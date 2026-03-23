@@ -23,6 +23,7 @@ _VALUE_RENDER_MIN_MODEL_KM = 10.0
 _VALUE_RENDER_MODEL_ALLOWLIST = {"gfs"}
 _TARGETED_VALUE_RENDER_MODELS = {"hrrr", "nam", "nbm"}
 _TARGETED_VALUE_RENDER_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
+_BILINEAR_ONLY_LOOP_DOWNSCALE_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
 _EXPANDED_LOOP_WIDTH_CONTINUOUS_MODELS = {"gfs"}
 _TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
     0: 2300,
@@ -410,6 +411,14 @@ def high_quality_loop_resampling() -> Resampling:
     if cubic is not None:
         return cubic
     return Resampling.bilinear
+
+
+def allow_high_quality_loop_resampling(*, model_id: str, var_key: str) -> bool:
+    del model_id
+    var_norm = str(var_key or "").strip().lower()
+    if not var_norm:
+        return True
+    return var_norm not in _BILINEAR_ONLY_LOOP_DOWNSCALE_VARS
 
 
 def rio_tiler_resampling_kwargs(

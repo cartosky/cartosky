@@ -179,7 +179,7 @@ def test_render_loop_webp_bytes_uses_rgba_when_gate_false(tmp_path, monkeypatch)
     assert calls["rgba_read"] is True
 
 
-def test_render_loop_webp_bytes_uses_value_render_for_hrrr_snowfall_with_high_quality_resize(
+def test_render_loop_webp_bytes_keeps_bilinear_resize_for_hrrr_snowfall(
     tmp_path,
     monkeypatch,
 ):
@@ -194,6 +194,7 @@ def test_render_loop_webp_bytes_uses_value_render_for_hrrr_snowfall_with_high_qu
     monkeypatch.setattr(main_module, "variable_color_map_id", lambda model_id, var_key: "snowfall_total")
     monkeypatch.setattr(main_module, "rasterio_resampling_for_loop", lambda **kwargs: "bilinear")
     monkeypatch.setattr(main_module, "high_quality_loop_resampling", lambda: "cubic")
+    monkeypatch.setattr(main_module, "allow_high_quality_loop_resampling", lambda **kwargs: False)
 
     def _fake_open(path, *args, **kwargs):
         path = Path(path)
@@ -244,5 +245,5 @@ def test_render_loop_webp_bytes_uses_value_render_for_hrrr_snowfall_with_high_qu
     assert calls["colorize_called"] is True
     assert calls["color_map_id"] == "snowfall_total"
     assert calls["meta_var_key"] == "snowfall_total"
-    assert calls["value_resampling"] == "cubic"
+    assert calls["value_resampling"] == "bilinear"
     assert calls["rgba_read"] is False

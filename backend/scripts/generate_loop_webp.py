@@ -28,6 +28,7 @@ from rasterio.enums import Resampling
 
 from app.services.builder.colorize import float_to_rgba
 from app.services.render_resampling import (
+    allow_high_quality_loop_resampling,
     compute_loop_output_shape,
     high_quality_loop_resampling,
     loop_fixed_width_for_tier,
@@ -171,7 +172,11 @@ def convert_job(job: Job, model_id: str, quality: int, max_dim: int) -> tuple[Jo
         use_value_render = use_value_render_for_variable(model_id=model_id, var_key=job.variable)
         resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=job.variable)
         prefer_high_quality_resize = use_value_render and (out_h < src_h or out_w < src_w)
-        if prefer_high_quality_resize and resampling != Resampling.nearest:
+        if (
+            prefer_high_quality_resize
+            and resampling != Resampling.nearest
+            and allow_high_quality_loop_resampling(model_id=model_id, var_key=job.variable)
+        ):
             resampling = high_quality_loop_resampling()
 
         if use_value_render and job.value_cog_path is not None:

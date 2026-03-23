@@ -298,3 +298,11 @@ def test_display_resampling_override_for_precip_and_snow(monkeypatch):
         "resampling_method": "bilinear",
         "reproject_method": "bilinear",
     }
+
+
+def test_loop_high_quality_resampling_disabled_for_precip_and_snow_totals():
+    for var_key in ("precip_total", "snowfall_total", "snowfall_kuchera_total"):
+        assert render_resampling.allow_high_quality_loop_resampling(model_id="gfs", var_key=var_key) is False
+        assert render_resampling.allow_high_quality_loop_resampling(model_id="hrrr", var_key=var_key) is False
+
+    assert render_resampling.allow_high_quality_loop_resampling(model_id="gfs", var_key="tmp2m") is True

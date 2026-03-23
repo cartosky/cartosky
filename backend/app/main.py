@@ -39,6 +39,7 @@ from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
 from .services.builder.colorize import float_to_rgba
 from .services.render_resampling import (
+    allow_high_quality_loop_resampling,
     compute_loop_output_shape,
     display_resampling_override,
     high_quality_loop_resampling,
@@ -2262,7 +2263,11 @@ def _render_loop_rgba_hwc(
     prefer_high_quality_resize: bool = False,
 ) -> np.ndarray | None:
     base_resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
-    if prefer_high_quality_resize and base_resampling != Resampling.nearest:
+    if (
+        prefer_high_quality_resize
+        and base_resampling != Resampling.nearest
+        and allow_high_quality_loop_resampling(model_id=model_id, var_key=var_key)
+    ):
         render_resampling = high_quality_loop_resampling()
     else:
         render_resampling = base_resampling
