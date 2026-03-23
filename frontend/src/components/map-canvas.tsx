@@ -1472,6 +1472,7 @@ export function MapCanvas({
       minZoom: view.minZoom ?? 3,
       maxZoom: view.maxZoom ?? 11,
       attributionControl: false,
+      preserveDrawingBuffer: true,
     });
 
     const handleMapError = (event: { error?: unknown }) => {
