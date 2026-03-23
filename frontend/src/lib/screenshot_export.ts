@@ -705,19 +705,9 @@ export async function exportViewerScreenshotPng(
     await sleep(MAP_SETTLE_DELAY_MS);
 
     const capturedMapCanvas = map.getCanvas();
-    const rawCanvas = document.createElement("canvas");
-    rawCanvas.width = Math.max(1, Math.round(width * pixelRatio));
-    rawCanvas.height = Math.max(1, Math.round(height * pixelRatio));
-
-    const rawCtx = rawCanvas.getContext("2d");
-    if (!rawCtx) {
-      throw new Error("Failed to create raw screenshot canvas context.");
-    }
-    rawCtx.drawImage(capturedMapCanvas, 0, 0, rawCanvas.width, rawCanvas.height);
-
     const outputCanvas = document.createElement("canvas");
-    outputCanvas.width = rawCanvas.width;
-    outputCanvas.height = rawCanvas.height;
+    outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
+    outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
     const outputCtx = outputCanvas.getContext("2d");
     if (!outputCtx) {
       throw new Error("Failed to create screenshot canvas context.");
@@ -727,7 +717,14 @@ export async function exportViewerScreenshotPng(
     outputCtx.imageSmoothingQuality = "high";
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
-    outputCtx.drawImage(rawCanvas, 0, 0, width, height);
+    try {
+      outputCtx.drawImage(capturedMapCanvas, 0, 0, width, height);
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : "Failed to capture the screenshot map canvas.";
+      throw new Error(message);
+    }
     drawOverlay(outputCtx, overlayLines, width);
 
     try {
