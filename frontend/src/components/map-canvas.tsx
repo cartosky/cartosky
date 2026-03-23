@@ -84,7 +84,8 @@ const PREFETCH_READY_TIMEOUT_MS = 8000;
 const WEBP_TO_TILE_STABLE_MS = 150;
 const WEBP_TO_TILE_CROSSFADE_MS = 200;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
-const ANCHOR_COLLISION_RADIUS_KM = 95;
+const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
+const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
@@ -344,7 +345,33 @@ function anchorPriorityFromId(id: string): number {
   return suffix;
 }
 
-function thinAnchorMarkers(markers: ActiveAnchorMarker[]): ActiveAnchorMarker[] {
+function interpolateAnchorCollisionRadiusKm(zoom: number): number {
+  const zoomStops: Array<[number, number]> = [
+    [3, ANCHOR_COLLISION_RADIUS_MAX_KM],
+    [4.5, 125],
+    [6, 82],
+    [7.5, 52],
+    [9, 30],
+    [11, ANCHOR_COLLISION_RADIUS_MIN_KM],
+  ];
+
+  if (zoom <= zoomStops[0][0]) {
+    return zoomStops[0][1];
+  }
+
+  for (let index = 1; index < zoomStops.length; index += 1) {
+    const [endZoom, endRadius] = zoomStops[index];
+    const [startZoom, startRadius] = zoomStops[index - 1];
+    if (zoom <= endZoom) {
+      const progress = (zoom - startZoom) / (endZoom - startZoom);
+      return startRadius + (endRadius - startRadius) * progress;
+    }
+  }
+
+  return ANCHOR_COLLISION_RADIUS_MIN_KM;
+}
+
+function thinAnchorMarkers(markers: ActiveAnchorMarker[], zoom: number): ActiveAnchorMarker[] {
   const sorted = [...markers].sort((left, right) => {
     if (left.priority !== right.priority) {
       return left.priority - right.priority;
@@ -352,10 +379,11 @@ function thinAnchorMarkers(markers: ActiveAnchorMarker[]): ActiveAnchorMarker[] 
     return left.id.localeCompare(right.id);
   });
 
+  const collisionRadiusKm = interpolateAnchorCollisionRadiusKm(zoom);
   const accepted: ActiveAnchorMarker[] = [];
   for (const marker of sorted) {
     const overlapsExisting = accepted.some(
-      (existing) => haversineKm(existing.lngLat, marker.lngLat) < ANCHOR_COLLISION_RADIUS_KM
+      (existing) => haversineKm(existing.lngLat, marker.lngLat) < collisionRadiusKm
     );
     if (!overlapsExisting) {
       accepted.push(marker);
@@ -365,7 +393,8 @@ function thinAnchorMarkers(markers: ActiveAnchorMarker[]): ActiveAnchorMarker[] 
 }
 
 function getActiveAnchorMarkers(
-  collection: AnchorFeatureCollection | null | undefined
+  collection: AnchorFeatureCollection | null | undefined,
+  zoom: number
 ): ActiveAnchorMarker[] {
   const sanitized = sanitizeAnchorFeatureCollection(collection);
   if (!sanitized) {
@@ -393,7 +422,7 @@ function getActiveAnchorMarkers(
     });
   }
 
-  return thinAnchorMarkers(activeMarkers);
+  return thinAnchorMarkers(activeMarkers, zoom);
 }
 
 function styleFor(
@@ -1037,7 +1066,7 @@ export function MapCanvas({
         return;
       }
 
-      const activeMarkers = getActiveAnchorMarkers(data);
+      const activeMarkers = getActiveAnchorMarkers(data, map.getZoom());
       const nextIds = new Set(activeMarkers.map((item) => item.id));
 
       for (const [id, record] of anchorMarkersRef.current) {
@@ -1497,7 +1526,29 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
-    syncAnchorMarkers(map, anchorGeoJson, pointLabelsEnabled);
+
+    let rafId: number | null = null;
+    const scheduleSync = () => {
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        syncAnchorMarkers(map, anchorGeoJson, pointLabelsEnabled);
+      });
+    };
+
+    scheduleSync();
+    map.on("move", scheduleSync);
+    map.on("moveend", scheduleSync);
+
+    return () => {
+      map.off("move", scheduleSync);
+      map.off("moveend", scheduleSync);
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
   }, [anchorGeoJson, isLoaded, pointLabelsEnabled, syncAnchorMarkers]);
 
   useEffect(() => {
