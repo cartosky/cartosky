@@ -375,6 +375,31 @@ function drawLegendLabel(
   ctx.fillText(text, x, y);
 }
 
+function strokeRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  drawRoundedRect(ctx, x, y, width, height, radius);
+  ctx.stroke();
+}
+
+function drawSectionGradient(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  colors: string[]
+): void {
+  fillHorizontalGradient(ctx, x, y, width, height, colors);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  strokeRoundedRect(ctx, x + 0.5, y + 0.5, width - 1, height - 1, 8);
+}
+
 function drawBottomLegend(
   ctx: CanvasRenderingContext2D,
   legend: LegendPayload,
@@ -385,13 +410,13 @@ function drawBottomLegend(
   const outerPadding = 18;
   const isPrecip = isPrecipPtypeLegend(legend);
   const isRadar = isRadarPtypeLegend(legend);
-  const bandHeight = isPrecip || isRadar ? 60 : 54;
+  const isCompactWidth = width <= 720;
+  const bandHeight = isPrecip || isRadar ? (isCompactWidth ? 112 : 60) : 54;
   const bandX = outerPadding;
   const bandY = height - bottomPadding - bandHeight;
   const bandWidth = width - outerPadding * 2;
   const contentX = bandX + 14;
   const contentWidth = bandWidth - 28;
-  const contentBottom = bandY + bandHeight - 12;
   const barHeight = isPrecip || isRadar ? 12 : 14;
   const barY = isPrecip || isRadar ? bandY + 36 : bandY + 24;
 
@@ -401,18 +426,35 @@ function drawBottomLegend(
   if (isPrecip) {
     const rows = groupPrecipPtypeRows(legend);
     if (rows.length > 0) {
-      const gap = 10;
-      const sectionWidth = (contentWidth - gap * (rows.length - 1)) / rows.length;
-      rows.forEach((row, index) => {
-        const x = contentX + index * (sectionWidth + gap);
-        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 18);
-        ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 30);
-        fillHorizontalGradient(ctx, x, barY, sectionWidth, barHeight, row.colors);
-        ctx.strokeStyle = "rgba(255,255,255,0.18)";
-        ctx.stroke();
-      });
+      if (isCompactWidth) {
+        const columns = 2;
+        const gapX = 12;
+        const gapY = 10;
+        const sectionWidth = (contentWidth - gapX * (columns - 1)) / columns;
+        const sectionHeight = 30;
+        rows.forEach((row, index) => {
+          const column = index % columns;
+          const rowIndex = Math.floor(index / columns);
+          const x = contentX + column * (sectionWidth + gapX);
+          const y = bandY + 16 + rowIndex * (sectionHeight + gapY);
+          ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, row.label.toUpperCase(), x, y);
+          ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x + sectionWidth, y, "right");
+          drawSectionGradient(ctx, x, y + 8, sectionWidth, barHeight, row.colors);
+        });
+      } else {
+        const gap = 10;
+        const sectionWidth = (contentWidth - gap * (rows.length - 1)) / rows.length;
+        rows.forEach((row, index) => {
+          const x = contentX + index * (sectionWidth + gap);
+          ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, row.label.toUpperCase(), x, bandY + 18);
+          ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, `${formatLegendValue(row.min)}-${formatLegendValue(row.max)}`, x, bandY + 30);
+          drawSectionGradient(ctx, x, barY, sectionWidth, barHeight, row.colors);
+        });
+      }
       ctx.restore();
       return;
     }
@@ -421,26 +463,61 @@ function drawBottomLegend(
   if (isRadar) {
     const groups = groupRadarEntries(legend);
     if (groups.length > 0) {
-      const gap = 10;
-      const sectionWidth = (contentWidth - gap * (groups.length - 1)) / groups.length;
-      groups.forEach((group, groupIndex) => {
-        const x = contentX + groupIndex * (sectionWidth + gap);
-        ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
-        drawLegendLabel(ctx, group.label.toUpperCase(), x, bandY + 18);
-        const values = group.entries.slice().reverse();
-        const swatchCount = Math.min(4, values.length);
-        const swatchGap = 5;
-        const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
-        for (let index = 0; index < swatchCount; index += 1) {
-          const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
-          const swatchX = x + index * (swatchWidth + swatchGap);
-          ctx.fillStyle = entry.color;
-          drawRoundedRect(ctx, swatchX, barY, swatchWidth, barHeight, 5);
-          ctx.fill();
+      if (isCompactWidth) {
+        const columns = 2;
+        const gapX = 12;
+        const gapY = 10;
+        const sectionWidth = (contentWidth - gapX * (columns - 1)) / columns;
+        const sectionHeight = 30;
+        groups.forEach((group, groupIndex) => {
+          const column = groupIndex % columns;
+          const rowIndex = Math.floor(groupIndex / columns);
+          const x = contentX + column * (sectionWidth + gapX);
+          const y = bandY + 16 + rowIndex * (sectionHeight + gapY);
+          const values = group.entries.slice().reverse();
+          const swatchCount = Math.min(4, values.length);
+          const swatchGap = 5;
+          const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
+
+          ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, group.label.toUpperCase(), x, y);
+          for (let index = 0; index < swatchCount; index += 1) {
+            const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
+            const swatchX = x + index * (swatchWidth + swatchGap);
+            ctx.fillStyle = entry.color;
+            drawRoundedRect(ctx, swatchX, y + 8, swatchWidth, barHeight, 5);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,0.14)";
+            strokeRoundedRect(ctx, swatchX + 0.5, y + 8.5, swatchWidth - 1, barHeight - 1, 5);
+          }
           ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 30);
-        }
-      });
+          drawLegendLabel(ctx, "Light", x, y + 28);
+          drawLegendLabel(ctx, "Heavy", x + sectionWidth, y + 28, "right");
+        });
+      } else {
+        const gap = 10;
+        const sectionWidth = (contentWidth - gap * (groups.length - 1)) / groups.length;
+        groups.forEach((group, groupIndex) => {
+          const x = contentX + groupIndex * (sectionWidth + gap);
+          ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
+          drawLegendLabel(ctx, group.label.toUpperCase(), x, bandY + 18);
+          const values = group.entries.slice().reverse();
+          const swatchCount = Math.min(4, values.length);
+          const swatchGap = 5;
+          const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
+          for (let index = 0; index < swatchCount; index += 1) {
+            const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
+            const swatchX = x + index * (swatchWidth + swatchGap);
+            ctx.fillStyle = entry.color;
+            drawRoundedRect(ctx, swatchX, barY, swatchWidth, barHeight, 5);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,0.14)";
+            strokeRoundedRect(ctx, swatchX + 0.5, barY + 0.5, swatchWidth - 1, barHeight - 1, 5);
+            ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
+            drawLegendLabel(ctx, formatLegendValue(entry.value), swatchX, bandY + 30);
+          }
+        });
+      }
       ctx.restore();
       return;
     }
@@ -451,9 +528,7 @@ function drawBottomLegend(
     return;
   }
 
-  fillHorizontalGradient(ctx, contentX, barY, contentWidth, barHeight, legend.entries.map((entry) => entry.color));
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.stroke();
+  drawSectionGradient(ctx, contentX, barY, contentWidth, barHeight, legend.entries.map((entry) => entry.color));
 
   const labelIndices = [0, 0.25, 0.5, 0.75, 1].map((ratio) =>
     Math.min(legend.entries.length - 1, Math.max(0, Math.round((legend.entries.length - 1) * ratio)))
@@ -473,22 +548,48 @@ function drawBottomLegend(
 async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<void> {
   const logo = await loadImage(SCREENSHOT_LOGO_SRC);
   const padding = 18;
-  const maxWidth = 162;
-  const maxHeight = 46;
+  const maxWidth = width <= 720 ? 172 : 162;
+  const maxHeight = width <= 720 ? 50 : 46;
   const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height);
   const drawWidth = Math.max(1, Math.round(logo.width * scale));
   const drawHeight = Math.max(1, Math.round(logo.height * scale));
-  const cardPaddingX = 12;
-  const cardPaddingY = 8;
+  const cardPaddingX = width <= 720 ? 14 : 12;
+  const cardPaddingY = width <= 720 ? 10 : 8;
   const cardWidth = drawWidth + cardPaddingX * 2;
   const cardHeight = drawHeight + cardPaddingY * 2;
   const cardX = width - padding - cardWidth;
   const cardY = padding;
 
-  drawGlassCard(ctx, cardX, cardY, cardWidth, cardHeight, 11);
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.38)";
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 8;
+  const bgGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardWidth, cardY + cardHeight);
+  bgGradient.addColorStop(0, "rgba(28,32,42,0.90)");
+  bgGradient.addColorStop(1, "rgba(52,58,72,0.84)");
+  ctx.fillStyle = bgGradient;
+  drawRoundedRect(ctx, cardX, cardY, cardWidth, cardHeight, 11);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.lineWidth = 1;
+  strokeRoundedRect(ctx, cardX + 0.5, cardY + 0.5, cardWidth - 1, cardHeight - 1, 10.5);
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  drawRoundedRect(ctx, cardX + 1.5, cardY + 1.5, cardWidth - 3, cardHeight - 3, 9.5);
+  ctx.fill();
+  ctx.restore();
+
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
+  ctx.shadowColor = "rgba(0,0,0,0.42)";
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetY = 4;
   ctx.drawImage(logo, cardX + cardPaddingX, cardY + cardPaddingY, drawWidth, drawHeight);
   ctx.restore();
 }
