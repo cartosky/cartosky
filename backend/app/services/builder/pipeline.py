@@ -115,7 +115,7 @@ def _prepare_display_data_for_colorize(
     # post-warp Gaussian smoothing so warp resampling is the only blur source.
     model_norm = str(model_id or "").strip().lower()
     var_norm = str(var_key or "").strip().lower()
-    if model_norm == "gfs" and var_norm in {"tmp2m", "dp2m", "tmp850", "wspd10m", "wgst10m", "precip_total", "snowfall_total", "qpf6h"}:
+    if model_norm == "gfs" and var_norm in {"tmp2m", "dp2m", "tmp850", "wspd10m", "wgst10m", "qpf6h"}:
         return warped_data
 
     if resampling_name_for_kind(model_id=model_norm, var_key=var_norm, kind=kind) == "nearest":

@@ -120,6 +120,20 @@ def test_targeted_accumulations_use_value_render_for_hrrr_nam_and_nbm(monkeypatc
             assert render_resampling.render_resampling_name(model_id=model_id, var_key=var_key) == "bilinear"
 
 
+def test_targeted_total_precip_and_snowfall_default_to_bilinear(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {
+            "snowfall_total": SimpleNamespace(kind="continuous", color_map_id="snowfall_total"),
+            "precip_total": SimpleNamespace(kind="continuous", color_map_id="precip_total"),
+        },
+    )
+
+    for model_id in ("gfs", "hrrr", "nam", "nbm"):
+        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="snowfall_total") == "bilinear"
+        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="precip_total") == "bilinear"
+
+
 def test_targeted_accumulations_use_larger_loop_widths(monkeypatch):
     _set_capabilities(
         monkeypatch,
@@ -277,9 +291,9 @@ def test_display_resampling_override_for_precip_and_snow(monkeypatch):
         },
     )
 
-    assert render_resampling.display_resampling_override("hrrr", "snowfall_total") == "nearest"
-    assert render_resampling.display_resampling_override("gfs", "precip_total") == "nearest"
-    assert render_resampling.resampling_name_for_kind(model_id="hrrr", var_key="snowfall_total") == "nearest"
+    assert render_resampling.display_resampling_override("hrrr", "snowfall_total") is None
+    assert render_resampling.display_resampling_override("gfs", "precip_total") is None
+    assert render_resampling.resampling_name_for_kind(model_id="hrrr", var_key="snowfall_total") == "bilinear"
     assert render_resampling.rio_tiler_resampling_kwargs(model_id="gfs", var_key="precip_total") == {
         "resampling_method": "bilinear",
         "reproject_method": "bilinear",
