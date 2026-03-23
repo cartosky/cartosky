@@ -247,6 +247,7 @@ type PendingVariableSwitchMetric = {
   startedAt: number;
   fromVariableId: string | null;
   toVariableId: string;
+  expectedSelectionKey: string;
   modelId: string | null;
   runId: string | null;
   regionId: string | null;
@@ -305,6 +306,7 @@ function buildVariableSwitchPhase0aMeta(
     from_variable: pending.fromVariableId,
     render_target: renderTarget,
     phase0a_trace_version: 1,
+    expected_selection_key: pending.expectedSelectionKey,
     stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
     stage_frames_resolved_ms: offsetMs(pending.framesResolvedAt),
     stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
@@ -543,33 +545,8 @@ function resolveManifestFrames(
   return { rows, hasFrameList: true };
 }
 
-function mergeManifestRowsWithPrevious(manifestRows: FrameRow[], previousRows: FrameRow[]): FrameRow[] {
-  if (manifestRows.length === 0 || previousRows.length === 0) {
-    return manifestRows;
-  }
-
-  const previousByHour = new Map<number, FrameRow>();
-  for (const row of previousRows) {
-    const fh = Number(row.fh);
-    if (Number.isFinite(fh)) {
-      previousByHour.set(fh, row);
-    }
-  }
-
-  return manifestRows.map((row) => {
-    const previous = previousByHour.get(Number(row.fh));
-    if (!previous) {
-      return row;
-    }
-    return {
-      ...row,
-      meta: row.meta ?? previous.meta,
-      tile_url_template: row.tile_url_template ?? previous.tile_url_template,
-      loop_webp_url: row.loop_webp_url ?? previous.loop_webp_url,
-      loop_webp_tier0_url: row.loop_webp_tier0_url ?? previous.loop_webp_tier0_url,
-      loop_webp_tier1_url: row.loop_webp_tier1_url ?? previous.loop_webp_tier1_url,
-    };
-  });
+function mergeManifestRowsWithPrevious(manifestRows: FrameRow[], _previousRows: FrameRow[]): FrameRow[] {
+  return manifestRows;
 }
 
 function extractLegendMeta(row: FrameRow | null | undefined): LegendMeta | null {
@@ -1312,6 +1289,7 @@ export default function App() {
     return candidates[0] ?? null;
   }, [run, runManifest, model, capabilities, runs, currentFrame, frameRows]);
   const resolvedRunForRequests = run === "latest" ? (latestRunId ?? "latest") : run;
+  const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
 
@@ -1952,6 +1930,10 @@ export default function App() {
   const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
+  const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
+    ? resolvedLoopForecastHour
+    : (loopDisplayHour ?? resolvedLoopTargetForecastHour);
+  const visibleOverlayHour = isLoopDisplayActive ? visibleLoopOverlayHour : forecastHour;
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
@@ -2423,6 +2405,7 @@ export default function App() {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (
       pendingVarSwitch
+      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
       && pendingVarSwitch.expectedTileUrl === loadedTileUrl
       && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
     ) {
@@ -2432,7 +2415,7 @@ export default function App() {
     if (loadedTileUrl === latestTileUrlRef.current) {
       setSettledTileUrl(loadedTileUrl);
     }
-  }, [markTileReady, markFrameReady]);
+  }, [loadedFramesKey, markTileReady, markFrameReady]);
 
   const handleTileReady = useCallback((loadedTileUrl: string, meta?: TileReadyMeta) => {
     if (meta?.source) {
@@ -2453,6 +2436,7 @@ export default function App() {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (
       pendingVarSwitch
+      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
       && pendingVarSwitch.expectedTileUrl === loadedTileUrl
       && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
     ) {
@@ -2462,7 +2446,7 @@ export default function App() {
     if (loadedTileUrl === latestTileUrlRef.current) {
       setSettledTileUrl(loadedTileUrl);
     }
-  }, [markTileReady, markFrameReady]);
+  }, [loadedFramesKey, markTileReady, markFrameReady]);
 
   const handleFrameLoadingChange = useCallback((loadingTileUrl: string, isLoadingValue: boolean) => {
     if (isLoadingValue) {
@@ -2480,6 +2464,8 @@ export default function App() {
       if (
         pendingVarSwitch
         && pendingVarSwitch.toVariableId === variable
+        && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
+        && loadingTileUrl === tileUrl
         && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
       ) {
         pendingVarSwitch.firstTargetRequestAt = performance.now();
@@ -2499,7 +2485,7 @@ export default function App() {
       return;
     }
     setMapLoadingTileUrl((current) => (current === loadingTileUrl ? null : current));
-  }, [variable]);
+  }, [loadedFramesKey, tileUrl, variable]);
 
   const clearFrameStatusTimer = useCallback(() => {
     if (frameStatusTimerRef.current !== null) {
@@ -3950,6 +3936,16 @@ export default function App() {
   }, [model, run]);
 
   useEffect(() => {
+    setFrameRows([]);
+    setLoopManifest(null);
+    setLoopDisplayHour(null);
+    setLoopDisplayBitmap(null);
+    setLoadedFramesKey("");
+    setSettledTileUrl(null);
+    setMapLoadingTileUrl(null);
+  }, [selectionKey]);
+
+  useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) {
       setLoopManifest(null);
       return;
@@ -4076,7 +4072,6 @@ export default function App() {
   }, [model, run, variable, resolvedRunForRequests, runManifest, selectedVariableDefaultFh, hasRenderableSelection]);
 
   useEffect(() => {
-    const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
     const generation = requestGenerationRef.current;
 
     if (!anchorBaseGeoJson) {
@@ -4108,7 +4103,7 @@ export default function App() {
       !hasRenderableSelection
       || !model
       || !variable
-      || !Number.isFinite(forecastHour)
+      || !Number.isFinite(visibleOverlayHour)
       || anchorBatchPoints.length === 0
       || loadedFramesKey !== selectionKey
     ) {
@@ -4133,7 +4128,7 @@ export default function App() {
       anchorBatchPendingHourRef.current = null;
       if (
         anchorBatchLastAppliedSelectionKeyRef.current === selectionKey
-        && anchorBatchLastAppliedHourRef.current === forecastHour
+        && anchorBatchLastAppliedHourRef.current === visibleOverlayHour
         && anchorBatchInFlightHourRef.current === null
       ) {
         return;
@@ -4141,7 +4136,7 @@ export default function App() {
       if (
         anchorBatchAbortRef.current
         && anchorBatchInFlightSelectionKeyRef.current === selectionKey
-        && anchorBatchInFlightHourRef.current === forecastHour
+        && anchorBatchInFlightHourRef.current === visibleOverlayHour
       ) {
         return;
       }
@@ -4149,41 +4144,42 @@ export default function App() {
         resetAnchorBatchQueue(true);
         anchorBatchContextRef.current = context;
       }
-      startAnchorBatchRequest(forecastHour, context);
+      startAnchorBatchRequest(visibleOverlayHour, context);
       return;
     }
 
     if (anchorBatchAbortRef.current && anchorBatchInFlightSelectionKeyRef.current === selectionKey) {
-      if (anchorBatchInFlightHourRef.current === forecastHour) {
+      if (anchorBatchInFlightHourRef.current === visibleOverlayHour) {
         anchorBatchPendingHourRef.current = null;
         return;
       }
-      anchorBatchPendingHourRef.current = forecastHour;
+      anchorBatchPendingHourRef.current = visibleOverlayHour;
       return;
     }
 
     if (
       anchorBatchLastAppliedSelectionKeyRef.current === selectionKey
-      && anchorBatchLastAppliedHourRef.current === forecastHour
+      && anchorBatchLastAppliedHourRef.current === visibleOverlayHour
     ) {
       anchorBatchPendingHourRef.current = null;
       return;
     }
 
     anchorBatchPendingHourRef.current = null;
-    startAnchorBatchRequest(forecastHour, context);
+    startAnchorBatchRequest(visibleOverlayHour, context);
   }, [
     anchorBaseGeoJson,
     anchorBatchPoints,
-    forecastHour,
     hasRenderableSelection,
     isScrubbing,
     loadedFramesKey,
     model,
     resetAnchorBatchQueue,
     resolvedRunForRequests,
+    selectionKey,
     startAnchorBatchRequest,
     variable,
+    visibleOverlayHour,
   ]);
 
   useEffect(() => {
@@ -4630,7 +4626,11 @@ export default function App() {
     }
     // Finalize variable_switch: fires once the first tile for the new variable is viewport-ready.
     const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (pendingVarSwitch && readyTileUrl === tileUrl) {
+    if (
+      pendingVarSwitch
+      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
+      && pendingVarSwitch.expectedTileUrl === readyTileUrl
+    ) {
       pendingVariableSwitchRef.current = null;
       setVariableSwitchState((current) => {
         if (!current || current.toVariable !== variable) {
@@ -4689,6 +4689,7 @@ export default function App() {
     tileUrl,
     visibleRenderMode,
     variable,
+    loadedFramesKey,
     region,
     forecastHour,
     finalizePendingFrameMetric,
@@ -4757,6 +4758,7 @@ export default function App() {
       startedAt: performance.now(),
       fromVariableId: fromVariable || null,
       toVariableId: nextVariable,
+      expectedSelectionKey: `${model}:${resolvedRunForRequests}:${nextVariable}`,
       modelId: model || null,
       runId: telemetryRunId,
       regionId: region || null,
@@ -4785,7 +4787,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -4871,9 +4873,7 @@ export default function App() {
     || preferLoopImageVariableSwitchPresentation;
   const activeLoopHour = preferLoopImagePlaybackPresentation
     ? resolvedLoopForecastHour
-    : ((preferLoopImageScrubPresentation || preferLoopImageVariableSwitchPresentation)
-      ? (loopDisplayHour ?? resolvedLoopTargetForecastHour)
-      : (loopDisplayHour ?? resolvedLoopTargetForecastHour));
+    : visibleLoopOverlayHour;
   const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
