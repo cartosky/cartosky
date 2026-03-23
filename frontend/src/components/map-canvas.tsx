@@ -425,7 +425,11 @@ function getActiveAnchorMarkers(
   return thinAnchorMarkers(activeMarkers, zoom);
 }
 
-function styleFor(
+type MapStyleOptions = {
+  includeRuntimeLoopCanvas?: boolean;
+};
+
+export function buildMapStyle(
   overlayUrl: string,
   opacity: number,
   variable?: string,
@@ -433,8 +437,10 @@ function styleFor(
   overlayFadeOutZoom?: { start: number; end: number } | null,
   contourGeoJsonUrl?: string | null,
   loopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]] = loopCoordinatesFromBbox(null),
-  basemapMode: BasemapMode = "light"
+  basemapMode: BasemapMode = "light",
+  options: MapStyleOptions = {}
 ): StyleSpecification {
+  const { includeRuntimeLoopCanvas = true } = options;
   const resamplingMode = getResamplingMode(variableKind);
   const loopResamplingMode = getLoopResamplingMode(variable, variableKind);
   const paintSettings = getOverlayPaintSettings(variable, basemapMode);
@@ -482,51 +488,75 @@ function styleFor(
     layout: { visibility: "none" as const },
     paint: overlayPaint,
   }));
+  const sources: StyleSpecification["sources"] = {
+    "twf-basemap": {
+      type: "raster",
+      tiles: basemapTiles,
+      tileSize: CARTO_TILE_SIZE,
+    },
+    [sourceId("a")]: {
+      type: "raster",
+      tiles: [overlayUrl],
+      tileSize: 512,
+    },
+    [sourceId("b")]: {
+      type: "raster",
+      tiles: [overlayUrl],
+      tileSize: 512,
+    },
+    ...prefetchSources,
+    "twf-labels": {
+      type: "raster",
+      tiles: labelTiles,
+      tileSize: CARTO_TILE_SIZE,
+    },
+    [STATE_BOUNDARY_SOURCE_ID]: {
+      type: "vector",
+      url: BOUNDARIES_VECTOR_TILES_URL,
+    },
+    [CONTOUR_SOURCE_ID]: {
+      type: "geojson",
+      data: contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION,
+    },
+    [LOOP_SOURCE_ID]: {
+      type: "image",
+      url: TRANSPARENT_PIXEL_DATA_URL,
+      coordinates: loopImageCoordinates,
+    },
+  };
+  if (includeRuntimeLoopCanvas) {
+    sources[LOOP_CANVAS_SOURCE_ID] = {
+      type: "canvas",
+      canvas: LOOP_CANVAS_ELEMENT_ID,
+      coordinates: loopImageCoordinates,
+      animate: false,
+    } as any;
+  }
+  const runtimeLoopCanvasLayers = includeRuntimeLoopCanvas
+    ? [
+        {
+          id: LOOP_CANVAS_LAYER_ID,
+          type: "raster" as const,
+          source: LOOP_CANVAS_SOURCE_ID,
+          layout: {
+            visibility: "none" as const,
+          },
+          paint: {
+            "raster-opacity": opacity,
+            "raster-resampling": loopResamplingMode,
+            "raster-fade-duration": 0,
+            "raster-contrast": paintSettings.contrast,
+            "raster-saturation": paintSettings.saturation,
+            "raster-brightness-min": paintSettings.brightnessMin,
+            "raster-brightness-max": paintSettings.brightnessMax,
+          },
+        },
+      ]
+    : [];
 
   return {
     version: 8,
-    sources: {
-      "twf-basemap": {
-        type: "raster",
-        tiles: basemapTiles,
-        tileSize: CARTO_TILE_SIZE,
-      },
-      [sourceId("a")]: {
-        type: "raster",
-        tiles: [overlayUrl],
-        tileSize: 512,
-      },
-      [sourceId("b")]: {
-        type: "raster",
-        tiles: [overlayUrl],
-        tileSize: 512,
-      },
-      ...prefetchSources,
-      "twf-labels": {
-        type: "raster",
-        tiles: labelTiles,
-        tileSize: CARTO_TILE_SIZE,
-      },
-      [STATE_BOUNDARY_SOURCE_ID]: {
-        type: "vector",
-        url: BOUNDARIES_VECTOR_TILES_URL,
-      },
-      [CONTOUR_SOURCE_ID]: {
-        type: "geojson",
-        data: contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION,
-      },
-      [LOOP_SOURCE_ID]: {
-        type: "image",
-        url: TRANSPARENT_PIXEL_DATA_URL,
-        coordinates: loopImageCoordinates,
-      },
-      [LOOP_CANVAS_SOURCE_ID]: {
-        type: "canvas",
-        canvas: LOOP_CANVAS_ELEMENT_ID,
-        coordinates: loopImageCoordinates,
-        animate: false,
-      } as any,
-    },
+    sources,
     layers: [
       {
         id: "twf-background",
@@ -683,23 +713,7 @@ function styleFor(
           "raster-brightness-max": paintSettings.brightnessMax,
         },
       },
-      {
-        id: LOOP_CANVAS_LAYER_ID,
-        type: "raster",
-        source: LOOP_CANVAS_SOURCE_ID,
-        layout: {
-          visibility: "none",
-        },
-        paint: {
-          "raster-opacity": opacity,
-          "raster-resampling": loopResamplingMode,
-          "raster-fade-duration": 0,
-          "raster-contrast": paintSettings.contrast,
-          "raster-saturation": paintSettings.saturation,
-          "raster-brightness-min": paintSettings.brightnessMin,
-          "raster-brightness-max": paintSettings.brightnessMax,
-        },
-      },
+      ...runtimeLoopCanvasLayers,
       {
         id: "twf-labels",
         type: "raster",
@@ -1443,7 +1457,7 @@ export function MapCanvas({
     let resizeRafId: number | null = null;
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: styleFor(
+      style: buildMapStyle(
         tileUrl,
         opacity,
         variable,
@@ -1599,7 +1613,7 @@ export function MapCanvas({
     lastAppliedBasemapModeRef.current = basemapMode;
     cancelCrossfade();
 
-    const style = styleFor(
+    const style = buildMapStyle(
       activeTileUrlRef.current,
       opacity,
       variable,

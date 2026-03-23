@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle, Eye, MapPin, Moon, Send, SlidersHorizontal, Sun } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, type BasemapMode, type TileReadyMeta, type TileReadySource } from "@/components/map-canvas";
+import { MapCanvas, buildMapStyle, type BasemapMode, type TileReadyMeta, type TileReadySource } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import { WeatherToolbar } from "@/components/weather-toolbar";
@@ -4997,10 +4997,6 @@ export default function App() {
     if (!map) {
       return null;
     }
-    const style = map.getStyle();
-    if (!style) {
-      return null;
-    }
     const center = map.getCenter();
     const zoom = map.getZoom();
     const container = map.getContainer();
@@ -5009,6 +5005,26 @@ export default function App() {
     if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
       return null;
     }
+
+    const loopCoordinates = loopManifest?.bbox
+      ? ([
+          [loopManifest.bbox[0], loopManifest.bbox[3]],
+          [loopManifest.bbox[2], loopManifest.bbox[3]],
+          [loopManifest.bbox[2], loopManifest.bbox[1]],
+          [loopManifest.bbox[0], loopManifest.bbox[1]],
+        ] as [[number, number], [number, number], [number, number], [number, number]])
+      : undefined;
+    const style = buildMapStyle(
+      tileUrl,
+      opacity,
+      variable,
+      displayedOverlayVariableKind,
+      overlayFadeOutZoom,
+      contourGeoJsonUrl,
+      loopCoordinates,
+      basemapMode,
+      { includeRuntimeLoopCanvas: false }
+    );
 
     return {
       style,
@@ -5036,7 +5052,14 @@ export default function App() {
     model,
     selectedRunLabel,
     run,
+    tileUrl,
+    opacity,
     variable,
+    displayedOverlayVariableKind,
+    overlayFadeOutZoom,
+    contourGeoJsonUrl,
+    loopManifest,
+    basemapMode,
     selectedVariableLabel,
     forecastHour,
     region,
