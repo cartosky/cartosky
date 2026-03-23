@@ -70,6 +70,19 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+async function snapshotCanvasImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
+  let dataUrl: string;
+  try {
+    dataUrl = canvas.toDataURL("image/png");
+  } catch (error) {
+    const message = error instanceof Error && error.message
+      ? error.message
+      : "Failed to snapshot the screenshot map canvas.";
+    throw new Error(message);
+  }
+  return loadImage(dataUrl);
+}
+
 function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -705,6 +718,7 @@ export async function exportViewerScreenshotPng(
     await sleep(MAP_SETTLE_DELAY_MS);
 
     const capturedMapCanvas = map.getCanvas();
+    const capturedMapImage = await snapshotCanvasImage(capturedMapCanvas);
     const outputCanvas = document.createElement("canvas");
     outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
     outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
@@ -718,7 +732,7 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     try {
-      outputCtx.drawImage(capturedMapCanvas, 0, 0, width, height);
+      outputCtx.drawImage(capturedMapImage, 0, 0, width, height);
     } catch (error) {
       const message = error instanceof Error && error.message
         ? error.message
