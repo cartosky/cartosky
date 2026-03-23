@@ -411,7 +411,7 @@ STATE_CITY_CANDIDATES: dict[str, list[CityCandidate]] = {
     ],
 }
 
-MAX_ANCHORS_PER_STATE = 3
+MAX_ANCHORS_PER_STATE = 4
 
 PRIMARY_CITY_OVERRIDES: dict[str, str] = {
     "CO": "Denver",
@@ -475,6 +475,14 @@ def sort_remaining_candidates(candidates: list[CityCandidate], excluded_names: s
     )
 
 
+def population_selection_mode(index: int) -> str:
+    if index == 3:
+        return "population-tertiary"
+    if index == 4:
+        return "population-quaternary"
+    return f"population-rank-{index}"
+
+
 def build_selected_anchors() -> list[SelectedAnchor]:
     selected_anchors: list[SelectedAnchor] = []
 
@@ -514,19 +522,22 @@ def build_selected_anchors() -> list[SelectedAnchor]:
         if anchor_target < 3:
             continue
 
-        remaining_candidates = sort_remaining_candidates(candidates, {primary.name, secondary.name})
-        tertiary = remaining_candidates[0]
-        selected_anchors.append(
-            SelectedAnchor(
-                state_code=state_code,
-                state_name=state_name,
-                city_name=tertiary.name,
-                lat=tertiary.lat,
-                lon=tertiary.lon,
-                index=3,
-                selection_mode="population-tertiary",
+        excluded_names = {primary.name, secondary.name}
+        remaining_candidates = sort_remaining_candidates(candidates, excluded_names)
+        for index, candidate in enumerate(remaining_candidates, start=3):
+            if index > anchor_target:
+                break
+            selected_anchors.append(
+                SelectedAnchor(
+                    state_code=state_code,
+                    state_name=state_name,
+                    city_name=candidate.name,
+                    lat=candidate.lat,
+                    lon=candidate.lon,
+                    index=index,
+                    selection_mode=population_selection_mode(index),
+                )
             )
-        )
 
     return selected_anchors
 
@@ -559,7 +570,7 @@ def print_summary(selected_anchors: list[SelectedAnchor]) -> None:
         per_state[anchor.state_code].append(anchor)
 
     total_anchors = len(selected_anchors)
-    if total_anchors < 90 or total_anchors > 150:
+    if total_anchors < 90 or total_anchors > 180:
         raise ValueError(f"Anchor count {total_anchors} is outside the expected expanded target range")
 
     print(f"total_anchors={total_anchors}")
