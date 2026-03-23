@@ -16,6 +16,7 @@ export type ScreenshotExportState = {
   fh: number;
   region?: { id: string; label: string };
   loopEnabled: boolean;
+  capturedMapDataUrl?: string;
 };
 
 export type ScreenshotExportOptions = {
@@ -688,6 +689,42 @@ export async function exportViewerScreenshotPng(
     : DEFAULT_PIXEL_RATIO;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
 
+  const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
+    const outputCanvas = document.createElement("canvas");
+    outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
+    outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
+    const outputCtx = outputCanvas.getContext("2d");
+    if (!outputCtx) {
+      throw new Error("Failed to create screenshot canvas context.");
+    }
+
+    outputCtx.imageSmoothingEnabled = true;
+    outputCtx.imageSmoothingQuality = "high";
+    outputCtx.save();
+    outputCtx.scale(pixelRatio, pixelRatio);
+    outputCtx.drawImage(mapImage, 0, 0, width, height);
+    drawOverlay(outputCtx, overlayLines, width);
+
+    try {
+      await drawLogo(outputCtx, width);
+    } catch (error) {
+      console.warn("[screenshot] Logo load failed; continuing without logo.", error);
+    }
+
+    const bottomPadding = 18;
+    if (opts.legend) {
+      drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding);
+    }
+    outputCtx.restore();
+
+    return canvasToPngBlob(outputCanvas);
+  };
+
+  if (state.capturedMapDataUrl) {
+    const liveMapImage = await loadImage(state.capturedMapDataUrl);
+    return composeScreenshot(liveMapImage);
+  }
+
   const container = document.createElement("div");
   container.style.position = "fixed";
   container.style.left = "-10000px";
@@ -719,41 +756,7 @@ export async function exportViewerScreenshotPng(
 
     const capturedMapCanvas = map.getCanvas();
     const capturedMapImage = await snapshotCanvasImage(capturedMapCanvas);
-    const outputCanvas = document.createElement("canvas");
-    outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
-    outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
-    const outputCtx = outputCanvas.getContext("2d");
-    if (!outputCtx) {
-      throw new Error("Failed to create screenshot canvas context.");
-    }
-
-    outputCtx.imageSmoothingEnabled = true;
-    outputCtx.imageSmoothingQuality = "high";
-    outputCtx.save();
-    outputCtx.scale(pixelRatio, pixelRatio);
-    try {
-      outputCtx.drawImage(capturedMapImage, 0, 0, width, height);
-    } catch (error) {
-      const message = error instanceof Error && error.message
-        ? error.message
-        : "Failed to capture the screenshot map canvas.";
-      throw new Error(message);
-    }
-    drawOverlay(outputCtx, overlayLines, width);
-
-    try {
-      await drawLogo(outputCtx, width);
-    } catch (error) {
-      console.warn("[screenshot] Logo load failed; continuing without logo.", error);
-    }
-
-    const bottomPadding = 18;
-    if (opts.legend) {
-      drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding);
-    }
-    outputCtx.restore();
-
-    return canvasToPngBlob(outputCanvas);
+    return composeScreenshot(capturedMapImage);
   } finally {
     map.remove();
     container.remove();

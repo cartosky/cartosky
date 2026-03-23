@@ -5005,6 +5005,12 @@ export default function App() {
     if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
       return null;
     }
+    let capturedMapDataUrl: string | undefined;
+    try {
+      capturedMapDataUrl = map.getCanvas().toDataURL("image/png");
+    } catch (error) {
+      console.warn("[screenshot] Failed to snapshot live map canvas; falling back to offscreen export.", error);
+    }
 
     const loopCoordinates = loopManifest?.bbox
       ? ([
@@ -5046,6 +5052,7 @@ export default function App() {
         label: selectedRegionLabel || region || "Region",
       },
       loopEnabled: isLoopDisplayActive,
+      capturedMapDataUrl,
     };
   }, [
     selectedModelLabel,
