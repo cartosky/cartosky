@@ -30,7 +30,9 @@ const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
+const MAP_LOAD_TIMEOUT_MS = 15_000;
 const MAP_IDLE_TIMEOUT_MS = 15_000;
+const IMAGE_LOAD_TIMEOUT_MS = 5_000;
 const SCREENSHOT_LOGO_SRC = BRAND_LOGO_SRC;
 
 function sleep(ms: number): Promise<void> {
@@ -42,9 +44,28 @@ function sleep(ms: number): Promise<void> {
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
+    let done = false;
+    const timeoutId = window.setTimeout(() => {
+      if (done) return;
+      done = true;
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error(`Timed out while loading image: ${src}`));
+    }, IMAGE_LOAD_TIMEOUT_MS);
+
     image.decoding = "async";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.onload = () => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timeoutId);
+      resolve(image);
+    };
+    image.onerror = () => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timeoutId);
+      reject(new Error(`Failed to load image: ${src}`));
+    };
     image.src = src;
   });
 }
@@ -91,8 +112,45 @@ function waitForMapLoad(map: maplibregl.Map): Promise<void> {
   if (map.loaded()) {
     return Promise.resolve();
   }
-  return new Promise((resolve) => {
-    map.once("load", () => resolve());
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let timeoutId: number | null = null;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      map.off("load", onLoad);
+      map.off("error", onError);
+      resolve();
+    };
+
+    const fail = (message: string) => {
+      if (done) return;
+      done = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      map.off("load", onLoad);
+      map.off("error", onError);
+      reject(new Error(message));
+    };
+
+    const onLoad = () => finish();
+    const onError = (event: { error?: unknown }) => {
+      const reason = event.error instanceof Error && event.error.message
+        ? event.error.message
+        : "Map failed to load for screenshot export.";
+      fail(reason);
+    };
+
+    map.on("load", onLoad);
+    map.on("error", onError);
+    timeoutId = window.setTimeout(() => {
+      fail("Timed out while loading the screenshot map.");
+    }, MAP_LOAD_TIMEOUT_MS);
   });
 }
 
