@@ -17,6 +17,7 @@ export type ScreenshotExportState = {
   region?: { id: string; label: string };
   loopEnabled: boolean;
   capturedMapDataUrl?: string;
+  anchors?: Array<{ x: number; y: number; label: string; cityName: string }>;
 };
 
 export type ScreenshotExportOptions = {
@@ -242,6 +243,40 @@ function drawGlassCard(
   ctx.restore();
 }
 
+function drawDarkCard(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.38)";
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 8;
+  const bgGradient = ctx.createLinearGradient(x, y, x + width, y + height);
+  bgGradient.addColorStop(0, "rgba(28,32,42,0.90)");
+  bgGradient.addColorStop(1, "rgba(52,58,72,0.84)");
+  ctx.fillStyle = bgGradient;
+  drawRoundedRect(ctx, x, y, width, height, radius);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.lineWidth = 1;
+  drawRoundedRect(ctx, x + 0.5, y + 0.5, width - 1, height - 1, Math.max(0, radius - 0.5));
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  drawRoundedRect(ctx, x + 1.5, y + 1.5, width - 3, height - 3, Math.max(0, radius - 1.5));
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   lines: string[],
@@ -269,7 +304,7 @@ function drawOverlay(
   const boxWidth = Math.min(maxWidth, Math.ceil(textWidth) + paddingX * 2);
   const boxHeight = cleaned.length * lineHeight + paddingY * 2 - 2;
 
-  drawGlassCard(ctx, boxX, boxY, boxWidth, boxHeight, 11);
+  drawDarkCard(ctx, boxX, boxY, boxWidth, boxHeight, 11);
 
   ctx.fillStyle = "rgba(255,255,255,0.96)";
   ctx.textBaseline = "top";
@@ -632,29 +667,7 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<v
   const cardX = width - padding - cardWidth;
   const cardY = padding;
 
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.38)";
-  ctx.shadowBlur = 28;
-  ctx.shadowOffsetY = 8;
-  const bgGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardWidth, cardY + cardHeight);
-  bgGradient.addColorStop(0, "rgba(28,32,42,0.90)");
-  bgGradient.addColorStop(1, "rgba(52,58,72,0.84)");
-  ctx.fillStyle = bgGradient;
-  drawRoundedRect(ctx, cardX, cardY, cardWidth, cardHeight, 11);
-  ctx.fill();
-  ctx.restore();
-
-  ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.14)";
-  ctx.lineWidth = 1;
-  strokeRoundedRect(ctx, cardX + 0.5, cardY + 0.5, cardWidth - 1, cardHeight - 1, 10.5);
-  ctx.restore();
-
-  ctx.save();
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
-  drawRoundedRect(ctx, cardX + 1.5, cardY + 1.5, cardWidth - 3, cardHeight - 3, 9.5);
-  ctx.fill();
-  ctx.restore();
+  drawDarkCard(ctx, cardX, cardY, cardWidth, cardHeight, 11);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
@@ -663,6 +676,51 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<v
   ctx.shadowBlur = 18;
   ctx.shadowOffsetY = 4;
   ctx.drawImage(logo, cardX + cardPaddingX, cardY + cardPaddingY, drawWidth, drawHeight);
+  ctx.restore();
+}
+
+function drawAnchors(
+  ctx: CanvasRenderingContext2D,
+  anchors: Array<{ x: number; y: number; label: string; cityName: string }>,
+  width: number,
+  height: number
+): void {
+  if (anchors.length === 0) {
+    return;
+  }
+
+  const margin = 10;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (const anchor of anchors) {
+    if (!anchor.label.trim() || !anchor.cityName.trim()) {
+      continue;
+    }
+    if (anchor.x < margin || anchor.x > width - margin || anchor.y < margin || anchor.y > height - margin) {
+      continue;
+    }
+
+    const chipPaddingX = 8;
+    const chipHeight = 22;
+    ctx.font = "700 12px system-ui, -apple-system, Segoe UI, sans-serif";
+    const chipWidth = Math.max(30, Math.ceil(ctx.measureText(anchor.label).width) + chipPaddingX * 2);
+    const chipX = anchor.x - chipWidth / 2;
+    const chipY = anchor.y - 30;
+
+    drawDarkCard(ctx, chipX, chipY, chipWidth, chipHeight, 11);
+    ctx.fillStyle = "rgba(255,255,255,0.98)";
+    ctx.fillText(anchor.label, anchor.x, chipY + chipHeight / 2 + 0.5);
+
+    ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(33,38,49,0.82)";
+    ctx.strokeText(anchor.cityName, anchor.x, anchor.y - 8);
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.fillText(anchor.cityName, anchor.x, anchor.y - 8);
+  }
+
   ctx.restore();
 }
 
@@ -703,6 +761,7 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     outputCtx.drawImage(mapImage, 0, 0, width, height);
+    drawAnchors(outputCtx, state.anchors ?? [], width, height);
     drawOverlay(outputCtx, overlayLines, width);
 
     try {

@@ -30,6 +30,7 @@ import {
   anchorBatchPointsFromGeoJson,
   buildAnchorDisplayGeoJson,
   buildInactiveAnchorFeatureCollection,
+  getActiveAnchorLabels,
   resolveAnchorDisplayRule,
   type AnchorFeatureCollection,
 } from "@/lib/anchor-labels";
@@ -5011,6 +5012,17 @@ export default function App() {
     } catch (error) {
       console.warn("[screenshot] Failed to snapshot live map canvas; falling back to offscreen export.", error);
     }
+    const anchors = getActiveAnchorLabels(anchorDisplayGeoJson, zoom)
+      .map((anchor) => {
+        const projected = map.project(anchor.lngLat);
+        return {
+          x: Math.round(projected.x),
+          y: Math.round(projected.y),
+          label: anchor.label,
+          cityName: anchor.cityName,
+        };
+      })
+      .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
     const loopCoordinates = loopManifest?.bbox
       ? ([
@@ -5053,6 +5065,7 @@ export default function App() {
       },
       loopEnabled: isLoopDisplayActive,
       capturedMapDataUrl,
+      anchors,
     };
   }, [
     selectedModelLabel,
@@ -5067,6 +5080,7 @@ export default function App() {
     contourGeoJsonUrl,
     loopManifest,
     basemapMode,
+    anchorDisplayGeoJson,
     selectedVariableLabel,
     forecastHour,
     region,

@@ -27,6 +27,14 @@ export type AnchorBatchResponse = {
   values: Record<string, number | null>;
 };
 
+export type ActiveAnchorLabel = {
+  id: string;
+  lngLat: [number, number];
+  label: string;
+  cityName: string;
+  priority: number;
+};
+
 export type AnchorDisplayMode = "always" | "active-only" | "hidden";
 
 export type AnchorDisplayRule = {
@@ -192,6 +200,110 @@ export function sanitizeAnchorFeatureCollection(
       }),
     })),
   };
+}
+
+function haversineKm(a: [number, number], b: [number, number]): number {
+  const [lonA, latA] = a;
+  const [lonB, latB] = b;
+  const earthRadiusKm = 6371;
+  const latDelta = (latB - latA) * Math.PI / 180;
+  const lonDelta = (lonB - lonA) * Math.PI / 180;
+  const latARadians = latA * Math.PI / 180;
+  const latBRadians = latB * Math.PI / 180;
+  const latSin = Math.sin(latDelta / 2);
+  const lonSin = Math.sin(lonDelta / 2);
+  const arc = latSin * latSin + Math.cos(latARadians) * Math.cos(latBRadians) * lonSin * lonSin;
+
+  return 2 * earthRadiusKm * Math.asin(Math.sqrt(arc));
+}
+
+function anchorPriorityFromId(id: string): number {
+  const parts = id.split("_");
+  const suffix = Number(parts[parts.length - 1]);
+  if (!Number.isFinite(suffix) || suffix < 1) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return suffix;
+}
+
+function interpolateAnchorCollisionRadiusKm(zoom: number): number {
+  const zoomStops: Array<[number, number]> = [
+    [3, 170],
+    [4.5, 125],
+    [6, 82],
+    [7.5, 52],
+    [9, 30],
+    [11, 18],
+  ];
+
+  if (zoom <= zoomStops[0][0]) {
+    return zoomStops[0][1];
+  }
+
+  for (let index = 1; index < zoomStops.length; index += 1) {
+    const [endZoom, endRadius] = zoomStops[index];
+    const [startZoom, startRadius] = zoomStops[index - 1];
+    if (zoom <= endZoom) {
+      const progress = (zoom - startZoom) / (endZoom - startZoom);
+      return startRadius + (endRadius - startRadius) * progress;
+    }
+  }
+
+  return 18;
+}
+
+function thinAnchorMarkers(markers: ActiveAnchorLabel[], zoom: number): ActiveAnchorLabel[] {
+  const sorted = [...markers].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  const collisionRadiusKm = interpolateAnchorCollisionRadiusKm(zoom);
+  const accepted: ActiveAnchorLabel[] = [];
+  for (const marker of sorted) {
+    const overlapsExisting = accepted.some(
+      (existing) => haversineKm(existing.lngLat, marker.lngLat) < collisionRadiusKm
+    );
+    if (!overlapsExisting) {
+      accepted.push(marker);
+    }
+  }
+  return accepted;
+}
+
+export function getActiveAnchorLabels(
+  collection: AnchorFeatureCollection | null | undefined,
+  zoom: number
+): ActiveAnchorLabel[] {
+  const sanitized = sanitizeAnchorFeatureCollection(collection);
+  if (!sanitized) {
+    return [];
+  }
+
+  const activeMarkers: ActiveAnchorLabel[] = [];
+  for (const feature of sanitized.features) {
+    const id = typeof feature.id === "string" ? feature.id : null;
+    const coordinates = feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
+    const lng = Number(coordinates?.[0]);
+    const lat = Number(coordinates?.[1]);
+    const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
+    const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
+    const active = feature.properties?.active === true;
+    if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
+      continue;
+    }
+    activeMarkers.push({
+      id,
+      lngLat: [lng, lat],
+      label,
+      cityName,
+      priority: anchorPriorityFromId(id),
+    });
+  }
+
+  return thinAnchorMarkers(activeMarkers, zoom);
 }
 
 export function isAnchorFeatureCollection(value: unknown): value is AnchorFeatureCollection {
