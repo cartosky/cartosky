@@ -545,8 +545,37 @@ function resolveManifestFrames(
   return { rows, hasFrameList: true };
 }
 
-function mergeManifestRowsWithPrevious(manifestRows: FrameRow[], _previousRows: FrameRow[]): FrameRow[] {
-  return manifestRows;
+function mergeManifestRowsWithPrevious(
+  manifestRows: FrameRow[],
+  previousRows: FrameRow[],
+  allowCarryForward = true
+): FrameRow[] {
+  if (!allowCarryForward || manifestRows.length === 0 || previousRows.length === 0) {
+    return manifestRows;
+  }
+
+  const previousByHour = new Map<number, FrameRow>();
+  for (const row of previousRows) {
+    const fh = Number(row.fh);
+    if (Number.isFinite(fh)) {
+      previousByHour.set(fh, row);
+    }
+  }
+
+  return manifestRows.map((row) => {
+    const previous = previousByHour.get(Number(row.fh));
+    if (!previous) {
+      return row;
+    }
+    return {
+      ...row,
+      meta: row.meta ?? previous.meta,
+      tile_url_template: row.tile_url_template ?? previous.tile_url_template,
+      loop_webp_url: row.loop_webp_url ?? previous.loop_webp_url,
+      loop_webp_tier0_url: row.loop_webp_tier0_url ?? previous.loop_webp_tier0_url,
+      loop_webp_tier1_url: row.loop_webp_tier1_url ?? previous.loop_webp_tier1_url,
+    };
+  });
 }
 
 function extractLegendMeta(row: FrameRow | null | undefined): LegendMeta | null {
@@ -3027,7 +3056,11 @@ export default function App() {
         }
 
         const pendingVarSwitch = pendingVariableSwitchRef.current;
-        if (pendingVarSwitch && pendingVarSwitch.toVariableId === variable) {
+        if (
+          pendingVarSwitch
+          && pendingVarSwitch.toVariableId === variable
+          && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
+        ) {
           pendingVariableSwitchRef.current = null;
           setVariableSwitchState((current) => {
             if (!current || current.toVariable !== variable) {
@@ -3091,6 +3124,7 @@ export default function App() {
     isLoopDisplayActive,
     loopDisplayHour,
     visibleRenderMode,
+    loadedFramesKey,
     telemetryRunId,
     region,
     finalizePendingFrameMetric,
@@ -4023,7 +4057,7 @@ export default function App() {
               visualState: "warming_new",
             };
           });
-          setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows));
+          setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey));
           setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
@@ -4069,7 +4103,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, selectedVariableDefaultFh, hasRenderableSelection]);
+  }, [model, run, variable, resolvedRunForRequests, runManifest, selectedVariableDefaultFh, hasRenderableSelection, loadedFramesKey, selectionKey]);
 
   useEffect(() => {
     const generation = requestGenerationRef.current;
@@ -4250,7 +4284,7 @@ export default function App() {
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
             if (hasFrameList) {
               setFrameRows((prevRows) => {
-                const merged = mergeManifestRowsWithPrevious(rows, prevRows);
+                const merged = mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey);
                 return merged.length === prevRows.length ? prevRows : merged;
               });
               const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
@@ -4282,7 +4316,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, hasRenderableSelection]);
+  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, hasRenderableSelection, loadedFramesKey, selectionKey]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
