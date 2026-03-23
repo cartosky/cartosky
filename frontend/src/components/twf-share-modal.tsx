@@ -744,15 +744,7 @@ export function TwfShareModal({
     if (screenshotBusy || screenshotUploadBusy) {
       return;
     }
-    const generated = await generateScreenshot();
-    if (!generated) {
-      return;
-    }
-    await uploadScreenshot({
-      blob: generated.blob,
-      filename: generated.filename,
-      state: generated.state,
-    });
+    await generateScreenshot();
   };
 
   const ensurePreparedScreenshot = async (): Promise<string | null> => {

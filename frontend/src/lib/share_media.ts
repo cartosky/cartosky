@@ -1,5 +1,7 @@
 import { API_V4_BASE } from "@/lib/config";
 
+const SHARE_MEDIA_UPLOAD_TIMEOUT_MS = 30_000;
+
 export type ShareMediaUploadParams = {
   blob: Blob;
   filename: string;
@@ -65,10 +67,24 @@ export async function uploadShareMedia(params: ShareMediaUploadParams): Promise<
     formData.append("region", params.region);
   }
 
-  const response = await fetch(`${API_V4_BASE}/share/media`, {
-    method: "POST",
-    body: formData,
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), SHARE_MEDIA_UPLOAD_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_V4_BASE}/share/media`, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Screenshot upload timed out. Try again in a moment.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const apiError = await readApiError(response);
