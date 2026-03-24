@@ -138,6 +138,10 @@ def _env_float(*names: str, default: float, min_value: float = 0.0) -> float:
     return parsed if parsed >= min_value else default
 
 
+def _legacy_telemetry_write_enabled() -> bool:
+    return _env_bool("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", default=True)
+
+
 LOOP_WEBP_QUALITY = int(
     _env_value("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82")
 )
@@ -1126,6 +1130,8 @@ class RumTelemetryIn(TelemetryEventBase):
 
 @app.post("/api/v4/telemetry/perf", status_code=204)
 async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Response:
+    if not _legacy_telemetry_write_enabled():
+        return Response(status_code=204, headers={"X-Cartosky-Legacy-Telemetry": "disabled"})
     sess = _maybe_twf_session(request)
     try:
         admin_telemetry.record_perf_event(payload.model_dump(), member_id=sess.member_id if sess else None)
@@ -1136,6 +1142,8 @@ async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Res
 
 @app.post("/api/v4/telemetry/usage", status_code=204)
 async def post_usage_telemetry(request: Request, payload: UsageTelemetryIn) -> Response:
+    if not _legacy_telemetry_write_enabled():
+        return Response(status_code=204, headers={"X-Cartosky-Legacy-Telemetry": "disabled"})
     sess = _maybe_twf_session(request)
     try:
         admin_telemetry.record_usage_event(payload.model_dump(), member_id=sess.member_id if sess else None)

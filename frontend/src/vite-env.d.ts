@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_CARTOSKY_ADMIN_EMBEDS_ENABLED?: string;
   readonly VITE_CARTOSKY_WEB_VITALS_ENABLED?: string;
   readonly VITE_CARTOSKY_RUM_ENABLED?: string;
+  readonly VITE_CARTOSKY_LEGACY_PERF_TELEMETRY_ENABLED?: string;
+  readonly VITE_CARTOSKY_LEGACY_USAGE_TELEMETRY_ENABLED?: string;
   readonly VITE_CARTOSKY_POSTHOG_ENABLED?: string;
   readonly VITE_CARTOSKY_POSTHOG_REPLAY_ENABLED?: string;
   readonly VITE_CARTOSKY_POSTHOG_API_KEY?: string;

@@ -7,6 +7,7 @@ import {
   getPostHogDashboardUrl,
   getPostHogReplayUrl,
   getPostHogUiHost,
+  isLegacyUsageTelemetryEnabled,
   isPostHogEnabled,
   isPostHogReplayEnabled,
 } from "@/lib/config";
@@ -21,6 +22,7 @@ export default function AdminAnalyticsPage() {
   const dashboardEmbedUrl = getPostHogDashboardEmbedUrl();
   const replayUrl = getPostHogReplayUrl();
   const uiHost = getPostHogUiHost();
+  const legacyUsageEnabled = isLegacyUsageTelemetryEnabled();
 
   useEffect(() => {
     let cancelled = false;
@@ -33,9 +35,11 @@ export default function AdminAnalyticsPage() {
         if (!authStatus.linked || !authStatus.admin) {
           return;
         }
-        const summary = await fetchAdminUsageSummary("30d");
-        if (cancelled) return;
-        setEvents(summary.events);
+        if (legacyUsageEnabled) {
+          const summary = await fetchAdminUsageSummary("30d");
+          if (cancelled) return;
+          setEvents(summary.events);
+        }
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : "Failed to load analytics");
@@ -193,24 +197,31 @@ export default function AdminAnalyticsPage() {
       <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
         <div className="text-lg font-semibold">Legacy comparison counts</div>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-          Keep these existing first-party counts around for a short validation window only. They are still useful for migration confidence,
-          but PostHog is now the source of truth for product analytics and this section should be removed after the next stable validation pass.
+          {legacyUsageEnabled
+            ? "Keep these existing first-party counts around for a short validation window only. They are still useful for migration confidence, but PostHog is now the source of truth for product analytics and this section should be removed after the cutoff release."
+            : "The legacy first-party usage comparison has been retired for cutoff. PostHog is now the production source of truth for product analytics."}
         </p>
 
-        <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {events.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-sm text-white/48">
-              No usage events recorded yet.
-            </div>
-          ) : (
-            events.map((event) => (
-              <div key={event.event_name} className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
-                <div className="text-sm font-semibold text-white">{event.event_name}</div>
-                <div className="mt-3 text-3xl font-semibold tracking-tight text-[#9dd5bf]">{event.count}</div>
+        {legacyUsageEnabled ? (
+          <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {events.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-sm text-white/48">
+                No usage events recorded yet.
               </div>
-            ))
-          )}
-        </div>
+            ) : (
+              events.map((event) => (
+                <div key={event.event_name} className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
+                  <div className="text-sm font-semibold text-white">{event.event_name}</div>
+                  <div className="mt-3 text-3xl font-semibold tracking-tight text-[#9dd5bf]">{event.count}</div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <div className="mt-6 rounded-2xl border border-emerald-300/20 bg-emerald-500/10 px-4 py-5 text-sm leading-6 text-emerald-100">
+            Legacy custom usage writes are disabled. Keep using PostHog dashboards and replay for product analytics workflows.
+          </div>
+        )}
       </section>
 
       <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">

@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { Activity, BarChart3, ChevronRight, ClipboardCheck, Gauge, Radar, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
+import { isLegacyPerfTelemetryEnabled } from "@/lib/config";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
   const { to, label, icon: Icon } = props;
@@ -26,6 +27,7 @@ function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ 
 }
 
 export default function AdminLayout() {
+  const legacyPerfEnabled = isLegacyPerfTelemetryEnabled();
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)] overflow-hidden bg-[#05070c] text-white">
       <div
@@ -64,14 +66,16 @@ export default function AdminLayout() {
             <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
           </nav>
 
-          <div className="mt-5 border-t border-white/10 pt-4">
-            <div className="px-2 pb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">
-              Migration
+          {legacyPerfEnabled ? (
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <div className="px-2 pb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">
+                Migration
+              </div>
+              <nav className="space-y-2">
+                <AdminNavItem to="/admin/legacy-performance" label="Legacy Perf" icon={Radar} />
+              </nav>
             </div>
-            <nav className="space-y-2">
-              <AdminNavItem to="/admin/legacy-performance" label="Legacy Perf" icon={Radar} />
-            </nav>
-          </div>
+          ) : null}
         </aside>
 
         <main className="min-w-0">

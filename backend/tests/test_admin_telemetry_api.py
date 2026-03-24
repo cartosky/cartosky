@@ -47,6 +47,7 @@ def isolate_databases(tmp_path: Path) -> None:
     os.environ.pop("CARTOSKY_OTEL_ENABLED", None)
     os.environ.pop("CARTOSKY_OTEL_SAMPLE_RATIO", None)
     os.environ.pop("CARTOSKY_OTEL_SLOW_REQUEST_MS", None)
+    os.environ.pop("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", None)
 
 
 @pytest.fixture
@@ -104,6 +105,50 @@ async def test_perf_telemetry_ingest_and_admin_summary(client: httpx.AsyncClient
     assert body["metrics"]["frame_change"]["count"] == 1
     assert body["metrics"]["frame_change"]["p95_ms"] == 186.4
     assert body["metrics"]["frame_change"]["target_ms"] == 250.0
+
+
+async def test_legacy_telemetry_write_cutoff_returns_204_without_persisting(client: httpx.AsyncClient) -> None:
+    os.environ["CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED"] = "0"
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    perf_response = await client.post(
+        "/api/v4/telemetry/perf",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+        json={
+            "event_name": "frame_change",
+            "duration_ms": 120.0,
+            "session_id": "viewer-session-cutoff",
+            "page": "/viewer",
+        },
+    )
+    usage_response = await client.post(
+        "/api/v4/telemetry/usage",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+        json={
+            "event_name": "model_selected",
+            "session_id": "viewer-session-cutoff",
+            "page": "/viewer",
+        },
+    )
+
+    assert perf_response.status_code == 204
+    assert perf_response.headers.get("X-Cartosky-Legacy-Telemetry") == "disabled"
+    assert usage_response.status_code == 204
+    assert usage_response.headers.get("X-Cartosky-Legacy-Telemetry") == "disabled"
+
+    perf_summary = await client.get(
+        "/api/v4/admin/performance/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    usage_summary = await client.get(
+        "/api/v4/admin/usage/summary?window=30d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert perf_summary.status_code == 200
+    assert perf_summary.json()["metrics"]["frame_change"]["count"] == 0
+    assert usage_summary.status_code == 200
+    assert usage_summary.json()["events"] == []
 
 
 async def test_perf_telemetry_summary_supports_phase1_loop_metrics(client: httpx.AsyncClient) -> None:

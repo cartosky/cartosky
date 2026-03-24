@@ -13,6 +13,7 @@ import {
   type PerfTimeseriesPoint,
   type TwfStatus,
 } from "@/lib/admin-api";
+import { isLegacyPerfTelemetryEnabled } from "@/lib/config";
 
 type WindowValue = "24h" | "7d" | "30d";
 type DeviceValue = "all" | "desktop" | "mobile";
@@ -370,6 +371,7 @@ function SectionLabel(props: { label: string; description: string; children: Rea
 }
 
 export default function AdminPerformancePage() {
+  const legacyPerfEnabled = isLegacyPerfTelemetryEnabled();
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [windowValue, setWindowValue] = useState<WindowValue>("7d");
   const [deviceValue, setDeviceValue] = useState<DeviceValue>("all");
@@ -424,6 +426,10 @@ export default function AdminPerformancePage() {
         if (cancelled) return;
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) {
+          setLoading(false);
+          return;
+        }
+        if (!legacyPerfEnabled) {
           setLoading(false);
           return;
         }
@@ -580,6 +586,21 @@ export default function AdminPerformancePage() {
         </div>
         <p className="mt-3 max-w-xl text-sm leading-6 text-white/66">
           Your account is linked, but it is not in the configured admin allowlist yet.
+        </p>
+      </section>
+    );
+  }
+
+  if (!legacyPerfEnabled) {
+    return (
+      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+        <div className="text-2xl font-semibold tracking-tight text-white">Legacy Performance Retired</div>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
+          The legacy custom frontend performance dashboard has been retired for the Phase 6 cutoff. Use{" "}
+          <Link to="/admin/overview" className="text-[#9dd5bf] underline underline-offset-4">Overview</Link>,{" "}
+          <Link to="/admin/analytics" className="text-[#9dd5bf] underline underline-offset-4">Analytics</Link>,{" "}
+          <Link to="/admin/observability" className="text-[#9dd5bf] underline underline-offset-4">Observability</Link>, and{" "}
+          <Link to="/admin/traces" className="text-[#9dd5bf] underline underline-offset-4">Traces</Link> for the current telemetry sources of truth.
         </p>
       </section>
     );

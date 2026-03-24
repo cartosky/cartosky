@@ -189,6 +189,14 @@ export function isRumEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_RUM_ENABLED, false);
 }
 
+export function isLegacyPerfTelemetryEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_LEGACY_PERF_TELEMETRY_ENABLED, true);
+}
+
+export function isLegacyUsageTelemetryEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_LEGACY_USAGE_TELEMETRY_ENABLED, true);
+}
+
 export function isPostHogEnabled(): boolean {
   return (
     readBooleanEnv(import.meta.env.VITE_CARTOSKY_POSTHOG_ENABLED, false)

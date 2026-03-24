@@ -1,4 +1,4 @@
-import { API_ORIGIN } from "@/lib/config";
+import { API_ORIGIN, isLegacyPerfTelemetryEnabled, isLegacyUsageTelemetryEnabled } from "@/lib/config";
 
 const TELEMETRY_SESSION_STORAGE_KEY = "twm.telemetry.session_id";
 
@@ -162,6 +162,9 @@ function postTelemetry(url: string, payload: Record<string, unknown>) {
 }
 
 export function trackPerfEvent(payload: PerfEventInput): void {
+  if (!isLegacyPerfTelemetryEnabled()) {
+    return;
+  }
   const enriched = enrichPayload(payload);
   if (!Number.isFinite(enriched.duration_ms) || enriched.duration_ms < 0) {
     return;
@@ -170,6 +173,9 @@ export function trackPerfEvent(payload: PerfEventInput): void {
 }
 
 export function trackUsageEvent(payload: UsageEventInput): void {
+  if (!isLegacyUsageTelemetryEnabled()) {
+    return;
+  }
   const enriched = enrichPayload(payload);
   postTelemetry(`${API_ORIGIN}/api/v4/telemetry/usage`, enriched);
 }

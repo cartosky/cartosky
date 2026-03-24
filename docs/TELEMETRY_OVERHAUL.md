@@ -299,6 +299,13 @@ Use Option A for `/admin`: keep CartoSky as the authenticated admin shell and su
 
 - Local:
   - remove or repurpose legacy UI and write archival/export tooling if needed
+  - cutoff plumbing now available in repo:
+    - backend runtime flag: `CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED=0`
+    - frontend compile-time flags:
+      - `VITE_CARTOSKY_LEGACY_PERF_TELEMETRY_ENABLED=0`
+      - `VITE_CARTOSKY_LEGACY_USAGE_TELEMETRY_ENABLED=0`
+    - legacy archive script:
+      - [export_legacy_telemetry.py](/Users/brianaustin/cartosky/scripts/export_legacy_telemetry.py)
 - Production:
   - perform the release-gated cutoff validation
   - disable legacy production writes
