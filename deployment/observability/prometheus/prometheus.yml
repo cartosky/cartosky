@@ -15,7 +15,6 @@ scrape_configs:
       - targets:
           - 127.0.0.1:8200
         labels:
-          service: api
           instance: cartosky-prod
 
   # Enable after node_exporter is installed on the shared host.
@@ -24,7 +23,6 @@ scrape_configs:
   #     - targets:
   #         - 127.0.0.1:9100
   #       labels:
-  #         service: node
   #         instance: cartosky-prod
 
   # Enable after the tile server exposes a Prometheus /metrics endpoint.
@@ -34,5 +32,4 @@ scrape_configs:
   #     - targets:
   #         - 127.0.0.1:8201
   #       labels:
-  #         service: tile-server
   #         instance: cartosky-prod

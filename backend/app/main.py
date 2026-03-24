@@ -528,6 +528,21 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _observe_prometheus_request(request: Request, *, status_code: int, duration_seconds: float) -> None:
+    if not prometheus_metrics.prometheus_enabled():
+        return
+    route = _prometheus_route_label(request)
+    # Exclude Prometheus scrape traffic from the API request summary and dashboards.
+    if route == "/metrics":
+        return
+    prometheus_metrics.observe_http_request(
+        route=route,
+        method=request.method,
+        status_code=status_code,
+        duration_seconds=duration_seconds,
+    )
+
+
 @app.middleware("http")
 async def twf_share_guards(request: Request, call_next):
     request_id = secrets.token_hex(8)
@@ -554,13 +569,11 @@ async def twf_share_guards(request: Request, call_next):
                         message="Request body too large",
                     )
                     response.headers["X-Request-ID"] = request_id
-                    if prometheus_metrics.prometheus_enabled():
-                        prometheus_metrics.observe_http_request(
-                            route=_prometheus_route_label(request),
-                            method=request.method,
-                            status_code=response.status_code,
-                            duration_seconds=time.perf_counter() - request_started_at,
-                        )
+                    _observe_prometheus_request(
+                        request,
+                        status_code=response.status_code,
+                        duration_seconds=time.perf_counter() - request_started_at,
+                    )
                     return response
             except ValueError:
                 pass
@@ -592,13 +605,11 @@ async def twf_share_guards(request: Request, call_next):
                 message="Request body too large",
             )
             response.headers["X-Request-ID"] = request_id
-            if prometheus_metrics.prometheus_enabled():
-                prometheus_metrics.observe_http_request(
-                    route=_prometheus_route_label(request),
-                    method=request.method,
-                    status_code=response.status_code,
-                    duration_seconds=time.perf_counter() - request_started_at,
-                )
+            _observe_prometheus_request(
+                request,
+                status_code=response.status_code,
+                duration_seconds=time.perf_counter() - request_started_at,
+            )
             return response
 
         now = time.monotonic()
@@ -638,34 +649,28 @@ async def twf_share_guards(request: Request, call_next):
                 headers={"Retry-After": str(retry_after)},
             )
             response.headers["X-Request-ID"] = request_id
-            if prometheus_metrics.prometheus_enabled():
-                prometheus_metrics.observe_http_request(
-                    route=_prometheus_route_label(request),
-                    method=request.method,
-                    status_code=response.status_code,
-                    duration_seconds=time.perf_counter() - request_started_at,
-                )
+            _observe_prometheus_request(
+                request,
+                status_code=response.status_code,
+                duration_seconds=time.perf_counter() - request_started_at,
+            )
             return response
 
     try:
         response = await call_next(request)
     except Exception:
-        if prometheus_metrics.prometheus_enabled():
-            prometheus_metrics.observe_http_request(
-                route=_prometheus_route_label(request),
-                method=request.method,
-                status_code=500,
-                duration_seconds=time.perf_counter() - request_started_at,
-            )
-        raise
-    response.headers["X-Request-ID"] = request_id
-    if prometheus_metrics.prometheus_enabled():
-        prometheus_metrics.observe_http_request(
-            route=_prometheus_route_label(request),
-            method=request.method,
-            status_code=response.status_code,
+        _observe_prometheus_request(
+            request,
+            status_code=500,
             duration_seconds=time.perf_counter() - request_started_at,
         )
+        raise
+    response.headers["X-Request-ID"] = request_id
+    _observe_prometheus_request(
+        request,
+        status_code=response.status_code,
+        duration_seconds=time.perf_counter() - request_started_at,
+    )
     return response
 
 
