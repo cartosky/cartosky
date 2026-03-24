@@ -46,15 +46,35 @@ function SummaryCard(props: {
   hint: string;
   icon: typeof Gauge;
   accentClassName?: string;
+  description?: string;
+  statusLabel?: string;
+  statusClassName?: string;
 }) {
-  const { title, value, hint, icon: Icon, accentClassName = "text-white" } = props;
+  const {
+    title,
+    value,
+    hint,
+    icon: Icon,
+    accentClassName = "text-white",
+    description,
+    statusLabel,
+    statusClassName = "border-white/10 bg-white/[0.05] text-white/72",
+  } = props;
   return (
     <section className="rounded-[24px] border border-white/12 bg-black/28 p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-white">{title}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-semibold text-white">{title}</div>
+            {statusLabel ? (
+              <div className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusClassName}`}>
+                {statusLabel}
+              </div>
+            ) : null}
+          </div>
           <div className={`mt-3 text-[2.1rem] font-semibold tracking-tight ${accentClassName}`}>{value}</div>
           <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/40">{hint}</div>
+          {description ? <p className="mt-3 max-w-xs text-sm leading-6 text-white/62">{description}</p> : null}
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3">
           <Icon className={`h-5 w-5 ${accentClassName}`} />
@@ -113,6 +133,48 @@ function getVitalTone(summary: OverviewMetricSummary | null): string {
   return "text-rose-300";
 }
 
+function getVitalStatus(summary: OverviewMetricSummary | null): {
+  label: string;
+  className: string;
+} {
+  if (!summary || !Number.isFinite(summary.p75)) {
+    return {
+      label: "Awaiting Data",
+      className: "border-white/10 bg-white/[0.05] text-white/72",
+    };
+  }
+  const value = Number(summary.p75);
+  if (summary.good_threshold !== null && value <= summary.good_threshold) {
+    return {
+      label: "Good",
+      className: "border-emerald-400/25 bg-emerald-500/10 text-emerald-200",
+    };
+  }
+  if (summary.needs_improvement_threshold !== null && value <= summary.needs_improvement_threshold) {
+    return {
+      label: "Watch",
+      className: "border-amber-400/25 bg-amber-500/10 text-amber-200",
+    };
+  }
+  return {
+    label: "Over Target",
+    className: "border-rose-400/25 bg-rose-500/10 text-rose-200",
+  };
+}
+
+function formatTarget(summary: OverviewMetricSummary | null): string {
+  if (!summary || summary.good_threshold === null) {
+    return "Target unavailable";
+  }
+  if (summary.unit === "score") {
+    return `Target <= ${summary.good_threshold.toFixed(1)}`;
+  }
+  if (summary.unit === "count") {
+    return `Target <= ${Math.round(summary.good_threshold)}`;
+  }
+  return `Target <= ${Math.round(summary.good_threshold)} ms`;
+}
+
 export default function AdminOverviewPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [results, setResults] = useState<StatusResult[]>([]);
@@ -167,6 +229,9 @@ export default function AdminOverviewPage() {
   const topUsageEvent = usage[0]?.event_name ?? "No usage events yet";
   const webVitals = overview?.web_vitals ?? null;
   const rumDiagnostics = overview?.rum_diagnostics ?? null;
+  const lcpStatus = getVitalStatus(webVitals?.lcp ?? null);
+  const inpStatus = getVitalStatus(webVitals?.inp ?? null);
+  const clsStatus = getVitalStatus(webVitals?.cls ?? null);
 
   return (
     <AdminGate status={status} loadingLabel="Loading admin overview...">
@@ -197,23 +262,32 @@ export default function AdminOverviewPage() {
           <SummaryCard
             title="LCP p75"
             value={formatMetricValue(webVitals?.lcp ?? null)}
-            hint={webVitals?.lcp?.count ? `${webVitals.lcp.count} samples in last 7d` : "Waiting for Web Vitals data"}
+            hint={webVitals?.lcp?.count ? `${webVitals.lcp.count} samples in last 7d · ${formatTarget(webVitals.lcp)}` : "Waiting for Web Vitals data"}
             icon={Gauge}
             accentClassName={getVitalTone(webVitals?.lcp ?? null)}
+            description="Measures how long the main visible content takes to appear after navigation."
+            statusLabel={lcpStatus.label}
+            statusClassName={lcpStatus.className}
           />
           <SummaryCard
             title="INP p75"
             value={formatMetricValue(webVitals?.inp ?? null)}
-            hint={webVitals?.inp?.count ? `${webVitals.inp.count} samples in last 7d` : "Waiting for Web Vitals data"}
+            hint={webVitals?.inp?.count ? `${webVitals.inp.count} samples in last 7d · ${formatTarget(webVitals.inp)}` : "Waiting for Web Vitals data"}
             icon={Gauge}
             accentClassName={getVitalTone(webVitals?.inp ?? null)}
+            description="Measures how responsive the page feels when a user clicks, taps, or types."
+            statusLabel={inpStatus.label}
+            statusClassName={inpStatus.className}
           />
           <SummaryCard
             title="CLS p75"
             value={formatMetricValue(webVitals?.cls ?? null)}
-            hint={webVitals?.cls?.count ? `${webVitals.cls.count} samples in last 7d` : "Waiting for Web Vitals data"}
+            hint={webVitals?.cls?.count ? `${webVitals.cls.count} samples in last 7d · ${formatTarget(webVitals.cls)}` : "Waiting for Web Vitals data"}
             icon={Gauge}
             accentClassName={getVitalTone(webVitals?.cls ?? null)}
+            description="Measures unexpected layout movement while the page is loading and settling."
+            statusLabel={clsStatus.label}
+            statusClassName={clsStatus.className}
           />
           <SummaryCard
             title="Manifest Fetch p95"
