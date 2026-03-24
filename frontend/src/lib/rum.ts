@@ -107,7 +107,8 @@ export function initRumTelemetry(): void {
 
   let lcpValue: number | null = null;
   let inpValue: number | null = null;
-  let clsValue: number | null = null;
+  // CLS should report 0 for stable sessions, not disappear entirely.
+  let clsValue = 0;
 
   const lcpObserver = observeLargestContentfulPaint((value) => {
     lcpValue = value;
@@ -140,10 +141,10 @@ export function initRumTelemetry(): void {
         sample_rate: 1,
       });
     }
-    if (Number.isFinite(clsValue) && (clsValue as number) >= 0) {
+    if (Number.isFinite(clsValue) && clsValue >= 0) {
       trackRumMetric({
         metric_name: "cls",
-        metric_value: Number(clsValue),
+        metric_value: clsValue,
         metric_unit: "score",
         sample_rate: 1,
       });
