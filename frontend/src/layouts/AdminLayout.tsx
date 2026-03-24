@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Activity, BarChart3, ChevronRight, ClipboardCheck } from "lucide-react";
+import { Activity, BarChart3, ChevronRight, ClipboardCheck, Gauge, Radar, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
@@ -52,15 +52,26 @@ export default function AdminLayout() {
             </div>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Command Center</h1>
             <p className="mt-2 text-sm leading-6 text-white/62">
-              Private performance and usage visibility for the viewer.
+              Unified admin shell for pipeline health, analytics, observability, and legacy telemetry during migration.
             </p>
           </div>
 
           <nav className="space-y-2">
-            <AdminNavItem to="/admin/performance" label="Performance" icon={Activity} />
+            <AdminNavItem to="/admin/overview" label="Overview" icon={Gauge} />
+            <AdminNavItem to="/admin/analytics" label="Analytics" icon={BarChart3} />
+            <AdminNavItem to="/admin/observability" label="Observability" icon={Activity} />
+            <AdminNavItem to="/admin/traces" label="Traces" icon={Waypoints} />
             <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
-            <AdminNavItem to="/admin/usage" label="Usage" icon={BarChart3} />
           </nav>
+
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <div className="px-2 pb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">
+              Migration
+            </div>
+            <nav className="space-y-2">
+              <AdminNavItem to="/admin/legacy-performance" label="Legacy Perf" icon={Radar} />
+            </nav>
+          </div>
         </aside>
 
         <main className="min-w-0">

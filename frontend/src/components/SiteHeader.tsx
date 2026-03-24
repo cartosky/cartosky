@@ -133,7 +133,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             <NavItem to="/models" label="Models" />
             <NavItem to="/variables" label="Variables" />
             <NavItem to="/status" label="Status" />
-            {adminEnabled ? <NavItem to="/admin/performance" label="Admin" /> : null}
+            {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <NavLink
               to="/login"
               className="ml-1 rounded-md border border-white/20 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-3 py-2 text-sm text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition-all duration-150 hover:brightness-110"
@@ -151,7 +151,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
         {showAppNav ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
             <NavItem to="/viewer" label="Viewer" />
-            {adminEnabled ? <NavItem to="/admin/performance" label="Admin" /> : null}
+            {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
           </nav>
         ) : null}
 
@@ -234,7 +234,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 />
                 {adminEnabled ? (
                   <NavItem
-                    to="/admin/performance"
+                    to="/admin"
                     label="Admin"
                     onClick={() => setMobileMenuOpen(false)}
                     className="text-white/90 hover:text-white"

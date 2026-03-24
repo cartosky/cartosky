@@ -9,9 +9,12 @@ const Models = lazy(() => import("./pages/models"));
 const Variables = lazy(() => import("./pages/variables"));
 const Status = lazy(() => import("./pages/status"));
 const Login = lazy(() => import("./pages/login"));
+const AdminOverview = lazy(() => import("./pages/admin/overview"));
+const AdminAnalytics = lazy(() => import("./pages/admin/analytics"));
+const AdminObservability = lazy(() => import("./pages/admin/observability"));
 const AdminPerformance = lazy(() => import("./pages/admin/performance"));
-const AdminUsage = lazy(() => import("./pages/admin/usage"));
 const AdminStatus = lazy(() => import("./pages/admin/status"));
+const AdminTraces = lazy(() => import("./pages/admin/traces"));
 const Viewer = lazy(() => import("./pages/viewer"));
 
 function withSuspense(node: React.ReactNode) {
@@ -32,10 +35,15 @@ export default function RouterApp() {
       <Route element={<AppLayout />}>
         <Route path="/viewer" element={withSuspense(<Viewer />)} />
         <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="/admin/performance" replace />} />
-          <Route path="performance" element={withSuspense(<AdminPerformance />)} />
+          <Route index element={<Navigate to="/admin/overview" replace />} />
+          <Route path="overview" element={withSuspense(<AdminOverview />)} />
+          <Route path="analytics" element={withSuspense(<AdminAnalytics />)} />
+          <Route path="observability" element={withSuspense(<AdminObservability />)} />
+          <Route path="traces" element={withSuspense(<AdminTraces />)} />
           <Route path="status" element={withSuspense(<AdminStatus />)} />
-          <Route path="usage" element={withSuspense(<AdminUsage />)} />
+          <Route path="legacy-performance" element={withSuspense(<AdminPerformance />)} />
+          <Route path="performance" element={<Navigate to="/admin/overview" replace />} />
+          <Route path="usage" element={<Navigate to="/admin/analytics" replace />} />
         </Route>
       </Route>
 

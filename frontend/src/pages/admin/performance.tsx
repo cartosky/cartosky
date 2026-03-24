@@ -958,10 +958,10 @@ export default function AdminPerformancePage() {
         <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:p-7">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Performance</div>
-            <h2 className="mt-2 text-4xl font-semibold tracking-tight text-white">Viewer telemetry</h2>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Legacy Performance</div>
+            <h2 className="mt-2 text-4xl font-semibold tracking-tight text-white">Viewer telemetry comparison</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62">
-              Real-user viewer timing from the current frontend build. Trend charts can be toggled between p95 and p50.
+              Legacy custom viewer timings from the current frontend build. Use this page for migration comparison and engineering diagnostics, not as the primary source of truth for user-perceived performance.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-white/58">
               <span className="rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-emerald-100">
@@ -1046,6 +1046,11 @@ export default function AdminPerformancePage() {
               <RefreshCcw className="h-4 w-4" />
             </button>
           </div>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          These metrics are being demoted during the telemetry overhaul. Treat them as legacy comparison telemetry until Web Vitals,
+          minimal CartoSky RUM, PostHog, Prometheus, and tracing are in place.
         </div>
 
         {error ? (

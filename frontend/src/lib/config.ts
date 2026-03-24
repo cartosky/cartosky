@@ -165,3 +165,7 @@ export function isDeferredPrefetchUntilFirstPaintEnabled(): boolean {
 export function isViewportAwareTileReadinessEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_VIEWPORT_AWARE_TILE_READINESS, false);
 }
+
+export function isAdminEmbedsEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_ADMIN_EMBEDS_ENABLED, false);
+}
