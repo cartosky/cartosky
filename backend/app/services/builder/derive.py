@@ -280,6 +280,36 @@ def _read_value_cog(path: Path) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.
         return data, ds.crs, ds.transform
 
 
+def _cumulative_cache_grid_key(
+    *,
+    use_warped: bool,
+    target_grid_id: str,
+    resampling: str,
+) -> str:
+    if use_warped:
+        return f"warped:{str(target_grid_id).strip()}:{str(resampling).strip()}"
+    return "native"
+
+
+def _kuchera_cumulative_cache_file_path(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    var_key: str,
+    fh: int,
+    root_name: str,
+) -> Path:
+    return (
+        data_root
+        / root_name
+        / str(model_id)
+        / str(run_id)
+        / str(var_key)
+        / f"fh{int(fh):03d}.cumulative-cache.npz"
+    )
+
+
 def _kuchera_load_prior_cumulative(
     *,
     model_id: str,
@@ -287,14 +317,14 @@ def _kuchera_load_prior_cumulative(
     var_key: str,
     fh: int,
     ctx: FetchContext | None,
+    grid_cache_key: str,
     scale_divisor: float = 0.03937007874015748,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
     if fh <= 0:
         return None
-    if not np.isfinite(scale_divisor) or float(scale_divisor) <= 0.0:
-        return None
+    del scale_divisor
     run_id = _run_id_from_date(run_date)
-    cache_key = (str(model_id), str(run_id), str(var_key), int(fh))
+    cache_key = (str(model_id), str(run_id), str(var_key), int(fh), str(grid_cache_key))
     if ctx is not None:
         cache = getattr(ctx, "kuchera_cumulative_cache", None)
         if isinstance(cache, dict) and cache_key in cache:
@@ -314,15 +344,39 @@ def _kuchera_load_prior_cumulative(
         return None
 
     candidate_paths = [
-        data_root / "staging" / str(model_id) / run_id / str(var_key) / f"fh{int(fh):03d}.val.cog.tif",
-        data_root / "published" / str(model_id) / run_id / str(var_key) / f"fh{int(fh):03d}.val.cog.tif",
+        _kuchera_cumulative_cache_file_path(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            var_key=var_key,
+            fh=fh,
+            root_name="staging",
+        ),
+        _kuchera_cumulative_cache_file_path(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            var_key=var_key,
+            fh=fh,
+            root_name="published",
+        ),
     ]
     for candidate in candidate_paths:
         try:
             if not candidate.exists():
                 continue
-            loaded_data, loaded_crs, loaded_transform = _read_value_cog(candidate)
-            loaded_data = (loaded_data / np.float32(scale_divisor)).astype(np.float32, copy=False)
+            with np.load(candidate, allow_pickle=False) as cached_npz:
+                if str(cached_npz["grid_cache_key"].tolist()) != str(grid_cache_key):
+                    continue
+                loaded_data = np.asarray(cached_npz["data"], dtype=np.float32)
+                transform_values = np.asarray(cached_npz["transform"], dtype=np.float64)
+                if transform_values.size != 6:
+                    continue
+                crs_wkt = str(cached_npz["crs_wkt"].tolist()).strip()
+                if not crs_wkt:
+                    continue
+                loaded_crs = rasterio.crs.CRS.from_wkt(crs_wkt)
+                loaded_transform = rasterio.transform.Affine(*transform_values.tolist())
             loaded = (loaded_data, loaded_crs, loaded_transform)
             if ctx is not None:
                 cache = getattr(ctx, "kuchera_cumulative_cache", None)
@@ -346,15 +400,57 @@ def _kuchera_store_cumulative_cache(
     crs: rasterio.crs.CRS,
     transform: rasterio.transform.Affine,
     ctx: FetchContext | None,
+    grid_cache_key: str,
 ) -> None:
-    if ctx is None:
+    run_id = _run_id_from_date(run_date)
+    cache_key = (str(model_id), run_id, str(var_key), int(fh), str(grid_cache_key))
+    if ctx is not None:
+        cache = getattr(ctx, "kuchera_cumulative_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(ctx, "kuchera_cumulative_cache", cache)
+        cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform)
+
+    data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
+    if data_root_raw is None:
+        data_root_raw = (
+            os.getenv("CARTOSKY_DATA_ROOT")
+            or os.getenv("CARTOSKY_V3_DATA_ROOT")
+            or os.getenv("TWF_V3_DATA_ROOT", "./data")
+        )
+    try:
+        data_root = Path(str(data_root_raw))
+    except Exception:
         return
-    cache = getattr(ctx, "kuchera_cumulative_cache", None)
-    if not isinstance(cache, dict):
-        cache = {}
-        setattr(ctx, "kuchera_cumulative_cache", cache)
-    cache_key = (str(model_id), _run_id_from_date(run_date), str(var_key), int(fh))
-    cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform)
+
+    cache_path = _kuchera_cumulative_cache_file_path(
+        data_root=data_root,
+        model_id=model_id,
+        run_id=run_id,
+        var_key=var_key,
+        fh=fh,
+        root_name="staging",
+    )
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_name(f"{cache_path.stem}.tmp{cache_path.suffix}")
+        np.savez_compressed(
+            tmp_path,
+            data=np.asarray(data, dtype=np.float32),
+            crs_wkt=crs.to_wkt(),
+            transform=np.asarray(tuple(transform), dtype=np.float64),
+            grid_cache_key=str(grid_cache_key),
+        )
+        tmp_path.replace(cache_path)
+    except Exception:
+        logger.debug(
+            "Failed to persist cumulative cache file model=%s run=%s var=%s fh=%03d",
+            model_id,
+            run_id,
+            var_key,
+            fh,
+            exc_info=True,
+        )
 
 
 def derive_variable(
@@ -2276,6 +2372,11 @@ def _derive_precip_total_cumulative(
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
+    cumulative_cache_grid_key = _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
 
     if not use_inventory_resolution:
         _prefetch_components_parallel(
@@ -2334,6 +2435,17 @@ def _derive_precip_total_cumulative(
         var_key=var_key,
         model_id=model_id,
         var_capability=var_capability,
+    )
+    _kuchera_store_cumulative_cache(
+        model_id=model_id,
+        run_date=run_date,
+        var_key=var_key,
+        fh=fh,
+        data=cumulative_kgm2,
+        crs=src_crs,
+        transform=src_transform,
+        ctx=ctx,
+        grid_cache_key=cumulative_cache_grid_key,
     )
     return cumulative_inches.astype(np.float32, copy=False), src_crs, src_transform
 
@@ -2440,6 +2552,23 @@ def _derive_snowfall_total_10to1_cumulative(
     ] | None = None
     current_step_fetch_counts: dict[str, int] = {"apcp": 0, "csnow": 0}
 
+    logger.info("snow_ratio method=10to1 fh=%d", fh)
+    logger.info(
+        "derive %s fh%03d apcp_steps=%d snow_steps=%d%s",
+        var_key, fh, len(step_fhs), len(snow_step_fhs),
+        _cadence_hint_suffix(hints),
+    )
+    logger.debug("derive %s fh%03d apcp_steps=%s snow_steps=%s", var_key, fh, step_fhs, snow_step_fhs)
+
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid, derive_component_resampling, model_id,
+    )
+    cumulative_cache_grid_key = _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
+
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior_snowfall = _kuchera_load_prior_cumulative(
@@ -2448,6 +2577,7 @@ def _derive_snowfall_total_10to1_cumulative(
             var_key=var_key,
             fh=prev_fh,
             ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
             scale_divisor=snow_inches_scale,
         )
         prior_precip = _kuchera_load_prior_cumulative(
@@ -2456,6 +2586,7 @@ def _derive_snowfall_total_10to1_cumulative(
             var_key="precip_total",
             fh=prev_fh,
             ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
             scale_divisor=0.03937007874015748,
         )
         if prior_snowfall is not None and prior_precip is not None:
@@ -2480,18 +2611,6 @@ def _derive_snowfall_total_10to1_cumulative(
                     prior_precip_transform,
                     prev_fh,
                 )
-
-    logger.info("snow_ratio method=10to1 fh=%d", fh)
-    logger.info(
-        "derive %s fh%03d apcp_steps=%d snow_steps=%d%s",
-        var_key, fh, len(step_fhs), len(snow_step_fhs),
-        _cadence_hint_suffix(hints),
-    )
-    logger.debug("derive %s fh%03d apcp_steps=%s snow_steps=%s", var_key, fh, step_fhs, snow_step_fhs)
-
-    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
-        derive_component_target_grid, derive_component_resampling, model_id,
-    )
 
     # Prefetch APCP + csnow in parallel.
     _prefetch_tasks: list[_PrefetchTask] = []
@@ -2670,6 +2789,17 @@ def _derive_snowfall_total_10to1_cumulative(
 
     # 1 kg/m^2 == 1 mm LWE. Convert to inches liquid then apply fixed 10:1 SLR.
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748 * slr
+    _kuchera_store_cumulative_cache(
+        model_id=model_id,
+        run_date=run_date,
+        var_key=var_key,
+        fh=fh,
+        data=cumulative_kgm2,
+        crs=src_crs,
+        transform=src_transform,
+        ctx=ctx,
+        grid_cache_key=cumulative_cache_grid_key,
+    )
     logger.info(
         "snow10to1_incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
         "base_fh=%s final_step_samples=%d current_step_fetches=%s compute_ms=%d",
@@ -2834,6 +2964,11 @@ def _derive_snowfall_kuchera_total_cumulative(
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
+    cumulative_cache_grid_key = _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
 
     resolved_profile_product = str(profile_product or product)
     sfc_pressure_mask_logged = False
@@ -2891,6 +3026,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             var_key=var_key,
             fh=prev_fh,
             ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
         )
         if prior is not None:
             base_cumulative, base_crs, base_transform = prior
@@ -2906,6 +3042,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             var_key=var_key,
             fh=anchor_fh,
             ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
         )
         if prior is None:
             start_index = 0
@@ -2929,6 +3066,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                     var_key=var_key,
                     fh=anchor_fh,
                     ctx=ctx,
+                    grid_cache_key=cumulative_cache_grid_key,
                 )
                 if prior is None:
                     start_index = 0
@@ -3396,6 +3534,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         crs=src_crs,
         transform=src_transform,
         ctx=ctx,
+        grid_cache_key=cumulative_cache_grid_key,
     )
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
