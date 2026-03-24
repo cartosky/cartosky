@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -28,6 +29,7 @@ from app import main as main_module
 twf_oauth = main_module.twf_oauth
 admin_telemetry = main_module.admin_telemetry
 prometheus_metrics = main_module.prometheus_metrics
+otel_tracing = main_module.otel_tracing
 
 pytestmark = pytest.mark.anyio
 
@@ -40,7 +42,11 @@ def isolate_databases(tmp_path: Path) -> None:
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
     admin_telemetry._db_initialized = False
     prometheus_metrics.reset_metrics_for_tests()
+    otel_tracing.reset_for_tests()
     os.environ.pop("CARTOSKY_PROMETHEUS_ENABLED", None)
+    os.environ.pop("CARTOSKY_OTEL_ENABLED", None)
+    os.environ.pop("CARTOSKY_OTEL_SAMPLE_RATIO", None)
+    os.environ.pop("CARTOSKY_OTEL_SLOW_REQUEST_MS", None)
 
 
 @pytest.fixture
@@ -382,6 +388,44 @@ async def test_admin_observability_summary_requires_admin_and_reports_recent_sta
     _create_session(session_id="normal-session", member_id=99, name="User")
     forbidden = await client.get(
         "/api/v4/admin/observability/summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
+    )
+    assert forbidden.status_code == 403
+
+
+async def test_tracing_summary_requires_admin_and_reports_recent_traces(client: httpx.AsyncClient) -> None:
+    exporter = InMemorySpanExporter()
+    otel_tracing.configure_test_exporter_factory(lambda: exporter)
+    os.environ["CARTOSKY_OTEL_ENABLED"] = "1"
+    os.environ["CARTOSKY_OTEL_SAMPLE_RATIO"] = "1.0"
+
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+    response = await client.get("/api/v4/bootstrap")
+
+    assert response.status_code == 200
+    trace_id = response.headers.get("X-Trace-ID")
+    assert isinstance(trace_id, str)
+    assert len(trace_id) == 32
+
+    summary = await client.get(
+        "/api/v4/admin/traces/summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["enabled"] is True
+    assert body["recent"]["exported_traces"] >= 1
+    assert any(item["trace_id"] == trace_id for item in body["traces"])
+
+    finished_spans = exporter.get_finished_spans()
+    span_names = {span.name for span in finished_spans}
+    assert "bootstrap.capabilities" in span_names
+    assert any(name.endswith("/api/v4/bootstrap") for name in span_names)
+
+    _create_session(session_id="normal-session", member_id=99, name="User")
+    forbidden = await client.get(
+        "/api/v4/admin/traces/summary",
         cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
     )
     assert forbidden.status_code == 403

@@ -219,3 +219,5 @@ This setup is a Phase 4.5 operational rollout:
 - complete it after Phase 4 backend metrics are validated
 - before Phase 5 tracing
 - so Grafana is already in place when Tempo arrives later for `/admin/traces`
+
+See [TRACING_SETUP.md](/Users/brianaustin/cartosky/docs/TRACING_SETUP.md) for the follow-up same-host Collector and Tempo rollout.

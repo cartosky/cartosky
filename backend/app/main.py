@@ -28,6 +28,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from opentelemetry.trace import SpanKind
 from PIL import Image, ImageFilter
 from pyproj import Transformer
 from rasterio.enums import Resampling
@@ -53,7 +54,7 @@ from .services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
-from .services import admin_telemetry, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,14 @@ def _prometheus_route_label(request: Request) -> str:
         return "unmatched_api"
     return raw_path
 
+
+def _append_exposed_headers(response: Response, *header_names: str) -> None:
+    existing = response.headers.get("Access-Control-Expose-Headers", "")
+    values = {item.strip() for item in existing.split(",") if item.strip()}
+    values.update(name for name in header_names if name)
+    if values:
+        response.headers["Access-Control-Expose-Headers"] = ", ".join(sorted(values))
+
 @dataclass
 class TwfApiError(Exception):
     status_code: int
@@ -548,130 +557,198 @@ async def twf_share_guards(request: Request, call_next):
     request_id = secrets.token_hex(8)
     request.state.request_id = request_id
     request_started_at = time.perf_counter()
+    trace_span_cm = otel_tracing.start_as_current_span(
+        f"{request.method} {request.url.path}",
+        kind=SpanKind.SERVER,
+        attributes={
+            "cartosky.trace.root": True,
+            "cartosky.request_id": request_id,
+            "http.method": request.method,
+            "url.path": request.url.path,
+        },
+    )
 
-    if request.method == "POST" and request.url.path in _TWF_GUARDED_PATHS:
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                if int(content_length) > _TWF_SHARE_BODY_CAP_BYTES:
-                    logger.warning(
-                        "TWF payload too large request_id=%s path=%s method=%s ip=%s has_session=%s content_length=%s",
-                        request_id,
-                        request.url.path,
-                        request.method,
-                        _client_ip(request),
-                        bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
-                        content_length,
-                    )
-                    response = _error_response(
-                        status_code=413,
-                        code="PAYLOAD_TOO_LARGE",
-                        message="Request body too large",
-                    )
-                    response.headers["X-Request-ID"] = request_id
-                    _observe_prometheus_request(
-                        request,
-                        status_code=response.status_code,
-                        duration_seconds=time.perf_counter() - request_started_at,
-                    )
-                    return response
-            except ValueError:
-                pass
+    with trace_span_cm as trace_span:
+        request.state.trace_id = otel_tracing.current_trace_id()
 
-        body = await request.body()
-        buffered_body = body
+        if request.method == "POST" and request.url.path in _TWF_GUARDED_PATHS:
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > _TWF_SHARE_BODY_CAP_BYTES:
+                        logger.warning(
+                            "TWF payload too large request_id=%s path=%s method=%s ip=%s has_session=%s content_length=%s",
+                            request_id,
+                            request.url.path,
+                            request.method,
+                            _client_ip(request),
+                            bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+                            content_length,
+                        )
+                        response = _error_response(
+                            status_code=413,
+                            code="PAYLOAD_TOO_LARGE",
+                            message="Request body too large",
+                        )
+                        route = _prometheus_route_label(request)
+                        response.headers["X-Request-ID"] = request_id
+                        if request.state.trace_id:
+                            response.headers["X-Trace-ID"] = request.state.trace_id
+                        _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                        otel_tracing.finalize_request_span(
+                            trace_span,
+                            route=route,
+                            status_code=response.status_code,
+                            duration_seconds=time.perf_counter() - request_started_at,
+                            request_id=request_id,
+                        )
+                        _observe_prometheus_request(
+                            request,
+                            status_code=response.status_code,
+                            duration_seconds=time.perf_counter() - request_started_at,
+                        )
+                        return response
+                except ValueError:
+                    pass
 
-        async def receive() -> dict[str, Any]:
-            nonlocal buffered_body
-            chunk = buffered_body
-            buffered_body = b""
-            return {"type": "http.request", "body": chunk, "more_body": False}
+            body = await request.body()
+            buffered_body = body
 
-        request = Request(request.scope, receive)
-        request._body = body
-        if len(body) > _TWF_SHARE_BODY_CAP_BYTES:
-            logger.warning(
-                "TWF payload too large request_id=%s path=%s method=%s ip=%s has_session=%s body_bytes=%s",
-                request_id,
-                request.url.path,
-                request.method,
-                _client_ip(request),
-                bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
-                len(body),
-            )
-            response = _error_response(
-                status_code=413,
-                code="PAYLOAD_TOO_LARGE",
-                message="Request body too large",
-            )
-            response.headers["X-Request-ID"] = request_id
-            _observe_prometheus_request(
-                request,
-                status_code=response.status_code,
-                duration_seconds=time.perf_counter() - request_started_at,
-            )
-            return response
+            async def receive() -> dict[str, Any]:
+                nonlocal buffered_body
+                chunk = buffered_body
+                buffered_body = b""
+                return {"type": "http.request", "body": chunk, "more_body": False}
 
-        now = time.monotonic()
-        ip = _client_ip(request)
-        session_id = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
-        retry_after = 0
-        with _twf_rate_lock:
-            _maybe_prune_rate_limit_state(now)
-            retry_after = _rate_limit_check(
-                _twf_ip_windows,
-                key=ip,
-                limit=_TWF_IP_LIMIT,
-                window_seconds=_TWF_RATE_WINDOW_SECONDS,
-                now=now,
-            )
-            if retry_after == 0 and session_id:
+            request = Request(request.scope, receive)
+            request._body = body
+            request.state.request_id = request_id
+            request.state.trace_id = otel_tracing.current_trace_id()
+            if len(body) > _TWF_SHARE_BODY_CAP_BYTES:
+                logger.warning(
+                    "TWF payload too large request_id=%s path=%s method=%s ip=%s has_session=%s body_bytes=%s",
+                    request_id,
+                    request.url.path,
+                    request.method,
+                    _client_ip(request),
+                    bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+                    len(body),
+                )
+                response = _error_response(
+                    status_code=413,
+                    code="PAYLOAD_TOO_LARGE",
+                    message="Request body too large",
+                )
+                route = _prometheus_route_label(request)
+                response.headers["X-Request-ID"] = request_id
+                if request.state.trace_id:
+                    response.headers["X-Trace-ID"] = request.state.trace_id
+                _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                otel_tracing.finalize_request_span(
+                    trace_span,
+                    route=route,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                    request_id=request_id,
+                )
+                _observe_prometheus_request(
+                    request,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                )
+                return response
+
+            now = time.monotonic()
+            ip = _client_ip(request)
+            session_id = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+            retry_after = 0
+            with _twf_rate_lock:
+                _maybe_prune_rate_limit_state(now)
                 retry_after = _rate_limit_check(
-                    _twf_session_windows,
-                    key=session_id,
-                    limit=_TWF_SESSION_LIMIT,
+                    _twf_ip_windows,
+                    key=ip,
+                    limit=_TWF_IP_LIMIT,
                     window_seconds=_TWF_RATE_WINDOW_SECONDS,
                     now=now,
                 )
-        if retry_after > 0:
-            logger.warning(
-                "TWF rate limit exceeded request_id=%s path=%s ip=%s has_session=%s retry_after=%s",
-                request_id,
-                request.url.path,
-                ip,
-                bool(session_id),
-                retry_after,
+                if retry_after == 0 and session_id:
+                    retry_after = _rate_limit_check(
+                        _twf_session_windows,
+                        key=session_id,
+                        limit=_TWF_SESSION_LIMIT,
+                        window_seconds=_TWF_RATE_WINDOW_SECONDS,
+                        now=now,
+                    )
+            if retry_after > 0:
+                logger.warning(
+                    "TWF rate limit exceeded request_id=%s path=%s ip=%s has_session=%s retry_after=%s",
+                    request_id,
+                    request.url.path,
+                    ip,
+                    bool(session_id),
+                    retry_after,
+                )
+                response = _error_response(
+                    status_code=429,
+                    code="RATE_LIMITED",
+                    message=_TWF_RATE_LIMIT_MESSAGE,
+                    headers={"Retry-After": str(retry_after)},
+                )
+                route = _prometheus_route_label(request)
+                response.headers["X-Request-ID"] = request_id
+                if request.state.trace_id:
+                    response.headers["X-Trace-ID"] = request.state.trace_id
+                _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                otel_tracing.finalize_request_span(
+                    trace_span,
+                    route=route,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                    request_id=request_id,
+                )
+                _observe_prometheus_request(
+                    request,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                )
+                return response
+
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            route = _prometheus_route_label(request)
+            otel_tracing.finalize_request_span(
+                trace_span,
+                route=route,
+                status_code=500,
+                duration_seconds=time.perf_counter() - request_started_at,
+                request_id=request_id,
+                error=exc,
             )
-            response = _error_response(
-                status_code=429,
-                code="RATE_LIMITED",
-                message=_TWF_RATE_LIMIT_MESSAGE,
-                headers={"Retry-After": str(retry_after)},
-            )
-            response.headers["X-Request-ID"] = request_id
             _observe_prometheus_request(
                 request,
-                status_code=response.status_code,
+                status_code=500,
                 duration_seconds=time.perf_counter() - request_started_at,
             )
-            return response
-
-    try:
-        response = await call_next(request)
-    except Exception:
+            raise
+        route = _prometheus_route_label(request)
+        response.headers["X-Request-ID"] = request_id
+        if request.state.trace_id:
+            response.headers["X-Trace-ID"] = request.state.trace_id
+        _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+        otel_tracing.finalize_request_span(
+            trace_span,
+            route=route,
+            status_code=response.status_code,
+            duration_seconds=time.perf_counter() - request_started_at,
+            request_id=request_id,
+        )
         _observe_prometheus_request(
             request,
-            status_code=500,
+            status_code=response.status_code,
             duration_seconds=time.perf_counter() - request_started_at,
         )
-        raise
-    response.headers["X-Request-ID"] = request_id
-    _observe_prometheus_request(
-        request,
-        status_code=response.status_code,
-        duration_seconds=time.perf_counter() - request_started_at,
-    )
-    return response
+        return response
 
 
 @app.exception_handler(twf_oauth.TwfUpstreamError)
@@ -1218,6 +1295,12 @@ async def admin_observability_summary(request: Request) -> dict[str, Any]:
     _require_admin_session(request)
     _refresh_prometheus_gauges()
     return prometheus_metrics.get_observability_summary()
+
+
+@app.get("/api/v4/admin/traces/summary")
+async def admin_traces_summary(request: Request) -> dict[str, Any]:
+    _require_admin_session(request)
+    return otel_tracing.get_traces_summary()
 
 
 @app.get("/api/v4/admin/status/results")
@@ -2883,7 +2966,8 @@ def get_bootstrap_v4(
     started_at = time.perf_counter()
 
     capabilities_started_at = time.perf_counter()
-    capabilities_payload = _build_capabilities_payload()
+    with otel_tracing.start_as_current_span("bootstrap.capabilities") as _span:
+        capabilities_payload = _build_capabilities_payload()
     capabilities_ms = (time.perf_counter() - capabilities_started_at) * 1000.0
 
     supported_models = capabilities_payload.get("supported_models", [])
@@ -2903,9 +2987,17 @@ def get_bootstrap_v4(
 
     if selected_model:
         manifest_started_at = time.perf_counter()
-        selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
-        if selected_run:
-            run_manifest = _load_manifest(selected_model, selected_run)
+        with otel_tracing.start_as_current_span(
+            "bootstrap.manifest",
+            attributes={
+                "cartosky.model": selected_model,
+                "cartosky.requested_run": run,
+            },
+        ):
+            selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
+            if selected_run:
+                otel_tracing.set_current_attributes({"cartosky.resolved_run": selected_run})
+                run_manifest = _load_manifest(selected_model, selected_run)
         manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
 
         model_capability = model_catalog.get(selected_model, {}) if isinstance(model_catalog, dict) else {}
@@ -2928,38 +3020,47 @@ def get_bootstrap_v4(
 
         if selected_var and selected_run and run_manifest:
             frames_started_at = time.perf_counter()
-            variables = run_manifest.get("variables", {})
-            var_entry = variables.get(selected_var) if isinstance(variables, dict) else None
-            frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
-            if not isinstance(frame_entries, list):
-                frame_entries = []
-            version_token = _run_version_token(selected_model, selected_run)
-            for item in frame_entries:
-                if not isinstance(item, dict):
-                    continue
-                fh = item.get("fh")
-                if not isinstance(fh, int):
-                    continue
-                tier0_url, tier1_url = _resolve_loop_urls_for_frame(
-                    selected_model,
-                    selected_run,
-                    selected_var,
-                    fh,
-                    version_token=version_token,
-                    include_tier0_runtime_fallback=True,
-                )
-                frames_payload.append(
-                    {
-                        "fh": fh,
-                        "has_cog": True,
-                        "run": selected_run,
-                        "loop_webp_url": tier0_url,
-                        "loop_webp_tier0_url": tier0_url,
-                        "loop_webp_tier1_url": tier1_url,
-                        "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
-                    }
-                )
-            frames_payload.sort(key=lambda row: int(row["fh"]))
+            with otel_tracing.start_as_current_span(
+                "bootstrap.frames",
+                attributes={
+                    "cartosky.model": selected_model,
+                    "cartosky.run": selected_run,
+                    "cartosky.variable": selected_var,
+                },
+            ):
+                variables = run_manifest.get("variables", {})
+                var_entry = variables.get(selected_var) if isinstance(variables, dict) else None
+                frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
+                if not isinstance(frame_entries, list):
+                    frame_entries = []
+                version_token = _run_version_token(selected_model, selected_run)
+                for item in frame_entries:
+                    if not isinstance(item, dict):
+                        continue
+                    fh = item.get("fh")
+                    if not isinstance(fh, int):
+                        continue
+                    tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+                        selected_model,
+                        selected_run,
+                        selected_var,
+                        fh,
+                        version_token=version_token,
+                        include_tier0_runtime_fallback=True,
+                    )
+                    frames_payload.append(
+                        {
+                            "fh": fh,
+                            "has_cog": True,
+                            "run": selected_run,
+                            "loop_webp_url": tier0_url,
+                            "loop_webp_tier0_url": tier0_url,
+                            "loop_webp_tier1_url": tier1_url,
+                            "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
+                        }
+                    )
+                otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames_payload)})
+                frames_payload.sort(key=lambda row: int(row["fh"]))
             frames_build_ms = (time.perf_counter() - frames_started_at) * 1000.0
 
     model_constraints = {}
@@ -3067,12 +3168,22 @@ def list_runs(request: Request, model: str):
 def get_manifest(request: Request, model: str, run: str):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
-    resolved = _resolve_run(model, run)
+    with otel_tracing.start_as_current_span(
+        "manifest.resolve",
+        attributes={"cartosky.model": model, "cartosky.requested_run": run},
+    ):
+        resolved = _resolve_run(model, run)
+        if resolved:
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     load_started_at = time.perf_counter()
-    manifest = _load_manifest(model, resolved)
+    with otel_tracing.start_as_current_span(
+        "manifest.load",
+        attributes={"cartosky.model": model, "cartosky.run": resolved},
+    ):
+        manifest = _load_manifest(model, resolved)
     load_ms = (time.perf_counter() - load_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -3131,13 +3242,23 @@ def list_vars(model: str, run: str):
 def list_frames(request: Request, model: str, run: str, var: str):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
-    resolved = _resolve_run(model, run)
+    with otel_tracing.start_as_current_span(
+        "frames.resolve",
+        attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
+    ):
+        resolved = _resolve_run(model, run)
+        if resolved:
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
-    manifest = _load_manifest(model, resolved)
+    with otel_tracing.start_as_current_span(
+        "frames.manifest",
+        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
+    ):
+        manifest = _load_manifest(model, resolved)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -3159,34 +3280,39 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
     frames_build_started_at = time.perf_counter()
     frames: list[dict] = []
-    for item in frame_entries:
-        if not isinstance(item, dict):
-            continue
-        fh = item.get("fh")
-        if not isinstance(fh, int):
-            continue
+    with otel_tracing.start_as_current_span(
+        "frames.build",
+        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
+    ):
+        for item in frame_entries:
+            if not isinstance(item, dict):
+                continue
+            fh = item.get("fh")
+            if not isinstance(fh, int):
+                continue
 
-        tier0_url, tier1_url = _resolve_loop_urls_for_frame(
-            model,
-            resolved,
-            var,
-            fh,
-            version_token=version_token,
-            include_tier0_runtime_fallback=True,
-        )
+            tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+                model,
+                resolved,
+                var,
+                fh,
+                version_token=version_token,
+                include_tier0_runtime_fallback=True,
+            )
 
-        meta = _resolve_sidecar(model, resolved, var, fh)
-        frames.append(
-            {
-                "fh": fh,
-                "has_cog": True,
-                "run": resolved,
-                "loop_webp_url": tier0_url,
-                "loop_webp_tier0_url": tier0_url,
-                "loop_webp_tier1_url": tier1_url,
-                "meta": {"meta": meta},
-            }
-        )
+            meta = _resolve_sidecar(model, resolved, var, fh)
+            frames.append(
+                {
+                    "fh": fh,
+                    "has_cog": True,
+                    "run": resolved,
+                    "loop_webp_url": tier0_url,
+                    "loop_webp_tier0_url": tier0_url,
+                    "loop_webp_tier1_url": tier1_url,
+                    "meta": {"meta": meta},
+                }
+            )
+        otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames)})
 
     frames.sort(key=lambda row: row["fh"])
     frames_build_ms = (time.perf_counter() - frames_build_started_at) * 1000.0
@@ -3219,13 +3345,23 @@ def list_frames(request: Request, model: str, run: str, var: str):
 def get_loop_manifest(request: Request, model: str, run: str, var: str):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
-    resolved = _resolve_run(model, run)
+    with otel_tracing.start_as_current_span(
+        "loop_manifest.resolve",
+        attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
+    ):
+        resolved = _resolve_run(model, run)
+        if resolved:
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
-    manifest = _load_manifest(model, resolved)
+    with otel_tracing.start_as_current_span(
+        "loop_manifest.manifest",
+        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
+    ):
+        manifest = _load_manifest(model, resolved)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -3252,25 +3388,35 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
 
     build_started_at = time.perf_counter()
     tier_frames: dict[int, list[dict[str, Any]]] = {0: [], 1: []}
-    for item in frame_entries:
-        if not isinstance(item, dict):
-            continue
-        fh = item.get("fh")
-        if not isinstance(fh, int):
-            continue
+    with otel_tracing.start_as_current_span(
+        "loop_manifest.build",
+        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
+    ):
+        for item in frame_entries:
+            if not isinstance(item, dict):
+                continue
+            fh = item.get("fh")
+            if not isinstance(fh, int):
+                continue
 
-        tier0_url, tier1_url = _resolve_loop_urls_for_frame(
-            model,
-            resolved,
-            var,
-            fh,
-            version_token=version_token,
-            include_tier0_runtime_fallback=True,
+            tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+                model,
+                resolved,
+                var,
+                fh,
+                version_token=version_token,
+                include_tier0_runtime_fallback=True,
+            )
+            if tier0_url:
+                tier_frames[0].append({"fh": fh, "url": tier0_url})
+            if tier1_url:
+                tier_frames[1].append({"fh": fh, "url": tier1_url})
+        otel_tracing.set_current_attributes(
+            {
+                "cartosky.loop_tier0_frames": len(tier_frames[0]),
+                "cartosky.loop_tier1_frames": len(tier_frames[1]),
+            }
         )
-        if tier0_url:
-            tier_frames[0].append({"fh": fh, "url": tier0_url})
-        if tier1_url:
-            tier_frames[1].append({"fh": fh, "url": tier1_url})
 
     tier_frames[0].sort(key=lambda row: int(row["fh"]))
     tier_frames[1].sort(key=lambda row: int(row["fh"]))
@@ -3448,27 +3594,39 @@ def sample(
     lon: float = Query(..., ge=-180, le=180, description="Longitude (WGS84)"),
 ):
     client_id = request.client.host if request.client and request.client.host else "unknown"
+    otel_tracing.set_current_attributes(
+        {
+            "cartosky.model": model,
+            "cartosky.requested_run": run,
+            "cartosky.variable": var,
+            "cartosky.forecast_hour": fh,
+        }
+    )
     allowed, retry_after = _sample_rate_limit_allow(client_id)
     if not allowed:
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample", result="rate_limited")
+        otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "rate_limited"})
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
             headers={"Retry-After": str(int(max(1, retry_after)))},
         )
 
-    val_cog = _resolve_val_cog(model, run, var, fh)
+    with otel_tracing.start_as_current_span("sample.resolve_cog") as _span:
+        val_cog = _resolve_val_cog(model, run, var, fh)
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
     try:
-        ds = _get_cached_dataset(val_cog)
-        row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
-        resolved_run = _resolve_run(model, run) or run
-        sidecar = _resolve_sidecar(model, run, var, fh)
-        units = sidecar.get("units", "") if sidecar else ""
-        valid_time = sidecar.get("valid_time", "") if sidecar else ""
+        with otel_tracing.start_as_current_span("sample.dataset_lookup"):
+            ds = _get_cached_dataset(val_cog)
+            row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
+            resolved_run = _resolve_run(model, run) or run
+            sidecar = _resolve_sidecar(model, run, var, fh)
+            units = sidecar.get("units", "") if sidecar else ""
+            valid_time = sidecar.get("valid_time", "") if sidecar else ""
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved_run})
 
         if row < 0 or row >= ds.height or col < 0 or col >= ds.width:
             payload = _sample_payload(
@@ -3497,6 +3655,7 @@ def sample(
                 if expires_at > now:
                     if prometheus_metrics.prometheus_enabled():
                         prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
+                    otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "hit"})
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
                 _sample_cache.pop(key, None)
 
@@ -3507,6 +3666,7 @@ def sample(
                 is_leader = True
                 if prometheus_metrics.prometheus_enabled():
                     prometheus_metrics.record_sample_cache_result(endpoint="sample", result="miss")
+                otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "miss"})
 
         if not is_leader:
             assert inflight is not None
@@ -3518,14 +3678,17 @@ def sample(
                     if expires_at > time.monotonic():
                         if prometheus_metrics.prometheus_enabled():
                             prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
+                        otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "hit"})
                         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
                 payload = inflight.payload
                 if payload is not None:
                     if prometheus_metrics.prometheus_enabled():
                         prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
+                    otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "hit"})
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
-        value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
+        with otel_tracing.start_as_current_span("sample.read_value"):
+            value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
 
         payload = _sample_payload(
             model=model,
@@ -3548,12 +3711,14 @@ def sample(
                 sample_inflight.event.set()
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample", result="store")
+        otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "store"})
 
         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=86400"})
 
     except Exception:
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample", result="error")
+        otel_tracing.set_current_attributes({"cartosky.sample.cache_result": "error"})
         with _sample_lock:
             key = locals().get("key")
             if isinstance(key, str):
@@ -3575,17 +3740,28 @@ def sample(
 @app.post("/api/v4/sample/batch")
 def sample_batch(request: Request, body: SampleBatchIn):
     client_id = request.client.host if request.client and request.client.host else "unknown"
+    otel_tracing.set_current_attributes(
+        {
+            "cartosky.model": body.model,
+            "cartosky.requested_run": body.run,
+            "cartosky.variable": body.variable,
+            "cartosky.forecast_hour": body.forecast_hour,
+            "cartosky.sample_batch.points": len(body.points),
+        }
+    )
     allowed, retry_after = _sample_rate_limit_allow(client_id)
     if not allowed:
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="rate_limited")
+        otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "rate_limited"})
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
             headers={"Retry-After": str(int(max(1, retry_after)))},
         )
 
-    val_cog = _resolve_val_cog(body.model, body.run, body.variable, body.forecast_hour)
+    with otel_tracing.start_as_current_span("sample_batch.resolve_cog"):
+        val_cog = _resolve_val_cog(body.model, body.run, body.variable, body.forecast_hour)
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
@@ -3608,6 +3784,7 @@ def sample_batch(request: Request, body: SampleBatchIn):
             if expires_at > now:
                 if prometheus_metrics.prometheus_enabled():
                     prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
+                otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "hit"})
                 return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
             _sample_cache.pop(key, None)
 
@@ -3618,6 +3795,7 @@ def sample_batch(request: Request, body: SampleBatchIn):
             is_leader = True
             if prometheus_metrics.prometheus_enabled():
                 prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="miss")
+            otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "miss"})
 
     if not is_leader:
         assert inflight is not None
@@ -3629,21 +3807,24 @@ def sample_batch(request: Request, body: SampleBatchIn):
                 if expires_at > time.monotonic():
                     if prometheus_metrics.prometheus_enabled():
                         prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
+                    otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "hit"})
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
             payload = inflight.payload
             if payload is not None:
                 if prometheus_metrics.prometheus_enabled():
                     prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
+                otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "hit"})
                 return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
     try:
-        ds = _get_cached_dataset(val_cog)
-        sidecar = _resolve_sidecar(body.model, body.run, body.variable, body.forecast_hour)
-        units = sidecar.get("units", "") if sidecar else ""
-        payload = {
-            "units": units,
-            "values": _sample_batch_values(ds, points=body.points),
-        }
+        with otel_tracing.start_as_current_span("sample_batch.compute"):
+            ds = _get_cached_dataset(val_cog)
+            sidecar = _resolve_sidecar(body.model, body.run, body.variable, body.forecast_hour)
+            units = sidecar.get("units", "") if sidecar else ""
+            payload = {
+                "units": units,
+                "values": _sample_batch_values(ds, points=body.points),
+            }
 
         with _sample_lock:
             _sample_cache[key] = (time.monotonic() + SAMPLE_CACHE_TTL_SECONDS, payload)
@@ -3653,12 +3834,14 @@ def sample_batch(request: Request, body: SampleBatchIn):
                 sample_inflight.event.set()
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="store")
+        otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "store"})
 
         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=86400"})
 
     except Exception:
         if prometheus_metrics.prometheus_enabled():
             prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="error")
+        otel_tracing.set_current_attributes({"cartosky.sample_batch.cache_result": "error"})
         with _sample_lock:
             sample_inflight = _sample_inflight.pop(key, None)
             if sample_inflight is not None:

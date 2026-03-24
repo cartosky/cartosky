@@ -156,6 +156,30 @@ export type AdminObservabilitySummaryResponse = {
   }>;
 };
 
+export type AdminTracesSummaryResponse = {
+  enabled: boolean;
+  service_name: string;
+  exporter_endpoint: string;
+  sample_ratio: number;
+  slow_request_ms: number;
+  recent: {
+    exported_traces: number;
+    slow_traces: number;
+    error_traces: number;
+    last_trace_at: number | null;
+    last_export_error: string | null;
+  };
+  traces: Array<{
+    trace_id: string;
+    name: string;
+    route: string | null;
+    duration_ms: number | null;
+    status_code: number | null;
+    decision: string;
+    ended_at: number;
+  }>;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: "include",
@@ -252,6 +276,10 @@ export async function fetchAdminOverviewSummary(window: string): Promise<AdminOv
 
 export async function fetchAdminObservabilitySummary(): Promise<AdminObservabilitySummaryResponse> {
   return fetchJson<AdminObservabilitySummaryResponse>(`${API_ORIGIN}/api/v4/admin/observability/summary`);
+}
+
+export async function fetchAdminTracesSummary(): Promise<AdminTracesSummaryResponse> {
+  return fetchJson<AdminTracesSummaryResponse>(`${API_ORIGIN}/api/v4/admin/traces/summary`);
 }
 
 export async function fetchAdminStatusResults(params: {

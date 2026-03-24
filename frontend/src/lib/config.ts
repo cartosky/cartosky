@@ -13,6 +13,7 @@ const POSTHOG_REPLAY_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPL
 const GRAFANA_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_URL ?? "").trim();
 const GRAFANA_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_DASHBOARD_URL ?? "").trim();
 const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED_URL ?? "").trim();
+const GRAFANA_TRACES_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_TRACES_URL ?? "").trim();
 const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
 export const WEBP_RENDER_MODE_THRESHOLDS = {
@@ -244,5 +245,10 @@ export function getGrafanaDashboardUrl(): string | null {
 
 export function getGrafanaEmbedUrl(): string | null {
   const value = GRAFANA_EMBED_URL_ENV.trim();
+  return value.length > 0 ? value : null;
+}
+
+export function getGrafanaTracesUrl(): string | null {
+  const value = GRAFANA_TRACES_URL_ENV.trim();
   return value.length > 0 ? value : null;
 }
