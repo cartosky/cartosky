@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from app import main as main_module
 
 twf_oauth = main_module.twf_oauth
 admin_telemetry = main_module.admin_telemetry
+prometheus_metrics = main_module.prometheus_metrics
 
 pytestmark = pytest.mark.anyio
 
@@ -37,6 +39,8 @@ def isolate_databases(tmp_path: Path) -> None:
     twf_oauth.TOKEN_DB_PATH = str(token_db)
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
     admin_telemetry._db_initialized = False
+    prometheus_metrics.reset_metrics_for_tests()
+    os.environ.pop("CARTOSKY_PROMETHEUS_ENABLED", None)
 
 
 @pytest.fixture
@@ -321,6 +325,66 @@ async def test_admin_overview_summary_requires_admin_membership(client: httpx.As
             "message": "Admin access required",
         }
     }
+
+
+async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:
+    os.environ["CARTOSKY_PROMETHEUS_ENABLED"] = "1"
+
+    response = await client.get("/auth/twf/status")
+    assert response.status_code == 200
+
+    metrics = await client.get("/metrics")
+    assert metrics.status_code == 200
+    payload = metrics.text
+    assert "cartosky_http_requests_total" in payload
+    assert 'route="/auth/twf/status"' in payload
+    assert "cartosky_http_request_duration_seconds_bucket" in payload
+    assert "cartosky_sample_cache_result_total" in payload
+    assert "cartosky_published_run_age_hours" in payload
+
+
+async def test_metrics_endpoint_returns_404_when_disabled(client: httpx.AsyncClient) -> None:
+    response = await client.get("/metrics")
+    assert response.status_code == 404
+
+
+async def test_admin_observability_summary_requires_admin_and_reports_recent_stats(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os.environ["CARTOSKY_PROMETHEUS_ENABLED"] = "1"
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+    prometheus_metrics.record_sample_cache_result(endpoint="sample", result="miss")
+    prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
+    main_module._sample_cache["synthetic-entry"] = (time.monotonic() + 60.0, {"ok": True})
+    monkeypatch.setattr(
+        main_module,
+        "_published_run_observability_rows",
+        lambda: [{"model_id": "hrrr", "run_age_hours": 2.5, "completion_ratio": 0.92}],
+    )
+
+    await client.get("/auth/twf/status")
+
+    response = await client.get(
+        "/api/v4/admin/observability/summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metrics_enabled"] is True
+    assert body["http"]["recent_request_count"] >= 1
+    assert body["http"]["p95_ms"] is not None
+    assert body["sample_cache"]["point_hit_rate"] == 0.5
+    assert body["sample_cache"]["entries"] == 1
+    assert body["published_runs"][0]["model_id"] == "hrrr"
+
+    _create_session(session_id="normal-session", member_id=99, name="User")
+    forbidden = await client.get(
+        "/api/v4/admin/observability/summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
+    )
+    assert forbidden.status_code == 403
 
 
 async def test_admin_perf_breakdown_supports_animation_stall_by_model_and_variable(client: httpx.AsyncClient) -> None:

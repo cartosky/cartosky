@@ -136,6 +136,26 @@ export type StatusResultsResponse = {
   results: StatusResult[];
 };
 
+export type AdminObservabilitySummaryResponse = {
+  metrics_enabled: boolean;
+  http: {
+    recent_request_count: number;
+    p95_ms: number | null;
+    error_rate: number | null;
+  };
+  sample_cache: {
+    point_hit_rate: number | null;
+    entries: number;
+    hits: number;
+    misses: number;
+  };
+  published_runs: Array<{
+    model_id: string;
+    run_age_hours: number;
+    completion_ratio: number;
+  }>;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: "include",
@@ -228,6 +248,10 @@ export async function fetchAdminOverviewSummary(window: string): Promise<AdminOv
   const search = new URLSearchParams();
   search.set("window", window);
   return fetchJson<AdminOverviewSummaryResponse>(`${API_ORIGIN}/api/v4/admin/overview/summary?${search.toString()}`);
+}
+
+export async function fetchAdminObservabilitySummary(): Promise<AdminObservabilitySummaryResponse> {
+  return fetchJson<AdminObservabilitySummaryResponse>(`${API_ORIGIN}/api/v4/admin/observability/summary`);
 }
 
 export async function fetchAdminStatusResults(params: {

@@ -11,3 +11,4 @@ httpx
 cryptography
 boto3
 python-multipart
+prometheus-client

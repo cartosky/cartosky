@@ -53,7 +53,7 @@ from .services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
-from .services import admin_telemetry, share_media as share_media_service
+from .services import admin_telemetry, prometheus_metrics, share_media as share_media_service
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -395,6 +395,17 @@ app.add_middleware(
     allow_headers=cors_allow_headers,
 )
 
+
+def _prometheus_route_label(request: Request) -> str:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if isinstance(route_path, str) and route_path.strip():
+        return route_path
+    raw_path = request.url.path
+    if raw_path.startswith("/api/v4/"):
+        return "unmatched_api"
+    return raw_path
+
 @dataclass
 class TwfApiError(Exception):
     status_code: int
@@ -521,6 +532,7 @@ def _client_ip(request: Request) -> str:
 async def twf_share_guards(request: Request, call_next):
     request_id = secrets.token_hex(8)
     request.state.request_id = request_id
+    request_started_at = time.perf_counter()
 
     if request.method == "POST" and request.url.path in _TWF_GUARDED_PATHS:
         content_length = request.headers.get("content-length")
@@ -542,6 +554,13 @@ async def twf_share_guards(request: Request, call_next):
                         message="Request body too large",
                     )
                     response.headers["X-Request-ID"] = request_id
+                    if prometheus_metrics.prometheus_enabled():
+                        prometheus_metrics.observe_http_request(
+                            route=_prometheus_route_label(request),
+                            method=request.method,
+                            status_code=response.status_code,
+                            duration_seconds=time.perf_counter() - request_started_at,
+                        )
                     return response
             except ValueError:
                 pass
@@ -573,6 +592,13 @@ async def twf_share_guards(request: Request, call_next):
                 message="Request body too large",
             )
             response.headers["X-Request-ID"] = request_id
+            if prometheus_metrics.prometheus_enabled():
+                prometheus_metrics.observe_http_request(
+                    route=_prometheus_route_label(request),
+                    method=request.method,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                )
             return response
 
         now = time.monotonic()
@@ -612,10 +638,34 @@ async def twf_share_guards(request: Request, call_next):
                 headers={"Retry-After": str(retry_after)},
             )
             response.headers["X-Request-ID"] = request_id
+            if prometheus_metrics.prometheus_enabled():
+                prometheus_metrics.observe_http_request(
+                    route=_prometheus_route_label(request),
+                    method=request.method,
+                    status_code=response.status_code,
+                    duration_seconds=time.perf_counter() - request_started_at,
+                )
             return response
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.observe_http_request(
+                route=_prometheus_route_label(request),
+                method=request.method,
+                status_code=500,
+                duration_seconds=time.perf_counter() - request_started_at,
+            )
+        raise
     response.headers["X-Request-ID"] = request_id
+    if prometheus_metrics.prometheus_enabled():
+        prometheus_metrics.observe_http_request(
+            route=_prometheus_route_label(request),
+            method=request.method,
+            status_code=response.status_code,
+            duration_seconds=time.perf_counter() - request_started_at,
+        )
     return response
 
 
@@ -1158,6 +1208,13 @@ async def admin_overview_summary(request: Request, window: str = Query("7d")) ->
     }
 
 
+@app.get("/api/v4/admin/observability/summary")
+async def admin_observability_summary(request: Request) -> dict[str, Any]:
+    _require_admin_session(request)
+    _refresh_prometheus_gauges()
+    return prometheus_metrics.get_observability_summary()
+
+
 @app.get("/api/v4/admin/status/results")
 async def admin_status_results(
     request: Request,
@@ -1183,6 +1240,17 @@ async def admin_status_results(
             limit=limit,
         ),
     }
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    if not prometheus_metrics.prometheus_enabled():
+        return Response(status_code=404)
+    _refresh_prometheus_gauges()
+    return Response(
+        content=prometheus_metrics.metrics_payload(),
+        media_type=prometheus_metrics.metrics_content_type(),
+    )
 
 
 @app.post("/auth/twf/disconnect")
@@ -2036,6 +2104,60 @@ def _availability_for_models(
             "latest_run_ready_frame_count": latest_run_ready_frame_count,
         }
     return availability
+
+
+def _published_run_observability_rows() -> list[dict[str, float | str]]:
+    capabilities_by_model = list_model_capabilities()
+    availability = _availability_for_models(sorted(capabilities_by_model.keys()), capabilities_by_model)
+    rows: list[dict[str, float | str]] = []
+    now_utc = datetime.utcnow()
+    for model_id, item in availability.items():
+        latest_run = item.get("latest_run")
+        if not isinstance(latest_run, str) or not latest_run:
+            continue
+        manifest = _load_manifest(model_id, latest_run)
+        variables = manifest.get("variables") if isinstance(manifest, dict) else None
+        variable_catalog = getattr(capabilities_by_model.get(model_id), "variable_catalog", {}) or {}
+        buildable_keys = {
+            str(var_key)
+            for var_key, capability in variable_catalog.items()
+            if bool(getattr(capability, "buildable", False))
+        }
+        total_variables = 0
+        ready_variables = 0
+        if isinstance(variables, dict):
+            for var_key, var_entry in variables.items():
+                if buildable_keys and var_key not in buildable_keys:
+                    continue
+                if not isinstance(var_entry, dict):
+                    continue
+                total_variables += 1
+                if _manifest_var_available_frames(var_entry) > 0:
+                    ready_variables += 1
+        completion_ratio = (ready_variables / total_variables) if total_variables > 0 else 0.0
+        run_age_hours = 0.0
+        try:
+            run_dt = datetime.strptime(latest_run, "%Y%m%d_%Hz")
+            run_age_hours = max(0.0, (now_utc - run_dt).total_seconds() / 3600.0)
+        except ValueError:
+            run_age_hours = 0.0
+        rows.append(
+            {
+                "model_id": model_id,
+                "run_age_hours": run_age_hours,
+                "completion_ratio": completion_ratio,
+            }
+        )
+    return rows
+
+
+def _refresh_prometheus_gauges() -> None:
+    if not prometheus_metrics.prometheus_enabled():
+        return
+    with _sample_lock:
+        active_entries = sum(1 for expires_at, _ in _sample_cache.values() if expires_at > time.monotonic())
+    prometheus_metrics.set_sample_cache_entries(endpoint="all", entries=active_entries)
+    prometheus_metrics.replace_published_run_health(_published_run_observability_rows())
 
 
 def _build_capabilities_payload() -> dict[str, Any]:
@@ -3323,6 +3445,8 @@ def sample(
     client_id = request.client.host if request.client and request.client.host else "unknown"
     allowed, retry_after = _sample_rate_limit_allow(client_id)
     if not allowed:
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample", result="rate_limited")
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
@@ -3366,6 +3490,8 @@ def sample(
             if cached is not None:
                 expires_at, payload = cached
                 if expires_at > now:
+                    if prometheus_metrics.prometheus_enabled():
+                        prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
                 _sample_cache.pop(key, None)
 
@@ -3374,6 +3500,8 @@ def sample(
                 inflight = _SampleInflight()
                 _sample_inflight[key] = inflight
                 is_leader = True
+                if prometheus_metrics.prometheus_enabled():
+                    prometheus_metrics.record_sample_cache_result(endpoint="sample", result="miss")
 
         if not is_leader:
             assert inflight is not None
@@ -3383,9 +3511,13 @@ def sample(
                 if cached is not None:
                     expires_at, payload = cached
                     if expires_at > time.monotonic():
+                        if prometheus_metrics.prometheus_enabled():
+                            prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
                         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
                 payload = inflight.payload
                 if payload is not None:
+                    if prometheus_metrics.prometheus_enabled():
+                        prometheus_metrics.record_sample_cache_result(endpoint="sample", result="hit")
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
         value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
@@ -3409,10 +3541,14 @@ def sample(
             if sample_inflight is not None:
                 sample_inflight.payload = payload
                 sample_inflight.event.set()
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample", result="store")
 
         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=86400"})
 
     except Exception:
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample", result="error")
         with _sample_lock:
             key = locals().get("key")
             if isinstance(key, str):
@@ -3436,6 +3572,8 @@ def sample_batch(request: Request, body: SampleBatchIn):
     client_id = request.client.host if request.client and request.client.host else "unknown"
     allowed, retry_after = _sample_rate_limit_allow(client_id)
     if not allowed:
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="rate_limited")
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
@@ -3463,6 +3601,8 @@ def sample_batch(request: Request, body: SampleBatchIn):
         if cached is not None:
             expires_at, payload = cached
             if expires_at > now:
+                if prometheus_metrics.prometheus_enabled():
+                    prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
                 return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
             _sample_cache.pop(key, None)
 
@@ -3471,6 +3611,8 @@ def sample_batch(request: Request, body: SampleBatchIn):
             inflight = _SampleInflight()
             _sample_inflight[key] = inflight
             is_leader = True
+            if prometheus_metrics.prometheus_enabled():
+                prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="miss")
 
     if not is_leader:
         assert inflight is not None
@@ -3480,9 +3622,13 @@ def sample_batch(request: Request, body: SampleBatchIn):
             if cached is not None:
                 expires_at, payload = cached
                 if expires_at > time.monotonic():
+                    if prometheus_metrics.prometheus_enabled():
+                        prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
             payload = inflight.payload
             if payload is not None:
+                if prometheus_metrics.prometheus_enabled():
+                    prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="hit")
                 return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
     try:
@@ -3500,10 +3646,14 @@ def sample_batch(request: Request, body: SampleBatchIn):
             if sample_inflight is not None:
                 sample_inflight.payload = payload
                 sample_inflight.event.set()
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="store")
 
         return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=86400"})
 
     except Exception:
+        if prometheus_metrics.prometheus_enabled():
+            prometheus_metrics.record_sample_cache_result(endpoint="sample_batch", result="error")
         with _sample_lock:
             sample_inflight = _sample_inflight.pop(key, None)
             if sample_inflight is not None:

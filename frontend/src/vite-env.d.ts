@@ -16,6 +16,9 @@ interface ImportMetaEnv {
   readonly VITE_CARTOSKY_POSTHOG_DASHBOARD_URL?: string;
   readonly VITE_CARTOSKY_POSTHOG_DASHBOARD_EMBED_URL?: string;
   readonly VITE_CARTOSKY_POSTHOG_REPLAY_URL?: string;
+  readonly VITE_CARTOSKY_GRAFANA_URL?: string;
+  readonly VITE_CARTOSKY_GRAFANA_DASHBOARD_URL?: string;
+  readonly VITE_CARTOSKY_GRAFANA_EMBED_URL?: string;
   readonly VITE_RELEASE_SHA?: string;
 }
 

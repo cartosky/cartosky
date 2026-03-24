@@ -10,6 +10,9 @@ const POSTHOG_UI_HOST_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_UI_HOST
 const POSTHOG_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_URL ?? "").trim();
 const POSTHOG_DASHBOARD_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_EMBED_URL ?? "").trim();
 const POSTHOG_REPLAY_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_URL ?? "").trim();
+const GRAFANA_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_URL ?? "").trim();
+const GRAFANA_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_DASHBOARD_URL ?? "").trim();
+const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED_URL ?? "").trim();
 const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
 export const WEBP_RENDER_MODE_THRESHOLDS = {
@@ -227,4 +230,19 @@ export function getPostHogReplayUrl(): string | null {
 
 export function getReleaseSha(): string | null {
   return RELEASE_SHA_ENV.length > 0 ? RELEASE_SHA_ENV : null;
+}
+
+export function getGrafanaUrl(): string | null {
+  const value = GRAFANA_URL_ENV.replace(/\/$/, "");
+  return value.length > 0 ? value : null;
+}
+
+export function getGrafanaDashboardUrl(): string | null {
+  const value = GRAFANA_DASHBOARD_URL_ENV.trim();
+  return value.length > 0 ? value : null;
+}
+
+export function getGrafanaEmbedUrl(): string | null {
+  const value = GRAFANA_EMBED_URL_ENV.trim();
+  return value.length > 0 ? value : null;
 }
