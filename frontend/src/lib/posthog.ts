@@ -10,7 +10,6 @@ import {
 } from "@/lib/config";
 import { isSampledSession } from "@/lib/telemetry";
 
-const POSTHOG_DEFAULTS_VERSION = "2026-01-30";
 const POSTHOG_REPLAY_SAMPLE_RATE = 0.1;
 const POSTHOG_EVENT_BUDGET_KEY = "cartosky.posthog.event_count";
 const POSTHOG_EVENT_BUDGET = 75;
@@ -144,7 +143,6 @@ export function initPostHogAnalytics(): void {
 
   posthog.init(getPostHogApiKey(), {
     api_host: getPostHogHost(),
-    defaults: POSTHOG_DEFAULTS_VERSION,
     autocapture: false,
     capture_pageview: false,
     capture_pageleave: false,
