@@ -393,7 +393,7 @@ export function TwfShareModal({
       return "Ready, but currently excluded from the post.";
     }
     if (screenshotBlobUrl) {
-      return "Generated locally. Upload it to include it.";
+      return "Screenshot generated successfully. It will be included automatically.";
     }
     return "Included by default, or prepare and preview one now.";
   }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotStatus, screenshotUploadBusy, screenshotUrl]);
