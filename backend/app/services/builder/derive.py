@@ -117,13 +117,9 @@ def _parse_hint_int(value: Any, *, default: int, minimum: int = 0) -> int:
     return max(int(minimum), int(parsed))
 
 
-def _is_apcp_seed_grid_mismatch_error(exc: BaseException) -> bool:
+def _is_apcp_incremental_rebuild_retryable_error(exc: BaseException) -> bool:
     message = str(exc)
-    return (
-        isinstance(exc, ValueError)
-        and "APCP_STEP_RESOLUTION" in message
-        and "grid mismatch" in message
-    )
+    return isinstance(exc, ValueError) and "APCP_STEP_RESOLUTION" in message
 
 
 def _parse_kuchera_levels_hpa(value: Any) -> list[int]:
@@ -2617,11 +2613,13 @@ def _derive_snowfall_total_10to1_cumulative(
             initial_apcp_cumulative=initial_apcp_cumulative,
         )
     except ValueError as exc:
-        if not (reused_prev_cumulative and _is_apcp_seed_grid_mismatch_error(exc)):
+        if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
             raise
         logger.warning(
-            "snow10to1_incremental apcp-seed grid mismatch at fh=%03d; retrying full rebuild",
+            "snow10to1_incremental apcp incremental state unusable at fh=%03d; retrying full rebuild "
+            'reason="%s"',
             fh,
+            str(exc).replace('"', "'"),
         )
         active_step_fhs = list(step_fhs)
         reused_prev_cumulative = False
