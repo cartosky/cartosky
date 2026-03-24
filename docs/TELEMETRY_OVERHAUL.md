@@ -154,6 +154,19 @@ Use Option A for `/admin`: keep CartoSky as the authenticated admin shell and su
   - `/admin/observability` embeds and deep links
   - integration tests for exposition and label contracts
 
+### Phase 4.5: Deploy Prometheus and Grafana on the Shared Host
+
+- Install Prometheus and Grafana on the existing production host alongside the API and tile services.
+- Use Prometheus to scrape the CartoSky API immediately, with tile-server and host scrapes added once those targets exist.
+- Provision a starter Grafana dashboard from version-controlled repo assets rather than building it manually in production.
+- Wire the resulting Grafana URL and dashboard URL into `/admin/observability` as deep links first; treat iframe embedding as optional follow-up work.
+- Production-only operator steps for this phase should be driven from [OBSERVABILITY_SETUP.md](/Users/brianaustin/cartosky/docs/OBSERVABILITY_SETUP.md).
+- Phase 4.5 deliverables:
+  - same-host Prometheus service with working CartoSky scrape
+  - same-host Grafana service with provisioned datasource and starter dashboard
+  - `/admin/observability` deep links configured in production
+  - optional embed only after auth and iframe policy review
+
 ### Phase 5: Add OpenTelemetry Tracing and Correlation
 
 - Add OpenTelemetry tracing to the backend first, not the browser first.

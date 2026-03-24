@@ -1,0 +1,38 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: production
+    stack: cartosky
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: cartosky-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:8200
+        labels:
+          service: api
+          instance: cartosky-prod
+
+  # Enable after node_exporter is installed on the shared host.
+  # - job_name: node
+  #   static_configs:
+  #     - targets:
+  #         - 127.0.0.1:9100
+  #       labels:
+  #         service: node
+  #         instance: cartosky-prod
+
+  # Enable after the tile server exposes a Prometheus /metrics endpoint.
+  # - job_name: cartosky-tile-server
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets:
+  #         - 127.0.0.1:8201
+  #       labels:
+  #         service: tile-server
+  #         instance: cartosky-prod
