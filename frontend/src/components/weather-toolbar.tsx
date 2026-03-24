@@ -1,6 +1,5 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import {
-  ArrowUpRight,
   Boxes,
   CalendarClock,
   ChevronDown,
@@ -8,7 +7,6 @@ import {
   MapPin,
   Send,
   SlidersHorizontal,
-  X,
 } from "lucide-react";
 
 import type { BasemapMode } from "@/components/map-canvas";
@@ -21,6 +19,7 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
+  SelectSeparator,
   SelectTrigger,
 } from "@/components/ui/select";
 
@@ -60,9 +59,7 @@ type WeatherToolbarProps = {
   runDisplayLabel?: string;
   latestAvailableRunLabel?: string | null;
   hasNewerRunAvailable?: boolean;
-  newRunNoticeMessage?: string | null;
   onViewLatestRun?: () => void;
-  onDismissRunNotice?: () => void;
 };
 
 function ToolbarSelect(props: {
@@ -77,6 +74,10 @@ function ToolbarSelect(props: {
   triggerClassName?: string;
   hideLabel?: boolean;
   selectedLabelOverride?: string;
+  highlightState?: boolean;
+  triggerBadgeLabel?: string | null;
+  menuActionLabel?: string | null;
+  onMenuAction?: () => void;
 }) {
   const {
     label,
@@ -90,6 +91,10 @@ function ToolbarSelect(props: {
     triggerClassName,
     hideLabel = false,
     selectedLabelOverride,
+    highlightState = false,
+    triggerBadgeLabel,
+    menuActionLabel,
+    onMenuAction,
   } = props;
   const selectedLabel = selectedLabelOverride ?? options.find((opt) => opt.value === value)?.label ?? placeholder;
 
@@ -146,6 +151,23 @@ function ToolbarSelect(props: {
     ));
   }
 
+  const resolvedContent = menuActionLabel && onMenuAction ? (
+    <>
+      <button
+        type="button"
+        onClick={onMenuAction}
+        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-xs font-semibold text-emerald-50 transition-colors duration-150 hover:bg-white/10"
+      >
+        <span>{menuActionLabel}</span>
+        <span className="rounded-full border border-emerald-300/24 bg-emerald-300/12 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.16em] text-emerald-100">
+          Latest
+        </span>
+      </button>
+      <SelectSeparator className="my-1 bg-white/10" />
+      {content}
+    </>
+  ) : content;
+
   return (
     <div className="flex flex-col gap-1">
       {!hideLabel ? (
@@ -158,12 +180,21 @@ function ToolbarSelect(props: {
         <SelectTrigger
           className={cn(
             "h-[30px] w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
+            highlightState ? "border-emerald-300/25 bg-emerald-300/10 text-white hover:bg-emerald-300/14" : "",
             triggerClassName
           )}
         >
-          <span className="truncate whitespace-nowrap pr-1">{selectedLabel}</span>
+          <span className="flex min-w-0 items-center gap-2 pr-1">
+            <span className="truncate whitespace-nowrap">{selectedLabel}</span>
+            {triggerBadgeLabel ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300/24 bg-emerald-300/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                {triggerBadgeLabel}
+              </span>
+            ) : null}
+          </span>
         </SelectTrigger>
-        <SelectContent>{content}</SelectContent>
+        <SelectContent>{resolvedContent}</SelectContent>
       </Select>
     </div>
   );
@@ -266,9 +297,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     runDisplayLabel,
     latestAvailableRunLabel,
     hasNewerRunAvailable = false,
-    newRunNoticeMessage,
     onViewLatestRun,
-    onDismissRunNotice,
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const isDesktopLayout = layoutMode === "desktop";
@@ -321,6 +350,14 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               placeholder="Run"
               hideLabel
               selectedLabelOverride={runDisplayLabel}
+              highlightState={hasNewerRunAvailable}
+              triggerBadgeLabel={hasNewerRunAvailable ? "New" : null}
+              menuActionLabel={
+                hasNewerRunAvailable && latestAvailableRunLabel
+                  ? `Switch to latest (${latestAvailableRunLabel})`
+                  : null
+              }
+              onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
               triggerClassName="min-w-[142px] max-w-[142px] rounded-full border-white/10 bg-white/8 px-3"
             />
 
@@ -338,39 +375,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             />
           </div>
 
-          {hasNewerRunAvailable ? (
-            <div className="glass-overlay ml-3 inline-flex max-w-[360px] items-center gap-3 rounded-2xl border border-emerald-300/18 px-3 py-2 text-xs text-white/90 shadow-[0_18px_40px_rgba(0,0,0,0.28)]">
-              <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/78">
-                  New Run Available
-                </div>
-                <div className="truncate text-white/88">
-                  {newRunNoticeMessage ?? (latestAvailableRunLabel ? `${latestAvailableRunLabel} is ready.` : "A newer run is ready.")}
-                </div>
-              </div>
-              {onViewLatestRun ? (
-                <button
-                  type="button"
-                  onClick={onViewLatestRun}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300/24 bg-emerald-300/12 px-2.5 py-1 text-[11px] font-semibold text-emerald-50 transition-colors duration-150 hover:bg-emerald-300/18"
-                >
-                  View latest
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-              {onDismissRunNotice ? (
-                <button
-                  type="button"
-                  onClick={onDismissRunNotice}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white/64 transition-colors duration-150 hover:bg-white/12 hover:text-white"
-                  aria-label="Dismiss new run notice"
-                  title="Dismiss"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -414,33 +418,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           ) : null}
         </div>
 
-        {hasNewerRunAvailable ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-300/18 bg-emerald-300/10 px-3 py-2 text-[11px] text-white/88">
-            <span className="font-semibold text-emerald-100">
-              {newRunNoticeMessage ?? (latestAvailableRunLabel ? `New run available: ${latestAvailableRunLabel}` : "A newer run is available.")}
-            </span>
-            {onViewLatestRun ? (
-              <button
-                type="button"
-                onClick={onViewLatestRun}
-                className="inline-flex items-center gap-1 rounded-full border border-emerald-300/25 bg-emerald-300/12 px-2 py-1 font-semibold text-emerald-50"
-              >
-                View latest
-                <ArrowUpRight className="h-3 w-3" />
-              </button>
-            ) : null}
-            {onDismissRunNotice ? (
-              <button
-                type="button"
-                onClick={onDismissRunNotice}
-                className="inline-flex items-center rounded-full border border-white/12 bg-white/8 px-2 py-1 text-white/72"
-              >
-                Dismiss
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
         {mobilePanelOpen ? (
           <div
             id="mobile-layers-panel"
@@ -476,6 +453,14 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 disabled={disabled}
                 placeholder="Run"
                 selectedLabelOverride={runDisplayLabel}
+                highlightState={hasNewerRunAvailable}
+                triggerBadgeLabel={hasNewerRunAvailable ? "New" : null}
+                menuActionLabel={
+                  hasNewerRunAvailable && latestAvailableRunLabel
+                    ? `Switch to latest (${latestAvailableRunLabel})`
+                    : null
+                }
+                onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
               />
 
               <ToolbarSelect

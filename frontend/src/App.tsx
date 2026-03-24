@@ -4780,10 +4780,6 @@ export default function App() {
     setNewRunNotice(null);
   }, []);
 
-  const handleDismissNewRunNotice = useCallback(() => {
-    setNewRunNotice(null);
-  }, []);
-
   const handleVariableChange = useCallback((nextVariable: string) => {
     if (!nextVariable || nextVariable === variable) {
       return;
@@ -4949,15 +4945,6 @@ export default function App() {
     && latestRunId === runNoticeForCurrentModel.latestRunId
     && run === runNoticeForCurrentModel.previousRunId
   );
-  const newRunNoticeMessage = useMemo(() => {
-    if (showNewRunNotice && latestRunId) {
-      return `${formatRunLabel(latestRunId)} is ready. You're still viewing ${formatRunLabel(run)}.`;
-    }
-    if (hasNewerRunAvailable && latestRunId) {
-      return `Latest available: ${formatRunLabel(latestRunId)}.`;
-    }
-    return null;
-  }, [showNewRunNotice, hasNewerRunAvailable, latestRunId, run]);
 
   useEffect(() => {
     setNewRunNotice((current) => {
@@ -5230,9 +5217,7 @@ export default function App() {
         runDisplayLabel={selectedRunLabel}
         latestAvailableRunLabel={latestAvailableRunLabel}
         hasNewerRunAvailable={hasNewerRunAvailable}
-        newRunNoticeMessage={newRunNoticeMessage}
         onViewLatestRun={hasNewerRunAvailable ? handleViewLatestRun : undefined}
-        onDismissRunNotice={showNewRunNotice ? handleDismissNewRunNotice : undefined}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
