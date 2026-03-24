@@ -34,6 +34,7 @@ from app.services.render_resampling import (
     loop_fixed_width_for_tier,
     loop_max_dim_for_tier,
     loop_quality_for_tier,
+    loop_webp_save_kwargs,
     rasterio_resampling_for_loop,
     use_value_render_for_variable,
     variable_color_map_id,
@@ -213,7 +214,11 @@ def convert_job(job: Job, model_id: str, quality: int, max_dim: int) -> tuple[Jo
                     data = np.concatenate((rgb, alpha[np.newaxis, :, :]), axis=0)
             rgba = np.moveaxis(data, 0, -1)
         image = Image.fromarray(rgba, mode="RGBA")
-        image.save(job.webp_path, format="WEBP", quality=resolved_quality, method=6)
+        image.save(
+            job.webp_path,
+            format="WEBP",
+            **loop_webp_save_kwargs(model_id=model_id, var_key=job.variable, quality=resolved_quality),
+        )
         return (job, True, None)
     except Exception as exc:
         return (job, False, str(exc))

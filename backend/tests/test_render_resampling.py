@@ -306,3 +306,32 @@ def test_loop_high_quality_resampling_disabled_for_precip_and_snow_totals():
         assert render_resampling.allow_high_quality_loop_resampling(model_id="hrrr", var_key=var_key) is False
 
     assert render_resampling.allow_high_quality_loop_resampling(model_id="gfs", var_key="tmp2m") is True
+
+
+def test_only_gfs_snowfall_total_uses_lossless_loop_webp():
+    assert render_resampling.loop_webp_save_kwargs(
+        model_id="gfs",
+        var_key="snowfall_total",
+        quality=82,
+    ) == {
+        "lossless": True,
+        "method": 6,
+    }
+
+    assert render_resampling.loop_webp_save_kwargs(
+        model_id="gfs",
+        var_key="snowfall_kuchera_total",
+        quality=82,
+    ) == {
+        "quality": 82,
+        "method": 6,
+    }
+
+    assert render_resampling.loop_webp_save_kwargs(
+        model_id="nbm",
+        var_key="snowfall_total",
+        quality=82,
+    ) == {
+        "quality": 82,
+        "method": 6,
+    }

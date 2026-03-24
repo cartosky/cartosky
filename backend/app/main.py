@@ -47,6 +47,7 @@ from .services.render_resampling import (
     loop_fixed_width_for_tier,
     loop_max_dim_for_tier,
     loop_quality_for_tier,
+    loop_webp_save_kwargs,
     rasterio_resampling_for_loop,
     use_value_render_for_variable,
     variable_kind,
@@ -2411,7 +2412,11 @@ def _ensure_loop_webp(
             return False
         rgba = _apply_loop_sharpen_if_needed(rgba=rgba, model_id=model_id, var_key=var_key)
         image = Image.fromarray(rgba, mode="RGBA")
-        image.save(tmp_path, format="WEBP", quality=quality_cfg, method=6)
+        image.save(
+            tmp_path,
+            format="WEBP",
+            **loop_webp_save_kwargs(model_id=model_id, var_key=var_key, quality=quality_cfg),
+        )
         tmp_path.replace(out_path)
         return True
     except Exception:
@@ -2501,7 +2506,11 @@ def _render_loop_webp_bytes(
         rgba = _apply_loop_sharpen_if_needed(rgba=rgba, model_id=model_id, var_key=var_key)
         image = Image.fromarray(rgba, mode="RGBA")
         buffer = io.BytesIO()
-        image.save(buffer, format="WEBP", quality=quality_cfg, method=6)
+        image.save(
+            buffer,
+            format="WEBP",
+            **loop_webp_save_kwargs(model_id=model_id, var_key=var_key, quality=quality_cfg),
+        )
         return buffer.getvalue()
     except Exception:
         logger.exception("Failed in-memory loop WebP generation: %s (tier=%s)", cog_path, tier)
