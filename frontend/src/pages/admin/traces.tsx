@@ -53,7 +53,7 @@ export default function AdminTracesPage() {
           <div>
             <div className="text-2xl font-semibold tracking-tight">Traces</div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-              This route is the tracing launch point inside the CartoSky admin shell. It now shows backend trace rollout health, recent exported traces, and native Grafana trace entrypoints.
+              This route is the tracing launch point inside the CartoSky admin shell. It now shows backend trace rollout health, recent high-signal exports, and native Grafana trace entrypoints.
             </p>
           </div>
         </div>
@@ -164,14 +164,14 @@ export default function AdminTracesPage() {
         </div>
 
         <section className="mt-6 rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
-          <div className="text-sm font-semibold text-white">Recent Trace Exports</div>
+          <div className="text-sm font-semibold text-white">Recent Exported Traces</div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm text-white/76">
               <thead className="text-white/42">
                 <tr>
                   <th className="pb-3 pr-4 font-medium">Trace ID</th>
                   <th className="pb-3 pr-4 font-medium">Route</th>
-                  <th className="pb-3 pr-4 font-medium">Decision</th>
+                  <th className="pb-3 pr-4 font-medium">Export Reason</th>
                   <th className="pb-3 pr-4 font-medium">Duration</th>
                   <th className="pb-3 font-medium">Status</th>
                 </tr>
@@ -191,7 +191,7 @@ export default function AdminTracesPage() {
                 {(summary?.traces ?? []).length === 0 ? (
                   <tr>
                     <td colSpan={5} className="py-4 text-white/42">
-                      No traces exported yet. After Phase 5 is enabled in production, recent trace exports will appear here.
+                      No exported traces yet. Once traced requests cross the sample or slow/error rules, they will appear here.
                     </td>
                   </tr>
                 ) : null}

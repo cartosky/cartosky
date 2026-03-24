@@ -417,6 +417,20 @@ async def test_tracing_summary_requires_admin_and_reports_recent_traces(client: 
     assert body["enabled"] is True
     assert body["recent"]["exported_traces"] >= 1
     assert any(item["trace_id"] == trace_id for item in body["traces"])
+    assert all(item["decision"] in {"sampled", "slow", "error"} for item in body["traces"])
+
+    noise_response = await client.get("/auth/twf/status")
+    assert noise_response.status_code == 200
+    metrics_response = await client.get("/metrics")
+    assert metrics_response.status_code == 404
+
+    summary_after_noise = await client.get(
+        "/api/v4/admin/traces/summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    assert summary_after_noise.status_code == 200
+    traces_after_noise = summary_after_noise.json()["traces"]
+    assert all(item["route"] not in {"/auth/twf/status", "/metrics"} for item in traces_after_noise)
 
     finished_spans = exporter.get_finished_spans()
     span_names = {span.name for span in finished_spans}

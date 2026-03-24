@@ -29,6 +29,10 @@ _DEFAULT_SAMPLE_RATIO = 0.05
 _DEFAULT_SLOW_REQUEST_MS = 1000.0
 _PENDING_TRACE_TTL_SECONDS = 60.0
 _RECENT_TRACE_LIMIT = 25
+_NOISE_ROUTES = frozenset({
+    "/auth/twf/status",
+    "/metrics",
+})
 
 
 def _env_value(name: str, default: str = "") -> str:
@@ -126,9 +130,13 @@ class _FilteringSpanExporter(SpanExporter):
                 root_span = self._root_span(pending.spans)
                 if root_span is None:
                     continue
+                route = self._route_for_span(root_span)
+                if route in _NOISE_ROUTES:
+                    completed_trace_ids.append(trace_id)
+                    continue
                 decision = self._decision_for_trace(root_span)
-                self._recent.appendleft(self._build_summary(root_span, decision))
                 if decision != "drop":
+                    self._recent.appendleft(self._build_summary(root_span, decision))
                     to_export.extend(sorted(pending.spans, key=lambda item: item.start_time))
                     self._exported_total += 1
                     if decision == "slow":
@@ -206,6 +214,13 @@ class _FilteringSpanExporter(SpanExporter):
     @staticmethod
     def _trace_id_hex(span: ReadableSpan) -> str:
         return f"{span.context.trace_id:032x}"
+
+    @staticmethod
+    def _route_for_span(span: ReadableSpan) -> str | None:
+        route = span.attributes.get("http.route")
+        if isinstance(route, str) and route:
+            return route
+        return None
 
     def _decision_for_trace(self, span: ReadableSpan) -> str:
         duration_ms = span.attributes.get("cartosky.request.duration_ms")
