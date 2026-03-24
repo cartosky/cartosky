@@ -1163,7 +1163,7 @@ export function TwfShareModal({
                           {screenshotUrl ? "Refresh" : "Prepare"}
                         </button>
                       </div>
-                      {screenshotUrl ? (
+                      {screenshotBlobUrl ? (
                         <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/7 pt-3">
                           <label className="flex items-center gap-2 text-xs text-white/80">
                             <input
@@ -1276,17 +1276,28 @@ export function TwfShareModal({
                   <div className="text-xs font-semibold uppercase tracking-wider text-white/65">Screenshot Preview</div>
                   <div className="mt-1 text-xs text-white/55">{screenshotStatus}</div>
                 </div>
-                {screenshotUrl ? (
-                  <label className="flex items-center gap-2 rounded-md border border-white/8 bg-white/10 px-2.5 py-2 text-xs text-white/80">
-                    <input
-                      type="checkbox"
-                      checked={includeScreenshotInPost}
-                      onChange={(event) => setIncludeScreenshotInPost(event.target.checked)}
-                      className="h-4 w-4 rounded border-white/20 bg-black/30 text-emerald-400 focus:ring-emerald-300/40"
-                    />
-                    <span>Include in post</span>
-                  </label>
-                ) : null}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadScreenshot}
+                    disabled={!screenshotBlobUrl || screenshotBusy}
+                    className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download Image
+                  </button>
+                  {screenshotBlobUrl ? (
+                    <label className="flex items-center gap-2 rounded-md border border-white/8 bg-white/10 px-2.5 py-2 text-xs text-white/80">
+                      <input
+                        type="checkbox"
+                        checked={includeScreenshotInPost}
+                        onChange={(event) => setIncludeScreenshotInPost(event.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-black/30 text-emerald-400 focus:ring-emerald-300/40"
+                      />
+                      <span>Include in post</span>
+                    </label>
+                  ) : null}
+                </div>
               </div>
               {screenshotError ? (
                 <div className="mb-2 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
