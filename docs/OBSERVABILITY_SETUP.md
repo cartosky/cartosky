@@ -144,7 +144,54 @@ This keeps the first rollout simpler and avoids immediate CSP, cookie, and embed
 
 If you want a stable external operator URL such as `grafana.cartosky.com`, put Grafana behind nginx and TLS separately from the public frontend and API.
 
-That is a production-only operator step and can be done after the local services are validated.
+Repo config:
+
+- [grafana.cartosky.com.conf](/Users/brianaustin/cartosky/deployment/nginx/grafana.cartosky.com.conf)
+
+Recommended production-only rollout:
+
+1. Create a DNS record for `grafana.cartosky.com` pointing at the production host.
+2. Copy the repo nginx file into place:
+
+```bash
+sudo cp /opt/cartosky/deployment/nginx/grafana.cartosky.com.conf /etc/nginx/sites-available/grafana.cartosky.com
+sudo ln -sf /etc/nginx/sites-available/grafana.cartosky.com /etc/nginx/sites-enabled/grafana.cartosky.com
+```
+
+3. Request a certificate after DNS is live:
+
+```bash
+sudo certbot --nginx -d grafana.cartosky.com
+```
+
+4. Validate and reload nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. Confirm Grafana now opens at:
+
+```text
+https://grafana.cartosky.com
+```
+
+Once that works, add these to `/opt/cartosky/frontend/.env.production`:
+
+```bash
+VITE_CARTOSKY_GRAFANA_URL=https://grafana.cartosky.com
+VITE_CARTOSKY_GRAFANA_DASHBOARD_URL=https://grafana.cartosky.com/d/cartosky-observability/cartosky-observability
+```
+
+Then rebuild the frontend:
+
+```bash
+cd /opt/cartosky/frontend
+npm run build
+```
+
+This keeps `/admin/observability` pointing at a stable operator URL rather than a personal SSH tunnel.
 
 ## Dashboard Contents
 
