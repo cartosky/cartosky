@@ -4,6 +4,13 @@ export const API_V4_BASE = `${API_ORIGIN}/api/v4`;
 
 const TILES_BASE_ENV = String(import.meta.env.VITE_TILES_BASE ?? "").trim();
 export const TILES_BASE = (TILES_BASE_ENV || API_ORIGIN).replace(/\/$/, "");
+const POSTHOG_API_KEY_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_API_KEY ?? "").trim();
+const POSTHOG_HOST_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_HOST ?? "").trim();
+const POSTHOG_UI_HOST_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_UI_HOST ?? "").trim();
+const POSTHOG_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_URL ?? "").trim();
+const POSTHOG_DASHBOARD_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_EMBED_URL ?? "").trim();
+const POSTHOG_REPLAY_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_URL ?? "").trim();
+const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
 export const WEBP_RENDER_MODE_THRESHOLDS = {
   tier0Max: 5.8,
@@ -176,4 +183,48 @@ export function isWebVitalsEnabled(): boolean {
 
 export function isRumEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_RUM_ENABLED, false);
+}
+
+export function isPostHogEnabled(): boolean {
+  return (
+    readBooleanEnv(import.meta.env.VITE_CARTOSKY_POSTHOG_ENABLED, false)
+    && POSTHOG_API_KEY_ENV.length > 0
+    && POSTHOG_HOST_ENV.length > 0
+  );
+}
+
+export function isPostHogReplayEnabled(): boolean {
+  return isPostHogEnabled() && readBooleanEnv(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_ENABLED, false);
+}
+
+export function getPostHogApiKey(): string {
+  return POSTHOG_API_KEY_ENV;
+}
+
+export function getPostHogHost(): string {
+  return POSTHOG_HOST_ENV.replace(/\/$/, "");
+}
+
+export function getPostHogUiHost(): string | null {
+  const value = POSTHOG_UI_HOST_ENV.replace(/\/$/, "");
+  return value.length > 0 ? value : null;
+}
+
+export function getPostHogDashboardUrl(): string | null {
+  const value = POSTHOG_DASHBOARD_URL_ENV.trim();
+  return value.length > 0 ? value : null;
+}
+
+export function getPostHogDashboardEmbedUrl(): string | null {
+  const value = POSTHOG_DASHBOARD_EMBED_URL_ENV.trim();
+  return value.length > 0 ? value : null;
+}
+
+export function getPostHogReplayUrl(): string | null {
+  const value = POSTHOG_REPLAY_URL_ENV.trim();
+  return value.length > 0 ? value : null;
+}
+
+export function getReleaseSha(): string | null {
+  return RELEASE_SHA_ENV.length > 0 ? RELEASE_SHA_ENV : null;
 }

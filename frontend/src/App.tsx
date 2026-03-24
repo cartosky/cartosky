@@ -52,6 +52,7 @@ import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending 
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
+import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
@@ -1066,6 +1067,7 @@ export default function App() {
   const viewerMountedAtRef = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const firstViewerFrameTrackedRef = useRef(false);
   const firstMapRenderTrackedRef = useRef(false);
+  const viewerOpenedTrackedRef = useRef(false);
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
   const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
@@ -4621,6 +4623,13 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
+    captureProductAnalyticsEvent("animation_started", {
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
 
     if (canUseLoopPlayback && webpDefaultEnabled) {
       setIsPlaying(false);
@@ -4823,6 +4832,13 @@ export default function App() {
       region_id: nextRegion,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
+    captureProductAnalyticsEvent("region_selected", {
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: nextRegion,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
   }, [model, variable, telemetryRunId, forecastHour]);
 
   const handleModelChange = useCallback((nextModel: string) => {
@@ -4835,6 +4851,13 @@ export default function App() {
     setModel(nextModel);
     trackUsageEvent({
       event_name: "model_selected",
+      model_id: nextModel,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
+    captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
       variable_id: variable || null,
       run_id: telemetryRunId,
@@ -4899,7 +4922,34 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
+    captureProductAnalyticsEvent("variable_selected", {
+      model_id: model || null,
+      variable_id: nextVariable,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
   }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests]);
+
+  useEffect(() => {
+    if (
+      viewerOpenedTrackedRef.current
+      || !firstWeatherFramePainted
+      || !hasRenderableSelection
+      || !model
+      || !variable
+    ) {
+      return;
+    }
+    viewerOpenedTrackedRef.current = true;
+    captureProductAnalyticsEvent("viewer_opened", {
+      model_id: model,
+      variable_id: variable,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
+  }, [firstWeatherFramePainted, hasRenderableSelection, model, variable, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -5174,6 +5224,13 @@ export default function App() {
 
     setSharePayload(fallbackPayload);
     setIsShareModalOpen(true);
+    captureProductAnalyticsEvent("share_clicked", {
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+    });
 
     void import("@/lib/share-summary")
       .then(({ buildShareSummary }) => {
@@ -5288,7 +5345,18 @@ export default function App() {
         pointLabelsEnabled={pointLabelsEnabled}
         onPointLabelsEnabledChange={setPointLabelsEnabled}
         legendVisible={legendVisible}
-        onLegendVisibleChange={setLegendVisible}
+        onLegendVisibleChange={(nextVisible) => {
+          setLegendVisible(nextVisible);
+          if (nextVisible) {
+            captureProductAnalyticsEvent("legend_opened", {
+              model_id: model || null,
+              variable_id: variable || null,
+              run_id: telemetryRunId,
+              region_id: region || null,
+              forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+            });
+          }
+        }}
         basemapMode={basemapMode}
         onBasemapModeChange={setBasemapMode}
         opacity={opacity}
@@ -5437,7 +5505,21 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => setLegendVisible((current) => !current)}
+                  onClick={() => {
+                    setLegendVisible((current) => {
+                      const nextVisible = !current;
+                      if (nextVisible) {
+                        captureProductAnalyticsEvent("legend_opened", {
+                          model_id: model || null,
+                          variable_id: variable || null,
+                          run_id: telemetryRunId,
+                          region_id: region || null,
+                          forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+                        });
+                      }
+                      return nextVisible;
+                    });
+                  }}
                   aria-pressed={legendVisible}
                   className={
                     legendVisible
