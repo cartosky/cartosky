@@ -582,24 +582,17 @@ function drawBottomLegend(
           const x = contentX + column * (sectionWidth + gapX);
           const y = bandY + 16 + rowIndex * (sectionHeight + gapY);
           const values = group.entries.slice().reverse();
-          const swatchCount = Math.min(4, values.length);
-          const swatchGap = 5;
-          const swatchWidth = (sectionWidth - swatchGap * Math.max(0, swatchCount - 1)) / Math.max(1, swatchCount);
+          const minValue = Number(values[values.length - 1]?.value);
+          const maxValue = Number(values[0]?.value);
+          const colors = values.map((entry) => entry.color).filter(Boolean);
 
           ctx.font = "700 10px system-ui, -apple-system, Segoe UI, sans-serif";
           drawLegendLabel(ctx, group.label.toUpperCase(), x, y);
-          for (let index = 0; index < swatchCount; index += 1) {
-            const entry = values[Math.round((index / Math.max(1, swatchCount - 1)) * (values.length - 1))];
-            const swatchX = x + index * (swatchWidth + swatchGap);
-            ctx.fillStyle = entry.color;
-            drawRoundedRect(ctx, swatchX, y + 8, swatchWidth, barHeight, 5);
-            ctx.fill();
-            ctx.strokeStyle = "rgba(255,255,255,0.14)";
-            strokeRoundedRect(ctx, swatchX + 0.5, y + 8.5, swatchWidth - 1, barHeight - 1, 5);
+          if (Number.isFinite(minValue) && Number.isFinite(maxValue)) {
+            ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
+            drawLegendLabel(ctx, `${formatLegendValue(minValue)}-${formatLegendValue(maxValue)}`, x + sectionWidth, y, "right");
           }
-          ctx.font = "600 10px system-ui, -apple-system, Segoe UI, sans-serif";
-          drawLegendLabel(ctx, "Light", x, y + 28);
-          drawLegendLabel(ctx, "Heavy", x + sectionWidth, y + 28, "right");
+          drawSectionGradient(ctx, x, y + 8, sectionWidth, barHeight, colors);
         });
       } else {
         const gap = 10;
