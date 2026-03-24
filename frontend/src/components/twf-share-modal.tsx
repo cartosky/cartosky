@@ -1163,28 +1163,6 @@ export function TwfShareModal({
                           {screenshotUrl ? "Refresh" : "Prepare"}
                         </button>
                       </div>
-                      {screenshotBlobUrl ? (
-                        <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/7 pt-3">
-                          <label className="flex items-center gap-2 text-xs text-white/80">
-                            <input
-                              type="checkbox"
-                              checked={includeScreenshotInPost}
-                              onChange={(event) => setIncludeScreenshotInPost(event.target.checked)}
-                              className="h-4 w-4 rounded border-white/20 bg-black/30 text-emerald-400 focus:ring-emerald-300/40"
-                            />
-                            <span>Include screenshot in post</span>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={handleDownloadScreenshot}
-                            disabled={!screenshotBlobUrl || screenshotBusy}
-                            className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            Download Image
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
                     <div className={`${insetCardClass} px-3 py-2`}>
                       <div className="flex items-start justify-between gap-3">
