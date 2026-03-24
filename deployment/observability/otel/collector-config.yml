@@ -9,7 +9,7 @@ processors:
 
 exporters:
   otlphttp/tempo:
-    endpoint: http://127.0.0.1:3200
+    endpoint: http://127.0.0.1:4319
     tls:
       insecure: true
 

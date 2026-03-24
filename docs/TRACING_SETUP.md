@@ -6,7 +6,8 @@ It assumes:
 
 - the CartoSky API exports OTLP traces when `CARTOSKY_OTEL_ENABLED=1`
 - traces are sent to a local OpenTelemetry Collector on `127.0.0.1:4318`
-- the local Collector forwards traces into a local Tempo backend
+- the local Collector forwards traces into a local Tempo OTLP HTTP receiver on `127.0.0.1:4319`
+- Grafana queries Tempo on `127.0.0.1:3200`
 - Grafana remains the primary operator UI for trace search and drill-down
 
 ## Repo Assets
@@ -39,14 +40,26 @@ Use the package source or binary/source layout you already trust on the producti
 ```bash
 sudo mkdir -p /etc/otelcol
 sudo cp /opt/cartosky/deployment/observability/otel/collector-config.yml /etc/otelcol/config.yaml
+sudo systemctl restart otelcol
+sudo systemctl status otelcol --no-pager
 ```
 
 ### 3. Production-only: place the Tempo config
 
 ```bash
 sudo mkdir -p /etc/tempo
-sudo cp /opt/cartosky/deployment/observability/tempo/tempo.yml /etc/tempo/tempo.yml
+sudo cp /opt/cartosky/deployment/observability/tempo/tempo.yml /etc/tempo/config.yml
 sudo mkdir -p /var/lib/tempo/traces
+sudo chown -R tempo:nogroup /etc/tempo /var/lib/tempo
+```
+
+On single-host installs, Tempo can take roughly 60 seconds to become ready while the compactor ring stabilizes. During that period, `GET /ready` can return `503` with one service still starting.
+
+Then restart Tempo:
+
+```bash
+sudo systemctl restart tempo
+sudo systemctl status tempo --no-pager
 ```
 
 ### 4. Production-only: provision Grafana with Tempo
@@ -115,6 +128,7 @@ npm run build
 ### Grafana validation
 
 - confirm `CartoSky Tempo` datasource exists
+- open Grafana Explore and wait until the Tempo datasource loads without a connection error
 - use Grafana trace search to find recent API traces
 
 ## Current Scope
