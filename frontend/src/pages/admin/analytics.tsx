@@ -7,7 +7,6 @@ import {
   getPostHogDashboardUrl,
   getPostHogReplayUrl,
   getPostHogUiHost,
-  isAdminEmbedsEnabled,
   isPostHogEnabled,
   isPostHogReplayEnabled,
 } from "@/lib/config";
@@ -16,7 +15,6 @@ export default function AdminAnalyticsPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [events, setEvents] = useState<Array<{ event_name: string; count: number }>>([]);
   const [error, setError] = useState<string | null>(null);
-  const embedsEnabled = isAdminEmbedsEnabled();
   const posthogEnabled = isPostHogEnabled();
   const replayEnabled = isPostHogReplayEnabled();
   const dashboardUrl = getPostHogDashboardUrl();
@@ -68,8 +66,8 @@ export default function AdminAnalyticsPage() {
           <div>
             <div className="text-2xl font-semibold tracking-tight">Analytics</div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-              This route is the future PostHog launch point. For Phase 1 it keeps the admin shell in place and shows the current first-party
-              usage counts that seed the v1 event taxonomy.
+              This route is the PostHog launch point inside the CartoSky admin shell. It now provides native status and launch surfaces,
+              plus an embedded dashboard when a PostHog embed URL is configured.
             </p>
           </div>
         </div>
@@ -175,11 +173,11 @@ export default function AdminAnalyticsPage() {
         </div>
       </section>
 
-      {embedsEnabled && dashboardEmbedUrl ? (
+      {dashboardEmbedUrl ? (
         <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
           <div className="text-lg font-semibold">Embedded dashboard</div>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-            This embed should stay limited to high-level dashboard views. Replay and ad hoc drill-down remain native PostHog workflows.
+            This embed is the main live analytics surface inside CartoSky admin. Replay and ad hoc drill-down still stay in native PostHog.
           </p>
           <div className="mt-5 overflow-hidden rounded-[24px] border border-white/10 bg-black/20">
             <iframe
@@ -193,9 +191,10 @@ export default function AdminAnalyticsPage() {
       ) : null}
 
       <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-        <div className="text-lg font-semibold">Migration comparison counts</div>
+        <div className="text-lg font-semibold">Legacy comparison counts</div>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-          These existing first-party usage counts are temporary migration scaffolding. They remain useful while PostHog is filling in, but PostHog now owns the long-term product analytics path.
+          Keep these existing first-party counts around for a short validation window only. They are still useful for migration confidence,
+          but PostHog is now the source of truth for product analytics and this section should be removed after the next stable validation pass.
         </p>
 
         <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
