@@ -36,11 +36,36 @@ type UsageEventInput = TelemetryBase & {
   event_name: "model_selected" | "variable_selected" | "region_selected" | "animation_play";
 };
 
+type RumMetricInput = TelemetryBase & {
+  metric_name:
+    | "lcp"
+    | "inp"
+    | "cls"
+    | "manifest_fetch_duration"
+    | "first_map_render_duration"
+    | "first_overlay_visible_duration"
+    | "tile_request_failure_count"
+    | "animation_stall_count"
+    | "frame_drop_bucket";
+  metric_value: number;
+  metric_unit: "ms" | "score" | "count";
+  sample_rate?: number;
+};
+
 function randomId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 export function getTelemetrySessionId(): string {
@@ -58,6 +83,18 @@ export function getTelemetrySessionId(): string {
   } catch {
     return randomId();
   }
+}
+
+export function isSampledSession(sampleRate: number): boolean {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    return false;
+  }
+  if (sampleRate >= 1) {
+    return true;
+  }
+  const sessionId = getTelemetrySessionId();
+  const bucket = stableHash(sessionId) / 0xffffffff;
+  return bucket < sampleRate;
 }
 
 function getDeviceType(): "mobile" | "desktop" {
@@ -135,4 +172,18 @@ export function trackPerfEvent(payload: PerfEventInput): void {
 export function trackUsageEvent(payload: UsageEventInput): void {
   const enriched = enrichPayload(payload);
   postTelemetry(`${API_ORIGIN}/api/v4/telemetry/usage`, enriched);
+}
+
+export function trackRumMetric(payload: RumMetricInput): void {
+  const enriched = enrichPayload(payload);
+  if (!Number.isFinite(enriched.metric_value) || enriched.metric_value < 0) {
+    return;
+  }
+  if (
+    enriched.sample_rate !== undefined
+    && (!Number.isFinite(enriched.sample_rate) || enriched.sample_rate <= 0 || enriched.sample_rate > 1)
+  ) {
+    return;
+  }
+  postTelemetry(`${API_ORIGIN}/api/v4/telemetry/rum`, enriched);
 }

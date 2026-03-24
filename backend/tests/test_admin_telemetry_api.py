@@ -210,6 +210,119 @@ async def test_usage_telemetry_summary_returns_counts(client: httpx.AsyncClient)
     assert summary.json()["events"] == [{"event_name": "model_selected", "count": 1}]
 
 
+async def test_rum_telemetry_ingest_and_admin_overview_summary(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        {
+            "metric_name": "lcp",
+            "metric_value": 2100.0,
+            "metric_unit": "ms",
+            "sample_rate": 1.0,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 18,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "lcp",
+            "metric_value": 2800.0,
+            "metric_unit": "ms",
+            "sample_rate": 1.0,
+            "session_id": "viewer-session-2",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20260308_00z",
+            "region_id": "conus",
+            "forecast_hour": 19,
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "inp",
+            "metric_value": 180.0,
+            "metric_unit": "ms",
+            "sample_rate": 1.0,
+            "session_id": "viewer-session-1",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "cls",
+            "metric_value": 0.08,
+            "metric_unit": "score",
+            "sample_rate": 1.0,
+            "session_id": "viewer-session-1",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "manifest_fetch_duration",
+            "metric_value": 340.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-1",
+            "page": "/viewer",
+        },
+    ]
+
+    for payload in payloads:
+        response = await client.post(
+            "/api/v4/telemetry/rum",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json=payload,
+        )
+        assert response.status_code == 204
+
+    summary = await client.get(
+        "/api/v4/admin/overview/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["web_vitals"]["lcp"] == {
+        "count": 2,
+        "unit": "ms",
+        "avg": 2450.0,
+        "min": 2100.0,
+        "max": 2800.0,
+        "p50": 2450.0,
+        "p75": 2625.0,
+        "p95": 2765.0,
+        "total_value": 4900.0,
+        "good_threshold": 2500.0,
+        "needs_improvement_threshold": 4000.0,
+    }
+    assert body["web_vitals"]["inp"]["p75"] == 180.0
+    assert body["web_vitals"]["inp"]["good_threshold"] == 200.0
+    assert body["web_vitals"]["cls"]["p75"] == 0.08
+    assert body["web_vitals"]["cls"]["good_threshold"] == 0.1
+    assert body["rum_diagnostics"]["manifest_fetch_duration"]["count"] == 1
+    assert body["rum_diagnostics"]["manifest_fetch_duration"]["p95"] == 340.0
+
+
+async def test_admin_overview_summary_requires_admin_membership(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="normal-session", member_id=99, name="User")
+
+    response = await client.get(
+        "/api/v4/admin/overview/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "TWF_ADMIN_REQUIRED",
+            "message": "Admin access required",
+        }
+    }
+
+
 async def test_admin_perf_breakdown_supports_animation_stall_by_model_and_variable(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
 

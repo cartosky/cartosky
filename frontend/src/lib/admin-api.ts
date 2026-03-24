@@ -71,6 +71,34 @@ export type UsageSummaryResponse = {
   }>;
 };
 
+export type OverviewMetricSummary = {
+  count: number;
+  unit: "ms" | "score" | "count";
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  p50: number | null;
+  p75: number | null;
+  p95: number | null;
+  total_value: number;
+  good_threshold: number | null;
+  needs_improvement_threshold: number | null;
+};
+
+export type AdminOverviewSummaryResponse = {
+  window: string;
+  web_vitals: Record<"lcp" | "inp" | "cls", OverviewMetricSummary>;
+  rum_diagnostics: Record<
+    | "manifest_fetch_duration"
+    | "first_map_render_duration"
+    | "first_overlay_visible_duration"
+    | "tile_request_failure_count"
+    | "animation_stall_count"
+    | "frame_drop_bucket",
+    OverviewMetricSummary
+  >;
+};
+
 export type StatusResult = {
   id: string;
   model_id: string;
@@ -194,6 +222,12 @@ export async function fetchAdminUsageSummary(window: string): Promise<UsageSumma
   const search = new URLSearchParams();
   search.set("window", window);
   return fetchJson<UsageSummaryResponse>(`${API_ORIGIN}/api/v4/admin/usage/summary?${search.toString()}`);
+}
+
+export async function fetchAdminOverviewSummary(window: string): Promise<AdminOverviewSummaryResponse> {
+  const search = new URLSearchParams();
+  search.set("window", window);
+  return fetchJson<AdminOverviewSummaryResponse>(`${API_ORIGIN}/api/v4/admin/overview/summary?${search.toString()}`);
 }
 
 export async function fetchAdminStatusResults(params: {

@@ -169,3 +169,11 @@ export function isViewportAwareTileReadinessEnabled(): boolean {
 export function isAdminEmbedsEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_ADMIN_EMBEDS_ENABLED, false);
 }
+
+export function isWebVitalsEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_WEB_VITALS_ENABLED, false);
+}
+
+export function isRumEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_RUM_ENABLED, false);
+}

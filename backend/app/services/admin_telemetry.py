@@ -45,6 +45,45 @@ ALLOWED_USAGE_EVENT_NAMES = {
     "animation_play",
 }
 
+ALLOWED_RUM_METRIC_NAMES = {
+    "lcp",
+    "inp",
+    "cls",
+    "manifest_fetch_duration",
+    "first_map_render_duration",
+    "first_overlay_visible_duration",
+    "tile_request_failure_count",
+    "animation_stall_count",
+    "frame_drop_bucket",
+}
+
+RUM_METRIC_UNITS = {
+    "lcp": "ms",
+    "inp": "ms",
+    "cls": "score",
+    "manifest_fetch_duration": "ms",
+    "first_map_render_duration": "ms",
+    "first_overlay_visible_duration": "ms",
+    "tile_request_failure_count": "count",
+    "animation_stall_count": "count",
+    "frame_drop_bucket": "count",
+}
+
+WEB_VITAL_THRESHOLDS = {
+    "lcp": {
+        "good_threshold": 2500.0,
+        "needs_improvement_threshold": 4000.0,
+    },
+    "inp": {
+        "good_threshold": 200.0,
+        "needs_improvement_threshold": 500.0,
+    },
+    "cls": {
+        "good_threshold": 0.1,
+        "needs_improvement_threshold": 0.25,
+    },
+}
+
 PERF_TARGETS_MS = {
     "viewer_first_frame": 1500.0,
     "frame_change": 250.0,
@@ -145,6 +184,33 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 ON usage_events(event_name, created_at);
             CREATE INDEX IF NOT EXISTS idx_usage_events_created
                 ON usage_events(created_at);
+
+            CREATE TABLE IF NOT EXISTS rum_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                session_id TEXT NOT NULL,
+                member_id INTEGER,
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                metric_unit TEXT NOT NULL,
+                sample_rate REAL,
+                model_id TEXT,
+                variable_id TEXT,
+                run_id TEXT,
+                region_id TEXT,
+                forecast_hour INTEGER,
+                device_type TEXT,
+                viewport_bucket TEXT,
+                page TEXT,
+                meta_json TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rum_events_metric_created
+                ON rum_events(metric_name, created_at);
+            CREATE INDEX IF NOT EXISTS idx_rum_events_created
+                ON rum_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_rum_events_device_created
+                ON rum_events(device_type, created_at);
 
             CREATE TABLE IF NOT EXISTS synthetic_perf_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -957,6 +1023,74 @@ def record_usage_event(payload: dict[str, Any], *, member_id: int | None = None)
         )
 
 
+def record_rum_metric(payload: dict[str, Any], *, member_id: int | None = None) -> None:
+    metric_name = _normalize_text(payload.get("metric_name") or payload.get("name"), max_length=64)
+    if metric_name not in ALLOWED_RUM_METRIC_NAMES:
+        raise ValueError("Unsupported rum metric")
+
+    metric_value = float(payload.get("metric_value"))
+    if metric_value < 0 or metric_value > 600000:
+        raise ValueError("Invalid rum metric value")
+
+    metric_unit = _normalize_text(payload.get("metric_unit"), max_length=16)
+    expected_unit = RUM_METRIC_UNITS.get(metric_name)
+    if metric_unit != expected_unit:
+        raise ValueError("Invalid rum metric unit")
+
+    sample_rate = payload.get("sample_rate")
+    parsed_sample_rate: float | None = None
+    if sample_rate is not None:
+        parsed_sample_rate = float(sample_rate)
+        if parsed_sample_rate <= 0 or parsed_sample_rate > 1:
+            raise ValueError("Invalid rum sample rate")
+
+    created_at = int(time.time())
+    session_id = _normalize_text(payload.get("session_id"), max_length=128) or "anonymous"
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO rum_events (
+                created_at,
+                session_id,
+                member_id,
+                metric_name,
+                metric_value,
+                metric_unit,
+                sample_rate,
+                model_id,
+                variable_id,
+                run_id,
+                region_id,
+                forecast_hour,
+                device_type,
+                viewport_bucket,
+                page,
+                meta_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                created_at,
+                session_id,
+                member_id,
+                metric_name,
+                metric_value,
+                metric_unit,
+                parsed_sample_rate,
+                _normalize_text(payload.get("model_id"), max_length=32),
+                _normalize_text(payload.get("variable_id"), max_length=64),
+                _normalize_text(payload.get("run_id"), max_length=32),
+                _normalize_text(payload.get("region_id"), max_length=32),
+                _normalize_forecast_hour(payload.get("forecast_hour")),
+                _normalize_text(payload.get("device_type"), max_length=24),
+                _normalize_text(payload.get("viewport_bucket"), max_length=24),
+                _normalize_text(payload.get("page"), max_length=120),
+                _serialize_meta(payload.get("meta")),
+            ),
+        )
+
+
 def _compute_percentile(values: list[float], percentile: float) -> float | None:
     if not values:
         return None
@@ -1077,6 +1211,44 @@ def _metric_summary(values: Iterable[float], *, target_ms: float | None = None) 
         "p50_ms": round(_compute_percentile(samples, 0.50) or 0.0, 1),
         "p95_ms": round(_compute_percentile(samples, 0.95) or 0.0, 1),
         "target_ms": target_ms,
+    }
+
+
+def _rum_metric_summary(
+    values: Iterable[float],
+    *,
+    metric_unit: str,
+    good_threshold: float | None = None,
+    needs_improvement_threshold: float | None = None,
+) -> dict[str, Any]:
+    samples = [float(value) for value in values]
+    if not samples:
+        return {
+            "count": 0,
+            "unit": metric_unit,
+            "avg": None,
+            "min": None,
+            "max": None,
+            "p50": None,
+            "p75": None,
+            "p95": None,
+            "total_value": 0.0,
+            "good_threshold": good_threshold,
+            "needs_improvement_threshold": needs_improvement_threshold,
+        }
+    avg_value = sum(samples) / len(samples)
+    return {
+        "count": len(samples),
+        "unit": metric_unit,
+        "avg": round(avg_value, 3),
+        "min": round(min(samples), 3),
+        "max": round(max(samples), 3),
+        "p50": round(_compute_percentile(samples, 0.50) or 0.0, 3),
+        "p75": round(_compute_percentile(samples, 0.75) or 0.0, 3),
+        "p95": round(_compute_percentile(samples, 0.95) or 0.0, 3),
+        "total_value": round(sum(samples), 3),
+        "good_threshold": good_threshold,
+        "needs_improvement_threshold": needs_improvement_threshold,
     }
 
 
@@ -1456,4 +1628,49 @@ def get_usage_summary(*, since_ts: int) -> dict[str, Any]:
             }
             for row in rows
         ]
+    }
+
+
+def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT metric_name, metric_value
+            FROM rum_events
+            WHERE created_at >= ?
+            ORDER BY created_at ASC
+            """,
+            (since_ts,),
+        ).fetchall()
+
+    values_by_metric: dict[str, list[float]] = {name: [] for name in ALLOWED_RUM_METRIC_NAMES}
+    for row in rows:
+        values_by_metric[str(row["metric_name"])].append(float(row["metric_value"]))
+
+    web_vitals = {
+        metric_name: _rum_metric_summary(
+            values_by_metric.get(metric_name, []),
+            metric_unit=RUM_METRIC_UNITS[metric_name],
+            good_threshold=WEB_VITAL_THRESHOLDS[metric_name]["good_threshold"],
+            needs_improvement_threshold=WEB_VITAL_THRESHOLDS[metric_name]["needs_improvement_threshold"],
+        )
+        for metric_name in ("lcp", "inp", "cls")
+    }
+    rum_diagnostics = {
+        metric_name: _rum_metric_summary(
+            values_by_metric.get(metric_name, []),
+            metric_unit=RUM_METRIC_UNITS[metric_name],
+        )
+        for metric_name in (
+            "manifest_fetch_duration",
+            "first_map_render_duration",
+            "first_overlay_visible_duration",
+            "tile_request_failure_count",
+            "animation_stall_count",
+            "frame_drop_bucket",
+        )
+    }
+    return {
+        "web_vitals": web_vitals,
+        "rum_diagnostics": rum_diagnostics,
     }

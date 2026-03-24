@@ -985,6 +985,13 @@ class UsageTelemetryIn(TelemetryEventBase):
     event_name: str = Field(min_length=1, max_length=64)
 
 
+class RumTelemetryIn(TelemetryEventBase):
+    metric_name: str = Field(min_length=1, max_length=64)
+    metric_value: float = Field(ge=0, le=600000)
+    metric_unit: str = Field(min_length=1, max_length=16)
+    sample_rate: float | None = Field(default=None, gt=0, le=1)
+
+
 @app.post("/api/v4/telemetry/perf", status_code=204)
 async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Response:
     sess = _maybe_twf_session(request)
@@ -1002,6 +1009,16 @@ async def post_usage_telemetry(request: Request, payload: UsageTelemetryIn) -> R
         admin_telemetry.record_usage_event(payload.model_dump(), member_id=sess.member_id if sess else None)
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_USAGE_EVENT", message=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@app.post("/api/v4/telemetry/rum", status_code=204)
+async def post_rum_telemetry(request: Request, payload: RumTelemetryIn) -> Response:
+    sess = _maybe_twf_session(request)
+    try:
+        admin_telemetry.record_rum_metric(payload.model_dump(), member_id=sess.member_id if sess else None)
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_RUM_METRIC", message=str(exc)) from exc
     return Response(status_code=204)
 
 
@@ -1127,6 +1144,17 @@ async def admin_usage_summary(request: Request, window: str = Query("30d")) -> d
     return {
         "window": normalized_window,
         **admin_telemetry.get_usage_summary(since_ts=since_ts),
+    }
+
+
+@app.get("/api/v4/admin/overview/summary")
+async def admin_overview_summary(request: Request, window: str = Query("7d")) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    return {
+        "window": normalized_window,
+        **admin_telemetry.get_overview_summary(since_ts=since_ts),
     }
 
 

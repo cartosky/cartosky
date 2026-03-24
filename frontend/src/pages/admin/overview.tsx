@@ -3,9 +3,12 @@ import { Activity, AlertTriangle, BarChart3, ClipboardCheck, Gauge, Waypoints } 
 import { Link } from "react-router-dom";
 
 import {
+  fetchAdminOverviewSummary,
   fetchAdminStatusResults,
   fetchAdminUsageSummary,
   fetchTwfStatus,
+  type AdminOverviewSummaryResponse,
+  type OverviewMetricSummary,
   type StatusResult,
   type TwfStatus,
   type UsageSummaryResponse,
@@ -79,10 +82,42 @@ function FutureSignalCard(props: { title: string; detail: string; phase: string;
   );
 }
 
+function formatMetricValue(summary: OverviewMetricSummary | null, percentile: "p75" | "p95" = "p75"): string {
+  if (!summary) {
+    return "Awaiting data";
+  }
+  const value = summary[percentile];
+  if (!Number.isFinite(value)) {
+    return "Awaiting data";
+  }
+  if (summary.unit === "score") {
+    return Number(value).toFixed(3);
+  }
+  if (summary.unit === "count") {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(value));
+  }
+  return `${Math.round(Number(value))} ms`;
+}
+
+function getVitalTone(summary: OverviewMetricSummary | null): string {
+  if (!summary || !Number.isFinite(summary.p75)) {
+    return "text-white";
+  }
+  const value = Number(summary.p75);
+  if (summary.good_threshold !== null && value <= summary.good_threshold) {
+    return "text-[#9dd5bf]";
+  }
+  if (summary.needs_improvement_threshold !== null && value <= summary.needs_improvement_threshold) {
+    return "text-amber-300";
+  }
+  return "text-rose-300";
+}
+
 export default function AdminOverviewPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [results, setResults] = useState<StatusResult[]>([]);
   const [usage, setUsage] = useState<UsageSummaryResponse["events"]>([]);
+  const [overview, setOverview] = useState<AdminOverviewSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,13 +132,15 @@ export default function AdminOverviewPage() {
           return;
         }
 
-        const [statusResponse, usageResponse] = await Promise.all([
+        const [statusResponse, usageResponse, overviewResponse] = await Promise.all([
           fetchAdminStatusResults({ window: "30d", limit: 200 }),
           fetchAdminUsageSummary("30d"),
+          fetchAdminOverviewSummary("7d"),
         ]);
         if (cancelled) return;
         setResults(statusResponse.results);
         setUsage(usageResponse.events);
+        setOverview(overviewResponse);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -128,6 +165,8 @@ export default function AdminOverviewPage() {
   );
   const totalUsageEvents = useMemo(() => usage.reduce((sum, event) => sum + event.count, 0), [usage]);
   const topUsageEvent = usage[0]?.event_name ?? "No usage events yet";
+  const webVitals = overview?.web_vitals ?? null;
+  const rumDiagnostics = overview?.rum_diagnostics ?? null;
 
   return (
     <AdminGate status={status} loadingLabel="Loading admin overview...">
@@ -154,13 +193,42 @@ export default function AdminOverviewPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-2">
-          <FutureSignalCard
-            title="Web Vitals Health"
-            detail="LCP, INP, and CLS cards will populate here once Phase 2 adds the new frontend truth baseline."
-            phase="Phase 2"
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            title="LCP p75"
+            value={formatMetricValue(webVitals?.lcp ?? null)}
+            hint={webVitals?.lcp?.count ? `${webVitals.lcp.count} samples in last 7d` : "Waiting for Web Vitals data"}
             icon={Gauge}
+            accentClassName={getVitalTone(webVitals?.lcp ?? null)}
           />
+          <SummaryCard
+            title="INP p75"
+            value={formatMetricValue(webVitals?.inp ?? null)}
+            hint={webVitals?.inp?.count ? `${webVitals.inp.count} samples in last 7d` : "Waiting for Web Vitals data"}
+            icon={Gauge}
+            accentClassName={getVitalTone(webVitals?.inp ?? null)}
+          />
+          <SummaryCard
+            title="CLS p75"
+            value={formatMetricValue(webVitals?.cls ?? null)}
+            hint={webVitals?.cls?.count ? `${webVitals.cls.count} samples in last 7d` : "Waiting for Web Vitals data"}
+            icon={Gauge}
+            accentClassName={getVitalTone(webVitals?.cls ?? null)}
+          />
+          <SummaryCard
+            title="Manifest Fetch p95"
+            value={formatMetricValue(rumDiagnostics?.manifest_fetch_duration ?? null, "p95")}
+            hint={
+              rumDiagnostics?.manifest_fetch_duration?.count
+                ? `${rumDiagnostics.manifest_fetch_duration.count} sampled diagnostics in last 7d`
+                : "Waiting for sampled RUM diagnostics"
+            }
+            icon={Activity}
+            accentClassName="text-sky-300"
+          />
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-3">
           <FutureSignalCard
             title="Product Analytics"
             detail="PostHog-backed usage summaries, funnels, and replay launch points will appear here under the analytics route in Phase 3."

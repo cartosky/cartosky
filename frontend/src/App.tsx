@@ -52,6 +52,7 @@ import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending 
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
+import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
@@ -1064,11 +1065,13 @@ export default function App() {
   const pendingInitialLoopRef = useRef<boolean | undefined>(initialPermalink.loop);
   const viewerMountedAtRef = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const firstViewerFrameTrackedRef = useRef(false);
+  const firstMapRenderTrackedRef = useRef(false);
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
   const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
+  const failedRumCountRef = useRef(0);
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
   const lastLoopAdvanceRef = useRef<number | null>(null);
@@ -2091,6 +2094,19 @@ export default function App() {
 
     const bufferedCount = ready.size;
     const failedCount = failed.size;
+    if (failedCount > failedRumCountRef.current) {
+      trackRumDiagnosticMetric({
+        metric_name: "tile_request_failure_count",
+        metric_value: failedCount - failedRumCountRef.current,
+        metric_unit: "count",
+        model_id: modelRef.current || null,
+        variable_id: variableRef.current || null,
+        run_id: telemetryRunId,
+        region_id: region || null,
+        forecast_hour: forecastHour,
+      });
+    }
+    failedRumCountRef.current = failedCount;
     const terminalCount = Math.min(totalFrames, bufferedCount + failedCount);
     const queueDepth = Math.max(0, totalFrames - terminalCount - inFlight.size);
 
@@ -2122,7 +2138,7 @@ export default function App() {
       version,
     };
     setBufferSnapshot(snapshot);
-  }, [frameHours, forecastHour]);
+  }, [frameHours, forecastHour, telemetryRunId, region]);
 
   const displayedOverlayVariable = isLoopDisplayActive ? (visualVariable || variable) : variable;
   const displayedOverlayVariableKind = isLoopDisplayActive ? visualVariableKind : selectedVariableKind;
@@ -2985,6 +3001,16 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
     });
+    trackRumDiagnosticMetric({
+      metric_name: "first_overlay_visible_duration",
+      metric_value: durationMs,
+      metric_unit: "ms",
+      model_id: modelRef.current || null,
+      variable_id: variableRef.current || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
+    });
   }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
   useEffect(() => {
@@ -3406,6 +3432,23 @@ export default function App() {
                   render_mode: visibleRenderMode,
                 },
               });
+              trackRumDiagnosticMetric({
+                metric_name: "frame_drop_bucket",
+                metric_value: 1,
+                metric_unit: "count",
+                model_id: modelRef.current || null,
+                variable_id: variableRef.current || null,
+                forecast_hour: nextHour,
+                meta: {
+                  render_mode: visibleRenderMode,
+                  bucket:
+                    gapMs >= 1000
+                      ? "1000ms_plus"
+                      : gapMs >= 500
+                        ? "500ms_to_999ms"
+                        : "250ms_to_499ms",
+                },
+              });
             }
           }
         }
@@ -3419,6 +3462,18 @@ export default function App() {
             duration_ms: stallMs,
             model_id: modelRef.current || null,
             variable_id: variableRef.current || null,
+          });
+          trackRumDiagnosticMetric({
+            metric_name: "animation_stall_count",
+            metric_value: 1,
+            metric_unit: "count",
+            model_id: modelRef.current || null,
+            variable_id: variableRef.current || null,
+            forecast_hour: nextHour,
+            meta: {
+              render_mode: visibleRenderMode,
+              stall_ms: stallMs,
+            },
           });
         }
       }
@@ -3978,6 +4033,7 @@ export default function App() {
     setLoadedFramesKey("");
     setSettledTileUrl(null);
     setMapLoadingTileUrl(null);
+    failedRumCountRef.current = 0;
   }, [selectionKey]);
 
   useEffect(() => {
@@ -4006,6 +4062,15 @@ export default function App() {
           meta: {
             resolved: Boolean(manifest),
           },
+        });
+        trackRumDiagnosticMetric({
+          metric_name: "manifest_fetch_duration",
+          metric_value: durationMs,
+          metric_unit: "ms",
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
         });
       }
       setLoopManifest(manifest);
@@ -4640,7 +4705,23 @@ export default function App() {
     viewportSignatureRef.current = viewportSignatureFromState(mapViewRef.current);
     setMapViewTick((current) => current + 1);
     setIsMapReady(true);
-  }, []);
+    if (!firstMapRenderTrackedRef.current) {
+      firstMapRenderTrackedRef.current = true;
+      const durationMs = performance.now() - viewerMountedAtRef.current;
+      if (Number.isFinite(durationMs) && durationMs >= 0) {
+        trackRumDiagnosticMetric({
+          metric_name: "first_map_render_duration",
+          metric_value: durationMs,
+          metric_unit: "ms",
+          model_id: modelRef.current || null,
+          variable_id: variableRef.current || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+        });
+      }
+    }
+  }, [telemetryRunId, region, forecastHour]);
 
   const handleViewportChange = useCallback((payload: { lat: number; lon: number; z: number }) => {
     if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon) || !Number.isFinite(payload.z)) {
