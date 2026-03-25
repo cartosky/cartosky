@@ -3,9 +3,9 @@ import SiteHeader from "../components/SiteHeader";
 
 export default function AppLayout() {
   return (
-    <div className="min-h-svh flex flex-col bg-background text-foreground">
+    <div className="h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground">
       <SiteHeader variant="app" />
-      <div className="flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <Outlet />
       </div>
     </div>
