@@ -96,6 +96,8 @@ const COUNTRY_BOUNDARY_LAYER_ID = "twf-country-boundaries";
 const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
+const LOOP_SOURCE_ID = "twf-loop-image";
+const LOOP_LAYER_ID = "twf-loop-image";
 const LOOP_CANVAS_SOURCE_ID = "twf-loop-canvas";
 const LOOP_CANVAS_LAYER_ID = "twf-loop-canvas";
 const LOOP_CANVAS_ELEMENT_ID = "twf-loop-canvas-el";
@@ -103,6 +105,9 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+const TRANSPARENT_PIXEL_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ax7n7kAAAAASUVORK5CYII=";
 
 const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-134.0, 24.0, -60.0, 55.0];
 
@@ -514,6 +519,11 @@ export function buildMapStyle(
       type: "geojson",
       data: contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION,
     },
+    [LOOP_SOURCE_ID]: {
+      type: "image",
+      url: TRANSPARENT_PIXEL_DATA_URL,
+      coordinates: loopImageCoordinates,
+    },
   };
   if (includeRuntimeLoopCanvas) {
     sources[LOOP_CANVAS_SOURCE_ID] = {
@@ -687,6 +697,23 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
+      {
+        id: LOOP_LAYER_ID,
+        type: "raster",
+        source: LOOP_SOURCE_ID,
+        layout: {
+          visibility: "none",
+        },
+        paint: {
+          "raster-opacity": opacity,
+          "raster-resampling": loopResamplingMode,
+          "raster-fade-duration": 0,
+          "raster-contrast": paintSettings.contrast,
+          "raster-saturation": paintSettings.saturation,
+          "raster-brightness-min": paintSettings.brightnessMin,
+          "raster-brightness-max": paintSettings.brightnessMax,
+        },
+      },
       ...runtimeLoopCanvasLayers,
       {
         id: "twf-labels",
@@ -699,7 +726,6 @@ export function buildMapStyle(
 }
 
 type MapCanvasProps = {
-  selectionKey: string;
   tileUrl: string;
   contourGeoJsonUrl?: string | null;
   anchorGeoJson?: AnchorFeatureCollection | null;
@@ -732,7 +758,6 @@ type MapCanvasProps = {
 };
 
 export function MapCanvas({
-  selectionKey,
   tileUrl,
   contourGeoJsonUrl,
   anchorGeoJson = null,
@@ -770,7 +795,6 @@ export function MapCanvas({
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [readyLoopImageUrl, setReadyLoopImageUrl] = useState<string | null>(null);
   const activeBufferRef = useRef<OverlayBuffer>("a");
-  const readyLoopImageRef = useRef<HTMLImageElement | null>(null);
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
   const prefetchTokenRef = useRef(0);
@@ -789,9 +813,7 @@ export function MapCanvas({
   const loopToTileTokenRef = useRef(0);
   const loopImageRequestTokenRef = useRef(0);
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
-  const requestedLoopImageUrlRef = useRef<string | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
-  const selectionKeyRef = useRef(selectionKey);
   const isLoopToTileTransitioningRef = useRef(false);
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
@@ -812,18 +834,15 @@ export function MapCanvas({
     [loopImageBbox]
   );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
-  const hasBufferedLoopImage = Boolean(readyLoopImageRef.current);
   const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
-  const hasLoopVisual = Boolean(hasCanvasLoopFrame || (mode === "variable-switch" ? isReadyLoopImage : hasBufferedLoopImage));
+  const hasLoopVisual = Boolean(hasCanvasLoopFrame || (mode === "variable-switch" ? isReadyLoopImage : loopImageUrl));
 
   useEffect(() => {
     if (!loopImageUrl) {
-      readyLoopImageRef.current = null;
       setReadyLoopImageUrl(null);
       return;
     }
     if (mode === "variable-switch" && readyLoopImageUrl !== loopImageUrl) {
-      readyLoopImageRef.current = null;
       setReadyLoopImageUrl(null);
     }
   }, [loopImageUrl, mode, readyLoopImageUrl]);
@@ -836,32 +855,17 @@ export function MapCanvas({
       loopImageUrl,
       readyLoopImageUrl,
       hasCanvasLoopFrame,
-      hasBufferedLoopImage,
       hasLoopVisual,
     });
-  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasBufferedLoopImage, hasLoopVisual]);
+  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasLoopVisual]);
 
   useEffect(() => {
     const canvas = loopCanvasRef.current;
-    if (!canvas) {
+    if (!canvas || !loopFrameBitmap) {
       return;
     }
-    const imageForCanvas = readyLoopImageRef.current;
-    if (!loopFrameBitmap && !imageForCanvas) {
-      const ctx = canvas.getContext("2d", { alpha: true });
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      return;
-    }
-    const width = Math.max(
-      1,
-      loopFrameBitmap?.width ?? imageForCanvas?.naturalWidth ?? imageForCanvas?.width ?? 1
-    );
-    const height = Math.max(
-      1,
-      loopFrameBitmap?.height ?? imageForCanvas?.naturalHeight ?? imageForCanvas?.height ?? 1
-    );
+    const width = Math.max(1, loopFrameBitmap.width);
+    const height = Math.max(1, loopFrameBitmap.height);
     if (canvas.width !== width) {
       canvas.width = width;
     }
@@ -873,11 +877,7 @@ export function MapCanvas({
       return;
     }
     ctx.clearRect(0, 0, width, height);
-    if (loopFrameBitmap) {
-      ctx.drawImage(loopFrameBitmap, 0, 0, width, height);
-    } else if (imageForCanvas) {
-      ctx.drawImage(imageForCanvas, 0, 0, width, height);
-    }
+    ctx.drawImage(loopFrameBitmap, 0, 0, width, height);
 
     const map = mapRef.current;
     if (map && isLoaded) {
@@ -887,7 +887,7 @@ export function MapCanvas({
       }
       map.triggerRepaint();
     }
-  }, [loopFrameBitmap, readyLoopImageUrl, loopImageCoordinates, isLoaded]);
+  }, [loopFrameBitmap, loopImageCoordinates, isLoaded]);
 
   const initializeSourceTracking = useCallback((currentTileUrl: string) => {
     const sourceA = sourceId("a");
@@ -946,7 +946,7 @@ export function MapCanvas({
       if (!map.getLayer(id)) {
         return;
       }
-      const resamplingMode = id === LOOP_CANVAS_LAYER_ID
+      const resamplingMode = id === LOOP_LAYER_ID || id === LOOP_CANVAS_LAYER_ID
         ? getLoopResamplingMode(variableId, variableKindId)
         : getResamplingMode(variableKindId);
       const paintSettings = getOverlayPaintSettings(variableId, basemapModeValue);
@@ -961,7 +961,6 @@ export function MapCanvas({
 
   const cancelPendingLoopImageUpdate = useCallback(() => {
     loopImageRequestTokenRef.current += 1;
-    requestedLoopImageUrlRef.current = null;
     const pending = loopImagePreloadRef.current;
     if (!pending) {
       return;
@@ -975,12 +974,10 @@ export function MapCanvas({
     (
       map: maplibregl.Map,
       nextLoopImageUrl: string | null | undefined,
-      _nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
+      nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
-        requestedLoopImageUrlRef.current = null;
-        readyLoopImageRef.current = null;
         setReadyLoopImageUrl(null);
         viewerDebugLog("map:loop-image-clear", {
           mode,
@@ -988,13 +985,6 @@ export function MapCanvas({
         });
         return;
       }
-      if (
-        requestedLoopImageUrlRef.current === nextLoopImageUrl
-        && (loopImagePreloadRef.current || readyLoopImageUrl === nextLoopImageUrl)
-      ) {
-        return;
-      }
-      requestedLoopImageUrlRef.current = nextLoopImageUrl;
 
       const requestToken = loopImageRequestTokenRef.current;
       viewerDebugLog("map:loop-image-request", {
@@ -1019,17 +1009,29 @@ export function MapCanvas({
           });
           return;
         }
-        readyLoopImageRef.current = image;
-        setReadyLoopImageUrl(nextLoopImageUrl);
-        viewerDebugLog("map:loop-image-ready", {
-          mode,
-          variable,
-          nextLoopImageUrl,
-          requestToken,
-        });
-        map.triggerRepaint();
-        if (loopImagePreloadRef.current === image) {
-          loopImagePreloadRef.current = null;
+        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
+        if (!loopSource || typeof loopSource.updateImage !== "function") {
+          return;
+        }
+        try {
+          loopSource.updateImage({
+            url: nextLoopImageUrl,
+            coordinates: nextLoopImageCoordinates,
+          });
+          setReadyLoopImageUrl(nextLoopImageUrl);
+          viewerDebugLog("map:loop-image-ready", {
+            mode,
+            variable,
+            nextLoopImageUrl,
+            requestToken,
+          });
+          map.triggerRepaint();
+        } catch (error) {
+          console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
+        } finally {
+          if (loopImagePreloadRef.current === image) {
+            loopImagePreloadRef.current = null;
+          }
         }
       };
 
@@ -1047,12 +1049,11 @@ export function MapCanvas({
         if (loopImagePreloadRef.current === image) {
           loopImagePreloadRef.current = null;
         }
-        requestedLoopImageUrlRef.current = null;
       };
 
       image.src = nextLoopImageUrl;
     },
-    [cancelPendingLoopImageUpdate, mode, variable, readyLoopImageUrl]
+    [cancelPendingLoopImageUpdate, mode, variable]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
@@ -1075,6 +1076,9 @@ export function MapCanvas({
 
     if (map.getLayer(CONTOUR_LAYER_ID)) {
       map.moveLayer(CONTOUR_LAYER_ID, "twf-labels");
+    }
+    if (map.getLayer(LOOP_LAYER_ID)) {
+      map.moveLayer(LOOP_LAYER_ID, "twf-labels");
     }
     if (map.getLayer(LOOP_CANVAS_LAYER_ID)) {
       map.moveLayer(LOOP_CANVAS_LAYER_ID, "twf-labels");
@@ -1322,41 +1326,6 @@ export function MapCanvas({
     }
     isLoopToTileTransitioningRef.current = false;
   }, []);
-
-  useEffect(() => {
-    if (selectionKeyRef.current === selectionKey) {
-      return;
-    }
-    selectionKeyRef.current = selectionKey;
-    cancelPendingLoopImageUpdate();
-    cancelLoopToTileTransition();
-    previousLoopActiveRef.current = false;
-    isLoopToTileTransitioningRef.current = false;
-    readyLoopImageRef.current = null;
-    setReadyLoopImageUrl(null);
-
-    const canvas = loopCanvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext("2d", { alpha: true });
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-    }
-
-    const map = mapRef.current;
-    if (map && isLoaded) {
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
-      setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, opacity);
-      map.triggerRepaint();
-    }
-  }, [
-    selectionKey,
-    isLoaded,
-    opacity,
-    cancelPendingLoopImageUpdate,
-    cancelLoopToTileTransition,
-    setLayerOpacity,
-  ]);
 
   const runCrossfade = useCallback(
     (map: maplibregl.Map, fromBuffer: OverlayBuffer, toBuffer: OverlayBuffer, targetOpacity: number) => {
@@ -1743,7 +1712,9 @@ export function MapCanvas({
       }
 
       const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual);
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop);
+      setLayerVisibility(map, LOOP_LAYER_ID, shouldShowLoop && !hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop && hasCanvasLoopFrame);
+      setLayerOpacity(map, LOOP_LAYER_ID, opacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, opacity);
       for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
         setLayerOpacity(map, prefetchLayerId(idx), HIDDEN_PREFETCH_OPACITY);
@@ -1760,6 +1731,7 @@ export function MapCanvas({
       for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
         setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, basemapMode);
       }
+      setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, basemapMode);
       setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, basemapMode);
 
       enforceLayerOrder(map);
@@ -2254,7 +2226,8 @@ export function MapCanvas({
     }
 
     const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual);
-    setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop);
+    setLayerVisibility(map, LOOP_LAYER_ID, shouldShowLoop && !hasCanvasLoopFrame);
+    setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop && hasCanvasLoopFrame);
     setLayerVisibility(
       map,
       CONTOUR_LAYER_ID,
@@ -2267,6 +2240,7 @@ export function MapCanvas({
     loopImageUrl,
     loopActive,
     variable,
+    hasCanvasLoopFrame,
     hasLoopVisual,
     queueLoopImageUpdate,
     enforceLayerOrder,
@@ -2296,7 +2270,9 @@ export function MapCanvas({
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, Boolean(hasLoopVisual));
+      setLayerVisibility(map, LOOP_LAYER_ID, Boolean(hasLoopVisual && !hasCanvasLoopFrame));
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, Boolean(hasLoopVisual && hasCanvasLoopFrame));
+      setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
       setLayerVisibility(map, CONTOUR_LAYER_ID, false);
     } else if (wasLoopActive && hasLoopVisual) {
@@ -2306,7 +2282,9 @@ export function MapCanvas({
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, true);
+      setLayerVisibility(map, LOOP_LAYER_ID, !hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, hasCanvasLoopFrame);
+      setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
 
       const startCrossfade = () => {
@@ -2326,6 +2304,7 @@ export function MapCanvas({
           const tileOpacity = HIDDEN_SWAP_BUFFER_OPACITY + (targetOpacity - HIDDEN_SWAP_BUFFER_OPACITY) * progress;
           const loopOpacity = targetOpacity * (1 - progress);
           setLayerOpacity(map, layerId(activeBuffer), tileOpacity);
+          setLayerOpacity(map, LOOP_LAYER_ID, loopOpacity);
           setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, loopOpacity);
 
           if (progress < 1) {
@@ -2334,7 +2313,9 @@ export function MapCanvas({
           }
 
           setLayerOpacity(map, layerId(activeBuffer), targetOpacity);
+          setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
           setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+          setLayerVisibility(map, LOOP_LAYER_ID, false);
           setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
           setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
           isLoopToTileTransitioningRef.current = false;
@@ -2372,7 +2353,9 @@ export function MapCanvas({
       setLayerOpacity(map, layerId(activeBuffer), targetOpacity);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerVisibility(map, layerId(inactiveBuffer), false);
+      setLayerVisibility(map, LOOP_LAYER_ID, false);
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+      setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
       setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
     }
@@ -2387,6 +2370,7 @@ export function MapCanvas({
     cancelLoopToTileTransition,
     setLayerOpacity,
     loopActive,
+    hasCanvasLoopFrame,
     hasLoopVisual,
     loopImageUrl,
   ]);
@@ -2433,6 +2417,7 @@ export function MapCanvas({
     for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
       setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, basemapMode);
     }
+    setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, basemapMode);
     setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, basemapMode);
   }, [isLoaded, variable, variableKind, basemapMode, setLayerRasterPaint]);
 

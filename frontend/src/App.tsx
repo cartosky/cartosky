@@ -1326,7 +1326,6 @@ export default function App() {
   }, [run, runManifest, model, capabilities, runs, currentFrame, frameRows]);
   const resolvedRunForRequests = run === "latest" ? (latestRunId ?? "latest") : run;
   const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
-  const hasLoadedSelectionAssets = loadedFramesKey === selectionKey;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
 
@@ -1336,9 +1335,6 @@ export default function App() {
 
   const loopFrameTier0FallbackByHour = useMemo(() => {
     const map = new Map<number, string>();
-    if (!hasLoadedSelectionAssets) {
-      return map;
-    }
     for (const row of frameRows) {
       const fh = Number(row?.fh);
       const loopUrl = row?.loop_webp_tier0_url ?? row?.loop_webp_url;
@@ -1351,18 +1347,10 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, frameRows, hasLoadedSelectionAssets]);
+  }, [apiRoot, frameRows]);
 
   const loopTier0UrlByHour = useMemo(() => {
     const map = new Map<number, string>(loopFrameTier0FallbackByHour);
-    const manifestMatchesSelection =
-      hasLoadedSelectionAssets
-      && loopManifest?.model === model
-      && loopManifest?.run === resolvedRunForRequests
-      && loopManifest?.var === variable;
-    if (!manifestMatchesSelection) {
-      return map;
-    }
     const tier0 = loopManifest?.loop_tiers.find((entry) => Number(entry?.tier) === 0);
     const frames = Array.isArray(tier0?.frames) ? tier0.frames : [];
     for (const frame of frames) {
@@ -1377,13 +1365,10 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest, hasLoadedSelectionAssets, model, resolvedRunForRequests, variable]);
+  }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest]);
 
   const loopTier1UrlByHour = useMemo(() => {
     const map = new Map<number, string>();
-    if (!hasLoadedSelectionAssets) {
-      return map;
-    }
     for (const row of frameRows) {
       const fh = Number(row?.fh);
       const loopUrl = row?.loop_webp_tier1_url;
@@ -1394,9 +1379,6 @@ export default function App() {
         ? loopUrl
         : `${apiRoot}${loopUrl.startsWith("/") ? "" : "/"}${loopUrl}`;
       map.set(fh, absolute);
-    }
-    if (!(loopManifest?.model === model && loopManifest?.run === resolvedRunForRequests && loopManifest?.var === variable)) {
-      return map;
     }
     const tier1 = loopManifest?.loop_tiers.find((entry) => Number(entry?.tier) === 1);
     const frames = Array.isArray(tier1?.frames) ? tier1.frames : [];
@@ -1412,7 +1394,7 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, frameRows, loopManifest, hasLoadedSelectionAssets, model, resolvedRunForRequests, variable]);
+  }, [apiRoot, frameRows, loopManifest]);
 
   const loopUrlByHour = useMemo(() => new Map(loopTier0UrlByHour), [loopTier0UrlByHour]);
 
@@ -1937,7 +1919,7 @@ export default function App() {
       return;
     }
 
-    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
+    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
     if (shouldPromoteViaImageSource) {
       setVisibleRenderMode(renderMode);
       setLoopDisplayHour(commitLoopHour);
@@ -1977,7 +1959,8 @@ export default function App() {
     isLoopPreloading,
     isLoopAutoplayBuffering,
     isScrubbing,
-    ]);
+    isVariableSwitching,
+  ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
   const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
@@ -3784,7 +3767,7 @@ export default function App() {
     }
 
     const shouldCommitViaImageSource =
-      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
+      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
     if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
@@ -5457,7 +5440,6 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
-          selectionKey={selectionKey}
           tileUrl={tileUrl}
           contourGeoJsonUrl={contourGeoJsonUrl}
           anchorGeoJson={anchorDisplayGeoJson}
