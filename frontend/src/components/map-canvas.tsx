@@ -789,6 +789,7 @@ export function MapCanvas({
   const loopToTileTokenRef = useRef(0);
   const loopImageRequestTokenRef = useRef(0);
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
+  const requestedLoopImageUrlRef = useRef<string | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
   const selectionKeyRef = useRef(selectionKey);
   const isLoopToTileTransitioningRef = useRef(false);
@@ -958,6 +959,7 @@ export function MapCanvas({
 
   const cancelPendingLoopImageUpdate = useCallback(() => {
     loopImageRequestTokenRef.current += 1;
+    requestedLoopImageUrlRef.current = null;
     const pending = loopImagePreloadRef.current;
     if (!pending) {
       return;
@@ -975,6 +977,7 @@ export function MapCanvas({
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
+        requestedLoopImageUrlRef.current = null;
         readyLoopImageRef.current = null;
         setReadyLoopImageUrl(null);
         viewerDebugLog("map:loop-image-clear", {
@@ -983,6 +986,13 @@ export function MapCanvas({
         });
         return;
       }
+      if (
+        requestedLoopImageUrlRef.current === nextLoopImageUrl
+        && (loopImagePreloadRef.current || readyLoopImageUrl === nextLoopImageUrl)
+      ) {
+        return;
+      }
+      requestedLoopImageUrlRef.current = nextLoopImageUrl;
 
       const requestToken = loopImageRequestTokenRef.current;
       viewerDebugLog("map:loop-image-request", {
@@ -1035,11 +1045,12 @@ export function MapCanvas({
         if (loopImagePreloadRef.current === image) {
           loopImagePreloadRef.current = null;
         }
+        requestedLoopImageUrlRef.current = null;
       };
 
       image.src = nextLoopImageUrl;
     },
-    [cancelPendingLoopImageUpdate, mode, variable]
+    [cancelPendingLoopImageUpdate, mode, variable, readyLoopImageUrl]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
