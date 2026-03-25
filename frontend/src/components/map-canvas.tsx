@@ -699,6 +699,7 @@ export function buildMapStyle(
 }
 
 type MapCanvasProps = {
+  selectionKey: string;
   tileUrl: string;
   contourGeoJsonUrl?: string | null;
   anchorGeoJson?: AnchorFeatureCollection | null;
@@ -731,6 +732,7 @@ type MapCanvasProps = {
 };
 
 export function MapCanvas({
+  selectionKey,
   tileUrl,
   contourGeoJsonUrl,
   anchorGeoJson = null,
@@ -788,6 +790,7 @@ export function MapCanvas({
   const loopImageRequestTokenRef = useRef(0);
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
+  const selectionKeyRef = useRef(selectionKey);
   const isLoopToTileTransitioningRef = useRef(false);
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
@@ -1306,6 +1309,41 @@ export function MapCanvas({
     }
     isLoopToTileTransitioningRef.current = false;
   }, []);
+
+  useEffect(() => {
+    if (selectionKeyRef.current === selectionKey) {
+      return;
+    }
+    selectionKeyRef.current = selectionKey;
+    cancelPendingLoopImageUpdate();
+    cancelLoopToTileTransition();
+    previousLoopActiveRef.current = false;
+    isLoopToTileTransitioningRef.current = false;
+    readyLoopImageRef.current = null;
+    setReadyLoopImageUrl(null);
+
+    const canvas = loopCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    const map = mapRef.current;
+    if (map && isLoaded) {
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+      setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, opacity);
+      map.triggerRepaint();
+    }
+  }, [
+    selectionKey,
+    isLoaded,
+    opacity,
+    cancelPendingLoopImageUpdate,
+    cancelLoopToTileTransition,
+    setLayerOpacity,
+  ]);
 
   const runCrossfade = useCallback(
     (map: maplibregl.Map, fromBuffer: OverlayBuffer, toBuffer: OverlayBuffer, targetOpacity: number) => {
