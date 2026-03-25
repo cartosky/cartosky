@@ -2365,6 +2365,38 @@ export default function App() {
     setSettledTileUrl(isTileReady(tileUrl) ? tileUrl : null);
   }, [tileUrl, isTileReady]);
 
+  useEffect(() => {
+    const pendingVarSwitch = pendingVariableSwitchRef.current;
+    if (!pendingVarSwitch) {
+      return;
+    }
+    if (pendingVarSwitch.toVariableId !== variable) {
+      return;
+    }
+    if (pendingVarSwitch.expectedSelectionKey !== loadedFramesKey) {
+      return;
+    }
+    if (!tileUrl || tileUrl === EMPTY_TILE_DATA_URL) {
+      return;
+    }
+    if (pendingVarSwitch.expectedTileUrl === tileUrl) {
+      return;
+    }
+    pendingVarSwitch.expectedTileUrl = tileUrl;
+    if (!Number.isFinite(pendingVarSwitch.firstTargetRequestAt)) {
+      pendingVarSwitch.firstTargetRequestAt = performance.now();
+    }
+    setVariableSwitchState((current) => {
+      if (!current || current.toVariable !== variable) {
+        return current;
+      }
+      return {
+        ...current,
+        visualState: "warming_new",
+      };
+    });
+  }, [loadedFramesKey, tileUrl, variable]);
+
   const isScrubLoading = useMemo(() => {
     if (isPlaying || isScrubbing) {
       return false;
