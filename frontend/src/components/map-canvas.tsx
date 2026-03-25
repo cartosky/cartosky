@@ -96,7 +96,6 @@ const COUNTRY_BOUNDARY_LAYER_ID = "twf-country-boundaries";
 const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
-const LOOP_SOURCE_ID = "twf-loop-image";
 const LOOP_LAYER_ID = "twf-loop-image";
 const LOOP_CANVAS_SOURCE_ID = "twf-loop-canvas";
 const LOOP_CANVAS_LAYER_ID = "twf-loop-canvas";
@@ -105,9 +104,6 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
-
-const TRANSPARENT_PIXEL_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ax7n7kAAAAASUVORK5CYII=";
 
 const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-134.0, 24.0, -60.0, 55.0];
 
@@ -519,11 +515,6 @@ export function buildMapStyle(
       type: "geojson",
       data: contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION,
     },
-    [LOOP_SOURCE_ID]: {
-      type: "image",
-      url: TRANSPARENT_PIXEL_DATA_URL,
-      coordinates: loopImageCoordinates,
-    },
   };
   if (includeRuntimeLoopCanvas) {
     sources[LOOP_CANVAS_SOURCE_ID] = {
@@ -697,23 +688,6 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
-      {
-        id: LOOP_LAYER_ID,
-        type: "raster",
-        source: LOOP_SOURCE_ID,
-        layout: {
-          visibility: "none",
-        },
-        paint: {
-          "raster-opacity": opacity,
-          "raster-resampling": loopResamplingMode,
-          "raster-fade-duration": 0,
-          "raster-contrast": paintSettings.contrast,
-          "raster-saturation": paintSettings.saturation,
-          "raster-brightness-min": paintSettings.brightnessMin,
-          "raster-brightness-max": paintSettings.brightnessMax,
-        },
-      },
       ...runtimeLoopCanvasLayers,
       {
         id: "twf-labels",
@@ -795,6 +769,7 @@ export function MapCanvas({
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [readyLoopImageUrl, setReadyLoopImageUrl] = useState<string | null>(null);
   const activeBufferRef = useRef<OverlayBuffer>("a");
+  const readyLoopImageRef = useRef<HTMLImageElement | null>(null);
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
   const prefetchTokenRef = useRef(0);
@@ -835,14 +810,16 @@ export function MapCanvas({
   );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
   const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
-  const hasLoopVisual = Boolean(hasCanvasLoopFrame || (mode === "variable-switch" ? isReadyLoopImage : loopImageUrl));
+  const hasLoopVisual = Boolean(hasCanvasLoopFrame || isReadyLoopImage);
 
   useEffect(() => {
     if (!loopImageUrl) {
+      readyLoopImageRef.current = null;
       setReadyLoopImageUrl(null);
       return;
     }
     if (mode === "variable-switch" && readyLoopImageUrl !== loopImageUrl) {
+      readyLoopImageRef.current = null;
       setReadyLoopImageUrl(null);
     }
   }, [loopImageUrl, mode, readyLoopImageUrl]);
@@ -861,11 +838,25 @@ export function MapCanvas({
 
   useEffect(() => {
     const canvas = loopCanvasRef.current;
-    if (!canvas || !loopFrameBitmap) {
+    if (!canvas) {
       return;
     }
-    const width = Math.max(1, loopFrameBitmap.width);
-    const height = Math.max(1, loopFrameBitmap.height);
+    const imageForCanvas = readyLoopImageRef.current;
+    if (!loopFrameBitmap && !imageForCanvas) {
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+    const width = Math.max(
+      1,
+      loopFrameBitmap?.width ?? imageForCanvas?.naturalWidth ?? imageForCanvas?.width ?? 1
+    );
+    const height = Math.max(
+      1,
+      loopFrameBitmap?.height ?? imageForCanvas?.naturalHeight ?? imageForCanvas?.height ?? 1
+    );
     if (canvas.width !== width) {
       canvas.width = width;
     }
@@ -877,7 +868,11 @@ export function MapCanvas({
       return;
     }
     ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(loopFrameBitmap, 0, 0, width, height);
+    if (loopFrameBitmap) {
+      ctx.drawImage(loopFrameBitmap, 0, 0, width, height);
+    } else if (imageForCanvas) {
+      ctx.drawImage(imageForCanvas, 0, 0, width, height);
+    }
 
     const map = mapRef.current;
     if (map && isLoaded) {
@@ -887,7 +882,7 @@ export function MapCanvas({
       }
       map.triggerRepaint();
     }
-  }, [loopFrameBitmap, loopImageCoordinates, isLoaded]);
+  }, [loopFrameBitmap, readyLoopImageUrl, loopImageCoordinates, isLoaded]);
 
   const initializeSourceTracking = useCallback((currentTileUrl: string) => {
     const sourceA = sourceId("a");
@@ -974,10 +969,11 @@ export function MapCanvas({
     (
       map: maplibregl.Map,
       nextLoopImageUrl: string | null | undefined,
-      nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
+      _nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
+        readyLoopImageRef.current = null;
         setReadyLoopImageUrl(null);
         viewerDebugLog("map:loop-image-clear", {
           mode,
@@ -1009,29 +1005,17 @@ export function MapCanvas({
           });
           return;
         }
-        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
-        if (!loopSource || typeof loopSource.updateImage !== "function") {
-          return;
-        }
-        try {
-          loopSource.updateImage({
-            url: nextLoopImageUrl,
-            coordinates: nextLoopImageCoordinates,
-          });
-          setReadyLoopImageUrl(nextLoopImageUrl);
-          viewerDebugLog("map:loop-image-ready", {
-            mode,
-            variable,
-            nextLoopImageUrl,
-            requestToken,
-          });
-          map.triggerRepaint();
-        } catch (error) {
-          console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
-        } finally {
-          if (loopImagePreloadRef.current === image) {
-            loopImagePreloadRef.current = null;
-          }
+        readyLoopImageRef.current = image;
+        setReadyLoopImageUrl(nextLoopImageUrl);
+        viewerDebugLog("map:loop-image-ready", {
+          mode,
+          variable,
+          nextLoopImageUrl,
+          requestToken,
+        });
+        map.triggerRepaint();
+        if (loopImagePreloadRef.current === image) {
+          loopImagePreloadRef.current = null;
         }
       };
 
