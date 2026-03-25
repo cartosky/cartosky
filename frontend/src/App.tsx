@@ -4030,6 +4030,7 @@ export default function App() {
   useEffect(() => {
     setFrameRows([]);
     setLoopManifest(null);
+    setVisibleRenderMode("tiles");
     setLoopDisplayHour(null);
     setLoopDisplayBitmap(null);
     setLoadedFramesKey("");
