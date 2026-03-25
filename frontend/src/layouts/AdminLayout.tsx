@@ -29,7 +29,7 @@ function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ 
 export default function AdminLayout() {
   const legacyPerfEnabled = isLegacyPerfTelemetryEnabled();
   return (
-    <div className="relative min-h-[calc(100vh-3.5rem)] overflow-hidden bg-[#05070c] text-white">
+    <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#05070c] text-white">
       <div
         aria-hidden="true"
         className="absolute inset-0"
