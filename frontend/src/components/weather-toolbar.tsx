@@ -79,6 +79,7 @@ function ToolbarSelect(props: {
   menuActionDescription?: string | null;
   onMenuAction?: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const {
     label,
     icon: Icon,
@@ -155,7 +156,10 @@ function ToolbarSelect(props: {
     <>
       <button
         type="button"
-        onClick={onMenuAction}
+        onClick={() => {
+          setOpen(false);
+          onMenuAction();
+        }}
         className="flex w-full flex-col items-start rounded-md px-3 py-2 text-left transition-colors duration-150 hover:bg-white/10"
       >
         <span className="text-xs font-semibold text-emerald-50">{menuActionLabel}</span>
@@ -176,7 +180,16 @@ function ToolbarSelect(props: {
           {label}
         </span>
       ) : null}
-      <Select value={value} onValueChange={onValueChange} disabled={disabled || options.length === 0}>
+      <Select
+        value={value}
+        onValueChange={(nextValue) => {
+          setOpen(false);
+          onValueChange(nextValue);
+        }}
+        open={open}
+        onOpenChange={setOpen}
+        disabled={disabled || options.length === 0}
+      >
         <SelectTrigger
           className={cn(
             "h-[30px] w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
