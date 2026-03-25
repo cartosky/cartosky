@@ -4957,6 +4957,7 @@ export default function App() {
       startedAt: performance.now(),
       visualState: "holding_old",
     });
+    resetLoopPresentationToTiles();
     setVariable(nextVariable);
     trackUsageEvent({
       event_name: "variable_selected",
@@ -4973,7 +4974,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, resetLoopPresentationToTiles]);
 
   useEffect(() => {
     if (
