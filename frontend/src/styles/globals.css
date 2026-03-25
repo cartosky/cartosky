@@ -45,16 +45,23 @@
 
   /* Elevated overlay glass: share modal + mobile layers shell */
   .glass-overlay {
-    background-color: rgba(31, 36, 44, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+    background:
+      linear-gradient(180deg, rgba(44, 50, 60, 0.82) 0%, rgba(27, 31, 39, 0.86) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    box-shadow:
+      0 24px 56px rgba(0, 0, 0, 0.42),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
     backdrop-filter: blur(20px) brightness(0.52) saturate(1.2);
     -webkit-backdrop-filter: blur(20px) brightness(0.52) saturate(1.2);
   }
 
   .glass-overlay-section {
-    background-color: rgba(255, 255, 255, 0.038);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.025) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.035);
+    box-shadow:
+      0 12px 28px rgba(0, 0, 0, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.035);
   }
 
   .map-anchor-marker {
