@@ -10,6 +10,7 @@ dist/
 # Project data (never commit artifacts)
 /data/
 herbie_cache/
+/backend/data/
 
 # OS
 .DS_Store

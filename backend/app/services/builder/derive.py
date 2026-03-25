@@ -310,6 +310,29 @@ def _kuchera_cumulative_cache_file_path(
     )
 
 
+def _affine_to_cache_values(transform: rasterio.transform.Affine) -> np.ndarray:
+    return np.asarray(
+        (
+            float(transform.a),
+            float(transform.b),
+            float(transform.c),
+            float(transform.d),
+            float(transform.e),
+            float(transform.f),
+        ),
+        dtype=np.float64,
+    )
+
+
+def _affine_from_cache_values(values: Any) -> rasterio.transform.Affine | None:
+    transform_values = np.asarray(values, dtype=np.float64).reshape(-1)
+    if transform_values.size == 9:
+        transform_values = transform_values[:6]
+    if transform_values.size != 6:
+        return None
+    return rasterio.transform.Affine(*transform_values.tolist())
+
+
 def _kuchera_load_prior_cumulative(
     *,
     model_id: str,
@@ -369,14 +392,13 @@ def _kuchera_load_prior_cumulative(
                 if str(cached_npz["grid_cache_key"].tolist()) != str(grid_cache_key):
                     continue
                 loaded_data = np.asarray(cached_npz["data"], dtype=np.float32)
-                transform_values = np.asarray(cached_npz["transform"], dtype=np.float64)
-                if transform_values.size != 6:
+                loaded_transform = _affine_from_cache_values(cached_npz["transform"])
+                if loaded_transform is None:
                     continue
                 crs_wkt = str(cached_npz["crs_wkt"].tolist()).strip()
                 if not crs_wkt:
                     continue
                 loaded_crs = rasterio.crs.CRS.from_wkt(crs_wkt)
-                loaded_transform = rasterio.transform.Affine(*transform_values.tolist())
             loaded = (loaded_data, loaded_crs, loaded_transform)
             if ctx is not None:
                 cache = getattr(ctx, "kuchera_cumulative_cache", None)
@@ -438,7 +460,7 @@ def _kuchera_store_cumulative_cache(
             tmp_path,
             data=np.asarray(data, dtype=np.float32),
             crs_wkt=crs.to_wkt(),
-            transform=np.asarray(tuple(transform), dtype=np.float64),
+            transform=_affine_to_cache_values(transform),
             grid_cache_key=str(grid_cache_key),
         )
         tmp_path.replace(cache_path)

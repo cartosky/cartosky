@@ -154,8 +154,8 @@ def test_incremental_matches_full_rebuild(monkeypatch) -> None:
     )
     fh2_internal = (fh2_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
 
-    def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
-        del model_id, run_date, var_key, ctx
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
         if int(fh) == 2:
             return fh2_internal, crs, transform
         return None
@@ -191,8 +191,8 @@ def test_incremental_does_not_recompute_full_history_when_prev_exists(monkeypatc
     )
     fh4_internal = (fh4_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
 
-    def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
-        del model_id, run_date, var_key, ctx
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
         if int(fh) == 4:
             return fh4_internal, crs, transform
         return None
@@ -241,8 +241,8 @@ def test_incremental_recovery_uses_bounded_window_when_prev_missing(monkeypatch,
     )
     fh3_internal = (fh3_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
 
-    def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
-        del model_id, run_date, var_key, ctx
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
         if int(fh) == 3:
             return fh3_internal, crs, transform
         return None
@@ -345,8 +345,8 @@ def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) 
         lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
 
-    def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
-        del model_id, run_date, var_key, ctx
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
         if int(fh) == 2:
             return fh2_internal, crs, transform
         return None
@@ -450,8 +450,8 @@ def test_incremental_reuse_with_late_cumulative_apcp_rebuilds_from_start(monkeyp
             return (tmp_700, crs, transform, meta) if return_meta else (tmp_700, crs, transform)
         raise AssertionError(f"unexpected pattern: {pattern}")
 
-    def _prior_loader(*, model_id, run_date, var_key, fh, ctx):
-        del model_id, run_date, var_key, ctx
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
         if int(fh) == 2:
             return fh2_internal, crs, transform
         return None
