@@ -1034,6 +1034,15 @@ export default function App() {
   const loopReadyHoursRef = useRef<Set<number>>(new Set());
   const loopFailedHoursRef = useRef<Set<number>>(new Set());
   const forecastHourRef = useRef(forecastHour);
+  const loopFrameHoursRef = useRef<number[]>([]);
+  const visibleRenderModeRef = useRef<RenderModeState>("tiles");
+  const countAheadReadyLoopFramesRef = useRef<
+    (currentHour: number, mode: RenderModeState, maxAhead: number, presentationPath: "image-url" | "canvas") => number
+  >(() => 0);
+  const isLoopFrameReadyForPresentationRef = useRef<
+    (fh: number, mode: RenderModeState, presentationPath: "image-url" | "canvas") => boolean
+  >(() => false);
+  const loopMinAheadWhilePlayingRef = useRef(0);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const renderModeDwellTimerRef = useRef<number | null>(null);
   const transitionTokenRef = useRef(0);
@@ -1681,6 +1690,7 @@ export default function App() {
     }
     return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
   }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
+
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
     const thresholds = getRenderModeThresholds();
@@ -2045,6 +2055,20 @@ export default function App() {
       }),
     [loopFrameHours.length]
   );
+
+  useEffect(() => {
+    loopFrameHoursRef.current = loopFrameHours;
+    visibleRenderModeRef.current = visibleRenderMode;
+    countAheadReadyLoopFramesRef.current = countAheadReadyLoopFrames;
+    isLoopFrameReadyForPresentationRef.current = isLoopFrameReadyForPresentation;
+    loopMinAheadWhilePlayingRef.current = loopPlaybackPolicy.minAheadWhilePlaying;
+  }, [
+    loopFrameHours,
+    visibleRenderMode,
+    countAheadReadyLoopFrames,
+    isLoopFrameReadyForPresentation,
+    loopPlaybackPolicy.minAheadWhilePlaying,
+  ]);
 
   const updateBufferSnapshot = useCallback(() => {
     const totalFrames = frameHours.length;
@@ -3466,119 +3490,132 @@ export default function App() {
     webpDecodeCacheBudgetBytes,
   ]);
 
-  // Playback ticker. Reads forecastHourRef so the interval stays stable across
-  // frame advances — no teardown/rebuild every 250ms. For image-source playback,
-  // URL-presentable readiness is enough to advance; bitmap decode remains a warm
-  // path accelerator rather than the gate for visible progression.
+  // Playback ticker. Uses requestAnimationFrame plus an accumulator so cadence
+  // tracks elapsed time without interval drift or teardown/rebuild churn.
+  // For image-source playback, URL-presentable readiness is enough to advance;
+  // bitmap decode remains a warm-path accelerator rather than the gate.
   useEffect(() => {
     if (!isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
       return;
     }
 
     lastLoopAdvanceRef.current = Date.now();
+    let rafId: number | null = null;
+    let previousTs = performance.now();
+    let accumulatedMs = 0;
 
-    const interval = window.setInterval(() => {
+    const tick = (now: number) => {
+      const frameHours = loopFrameHoursRef.current;
+      const mode = visibleRenderModeRef.current;
       const currentHour = forecastHourRef.current;
-      const currentIndex = loopFrameHours.indexOf(currentHour);
+      const currentIndex = frameHours.indexOf(currentHour);
       if (currentIndex < 0) {
+        previousTs = now;
+        rafId = window.requestAnimationFrame(tick);
         return;
       }
 
+      const deltaMs = Math.max(0, now - previousTs);
+      previousTs = now;
+      accumulatedMs = Math.min(accumulatedMs + deltaMs, AUTOPLAY_TICK_MS * 4);
+
       const nextIndex = currentIndex + 1;
-      if (nextIndex >= loopFrameHours.length) {
+      if (nextIndex >= frameHours.length) {
         lastLoopAdvanceRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
         return;
       }
 
-      const nextHour = loopFrameHours[nextIndex];
-      const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
-      const minAheadRequired = Math.min(loopPlaybackPolicy.minAheadWhilePlaying, remainingAhead);
-      const readyAhead = countAheadReadyLoopFrames(currentHour, visibleRenderMode, minAheadRequired, "image-url");
+      const nextHour = frameHours[nextIndex];
+      const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
+      const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
+      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "image-url");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
-      if (isLoopFrameReadyForPresentation(nextHour, visibleRenderMode, "image-url")) {
-        lastLoopAdvanceRef.current = Date.now();
-        setTargetForecastHour(nextHour);
-      } else {
-        const now = Date.now();
-        const lastAdvance = lastLoopAdvanceRef.current;
-        if (lastAdvance !== null) {
-          const gapMs = now - lastAdvance;
-          if (gapMs > AUTOPLAY_TICK_MS) {
-            loopFrameDropSampleCounterRef.current += 1;
-            if (loopFrameDropSampleCounterRef.current % 4 === 0) {
+      if (accumulatedMs >= AUTOPLAY_TICK_MS) {
+        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "image-url")) {
+          accumulatedMs -= AUTOPLAY_TICK_MS;
+          lastLoopAdvanceRef.current = Date.now();
+          setTargetForecastHour(nextHour);
+        } else {
+          const wallClockNow = Date.now();
+          const lastAdvance = lastLoopAdvanceRef.current;
+          if (lastAdvance !== null) {
+            const gapMs = wallClockNow - lastAdvance;
+            if (gapMs > AUTOPLAY_TICK_MS) {
+              loopFrameDropSampleCounterRef.current += 1;
+              if (loopFrameDropSampleCounterRef.current % 4 === 0) {
+                trackPerfEvent({
+                  event_name: "loop_frame_drop_gap",
+                  duration_ms: gapMs,
+                  model_id: modelRef.current || null,
+                  variable_id: variableRef.current || null,
+                  forecast_hour: nextHour,
+                  meta: {
+                    render_mode: mode,
+                  },
+                });
+                trackRumDiagnosticMetric({
+                  metric_name: "frame_drop_bucket",
+                  metric_value: 1,
+                  metric_unit: "count",
+                  model_id: modelRef.current || null,
+                  variable_id: variableRef.current || null,
+                  forecast_hour: nextHour,
+                  meta: {
+                    render_mode: mode,
+                    bucket:
+                      gapMs >= 1000
+                        ? "1000ms_plus"
+                        : gapMs >= 500
+                          ? "500ms_to_999ms"
+                          : "250ms_to_499ms",
+                  },
+                });
+              }
+            }
+            if (gapMs > AUTOPLAY_TICK_MS * 2) {
+              lastLoopAdvanceRef.current = wallClockNow;
               trackPerfEvent({
-                event_name: "loop_frame_drop_gap",
+                event_name: "animation_stall",
                 duration_ms: gapMs,
                 model_id: modelRef.current || null,
                 variable_id: variableRef.current || null,
-                forecast_hour: nextHour,
-                meta: {
-                  render_mode: visibleRenderMode,
-                },
               });
               trackRumDiagnosticMetric({
-                metric_name: "frame_drop_bucket",
+                metric_name: "animation_stall_count",
                 metric_value: 1,
                 metric_unit: "count",
                 model_id: modelRef.current || null,
                 variable_id: variableRef.current || null,
                 forecast_hour: nextHour,
                 meta: {
-                  render_mode: visibleRenderMode,
-                  bucket:
-                    gapMs >= 1000
-                      ? "1000ms_plus"
-                      : gapMs >= 500
-                        ? "500ms_to_999ms"
-                        : "250ms_to_499ms",
+                  render_mode: mode,
+                  stall_ms: gapMs,
                 },
               });
             }
           }
         }
-        // Frame not yet decoded — detect stall and emit once per stall episode.
-        if (lastAdvance !== null && now - lastAdvance > AUTOPLAY_TICK_MS * 2) {
-          const stallMs = now - lastAdvance;
-          // Reset the baseline so we emit once per stall episode, not every tick.
-          lastLoopAdvanceRef.current = now;
-          trackPerfEvent({
-            event_name: "animation_stall",
-            duration_ms: stallMs,
-            model_id: modelRef.current || null,
-            variable_id: variableRef.current || null,
-          });
-          trackRumDiagnosticMetric({
-            metric_name: "animation_stall_count",
-            metric_value: 1,
-            metric_unit: "count",
-            model_id: modelRef.current || null,
-            variable_id: variableRef.current || null,
-            forecast_hour: nextHour,
-            meta: {
-              render_mode: visibleRenderMode,
-              stall_ms: stallMs,
-            },
-          });
-        }
       }
-    }, AUTOPLAY_TICK_MS);
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
 
     return () => {
-      window.clearInterval(interval);
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
       lastLoopAdvanceRef.current = null;
     };
   }, [
     isPlaying,
     renderMode,
     loopFrameHours,
-    visibleRenderMode,
-    countAheadReadyLoopFrames,
-    isLoopFrameReadyForPresentation,
-    loopPlaybackPolicy.minAheadWhilePlaying,
   ]);
 
   useEffect(() => {
@@ -3718,26 +3755,9 @@ export default function App() {
           traceMeta: scrubTraceMeta,
         });
 
-        if (resolveLoopUrlForHour(nextHour, visibleRenderMode)) {
-          setTargetForecastHour(nextHour);
+        setTargetForecastHour(nextHour);
+        if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
           setLoopDisplayHour(nextHour);
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
-          return;
-        }
-
-        if (!shouldEagerlyDecodeLoopFrames) {
-          setTargetForecastHour(nextHour);
-          setLoopDisplayHour(nextHour);
-          return;
-        }
-
-        const readyLoopHour = hasDecodedLoopFrame(nextHour, visibleRenderMode)
-          ? nextHour
-          : findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
-        if (Number.isFinite(readyLoopHour)) {
-          const resolvedReadyHour = readyLoopHour as number;
-          setTargetForecastHour(resolvedReadyHour);
-          setLoopDisplayHour(resolvedReadyHour);
         }
         startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
         return;
@@ -3789,19 +3809,12 @@ export default function App() {
         const nextHour = loopFrameHours.length > 0
           ? nearestFrame(loopFrameHours, requested)
           : requested;
-        if (resolveLoopUrlForHour(nextHour, visibleRenderMode)) {
-          setTargetForecastHour(nextHour);
+        setTargetForecastHour(nextHour);
+        if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
           setLoopDisplayHour(nextHour);
-        } else if (useExactScrubSelection || !shouldEagerlyDecodeLoopFrames) {
-          setTargetForecastHour(nextHour);
-          setLoopDisplayHour(nextHour);
-        } else {
-          const readyLoopHour = findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
-          if (Number.isFinite(readyLoopHour)) {
-            const resolvedReadyHour = readyLoopHour as number;
-            setTargetForecastHour(resolvedReadyHour);
-            setLoopDisplayHour(resolvedReadyHour);
-          }
+        }
+        if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
         }
       });
     },
@@ -3853,12 +3866,19 @@ export default function App() {
 
     const shouldCommitViaImageSource =
       isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
+    if (isScrubbing) {
+      if (hasDecodedLoopFrame(commitLoopHour, visibleRenderMode)) {
+        loopDisplayDecodeTokenRef.current += 1;
+        setLoopDisplayHour(commitLoopHour);
+      } else {
+        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode);
+      }
+      return;
+    }
+
     if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
-      if (isScrubbing) {
-        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode);
-      }
       return;
     }
 
