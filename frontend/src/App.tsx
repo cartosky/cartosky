@@ -56,6 +56,7 @@ import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
+import { viewerDebugLog } from "@/lib/viewer-debug";
 import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
 
 const TwfShareModal = lazy(() =>
@@ -4747,6 +4748,22 @@ export default function App() {
   }, []);
 
   const handleTileViewportReady = useCallback((readyTileUrl: string) => {
+    viewerDebugLog("app:tile-viewport-ready", {
+      readyTileUrl,
+      currentTileUrl: tileUrl,
+      loadedFramesKey,
+      variable,
+      visualVariable,
+      visibleRenderMode,
+      loopDisplayHour,
+      pendingVariableSwitch: pendingVariableSwitchRef.current
+        ? {
+            toVariableId: pendingVariableSwitchRef.current.toVariableId,
+            expectedSelectionKey: pendingVariableSwitchRef.current.expectedSelectionKey,
+            expectedTileUrl: pendingVariableSwitchRef.current.expectedTileUrl,
+          }
+        : null,
+    });
     if (readyTileUrl === tileUrl) {
       trackFirstViewerFrame(forecastHour);
     }
@@ -4816,8 +4833,10 @@ export default function App() {
     visibleRenderMode,
     variable,
     loadedFramesKey,
+    visualVariable,
     region,
     forecastHour,
+    loopDisplayHour,
     finalizePendingFrameMetric,
     telemetryRunId,
     trackFirstViewerFrame,
@@ -4890,6 +4909,17 @@ export default function App() {
       return;
     }
     const fromVariable = visualVariable || variable;
+    viewerDebugLog("app:variable-change", {
+      fromVariable,
+      nextVariable,
+      model,
+      run: resolvedRunForRequests,
+      forecastHour,
+      targetForecastHour,
+      renderMode,
+      visibleRenderMode,
+      loopDisplayHour,
+    });
     pendingVariableSwitchRef.current = {
       startedAt: performance.now(),
       fromVariableId: fromVariable || null,
@@ -4930,7 +4960,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour]);
 
   useEffect(() => {
     if (
@@ -5041,6 +5071,44 @@ export default function App() {
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
     : null;
+
+  useEffect(() => {
+    viewerDebugLog("app:selection", {
+      model,
+      run: resolvedRunForRequests,
+      variable,
+      visualVariable,
+      selectionKey,
+      loadedFramesKey,
+      forecastHour,
+      targetForecastHour,
+      loopDisplayHour,
+      renderMode,
+      visibleRenderMode,
+      isLoopDisplayActive,
+      isVariableSwitching,
+      activeLoopHour,
+      activeLoopUrl,
+      tileUrl,
+    });
+  }, [
+    model,
+    resolvedRunForRequests,
+    variable,
+    visualVariable,
+    selectionKey,
+    loadedFramesKey,
+    forecastHour,
+    targetForecastHour,
+    loopDisplayHour,
+    renderMode,
+    visibleRenderMode,
+    isLoopDisplayActive,
+    isVariableSwitching,
+    activeLoopHour,
+    activeLoopUrl,
+    tileUrl,
+  ]);
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
   const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
     ? pendingInitialLoopRef.current

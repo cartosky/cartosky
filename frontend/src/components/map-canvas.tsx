@@ -4,6 +4,7 @@ import type { GeoJSON } from "geojson";
 
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import { MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
+import { viewerDebugLog } from "@/lib/viewer-debug";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
@@ -847,6 +848,18 @@ export function MapCanvas({
   }, [loopImageUrl, mode, readyLoopImageUrl]);
 
   useEffect(() => {
+    viewerDebugLog("map:loop-state", {
+      mode,
+      variable,
+      loopActive,
+      loopImageUrl,
+      readyLoopImageUrl,
+      hasCanvasLoopFrame,
+      hasLoopVisual,
+    });
+  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasLoopVisual]);
+
+  useEffect(() => {
     const canvas = loopCanvasRef.current;
     if (!canvas || !loopFrameBitmap) {
       return;
@@ -966,10 +979,20 @@ export function MapCanvas({
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
         setReadyLoopImageUrl(null);
+        viewerDebugLog("map:loop-image-clear", {
+          mode,
+          variable,
+        });
         return;
       }
 
       const requestToken = loopImageRequestTokenRef.current;
+      viewerDebugLog("map:loop-image-request", {
+        mode,
+        variable,
+        nextLoopImageUrl,
+        requestToken,
+      });
       const image = new Image();
       image.decoding = "async";
       image.crossOrigin = "anonymous";
@@ -977,6 +1000,13 @@ export function MapCanvas({
 
       image.onload = () => {
         if (loopImageRequestTokenRef.current !== requestToken) {
+          viewerDebugLog("map:loop-image-stale-onload", {
+            mode,
+            variable,
+            nextLoopImageUrl,
+            requestToken,
+            currentToken: loopImageRequestTokenRef.current,
+          });
           return;
         }
         const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
@@ -989,6 +1019,12 @@ export function MapCanvas({
             coordinates: nextLoopImageCoordinates,
           });
           setReadyLoopImageUrl(nextLoopImageUrl);
+          viewerDebugLog("map:loop-image-ready", {
+            mode,
+            variable,
+            nextLoopImageUrl,
+            requestToken,
+          });
           map.triggerRepaint();
         } catch (error) {
           console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
@@ -1003,6 +1039,12 @@ export function MapCanvas({
         if (loopImageRequestTokenRef.current !== requestToken) {
           return;
         }
+        viewerDebugLog("map:loop-image-error", {
+          mode,
+          variable,
+          nextLoopImageUrl,
+          requestToken,
+        });
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
         if (loopImagePreloadRef.current === image) {
           loopImagePreloadRef.current = null;
@@ -1011,7 +1053,7 @@ export function MapCanvas({
 
       image.src = nextLoopImageUrl;
     },
-    [cancelPendingLoopImageUpdate]
+    [cancelPendingLoopImageUpdate, mode, variable]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
