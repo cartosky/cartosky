@@ -19,6 +19,10 @@ TELEMETRY_DB_PATH = Path(
     os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
     or os.environ.get("TWM_TELEMETRY_DB_PATH", "./data/admin_telemetry.sqlite3")
 )
+STATUS_DB_PATH = Path(
+    os.environ.get("CARTOSKY_STATUS_DB_PATH")
+    or os.environ.get("TWM_STATUS_DB_PATH", str(TELEMETRY_DB_PATH))
+)
 
 ALLOWED_PERF_EVENT_NAMES = {
     "viewer_first_frame",
@@ -108,6 +112,8 @@ RUN_ID_RE = re.compile(r"^(?P<day>\d{8})_(?P<hour>\d{2})z$")
 
 _db_init_lock = threading.Lock()
 _db_initialized = False
+_status_db_init_lock = threading.Lock()
+_status_db_initialized = False
 
 
 def _ensure_parent_dir(path: Path) -> None:
@@ -124,6 +130,17 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA temp_store=MEMORY")
     _init_db(conn)
+    return conn
+
+
+def _connect_status() -> sqlite3.Connection:
+    _ensure_parent_dir(STATUS_DB_PATH)
+    conn = sqlite3.connect(STATUS_DB_PATH, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    _init_status_db(conn)
     return conn
 
 
@@ -232,6 +249,49 @@ def _init_db(conn: sqlite3.Connection) -> None:
             """
         )
         _db_initialized = True
+
+
+def _init_status_db(conn: sqlite3.Connection) -> None:
+    global _status_db_initialized
+    if _status_db_initialized:
+        return
+    with _status_db_init_lock:
+        if _status_db_initialized:
+            return
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS qa_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                model_id TEXT NOT NULL,
+                variable_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                forecast_hour INTEGER NOT NULL,
+                auto_status TEXT NOT NULL,
+                manual_status TEXT,
+                auto_checks_json TEXT,
+                coverage_fraction REAL,
+                valid_pixel_count INTEGER,
+                total_pixel_count INTEGER,
+                range_min REAL,
+                range_max REAL,
+                warning_summary TEXT,
+                severity TEXT,
+                diagnostics_json TEXT,
+                last_checked_at INTEGER,
+                UNIQUE(model_id, variable_id, run_id, forecast_hour)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_qa_reviews_updated
+                ON qa_reviews(updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_qa_reviews_model_run
+                ON qa_reviews(model_id, run_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_qa_reviews_status_updated
+                ON qa_reviews(auto_status, updated_at DESC);
+            """
+        )
+        _status_db_initialized = True
 
 
 def _normalize_text(value: Any, *, max_length: int = 120) -> str | None:
@@ -617,7 +677,7 @@ def sync_status_run(*, data_root: Path, model_id: str, run_id: str) -> int:
 
     now = int(time.time())
     synced = 0
-    with _connect() as conn:
+    with _connect_status() as conn:
         for variable_id, variable_meta in variables.items():
             if str(variable_id) not in STATUS_VARIABLE_IDS:
                 continue
@@ -737,7 +797,7 @@ def prune_status_rows(*, data_root: Path, keep_runs_per_model: int = STATUS_KEEP
         )
 
     deleted = 0
-    with _connect() as conn:
+    with _connect_status() as conn:
         rows = conn.execute("SELECT DISTINCT model_id, run_id FROM qa_reviews").fetchall()
         for row in rows:
             model_id = str(row["model_id"])
@@ -760,7 +820,7 @@ def sync_latest_missing_status_runs(*, data_root: Path, limit_runs_per_model: in
         return 0
 
     synced = 0
-    with _connect() as conn:
+    with _connect_status() as conn:
         for model_dir in sorted(path for path in published_root.iterdir() if path.is_dir()):
             run_ids = _reviewable_run_ids_from_disk(data_root, model_dir.name, keep_runs=limit_runs_per_model)
             for run_id in run_ids:
@@ -780,7 +840,7 @@ def sync_latest_missing_status_runs(*, data_root: Path, limit_runs_per_model: in
 
 
 def status_rows_count() -> int:
-    with _connect() as conn:
+    with _connect_status() as conn:
         row = conn.execute("SELECT COUNT(*) AS total FROM qa_reviews").fetchone()
     return int(row["total"] or 0)
 
@@ -792,7 +852,7 @@ def ensure_status_seeded(*, data_root: Path, limit_runs_per_model: int = 2) -> i
 
 
 def refresh_missing_status_diagnostics(*, data_root: Path, limit_runs: int = 50) -> int:
-    with _connect() as conn:
+    with _connect_status() as conn:
         rows = conn.execute(
             """
             SELECT DISTINCT model_id, run_id
@@ -852,7 +912,7 @@ def get_status_results(
     params.append(max(1, min(500, int(limit))))
     where_sql = " WHERE " + " AND ".join(clauses)
 
-    with _connect() as conn:
+    with _connect_status() as conn:
         rows = conn.execute(
             f"""
             SELECT
@@ -923,6 +983,41 @@ def get_status_results(
             }
         )
     return results
+
+
+def get_status_qa_summary() -> dict[str, Any]:
+    with _connect_status() as conn:
+        total_row = conn.execute("SELECT COUNT(*) AS total FROM qa_reviews").fetchone()
+        warning_row = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM qa_reviews
+            WHERE auto_status = 'warning'
+            """
+        ).fetchone()
+        run_row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT model_id || '|' || run_id) AS total
+            FROM qa_reviews
+            """
+        ).fetchone()
+        latest_row = conn.execute(
+            """
+            SELECT MAX(last_checked_at) AS latest_checked_at
+            FROM qa_reviews
+            """
+        ).fetchone()
+
+    telemetry_path = str(TELEMETRY_DB_PATH.resolve())
+    status_path = str(STATUS_DB_PATH.resolve())
+    return {
+        "store_mode": "shared" if status_path == telemetry_path else "separate",
+        "db_path": status_path,
+        "total_reviews": int(total_row["total"] or 0),
+        "warning_reviews": int(warning_row["total"] or 0),
+        "distinct_runs": int(run_row["total"] or 0),
+        "latest_checked_at": int(latest_row["latest_checked_at"]) if latest_row["latest_checked_at"] else None,
+    }
 
 
 def record_perf_event(payload: dict[str, Any], *, member_id: int | None = None) -> None:

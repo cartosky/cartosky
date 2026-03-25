@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ClipboardCheck, Clock3, SearchCheck, X } from "lucide-react";
 
 import {
+  fetchAdminStatusQaSummary,
   fetchAdminStatusResults,
   fetchTwfStatus,
+  type StatusQaSummaryResponse,
   type StatusResult,
   type TwfStatus,
 } from "@/lib/admin-api";
@@ -103,6 +105,7 @@ function viewLabel(view: ViewFilter): string {
 
 export default function AdminStatusPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
+  const [qaSummary, setQaSummary] = useState<StatusQaSummaryResponse | null>(null);
   const [windowValue, setWindowValue] = useState<WindowValue>("30d");
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("issues");
@@ -123,13 +126,17 @@ export default function AdminStatusPage() {
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) return;
 
-        const response = await fetchAdminStatusResults({
-          window: windowValue,
-          model: modelFilter,
-          limit: 200,
-        });
+        const [response, nextQaSummary] = await Promise.all([
+          fetchAdminStatusResults({
+            window: windowValue,
+            model: modelFilter,
+            limit: 200,
+          }),
+          fetchAdminStatusQaSummary(),
+        ]);
         if (cancelled) return;
         setResults(response.results);
+        setQaSummary(nextQaSummary);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -253,6 +260,36 @@ export default function AdminStatusPage() {
             onClick={() => setViewFilter("stale")}
             active={viewFilter === "stale"}
           />
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+            <div className="text-sm font-semibold text-white">QA Store</div>
+            <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
+              {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
+            </div>
+            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
+              {qaSummary?.store_mode === "separate" ? "Ready for final DB retirement" : "Still sharing legacy telemetry DB"}
+            </div>
+          </section>
+          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+            <div className="text-sm font-semibold text-white">QA Reviews</div>
+            <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
+              {qaSummary?.total_reviews ?? 0}
+            </div>
+            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
+              {qaSummary?.warning_reviews ?? 0} warning rows
+            </div>
+          </section>
+          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+            <div className="text-sm font-semibold text-white">Latest QA Check</div>
+            <div className="mt-3 text-[1.15rem] font-semibold tracking-tight text-white">
+              {formatTimestamp(qaSummary?.latest_checked_at)}
+            </div>
+            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
+              {qaSummary?.distinct_runs ?? 0} distinct runs tracked
+            </div>
+          </section>
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">

@@ -38,9 +38,12 @@ pytestmark = pytest.mark.anyio
 def isolate_databases(tmp_path: Path) -> None:
     token_db = tmp_path / "tokens.sqlite3"
     telemetry_db = tmp_path / "telemetry.sqlite3"
+    status_db = tmp_path / "status.sqlite3"
     twf_oauth.TOKEN_DB_PATH = str(token_db)
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
+    admin_telemetry.STATUS_DB_PATH = status_db
     admin_telemetry._db_initialized = False
+    admin_telemetry._status_db_initialized = False
     prometheus_metrics.reset_metrics_for_tests()
     otel_tracing.reset_for_tests()
     os.environ.pop("CARTOSKY_PROMETHEUS_ENABLED", None)
@@ -488,6 +491,71 @@ async def test_tracing_summary_requires_admin_and_reports_recent_traces(client: 
         cookies={twf_oauth.SESSION_COOKIE_NAME: "normal-session"},
     )
     assert forbidden.status_code == 403
+
+
+async def test_status_qa_summary_reads_from_separate_store(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    with admin_telemetry._connect_status() as conn:
+        now = int(time.time())
+        conn.execute(
+            """
+            INSERT INTO qa_reviews (
+                created_at,
+                updated_at,
+                model_id,
+                variable_id,
+                run_id,
+                forecast_hour,
+                auto_status,
+                manual_status,
+                auto_checks_json,
+                coverage_fraction,
+                valid_pixel_count,
+                total_pixel_count,
+                range_min,
+                range_max,
+                warning_summary,
+                severity,
+                diagnostics_json,
+                last_checked_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now,
+                now,
+                "hrrr",
+                "tmp2m",
+                "20260308_00z",
+                1,
+                "warning",
+                "review",
+                "{}",
+                0.25,
+                10,
+                40,
+                12.0,
+                22.0,
+                "Coverage looks sparse",
+                "warning",
+                "{}",
+                now,
+            ),
+        )
+
+    response = await client.get(
+        "/api/v4/admin/status/qa-summary",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["store_mode"] == "separate"
+    assert body["total_reviews"] == 1
+    assert body["warning_reviews"] == 1
+    assert body["distinct_runs"] == 1
+    assert body["latest_checked_at"] == now
 
 
 async def test_admin_perf_breakdown_supports_animation_stall_by_model_and_variable(client: httpx.AsyncClient) -> None:

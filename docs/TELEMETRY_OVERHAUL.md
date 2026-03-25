@@ -317,6 +317,10 @@ Use Option A for `/admin`: keep CartoSky as the authenticated admin shell and su
 
 - Local:
   - narrow the custom admin implementation to CartoSky-specific health only
+  - phase plumbing now available in repo:
+    - dedicated QA/status DB env: `CARTOSKY_STATUS_DB_PATH`
+    - QA migration script:
+      - [migrate_qa_reviews.py](/Users/brianaustin/cartosky/scripts/migrate_qa_reviews.py)
 - Production:
   - verify status and QA surfaces still work after the legacy telemetry cutover
   - confirm no production path still treats the old perf or usage system as authoritative

@@ -136,6 +136,15 @@ export type StatusResultsResponse = {
   results: StatusResult[];
 };
 
+export type StatusQaSummaryResponse = {
+  store_mode: "shared" | "separate";
+  db_path: string;
+  total_reviews: number;
+  warning_reviews: number;
+  distinct_runs: number;
+  latest_checked_at: number | null;
+};
+
 export type AdminObservabilitySummaryResponse = {
   metrics_enabled: boolean;
   http: {
@@ -294,4 +303,8 @@ export async function fetchAdminStatusResults(params: {
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.status && params.status !== "all") search.set("status", params.status);
   return fetchJson<StatusResultsResponse>(`${API_ORIGIN}/api/v4/admin/status/results?${search.toString()}`);
+}
+
+export async function fetchAdminStatusQaSummary(): Promise<StatusQaSummaryResponse> {
+  return fetchJson<StatusQaSummaryResponse>(`${API_ORIGIN}/api/v4/admin/status/qa-summary`);
 }

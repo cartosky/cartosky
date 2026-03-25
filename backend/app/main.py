@@ -1338,6 +1338,12 @@ async def admin_status_results(
     }
 
 
+@app.get("/api/v4/admin/status/qa-summary")
+async def admin_status_qa_summary(request: Request) -> dict[str, Any]:
+    _require_admin_session(request)
+    return admin_telemetry.get_status_qa_summary()
+
+
 @app.get("/metrics")
 async def metrics() -> Response:
     if not prometheus_metrics.prometheus_enabled():
