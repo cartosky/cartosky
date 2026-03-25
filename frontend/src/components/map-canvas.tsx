@@ -792,6 +792,7 @@ export function MapCanvas({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
+  const [readyLoopImageUrl, setReadyLoopImageUrl] = useState<string | null>(null);
   const activeBufferRef = useRef<OverlayBuffer>("a");
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
@@ -832,7 +833,18 @@ export function MapCanvas({
     [loopImageBbox]
   );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
-  const hasLoopVisual = Boolean(loopImageUrl || hasCanvasLoopFrame);
+  const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
+  const hasLoopVisual = Boolean(hasCanvasLoopFrame || (mode === "variable-switch" ? isReadyLoopImage : loopImageUrl));
+
+  useEffect(() => {
+    if (!loopImageUrl) {
+      setReadyLoopImageUrl(null);
+      return;
+    }
+    if (mode === "variable-switch" && readyLoopImageUrl !== loopImageUrl) {
+      setReadyLoopImageUrl(null);
+    }
+  }, [loopImageUrl, mode, readyLoopImageUrl]);
 
   useEffect(() => {
     const canvas = loopCanvasRef.current;
@@ -953,6 +965,7 @@ export function MapCanvas({
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
+        setReadyLoopImageUrl(null);
         return;
       }
 
@@ -975,6 +988,8 @@ export function MapCanvas({
             url: nextLoopImageUrl,
             coordinates: nextLoopImageCoordinates,
           });
+          setReadyLoopImageUrl(nextLoopImageUrl);
+          map.triggerRepaint();
         } catch (error) {
           console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
         } finally {
