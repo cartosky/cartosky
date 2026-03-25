@@ -974,6 +974,7 @@ export default function App() {
   const [frameStatusMessage, setFrameStatusMessage] = useState<string | null>(null);
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [selectionEpoch, setSelectionEpoch] = useState(0);
 
   const isVariableSwitching = useMemo(() => {
     if (!variableSwitchState) {
@@ -1000,6 +1001,7 @@ export default function App() {
     version: 0,
   });
   const latestTileUrlRef = useRef<string>("");
+  const selectionEpochRef = useRef(selectionEpoch);
   const readyTileUrlsRef = useRef<Map<string, number>>(new Map());
   const tileReadySourceRef = useRef<Map<string, TileReadySource>>(new Map());
   const tileReadyViewportSignatureRef = useRef<Map<string, string>>(new Map());
@@ -1340,6 +1342,14 @@ export default function App() {
   const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+
+  useEffect(() => {
+    selectionEpochRef.current = selectionEpoch;
+  }, [selectionEpoch]);
+
+  useEffect(() => {
+    setSelectionEpoch((current) => current + 1);
+  }, [selectionKey]);
 
   const runOptions = useMemo<Option[]>(() => {
     return buildRunOptions(runs, latestRunId);
@@ -2452,7 +2462,16 @@ export default function App() {
     [loopFrameHours, hasDecodedLoopFrame, forecastHour]
   );
 
-  const handleFrameSettled = useCallback((loadedTileUrl: string) => {
+  const handleFrameSettled = useCallback((
+    loadedTileUrl: string,
+    meta?: { selectionEpoch?: number; selectionKey?: string }
+  ) => {
+    if (
+      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
+      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
+    ) {
+      return;
+    }
     markTileReady(loadedTileUrl);
     markFrameReady(loadedTileUrl);
     const pending = pendingFrameMetricRef.current;
@@ -2475,9 +2494,15 @@ export default function App() {
     if (loadedTileUrl === latestTileUrlRef.current) {
       setSettledTileUrl(loadedTileUrl);
     }
-  }, [loadedFramesKey, markTileReady, markFrameReady]);
+  }, [loadedFramesKey, markTileReady, markFrameReady, selectionKey]);
 
   const handleTileReady = useCallback((loadedTileUrl: string, meta?: TileReadyMeta) => {
+    if (
+      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
+      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
+    ) {
+      return;
+    }
     if (meta?.source) {
       tileReadySourceRef.current.set(loadedTileUrl, meta.source);
     }
@@ -2506,9 +2531,19 @@ export default function App() {
     if (loadedTileUrl === latestTileUrlRef.current) {
       setSettledTileUrl(loadedTileUrl);
     }
-  }, [loadedFramesKey, markTileReady, markFrameReady]);
+  }, [loadedFramesKey, markTileReady, markFrameReady, selectionKey]);
 
-  const handleFrameLoadingChange = useCallback((loadingTileUrl: string, isLoadingValue: boolean) => {
+  const handleFrameLoadingChange = useCallback((
+    loadingTileUrl: string,
+    isLoadingValue: boolean,
+    meta?: { selectionEpoch?: number; selectionKey?: string }
+  ) => {
+    if (
+      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
+      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
+    ) {
+      return;
+    }
     if (isLoadingValue) {
       const pending = pendingFrameMetricRef.current;
       if (
@@ -2545,7 +2580,7 @@ export default function App() {
       return;
     }
     setMapLoadingTileUrl((current) => (current === loadingTileUrl ? null : current));
-  }, [loadedFramesKey, tileUrl, variable]);
+  }, [loadedFramesKey, tileUrl, variable, selectionKey]);
 
   const clearFrameStatusTimer = useCallback(() => {
     if (frameStatusTimerRef.current !== null) {
@@ -4758,7 +4793,16 @@ export default function App() {
     setMapViewTick((current) => current + 1);
   }, []);
 
-  const handleTileViewportReady = useCallback((readyTileUrl: string) => {
+  const handleTileViewportReady = useCallback((
+    readyTileUrl: string,
+    meta?: { selectionEpoch?: number; selectionKey?: string }
+  ) => {
+    if (
+      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
+      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
+    ) {
+      return;
+    }
     viewerDebugLog("app:tile-viewport-ready", {
       readyTileUrl,
       currentTileUrl: tileUrl,
@@ -4853,6 +4897,7 @@ export default function App() {
     finalizePendingFrameMetric,
     telemetryRunId,
     trackFirstViewerFrame,
+    selectionKey,
   ]);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
@@ -5455,6 +5500,8 @@ export default function App() {
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
           tileUrl={tileUrl}
+          selectionKey={selectionKey}
+          selectionEpoch={selectionEpoch}
           contourGeoJsonUrl={contourGeoJsonUrl}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}

@@ -52,6 +52,13 @@ export type BasemapMode = "light" | "dark";
 export type TileReadySource = "active" | "swap" | "prefetch" | "loop-warm";
 export type TileReadyMeta = {
   source: TileReadySource;
+  selectionEpoch?: number;
+  selectionKey?: string;
+};
+
+type SelectionScopedMeta = {
+  selectionEpoch: number;
+  selectionKey: string;
 };
 
 const SCRUB_SWAP_TIMEOUT_MS = 650;
@@ -727,6 +734,8 @@ export function buildMapStyle(
 
 type MapCanvasProps = {
   tileUrl: string;
+  selectionKey: string;
+  selectionEpoch: number;
   contourGeoJsonUrl?: string | null;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
@@ -745,10 +754,10 @@ type MapCanvasProps = {
   loopFrameBitmap?: ImageBitmap | null;
   loopImageBbox?: [number, number, number, number] | null;
   loopActive?: boolean;
-  onFrameSettled?: (tileUrl: string) => void;
+  onFrameSettled?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
   onTileReady?: (tileUrl: string, meta?: TileReadyMeta) => void;
-  onTileViewportReady?: (tileUrl: string) => void;
-  onFrameLoadingChange?: (tileUrl: string, isLoading: boolean) => void;
+  onTileViewportReady?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
+  onFrameLoadingChange?: (tileUrl: string, isLoading: boolean, meta?: SelectionScopedMeta) => void;
   onZoomBucketChange?: (bucket: number) => void;
   onZoomRoutingSignal?: (payload: { zoom: number; gestureActive: boolean }) => void;
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
@@ -759,6 +768,8 @@ type MapCanvasProps = {
 
 export function MapCanvas({
   tileUrl,
+  selectionKey,
+  selectionEpoch,
   contourGeoJsonUrl,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
@@ -815,6 +826,8 @@ export function MapCanvas({
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
   const isLoopToTileTransitioningRef = useRef(false);
+  const currentSelectionEpochRef = useRef(selectionEpoch);
+  currentSelectionEpochRef.current = selectionEpoch;
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
   const anchorHoverLeaveTimeoutRef = useRef<number | null>(null);
@@ -975,6 +988,7 @@ export function MapCanvas({
       map: maplibregl.Map,
       nextLoopImageUrl: string | null | undefined,
       nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
+      selectionScope: SelectionScopedMeta,
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
@@ -982,6 +996,8 @@ export function MapCanvas({
         viewerDebugLog("map:loop-image-clear", {
           mode,
           variable,
+          selectionKey: selectionScope.selectionKey,
+          selectionEpoch: selectionScope.selectionEpoch,
         });
         return;
       }
@@ -992,6 +1008,8 @@ export function MapCanvas({
         variable,
         nextLoopImageUrl,
         requestToken,
+        selectionKey: selectionScope.selectionKey,
+        selectionEpoch: selectionScope.selectionEpoch,
       });
       const image = new Image();
       image.decoding = "async";
@@ -1006,7 +1024,12 @@ export function MapCanvas({
             nextLoopImageUrl,
             requestToken,
             currentToken: loopImageRequestTokenRef.current,
+            selectionKey: selectionScope.selectionKey,
+            selectionEpoch: selectionScope.selectionEpoch,
           });
+          return;
+        }
+        if (selectionScope.selectionEpoch !== currentSelectionEpochRef.current) {
           return;
         }
         const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
@@ -1024,6 +1047,8 @@ export function MapCanvas({
             variable,
             nextLoopImageUrl,
             requestToken,
+            selectionKey: selectionScope.selectionKey,
+            selectionEpoch: selectionScope.selectionEpoch,
           });
           map.triggerRepaint();
         } catch (error) {
@@ -1044,6 +1069,8 @@ export function MapCanvas({
           variable,
           nextLoopImageUrl,
           requestToken,
+          selectionKey: selectionScope.selectionKey,
+          selectionEpoch: selectionScope.selectionEpoch,
         });
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
         if (loopImagePreloadRef.current === image) {
@@ -1250,7 +1277,13 @@ export function MapCanvas({
   }, [isLoaded]);
 
   const notifySettled = useCallback(
-    (map: maplibregl.Map, source: string, url: string, readySource: TileReadySource) => {
+    (
+      map: maplibregl.Map,
+      source: string,
+      url: string,
+      readySource: TileReadySource,
+      selectionScope: SelectionScopedMeta
+    ) => {
       let done = false;
       let timeoutId: number | null = null;
 
@@ -1266,8 +1299,12 @@ export function MapCanvas({
         if (done) return;
         done = true;
         cleanup();
-        onTileReady?.(url, { source: readySource });
-        onFrameSettled?.(url);
+        onTileReady?.(url, {
+          source: readySource,
+          selectionEpoch: selectionScope.selectionEpoch,
+          selectionKey: selectionScope.selectionKey,
+        });
+        onFrameSettled?.(url, selectionScope);
       };
 
       const onSourceData = (event: maplibregl.MapSourceDataEvent) => {
@@ -1326,6 +1363,23 @@ export function MapCanvas({
     }
     isLoopToTileTransitioningRef.current = false;
   }, []);
+
+  useEffect(() => {
+    swapTokenRef.current += 1;
+    prefetchTokenRef.current += 1;
+    tileViewportReadyTokenRef.current += 1;
+    basemapStyleSwapTokenRef.current += 1;
+    cancelCrossfade();
+    cancelLoopToTileTransition();
+    cancelPendingLoopImageUpdate();
+    setReadyLoopImageUrl(null);
+  }, [
+    selectionEpoch,
+    selectionKey,
+    cancelCrossfade,
+    cancelLoopToTileTransition,
+    cancelPendingLoopImageUpdate,
+  ]);
 
   const runCrossfade = useCallback(
     (map: maplibregl.Map, fromBuffer: OverlayBuffer, toBuffer: OverlayBuffer, targetOpacity: number) => {
@@ -1704,7 +1758,7 @@ export function MapCanvas({
       }
 
       if (loopImageUrl) {
-        queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates);
+        queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
       }
       const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
       if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
@@ -1863,13 +1917,14 @@ export function MapCanvas({
     if (!map || !isLoaded || !loopActive) {
       return;
     }
+    const selectionScope = { selectionEpoch, selectionKey };
 
-    onFrameLoadingChange?.(tileUrl, false);
+    onFrameLoadingChange?.(tileUrl, false, selectionScope);
 
     const emitReady = () => {
-      onTileReady?.(tileUrl, { source: "loop-warm" });
-      onFrameSettled?.(tileUrl);
-      onTileViewportReady?.(tileUrl);
+      onTileReady?.(tileUrl, { source: "loop-warm", ...selectionScope });
+      onFrameSettled?.(tileUrl, selectionScope);
+      onTileViewportReady?.(tileUrl, selectionScope);
     };
 
     if (tileUrl === activeTileUrlRef.current) {
@@ -1961,6 +2016,8 @@ export function MapCanvas({
     onFrameSettled,
     onTileViewportReady,
     onFrameLoadingChange,
+    selectionEpoch,
+    selectionKey,
   ]);
 
   useEffect(() => {
@@ -1968,12 +2025,13 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    const selectionScope = { selectionEpoch, selectionKey };
 
     // Foreground tile swap work is disabled while loop mode is active.
     // A separate warm-path effect keeps the active tile buffer up to date
     // at tiny opacity to avoid flashes during WebP -> tile handoff.
     if (loopActive) {
-      onFrameLoadingChange?.(tileUrl, false);
+      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       return;
     }
     let settledCleanup: (() => void) | undefined;
@@ -1982,7 +2040,7 @@ export function MapCanvas({
       const source = sourceId(activeBufferRef.current);
       setLayerVisibility(map, layerId(activeBufferRef.current), true);
       setLayerVisibility(map, layerId(otherBuffer(activeBufferRef.current)), false);
-      onFrameLoadingChange?.(tileUrl, false);
+      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       const readyCleanup = waitForSourceReady(
         map,
         source,
@@ -1991,10 +2049,10 @@ export function MapCanvas({
         -1,
         mode,
         () => {
-          settledCleanup = notifySettled(map, source, tileUrl, "active");
+          settledCleanup = notifySettled(map, source, tileUrl, "active", selectionScope);
         },
         () => {
-          onFrameLoadingChange?.(tileUrl, true);
+          onFrameLoadingChange?.(tileUrl, true, selectionScope);
           console.warn("[map] ready timeout", { sourceId: source, tileUrl, mode });
         }
       );
@@ -2014,7 +2072,7 @@ export function MapCanvas({
     }
 
     const inactiveSourceId = sourceId(inactiveBuffer);
-    onFrameLoadingChange?.(tileUrl, true);
+    onFrameLoadingChange?.(tileUrl, true, selectionScope);
     if (
       !setTilesSafe(inactiveSource, [tileUrl], {
         sourceId: inactiveSourceId,
@@ -2022,7 +2080,7 @@ export function MapCanvas({
         mode: mode,
       })
     ) {
-      onFrameLoadingChange?.(tileUrl, false);
+      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       return;
     }
     sourceRequestedUrlRef.current.set(inactiveSourceId, tileUrl);
@@ -2064,9 +2122,9 @@ export function MapCanvas({
         // Use micro-crossfade for smooth transition without noticeable flash
         runMicroCrossfade(map, previousActive, inactiveBuffer, opacity, token);
       }
-      onFrameLoadingChange?.(tileUrl, false);
+      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       if (!skipSettleNotify) {
-        settledCleanup = notifySettled(map, sourceId(inactiveBuffer), tileUrl, "swap");
+        settledCleanup = notifySettled(map, sourceId(inactiveBuffer), tileUrl, "swap", selectionScope);
       }
 
       // After promotion, keep only the active buffer visible so MapLibre stops
@@ -2086,7 +2144,7 @@ export function MapCanvas({
       if (token !== swapTokenRef.current) {
         return;
       }
-      onFrameLoadingChange?.(tileUrl, true);
+      onFrameLoadingChange?.(tileUrl, true, selectionScope);
       console.warn("[map] swap timeout", { sourceId: inactiveSourceId, tileUrl, token, mode });
     });
 
@@ -2110,6 +2168,8 @@ export function MapCanvas({
     onTileReady,
     onFrameSettled,
     onFrameLoadingChange,
+    selectionEpoch,
+    selectionKey,
   ]);
 
   useEffect(() => {
@@ -2117,6 +2177,7 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    const selectionScope = { selectionEpoch, selectionKey };
 
     const token = ++prefetchTokenRef.current;
     const urls = Array.from({ length: PREFETCH_BUFFER_COUNT }, (_, idx) => prefetchTileUrls[idx] ?? "");
@@ -2177,7 +2238,7 @@ export function MapCanvas({
           }
           // Important: App.tsx autoplay waits on URLs being marked ready.
           // Prefetch sources should contribute to that readiness cache.
-          onTileReady?.(url, { source: "prefetch" });
+          onTileReady?.(url, { source: "prefetch", ...selectionScope });
           // Tiles are now in the browser cache — hide the layer so MapLibre stops
           // issuing new requests when the viewport changes.
           setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
@@ -2211,7 +2272,7 @@ export function MapCanvas({
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [prefetchTileUrls, isLoaded, waitForSourceReady, setTilesSafe, onTileReady]);
+  }, [prefetchTileUrls, isLoaded, waitForSourceReady, setTilesSafe, onTileReady, selectionEpoch, selectionKey]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2219,7 +2280,7 @@ export function MapCanvas({
       return;
     }
 
-    queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates);
+    queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
     const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
     if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
       loopCanvasSource.setCoordinates(loopImageCoordinates);
@@ -2244,6 +2305,8 @@ export function MapCanvas({
     hasLoopVisual,
     queueLoopImageUpdate,
     enforceLayerOrder,
+    selectionEpoch,
+    selectionKey,
   ]);
 
   useEffect(() => {
@@ -2380,6 +2443,7 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    const selectionScope = { selectionEpoch, selectionKey };
 
     const token = ++tileViewportReadyTokenRef.current;
     const activeSource = sourceId(activeBufferRef.current);
@@ -2395,7 +2459,7 @@ export function MapCanvas({
       if (!map.isSourceLoaded(activeSource)) {
         return;
       }
-      onTileViewportReady?.(expectedTileUrl);
+      onTileViewportReady?.(expectedTileUrl, selectionScope);
     };
 
     map.on("idle", maybeNotify);
@@ -2404,7 +2468,7 @@ export function MapCanvas({
     return () => {
       map.off("idle", maybeNotify);
     };
-  }, [isLoaded, tileUrl, onTileViewportReady]);
+  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey]);
 
   useEffect(() => {
     const map = mapRef.current;
