@@ -75,7 +75,6 @@ function ToolbarSelect(props: {
   hideLabel?: boolean;
   selectedLabelOverride?: string;
   highlightState?: boolean;
-  triggerBadgeLabel?: string | null;
   menuActionLabel?: string | null;
   onMenuAction?: () => void;
 }) {
@@ -92,7 +91,6 @@ function ToolbarSelect(props: {
     hideLabel = false,
     selectedLabelOverride,
     highlightState = false,
-    triggerBadgeLabel,
     menuActionLabel,
     onMenuAction,
   } = props;
@@ -180,17 +178,17 @@ function ToolbarSelect(props: {
         <SelectTrigger
           className={cn(
             "h-[30px] w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
-            highlightState ? "border-emerald-300/25 bg-emerald-300/10 text-white hover:bg-emerald-300/14" : "",
+            highlightState ? "border-emerald-300/20 bg-emerald-300/[0.08] text-white shadow-[0_0_0_1px_rgba(110,231,183,0.08)] hover:bg-emerald-300/[0.11]" : "",
             triggerClassName
           )}
         >
-          <span className="flex min-w-0 items-center gap-2 pr-1">
+          <span className="flex min-w-0 items-center pr-1">
             <span className="truncate whitespace-nowrap">{selectedLabel}</span>
-            {triggerBadgeLabel ? (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300/24 bg-emerald-300/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
-                {triggerBadgeLabel}
-              </span>
+            {highlightState ? (
+              <span
+                aria-hidden="true"
+                className="ml-2 inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-300 shadow-[0_0_0_3px_rgba(110,231,183,0.12)]"
+              />
             ) : null}
           </span>
         </SelectTrigger>
@@ -351,7 +349,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               hideLabel
               selectedLabelOverride={runDisplayLabel}
               highlightState={hasNewerRunAvailable}
-              triggerBadgeLabel={hasNewerRunAvailable ? "New" : null}
               menuActionLabel={
                 hasNewerRunAvailable && latestAvailableRunLabel
                   ? `Switch to latest (${latestAvailableRunLabel})`
@@ -454,7 +451,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 placeholder="Run"
                 selectedLabelOverride={runDisplayLabel}
                 highlightState={hasNewerRunAvailable}
-                triggerBadgeLabel={hasNewerRunAvailable ? "New" : null}
                 menuActionLabel={
                   hasNewerRunAvailable && latestAvailableRunLabel
                     ? `Switch to latest (${latestAvailableRunLabel})`
