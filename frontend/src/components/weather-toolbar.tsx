@@ -1,4 +1,4 @@
-import { useState, type ComponentType, type ReactNode } from "react";
+import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import {
   Boxes,
   CalendarClock,
@@ -76,6 +76,7 @@ function ToolbarSelect(props: {
   selectedLabelOverride?: string;
   highlightState?: boolean;
   menuActionLabel?: string | null;
+  menuActionDescription?: string | null;
   onMenuAction?: () => void;
 }) {
   const {
@@ -92,6 +93,7 @@ function ToolbarSelect(props: {
     selectedLabelOverride,
     highlightState = false,
     menuActionLabel,
+    menuActionDescription,
     onMenuAction,
   } = props;
   const selectedLabel = selectedLabelOverride ?? options.find((opt) => opt.value === value)?.label ?? placeholder;
@@ -154,12 +156,12 @@ function ToolbarSelect(props: {
       <button
         type="button"
         onClick={onMenuAction}
-        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-xs font-semibold text-emerald-50 transition-colors duration-150 hover:bg-white/10"
+        className="flex w-full flex-col items-start rounded-md px-3 py-2 text-left transition-colors duration-150 hover:bg-white/10"
       >
-        <span>{menuActionLabel}</span>
-        <span className="rounded-full border border-emerald-300/24 bg-emerald-300/12 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.16em] text-emerald-100">
-          Latest
-        </span>
+        <span className="text-xs font-semibold text-emerald-50">{menuActionLabel}</span>
+        {menuActionDescription ? (
+          <span className="mt-0.5 text-[11px] text-emerald-100/72">{menuActionDescription}</span>
+        ) : null}
       </button>
       <SelectSeparator className="my-1 bg-white/10" />
       {content}
@@ -178,19 +180,11 @@ function ToolbarSelect(props: {
         <SelectTrigger
           className={cn(
             "h-[30px] w-full border-border/50 bg-secondary/40 px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-all duration-150 hover:border-border hover:bg-secondary/60 focus:border-primary/50 focus:ring-1 focus:ring-primary/30 [&>span]:line-clamp-none",
-            highlightState ? "border-emerald-300/20 bg-emerald-300/[0.08] text-white shadow-[0_0_0_1px_rgba(110,231,183,0.08)] hover:bg-emerald-300/[0.11]" : "",
+            highlightState ? "border-emerald-300/16 bg-emerald-300/[0.05] text-white shadow-[0_0_0_1px_rgba(110,231,183,0.04)] hover:bg-emerald-300/[0.08]" : "",
             triggerClassName
           )}
         >
-          <span className="flex min-w-0 items-center pr-1">
-            <span className="truncate whitespace-nowrap">{selectedLabel}</span>
-            {highlightState ? (
-              <span
-                aria-hidden="true"
-                className="ml-2 inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-300 shadow-[0_0_0_3px_rgba(110,231,183,0.12)]"
-              />
-            ) : null}
-          </span>
+          <span className="truncate whitespace-nowrap pr-1">{selectedLabel}</span>
         </SelectTrigger>
         <SelectContent>{resolvedContent}</SelectContent>
       </Select>
@@ -308,6 +302,12 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     /^Latest\s*\((.*)\)$/,
     "$1"
   );
+  const runMenuOptions = useMemo(() => {
+    if (!hasNewerRunAvailable) {
+      return runs;
+    }
+    return runs.filter((opt) => opt.value !== "latest");
+  }, [hasNewerRunAvailable, runs]);
 
   return (
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
@@ -343,15 +343,20 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               icon={CalendarClock}
               value={run}
               onValueChange={onRunChange}
-              options={runs}
+              options={runMenuOptions}
               disabled={disabled}
               placeholder="Run"
               hideLabel
               selectedLabelOverride={runDisplayLabel}
               highlightState={hasNewerRunAvailable}
               menuActionLabel={
+                hasNewerRunAvailable
+                  ? "View latest run"
+                  : null
+              }
+              menuActionDescription={
                 hasNewerRunAvailable && latestAvailableRunLabel
-                  ? `Switch to latest (${latestAvailableRunLabel})`
+                  ? `${latestAvailableRunLabel} available`
                   : null
               }
               onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
@@ -446,14 +451,19 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 icon={CalendarClock}
                 value={run}
                 onValueChange={onRunChange}
-                options={runs}
+                options={runMenuOptions}
                 disabled={disabled}
                 placeholder="Run"
                 selectedLabelOverride={runDisplayLabel}
                 highlightState={hasNewerRunAvailable}
                 menuActionLabel={
+                  hasNewerRunAvailable
+                    ? "View latest run"
+                    : null
+                }
+                menuActionDescription={
                   hasNewerRunAvailable && latestAvailableRunLabel
-                    ? `Switch to latest (${latestAvailableRunLabel})`
+                    ? `${latestAvailableRunLabel} available`
                     : null
                 }
                 onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
