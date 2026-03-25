@@ -1730,7 +1730,7 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT metric_name, metric_value
+            SELECT metric_name, metric_value, created_at
             FROM rum_events
             WHERE created_at >= ?
             ORDER BY created_at ASC
@@ -1739,8 +1739,11 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
         ).fetchall()
 
     values_by_metric: dict[str, list[float]] = {name: [] for name in ALLOWED_RUM_METRIC_NAMES}
+    last_seen_by_metric: dict[str, int | None] = {name: None for name in ALLOWED_RUM_METRIC_NAMES}
     for row in rows:
-        values_by_metric[str(row["metric_name"])].append(float(row["metric_value"]))
+        metric_name = str(row["metric_name"])
+        values_by_metric[metric_name].append(float(row["metric_value"]))
+        last_seen_by_metric[metric_name] = int(row["created_at"])
 
     web_vitals = {
         metric_name: _rum_metric_summary(
@@ -1751,21 +1754,38 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
         )
         for metric_name in ("lcp", "inp", "cls")
     }
+    web_vitals_names = ("lcp", "inp", "cls")
+    rum_diagnostic_names = (
+        "manifest_fetch_duration",
+        "first_map_render_duration",
+        "first_overlay_visible_duration",
+        "tile_request_failure_count",
+        "animation_stall_count",
+        "frame_drop_bucket",
+    )
     rum_diagnostics = {
         metric_name: _rum_metric_summary(
             values_by_metric.get(metric_name, []),
             metric_unit=RUM_METRIC_UNITS[metric_name],
         )
-        for metric_name in (
-            "manifest_fetch_duration",
-            "first_map_render_duration",
-            "first_overlay_visible_duration",
-            "tile_request_failure_count",
-            "animation_stall_count",
-            "frame_drop_bucket",
-        )
+        for metric_name in rum_diagnostic_names
     }
+
+    def _latest_timestamp(metric_names: tuple[str, ...]) -> int | None:
+        timestamps = [last_seen_by_metric.get(metric_name) for metric_name in metric_names]
+        known_timestamps = [timestamp for timestamp in timestamps if isinstance(timestamp, int)]
+        return max(known_timestamps) if known_timestamps else None
+
+    def _sample_count(metric_names: tuple[str, ...]) -> int:
+        return sum(len(values_by_metric.get(metric_name, [])) for metric_name in metric_names)
+
     return {
         "web_vitals": web_vitals,
         "rum_diagnostics": rum_diagnostics,
+        "telemetry_health": {
+            "web_vitals_last_seen_at": _latest_timestamp(web_vitals_names),
+            "rum_last_seen_at": _latest_timestamp(rum_diagnostic_names),
+            "web_vitals_sample_count": _sample_count(web_vitals_names),
+            "rum_sample_count": _sample_count(rum_diagnostic_names),
+        },
     }

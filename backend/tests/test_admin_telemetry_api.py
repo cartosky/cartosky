@@ -270,6 +270,7 @@ async def test_usage_telemetry_summary_returns_counts(client: httpx.AsyncClient)
 
 async def test_rum_telemetry_ingest_and_admin_overview_summary(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
+    before_ingest = int(time.time())
 
     payloads = [
         {
@@ -362,6 +363,10 @@ async def test_rum_telemetry_ingest_and_admin_overview_summary(client: httpx.Asy
     assert body["web_vitals"]["cls"]["good_threshold"] == 0.1
     assert body["rum_diagnostics"]["manifest_fetch_duration"]["count"] == 1
     assert body["rum_diagnostics"]["manifest_fetch_duration"]["p95"] == 340.0
+    assert body["telemetry_health"]["web_vitals_sample_count"] == 4
+    assert body["telemetry_health"]["rum_sample_count"] == 1
+    assert body["telemetry_health"]["web_vitals_last_seen_at"] >= before_ingest
+    assert body["telemetry_health"]["rum_last_seen_at"] >= before_ingest
 
 
 async def test_admin_overview_summary_requires_admin_membership(client: httpx.AsyncClient) -> None:

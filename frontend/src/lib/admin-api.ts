@@ -97,6 +97,12 @@ export type AdminOverviewSummaryResponse = {
     | "frame_drop_bucket",
     OverviewMetricSummary
   >;
+  telemetry_health: {
+    web_vitals_last_seen_at: number | null;
+    rum_last_seen_at: number | null;
+    web_vitals_sample_count: number;
+    rum_sample_count: number;
+  };
 };
 
 export type StatusResult = {

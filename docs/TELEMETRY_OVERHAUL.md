@@ -229,6 +229,7 @@ Use Option A for `/admin`: keep CartoSky as the authenticated admin shell and su
 - Add release-level checks that confirm key telemetry is emitting before broad rollout.
 - Confirm that slow-session workflows work end-to-end from `/admin` summary to PostHog replay and from observability spikes to trace drill-down.
 - Document new ownership rules so future telemetry additions land in the right system.
+- Keep the operator-facing validation and ownership runbook in [TELEMETRY_VALIDATION.md](/Users/brianaustin/cartosky/docs/TELEMETRY_VALIDATION.md).
 
 ## Execution by Phase
 
