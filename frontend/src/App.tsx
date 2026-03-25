@@ -1097,6 +1097,18 @@ export default function App() {
   // on every tile event (which fired 20-40×/sec during animation).
   const frameSetRef = useRef<Set<number>>(new Set());
 
+  const resetLoopPresentationToTiles = useCallback(() => {
+    transitionTokenRef.current += 1;
+    loopDisplayDecodeTokenRef.current += 1;
+    loopDisplayCommitTokenRef.current += 1;
+    loopVisiblePaintTokenRef.current += 1;
+    loopDisplayCommitRef.current = null;
+    setLoopDisplayHour(null);
+    setLoopDisplayBitmap(null);
+    setVisibleRenderMode("tiles");
+    lastTileViewportCommitUrlRef.current = null;
+  }, []);
+
   useEffect(() => {
     writeBasemapModePreference(basemapMode);
   }, [basemapMode]);
@@ -1919,7 +1931,7 @@ export default function App() {
       return;
     }
 
-    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
+    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
     if (shouldPromoteViaImageSource) {
       setVisibleRenderMode(renderMode);
       setLoopDisplayHour(commitLoopHour);
@@ -1959,7 +1971,6 @@ export default function App() {
     isLoopPreloading,
     isLoopAutoplayBuffering,
     isScrubbing,
-    isVariableSwitching,
   ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
@@ -3767,11 +3778,11 @@ export default function App() {
     }
 
     const shouldCommitViaImageSource =
-      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
+      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
     if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
-      if (isScrubbing || isVariableSwitching) {
+      if (isScrubbing) {
         startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode);
       }
       return;
@@ -3815,9 +3826,9 @@ export default function App() {
     isLoopPreloading,
     isLoopAutoplayBuffering,
     isScrubbing,
-    isVariableSwitching,
     resolveLoopUrlForHour,
     startForegroundLoopFrameDecode,
+    resetLoopPresentationToTiles,
   ]);
 
   useEffect(() => {
@@ -4775,6 +4786,7 @@ export default function App() {
       && pendingVarSwitch.expectedTileUrl === readyTileUrl
     ) {
       pendingVariableSwitchRef.current = null;
+      resetLoopPresentationToTiles();
       setVariableSwitchState((current) => {
         if (!current || current.toVariable !== variable) {
           return null;
@@ -4836,6 +4848,7 @@ export default function App() {
     visualVariable,
     region,
     forecastHour,
+    resetLoopPresentationToTiles,
     loopDisplayHour,
     finalizePendingFrameMetric,
     telemetryRunId,
