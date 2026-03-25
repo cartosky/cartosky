@@ -1447,6 +1447,8 @@ export default function App() {
     },
     [loopTier0UrlByHour, loopTier1UrlByHour, loopUrlByHour]
   );
+  const isCurrentSelectionLoaded = loadedFramesKey === selectionKey;
+  const loopSelectionReady = isCurrentSelectionLoaded && loopFrameHours.length > 0;
 
   const webpDecodeCacheBudgetBytes = useMemo(() => {
     if (typeof navigator === "undefined") {
@@ -1915,7 +1917,7 @@ export default function App() {
       return;
     }
 
-    if (!canUseLoopPlayback) {
+    if (!canUseLoopPlayback || !loopSelectionReady) {
       setVisibleRenderMode("tiles");
       setLoopDisplayHour(null);
       return;
@@ -1970,6 +1972,7 @@ export default function App() {
     renderMode,
     visibleRenderMode,
     canUseLoopPlayback,
+    loopSelectionReady,
     tileFirstInitialPaintEnabled,
     firstWeatherFramePainted,
     targetForecastHour,
@@ -1984,7 +1987,11 @@ export default function App() {
   ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
-  const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
+  const isLoopDisplayActive =
+    visibleRenderMode !== "tiles"
+    && canUseLoopPlayback
+    && loopPromotionAllowed
+    && loopSelectionReady;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
   const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
@@ -3817,7 +3824,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!isLoopDisplayActive) {
+    if (!isLoopDisplayActive || !loopSelectionReady) {
       setLoopDisplayHour(null);
       return;
     }
@@ -3882,6 +3889,7 @@ export default function App() {
       });
   }, [
     isLoopDisplayActive,
+    loopSelectionReady,
     targetForecastHour,
     resolvedLoopForecastHour,
     resolvedLoopTargetForecastHour,
