@@ -812,8 +812,9 @@ export function MapCanvas({
     [loopImageBbox]
   );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
+  const hasBufferedLoopImage = Boolean(readyLoopImageRef.current);
   const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
-  const hasLoopVisual = Boolean(hasCanvasLoopFrame || isReadyLoopImage);
+  const hasLoopVisual = Boolean(hasCanvasLoopFrame || (mode === "variable-switch" ? isReadyLoopImage : hasBufferedLoopImage));
 
   useEffect(() => {
     if (!loopImageUrl) {
@@ -835,9 +836,10 @@ export function MapCanvas({
       loopImageUrl,
       readyLoopImageUrl,
       hasCanvasLoopFrame,
+      hasBufferedLoopImage,
       hasLoopVisual,
     });
-  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasLoopVisual]);
+  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasBufferedLoopImage, hasLoopVisual]);
 
   useEffect(() => {
     const canvas = loopCanvasRef.current;

@@ -1937,7 +1937,7 @@ export default function App() {
       return;
     }
 
-    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
+    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
     if (shouldPromoteViaImageSource) {
       setVisibleRenderMode(renderMode);
       setLoopDisplayHour(commitLoopHour);
@@ -1977,8 +1977,7 @@ export default function App() {
     isLoopPreloading,
     isLoopAutoplayBuffering,
     isScrubbing,
-    isVariableSwitching,
-  ]);
+    ]);
 
   const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
   const isLoopDisplayActive = visibleRenderMode !== "tiles" && canUseLoopPlayback && loopPromotionAllowed;
@@ -3785,7 +3784,7 @@ export default function App() {
     }
 
     const shouldCommitViaImageSource =
-      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing || isVariableSwitching;
+      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
     if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
