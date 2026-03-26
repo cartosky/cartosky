@@ -1044,12 +1044,16 @@ export function MapCanvas({
         return;
       }
 
-      const coordinatesSignature = JSON.stringify(nextLoopImageCoordinates);
-      const requestSignature = `${selectionScope.selectionEpoch}:${selectionScope.selectionKey}:${nextLoopImageUrl}:${coordinatesSignature}`;
+      const requestSignature = `${selectionScope.selectionEpoch}:${selectionScope.selectionKey}:${nextLoopImageUrl}`;
       if (
         loopImagePendingSignatureRef.current === requestSignature ||
         loopImageCommittedSignatureRef.current === requestSignature
       ) {
+        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
+        if (loopSource && typeof loopSource.setCoordinates === "function") {
+          loopSource.setCoordinates(nextLoopImageCoordinates);
+          map.triggerRepaint();
+        }
         return;
       }
 
@@ -1851,7 +1855,9 @@ export function MapCanvas({
         setLayerVisibility(map, layerId(inactiveBuffer), false);
       }
 
-      if (loopImageUrl) {
+      if (loopFrameBitmap) {
+        cancelPendingLoopImageUpdate();
+      } else if (loopImageUrl) {
         queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
       }
       const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
@@ -2374,7 +2380,11 @@ export function MapCanvas({
       return;
     }
 
-    queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
+    if (loopFrameBitmap) {
+      cancelPendingLoopImageUpdate();
+    } else {
+      queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
+    }
     const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
     if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
       loopCanvasSource.setCoordinates(loopImageCoordinates);
@@ -2393,6 +2403,7 @@ export function MapCanvas({
     isLoaded,
     loopImageCoordinates,
     loopImageUrl,
+    loopFrameBitmap,
     loopActive,
     variable,
     hasCanvasLoopFrame,
