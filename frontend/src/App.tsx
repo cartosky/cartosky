@@ -1458,13 +1458,6 @@ export default function App() {
     return Array.from(loopTier0UrlByHour.keys()).sort((a, b) => a - b);
   }, [loopTier0UrlByHour]);
 
-  const resolvedLoopForecastHour = useMemo(() => {
-    if (loopFrameHours.length === 0) {
-      return forecastHour;
-    }
-    return nearestFrame(loopFrameHours, forecastHour);
-  }, [loopFrameHours, forecastHour]);
-
   const resolvedLoopTargetForecastHour = useMemo(() => {
     if (loopFrameHours.length === 0) {
       return targetForecastHour;
@@ -1937,9 +1930,7 @@ export default function App() {
       setVisibleRenderMode(renderMode);
     }
 
-    const commitLoopHour = isPlaying || isLoopPreloading || isLoopAutoplayBuffering
-      ? resolvedLoopForecastHour
-      : resolvedLoopTargetForecastHour;
+    const commitLoopHour = resolvedLoopTargetForecastHour;
 
     // No signal passed to ensureLoopFrameDecoded: the decode always runs to
     // completion so its result is stored in the LRU cache for immediate reuse.
@@ -1965,7 +1956,6 @@ export default function App() {
     canUseLoopPlayback,
     loopSelectionReady,
     targetForecastHour,
-    resolvedLoopForecastHour,
     resolvedLoopTargetForecastHour,
     resolveLoopUrlForHour,
     ensureLoopFrameDecoded,
@@ -1985,7 +1975,7 @@ export default function App() {
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
   const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
-    ? resolvedLoopForecastHour
+    ? resolvedLoopTargetForecastHour
     : (loopDisplayHour ?? resolvedLoopTargetForecastHour);
   const visibleOverlayHour = isLoopDisplayActive ? visibleLoopOverlayHour : forecastHour;
 
@@ -3987,9 +3977,7 @@ export default function App() {
       pendingVarSwitch.loopDecodeRequestedAt = performance.now();
     }
 
-    const commitLoopHour = isPlaying || isLoopPreloading || isLoopAutoplayBuffering
-      ? resolvedLoopForecastHour
-      : resolvedLoopTargetForecastHour;
+    const commitLoopHour = resolvedLoopTargetForecastHour;
 
     if (
       pendingVarSwitch
@@ -4045,7 +4033,6 @@ export default function App() {
     isLoopDisplayActive,
     loopSelectionReady,
     targetForecastHour,
-    resolvedLoopForecastHour,
     resolvedLoopTargetForecastHour,
     loopPlaybackRenderMode,
     ensureLoopFrameDecoded,
