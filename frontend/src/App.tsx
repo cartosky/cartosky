@@ -1998,17 +1998,11 @@ export default function App() {
         if (ready) {
           setVisibleRenderMode(renderMode);
           setLoopDisplayHour(commitLoopHour);
-          return;
         }
-        setVisibleRenderMode("tiles");
-        setLoopDisplayHour(null);
       })
       .catch(() => {
-        if (token !== transitionTokenRef.current) {
-          return;
-        }
-        setVisibleRenderMode("tiles");
-        setLoopDisplayHour(null);
+        // Decode failed for this attempt; keep current visible mode and allow
+        // subsequent scheduler/interaction passes to retry.
       });
   }, [
     renderMode,
@@ -3984,18 +3978,8 @@ export default function App() {
         const requested = latestRequestedHour as number;
         const useExactScrubSelection = model === "gfs";
         if (!isLoopDisplayActive) {
-          if (frameHours.length === 0) {
-            return;
-          }
-          const snappedTileHour = nearestFrame(frameHours, requested);
-          if (useExactScrubSelection) {
-            setTargetForecastHour(snappedTileHour);
-            return;
-          }
-          const readyTileHour = findNearestReadyTileScrubHour(snappedTileHour);
-          if (Number.isFinite(readyTileHour)) {
-            setTargetForecastHour(readyTileHour as number);
-          }
+          // Tile mode is static-only. Live scrub updates are disabled so the
+          // overlay only changes on scrub commit.
           return;
         }
 
@@ -4937,41 +4921,23 @@ export default function App() {
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
 
-    if (canUseLoopPlayback && webpDefaultEnabled) {
+    if (!canUseLoopPlayback || !webpDefaultEnabled) {
+      pendingLoopStartMetricRef.current = null;
       setIsPlaying(false);
+      setIsLoopAutoplayBuffering(false);
+      setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
-      setIsLoopPreloading(true);
-      showTransientFrameStatus("Loading loop frames");
+      showTransientFrameStatus("Animation unavailable for this selection");
       return;
     }
 
-    setRenderMode("tiles");
-    setIsLoopAutoplayBuffering(false);
-    const remainingAheadFrames = Math.max(0, frameHours.length - forecastHour - 1);
-    const minAheadReady = Math.min(playbackPolicy.minAheadWhilePlaying, remainingAheadFrames);
-    const canStartImmediately =
-      bufferSnapshot.bufferedCount >= playbackPolicy.minStartBuffer &&
-      bufferSnapshot.bufferedAheadCount >= minAheadReady;
-    if (canStartImmediately) {
-      setIsPreloadingForPlay(false);
-      setIsPlaying(true);
-      return;
-    }
     setIsPlaying(false);
-    preloadProgressRef.current = {
-      lastBufferedCount: Math.max(0, Math.min(bufferSnapshot.bufferedCount, frameHours.length)),
-      lastProgressAt: Date.now(),
-    };
-    setIsPreloadingForPlay(true);
-    showTransientFrameStatus("Loading frames");
+    setIsPreloadingForPlay(false);
+    setIsLoopPreloading(true);
+    showTransientFrameStatus("Loading loop frames");
   }, [
     loading,
     frameHours.length,
-    forecastHour,
-    bufferSnapshot.bufferedCount,
-    bufferSnapshot.bufferedAheadCount,
-    playbackPolicy.minAheadWhilePlaying,
-    playbackPolicy.minStartBuffer,
     canUseLoopPlayback,
     isHighDetailZoom,
     webpDefaultEnabled,
@@ -4983,6 +4949,14 @@ export default function App() {
     telemetryRunId,
     region,
   ]);
+
+  useEffect(() => {
+    if (isPlaying && renderMode === "tiles") {
+      setIsPlaying(false);
+      setIsLoopAutoplayBuffering(false);
+      showTransientFrameStatus("High detail mode — zoom out for smooth loop");
+    }
+  }, [isPlaying, renderMode, showTransientFrameStatus]);
 
   useEffect(() => {
     const pendingLoop = pendingInitialLoopRef.current;
