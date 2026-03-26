@@ -150,10 +150,6 @@ export function isWebpDefaultRenderEnabled(): boolean {
   );
 }
 
-export function isLoopPlaybackVideoEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_LOOP_PLAYBACK_VIDEO_ENABLED, true);
-}
-
 function readBooleanEnv(value: unknown, fallback: boolean): boolean {
   const envValue = String(value ?? "").trim().toLowerCase();
   if (envValue === "1" || envValue === "true" || envValue === "yes" || envValue === "on") {

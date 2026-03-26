@@ -16,14 +16,12 @@ import {
   type FrameRow,
   type LegendMeta,
   type LoopManifestResponse,
-  type LoopPlaybackManifestResponse,
   type RegionPreset,
   type RunManifestResponse,
   fetchManifest,
   fetchCapabilities,
   fetchFrames,
   fetchLoopManifest,
-  fetchLoopPlaybackManifest,
   fetchRegionPresets,
   fetchRuns,
   fetchSampleBatch,
@@ -42,7 +40,6 @@ import {
   getPlaybackBufferPolicy,
   isDeferredNonCriticalBootstrapEnabled,
   isDeferredPrefetchUntilFirstPaintEnabled,
-  isLoopPlaybackVideoEnabled,
   isTileFirstInitialPaintEnabled,
   isViewportAwareTileReadinessEnabled,
   isWebpDefaultRenderEnabled,
@@ -913,7 +910,6 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 
 export default function App() {
   const webpDefaultEnabled = isWebpDefaultRenderEnabled();
-  const loopPlaybackVideoEnabled = isLoopPlaybackVideoEnabled();
   const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const deferPrefetchUntilFirstPaintEnabled = isDeferredPrefetchUntilFirstPaintEnabled();
@@ -943,7 +939,6 @@ export default function App() {
   const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [loopManifest, setLoopManifest] = useState<LoopManifestResponse | null>(null);
-  const [loopPlaybackManifest, setLoopPlaybackManifest] = useState<LoopPlaybackManifestResponse | null>(null);
   const [regionPresets, setRegionPresets] = useState<Record<string, RegionPreset>>({});
   const [anchorBaseGeoJson, setAnchorBaseGeoJson] = useState<AnchorFeatureCollection | null>(null);
   const [anchorDisplayGeoJson, setAnchorDisplayGeoJson] = useState<AnchorFeatureCollection | null>(null);
@@ -1714,23 +1709,6 @@ export default function App() {
     }
     return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
   }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
-
-  const canUseLoopPlaybackVideo = useMemo(() => {
-    if (!loopPlaybackVideoEnabled || !loopPlaybackManifest?.video_url) {
-      return false;
-    }
-    if (loopPlaybackManifest.model !== model || loopPlaybackManifest.run !== resolvedRunForRequests || loopPlaybackManifest.var !== variable) {
-      return false;
-    }
-    return canUseLoopPlayback;
-  }, [
-    loopPlaybackVideoEnabled,
-    loopPlaybackManifest,
-    model,
-    resolvedRunForRequests,
-    variable,
-    canUseLoopPlayback,
-  ]);
 
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
@@ -4114,7 +4092,6 @@ export default function App() {
         setRunManifest(null);
         setFrameRows([]);
         setLoopManifest(null);
-        setLoopPlaybackManifest(null);
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
@@ -4236,7 +4213,6 @@ export default function App() {
   useEffect(() => {
     setFrameRows([]);
     setLoopManifest(null);
-    setLoopPlaybackManifest(null);
     setForecastHour(Number.POSITIVE_INFINITY);
     setTargetForecastHour(Number.POSITIVE_INFINITY);
     setLoopDisplayHour(null);
@@ -4248,7 +4224,6 @@ export default function App() {
   useEffect(() => {
     setFrameRows([]);
     setLoopManifest(null);
-    setLoopPlaybackManifest(null);
     setVisibleRenderMode("tiles");
     setLoopDisplayHour(null);
     setLoopDisplayBitmap(null);
@@ -4261,20 +4236,14 @@ export default function App() {
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) {
       setLoopManifest(null);
-      setLoopPlaybackManifest(null);
       return;
     }
     const controller = new AbortController();
     const generation = requestGenerationRef.current;
 
-    async function loadLoopAssets() {
+    async function loadLoopManifest() {
       const startedAt = performance.now();
-      const [manifest, playbackManifest] = await Promise.all([
-        fetchLoopManifest(model, resolvedRunForRequests, variable, { signal: controller.signal }),
-        loopPlaybackVideoEnabled
-          ? fetchLoopPlaybackManifest(model, resolvedRunForRequests, variable, { signal: controller.signal })
-          : Promise.resolve(null),
-      ]);
+      const manifest = await fetchLoopManifest(model, resolvedRunForRequests, variable, { signal: controller.signal });
       if (controller.signal.aborted || generation !== requestGenerationRef.current) {
         return;
       }
@@ -4302,15 +4271,13 @@ export default function App() {
         });
       }
       setLoopManifest(manifest);
-      setLoopPlaybackManifest(playbackManifest);
     }
 
-    loadLoopAssets().catch(() => {
+    loadLoopManifest().catch(() => {
       if (controller.signal.aborted || generation !== requestGenerationRef.current) {
         return;
       }
       setLoopManifest(null);
-      setLoopPlaybackManifest(null);
     });
 
     return () => {
@@ -4321,7 +4288,6 @@ export default function App() {
     variable,
     resolvedRunForRequests,
     hasRenderableSelection,
-    loopPlaybackVideoEnabled,
     telemetryRunId,
     region,
   ]);
@@ -5107,7 +5073,6 @@ export default function App() {
     setRunManifest(null);
     setFrameRows([]);
     setLoopManifest(null);
-    setLoopPlaybackManifest(null);
     setModel(nextModel);
     trackUsageEvent({
       event_name: "model_selected",
@@ -5312,14 +5277,6 @@ export default function App() {
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
     : null;
-  const activeLoopPlaybackVideoUrl = (
-    canUseLoopPlaybackVideo
-    && isPlaying
-    && renderMode !== "tiles"
-    && isLoopDisplayActive
-  )
-    ? loopPlaybackManifest?.video_url ?? null
-    : null;
 
   useEffect(() => {
     viewerDebugLog("app:selection", {
@@ -5338,7 +5295,6 @@ export default function App() {
       isVariableSwitching,
       activeLoopHour,
       activeLoopUrl,
-      activeLoopPlaybackVideoUrl,
       tileUrl,
     });
   }, [
@@ -5357,7 +5313,6 @@ export default function App() {
     isVariableSwitching,
     activeLoopHour,
     activeLoopUrl,
-    activeLoopPlaybackVideoUrl,
     tileUrl,
   ]);
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
@@ -5711,9 +5666,6 @@ export default function App() {
           loopFrameBitmap={activeLoopBitmap}
           loopImageBbox={loopManifest?.bbox ?? null}
           loopActive={isLoopDisplayActive}
-          loopPlaybackVideoUrl={activeLoopPlaybackVideoUrl}
-          loopPlaybackVideoBbox={loopPlaybackManifest?.bbox ?? loopManifest?.bbox ?? null}
-          loopPlaybackActive={Boolean(activeLoopPlaybackVideoUrl)}
           onFrameSettled={handleFrameSettled}
           onTileReady={handleTileReady}
           onFrameLoadingChange={handleFrameLoadingChange}
