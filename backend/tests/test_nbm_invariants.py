@@ -144,9 +144,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     apcp_component_spec = NBM_MODEL.get_var("apcp_step")
     assert apcp_component_spec is not None
     assert apcp_component_spec.selectors.search == [
-        ":APCP:surface:[0-9]+-[0-9]+ hour acc@\\(fcst,dt=[0-9]+ hour\\),missing=0:$",
-        ":APCP:surface:[0-9]+-[0-9]+ hour acc@\\(fcst,dt=[0-9]+ hour\\):$",
-        ":APCP:surface:[0-9]+-[0-9]+ hour acc fcst:$",
+        ":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$",
     ]
     assert apcp_component_spec.selectors.filter_by_keys["shortName"] == "apcp"
 
@@ -160,9 +158,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     asnow_component_spec = NBM_MODEL.get_var("asnow_step")
     assert asnow_component_spec is not None
     assert asnow_component_spec.selectors.search == [
-        ":ASNOW:surface:[0-9]+-[0-9]+ hour acc@\\(fcst,dt=[0-9]+ hour\\),missing=0:$",
-        ":ASNOW:surface:[0-9]+-[0-9]+ hour acc@\\(fcst,dt=[0-9]+ hour\\):$",
-        ":ASNOW:surface:[0-9]+-[0-9]+ hour acc fcst:$",
+        ":ASNOW:surface:[0-9]+-[0-9]+ hour acc[^:]*:$",
     ]
     assert asnow_component_spec.selectors.filter_by_keys["shortName"] == "asnow"
 
