@@ -1904,27 +1904,15 @@ export default function App() {
       return clearDwellTimer;
     }
 
-    if (zoomGestureActive) {
-      clearDwellTimer();
-      return clearDwellTimer;
-    }
-
-    const effectiveZoom = getEffectiveZoom(mapZoom);
-    const candidate = nextRenderModeByHysteresis(renderMode, effectiveZoom);
-    if (candidate === renderMode) {
-      clearDwellTimer();
-      return clearDwellTimer;
-    }
-
+    // Single-surface loop playback: when loop frames are available, stay on
+    // canonical WebP mode regardless of zoom so autoplay/scrub remains
+    // frame-index driven and never drops into static tile mode.
     clearDwellTimer();
-    renderModeDwellTimerRef.current = window.setTimeout(() => {
-      const latestEffectiveZoom = getEffectiveZoom(mapZoomRef.current);
-      setRenderMode((current) => nextRenderModeByHysteresis(current, latestEffectiveZoom));
-      renderModeDwellTimerRef.current = null;
-    }, WEBP_RENDER_MODE_THRESHOLDS.dwellMs);
-
+    if (renderMode !== SINGLE_TIER_WEBP_MODE) {
+      setRenderMode(SINGLE_TIER_WEBP_MODE);
+    }
     return clearDwellTimer;
-  }, [mapZoom, zoomGestureActive, renderMode, webpDefaultEnabled, canUseLoopPlayback]);
+  }, [renderMode, webpDefaultEnabled, canUseLoopPlayback]);
 
   useEffect(() => {
     transitionTokenRef.current += 1;
@@ -5299,6 +5287,7 @@ export default function App() {
     ? getDecodedLoopBitmap(activeLoopHour, visibleRenderMode)
     : null;
   const activeLoopBitmap = newLoopBitmap
+    ?? loopDisplayBitmap
     ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
   // Canvas/bitmap-only loop presentation: avoid MapLibre image-source path,
   // which is currently causing decode instability and stale loop visuals.
@@ -5309,6 +5298,16 @@ export default function App() {
   // Even if a specific decoded frame is briefly unavailable, stay in loop mode
   // rather than falling back to tile-layer swaps.
   const effectiveLoopActive = isLoopDisplayActive || Boolean(activeLoopBitmap);
+
+  useEffect(() => {
+    if (!newLoopBitmap) {
+      return;
+    }
+    if (loopDisplayBitmap === newLoopBitmap) {
+      return;
+    }
+    setLoopDisplayBitmap(newLoopBitmap);
+  }, [newLoopBitmap, loopDisplayBitmap]);
 
   const loopStuckWatchRef = useRef<{
     targetHour: number | null;
