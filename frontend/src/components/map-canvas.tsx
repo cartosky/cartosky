@@ -809,6 +809,11 @@ export function MapCanvas({
     selectionEpoch: number;
     selectionKey: string;
   } | null>(null);
+  const [readyLoopCanvasFrame, setReadyLoopCanvasFrame] = useState<{
+    url: string;
+    selectionEpoch: number;
+    selectionKey: string;
+  } | null>(null);
   const readyLoopImageUrl = readyLoopImageFrame?.url ?? null;
   const activeBufferRef = useRef<OverlayBuffer>("a");
   const activeTileUrlRef = useRef(tileUrl);
@@ -851,7 +856,13 @@ export function MapCanvas({
     () => loopCoordinatesFromBbox(loopImageBbox),
     [loopImageBbox]
   );
-  const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
+  const hasBitmapCanvasLoopFrame = Boolean(loopFrameBitmap);
+  const hasReadyLoopCanvasFrame = Boolean(
+    readyLoopCanvasFrame &&
+    readyLoopCanvasFrame.selectionEpoch === selectionEpoch &&
+    readyLoopCanvasFrame.selectionKey === selectionKey
+  );
+  const hasCanvasLoopFrame = Boolean(hasBitmapCanvasLoopFrame || hasReadyLoopCanvasFrame);
   // True when a frame from the *current* selection has been committed to the
   // ImageSource — regardless of which forecast hour it is. This keeps the loop
   // layer visible with the previously-committed frame while the next one loads,
@@ -866,10 +877,12 @@ export function MapCanvas({
   useEffect(() => {
     if (!loopImageUrl) {
       setReadyLoopImageFrame(null);
+      setReadyLoopCanvasFrame(null);
       return;
     }
     if (mode === "variable-switch" && readyLoopImageUrl !== loopImageUrl) {
       setReadyLoopImageFrame(null);
+      setReadyLoopCanvasFrame(null);
     }
   }, [loopImageUrl, mode, readyLoopImageUrl]);
 
@@ -885,35 +898,46 @@ export function MapCanvas({
     });
   }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasLoopVisual]);
 
-  useEffect(() => {
-    const canvas = loopCanvasRef.current;
-    if (!canvas || !loopFrameBitmap) {
-      return;
-    }
-    const width = Math.max(1, loopFrameBitmap.width);
-    const height = Math.max(1, loopFrameBitmap.height);
-    if (canvas.width !== width) {
-      canvas.width = width;
-    }
-    if (canvas.height !== height) {
-      canvas.height = height;
-    }
-    const ctx = canvas.getContext("2d", { alpha: true });
-    if (!ctx) {
-      return;
-    }
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(loopFrameBitmap, 0, 0, width, height);
-
-    const map = mapRef.current;
-    if (map && isLoaded) {
-      const canvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
-      if (canvasSource && typeof canvasSource.setCoordinates === "function") {
-        canvasSource.setCoordinates(loopImageCoordinates);
+  const drawToLoopCanvas = useCallback(
+    (frame: CanvasImageSource, width: number, height: number): boolean => {
+      const canvas = loopCanvasRef.current;
+      if (!canvas) {
+        return false;
       }
-      map.triggerRepaint();
+      const nextWidth = Math.max(1, Math.floor(width));
+      const nextHeight = Math.max(1, Math.floor(height));
+      if (canvas.width !== nextWidth) {
+        canvas.width = nextWidth;
+      }
+      if (canvas.height !== nextHeight) {
+        canvas.height = nextHeight;
+      }
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx) {
+        return false;
+      }
+      ctx.clearRect(0, 0, nextWidth, nextHeight);
+      ctx.drawImage(frame, 0, 0, nextWidth, nextHeight);
+
+      const map = mapRef.current;
+      if (map && isLoaded) {
+        const canvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
+        if (canvasSource && typeof canvasSource.setCoordinates === "function") {
+          canvasSource.setCoordinates(loopImageCoordinates);
+        }
+        map.triggerRepaint();
+      }
+      return true;
+    },
+    [isLoaded, loopImageCoordinates]
+  );
+
+  useEffect(() => {
+    if (!loopFrameBitmap) {
+      return;
     }
-  }, [loopFrameBitmap, loopImageCoordinates, isLoaded]);
+    drawToLoopCanvas(loopFrameBitmap, loopFrameBitmap.width, loopFrameBitmap.height);
+  }, [loopFrameBitmap, drawToLoopCanvas]);
 
   const initializeSourceTracking = useCallback((currentTileUrl: string) => {
     const sourceA = sourceId("a");
@@ -1006,6 +1030,7 @@ export function MapCanvas({
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
         setReadyLoopImageFrame(null);
+        setReadyLoopCanvasFrame(null);
         viewerDebugLog("map:loop-image-clear", {
           mode,
           variable,
@@ -1050,10 +1075,20 @@ export function MapCanvas({
           return;
         }
         try {
-          loopSource.updateImage({
-            url: nextLoopImageUrl,
-            coordinates: nextLoopImageCoordinates,
-          });
+          const drawnToCanvas = drawToLoopCanvas(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
+          if (drawnToCanvas) {
+            setReadyLoopCanvasFrame({
+              url: nextLoopImageUrl,
+              selectionEpoch: selectionScope.selectionEpoch,
+              selectionKey: selectionScope.selectionKey,
+            });
+          }
+          if (!drawnToCanvas) {
+            loopSource.updateImage({
+              url: nextLoopImageUrl,
+              coordinates: nextLoopImageCoordinates,
+            });
+          }
           setReadyLoopImageFrame({ url: nextLoopImageUrl, selectionEpoch: selectionScope.selectionEpoch, selectionKey: selectionScope.selectionKey });
           viewerDebugLog("map:loop-image-ready", {
             mode,
@@ -1062,10 +1097,12 @@ export function MapCanvas({
             requestToken,
             selectionKey: selectionScope.selectionKey,
             selectionEpoch: selectionScope.selectionEpoch,
+            drawnToCanvas,
           });
           map.triggerRepaint();
         } catch (error) {
           setReadyLoopImageFrame(null);
+          setReadyLoopCanvasFrame(null);
           console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
         } finally {
           if (loopImagePreloadRef.current === image) {
@@ -1087,6 +1124,7 @@ export function MapCanvas({
           selectionEpoch: selectionScope.selectionEpoch,
         });
         setReadyLoopImageFrame(null);
+        setReadyLoopCanvasFrame(null);
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
         if (loopImagePreloadRef.current === image) {
           loopImagePreloadRef.current = null;
@@ -1095,7 +1133,7 @@ export function MapCanvas({
 
       image.src = nextLoopImageUrl;
     },
-    [cancelPendingLoopImageUpdate, mode, variable]
+    [cancelPendingLoopImageUpdate, drawToLoopCanvas, mode, variable]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
