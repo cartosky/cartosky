@@ -85,7 +85,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="loop_playback_") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
         for index, frame_path in enumerate(frame_paths):
-            link_path = temp_dir / f"{index:06d}{frame_path.suffix}"
+            link_path = temp_dir / f"{index:06d}.loop.webp"
             try:
                 link_path.symlink_to(frame_path.resolve())
             except OSError:
