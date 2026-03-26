@@ -2420,6 +2420,24 @@ export function MapCanvas({
 
     if (loopActive) {
       isLoopToTileTransitioningRef.current = false;
+      const sourceA = map.getSource(sourceId("a")) as maplibregl.RasterTileSource | undefined;
+      if (sourceA && typeof sourceA.setTiles === "function") {
+        setTilesSafe(sourceA, [TRANSPARENT_PIXEL_DATA_URL], {
+          sourceId: sourceId("a"),
+          tileUrl: TRANSPARENT_PIXEL_DATA_URL,
+          mode: "loop-suspend",
+        });
+        sourceRequestedUrlRef.current.set(sourceId("a"), TRANSPARENT_PIXEL_DATA_URL);
+      }
+      const sourceB = map.getSource(sourceId("b")) as maplibregl.RasterTileSource | undefined;
+      if (sourceB && typeof sourceB.setTiles === "function") {
+        setTilesSafe(sourceB, [TRANSPARENT_PIXEL_DATA_URL], {
+          sourceId: sourceId("b"),
+          tileUrl: TRANSPARENT_PIXEL_DATA_URL,
+          mode: "loop-suspend",
+        });
+        sourceRequestedUrlRef.current.set(sourceId("b"), TRANSPARENT_PIXEL_DATA_URL);
+      }
       setLayerVisibility(map, layerId(activeBuffer), false);
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
@@ -2523,6 +2541,7 @@ export function MapCanvas({
     cancelCrossfade,
     cancelLoopToTileTransition,
     setLayerOpacity,
+    setTilesSafe,
     loopActive,
     hasCanvasLoopFrame,
     hasLoopVisual,

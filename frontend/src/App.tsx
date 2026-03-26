@@ -5298,6 +5298,7 @@ export default function App() {
   // Even if a specific decoded frame is briefly unavailable, stay in loop mode
   // rather than falling back to tile-layer swaps.
   const effectiveLoopActive = isLoopDisplayActive || Boolean(activeLoopBitmap);
+  const mapCanvasTileUrl = effectiveLoopActive ? EMPTY_TILE_DATA_URL : tileUrl;
 
   useEffect(() => {
     if (!newLoopBitmap) {
@@ -5458,7 +5459,10 @@ export default function App() {
       isVariableSwitching,
       activeLoopHour,
       activeLoopUrl,
+      activeLoopBitmapReady: Boolean(activeLoopBitmap),
+      effectiveLoopActive,
       tileUrl,
+      mapCanvasTileUrl,
     });
   }, [
     model,
@@ -5476,7 +5480,10 @@ export default function App() {
     isVariableSwitching,
     activeLoopHour,
     activeLoopUrl,
+    activeLoopBitmap,
+    effectiveLoopActive,
     tileUrl,
+    mapCanvasTileUrl,
   ]);
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
   const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
@@ -5809,7 +5816,7 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
-          tileUrl={tileUrl}
+          tileUrl={mapCanvasTileUrl}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           contourGeoJsonUrl={contourGeoJsonUrl}
