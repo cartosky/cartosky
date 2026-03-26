@@ -492,6 +492,7 @@ export function buildMapStyle(
         type: "raster",
         tiles: [overlayUrl],
         tileSize: 512,
+        minzoom: 6,
       },
     ])
   );
@@ -512,11 +513,13 @@ export function buildMapStyle(
       type: "raster",
       tiles: [overlayUrl],
       tileSize: 512,
+      minzoom: 6,
     },
     [sourceId("b")]: {
       type: "raster",
       tiles: [overlayUrl],
       tileSize: 512,
+      minzoom: 6,
     },
     ...prefetchSources,
     "twf-labels": {

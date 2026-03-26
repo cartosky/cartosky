@@ -1890,15 +1890,30 @@ export default function App() {
       return clearDwellTimer;
     }
 
-    // Single-surface loop playback: when loop frames are available, stay on
-    // canonical WebP mode regardless of zoom so autoplay/scrub remains
-    // frame-index driven and never drops into static tile mode.
-    clearDwellTimer();
-    if (renderMode !== SINGLE_TIER_WEBP_MODE) {
-      setRenderMode(SINGLE_TIER_WEBP_MODE);
+    // At high zoom levels, switch to tiles for detail.  At lower zooms, use
+    // the canonical WebP loop mode for smooth playback/scrubbing.
+    if (zoomGestureActive) {
+      // While the user is still pinching/scrolling, don't switch modes — wait
+      // for the gesture to settle to avoid flicker.
+      return clearDwellTimer;
     }
+
+    const desired = nextRenderModeByHysteresis(renderMode, getEffectiveZoom(mapZoom));
+    if (desired === renderMode) {
+      clearDwellTimer();
+      return clearDwellTimer;
+    }
+
+    // Use the dwell timer to avoid jitter when the zoom is right at the
+    // threshold boundary.
+    clearDwellTimer();
+    renderModeDwellTimerRef.current = window.setTimeout(() => {
+      renderModeDwellTimerRef.current = null;
+      setRenderMode(desired);
+    }, WEBP_RENDER_MODE_THRESHOLDS.dwellMs);
+
     return clearDwellTimer;
-  }, [renderMode, webpDefaultEnabled, canUseLoopPlayback]);
+  }, [renderMode, webpDefaultEnabled, canUseLoopPlayback, mapZoom, zoomGestureActive]);
 
   useEffect(() => {
     transitionTokenRef.current += 1;
