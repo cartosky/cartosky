@@ -2707,7 +2707,7 @@ export default function App() {
         : null;
     } else {
       const loopHour = options?.loopHour ?? null;
-      const loopRenderMode = options?.loopRenderMode ?? visibleRenderMode;
+      const loopRenderMode = options?.loopRenderMode ?? loopPlaybackRenderMode;
       pendingVarSwitch.warmAtVisible = Number.isFinite(loopHour)
         ? hasDecodedLoopFrame(loopHour as number, loopRenderMode)
         : null;
@@ -2735,7 +2735,7 @@ export default function App() {
     loadedFramesKey,
     resetLoopPresentationToTiles,
     variable,
-    visibleRenderMode,
+    loopPlaybackRenderMode,
   ]);
 
   const clearFrameStatusTimer = useCallback(() => {
@@ -3233,7 +3233,7 @@ export default function App() {
       return;
     }
     const commit = loopDisplayCommitRef.current;
-    if (!commit || commit.displayHour !== loopDisplayHour || commit.renderMode !== visibleRenderMode) {
+    if (!commit || commit.displayHour !== loopDisplayHour || commit.renderMode !== loopPlaybackRenderMode) {
       return;
     }
     if (loopDisplayPaintedTokenRef.current === commit.token) {
@@ -3332,7 +3332,7 @@ export default function App() {
   }, [
     isLoopDisplayActive,
     loopDisplayHour,
-    visibleRenderMode,
+    loopPlaybackRenderMode,
     loadedFramesKey,
     telemetryRunId,
     region,
@@ -3413,7 +3413,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    const decodeMode = isLoopDisplayActive ? visibleRenderMode : stagedLoopWarmupMode;
+    const decodeMode = isLoopDisplayActive ? loopPlaybackRenderMode : stagedLoopWarmupMode;
     const shouldWarmLoopFrames =
       loopSelectionReady
       && canUseLoopPlayback
@@ -3612,7 +3612,7 @@ export default function App() {
     canUseLoopPlayback,
     stagedLoopWarmupMode,
     isPlaying,
-    visibleRenderMode,
+    loopPlaybackRenderMode,
     loopFrameHours,
     ensureLoopFrameDecoded,
     hasDecodedLoopFrame,
@@ -5003,6 +5003,11 @@ export default function App() {
           }
         : null,
     });
+    if (renderMode !== "tiles") {
+      // Loop/canvas playback can emit synthetic tile-ready events to warm caches.
+      // Never treat those as visible tile presentation commits.
+      return;
+    }
     if (readyTileUrl === tileUrl) {
       trackFirstViewerFrame(forecastHour);
     }
@@ -5016,9 +5021,6 @@ export default function App() {
         pending.firstVisibleAt = performance.now();
       }
       finalizePendingFrameMetric("tile");
-    }
-    if (renderMode !== "tiles") {
-      return;
     }
     if (readyTileUrl !== tileUrl) {
       return;
@@ -5150,10 +5152,10 @@ export default function App() {
     // Snapshot the current loop visuals before tearing down loop presentation.
     // This lets the map hold the old frame during the transition instead of
     // flashing stale tile imagery while the new variable loads.
-    if (visibleRenderMode !== "tiles" && Number.isFinite(loopDisplayHour)) {
+    if (isLoopDisplayActive && Number.isFinite(loopDisplayHour)) {
       const snapshotHour = loopDisplayHour as number;
-      holdoverLoopBitmapRef.current = getDecodedLoopBitmap(snapshotHour, visibleRenderMode);
-      holdoverLoopUrlRef.current = resolveLoopUrlForHour(snapshotHour, visibleRenderMode);
+      holdoverLoopBitmapRef.current = getDecodedLoopBitmap(snapshotHour, loopPlaybackRenderMode);
+      holdoverLoopUrlRef.current = resolveLoopUrlForHour(snapshotHour, loopPlaybackRenderMode);
       holdoverLoopBboxRef.current = loopManifest?.bbox ?? null;
     } else {
       holdoverLoopBitmapRef.current = null;
@@ -5177,7 +5179,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, isLoopDisplayActive, loopPlaybackRenderMode, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles]);
 
   useEffect(() => {
     if (
@@ -5275,12 +5277,17 @@ export default function App() {
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
   const activeLoopHour = visibleLoopOverlayHour;
+  const committedLoopHour = Number.isFinite(loopDisplayHour) ? (loopDisplayHour as number) : null;
   // Loop presentation is bitmap-backed. During a variable switch, fall back to
   // the holdover bitmap from the outgoing selection until the new selection's
   // first frame is ready.
-  const newLoopBitmap = hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
+  const targetLoopBitmap = hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
     ? getDecodedLoopBitmap(activeLoopHour, loopPlaybackRenderMode)
     : null;
+  const committedLoopBitmap = committedLoopHour !== null && hasDecodedLoopFrame(committedLoopHour, loopPlaybackRenderMode)
+    ? getDecodedLoopBitmap(committedLoopHour, loopPlaybackRenderMode)
+    : null;
+  const newLoopBitmap = targetLoopBitmap ?? committedLoopBitmap;
   const activeLoopBitmap = newLoopBitmap
     ?? loopDisplayBitmap
     ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
