@@ -121,6 +121,8 @@ const DEFAULT_LOOP_BBOX: [number, number, number, number] = [-134.0, 24.0, -60.0
 type OverlayBuffer = "a" | "b";
 type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 const GRAY_LOW_END_VARIABLES = new Set(["precip_total", "snowfall_total", "qpf6h", "wspd10m", "wgst10m"]);
+const SINGLE_OVERLAY_SOURCE = true;
+const PRIMARY_OVERLAY_BUFFER: OverlayBuffer = "b";
 
 function sourceId(buffer: OverlayBuffer): string {
   return `twf-overlay-${buffer}`;
@@ -131,6 +133,9 @@ function layerId(buffer: OverlayBuffer): string {
 }
 
 function otherBuffer(buffer: OverlayBuffer): OverlayBuffer {
+  if (SINGLE_OVERLAY_SOURCE) {
+    return PRIMARY_OVERLAY_BUFFER;
+  }
   return buffer === "a" ? "b" : "a";
 }
 
@@ -607,6 +612,9 @@ export function buildMapStyle(
         id: layerId("a"),
         type: "raster",
         source: sourceId("a"),
+        layout: {
+          visibility: SINGLE_OVERLAY_SOURCE ? ("none" as const) : ("visible" as const),
+        },
         paint: overlayPaint,
       },
       {
@@ -823,7 +831,7 @@ export function MapCanvas({
     selectionKey: string;
   } | null>(null);
   const readyLoopImageUrl = readyLoopImageFrame?.url ?? null;
-  const activeBufferRef = useRef<OverlayBuffer>("a");
+  const activeBufferRef = useRef<OverlayBuffer>(PRIMARY_OVERLAY_BUFFER);
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
   const prefetchTokenRef = useRef(0);
