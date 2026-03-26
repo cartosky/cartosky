@@ -3721,12 +3721,12 @@ export default function App() {
       const nextHour = frameHours[nextIndex];
       const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
       const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
-      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "canvas");
+      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "image-url");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
       if (accumulatedMs >= AUTOPLAY_TICK_MS) {
-        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "canvas")) {
+        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "image-url")) {
           accumulatedMs -= AUTOPLAY_TICK_MS;
           lastLoopAdvanceRef.current = Date.now();
           setTargetForecastHour(nextHour);
@@ -5338,7 +5338,8 @@ export default function App() {
     : null;
   const activeLoopBitmap = newLoopBitmap
     ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
-  const activeLoopUrl = null;
+  const activeLoopUrl = resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
+    ?? (isVariableSwitching ? holdoverLoopUrlRef.current : null);
   const activeLoopBbox = loopManifest?.bbox
     ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
   // When holdover visuals are active, keep the loop layer visible even though
