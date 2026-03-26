@@ -1917,12 +1917,6 @@ export default function App() {
   useEffect(() => {
     transitionTokenRef.current += 1;
 
-    if (tileFirstInitialPaintEnabled && !firstWeatherFramePainted) {
-      setVisibleRenderMode("tiles");
-      setLoopDisplayHour(null);
-      return;
-    }
-
     if (!canUseLoopPlayback || !loopSelectionReady) {
       setVisibleRenderMode("tiles");
       setLoopDisplayHour(null);
@@ -1967,8 +1961,6 @@ export default function App() {
     visibleRenderMode,
     canUseLoopPlayback,
     loopSelectionReady,
-    tileFirstInitialPaintEnabled,
-    firstWeatherFramePainted,
     targetForecastHour,
     resolvedLoopForecastHour,
     resolvedLoopTargetForecastHour,
@@ -1980,11 +1972,11 @@ export default function App() {
     isScrubbing,
   ]);
 
-  const loopPromotionAllowed = !tileFirstInitialPaintEnabled || firstWeatherFramePainted;
+  const loopPlaybackRenderMode: RenderModeState =
+    visibleRenderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : visibleRenderMode;
   const isLoopDisplayActive =
     visibleRenderMode !== "tiles"
     && canUseLoopPlayback
-    && loopPromotionAllowed
     && loopSelectionReady;
   const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : renderMode;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
@@ -2043,13 +2035,13 @@ export default function App() {
 
   useEffect(() => {
     loopFrameHoursRef.current = loopFrameHours;
-    visibleRenderModeRef.current = visibleRenderMode;
+    visibleRenderModeRef.current = loopPlaybackRenderMode;
     countAheadReadyLoopFramesRef.current = countAheadReadyLoopFrames;
     isLoopFrameReadyForPresentationRef.current = isLoopFrameReadyForPresentation;
     loopMinAheadWhilePlayingRef.current = loopPlaybackPolicy.minAheadWhilePlaying;
   }, [
     loopFrameHours,
-    visibleRenderMode,
+    loopPlaybackRenderMode,
     countAheadReadyLoopFrames,
     isLoopFrameReadyForPresentation,
     loopPlaybackPolicy.minAheadWhilePlaying,
@@ -3171,17 +3163,17 @@ export default function App() {
       return;
     }
     const displayHour = loopDisplayHour as number;
-    const cacheKey = loopCacheKey(displayHour, visibleRenderMode);
+    const cacheKey = loopCacheKey(displayHour, loopPlaybackRenderMode);
     const decodedAt = loopDecodeCompletedAtRef.current.get(cacheKey) ?? null;
     loopDisplayCommitRef.current = {
       token: ++loopDisplayCommitTokenRef.current,
       displayHour,
-      renderMode: visibleRenderMode,
+      renderMode: loopPlaybackRenderMode,
       committedAt: performance.now(),
       decodedAt: Number.isFinite(decodedAt) ? (decodedAt as number) : null,
       presentationPath: "canvas",
     };
-  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, getDecodedLoopBitmap]);
+  }, [isLoopDisplayActive, loopDisplayHour, loopPlaybackRenderMode, loopCacheKey, getDecodedLoopBitmap]);
 
   // loopDisplayBitmap is cleared at selection/reset boundaries below;
   // per-frame sync is handled directly by activeLoopBitmap reading the LRU
@@ -3897,10 +3889,10 @@ export default function App() {
         });
 
         setTargetForecastHour(nextHour);
-        if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
+        if (hasDecodedLoopFrame(nextHour, loopPlaybackRenderMode)) {
           setLoopDisplayHour(nextHour);
         } else {
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+          startForegroundLoopFrameDecode(nextHour, loopPlaybackRenderMode, () => {
             setLoopDisplayHour(nextHour);
           });
         }
@@ -3944,16 +3936,16 @@ export default function App() {
           ? nearestFrame(loopFrameHours, requested)
           : requested;
         setTargetForecastHour(nextHour);
-        if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
+        if (hasDecodedLoopFrame(nextHour, loopPlaybackRenderMode)) {
           setLoopDisplayHour(nextHour);
         } else {
           // Show the nearest already-decoded frame immediately so the user sees
           // something while the exact frame decodes in the background.
-          const nearbyReady = findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
+          const nearbyReady = findNearestDecodedLoopScrubHour(nextHour, loopPlaybackRenderMode);
           if (Number.isFinite(nearbyReady)) {
             setLoopDisplayHour(nearbyReady as number);
           }
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+          startForegroundLoopFrameDecode(nextHour, loopPlaybackRenderMode, () => {
             setLoopDisplayHour(nextHour);
           });
         }
@@ -3966,7 +3958,7 @@ export default function App() {
       model,
       tileUrlForHour,
       ensureLoopFrameDecoded,
-      visibleRenderMode,
+      loopPlaybackRenderMode,
       hasDecodedLoopFrame,
       resolveLoopUrlForHour,
       findNearestReadyTileScrubHour,
@@ -4005,7 +3997,7 @@ export default function App() {
     }
 
     if (isScrubbing) {
-      if (hasDecodedLoopFrame(commitLoopHour, visibleRenderMode)) {
+      if (hasDecodedLoopFrame(commitLoopHour, loopPlaybackRenderMode)) {
         loopDisplayDecodeTokenRef.current += 1;
         setLoopDisplayHour(commitLoopHour);
       } else {
@@ -4014,14 +4006,14 @@ export default function App() {
         // startForegroundLoopFrameDecode (which aborts any prior RAF-initiated
         // decode) would leave loopDisplayHour stuck at the previous value.
         const hourToCommit = commitLoopHour;
-        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode, () => {
+        startForegroundLoopFrameDecode(commitLoopHour, loopPlaybackRenderMode, () => {
           setLoopDisplayHour(hourToCommit);
         });
       }
       return;
     }
 
-    if (hasDecodedLoopFrame(commitLoopHour, visibleRenderMode)) {
+    if (hasDecodedLoopFrame(commitLoopHour, loopPlaybackRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
       return;
@@ -4033,7 +4025,7 @@ export default function App() {
     // No signal: the decode always completes and its result is stored in the LRU
     // cache. The token guards the commit; scrubbing to a new frame only invalidates
     // the commit, not the inflight fetch — keeping every touched frame warm.
-    ensureLoopFrameDecoded(commitLoopHour, visibleRenderMode)
+    ensureLoopFrameDecoded(commitLoopHour, loopPlaybackRenderMode)
       .then((ready) => {
         if (!ready) {
           return;
@@ -4052,7 +4044,7 @@ export default function App() {
     targetForecastHour,
     resolvedLoopForecastHour,
     resolvedLoopTargetForecastHour,
-    visibleRenderMode,
+    loopPlaybackRenderMode,
     ensureLoopFrameDecoded,
     variable,
     shouldEagerlyDecodeLoopFrames,
@@ -5283,8 +5275,8 @@ export default function App() {
   // Loop presentation is bitmap-backed. During a variable switch, fall back to
   // the holdover bitmap from the outgoing selection until the new selection's
   // first frame is ready.
-  const newLoopBitmap = hasDecodedLoopFrame(activeLoopHour, visibleRenderMode)
-    ? getDecodedLoopBitmap(activeLoopHour, visibleRenderMode)
+  const newLoopBitmap = hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
+    ? getDecodedLoopBitmap(activeLoopHour, loopPlaybackRenderMode)
     : null;
   const activeLoopBitmap = newLoopBitmap
     ?? loopDisplayBitmap
@@ -5298,7 +5290,6 @@ export default function App() {
   // Even if a specific decoded frame is briefly unavailable, stay in loop mode
   // rather than falling back to tile-layer swaps.
   const effectiveLoopActive = isLoopDisplayActive || Boolean(activeLoopBitmap);
-  const mapCanvasTileUrl = effectiveLoopActive ? EMPTY_TILE_DATA_URL : tileUrl;
 
   useEffect(() => {
     if (!newLoopBitmap) {
@@ -5364,7 +5355,7 @@ export default function App() {
       targetForecastHour,
       resolvedTargetHour,
       loopDisplayHour,
-      hasDecodedTarget: hasDecodedLoopFrame(resolvedTargetHour, visibleRenderMode),
+      hasDecodedTarget: hasDecodedLoopFrame(resolvedTargetHour, loopPlaybackRenderMode),
       hasActiveLoopBitmap: Boolean(activeLoopBitmap),
       loopFrameHoursCount: loopFrameHours.length,
       staleMs,
@@ -5410,7 +5401,7 @@ export default function App() {
         targetForecastHour,
         resolvedTargetHour: targetHour,
         loopDisplayHour,
-        hasDecodedTarget: hasDecodedLoopFrame(targetHour, visibleRenderMode),
+        hasDecodedTarget: hasDecodedLoopFrame(targetHour, loopPlaybackRenderMode),
         hasActiveLoopBitmap: Boolean(activeLoopBitmap),
         loopFrameCount: loopFrameHours.length,
         loadedFramesKey,
@@ -5462,7 +5453,6 @@ export default function App() {
       activeLoopBitmapReady: Boolean(activeLoopBitmap),
       effectiveLoopActive,
       tileUrl,
-      mapCanvasTileUrl,
     });
   }, [
     model,
@@ -5483,7 +5473,6 @@ export default function App() {
     activeLoopBitmap,
     effectiveLoopActive,
     tileUrl,
-    mapCanvasTileUrl,
   ]);
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
   const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
@@ -5816,7 +5805,7 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
-          tileUrl={mapCanvasTileUrl}
+          tileUrl={tileUrl}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           contourGeoJsonUrl={contourGeoJsonUrl}
