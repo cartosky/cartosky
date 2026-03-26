@@ -91,6 +91,7 @@ const PREFETCH_TILE_EVENT_BUDGET = 1;
 const PREFETCH_READY_TIMEOUT_MS = 8000;
 const WEBP_TO_TILE_STABLE_MS = 150;
 const WEBP_TO_TILE_CROSSFADE_MS = 200;
+const WEBP_TO_TILE_FORCE_CROSSFADE_MS = 900;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
 const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
@@ -857,6 +858,7 @@ export function MapCanvas({
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
   const loopToTileRafRef = useRef<number | null>(null);
   const loopToTileStableTimerRef = useRef<number | null>(null);
+  const loopToTileForceTimerRef = useRef<number | null>(null);
   const loopToTileIdleCleanupRef = useRef<(() => void) | null>(null);
   const loopToTileTokenRef = useRef(0);
   const loopImageRequestTokenRef = useRef(0);
@@ -1482,6 +1484,10 @@ export function MapCanvas({
       window.clearTimeout(loopToTileStableTimerRef.current);
       loopToTileStableTimerRef.current = null;
     }
+    if (loopToTileForceTimerRef.current !== null) {
+      window.clearTimeout(loopToTileForceTimerRef.current);
+      loopToTileForceTimerRef.current = null;
+    }
     if (loopToTileIdleCleanupRef.current) {
       loopToTileIdleCleanupRef.current();
       loopToTileIdleCleanupRef.current = null;
@@ -1498,6 +1504,14 @@ export function MapCanvas({
     cancelLoopToTileTransition();
     cancelPendingLoopImageUpdate();
     setReadyLoopImageFrame(null);
+    setReadyLoopCanvasFrame(null);
+    const loopCanvas = loopCanvasRef.current;
+    if (loopCanvas) {
+      const ctx = loopCanvas.getContext("2d", { alpha: true });
+      if (ctx) {
+        ctx.clearRect(0, 0, loopCanvas.width, loopCanvas.height);
+      }
+    }
   }, [
     selectionEpoch,
     selectionKey,
@@ -2445,6 +2459,10 @@ export function MapCanvas({
         if (transitionToken !== loopToTileTokenRef.current) {
           return;
         }
+        if (loopToTileForceTimerRef.current !== null) {
+          window.clearTimeout(loopToTileForceTimerRef.current);
+          loopToTileForceTimerRef.current = null;
+        }
         if (loopToTileIdleCleanupRef.current) {
           loopToTileIdleCleanupRef.current();
           loopToTileIdleCleanupRef.current = null;
@@ -2474,6 +2492,10 @@ export function MapCanvas({
           setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
           isLoopToTileTransitioningRef.current = false;
           loopToTileRafRef.current = null;
+          if (loopToTileForceTimerRef.current !== null) {
+            window.clearTimeout(loopToTileForceTimerRef.current);
+            loopToTileForceTimerRef.current = null;
+          }
         };
 
         loopToTileRafRef.current = window.requestAnimationFrame(tick);
@@ -2492,15 +2514,26 @@ export function MapCanvas({
         }, WEBP_TO_TILE_STABLE_MS);
       };
 
-      map.on("idle", onIdle);
-      loopToTileIdleCleanupRef.current = () => {
-        map.off("idle", onIdle);
-      };
-      window.requestAnimationFrame(() => {
-        if (map.areTilesLoaded()) {
-          onIdle();
+      loopToTileForceTimerRef.current = window.setTimeout(() => {
+        if (transitionToken !== loopToTileTokenRef.current) {
+          return;
         }
-      });
+        startCrossfade();
+      }, WEBP_TO_TILE_FORCE_CROSSFADE_MS);
+
+      if (mode === "variable-switch") {
+        startCrossfade();
+      } else {
+        map.on("idle", onIdle);
+        loopToTileIdleCleanupRef.current = () => {
+          map.off("idle", onIdle);
+        };
+        window.requestAnimationFrame(() => {
+          if (map.areTilesLoaded()) {
+            onIdle();
+          }
+        });
+      }
     } else {
       isLoopToTileTransitioningRef.current = false;
       setLayerVisibility(map, layerId(activeBuffer), true);
@@ -2519,6 +2552,7 @@ export function MapCanvas({
   }, [
     opacity,
     isLoaded,
+    mode,
     crossfade,
     cancelCrossfade,
     cancelLoopToTileTransition,
