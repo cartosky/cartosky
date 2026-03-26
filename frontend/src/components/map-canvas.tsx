@@ -956,7 +956,22 @@ export function MapCanvas({
         if (canvasSource && typeof canvasSource.setCoordinates === "function") {
           canvasSource.setCoordinates(loopImageCoordinates);
         }
-        map.triggerRepaint();
+        // MapLibre's CanvasSource with `animate: false` never re-reads canvas
+        // pixels after initial load. Calling play() sets the internal `_playing`
+        // flag so that the next `prepare()` call (during the render cycle)
+        // uploads the updated canvas texture to the GPU. play() also calls
+        // triggerRepaint() internally. We pause after the render completes to
+        // avoid continuous repainting.
+        if (canvasSource && typeof (canvasSource as any).play === "function") {
+          (canvasSource as any).play();
+          map.once("render", () => {
+            if (typeof (canvasSource as any).pause === "function") {
+              (canvasSource as any).pause();
+            }
+          });
+        } else {
+          map.triggerRepaint();
+        }
       }
       return true;
     },
