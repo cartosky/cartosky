@@ -1081,6 +1081,12 @@ export default function App() {
   const longTaskSampleCounterRef = useRef(0);
   const loopVisiblePaintTokenRef = useRef(0);
   const tierFailoverCycleRef = useRef<{ key: string; emitted: boolean }>({ key: "", emitted: false });
+  // Holdover refs: snapshot of loop visuals from the outgoing variable so the
+  // map keeps showing the old frame during a variable switch instead of
+  // flashing stale tile data while the new variable's imagery loads.
+  const holdoverLoopBitmapRef = useRef<ImageBitmap | null>(null);
+  const holdoverLoopUrlRef = useRef<string | null>(null);
+  const holdoverLoopBboxRef = useRef<[number, number, number, number] | null>(null);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const mapViewRef = useRef({
@@ -2707,6 +2713,9 @@ export default function App() {
     if (variableSwitchState.toVariable !== variable) {
       setVariableSwitchState(null);
       setVisualVariable(variable);
+      holdoverLoopBitmapRef.current = null;
+      holdoverLoopUrlRef.current = null;
+      holdoverLoopBboxRef.current = null;
     }
   }, [variable, visualVariable, variableSwitchState]);
 
@@ -3215,6 +3224,9 @@ export default function App() {
           && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
         ) {
           pendingVariableSwitchRef.current = null;
+          holdoverLoopBitmapRef.current = null;
+          holdoverLoopUrlRef.current = null;
+          holdoverLoopBboxRef.current = null;
           setVariableSwitchState((current) => {
             if (!current || current.toVariable !== variable) {
               return null;
@@ -3611,12 +3623,12 @@ export default function App() {
       const nextHour = frameHours[nextIndex];
       const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
       const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
-      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "image-url");
+      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "canvas");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
       if (accumulatedMs >= AUTOPLAY_TICK_MS) {
-        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "image-url")) {
+        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "canvas")) {
           accumulatedMs -= AUTOPLAY_TICK_MS;
           lastLoopAdvanceRef.current = Date.now();
           setTargetForecastHour(nextHour);
@@ -3896,10 +3908,18 @@ export default function App() {
         setTargetForecastHour(nextHour);
         if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
           setLoopDisplayHour(nextHour);
-        } else if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
-            setLoopDisplayHour(nextHour);
-          });
+        } else {
+          // Show the nearest already-decoded frame immediately so the user sees
+          // something while the exact frame decodes in the background.
+          const nearbyReady = findNearestDecodedLoopScrubHour(nextHour, visibleRenderMode);
+          if (Number.isFinite(nearbyReady)) {
+            setLoopDisplayHour(nearbyReady as number);
+          }
+          if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
+            startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+              setLoopDisplayHour(nextHour);
+            });
+          }
         }
       });
     },
@@ -4982,6 +5002,9 @@ export default function App() {
       && pendingVarSwitch.expectedTileUrl === readyTileUrl
     ) {
       pendingVariableSwitchRef.current = null;
+      holdoverLoopBitmapRef.current = null;
+      holdoverLoopUrlRef.current = null;
+      holdoverLoopBboxRef.current = null;
       resetLoopPresentationToTiles();
       setVariableSwitchState((current) => {
         if (!current || current.toVariable !== variable) {
@@ -5154,6 +5177,19 @@ export default function App() {
       startedAt: performance.now(),
       visualState: "holding_old",
     });
+    // Snapshot the current loop visuals before tearing down loop presentation.
+    // This lets the map hold the old frame during the transition instead of
+    // flashing stale tile imagery while the new variable loads.
+    if (visibleRenderMode !== "tiles" && Number.isFinite(loopDisplayHour)) {
+      const snapshotHour = loopDisplayHour as number;
+      holdoverLoopBitmapRef.current = getDecodedLoopBitmap(snapshotHour, visibleRenderMode);
+      holdoverLoopUrlRef.current = resolveLoopUrlForHour(snapshotHour, visibleRenderMode);
+      holdoverLoopBboxRef.current = loopManifest?.bbox ?? null;
+    } else {
+      holdoverLoopBitmapRef.current = null;
+      holdoverLoopUrlRef.current = null;
+      holdoverLoopBboxRef.current = null;
+    }
     resetLoopPresentationToTiles();
     setVariable(nextVariable);
     trackUsageEvent({
@@ -5171,7 +5207,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, resetLoopPresentationToTiles]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles]);
 
   useEffect(() => {
     if (
@@ -5276,12 +5312,25 @@ export default function App() {
   // the LRU cache — regardless of whether we are playing, scrubbing, or
   // switching variables. Only fall back to null (image-url path) on a cache
   // miss so that map-canvas queues an async Image() preload for that frame.
-  const activeLoopBitmap = hasDecodedLoopFrame(activeLoopHour, visibleRenderMode)
+  // During a variable switch, fall back to the holdover snapshot from the
+  // outgoing variable so the map keeps showing something instead of flashing
+  // stale tile imagery.
+  const newLoopBitmap = hasDecodedLoopFrame(activeLoopHour, visibleRenderMode)
     ? getDecodedLoopBitmap(activeLoopHour, visibleRenderMode)
     : null;
-  const activeLoopUrl = isLoopDisplayActive
+  const activeLoopBitmap = newLoopBitmap
+    ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
+  const newLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
     : null;
+  const activeLoopUrl = newLoopUrl
+    ?? (isVariableSwitching ? holdoverLoopUrlRef.current : null);
+  const activeLoopBbox = loopManifest?.bbox
+    ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
+  // When holdover visuals are active, keep the loop layer visible even though
+  // isLoopDisplayActive is false (the new selection hasn't loaded yet).
+  const effectiveLoopActive = isLoopDisplayActive
+    || (isVariableSwitching && Boolean(activeLoopBitmap || activeLoopUrl));
 
   useEffect(() => {
     viewerDebugLog("app:selection", {
@@ -5669,8 +5718,8 @@ export default function App() {
           crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
           loopFrameBitmap={activeLoopBitmap}
-          loopImageBbox={loopManifest?.bbox ?? null}
-          loopActive={isLoopDisplayActive}
+          loopImageBbox={activeLoopBbox}
+          loopActive={effectiveLoopActive}
           onFrameSettled={handleFrameSettled}
           onTileReady={handleTileReady}
           onFrameLoadingChange={handleFrameLoadingChange}
