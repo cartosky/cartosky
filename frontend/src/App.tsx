@@ -57,7 +57,7 @@ import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
-import { viewerDebugLog } from "@/lib/viewer-debug";
+
 import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
 
 const TwfShareModal = lazy(() =>
@@ -905,12 +905,6 @@ export default function App() {
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
   const initialPermalink = useMemo(() => readPermalink(), []);
-  const loopDebugEnabled = useMemo(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    return new URLSearchParams(window.location.search).get("debugLoop") === "1";
-  }, []);
   const initialPermalinkMapView = useMemo(() => {
     if (
       Number.isFinite(initialPermalink.lat)
@@ -986,7 +980,6 @@ export default function App() {
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
-  const [loopDebugSnapshot, setLoopDebugSnapshot] = useState<Record<string, unknown> | null>(null);
 
   const isVariableSwitching = useMemo(() => {
     if (!variableSwitchState) {
@@ -2629,14 +2622,6 @@ export default function App() {
     if (!pendingVarSwitch) {
       return false;
     }
-    viewerDebugLog("app:variable-switch-cancel", {
-      reason,
-      variable,
-      loadedFramesKey,
-      selectionKey,
-      pendingToVariable: pendingVarSwitch.toVariableId,
-      expectedTileUrl: pendingVarSwitch.expectedTileUrl,
-    });
     pendingVariableSwitchRef.current = null;
     clearLoopHoldover();
     if (options?.forceTiles) {
@@ -4974,22 +4959,6 @@ export default function App() {
     ) {
       return;
     }
-    viewerDebugLog("app:tile-viewport-ready", {
-      readyTileUrl,
-      currentTileUrl: tileUrl,
-      loadedFramesKey,
-      variable,
-      visualVariable,
-      visibleRenderMode,
-      loopDisplayHour,
-      pendingVariableSwitch: pendingVariableSwitchRef.current
-        ? {
-            toVariableId: pendingVariableSwitchRef.current.toVariableId,
-            expectedSelectionKey: pendingVariableSwitchRef.current.expectedSelectionKey,
-            expectedTileUrl: pendingVariableSwitchRef.current.expectedTileUrl,
-          }
-        : null,
-    });
     if (renderMode !== "tiles") {
       // Loop/canvas playback can emit synthetic tile-ready events to warm caches.
       // Never treat those as visible tile presentation commits.
@@ -5101,17 +5070,6 @@ export default function App() {
       return;
     }
     const fromVariable = visualVariable || variable;
-    viewerDebugLog("app:variable-change", {
-      fromVariable,
-      nextVariable,
-      model,
-      run: resolvedRunForRequests,
-      forecastHour,
-      targetForecastHour,
-      renderMode,
-      visibleRenderMode,
-      loopDisplayHour,
-    });
     pendingVariableSwitchRef.current = {
       startedAt: performance.now(),
       fromVariableId: fromVariable || null,
@@ -5300,179 +5258,6 @@ export default function App() {
     setLoopDisplayBitmap(newLoopBitmap);
   }, [newLoopBitmap, loopDisplayBitmap]);
 
-  const loopStuckWatchRef = useRef<{
-    targetHour: number | null;
-    changedAtMs: number;
-    lastLoggedAtMs: number;
-  }>({
-    targetHour: null,
-    changedAtMs: 0,
-    lastLoggedAtMs: 0,
-  });
-
-  useEffect(() => {
-    if (!isLoopDisplayActive || loopFrameHours.length === 0) {
-      loopStuckWatchRef.current = {
-        targetHour: null,
-        changedAtMs: 0,
-        lastLoggedAtMs: 0,
-      };
-      return;
-    }
-
-    const resolvedTargetHour = nearestFrame(loopFrameHours, targetForecastHour);
-    const nowMs = performance.now();
-    const watch = loopStuckWatchRef.current;
-    if (watch.targetHour !== resolvedTargetHour) {
-      watch.targetHour = resolvedTargetHour;
-      watch.changedAtMs = nowMs;
-    }
-
-    if (loopDisplayHour === resolvedTargetHour) {
-      watch.lastLoggedAtMs = 0;
-      return;
-    }
-
-    const staleMs = nowMs - watch.changedAtMs;
-    if (staleMs < 800) {
-      return;
-    }
-    if (watch.lastLoggedAtMs > 0 && nowMs - watch.lastLoggedAtMs < 1200) {
-      return;
-    }
-
-    watch.lastLoggedAtMs = nowMs;
-    viewerDebugLog("app:loop-stuck-watchdog", {
-      model,
-      run: resolvedRunForRequests,
-      variable,
-      renderMode,
-      visibleRenderMode,
-      isPlaying,
-      isScrubbing,
-      effectiveLoopActive,
-      targetForecastHour,
-      resolvedTargetHour,
-      loopDisplayHour,
-      hasDecodedTarget: hasDecodedLoopFrame(resolvedTargetHour, loopPlaybackRenderMode),
-      hasActiveLoopBitmap: Boolean(activeLoopBitmap),
-      loopFrameHoursCount: loopFrameHours.length,
-      staleMs,
-    });
-  }, [
-    isLoopDisplayActive,
-    loopFrameHours,
-    targetForecastHour,
-    loopDisplayHour,
-    model,
-    resolvedRunForRequests,
-    variable,
-    renderMode,
-    visibleRenderMode,
-    isPlaying,
-    isScrubbing,
-    effectiveLoopActive,
-    hasDecodedLoopFrame,
-    activeLoopBitmap,
-  ]);
-
-  useEffect(() => {
-    if (!loopDebugEnabled) {
-      setLoopDebugSnapshot(null);
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      const targetHour = loopFrameHours.length > 0
-        ? nearestFrame(loopFrameHours, targetForecastHour)
-        : targetForecastHour;
-      setLoopDebugSnapshot({
-        mode: isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub"),
-        renderMode,
-        visibleRenderMode,
-        isPlaying,
-        isScrubbing,
-        isLoopDisplayActive,
-        effectiveLoopActive,
-        canUseLoopPlayback,
-        isHighDetailZoom,
-        forecastHour,
-        targetForecastHour,
-        resolvedTargetHour: targetHour,
-        loopDisplayHour,
-        hasDecodedTarget: hasDecodedLoopFrame(targetHour, loopPlaybackRenderMode),
-        hasActiveLoopBitmap: Boolean(activeLoopBitmap),
-        loopFrameCount: loopFrameHours.length,
-        loadedFramesKey,
-        selectionKey,
-      });
-    }, 250);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    loopDebugEnabled,
-    isPlaying,
-    isVariableSwitching,
-    renderMode,
-    visibleRenderMode,
-    isScrubbing,
-    isLoopDisplayActive,
-    effectiveLoopActive,
-    canUseLoopPlayback,
-    isHighDetailZoom,
-    forecastHour,
-    targetForecastHour,
-    loopDisplayHour,
-    hasDecodedLoopFrame,
-    activeLoopBitmap,
-    loopFrameHours,
-    loadedFramesKey,
-    selectionKey,
-  ]);
-
-  useEffect(() => {
-    viewerDebugLog("app:selection", {
-      model,
-      run: resolvedRunForRequests,
-      variable,
-      visualVariable,
-      selectionKey,
-      loadedFramesKey,
-      forecastHour,
-      targetForecastHour,
-      loopDisplayHour,
-      renderMode,
-      visibleRenderMode,
-      isLoopDisplayActive,
-      isVariableSwitching,
-      activeLoopHour,
-      activeLoopUrl,
-      activeLoopBitmapReady: Boolean(activeLoopBitmap),
-      effectiveLoopActive,
-      tileUrl,
-    });
-  }, [
-    model,
-    resolvedRunForRequests,
-    variable,
-    visualVariable,
-    selectionKey,
-    loadedFramesKey,
-    forecastHour,
-    targetForecastHour,
-    loopDisplayHour,
-    renderMode,
-    visibleRenderMode,
-    isLoopDisplayActive,
-    isVariableSwitching,
-    activeLoopHour,
-    activeLoopUrl,
-    activeLoopBitmap,
-    effectiveLoopActive,
-    tileUrl,
-  ]);
   const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
   const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
     ? pendingInitialLoopRef.current
@@ -5890,13 +5675,6 @@ export default function App() {
           <div className="glass absolute left-1/2 top-14 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs">
             <AlertCircle className="h-3.5 w-3.5" />
             High detail mode — zoom out for smooth loop
-          </div>
-        )}
-
-        {loopDebugEnabled && loopDebugSnapshot && (
-          <div className="glass absolute left-3 top-20 z-40 max-w-[min(92vw,520px)] rounded-xl px-3 py-2 text-[11px] leading-tight text-white/88">
-            <div className="mb-1 font-semibold tracking-wide text-white/95">Loop Diagnostics</div>
-            <pre className="whitespace-pre-wrap break-words font-mono text-[10px] leading-tight text-white/85">{JSON.stringify(loopDebugSnapshot, null, 2)}</pre>
           </div>
         )}
 

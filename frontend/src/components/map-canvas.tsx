@@ -4,7 +4,6 @@ import type { GeoJSON } from "geojson";
 
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import { MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
-import { viewerDebugLog } from "@/lib/viewer-debug";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
@@ -840,17 +839,6 @@ export function MapCanvas({
   const sourceRequestedUrlRef = useRef<Map<string, string>>(new Map());
   const sourceRequestTokenRef = useRef<Map<string, number>>(new Map());
   const sourceEventCountRef = useRef<Map<string, number>>(new Map());
-  const decodeErrorTelemetryRef = useRef<{
-    total: number;
-    recent: number;
-    bySource: Map<string, number>;
-    lastLogAtMs: number;
-  }>({
-    total: 0,
-    recent: 0,
-    bySource: new Map(),
-    lastLogAtMs: 0,
-  });
   const fadeTokenRef = useRef(0);
   const fadeRafRef = useRef<number | null>(null);
   const tileViewportReadyTokenRef = useRef(0);
@@ -916,18 +904,6 @@ export function MapCanvas({
       setReadyLoopCanvasFrame(null);
     }
   }, [loopImageUrl, mode, readyLoopImageUrl]);
-
-  useEffect(() => {
-    viewerDebugLog("map:loop-state", {
-      mode,
-      variable,
-      loopActive,
-      loopImageUrl,
-      readyLoopImageUrl,
-      hasCanvasLoopFrame,
-      hasLoopVisual,
-    });
-  }, [mode, variable, loopActive, loopImageUrl, readyLoopImageUrl, hasCanvasLoopFrame, hasLoopVisual]);
 
   const drawToLoopCanvas = useCallback(
     (frame: CanvasImageSource, width: number, height: number): boolean => {
@@ -1079,12 +1055,6 @@ export function MapCanvas({
         loopImageCommittedSignatureRef.current = null;
         setReadyLoopImageFrame(null);
         setReadyLoopCanvasFrame(null);
-        viewerDebugLog("map:loop-image-clear", {
-          mode,
-          variable,
-          selectionKey: selectionScope.selectionKey,
-          selectionEpoch: selectionScope.selectionEpoch,
-        });
         return;
       }
 
@@ -1105,14 +1075,6 @@ export function MapCanvas({
       loopImagePendingSignatureRef.current = requestSignature;
 
       const requestToken = loopImageRequestTokenRef.current;
-      viewerDebugLog("map:loop-image-request", {
-        mode,
-        variable,
-        nextLoopImageUrl,
-        requestToken,
-        selectionKey: selectionScope.selectionKey,
-        selectionEpoch: selectionScope.selectionEpoch,
-      });
       const image = new Image();
       image.decoding = "async";
       image.crossOrigin = "anonymous";
@@ -1123,15 +1085,6 @@ export function MapCanvas({
           if (loopImagePendingSignatureRef.current === requestSignature) {
             loopImagePendingSignatureRef.current = null;
           }
-          viewerDebugLog("map:loop-image-stale-onload", {
-            mode,
-            variable,
-            nextLoopImageUrl,
-            requestToken,
-            currentToken: loopImageRequestTokenRef.current,
-            selectionKey: selectionScope.selectionKey,
-            selectionEpoch: selectionScope.selectionEpoch,
-          });
           return;
         }
         if (selectionScope.selectionEpoch !== currentSelectionEpochRef.current) {
@@ -1153,15 +1106,6 @@ export function MapCanvas({
           setReadyLoopCanvasFrame(null);
           loopImageCommittedSignatureRef.current = requestSignature;
           loopImagePendingSignatureRef.current = null;
-          viewerDebugLog("map:loop-image-ready", {
-            mode,
-            variable,
-            nextLoopImageUrl,
-            requestToken,
-            selectionKey: selectionScope.selectionKey,
-            selectionEpoch: selectionScope.selectionEpoch,
-            source: "image-source",
-          });
           map.triggerRepaint();
         } catch (error) {
           const drawnToCanvas = drawToLoopCanvas(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
@@ -1174,15 +1118,6 @@ export function MapCanvas({
             });
             loopImageCommittedSignatureRef.current = requestSignature;
             loopImagePendingSignatureRef.current = null;
-            viewerDebugLog("map:loop-image-ready", {
-              mode,
-              variable,
-              nextLoopImageUrl,
-              requestToken,
-              selectionKey: selectionScope.selectionKey,
-              selectionEpoch: selectionScope.selectionEpoch,
-              source: "canvas-fallback",
-            });
             map.triggerRepaint();
           } else {
             setReadyLoopImageFrame(null);
@@ -1204,14 +1139,6 @@ export function MapCanvas({
         if (loopImagePendingSignatureRef.current === requestSignature) {
           loopImagePendingSignatureRef.current = null;
         }
-        viewerDebugLog("map:loop-image-error", {
-          mode,
-          variable,
-          nextLoopImageUrl,
-          requestToken,
-          selectionKey: selectionScope.selectionKey,
-          selectionEpoch: selectionScope.selectionEpoch,
-        });
         setReadyLoopImageFrame(null);
         setReadyLoopCanvasFrame(null);
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
@@ -1753,47 +1680,6 @@ export function MapCanvas({
       if (errName === "AbortError" || errMessage === "AbortError") {
         // Expected when setTiles() rapidly supersedes in-flight requests.
         return;
-      }
-
-      const isDecodeError =
-        errName === "InvalidStateError" && /could not be decoded/i.test(errMessage);
-      if (isDecodeError) {
-        const nowMs = Date.now();
-        const errorSourceId = typeof event?.sourceId === "string" ? event.sourceId : "unknown";
-        const telemetry = decodeErrorTelemetryRef.current;
-        telemetry.total += 1;
-        telemetry.recent += 1;
-        telemetry.bySource.set(errorSourceId, (telemetry.bySource.get(errorSourceId) ?? 0) + 1);
-
-        const shouldLog = telemetry.total <= 3 || nowMs - telemetry.lastLogAtMs >= 2000;
-        if (shouldLog) {
-          telemetry.lastLogAtMs = nowMs;
-          const style = map.getStyle();
-          const styleSource = (style?.sources as Record<string, any> | undefined)?.[errorSourceId] as
-            | { type?: string; tiles?: string[] }
-            | undefined;
-          const tileSummary =
-            typeof event?.tile === "object" && event.tile !== null
-              ? Object.keys(event.tile as Record<string, unknown>).slice(0, 6)
-              : [];
-
-          viewerDebugLog("map:decode-error", {
-            sourceId: errorSourceId,
-            errorName: errName,
-            errorMessage: errMessage,
-            totalDecodeErrors: telemetry.total,
-            recentDecodeErrors: telemetry.recent,
-            sourceDecodeErrors: telemetry.bySource.get(errorSourceId) ?? 0,
-            requestedUrlForSource: sourceRequestedUrlRef.current.get(errorSourceId) ?? null,
-            requestedOverlayA: sourceRequestedUrlRef.current.get(sourceId("a")) ?? null,
-            requestedOverlayB: sourceRequestedUrlRef.current.get(sourceId("b")) ?? null,
-            styleSourceType: styleSource?.type ?? null,
-            styleSourceFirstTile: Array.isArray(styleSource?.tiles) ? (styleSource?.tiles[0] ?? null) : null,
-            tileEventKeys: tileSummary,
-          });
-
-          telemetry.recent = 0;
-        }
       }
 
       if (err) {
