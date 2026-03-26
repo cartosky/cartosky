@@ -105,6 +105,8 @@ const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const LOOP_SOURCE_ID = "twf-loop-image";
 const LOOP_LAYER_ID = "twf-loop-image";
+const LOOP_VIDEO_SOURCE_ID = "twf-loop-video";
+const LOOP_VIDEO_LAYER_ID = "twf-loop-video";
 const LOOP_CANVAS_SOURCE_ID = "twf-loop-canvas";
 const LOOP_CANVAS_LAYER_ID = "twf-loop-canvas";
 const LOOP_CANVAS_ELEMENT_ID = "twf-loop-canvas-el";
@@ -754,6 +756,9 @@ type MapCanvasProps = {
   loopFrameBitmap?: ImageBitmap | null;
   loopImageBbox?: [number, number, number, number] | null;
   loopActive?: boolean;
+  loopPlaybackVideoUrl?: string | null;
+  loopPlaybackVideoBbox?: [number, number, number, number] | null;
+  loopPlaybackActive?: boolean;
   onFrameSettled?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
   onTileReady?: (tileUrl: string, meta?: TileReadyMeta) => void;
   onTileViewportReady?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
@@ -788,6 +793,9 @@ export function MapCanvas({
   loopFrameBitmap = null,
   loopImageBbox = null,
   loopActive = false,
+  loopPlaybackVideoUrl = null,
+  loopPlaybackVideoBbox = null,
+  loopPlaybackActive = false,
   onFrameSettled,
   onTileReady,
   onTileViewportReady,
@@ -826,6 +834,7 @@ export function MapCanvas({
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
   const isLoopToTileTransitioningRef = useRef(false);
+  const activeLoopPlaybackVideoUrlRef = useRef<string | null>(null);
   const currentSelectionEpochRef = useRef(selectionEpoch);
   currentSelectionEpochRef.current = selectionEpoch;
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
@@ -846,9 +855,14 @@ export function MapCanvas({
     () => loopCoordinatesFromBbox(loopImageBbox),
     [loopImageBbox]
   );
+  const loopPlaybackVideoCoordinates = useMemo(
+    () => loopCoordinatesFromBbox(loopPlaybackVideoBbox ?? loopImageBbox),
+    [loopPlaybackVideoBbox, loopImageBbox]
+  );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
   const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
   const hasLoopVisual = Boolean(hasCanvasLoopFrame || isReadyLoopImage);
+  const showLoopPlaybackVideo = Boolean(loopPlaybackActive && loopPlaybackVideoUrl);
 
   useEffect(() => {
     if (!loopImageUrl) {
@@ -959,7 +973,7 @@ export function MapCanvas({
       if (!map.getLayer(id)) {
         return;
       }
-      const resamplingMode = id === LOOP_LAYER_ID || id === LOOP_CANVAS_LAYER_ID
+      const resamplingMode = id === LOOP_LAYER_ID || id === LOOP_CANVAS_LAYER_ID || id === LOOP_VIDEO_LAYER_ID
         ? getLoopResamplingMode(variableId, variableKindId)
         : getResamplingMode(variableKindId);
       const paintSettings = getOverlayPaintSettings(variableId, basemapModeValue);
@@ -1126,6 +1140,9 @@ export function MapCanvas({
     if (map.getLayer(LOOP_LAYER_ID)) {
       map.moveLayer(LOOP_LAYER_ID, "twf-labels");
     }
+    if (map.getLayer(LOOP_VIDEO_LAYER_ID)) {
+      map.moveLayer(LOOP_VIDEO_LAYER_ID, "twf-labels");
+    }
     if (map.getLayer(LOOP_CANVAS_LAYER_ID)) {
       map.moveLayer(LOOP_CANVAS_LAYER_ID, "twf-labels");
     }
@@ -1148,6 +1165,100 @@ export function MapCanvas({
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
     }
     map.moveLayer("twf-labels");
+  }, []);
+
+  const removeLoopPlaybackVideoSource = useCallback((map: maplibregl.Map) => {
+    if (map.getLayer(LOOP_VIDEO_LAYER_ID)) {
+      map.removeLayer(LOOP_VIDEO_LAYER_ID);
+    }
+    if (map.getSource(LOOP_VIDEO_SOURCE_ID)) {
+      map.removeSource(LOOP_VIDEO_SOURCE_ID);
+    }
+    activeLoopPlaybackVideoUrlRef.current = null;
+  }, []);
+
+  const syncLoopPlaybackVideoSource = useCallback(
+    (
+      map: maplibregl.Map,
+      nextVideoUrl: string | null | undefined,
+      coordinates: [[number, number], [number, number], [number, number], [number, number]]
+    ) => {
+      const resolvedUrl = typeof nextVideoUrl === "string" && nextVideoUrl.trim().length > 0
+        ? nextVideoUrl.trim()
+        : null;
+
+      if (!resolvedUrl) {
+        removeLoopPlaybackVideoSource(map);
+        return;
+      }
+
+      if (activeLoopPlaybackVideoUrlRef.current !== resolvedUrl || !map.getSource(LOOP_VIDEO_SOURCE_ID)) {
+        removeLoopPlaybackVideoSource(map);
+        map.addSource(LOOP_VIDEO_SOURCE_ID, {
+          type: "video",
+          urls: [resolvedUrl],
+          coordinates,
+        } as any);
+        map.addLayer({
+          id: LOOP_VIDEO_LAYER_ID,
+          type: "raster",
+          source: LOOP_VIDEO_SOURCE_ID,
+          layout: {
+            visibility: "none",
+          },
+          paint: {
+            "raster-opacity": 0,
+            "raster-resampling": getLoopResamplingMode(variable, variableKind),
+            "raster-fade-duration": 0,
+          },
+        } as any, "twf-labels");
+        activeLoopPlaybackVideoUrlRef.current = resolvedUrl;
+        window.requestAnimationFrame(() => {
+          const nextVideoSource = map.getSource(LOOP_VIDEO_SOURCE_ID) as any;
+          const video = typeof nextVideoSource?.getVideo === "function" ? nextVideoSource.getVideo() : null;
+          if (video) {
+            video.muted = true;
+            video.loop = true;
+            video.preload = "auto";
+            video.playsInline = true;
+            video.crossOrigin = "anonymous";
+          }
+        });
+      } else {
+        const videoSource = map.getSource(LOOP_VIDEO_SOURCE_ID) as any;
+        if (videoSource && typeof videoSource.setCoordinates === "function") {
+          videoSource.setCoordinates(coordinates);
+        }
+      }
+
+      setLayerRasterPaint(map, LOOP_VIDEO_LAYER_ID, variable, variableKind, basemapMode);
+      enforceLayerOrder(map);
+    },
+    [basemapMode, enforceLayerOrder, removeLoopPlaybackVideoSource, setLayerRasterPaint, variable, variableKind]
+  );
+
+  const setLoopPlaybackVideoPlaying = useCallback((map: maplibregl.Map, shouldPlay: boolean) => {
+    const videoSource = map.getSource(LOOP_VIDEO_SOURCE_ID) as any;
+    if (!videoSource) {
+      return;
+    }
+    try {
+      if (shouldPlay) {
+        if (typeof videoSource.play === "function") {
+          videoSource.play();
+        } else if (typeof videoSource.getVideo === "function") {
+          const video = videoSource.getVideo();
+          void video?.play?.().catch(() => {});
+        }
+      } else if (typeof videoSource.pause === "function") {
+        videoSource.pause();
+      } else if (typeof videoSource.getVideo === "function") {
+        const video = videoSource.getVideo();
+        video?.pause?.();
+      }
+    } catch (error) {
+      console.warn("[map] failed to toggle loop playback video", { shouldPlay, error });
+    }
   }, []);
 
   const clearAnchorMarkers = useCallback(() => {
@@ -1392,12 +1503,17 @@ export function MapCanvas({
     cancelLoopToTileTransition();
     cancelPendingLoopImageUpdate();
     setReadyLoopImageUrl(null);
+    const map = mapRef.current;
+    if (map) {
+      removeLoopPlaybackVideoSource(map);
+    }
   }, [
     selectionEpoch,
     selectionKey,
     cancelCrossfade,
     cancelLoopToTileTransition,
     cancelPendingLoopImageUpdate,
+    removeLoopPlaybackVideoSource,
   ]);
 
   const runCrossfade = useCallback(
@@ -1646,13 +1762,14 @@ export function MapCanvas({
       map.off("error", handleMapError as any);
       cancelCrossfade();
       cancelLoopToTileTransition();
+      removeLoopPlaybackVideoSource(map);
       clearAnchorMarkers();
       map.remove();
       mapRef.current = null;
       cancelPendingLoopImageUpdate();
       setIsLoaded(false);
     };
-  }, [cancelCrossfade, cancelLoopToTileTransition, cancelPendingLoopImageUpdate, clearAnchorMarkers, enforceLayerOrder, initializeSourceTracking]);
+  }, [cancelCrossfade, cancelLoopToTileTransition, cancelPendingLoopImageUpdate, clearAnchorMarkers, enforceLayerOrder, initializeSourceTracking, removeLoopPlaybackVideoSource]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1784,11 +1901,13 @@ export function MapCanvas({
         loopCanvasSource.setCoordinates(loopImageCoordinates);
       }
 
-      const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual);
+      const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual && !showLoopPlaybackVideo);
       setLayerVisibility(map, LOOP_LAYER_ID, shouldShowLoop && !hasCanvasLoopFrame);
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop && hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo);
       setLayerOpacity(map, LOOP_LAYER_ID, opacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, opacity);
+      setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo ? opacity : 0);
       for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
         setLayerOpacity(map, prefetchLayerId(idx), HIDDEN_PREFETCH_OPACITY);
         setLayerVisibility(map, prefetchLayerId(idx), false);
@@ -1806,6 +1925,7 @@ export function MapCanvas({
       }
       setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, basemapMode);
       setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, basemapMode);
+      setLayerRasterPaint(map, LOOP_VIDEO_LAYER_ID, variable, variableKind, basemapMode);
 
       enforceLayerOrder(map);
     };
@@ -1829,6 +1949,7 @@ export function MapCanvas({
     loopActive,
     hasCanvasLoopFrame,
     hasLoopVisual,
+    showLoopPlaybackVideo,
     loopImageUrl,
     overlayFadeOutZoom,
     opacity,
@@ -2299,15 +2420,49 @@ export function MapCanvas({
       return;
     }
 
+    syncLoopPlaybackVideoSource(map, loopPlaybackVideoUrl, loopPlaybackVideoCoordinates);
+    if (!loopPlaybackVideoUrl) {
+      return;
+    }
+    setLoopPlaybackVideoPlaying(map, loopPlaybackActive);
+    setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, loopPlaybackActive);
+    setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, loopPlaybackActive ? opacity : 0);
+    setLayerRasterPaint(map, LOOP_VIDEO_LAYER_ID, variable, variableKind, basemapMode);
+    enforceLayerOrder(map);
+  }, [
+    isLoaded,
+    selectionEpoch,
+    loopPlaybackVideoUrl,
+    loopPlaybackVideoCoordinates,
+    loopPlaybackActive,
+    opacity,
+    basemapMode,
+    variable,
+    variableKind,
+    syncLoopPlaybackVideoSource,
+    setLoopPlaybackVideoPlaying,
+    setLayerOpacity,
+    setLayerRasterPaint,
+    enforceLayerOrder,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+
     queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
     const loopCanvasSource = map.getSource(LOOP_CANVAS_SOURCE_ID) as maplibregl.CanvasSource | undefined;
     if (loopCanvasSource && typeof loopCanvasSource.setCoordinates === "function") {
       loopCanvasSource.setCoordinates(loopImageCoordinates);
     }
 
-    const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual);
+    const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual && !showLoopPlaybackVideo);
     setLayerVisibility(map, LOOP_LAYER_ID, shouldShowLoop && !hasCanvasLoopFrame);
     setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop && hasCanvasLoopFrame);
+    setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo);
+    setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo ? opacity : 0);
     setLayerVisibility(
       map,
       CONTOUR_LAYER_ID,
@@ -2322,10 +2477,13 @@ export function MapCanvas({
     variable,
     hasCanvasLoopFrame,
     hasLoopVisual,
+    showLoopPlaybackVideo,
     queueLoopImageUpdate,
     enforceLayerOrder,
     selectionEpoch,
     selectionKey,
+    opacity,
+    setLayerOpacity,
   ]);
 
   useEffect(() => {
@@ -2352,10 +2510,12 @@ export function MapCanvas({
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerVisibility(map, LOOP_LAYER_ID, Boolean(hasLoopVisual && !hasCanvasLoopFrame));
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, Boolean(hasLoopVisual && hasCanvasLoopFrame));
+      setLayerVisibility(map, LOOP_LAYER_ID, Boolean(hasLoopVisual && !hasCanvasLoopFrame && !showLoopPlaybackVideo));
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, Boolean(hasLoopVisual && hasCanvasLoopFrame && !showLoopPlaybackVideo));
+      setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+      setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, showLoopPlaybackVideo ? targetOpacity : 0);
       setLayerVisibility(map, CONTOUR_LAYER_ID, false);
     } else if (wasLoopActive && hasLoopVisual) {
       isLoopToTileTransitioningRef.current = true;
@@ -2364,10 +2524,12 @@ export function MapCanvas({
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerVisibility(map, LOOP_LAYER_ID, !hasCanvasLoopFrame);
-      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_LAYER_ID, !hasCanvasLoopFrame && !showLoopPlaybackVideo);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, hasCanvasLoopFrame && !showLoopPlaybackVideo);
+      setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, false);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+      setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, 0);
 
       const startCrossfade = () => {
         if (transitionToken !== loopToTileTokenRef.current) {
@@ -2388,6 +2550,7 @@ export function MapCanvas({
           setLayerOpacity(map, layerId(activeBuffer), tileOpacity);
           setLayerOpacity(map, LOOP_LAYER_ID, loopOpacity);
           setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, loopOpacity);
+          setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, 0);
 
           if (progress < 1) {
             loopToTileRafRef.current = window.requestAnimationFrame(tick);
@@ -2397,8 +2560,10 @@ export function MapCanvas({
           setLayerOpacity(map, layerId(activeBuffer), targetOpacity);
           setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
           setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+          setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, 0);
           setLayerVisibility(map, LOOP_LAYER_ID, false);
           setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+          setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, false);
           setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
           isLoopToTileTransitioningRef.current = false;
           loopToTileRafRef.current = null;
@@ -2437,8 +2602,10 @@ export function MapCanvas({
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerVisibility(map, LOOP_LAYER_ID, false);
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+      setLayerVisibility(map, LOOP_VIDEO_LAYER_ID, false);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+      setLayerOpacity(map, LOOP_VIDEO_LAYER_ID, 0);
       setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
     }
     for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
@@ -2454,6 +2621,7 @@ export function MapCanvas({
     loopActive,
     hasCanvasLoopFrame,
     hasLoopVisual,
+    showLoopPlaybackVideo,
     loopImageUrl,
   ]);
 

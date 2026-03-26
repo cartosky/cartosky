@@ -1821,6 +1821,15 @@ _sample_lock = threading.Lock()
 
 LOOP_MANIFEST_VERSION = 1
 LOOP_MANIFEST_PROJECTION = "EPSG:4326"
+LOOP_PLAYBACK_MANIFEST_VERSION = 1
+LOOP_PLAYBACK_FPS = _env_int(
+    "CARTOSKY_LOOP_PLAYBACK_FPS",
+    "CARTOSKY_V3_LOOP_PLAYBACK_FPS",
+    "TWF_V3_LOOP_PLAYBACK_FPS",
+    default=4,
+    min_value=1,
+)
+LOOP_PLAYBACK_TICK_MS = max(1, int(round(1000 / LOOP_PLAYBACK_FPS)))
 LOOP_MANIFEST_BBOX = [-134.0, 24.0, -60.0, 55.0]
 _LOOP_MANIFEST_BBOX_DENSIFY_POINTS = 21
 
@@ -2445,6 +2454,42 @@ def _legacy_loop_webp_path(model: str, run: str, var: str, fh: int, *, tier: int
     if candidate.is_file():
         return candidate
     return None
+
+
+def _loop_playback_path(model: str, run: str, var: str, *, ext: str) -> Path | None:
+    resolved = _resolve_run(model, run)
+    if resolved is None:
+        return None
+    return LOOP_CACHE_ROOT / model / resolved / var / f"playback.{ext}"
+
+
+def _legacy_loop_playback_path(model: str, run: str, var: str, *, ext: str) -> Path | None:
+    resolved = _resolve_run(model, run)
+    if resolved is None:
+        return None
+    candidate = _published_var_dir(model, resolved, var) / f"playback.{ext}"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _resolve_loop_playback_asset(model: str, run: str, var: str) -> tuple[str, Path] | None:
+    for ext in ("webm", "mp4"):
+        cache_path = _loop_playback_path(model, run, var, ext=ext)
+        if cache_path and cache_path.is_file():
+            return ext, cache_path
+        legacy_path = _legacy_loop_playback_path(model, run, var, ext=ext)
+        if legacy_path and legacy_path.is_file():
+            return ext, legacy_path
+    return None
+
+
+def _loop_playback_mime_type(ext: str) -> str:
+    return "video/webm" if ext == "webm" else "video/mp4"
+
+
+def _loop_playback_url(model: str, run: str, var: str, *, ext: str, version_token: str) -> str:
+    return f"/api/v4/{model}/{run}/{var}/playback.{ext}?v={version_token}"
 
 
 def _maybe_blur_loop_values(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
@@ -3481,6 +3526,102 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
             "ETag": etag,
             "Server-Timing": timing_header,
         },
+    )
+
+
+@app.get("/api/v4/{model}/{run}/{var}/playback-manifest")
+def get_loop_playback_manifest(request: Request, model: str, run: str, var: str):
+    resolved = _resolve_run(model, run)
+    if resolved is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+
+    manifest = _load_manifest(model, resolved)
+    if manifest is None:
+        return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
+
+    variables = manifest.get("variables")
+    if not isinstance(variables, dict):
+        return Response(status_code=404, content='{"error": "variable not found"}', media_type="application/json")
+
+    var_entry = variables.get(var)
+    if not isinstance(var_entry, dict):
+        return Response(status_code=404, content='{"error": "variable not found"}', media_type="application/json")
+
+    playback_asset = _resolve_loop_playback_asset(model, resolved, var)
+    if playback_asset is None:
+        return Response(status_code=404, content='{"error": "playback asset not found"}', media_type="application/json")
+
+    frame_entries = var_entry.get("frames")
+    if not isinstance(frame_entries, list):
+        frame_entries = []
+    frame_hours: list[int] = []
+    for item in frame_entries:
+        if not isinstance(item, dict):
+            continue
+        fh = item.get("fh")
+        if isinstance(fh, int):
+            frame_hours.append(fh)
+
+    loop_bbox = _resolve_loop_manifest_bbox(
+        model,
+        resolved,
+        var,
+        [item for item in frame_entries if isinstance(item, dict)],
+    )
+    version_token = _run_version_token(model, resolved)
+    ext, _path = playback_asset
+    payload = {
+        "manifest_version": LOOP_PLAYBACK_MANIFEST_VERSION,
+        "run": resolved,
+        "model": model,
+        "var": var,
+        "bbox": loop_bbox,
+        "projection": LOOP_MANIFEST_PROJECTION,
+        "fps": LOOP_PLAYBACK_FPS,
+        "tick_ms": LOOP_PLAYBACK_TICK_MS,
+        "mime_type": _loop_playback_mime_type(ext),
+        "video_url": _loop_playback_url(model, resolved, var, ext=ext, version_token=version_token),
+        "frame_hours": sorted(frame_hours),
+    }
+
+    cache_control = "public, max-age=60"
+    etag = _make_etag(payload)
+    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    if r304 is not None:
+        return r304
+
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": cache_control,
+            "ETag": etag,
+        },
+    )
+
+
+@app.get("/api/v4/{model}/{run}/{var}/playback.{ext}")
+def get_loop_playback_asset(model: str, run: str, var: str, ext: str):
+    normalized_ext = ext.strip().lower()
+    if normalized_ext not in {"webm", "mp4"}:
+        return Response(status_code=404, content='{"error": "unsupported playback format"}', media_type="application/json")
+
+    resolved = _resolve_run(model, run)
+    if resolved is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+
+    asset = _resolve_loop_playback_asset(model, resolved, var)
+    if asset is None:
+        return Response(status_code=404, content='{"error": "playback asset not found"}', media_type="application/json")
+
+    resolved_ext, path = asset
+    if resolved_ext != normalized_ext:
+        return Response(status_code=404, content='{"error": "requested playback format not found"}', media_type="application/json")
+
+    return FileResponse(
+        str(path),
+        media_type=_loop_playback_mime_type(resolved_ext),
+        filename=path.name,
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 

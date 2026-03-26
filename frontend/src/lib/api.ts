@@ -142,6 +142,20 @@ export type LoopManifestResponse = {
   loop_tiers: LoopManifestTier[];
 };
 
+export type LoopPlaybackManifestResponse = {
+  manifest_version: number;
+  run: string;
+  model: string;
+  var: string;
+  bbox?: [number, number, number, number];
+  projection?: string;
+  fps: number;
+  tick_ms: number;
+  mime_type: string;
+  video_url: string;
+  frame_hours: number[];
+};
+
 export type RunManifestFrame = {
   fh: number;
   valid_time?: string;
@@ -373,6 +387,32 @@ export async function fetchLoopManifest(
       options
     );
     if (!response || !Array.isArray(response.loop_tiers)) {
+      return null;
+    }
+    return response;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLoopPlaybackManifest(
+  model: string,
+  run: string,
+  varKey: string,
+  options?: FetchOptions
+): Promise<LoopPlaybackManifestResponse | null> {
+  const runKey = run || "latest";
+  try {
+    const response = await fetchJson<LoopPlaybackManifestResponse>(
+      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/playback-manifest`,
+      options
+    );
+    if (
+      !response
+      || typeof response.video_url !== "string"
+      || !Array.isArray(response.frame_hours)
+      || !Number.isFinite(Number(response.fps))
+    ) {
       return null;
     }
     return response;
