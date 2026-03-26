@@ -84,19 +84,24 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="loop_playback_") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
+        concat_manifest = temp_dir / "frames.txt"
+        manifest_lines: list[str] = []
         for index, frame_path in enumerate(frame_paths):
             link_path = temp_dir / f"{index:06d}.loop.webp"
             try:
                 link_path.symlink_to(frame_path.resolve())
             except OSError:
                 shutil.copy2(frame_path, link_path)
+            manifest_lines.append(f"file '{link_path.as_posix()}'")
 
-        frame_pattern = temp_dir / "%06d.loop.webp"
+        concat_manifest.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
         cmd = [
             ffmpeg_bin,
             "-y" if args.overwrite else "-n",
-            "-framerate", str(max(1, args.fps)),
-            "-i", str(frame_pattern),
+            "-f", "concat",
+            "-safe", "0",
+            "-r", str(max(1, args.fps)),
+            "-i", str(concat_manifest),
             *codec_args,
             str(output_path),
         ]
