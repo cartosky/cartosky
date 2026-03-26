@@ -1933,6 +1933,10 @@ export default function App() {
       return;
     }
 
+    if (visibleRenderMode !== renderMode) {
+      setVisibleRenderMode(renderMode);
+    }
+
     const commitLoopHour = isPlaying || isLoopPreloading || isLoopAutoplayBuffering
       ? resolvedLoopForecastHour
       : resolvedLoopTargetForecastHour;
@@ -1948,7 +1952,6 @@ export default function App() {
           return;
         }
         if (ready) {
-          setVisibleRenderMode(renderMode);
           setLoopDisplayHour(commitLoopHour);
         }
       })
@@ -1975,7 +1978,7 @@ export default function App() {
   const loopPlaybackRenderMode: RenderModeState =
     visibleRenderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : visibleRenderMode;
   const isLoopDisplayActive =
-    visibleRenderMode !== "tiles"
+    renderMode !== "tiles"
     && canUseLoopPlayback
     && loopSelectionReady;
   const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : renderMode;
@@ -5289,7 +5292,9 @@ export default function App() {
   // Keep tiles fully disabled for the entire loop playback session.
   // Even if a specific decoded frame is briefly unavailable, stay in loop mode
   // rather than falling back to tile-layer swaps.
-  const effectiveLoopActive = isLoopDisplayActive || Boolean(activeLoopBitmap);
+  const effectiveLoopActive =
+    Boolean(activeLoopBitmap)
+    || (isLoopDisplayActive && Number.isFinite(loopDisplayHour));
 
   useEffect(() => {
     if (!newLoopBitmap) {
