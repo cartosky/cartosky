@@ -198,15 +198,14 @@ export default function Models() {
         limitations: [
           "Not designed for storm-scale structure or convective evolution",
           "Smoother blend can mute sharp mesoscale gradients",
-          "Shorter horizon than true long-range global guidance",
         ],
         notes: [
-          "Current frontend rollout mirrors the system's initial NBM catalog and forecast-hour availability.",
+          "Synoptic cycles (00/06/12/18z) extend to 264h; off cycles (03/09/15/21z) extend to 261h.",
         ],
         specs: [
           { k: "Domain", v: "CONUS, PNW" },
           { k: "Cadence", v: "Every 3 hours" },
-          { k: "Horizon", v: "Mid range" },
+          { k: "Horizon", v: "Extended range (11 days)" },
         ],
       },
     ],

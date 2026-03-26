@@ -65,7 +65,7 @@ export default function Home() {
         key: "NBM",
         modelId: "nbm",
         update: "Every 3 hours",
-        forecast: "0-120h",
+        forecast: "0-264h",
         notes: "Blended guidance",
       },
       {

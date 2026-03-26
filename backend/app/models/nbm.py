@@ -27,8 +27,9 @@ from .base import (
 
 class NBMPlugin(BaseModelPlugin):
     def target_fhs(self, cycle_hour: int) -> list[int]:
-        del cycle_hour  # all NBM cycles share the same initial FH set for now
-        return list(NBM_INITIAL_FHS)
+        if cycle_hour in _NBM_SYNOPTIC_CYCLES:
+            return list(NBM_FHS_SYNOPTIC)
+        return list(NBM_FHS_OFF_CYCLE)
 
     def normalize_var_id(self, var_id: str) -> str:
         normalized = var_id.strip().lower()
@@ -81,8 +82,39 @@ NBM_REGIONS: dict[str, RegionSpec] = {
 }
 
 
-# Initial NBM rollout: 6-hourly forecast hours through fh120.
-NBM_INITIAL_FHS: tuple[int, ...] = tuple(range(0, 121, 6))
+# ---------------------------------------------------------------------------
+# NBM forecast-hour schedule
+#
+# Upstream (NOMADS) structure for all cycles:
+#   - Hourly:   fh001 .. fh036
+#   - 3-hourly: fh039 .. fh192
+#   - 6-hourly: fh192+ (aligned to cycle hour)
+#
+# Our build targets:
+#   - Hourly:   fh001 .. fh036   (matches upstream exactly)
+#   - 6-hourly: fh036 .. fh264   (aligned to cycle hour)
+#
+# Synoptic cycles (00z/06z/12z/18z):
+#   6-hourly steps land on fh42, 48, 54, …, 264
+# Off cycles (03z/09z/15z/21z):
+#   6-hourly steps land on fh39, 45, 51, …, 261
+# ---------------------------------------------------------------------------
+
+_NBM_SYNOPTIC_CYCLES: frozenset[int] = frozenset({0, 6, 12, 18})
+
+
+def _nbm_fhs_for_cycle(cycle_hour: int) -> tuple[int, ...]:
+    """Build the forecast-hour tuple for a given NBM cycle hour."""
+    hourly = list(range(1, 37))  # fh1 .. fh36 inclusive
+    if cycle_hour in _NBM_SYNOPTIC_CYCLES:
+        six_hourly = list(range(42, 265, 6))  # 42, 48, …, 264
+    else:
+        six_hourly = list(range(39, 262, 6))  # 39, 45, …, 261
+    return tuple([0] + hourly + six_hourly)
+
+
+NBM_FHS_SYNOPTIC: tuple[int, ...] = _nbm_fhs_for_cycle(0)
+NBM_FHS_OFF_CYCLE: tuple[int, ...] = _nbm_fhs_for_cycle(3)
 
 
 NBM_VARS: dict[str, VarSpec] = {

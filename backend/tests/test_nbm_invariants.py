@@ -8,14 +8,32 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.main import _serialize_model_capability
-from app.models.nbm import NBM_MODEL
+from app.models.nbm import NBM_FHS_OFF_CYCLE, NBM_FHS_SYNOPTIC, NBM_MODEL
 
 
 def test_nbm_target_fhs_invariants() -> None:
-    assert NBM_MODEL.target_fhs(0) == list(range(0, 121, 6))
-    assert NBM_MODEL.target_fhs(6) == list(range(0, 121, 6))
-    assert NBM_MODEL.target_fhs(12) == list(range(0, 121, 6))
-    assert NBM_MODEL.target_fhs(18) == list(range(0, 121, 6))
+    expected_synoptic = list(NBM_FHS_SYNOPTIC)
+    expected_off_cycle = list(NBM_FHS_OFF_CYCLE)
+
+    # Synoptic cycles: 00z, 06z, 12z, 18z  →  hourly 0-36, then 6-hourly 42..264
+    for cycle in (0, 6, 12, 18):
+        fhs = NBM_MODEL.target_fhs(cycle)
+        assert fhs == expected_synoptic, f"Mismatch for cycle {cycle}z"
+        assert fhs[0] == 0
+        assert fhs[-1] == 264
+
+    # Off cycles: 03z, 09z, 15z, 21z  →  hourly 0-36, then 6-hourly 39..261
+    for cycle in (3, 9, 15, 21):
+        fhs = NBM_MODEL.target_fhs(cycle)
+        assert fhs == expected_off_cycle, f"Mismatch for cycle {cycle}z"
+        assert fhs[0] == 0
+        assert fhs[-1] == 261
+
+    # Structural checks
+    assert list(range(0, 37)) == expected_synoptic[:37]
+    assert list(range(0, 37)) == expected_off_cycle[:37]
+    assert all((fh % 6 == 0) for fh in expected_synoptic[37:])
+    assert all((fh % 6 == 3) for fh in expected_off_cycle[37:])
 
 
 def test_nbm_buildable_var_set_and_defaults_invariants() -> None:
