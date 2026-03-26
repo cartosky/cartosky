@@ -1985,23 +1985,10 @@ export default function App() {
       ? resolvedLoopForecastHour
       : resolvedLoopTargetForecastHour;
 
-    if (!resolveLoopUrlForHour(commitLoopHour, renderMode)) {
-      setVisibleRenderMode("tiles");
-      setLoopDisplayHour(null);
-      return;
-    }
-
-    const shouldPromoteViaImageSource = isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
-    if (shouldPromoteViaImageSource) {
-      setVisibleRenderMode(renderMode);
-      setLoopDisplayHour(commitLoopHour);
-      return;
-    }
-
     // No signal passed to ensureLoopFrameDecoded: the decode always runs to
-    // completion so its result is stored in the LRU cache for immediate reuse
-    // by paused-path presentation. The token gates whether we actually commit
-    // the visible mode change — preventing stale results from being applied.
+    // completion so its result is stored in the LRU cache for immediate reuse.
+    // The token gates whether we actually commit the visible mode change,
+    // preventing stale results from being applied.
     const token = transitionTokenRef.current;
     ensureLoopFrameDecoded(commitLoopHour, renderMode)
       .then((ready) => {
@@ -2011,10 +1998,17 @@ export default function App() {
         if (ready) {
           setVisibleRenderMode(renderMode);
           setLoopDisplayHour(commitLoopHour);
+          return;
         }
+        setVisibleRenderMode("tiles");
+        setLoopDisplayHour(null);
       })
       .catch(() => {
-        // Decode failed; remain in current visible mode.
+        if (token !== transitionTokenRef.current) {
+          return;
+        }
+        setVisibleRenderMode("tiles");
+        setLoopDisplayHour(null);
       });
   }, [
     renderMode,
@@ -3233,7 +3227,7 @@ export default function App() {
       renderMode: visibleRenderMode,
       committedAt: performance.now(),
       decodedAt: Number.isFinite(decodedAt) ? (decodedAt as number) : null,
-      presentationPath: getDecodedLoopBitmap(displayHour, visibleRenderMode) ? "canvas" : "image-url",
+      presentationPath: "canvas",
     };
   }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, getDecodedLoopBitmap]);
 
@@ -4018,11 +4012,9 @@ export default function App() {
           if (Number.isFinite(nearbyReady)) {
             setLoopDisplayHour(nearbyReady as number);
           }
-          if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
-            startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
-              setLoopDisplayHour(nextHour);
-            });
-          }
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+            setLoopDisplayHour(nextHour);
+          });
         }
       });
     },
@@ -4067,13 +4059,10 @@ export default function App() {
       pendingVarSwitch
       && pendingVarSwitch.toVariableId === variable
       && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
-      && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)
     ) {
       pendingVarSwitch.firstTargetRequestAt = performance.now();
     }
 
-    const shouldCommitViaImageSource =
-      isPlaying || isLoopPreloading || isLoopAutoplayBuffering || isScrubbing;
     if (isScrubbing) {
       if (hasDecodedLoopFrame(commitLoopHour, visibleRenderMode)) {
         loopDisplayDecodeTokenRef.current += 1;
@@ -4091,13 +4080,7 @@ export default function App() {
       return;
     }
 
-    if (shouldCommitViaImageSource && resolveLoopUrlForHour(commitLoopHour, visibleRenderMode)) {
-      loopDisplayDecodeTokenRef.current += 1;
-      setLoopDisplayHour(commitLoopHour);
-      return;
-    }
-
-    if (!shouldEagerlyDecodeLoopFrames) {
+    if (hasDecodedLoopFrame(commitLoopHour, visibleRenderMode)) {
       loopDisplayDecodeTokenRef.current += 1;
       setLoopDisplayHour(commitLoopHour);
       return;
@@ -5365,33 +5348,22 @@ export default function App() {
   const bufferStatusText = isScrubLoading
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
-  const preferLoopImagePlaybackPresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
-  const activeLoopHour = preferLoopImagePlaybackPresentation
-    ? resolvedLoopForecastHour
-    : visibleLoopOverlayHour;
-  // Use the canvas/bitmap path whenever the active hour is already decoded in
-  // the LRU cache — regardless of whether we are playing, scrubbing, or
-  // switching variables. Only fall back to null (image-url path) on a cache
-  // miss so that map-canvas queues an async Image() preload for that frame.
-  // During a variable switch, fall back to the holdover snapshot from the
-  // outgoing variable so the map keeps showing something instead of flashing
-  // stale tile imagery.
+  const activeLoopHour = visibleLoopOverlayHour;
+  // Loop presentation is bitmap-backed. During a variable switch, fall back to
+  // the holdover bitmap from the outgoing selection until the new selection's
+  // first frame is ready.
   const newLoopBitmap = hasDecodedLoopFrame(activeLoopHour, visibleRenderMode)
     ? getDecodedLoopBitmap(activeLoopHour, visibleRenderMode)
     : null;
   const activeLoopBitmap = newLoopBitmap
     ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
-  const newLoopUrl = isLoopDisplayActive
-    ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
-    : null;
-  const activeLoopUrl = newLoopUrl
-    ?? (isVariableSwitching ? holdoverLoopUrlRef.current : null);
+  const activeLoopUrl = null;
   const activeLoopBbox = loopManifest?.bbox
     ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
   // When holdover visuals are active, keep the loop layer visible even though
   // isLoopDisplayActive is false (the new selection hasn't loaded yet).
   const effectiveLoopActive = isLoopDisplayActive
-    || (isVariableSwitching && Boolean(activeLoopBitmap || activeLoopUrl));
+    || (isVariableSwitching && Boolean(activeLoopBitmap));
 
   useEffect(() => {
     viewerDebugLog("app:selection", {
