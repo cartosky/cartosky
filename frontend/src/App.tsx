@@ -79,6 +79,7 @@ const FRAME_MAX_RETRIES = 3;
 const FRAME_HARD_DEADLINE_MS = 30_000;
 const FRAME_RETRY_BASE_MS = 1200;
 const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
+const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
 const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const EMPTY_TILE_DATA_URL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
@@ -1143,6 +1144,12 @@ export default function App() {
     setLoopDisplayBitmap(null);
     setVisibleRenderMode("tiles");
     lastTileViewportCommitUrlRef.current = null;
+  }, []);
+
+  const clearLoopHoldover = useCallback(() => {
+    holdoverLoopBitmapRef.current = null;
+    holdoverLoopUrlRef.current = null;
+    holdoverLoopBboxRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -2581,10 +2588,12 @@ export default function App() {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (
       pendingVarSwitch
+      && pendingVarSwitch.toVariableId === variable
       && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-      && pendingVarSwitch.expectedTileUrl === loadedTileUrl
+      && loadedTileUrl === tileUrl
       && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
     ) {
+      pendingVarSwitch.expectedTileUrl = loadedTileUrl;
       pendingVarSwitch.firstTargetReadyAt = performance.now();
     }
 
@@ -2618,10 +2627,12 @@ export default function App() {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (
       pendingVarSwitch
+      && pendingVarSwitch.toVariableId === variable
       && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-      && pendingVarSwitch.expectedTileUrl === loadedTileUrl
+      && loadedTileUrl === tileUrl
       && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
     ) {
+      pendingVarSwitch.expectedTileUrl = loadedTileUrl;
       pendingVarSwitch.firstTargetReadyAt = performance.now();
     }
 
@@ -2679,6 +2690,113 @@ export default function App() {
     setMapLoadingTileUrl((current) => (current === loadingTileUrl ? null : current));
   }, [loadedFramesKey, tileUrl, variable, selectionKey]);
 
+  const cancelPendingVariableSwitch = useCallback((
+    reason: "selection-mismatch" | "timeout",
+    options?: { forceTiles?: boolean }
+  ): boolean => {
+    const pendingVarSwitch = pendingVariableSwitchRef.current;
+    if (!pendingVarSwitch) {
+      return false;
+    }
+    viewerDebugLog("app:variable-switch-cancel", {
+      reason,
+      variable,
+      loadedFramesKey,
+      selectionKey,
+      pendingToVariable: pendingVarSwitch.toVariableId,
+      expectedTileUrl: pendingVarSwitch.expectedTileUrl,
+    });
+    pendingVariableSwitchRef.current = null;
+    clearLoopHoldover();
+    if (options?.forceTiles) {
+      resetLoopPresentationToTiles();
+    }
+    setVariableSwitchState(null);
+    setVisualVariable(variable);
+    return true;
+  }, [clearLoopHoldover, loadedFramesKey, resetLoopPresentationToTiles, selectionKey, variable]);
+
+  const finalizePendingVariableSwitch = useCallback((
+    renderTarget: "tiles" | "loop",
+    visibleAt: number,
+    options?: {
+      readyTileUrl?: string | null;
+      loopHour?: number | null;
+      loopRenderMode?: RenderModeState;
+    }
+  ): boolean => {
+    const pendingVarSwitch = pendingVariableSwitchRef.current;
+    if (
+      !pendingVarSwitch
+      || pendingVarSwitch.toVariableId !== variable
+      || pendingVarSwitch.expectedSelectionKey !== loadedFramesKey
+    ) {
+      return false;
+    }
+
+    pendingVariableSwitchRef.current = null;
+    clearLoopHoldover();
+    if (renderTarget === "tiles") {
+      resetLoopPresentationToTiles();
+    }
+    setVariableSwitchState((current) => {
+      if (!current || current.toVariable !== variable) {
+        return null;
+      }
+      return {
+        ...current,
+        visualState: "promoting_new",
+      };
+    });
+    setVisualVariable(variable);
+
+    if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
+      pendingVarSwitch.firstTargetReadyAt = visibleAt;
+    }
+    pendingVarSwitch.firstVisibleAt = visibleAt;
+
+    if (renderTarget === "tiles") {
+      const readyTileUrl = options?.readyTileUrl ?? null;
+      const readyTs = readyTileUrl ? (readyTileUrlsRef.current.get(readyTileUrl) ?? null) : null;
+      pendingVarSwitch.warmAtVisible = Number.isFinite(readyTs)
+        ? Date.now() - (readyTs as number) <= READY_URL_TTL_MS
+        : false;
+      pendingVarSwitch.warmSourceAtVisible = readyTileUrl
+        ? (tileReadySourceRef.current.get(readyTileUrl) ?? null)
+        : null;
+    } else {
+      const loopHour = options?.loopHour ?? null;
+      const loopRenderMode = options?.loopRenderMode ?? visibleRenderMode;
+      pendingVarSwitch.warmAtVisible = Number.isFinite(loopHour)
+        ? hasDecodedLoopFrame(loopHour as number, loopRenderMode)
+        : null;
+      pendingVarSwitch.warmSourceAtVisible = null;
+    }
+
+    const durationMs = visibleAt - pendingVarSwitch.startedAt;
+    if (Number.isFinite(durationMs) && durationMs >= 0) {
+      trackPerfEvent({
+        event_name: "variable_switch",
+        duration_ms: durationMs,
+        model_id: pendingVarSwitch.modelId,
+        variable_id: pendingVarSwitch.toVariableId,
+        run_id: pendingVarSwitch.runId,
+        region_id: pendingVarSwitch.regionId,
+        meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, renderTarget),
+      });
+    }
+
+    setVariableSwitchState(null);
+    return true;
+  }, [
+    clearLoopHoldover,
+    hasDecodedLoopFrame,
+    loadedFramesKey,
+    resetLoopPresentationToTiles,
+    variable,
+    visibleRenderMode,
+  ]);
+
   const clearFrameStatusTimer = useCallback(() => {
     if (frameStatusTimerRef.current !== null) {
       window.clearTimeout(frameStatusTimerRef.current);
@@ -2711,13 +2829,34 @@ export default function App() {
     }
 
     if (variableSwitchState.toVariable !== variable) {
-      setVariableSwitchState(null);
-      setVisualVariable(variable);
-      holdoverLoopBitmapRef.current = null;
-      holdoverLoopUrlRef.current = null;
-      holdoverLoopBboxRef.current = null;
+      cancelPendingVariableSwitch("selection-mismatch", { forceTiles: true });
     }
-  }, [variable, visualVariable, variableSwitchState]);
+  }, [cancelPendingVariableSwitch, variable, visualVariable, variableSwitchState]);
+
+  useEffect(() => {
+    if (
+      !variableSwitchState
+      || variableSwitchState.toVariable !== variable
+      || variableSwitchState.visualState === "promoting_new"
+    ) {
+      return;
+    }
+
+    const elapsedMs = performance.now() - variableSwitchState.startedAt;
+    const remainingMs = VARIABLE_SWITCH_TIMEOUT_MS - elapsedMs;
+    if (remainingMs <= 0) {
+      cancelPendingVariableSwitch("timeout", { forceTiles: true });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      cancelPendingVariableSwitch("timeout", { forceTiles: true });
+    }, remainingMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [cancelPendingVariableSwitch, variable, variableSwitchState]);
 
   const finalizePendingFrameMetric = useCallback((reason: "tile" | "loop") => {
     const pending = pendingFrameMetricRef.current;
@@ -2942,9 +3081,9 @@ export default function App() {
     };
 
     // Attempt to start playback early once the loop playback policy's minimum
-    // presentable frames exist ahead of the current position. For the image-source
-    // path, URL-presentable readiness is enough to begin playback; bitmap decode
-    // becomes a warm-path accelerator rather than the universal gate.
+    // decoded frames exist ahead of the current position. Starting autoplay on
+    // URL presence alone puts the UI into a "playing" state while frame advance
+    // is still blocked on decode, which reads as broken animation.
     let earlyStarted = false;
     const tryEarlyStart = (): boolean => {
       if (earlyStarted) return false;
@@ -2955,7 +3094,7 @@ export default function App() {
       if (neededAhead <= 0) return false;
       let consecutiveAhead = 0;
       for (let i = currentIdx + 1; i < loopFrameHours.length && consecutiveAhead < neededAhead; i++) {
-        if (isLoopFrameReadyForPresentation(loopFrameHours[i], renderMode, "image-url")) {
+        if (isLoopFrameReadyForPresentation(loopFrameHours[i], renderMode, "canvas")) {
           consecutiveAhead++;
         } else {
           break;
@@ -3217,46 +3356,10 @@ export default function App() {
           finalizePendingFrameMetric("loop");
         }
 
-        const pendingVarSwitch = pendingVariableSwitchRef.current;
-        if (
-          pendingVarSwitch
-          && pendingVarSwitch.toVariableId === variable
-          && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-        ) {
-          pendingVariableSwitchRef.current = null;
-          holdoverLoopBitmapRef.current = null;
-          holdoverLoopUrlRef.current = null;
-          holdoverLoopBboxRef.current = null;
-          setVariableSwitchState((current) => {
-            if (!current || current.toVariable !== variable) {
-              return null;
-            }
-            return {
-              ...current,
-              visualState: "promoting_new",
-            };
-          });
-          setVisualVariable(variable);
-          if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
-            pendingVarSwitch.firstTargetReadyAt = visibleAt;
-          }
-          pendingVarSwitch.firstVisibleAt = visibleAt;
-          pendingVarSwitch.warmAtVisible = hasDecodedLoopFrame(commit.displayHour, commit.renderMode);
-          pendingVarSwitch.warmSourceAtVisible = null;
-          const variableSwitchMs = visibleAt - pendingVarSwitch.startedAt;
-          if (Number.isFinite(variableSwitchMs) && variableSwitchMs >= 0) {
-            trackPerfEvent({
-              event_name: "variable_switch",
-              duration_ms: variableSwitchMs,
-              model_id: pendingVarSwitch.modelId,
-              variable_id: pendingVarSwitch.toVariableId,
-              run_id: pendingVarSwitch.runId,
-              region_id: pendingVarSwitch.regionId,
-              meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "loop"),
-            });
-          }
-          setVariableSwitchState(null);
-        }
+        finalizePendingVariableSwitch("loop", visibleAt, {
+          loopHour: commit.displayHour,
+          loopRenderMode: commit.renderMode,
+        });
 
         const pendingLoopStart = pendingLoopStartMetricRef.current;
         if (isPlaying && pendingLoopStart && commit.displayHour !== pendingLoopStart.forecastHour) {
@@ -3293,7 +3396,7 @@ export default function App() {
     telemetryRunId,
     region,
     finalizePendingFrameMetric,
-    hasDecodedLoopFrame,
+    finalizePendingVariableSwitch,
     isPlaying,
     trackFirstViewerFrame,
     variable,
@@ -4995,50 +5098,8 @@ export default function App() {
       trackFirstViewerFrame(forecastHour);
     }
     // Finalize variable_switch: fires once the first tile for the new variable is viewport-ready.
-    const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (
-      pendingVarSwitch
-      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-      && pendingVarSwitch.expectedTileUrl === readyTileUrl
-    ) {
-      pendingVariableSwitchRef.current = null;
-      holdoverLoopBitmapRef.current = null;
-      holdoverLoopUrlRef.current = null;
-      holdoverLoopBboxRef.current = null;
-      resetLoopPresentationToTiles();
-      setVariableSwitchState((current) => {
-        if (!current || current.toVariable !== variable) {
-          return null;
-        }
-        return {
-          ...current,
-          visualState: "promoting_new",
-        };
-      });
-      setVisualVariable(variable);
-      if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
-        pendingVarSwitch.firstTargetReadyAt = performance.now();
-      }
-      const durationMs = performance.now() - pendingVarSwitch.startedAt;
-      if (Number.isFinite(durationMs) && durationMs >= 0) {
-        pendingVarSwitch.firstVisibleAt = performance.now();
-        const readyTs = readyTileUrlsRef.current.get(readyTileUrl) ?? null;
-        const warmAtVisible = Number.isFinite(readyTs)
-          ? Date.now() - (readyTs as number) <= READY_URL_TTL_MS
-          : false;
-        pendingVarSwitch.warmAtVisible = warmAtVisible;
-        pendingVarSwitch.warmSourceAtVisible = tileReadySourceRef.current.get(readyTileUrl) ?? null;
-        trackPerfEvent({
-          event_name: "variable_switch",
-          duration_ms: durationMs,
-          model_id: pendingVarSwitch.modelId,
-          variable_id: pendingVarSwitch.toVariableId,
-          run_id: pendingVarSwitch.runId,
-          region_id: pendingVarSwitch.regionId,
-          meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, "tiles"),
-        });
-      }
-      setVariableSwitchState(null);
+    if (readyTileUrl === tileUrl) {
+      finalizePendingVariableSwitch("tiles", performance.now(), { readyTileUrl });
     }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
@@ -5067,9 +5128,9 @@ export default function App() {
     visualVariable,
     region,
     forecastHour,
-    resetLoopPresentationToTiles,
     loopDisplayHour,
     finalizePendingFrameMetric,
+    finalizePendingVariableSwitch,
     telemetryRunId,
     trackFirstViewerFrame,
     selectionKey,
