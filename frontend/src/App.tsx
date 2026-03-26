@@ -734,6 +734,23 @@ async function preloadLoopFrame(
   }
 }
 
+async function warmLoopImageUrl(url: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      credentials: "omit",
+      signal,
+      cache: "force-cache",
+    });
+    if (!response.ok) {
+      return false;
+    }
+    await response.blob();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runIdToIso(runId: string | null): string | null {
   if (!runId) return null;
   const match = runId.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
@@ -1031,6 +1048,8 @@ export default function App() {
     lastProgressAt: 0,
   });
   const loopPreloadTokenRef = useRef(0);
+  const loopUrlWarmTokenRef = useRef(0);
+  const warmedLoopSelectionKeyRef = useRef("");
   const loopReadyHoursRef = useRef<Set<number>>(new Set());
   const loopFailedHoursRef = useRef<Set<number>>(new Set());
   const forecastHourRef = useRef(forecastHour);
@@ -2002,6 +2021,7 @@ export default function App() {
     && canUseLoopPlayback
     && loopPromotionAllowed
     && loopSelectionReady;
+  const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? "webp_tier0" : renderMode;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
   const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
@@ -3287,7 +3307,68 @@ export default function App() {
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
 
   useEffect(() => {
-    if (!isLoopDisplayActive || !shouldEagerlyDecodeLoopFrames || loopFrameHours.length === 0) {
+    if (!loopSelectionReady || !canUseLoopPlayback || loopFrameHours.length === 0) {
+      return;
+    }
+
+    const warmSelectionKey = `${selectionKey}:${stagedLoopWarmupMode}`;
+    if (warmedLoopSelectionKeyRef.current === warmSelectionKey) {
+      return;
+    }
+    warmedLoopSelectionKeyRef.current = warmSelectionKey;
+
+    const token = ++loopUrlWarmTokenRef.current;
+    const controller = new AbortController();
+    const urls = Array.from(
+      new Set(
+        loopFrameHours
+          .map((fh) => resolveLoopUrlForHour(fh, stagedLoopWarmupMode))
+          .filter((url): url is string => Boolean(url))
+      )
+    );
+
+    let nextIndex = 0;
+    let inFlight = 0;
+    const maxConcurrency = 4;
+
+    const launchNext = () => {
+      if (controller.signal.aborted || token !== loopUrlWarmTokenRef.current) {
+        return;
+      }
+      while (inFlight < maxConcurrency && nextIndex < urls.length) {
+        const url = urls[nextIndex];
+        nextIndex += 1;
+        inFlight += 1;
+        warmLoopImageUrl(url, controller.signal)
+          .catch(() => false)
+          .finally(() => {
+            inFlight -= 1;
+            launchNext();
+          });
+      }
+    };
+
+    launchNext();
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    loopSelectionReady,
+    canUseLoopPlayback,
+    stagedLoopWarmupMode,
+    loopFrameHours,
+    resolveLoopUrlForHour,
+    selectionKey,
+  ]);
+
+  useEffect(() => {
+    const decodeMode = isLoopDisplayActive ? visibleRenderMode : stagedLoopWarmupMode;
+    const shouldWarmLoopFrames =
+      loopSelectionReady
+      && canUseLoopPlayback
+      && loopFrameHours.length > 0;
+    if (!shouldWarmLoopFrames) {
       return;
     }
 
@@ -3334,7 +3415,7 @@ export default function App() {
       inFlight.add(fh);
       inFlightLane.set(fh, lane);
       controllers.set(fh, controller);
-      ensureLoopFrameDecoded(fh, visibleRenderMode, controller.signal)
+      ensureLoopFrameDecoded(fh, decodeMode, controller.signal)
         .catch(() => {
           // best-effort prefetch; decode failures are handled by fallback path.
         })
@@ -3359,7 +3440,9 @@ export default function App() {
       }
 
       const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
-      const targetAhead = Math.min(loopPlaybackPolicy.targetWarmAhead, remainingAhead);
+      const targetAhead = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
+        ? Math.min(loopPlaybackPolicy.targetWarmAhead, remainingAhead)
+        : remainingAhead;
       if (targetAhead <= 0) {
         return;
       }
@@ -3384,7 +3467,9 @@ export default function App() {
         ? 0
         : Math.min(loopPlaybackPolicy.maxIdleInFlight, Math.max(1, criticalConcurrencyCap - 3));
 
-      const shortAheadTarget = Math.min(loopPlaybackPolicy.shortAheadTarget, targetAhead);
+      const shortAheadTarget = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
+        ? Math.min(loopPlaybackPolicy.shortAheadTarget, targetAhead)
+        : Math.min(Math.max(loopPlaybackPolicy.shortAheadTarget, 4), targetAhead);
       const criticalCandidates: number[] = [];
       const idleCandidates: number[] = [];
       const criticalEndIndex = Math.min(loopFrameHours.length - 1, currentIndex + shortAheadTarget);
@@ -3392,7 +3477,7 @@ export default function App() {
 
       for (let index = currentIndex + 1; index <= criticalEndIndex; index += 1) {
         const fh = loopFrameHours[index];
-        if (hasDecodedLoopFrame(fh, visibleRenderMode)) {
+        if (hasDecodedLoopFrame(fh, decodeMode)) {
           continue;
         }
         if (inFlight.has(fh)) {
@@ -3403,7 +3488,7 @@ export default function App() {
 
       for (let index = criticalEndIndex + 1; index <= idleEndIndex; index += 1) {
         const fh = loopFrameHours[index];
-        if (hasDecodedLoopFrame(fh, visibleRenderMode)) {
+        if (hasDecodedLoopFrame(fh, decodeMode)) {
           continue;
         }
         if (inFlight.has(fh)) {
@@ -3455,7 +3540,7 @@ export default function App() {
     schedulePrefetch();
     const interval = window.setInterval(
       schedulePrefetch,
-      isPlaying || isLoopAutoplayBuffering ? 180 : 320,
+      isPlaying || isLoopAutoplayBuffering ? 180 : 450,
     );
 
     return () => {
@@ -3473,7 +3558,9 @@ export default function App() {
     };
   }, [
     isLoopDisplayActive,
-    shouldEagerlyDecodeLoopFrames,
+    loopSelectionReady,
+    canUseLoopPlayback,
+    stagedLoopWarmupMode,
     isPlaying,
     visibleRenderMode,
     loopFrameHours,
