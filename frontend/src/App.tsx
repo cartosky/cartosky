@@ -5338,14 +5338,14 @@ export default function App() {
     : null;
   const activeLoopBitmap = newLoopBitmap
     ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
-  const activeLoopUrl = resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
-    ?? (isVariableSwitching ? holdoverLoopUrlRef.current : null);
+  // Canvas/bitmap-only loop presentation: avoid MapLibre image-source path,
+  // which is currently causing decode instability and stale loop visuals.
+  const activeLoopUrl = null;
   const activeLoopBbox = loopManifest?.bbox
     ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
   // When holdover visuals are active, keep the loop layer visible even though
   // isLoopDisplayActive is false (the new selection hasn't loaded yet).
-  const effectiveLoopActive = isLoopDisplayActive
-    || (isVariableSwitching && Boolean(activeLoopBitmap));
+  const effectiveLoopActive = Boolean(activeLoopBitmap);
 
   const loopStuckWatchRef = useRef<{
     targetHour: number | null;

@@ -435,6 +435,7 @@ function getActiveAnchorMarkers(
 
 type MapStyleOptions = {
   includeRuntimeLoopCanvas?: boolean;
+  includeRuntimeLoopImageSource?: boolean;
 };
 
 export function buildMapStyle(
@@ -448,7 +449,7 @@ export function buildMapStyle(
   basemapMode: BasemapMode = "light",
   options: MapStyleOptions = {}
 ): StyleSpecification {
-  const { includeRuntimeLoopCanvas = true } = options;
+  const { includeRuntimeLoopCanvas = true, includeRuntimeLoopImageSource = false } = options;
   const resamplingMode = getResamplingMode(variableKind);
   const loopResamplingMode = getLoopResamplingMode(variable, variableKind);
   const paintSettings = getOverlayPaintSettings(variable, basemapMode);
@@ -526,12 +527,14 @@ export function buildMapStyle(
       type: "geojson",
       data: contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION,
     },
-    [LOOP_SOURCE_ID]: {
+  };
+  if (includeRuntimeLoopImageSource) {
+    sources[LOOP_SOURCE_ID] = {
       type: "image",
       url: TRANSPARENT_PIXEL_DATA_URL,
       coordinates: loopImageCoordinates,
-    },
-  };
+    } as any;
+  }
   if (includeRuntimeLoopCanvas) {
     sources[LOOP_CANVAS_SOURCE_ID] = {
       type: "canvas",
@@ -546,6 +549,27 @@ export function buildMapStyle(
           id: LOOP_CANVAS_LAYER_ID,
           type: "raster" as const,
           source: LOOP_CANVAS_SOURCE_ID,
+          layout: {
+            visibility: "none" as const,
+          },
+          paint: {
+            "raster-opacity": opacity,
+            "raster-resampling": loopResamplingMode,
+            "raster-fade-duration": 0,
+            "raster-contrast": paintSettings.contrast,
+            "raster-saturation": paintSettings.saturation,
+            "raster-brightness-min": paintSettings.brightnessMin,
+            "raster-brightness-max": paintSettings.brightnessMax,
+          },
+        },
+      ]
+    : [];
+  const runtimeLoopImageLayers = includeRuntimeLoopImageSource
+    ? [
+        {
+          id: LOOP_LAYER_ID,
+          type: "raster" as const,
+          source: LOOP_SOURCE_ID,
           layout: {
             visibility: "none" as const,
           },
@@ -704,23 +728,7 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
-      {
-        id: LOOP_LAYER_ID,
-        type: "raster",
-        source: LOOP_SOURCE_ID,
-        layout: {
-          visibility: "none",
-        },
-        paint: {
-          "raster-opacity": opacity,
-          "raster-resampling": loopResamplingMode,
-          "raster-fade-duration": 0,
-          "raster-contrast": paintSettings.contrast,
-          "raster-saturation": paintSettings.saturation,
-          "raster-brightness-min": paintSettings.brightnessMin,
-          "raster-brightness-max": paintSettings.brightnessMax,
-        },
-      },
+      ...runtimeLoopImageLayers,
       ...runtimeLoopCanvasLayers,
       {
         id: "twf-labels",
