@@ -3956,7 +3956,14 @@ export default function App() {
         loopDisplayDecodeTokenRef.current += 1;
         setLoopDisplayHour(commitLoopHour);
       } else {
-        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode);
+        // Pass the commit callback so that when the foreground decode finishes
+        // the displayed hour advances. Without this, the effect's call to
+        // startForegroundLoopFrameDecode (which aborts any prior RAF-initiated
+        // decode) would leave loopDisplayHour stuck at the previous value.
+        const hourToCommit = commitLoopHour;
+        startForegroundLoopFrameDecode(commitLoopHour, visibleRenderMode, () => {
+          setLoopDisplayHour(hourToCommit);
+        });
       }
       return;
     }
