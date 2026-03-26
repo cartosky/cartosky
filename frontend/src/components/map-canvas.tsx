@@ -1030,8 +1030,8 @@ export function MapCanvas({
       nextLoopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]],
       selectionScope: SelectionScopedMeta,
     ) => {
-      cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
+        cancelPendingLoopImageUpdate();
         loopImageCommittedSignatureRef.current = null;
         setReadyLoopImageFrame(null);
         setReadyLoopCanvasFrame(null);
@@ -1044,13 +1044,16 @@ export function MapCanvas({
         return;
       }
 
-      const requestSignature = `${selectionScope.selectionEpoch}:${selectionScope.selectionKey}:${nextLoopImageUrl}`;
+      const coordinatesSignature = JSON.stringify(nextLoopImageCoordinates);
+      const requestSignature = `${selectionScope.selectionEpoch}:${selectionScope.selectionKey}:${nextLoopImageUrl}:${coordinatesSignature}`;
       if (
         loopImagePendingSignatureRef.current === requestSignature ||
         loopImageCommittedSignatureRef.current === requestSignature
       ) {
         return;
       }
+
+      cancelPendingLoopImageUpdate();
       loopImagePendingSignatureRef.current = requestSignature;
 
       const requestToken = loopImageRequestTokenRef.current;
