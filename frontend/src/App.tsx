@@ -1654,7 +1654,7 @@ export default function App() {
   );
 
   const startForegroundLoopFrameDecode = useCallback(
-    (fh: number, mode: RenderModeState) => {
+    (fh: number, mode: RenderModeState, onReady?: () => void) => {
       if (mode === "tiles") {
         return;
       }
@@ -1662,6 +1662,12 @@ export default function App() {
       const controller = new AbortController();
       loopDisplayDecodeAbortRef.current = controller;
       ensureLoopFrameDecoded(fh, mode, controller.signal)
+        .then((ready) => {
+          // Only promote if this decode hasn't been superseded by a newer scrub.
+          if (ready && loopDisplayDecodeAbortRef.current === controller) {
+            onReady?.();
+          }
+        })
         .catch(() => {
           // Foreground interaction decode is best-effort warming for the exact frame.
         })
@@ -2215,8 +2221,10 @@ export default function App() {
     setBufferSnapshot(snapshot);
   }, [frameHours, forecastHour, telemetryRunId, region]);
 
-  const displayedOverlayVariable = isLoopDisplayActive ? (visualVariable || variable) : variable;
-  const displayedOverlayVariableKind = isLoopDisplayActive ? visualVariableKind : selectedVariableKind;
+  // During a variable switch the old variable's imagery is still on screen;
+  // keep its paint settings in effect until the new variable is promoting.
+  const displayedOverlayVariable = (isLoopDisplayActive || isVariableSwitching) ? (visualVariable || variable) : variable;
+  const displayedOverlayVariableKind = (isLoopDisplayActive || isVariableSwitching) ? visualVariableKind : selectedVariableKind;
 
   const contourGeoJsonUrl = useMemo(() => {
     if (!firstWeatherFramePainted) {
@@ -3081,23 +3089,9 @@ export default function App() {
     };
   }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, loopCacheKey, getDecodedLoopBitmap]);
 
-  useEffect(() => {
-    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
-      if (loopDisplayBitmap !== null) {
-        setLoopDisplayBitmap(null);
-      }
-      return;
-    }
-    const displayHour = loopDisplayHour as number;
-    const nextBitmap = getDecodedLoopBitmap(displayHour, visibleRenderMode);
-    if (!nextBitmap) {
-      if (loopDisplayBitmap !== null) {
-        setLoopDisplayBitmap(null);
-      }
-      return;
-    }
-    setLoopDisplayBitmap((current) => (current === nextBitmap ? current : nextBitmap));
-  }, [isLoopDisplayActive, loopDisplayHour, visibleRenderMode, getDecodedLoopBitmap, loopDisplayBitmap]);
+  // loopDisplayBitmap is cleared at selection/reset boundaries below;
+  // per-frame sync is handled directly by activeLoopBitmap reading the LRU
+  // cache, so no separate effect is needed here.
 
   const trackFirstViewerFrame = useCallback((frameHour: number | null) => {
     if (firstViewerFrameTrackedRef.current) {
@@ -3845,8 +3839,11 @@ export default function App() {
         setTargetForecastHour(nextHour);
         if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
           setLoopDisplayHour(nextHour);
+        } else {
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+            setLoopDisplayHour(nextHour);
+          });
         }
-        startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
         return;
       }
 
@@ -3899,9 +3896,10 @@ export default function App() {
         setTargetForecastHour(nextHour);
         if (hasDecodedLoopFrame(nextHour, visibleRenderMode)) {
           setLoopDisplayHour(nextHour);
-        }
-        if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
-          startForegroundLoopFrameDecode(nextHour, visibleRenderMode);
+        } else if (!useExactScrubSelection || shouldEagerlyDecodeLoopFrames) {
+          startForegroundLoopFrameDecode(nextHour, visibleRenderMode, () => {
+            setLoopDisplayHour(nextHour);
+          });
         }
       });
     },
@@ -5264,16 +5262,16 @@ export default function App() {
     ? "Loading frame"
     : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
   const preferLoopImagePlaybackPresentation = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
-  const preferLoopImageScrubPresentation = isScrubbing;
-  const preferLoopImageVariableSwitchPresentation = isVariableSwitching;
-  const preferLoopImagePresentation =
-    preferLoopImagePlaybackPresentation
-    || preferLoopImageScrubPresentation
-    || preferLoopImageVariableSwitchPresentation;
   const activeLoopHour = preferLoopImagePlaybackPresentation
     ? resolvedLoopForecastHour
     : visibleLoopOverlayHour;
-  const activeLoopBitmap = preferLoopImagePresentation ? null : loopDisplayBitmap;
+  // Use the canvas/bitmap path whenever the active hour is already decoded in
+  // the LRU cache — regardless of whether we are playing, scrubbing, or
+  // switching variables. Only fall back to null (image-url path) on a cache
+  // miss so that map-canvas queues an async Image() preload for that frame.
+  const activeLoopBitmap = hasDecodedLoopFrame(activeLoopHour, visibleRenderMode)
+    ? getDecodedLoopBitmap(activeLoopHour, visibleRenderMode)
+    : null;
   const activeLoopUrl = isLoopDisplayActive
     ? resolveLoopUrlForHour(activeLoopHour, visibleRenderMode)
     : null;

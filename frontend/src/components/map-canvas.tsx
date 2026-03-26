@@ -804,7 +804,12 @@ export function MapCanvas({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
-  const [readyLoopImageUrl, setReadyLoopImageUrl] = useState<string | null>(null);
+  const [readyLoopImageFrame, setReadyLoopImageFrame] = useState<{
+    url: string;
+    selectionEpoch: number;
+    selectionKey: string;
+  } | null>(null);
+  const readyLoopImageUrl = readyLoopImageFrame?.url ?? null;
   const activeBufferRef = useRef<OverlayBuffer>("a");
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
@@ -847,16 +852,24 @@ export function MapCanvas({
     [loopImageBbox]
   );
   const hasCanvasLoopFrame = Boolean(loopFrameBitmap);
-  const isReadyLoopImage = Boolean(loopImageUrl && readyLoopImageUrl === loopImageUrl);
+  // True when a frame from the *current* selection has been committed to the
+  // ImageSource — regardless of which forecast hour it is. This keeps the loop
+  // layer visible with the previously-committed frame while the next one loads,
+  // but immediately goes false when selectionEpoch/selectionKey change.
+  const isReadyLoopImage = Boolean(
+    readyLoopImageFrame &&
+    readyLoopImageFrame.selectionEpoch === selectionEpoch &&
+    readyLoopImageFrame.selectionKey === selectionKey
+  );
   const hasLoopVisual = Boolean(hasCanvasLoopFrame || isReadyLoopImage);
 
   useEffect(() => {
     if (!loopImageUrl) {
-      setReadyLoopImageUrl(null);
+      setReadyLoopImageFrame(null);
       return;
     }
     if (mode === "variable-switch" && readyLoopImageUrl !== loopImageUrl) {
-      setReadyLoopImageUrl(null);
+      setReadyLoopImageFrame(null);
     }
   }, [loopImageUrl, mode, readyLoopImageUrl]);
 
@@ -1006,7 +1019,7 @@ export function MapCanvas({
         }
       };
       if (!nextLoopImageUrl) {
-        setReadyLoopImageUrl(null);
+        setReadyLoopImageFrame(null);
         clearLoopSource();
         viewerDebugLog("map:loop-image-clear", {
           mode,
@@ -1056,7 +1069,7 @@ export function MapCanvas({
             url: nextLoopImageUrl,
             coordinates: nextLoopImageCoordinates,
           });
-          setReadyLoopImageUrl(nextLoopImageUrl);
+          setReadyLoopImageFrame({ url: nextLoopImageUrl, selectionEpoch: selectionScope.selectionEpoch, selectionKey: selectionScope.selectionKey });
           viewerDebugLog("map:loop-image-ready", {
             mode,
             variable,
@@ -1067,7 +1080,7 @@ export function MapCanvas({
           });
           map.triggerRepaint();
         } catch (error) {
-          setReadyLoopImageUrl(null);
+          setReadyLoopImageFrame(null);
           clearLoopSource();
           console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
         } finally {
@@ -1089,7 +1102,7 @@ export function MapCanvas({
           selectionKey: selectionScope.selectionKey,
           selectionEpoch: selectionScope.selectionEpoch,
         });
-        setReadyLoopImageUrl(null);
+        setReadyLoopImageFrame(null);
         clearLoopSource();
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
         if (loopImagePreloadRef.current === image) {
@@ -1391,7 +1404,7 @@ export function MapCanvas({
     cancelCrossfade();
     cancelLoopToTileTransition();
     cancelPendingLoopImageUpdate();
-    setReadyLoopImageUrl(null);
+    setReadyLoopImageFrame(null);
   }, [
     selectionEpoch,
     selectionKey,
