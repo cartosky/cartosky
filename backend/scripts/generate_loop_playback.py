@@ -88,13 +88,12 @@ def main() -> int:
         manifest_lines: list[str] = []
         for index, frame_path in enumerate(frame_paths):
             link_path = temp_dir / f"{index:06d}.loop.webp"
-            try:
-                link_path.symlink_to(frame_path.resolve())
-            except OSError:
-                shutil.copy2(frame_path, link_path)
+            shutil.copy2(frame_path, link_path)
+            link_path.chmod(0o644)
             manifest_lines.append(f"file '{link_path.as_posix()}'")
 
         concat_manifest.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
+        concat_manifest.chmod(0o644)
         cmd = [
             ffmpeg_bin,
             "-y" if args.overwrite else "-n",
