@@ -36,6 +36,7 @@ import {
 } from "@/lib/anchor-labels";
 import {
   API_ORIGIN,
+  getCanonicalSingleWebpTierMode,
   getLoopPlaybackPolicy,
   getPlaybackBufferPolicy,
   isDeferredNonCriticalBootstrapEnabled,
@@ -110,6 +111,7 @@ function recentMedianSample(samples: readonly number[], maxSamples = 12): number
 }
 
 type RenderModeState = "webp_tier0" | "webp_tier1" | "tiles";
+const SINGLE_TIER_WEBP_MODE: RenderModeState = getCanonicalSingleWebpTierMode();
 
 type BufferSnapshot = {
   totalFrames: number;
@@ -667,29 +669,13 @@ function getRenderModeThresholds() {
 }
 
 function nextRenderModeByHysteresis(current: RenderModeState, effectiveZoom: number): RenderModeState {
-  const { tier0Max, tier1Max, hysteresis } = getRenderModeThresholds();
+  const { tier1Max, hysteresis } = getRenderModeThresholds();
 
-  if (current === "webp_tier0") {
-    if (effectiveZoom > tier0Max + hysteresis) {
-      return effectiveZoom > tier1Max + hysteresis ? "tiles" : "webp_tier1";
-    }
-    return "webp_tier0";
+  if (current === "tiles") {
+    return effectiveZoom <= tier1Max - hysteresis ? SINGLE_TIER_WEBP_MODE : "tiles";
   }
 
-  if (current === "webp_tier1") {
-    if (effectiveZoom <= tier0Max - hysteresis) {
-      return "webp_tier0";
-    }
-    if (effectiveZoom > tier1Max + hysteresis) {
-      return "tiles";
-    }
-    return "webp_tier1";
-  }
-
-  if (effectiveZoom <= tier1Max - hysteresis) {
-    return effectiveZoom <= tier0Max - hysteresis ? "webp_tier0" : "webp_tier1";
-  }
-  return "tiles";
+  return effectiveZoom > tier1Max + hysteresis ? "tiles" : SINGLE_TIER_WEBP_MODE;
 }
 
 async function preloadLoopFrame(
@@ -964,8 +950,8 @@ export default function App() {
   const [mapZoom, setMapZoom] = useState(MAP_VIEW_DEFAULTS.zoom);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? "webp_tier0" : "tiles");
-  const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? "webp_tier0" : "tiles");
+  const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
+  const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
   const [loopDisplayHour, setLoopDisplayHour] = useState<number | null>(null);
   const [loopDisplayBitmap, setLoopDisplayBitmap] = useState<ImageBitmap | null>(null);
   const [isLoopPreloading, setIsLoopPreloading] = useState(false);
@@ -1089,7 +1075,6 @@ export default function App() {
   const loopDisplayPaintedTokenRef = useRef(0);
   const longTaskSampleCounterRef = useRef(0);
   const loopVisiblePaintTokenRef = useRef(0);
-  const tierFailoverCycleRef = useRef<{ key: string; emitted: boolean }>({ key: "", emitted: false });
   // Holdover refs: snapshot of loop visuals from the outgoing variable so the
   // map keeps showing the old frame during a variable switch instead of
   // flashing stale tile data while the new variable's imagery loads.
@@ -1488,9 +1473,9 @@ export default function App() {
   }, [loopFrameHours, targetForecastHour]);
 
   const resolveLoopUrlForHour = useCallback(
-    (fh: number, preferredMode: RenderModeState): string | null => {
-      if (preferredMode === "webp_tier1") {
-        return loopTier1UrlByHour.get(fh) ?? loopTier0UrlByHour.get(fh) ?? null;
+    (fh: number, _preferredMode: RenderModeState): string | null => {
+      if (SINGLE_TIER_WEBP_MODE === "webp_tier1") {
+        return loopTier1UrlByHour.get(fh) ?? loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh) ?? null;
       }
       return loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh) ?? null;
     },
@@ -1895,36 +1880,13 @@ export default function App() {
   }, [bootstrapHydrated, mapViewTick]);
 
   useEffect(() => {
-    if (!webpDefaultEnabled || renderMode !== "webp_tier1") {
-      tierFailoverCycleRef.current = { key: "", emitted: false };
-      return;
+    if (renderMode !== "tiles" && renderMode !== SINGLE_TIER_WEBP_MODE) {
+      setRenderMode(SINGLE_TIER_WEBP_MODE);
     }
-
-    const cycleKey = `${model}:${resolvedRunForRequests}:${variable}:webp_tier1`;
-    if (tierFailoverCycleRef.current.key !== cycleKey) {
-      tierFailoverCycleRef.current = { key: cycleKey, emitted: false };
+    if (visibleRenderMode !== "tiles" && visibleRenderMode !== SINGLE_TIER_WEBP_MODE) {
+      setVisibleRenderMode(SINGLE_TIER_WEBP_MODE);
     }
-
-    if (tierFailoverCycleRef.current.emitted) {
-      return;
-    }
-
-    const hasTier1 = Boolean(loopTier1UrlByHour.get(forecastHour));
-    const hasTier0 = Boolean(loopTier0UrlByHour.get(forecastHour) ?? loopUrlByHour.get(forecastHour));
-    if (!hasTier1 && hasTier0) {
-      tierFailoverCycleRef.current = { key: cycleKey, emitted: true };
-    }
-  }, [
-    webpDefaultEnabled,
-    renderMode,
-    model,
-    resolvedRunForRequests,
-    variable,
-    forecastHour,
-    loopTier1UrlByHour,
-    loopTier0UrlByHour,
-    loopUrlByHour,
-  ]);
+  }, [renderMode, visibleRenderMode]);
 
   useEffect(() => {
     const clearDwellTimer = () => {
@@ -2036,7 +1998,7 @@ export default function App() {
     && canUseLoopPlayback
     && loopPromotionAllowed
     && loopSelectionReady;
-  const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? "webp_tier0" : renderMode;
+  const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : renderMode;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
   const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
@@ -3684,8 +3646,7 @@ export default function App() {
 
   // Playback ticker. Uses requestAnimationFrame plus an accumulator so cadence
   // tracks elapsed time without interval drift or teardown/rebuild churn.
-  // For image-source playback, URL-presentable readiness is enough to advance;
-  // bitmap decode remains a warm-path accelerator rather than the gate.
+  // Canvas-backed playback advances only when the next decoded bitmap is ready.
   useEffect(() => {
     if (!isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
       return;
@@ -3722,12 +3683,12 @@ export default function App() {
       const nextHour = frameHours[nextIndex];
       const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
       const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
-      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "image-url");
+      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "canvas");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
       if (accumulatedMs >= AUTOPLAY_TICK_MS) {
-        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "image-url")) {
+        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "canvas")) {
           accumulatedMs -= AUTOPLAY_TICK_MS;
           lastLoopAdvanceRef.current = Date.now();
           setTargetForecastHour(nextHour);
@@ -5344,9 +5305,10 @@ export default function App() {
   const activeLoopUrl = null;
   const activeLoopBbox = loopManifest?.bbox
     ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
-  // When holdover visuals are active, keep the loop layer visible even though
-  // isLoopDisplayActive is false (the new selection hasn't loaded yet).
-  const effectiveLoopActive = Boolean(activeLoopBitmap);
+  // Keep tiles fully disabled for the entire loop playback session.
+  // Even if a specific decoded frame is briefly unavailable, stay in loop mode
+  // rather than falling back to tile-layer swaps.
+  const effectiveLoopActive = isLoopDisplayActive || Boolean(activeLoopBitmap);
 
   const loopStuckWatchRef = useRef<{
     targetHour: number | null;
@@ -5862,7 +5824,7 @@ export default function App() {
           variableKind={displayedOverlayVariableKind}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
-          prefetchTileUrls={prefetchTileUrls}
+          prefetchTileUrls={isLoopDisplayActive ? [] : prefetchTileUrls}
           crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
           loopFrameBitmap={activeLoopBitmap}

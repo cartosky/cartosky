@@ -1913,10 +1913,10 @@ export function MapCanvas({
       const activeBuffer = activeBufferRef.current;
       const inactiveBuffer = otherBuffer(activeBuffer);
       if (loopActive) {
-        setLayerVisibility(map, layerId(activeBuffer), true);
+        setLayerVisibility(map, layerId(activeBuffer), false);
+        setLayerVisibility(map, layerId(inactiveBuffer), false);
         setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
         setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-        setLayerVisibility(map, layerId(inactiveBuffer), false);
       } else {
         setLayerVisibility(map, layerId(activeBuffer), true);
         setLayerOpacity(map, layerId(activeBuffer), opacity);
@@ -2088,99 +2088,16 @@ export function MapCanvas({
     }
     const selectionScope = { selectionEpoch, selectionKey };
 
+    // Loop playback is fully canvas-backed. Report frame readiness for the
+    // current selection without mutating tile sources.
     onFrameLoadingChange?.(tileUrl, false, selectionScope);
-
-    const emitReady = () => {
-      onTileReady?.(tileUrl, { source: "loop-warm", ...selectionScope });
-      onFrameSettled?.(tileUrl, selectionScope);
-      onTileViewportReady?.(tileUrl, selectionScope);
-    };
-
-    if (tileUrl === activeTileUrlRef.current) {
-      const active = activeBufferRef.current;
-      const source = sourceId(active);
-      setLayerVisibility(map, layerId(active), true);
-      setLayerOpacity(map, layerId(active), HIDDEN_SWAP_BUFFER_OPACITY);
-      const readyCleanup = waitForSourceReady(
-        map,
-        source,
-        tileUrl,
-        sourceRequestTokenRef.current.get(source) ?? 0,
-        -1,
-        "autoplay",
-        emitReady,
-        () => {
-          console.warn("[map] loop warm ready timeout", { sourceId: source, tileUrl });
-        },
-        PREFETCH_READY_TIMEOUT_MS
-      );
-      return () => {
-        readyCleanup?.();
-      };
-    }
-
-    const inactiveBuffer = otherBuffer(activeBufferRef.current);
-    const inactiveSourceId = sourceId(inactiveBuffer);
-    const inactiveSource = map.getSource(inactiveSourceId) as maplibregl.RasterTileSource | undefined;
-    if (!inactiveSource || typeof inactiveSource.setTiles !== "function") {
-      return;
-    }
-
-    setLayerVisibility(map, layerId(inactiveBuffer), true);
-    setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-    if (
-      !setTilesSafe(inactiveSource, [tileUrl], {
-        sourceId: inactiveSourceId,
-        tileUrl,
-        mode: "loop-warm",
-      })
-    ) {
-      return;
-    }
-    sourceRequestedUrlRef.current.set(inactiveSourceId, tileUrl);
-    const nextSwapRequestToken = (sourceRequestTokenRef.current.get(inactiveSourceId) ?? 0) + 1;
-    sourceRequestTokenRef.current.set(inactiveSourceId, nextSwapRequestToken);
-    const eventBaseline = sourceEventCountRef.current.get(inactiveSourceId) ?? 0;
-    const warmToken = ++swapTokenRef.current;
-
-    const readyCleanup = waitForSourceReady(
-      map,
-      inactiveSourceId,
-      tileUrl,
-      nextSwapRequestToken,
-      eventBaseline,
-      "autoplay",
-      () => {
-        if (warmToken !== swapTokenRef.current) {
-          return;
-        }
-        const previousActive = activeBufferRef.current;
-        activeBufferRef.current = inactiveBuffer;
-        activeTileUrlRef.current = tileUrl;
-        setLayerVisibility(map, layerId(previousActive), false);
-        setLayerVisibility(map, layerId(inactiveBuffer), true);
-        setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-        emitReady();
-      },
-      () => {
-        if (warmToken !== swapTokenRef.current) {
-          return;
-        }
-        console.warn("[map] loop warm swap timeout", { sourceId: inactiveSourceId, tileUrl, token: warmToken });
-      },
-      PREFETCH_READY_TIMEOUT_MS
-    );
-
-    return () => {
-      readyCleanup?.();
-    };
+    onTileReady?.(tileUrl, { source: "loop-warm", ...selectionScope });
+    onFrameSettled?.(tileUrl, selectionScope);
+    onTileViewportReady?.(tileUrl, selectionScope);
   }, [
     isLoaded,
     loopActive,
     tileUrl,
-    waitForSourceReady,
-    setTilesSafe,
-    setLayerOpacity,
     onTileReady,
     onFrameSettled,
     onTileViewportReady,
@@ -2503,7 +2420,7 @@ export function MapCanvas({
 
     if (loopActive) {
       isLoopToTileTransitioningRef.current = false;
-      setLayerVisibility(map, layerId(activeBuffer), true);
+      setLayerVisibility(map, layerId(activeBuffer), false);
       setLayerVisibility(map, layerId(inactiveBuffer), false);
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
       setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
@@ -2619,6 +2536,13 @@ export function MapCanvas({
     }
     const selectionScope = { selectionEpoch, selectionKey };
 
+    if (loopActive) {
+      window.requestAnimationFrame(() => {
+        onTileViewportReady?.(tileUrl, selectionScope);
+      });
+      return;
+    }
+
     const token = ++tileViewportReadyTokenRef.current;
     const activeSource = sourceId(activeBufferRef.current);
     const expectedTileUrl = tileUrl;
@@ -2642,7 +2566,7 @@ export function MapCanvas({
     return () => {
       map.off("idle", maybeNotify);
     };
-  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey]);
+  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey, loopActive]);
 
   useEffect(() => {
     const map = mapRef.current;

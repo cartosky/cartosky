@@ -25,6 +25,16 @@ export const WEBP_RENDER_MODE_THRESHOLDS = {
   desktopHiDpiTier1Bias: 0.35,
 };
 
+export type CanonicalSingleWebpTierMode = "webp_tier0" | "webp_tier1";
+
+export function getCanonicalSingleWebpTierMode(): CanonicalSingleWebpTierMode {
+  const raw = String(import.meta.env.VITE_CANONICAL_SINGLE_WEBP_TIER ?? "").trim().toLowerCase();
+  if (raw === "tier1" || raw === "webp_tier1") {
+    return "webp_tier1";
+  }
+  return "webp_tier0";
+}
+
 export const MAP_VIEW_DEFAULTS = {
   region: "conus",
   center: [39.83, -98.58] as [number, number],
