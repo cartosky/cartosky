@@ -834,6 +834,8 @@ export function MapCanvas({
   const loopToTileTokenRef = useRef(0);
   const loopImageRequestTokenRef = useRef(0);
   const loopImagePreloadRef = useRef<HTMLImageElement | null>(null);
+  const loopImagePendingSignatureRef = useRef<string | null>(null);
+  const loopImageCommittedSignatureRef = useRef<string | null>(null);
   const previousLoopActiveRef = useRef(loopActive);
   const isLoopToTileTransitioningRef = useRef(false);
   const currentSelectionEpochRef = useRef(selectionEpoch);
@@ -1011,6 +1013,7 @@ export function MapCanvas({
 
   const cancelPendingLoopImageUpdate = useCallback(() => {
     loopImageRequestTokenRef.current += 1;
+    loopImagePendingSignatureRef.current = null;
     const pending = loopImagePreloadRef.current;
     if (!pending) {
       return;
@@ -1029,6 +1032,7 @@ export function MapCanvas({
     ) => {
       cancelPendingLoopImageUpdate();
       if (!nextLoopImageUrl) {
+        loopImageCommittedSignatureRef.current = null;
         setReadyLoopImageFrame(null);
         setReadyLoopCanvasFrame(null);
         viewerDebugLog("map:loop-image-clear", {
@@ -1039,6 +1043,15 @@ export function MapCanvas({
         });
         return;
       }
+
+      const requestSignature = `${selectionScope.selectionEpoch}:${selectionScope.selectionKey}:${nextLoopImageUrl}`;
+      if (
+        loopImagePendingSignatureRef.current === requestSignature ||
+        loopImageCommittedSignatureRef.current === requestSignature
+      ) {
+        return;
+      }
+      loopImagePendingSignatureRef.current = requestSignature;
 
       const requestToken = loopImageRequestTokenRef.current;
       viewerDebugLog("map:loop-image-request", {
@@ -1056,6 +1069,9 @@ export function MapCanvas({
 
       image.onload = () => {
         if (loopImageRequestTokenRef.current !== requestToken) {
+          if (loopImagePendingSignatureRef.current === requestSignature) {
+            loopImagePendingSignatureRef.current = null;
+          }
           viewerDebugLog("map:loop-image-stale-onload", {
             mode,
             variable,
@@ -1068,6 +1084,9 @@ export function MapCanvas({
           return;
         }
         if (selectionScope.selectionEpoch !== currentSelectionEpochRef.current) {
+          if (loopImagePendingSignatureRef.current === requestSignature) {
+            loopImagePendingSignatureRef.current = null;
+          }
           return;
         }
         const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
@@ -1075,21 +1094,14 @@ export function MapCanvas({
           return;
         }
         try {
-          const drawnToCanvas = drawToLoopCanvas(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
-          if (drawnToCanvas) {
-            setReadyLoopCanvasFrame({
-              url: nextLoopImageUrl,
-              selectionEpoch: selectionScope.selectionEpoch,
-              selectionKey: selectionScope.selectionKey,
-            });
-          }
-          if (!drawnToCanvas) {
-            loopSource.updateImage({
-              url: nextLoopImageUrl,
-              coordinates: nextLoopImageCoordinates,
-            });
-          }
+          loopSource.updateImage({
+            url: nextLoopImageUrl,
+            coordinates: nextLoopImageCoordinates,
+          });
           setReadyLoopImageFrame({ url: nextLoopImageUrl, selectionEpoch: selectionScope.selectionEpoch, selectionKey: selectionScope.selectionKey });
+          setReadyLoopCanvasFrame(null);
+          loopImageCommittedSignatureRef.current = requestSignature;
+          loopImagePendingSignatureRef.current = null;
           viewerDebugLog("map:loop-image-ready", {
             mode,
             variable,
@@ -1097,13 +1109,36 @@ export function MapCanvas({
             requestToken,
             selectionKey: selectionScope.selectionKey,
             selectionEpoch: selectionScope.selectionEpoch,
-            drawnToCanvas,
+            source: "image-source",
           });
           map.triggerRepaint();
         } catch (error) {
-          setReadyLoopImageFrame(null);
-          setReadyLoopCanvasFrame(null);
-          console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
+          const drawnToCanvas = drawToLoopCanvas(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
+          if (drawnToCanvas) {
+            setReadyLoopImageFrame(null);
+            setReadyLoopCanvasFrame({
+              url: nextLoopImageUrl,
+              selectionEpoch: selectionScope.selectionEpoch,
+              selectionKey: selectionScope.selectionKey,
+            });
+            loopImageCommittedSignatureRef.current = requestSignature;
+            loopImagePendingSignatureRef.current = null;
+            viewerDebugLog("map:loop-image-ready", {
+              mode,
+              variable,
+              nextLoopImageUrl,
+              requestToken,
+              selectionKey: selectionScope.selectionKey,
+              selectionEpoch: selectionScope.selectionEpoch,
+              source: "canvas-fallback",
+            });
+            map.triggerRepaint();
+          } else {
+            setReadyLoopImageFrame(null);
+            setReadyLoopCanvasFrame(null);
+            loopImagePendingSignatureRef.current = null;
+            console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
+          }
         } finally {
           if (loopImagePreloadRef.current === image) {
             loopImagePreloadRef.current = null;
@@ -1114,6 +1149,9 @@ export function MapCanvas({
       image.onerror = () => {
         if (loopImageRequestTokenRef.current !== requestToken) {
           return;
+        }
+        if (loopImagePendingSignatureRef.current === requestSignature) {
+          loopImagePendingSignatureRef.current = null;
         }
         viewerDebugLog("map:loop-image-error", {
           mode,
