@@ -12,6 +12,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -56,7 +57,9 @@ def main() -> int:
     if not tier0_dir.is_dir():
         raise SystemExit(f"Loop tier0 directory not found: {tier0_dir}")
 
-    frame_pattern = tier0_dir / "fh%03d.loop.webp"
+    frame_paths = sorted(tier0_dir.glob("fh*.loop.webp"))
+    if not frame_paths:
+        raise SystemExit(f"No loop WebP frames found under: {tier0_dir}")
     output_path = LOOP_CACHE_ROOT / args.model / args.run / args.variable / f"playback.{args.format}"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists() and not args.overwrite:
@@ -79,15 +82,25 @@ def main() -> int:
             "-movflags", "+faststart",
         ]
 
-    cmd = [
-        ffmpeg_bin,
-        "-y" if args.overwrite else "-n",
-        "-framerate", str(max(1, args.fps)),
-        "-i", str(frame_pattern),
-        *codec_args,
-        str(output_path),
-    ]
-    subprocess.run(cmd, check=True)
+    with tempfile.TemporaryDirectory(prefix="loop_playback_") as temp_dir_raw:
+        temp_dir = Path(temp_dir_raw)
+        for index, frame_path in enumerate(frame_paths):
+            link_path = temp_dir / f"{index:06d}{frame_path.suffix}"
+            try:
+                link_path.symlink_to(frame_path.resolve())
+            except OSError:
+                shutil.copy2(frame_path, link_path)
+
+        frame_pattern = temp_dir / "%06d.loop.webp"
+        cmd = [
+            ffmpeg_bin,
+            "-y" if args.overwrite else "-n",
+            "-framerate", str(max(1, args.fps)),
+            "-i", str(frame_pattern),
+            *codec_args,
+            str(output_path),
+        ]
+        subprocess.run(cmd, check=True)
     print(output_path)
     return 0
 
