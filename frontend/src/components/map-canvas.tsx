@@ -1004,23 +1004,8 @@ export function MapCanvas({
       selectionScope: SelectionScopedMeta,
     ) => {
       cancelPendingLoopImageUpdate();
-      const clearLoopSource = () => {
-        const loopSource = map.getSource(LOOP_SOURCE_ID) as maplibregl.ImageSource | undefined;
-        if (!loopSource || typeof loopSource.updateImage !== "function") {
-          return;
-        }
-        try {
-          loopSource.updateImage({
-            url: TRANSPARENT_PIXEL_DATA_URL,
-            coordinates: nextLoopImageCoordinates,
-          });
-        } catch {
-          // Best effort only; stale visibility is gated by isReadyLoopImage.
-        }
-      };
       if (!nextLoopImageUrl) {
         setReadyLoopImageFrame(null);
-        clearLoopSource();
         viewerDebugLog("map:loop-image-clear", {
           mode,
           variable,
@@ -1081,7 +1066,6 @@ export function MapCanvas({
           map.triggerRepaint();
         } catch (error) {
           setReadyLoopImageFrame(null);
-          clearLoopSource();
           console.warn("[map] failed to update loop image source", { loopImageUrl: nextLoopImageUrl, error });
         } finally {
           if (loopImagePreloadRef.current === image) {
@@ -1103,7 +1087,6 @@ export function MapCanvas({
           selectionEpoch: selectionScope.selectionEpoch,
         });
         setReadyLoopImageFrame(null);
-        clearLoopSource();
         console.warn("[map] failed to preload loop image", { loopImageUrl: nextLoopImageUrl });
         if (loopImagePreloadRef.current === image) {
           loopImagePreloadRef.current = null;
