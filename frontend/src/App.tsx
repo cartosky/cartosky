@@ -1931,6 +1931,7 @@ export default function App() {
     if (renderMode === "tiles") {
       setVisibleRenderMode("tiles");
       setLoopDisplayHour(null);
+      setLoopDisplayBitmap(null);
       return;
     }
 
@@ -5258,10 +5259,13 @@ export default function App() {
     ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
   // Keep tiles fully disabled for the entire loop playback session.
   // Even if a specific decoded frame is briefly unavailable, stay in loop mode
-  // rather than falling back to tile-layer swaps.
+  // rather than falling back to tile-layer swaps.  However, when the render
+  // mode has explicitly switched to tiles (e.g. high-zoom detail), respect
+  // that and allow the tile layers to take over even if a cached bitmap exists.
   const effectiveLoopActive =
-    Boolean(activeLoopBitmap)
-    || (isLoopDisplayActive && Number.isFinite(loopDisplayHour));
+    renderMode !== "tiles"
+    && (Boolean(activeLoopBitmap)
+      || (isLoopDisplayActive && Number.isFinite(loopDisplayHour)));
 
   useEffect(() => {
     if (!newLoopBitmap) {
