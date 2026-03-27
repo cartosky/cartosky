@@ -1056,6 +1056,10 @@ export default function App() {
   const lastTileViewportCommitUrlRef = useRef<string | null>(null);
   const loopDisplayDecodeTokenRef = useRef(0);
   const loopDisplayDecodeAbortRef = useRef<AbortController | null>(null);
+  // The forecast hour currently being decoded by startForegroundLoopFrameDecode.
+  // Used to avoid aborting and re-issuing an identical in-flight fetch when the
+  // effect-based scrub path fires for the same hour the RAF path already started.
+  const foregroundDecodeHourRef = useRef<number | null>(null);
   const loopDecodedCacheRef = useRef<Map<string, { bitmap: ImageBitmap; bytes: number; lastUsedAt: number }>>(new Map());
   const loopDecodedCacheBytesRef = useRef(0);
   const loopDecodedCacheHighWaterRef = useRef(0);
@@ -1690,9 +1694,16 @@ export default function App() {
       if (mode === "tiles") {
         return;
       }
+      // If a decode for the exact same hour is already in-flight, skip the
+      // abort-and-refetch cycle.  This prevents the RAF-initiated scrub decode
+      // from being cancelled and re-issued identically by the effect-based path.
+      if (foregroundDecodeHourRef.current === fh && loopDisplayDecodeAbortRef.current) {
+        return;
+      }
       loopDisplayDecodeAbortRef.current?.abort();
       const controller = new AbortController();
       loopDisplayDecodeAbortRef.current = controller;
+      foregroundDecodeHourRef.current = fh;
       ensureLoopFrameDecoded(fh, mode, controller.signal)
         .then((ready) => {
           // Only promote if this decode hasn't been superseded by a newer scrub.
@@ -1706,6 +1717,7 @@ export default function App() {
         .finally(() => {
           if (loopDisplayDecodeAbortRef.current === controller) {
             loopDisplayDecodeAbortRef.current = null;
+            foregroundDecodeHourRef.current = null;
           }
         });
     },
@@ -2941,6 +2953,7 @@ export default function App() {
     autoplayPrimedRef.current = false;
     loopDisplayDecodeAbortRef.current?.abort();
     loopDisplayDecodeAbortRef.current = null;
+    foregroundDecodeHourRef.current = null;
     // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
     // the first update after reset is never incorrectly skipped.
     if (bufferSnapshotRafRef.current !== null) {
@@ -5328,6 +5341,7 @@ export default function App() {
         window.cancelAnimationFrame(bufferSnapshotRafRef.current);
       }
       loopDisplayDecodeAbortRef.current?.abort();
+      foregroundDecodeHourRef.current = null;
       for (const cached of loopDecodedCacheRef.current.values()) {
         cached.bitmap.close();
       }
