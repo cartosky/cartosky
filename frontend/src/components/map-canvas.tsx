@@ -922,6 +922,12 @@ export function MapCanvas({
       if (!canvas) {
         return false;
       }
+      // Guard against detached ImageBitmaps whose backing store has been freed
+      // by LRU eviction or dataset-change cache clears.  Attempting to
+      // drawImage a closed bitmap throws InvalidStateError.
+      if (frame instanceof ImageBitmap && (frame.width === 0 || frame.height === 0)) {
+        return false;
+      }
       const nextWidth = Math.max(1, Math.floor(width));
       const nextHeight = Math.max(1, Math.floor(height));
       if (canvas.width !== nextWidth) {
@@ -935,7 +941,12 @@ export function MapCanvas({
         return false;
       }
       ctx.clearRect(0, 0, nextWidth, nextHeight);
-      ctx.drawImage(frame, 0, 0, nextWidth, nextHeight);
+      try {
+        ctx.drawImage(frame, 0, 0, nextWidth, nextHeight);
+      } catch {
+        // ImageBitmap was detached between the guard check and drawImage.
+        return false;
+      }
 
       const map = mapRef.current;
       if (map && isLoaded) {
@@ -1011,7 +1022,7 @@ export function MapCanvas({
     if (!map.getLayer(id)) {
       return;
     }
-    map.setPaintProperty(id, "raster-opacity", value);
+    map.setPaintProperty(id, "raster-opacity", Math.max(0, Math.min(1, value)));
   }, []);
 
   const setTilesSafe = useCallback(

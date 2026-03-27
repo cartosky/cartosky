@@ -1655,6 +1655,10 @@ export default function App() {
       if (!cached) {
         return null;
       }
+      // Guard against detached bitmaps whose backing store was freed.
+      if (cached.bitmap.width === 0) {
+        return null;
+      }
       cached.lastUsedAt = Date.now();
       return cached.bitmap;
     },
@@ -1670,7 +1674,9 @@ export default function App() {
       for (const fh of frameHours) {
         const key = loopCacheKey(fh, mode);
         const cached = loopDecodedCacheRef.current.get(key);
-        if (cached) {
+        // Skip detached bitmaps — their backing store was freed by
+        // LRU eviction or dataset-change cache clears.
+        if (cached && cached.bitmap.width > 0) {
           map.set(fh, cached.bitmap);
         }
       }
@@ -2955,6 +2961,10 @@ export default function App() {
     loopDecodedCacheRef.current.clear();
     loopDecodeCompletedAtRef.current.clear();
     loopDecodedCacheBytesRef.current = 0;
+    // Invalidate the imperative playback bitmap map — the bitmaps it
+    // referenced were just closed above and are now detached.
+    playbackBitmapMapRef.current = null;
+    imperativePlaybackHourRef.current = null;
     setIsPreloadingForPlay(false);
     lastTileViewportCommitUrlRef.current = null;
     preloadProgressRef.current = {
@@ -3733,21 +3743,37 @@ export default function App() {
           const drawFn = drawLoopFrameImperativeRef.current;
           const bitmapMap = playbackBitmapMapRef.current;
           const bitmap = bitmapMap?.get(nextHour);
-          if (drawFn && bitmap) {
-            drawFn(bitmap);
-            forecastHourRef.current = nextHour;
-            imperativePlaybackHourRef.current = nextHour;
+          // Guard against detached bitmaps — LRU eviction or dataset-change
+          // cache clears call `.close()` which zeros width/height.
+          const bitmapValid = bitmap && bitmap.width > 0;
+          if (drawFn && bitmapValid) {
+            const drawn = drawFn(bitmap);
+            if (drawn) {
+              forecastHourRef.current = nextHour;
+              imperativePlaybackHourRef.current = nextHour;
 
-            // Throttled React state sync.
-            if (now - lastStateSyncTs >= STATE_SYNC_INTERVAL_MS) {
-              lastStateSyncTs = now;
-              syncStateNow();
+              // Throttled React state sync.
+              if (now - lastStateSyncTs >= STATE_SYNC_INTERVAL_MS) {
+                lastStateSyncTs = now;
+                syncStateNow();
+              }
+            } else {
+              // Draw failed (e.g. bitmap detached mid-draw) — refresh map.
+              playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
+              forecastHourRef.current = nextHour;
+              imperativePlaybackHourRef.current = nextHour;
+              setTargetForecastHour(nextHour);
             }
           } else {
             // --- FALLBACK: go through React state (e.g. frame decoded after
             //     map was built, or draw handle not yet available). ---
             // Refresh the bitmap map so the next tick can use the fast path.
             playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
+            // Advance the imperative playhead so subsequent ticks don't re-try
+            // the same hour and stall — the frame will be drawn via React's
+            // prop-based path (or the next tick will pick up the new bitmap).
+            forecastHourRef.current = nextHour;
+            imperativePlaybackHourRef.current = nextHour;
             setTargetForecastHour(nextHour);
           }
         } else {
@@ -5351,9 +5377,16 @@ export default function App() {
     ? getDecodedLoopBitmap(committedLoopHour, loopPlaybackRenderMode)
     : null;
   const newLoopBitmap = targetLoopBitmap ?? committedLoopBitmap;
+  // Guard against detached holdover bitmaps — the cache-clear on dataset
+  // change calls `.close()` on every cached bitmap, which invalidates any
+  // holdover ref that was snapshotted before the switch.
+  const holdoverBitmap = holdoverLoopBitmapRef.current;
+  const safeHoldover = isVariableSwitching && holdoverBitmap && holdoverBitmap.width > 0
+    ? holdoverBitmap
+    : null;
   const activeLoopBitmap = newLoopBitmap
     ?? loopDisplayBitmap
-    ?? (isVariableSwitching ? holdoverLoopBitmapRef.current : null);
+    ?? safeHoldover;
   // Canvas/bitmap-only loop presentation: avoid MapLibre image-source path,
   // which is currently causing decode instability and stale loop visuals.
   const activeLoopUrl = null;
