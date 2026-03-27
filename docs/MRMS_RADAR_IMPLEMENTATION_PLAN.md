@@ -157,7 +157,7 @@ That means the system should now be thought of as:
 4. units:
    - `dBZ`
 5. kind:
-   - `continuous`
+   - `discrete`
 
 ### Run Semantics
 1. Each published MRMS bundle gets a run-like ID based on publish time.

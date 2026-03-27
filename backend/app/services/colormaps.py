@@ -465,6 +465,16 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Composite Reflectivity",
         "legend_title": "Reflectivity (dBZ)",
     },
+    "mrms_reflectivity": {
+        "type": "discrete",
+        "units": "dBZ",
+        # Keep the MRMS reflectivity palette separate from forecast reflectivity
+        # metadata so we can tune the observed product independently later.
+        "levels": RADAR_CONFIG["rain"]["levels"][1:],
+        "colors": RADAR_CONFIG["rain"]["colors"][1:],
+        "display_name": "Merged Base Reflectivity QC",
+        "legend_title": "MRMS Reflectivity (dBZ)",
+    },
 }
 
 # Aliases kept for historical compatibility with already-published metadata.
