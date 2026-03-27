@@ -11,6 +11,22 @@ export type ModelOption = {
   name: string;
 };
 
+export type ModelTimeAxisMode = "forecast" | "observed";
+export type ModelDefaultFrameSelection = "first" | "latest";
+
+export type CapabilityModelDefaults = Record<string, unknown> & {
+  default_var_key?: string;
+  default_run?: string;
+  default_frame_selection?: ModelDefaultFrameSelection | null;
+};
+
+export type CapabilityModelConstraints = Record<string, unknown> & {
+  canonical_region?: string | null;
+  time_axis_mode?: ModelTimeAxisMode | null;
+  latest_only?: boolean | null;
+  supports_sampling?: boolean | null;
+};
+
 export type CapabilityVariable = {
   var_key: string;
   display_name?: string;
@@ -32,8 +48,8 @@ export type CapabilityModel = {
   name: string;
   product?: string | null;
   canonical_region?: string | null;
-  defaults?: Record<string, unknown>;
-  constraints?: Record<string, unknown>;
+  defaults?: CapabilityModelDefaults;
+  constraints?: CapabilityModelConstraints;
   run_discovery?: Record<string, unknown>;
   variables: Record<string, CapabilityVariable>;
 };
@@ -175,6 +191,26 @@ export type VarRow =
 type FetchOptions = {
   signal?: AbortSignal;
 };
+
+export function readCapabilityTimeAxisMode(model: CapabilityModel | null | undefined): ModelTimeAxisMode {
+  const raw = String(model?.constraints?.time_axis_mode ?? "").trim().toLowerCase();
+  return raw === "observed" ? "observed" : "forecast";
+}
+
+export function readCapabilityDefaultFrameSelection(
+  model: CapabilityModel | null | undefined
+): ModelDefaultFrameSelection {
+  const raw = String(model?.defaults?.default_frame_selection ?? "").trim().toLowerCase();
+  return raw === "latest" ? "latest" : "first";
+}
+
+export function readCapabilityLatestOnly(model: CapabilityModel | null | undefined): boolean {
+  return model?.constraints?.latest_only === true;
+}
+
+export function readCapabilitySupportsSampling(model: CapabilityModel | null | undefined): boolean {
+  return model?.constraints?.supports_sampling === true;
+}
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
   const response = await fetch(url, { credentials: "omit", signal: options?.signal });

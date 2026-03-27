@@ -38,11 +38,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
+from .models.serialization import (
+    serialize_model_capability,
+    serialize_variable_capability,
+)
 from .services.builder.colorize import float_to_rgba
 from .services.render_resampling import (
     allow_high_quality_loop_resampling,
     compute_loop_output_shape,
-    display_resampling_override,
     high_quality_loop_resampling,
     log_fixed_loop_size_once,
     loop_fixed_width_for_tier,
@@ -2081,54 +2084,11 @@ def _scan_manifest_runs(model: str) -> list[str]:
 
 
 def _serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:
-    constraints = getattr(capability, "constraints", None)
-    constraints_payload = dict(constraints) if isinstance(constraints, dict) else {}
-    var_key = str(getattr(capability, "var_key", ""))
-    return {
-        "var_key": var_key,
-        "display_name": str(getattr(capability, "name", "")),
-        "kind": getattr(capability, "kind", None),
-        "units": getattr(capability, "units", None),
-        "order": getattr(capability, "order", None),
-        "group": getattr(capability, "group", None),
-        "default_fh": getattr(capability, "default_fh", None),
-        "buildable": bool(getattr(capability, "buildable", False)),
-        "color_map_id": getattr(capability, "color_map_id", None),
-        "display_resampling_override": display_resampling_override(model_id, var_key),
-        "constraints": constraints_payload,
-        "derived": bool(getattr(capability, "derived", False)),
-        "derive_strategy_id": getattr(capability, "derive_strategy_id", None),
-    }
+    return serialize_variable_capability(model_id, capability)
 
 
 def _serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]:
-    variable_catalog = getattr(capability, "variable_catalog", {}) or {}
-    ordered_items = sorted(
-        variable_catalog.items(),
-        key=lambda item: (
-            getattr(item[1], "order", None) is None,
-            getattr(item[1], "order", 0) if getattr(item[1], "order", None) is not None else 0,
-            item[0],
-        ),
-    )
-    variables_payload = {
-        var_key: _serialize_variable_capability(model_id, var_capability)
-        for var_key, var_capability in ordered_items
-    }
-
-    defaults = getattr(capability, "ui_defaults", None)
-    constraints = getattr(capability, "ui_constraints", None)
-    run_discovery = getattr(capability, "run_discovery", None)
-    return {
-        "model_id": model_id,
-        "name": str(getattr(capability, "name", model_id.upper())),
-        "product": getattr(capability, "product", None),
-        "canonical_region": getattr(capability, "canonical_region", None),
-        "defaults": dict(defaults) if isinstance(defaults, dict) else {},
-        "constraints": dict(constraints) if isinstance(constraints, dict) else {},
-        "run_discovery": dict(run_discovery) if isinstance(run_discovery, dict) else {},
-        "variables": variables_payload,
-    }
+    return serialize_model_capability(model_id, capability)
 
 
 def _manifest_var_available_frames(var_entry: dict[str, Any]) -> int:

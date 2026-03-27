@@ -16,6 +16,7 @@ import {
   type FrameRow,
   type LegendMeta,
   type LoopManifestResponse,
+  type ModelDefaultFrameSelection,
   type RegionPreset,
   type RunManifestResponse,
   fetchManifest,
@@ -25,6 +26,7 @@ import {
   fetchRegionPresets,
   fetchRuns,
   fetchSampleBatch,
+  readCapabilityDefaultFrameSelection,
 } from "@/lib/api";
 import {
   anchorBatchPointsFromGeoJson,
@@ -615,17 +617,26 @@ function selectableFramesForVariable(frames: number[], preferredFh: number | nul
   return filtered.length > 0 ? filtered : frames;
 }
 
-function preferredInitialFrame(frames: number[], preferredFh: number | null | undefined): number {
+function preferredInitialFrame(
+  frames: number[],
+  preferredFh: number | null | undefined,
+  defaultFrameSelection: ModelDefaultFrameSelection = "first"
+): number {
   if (frames.length === 0) {
     return 0;
   }
   if (!Number.isFinite(preferredFh)) {
-    return frames[0];
+    return defaultFrameSelection === "latest" ? frames[frames.length - 1] : frames[0];
   }
   return nearestFrame(frames, Number(preferredFh));
 }
 
-function resolveForecastHour(frames: number[], current: number, preferredFh: number | null | undefined): number {
+function resolveForecastHour(
+  frames: number[],
+  current: number,
+  preferredFh: number | null | undefined,
+  defaultFrameSelection: ModelDefaultFrameSelection = "first"
+): number {
   const selectableFrames = selectableFramesForVariable(frames, preferredFh);
   if (selectableFrames.length === 0) {
     return 0;
@@ -633,7 +644,7 @@ function resolveForecastHour(frames: number[], current: number, preferredFh: num
   if (Number.isFinite(current)) {
     return nearestFrame(selectableFrames, current);
   }
-  return preferredInitialFrame(selectableFrames, preferredFh);
+  return preferredInitialFrame(selectableFrames, preferredFh, defaultFrameSelection);
 }
 
 function getEffectiveZoom(zoom: number): number {
@@ -1205,6 +1216,7 @@ export default function App() {
   const selectedVariableKind = selectedCapabilityVarMap.get(variable)?.kind ?? null;
   const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
+  const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1237,11 +1249,16 @@ export default function App() {
     if (!Number.isFinite(pendingForecastHour) || frameHours.length === 0) {
       return;
     }
-    const resolved = resolveForecastHour(frameHours, Number(pendingForecastHour), selectedVariableDefaultFh);
+    const resolved = resolveForecastHour(
+      frameHours,
+      Number(pendingForecastHour),
+      selectedVariableDefaultFh,
+      selectedModelDefaultFrameSelection
+    );
     setForecastHour(resolved);
     setTargetForecastHour(resolved);
     pendingInitialForecastHourRef.current = null;
-  }, [frameHours, selectedVariableDefaultFh]);
+  }, [frameHours, selectedVariableDefaultFh, selectedModelDefaultFrameSelection]);
 
   // Keep frameSetRef in sync so updateBufferSnapshot never allocates a one-off Set.
   useEffect(() => {
@@ -4489,8 +4506,12 @@ export default function App() {
           setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey));
           setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
-          setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
-          setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
+          setForecastHour((prev) =>
+            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          );
+          setTargetForecastHour((prev) =>
+            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          );
           hydratedFromManifest = true;
         }
       }
@@ -4515,8 +4536,12 @@ export default function App() {
         setFrameRows(rows);
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
         const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
-        setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
-        setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
+        setForecastHour((prev) =>
+          resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+        );
+        setTargetForecastHour((prev) =>
+          resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+        );
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         if (!hydratedFromManifest) {
@@ -4532,7 +4557,18 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, selectedVariableDefaultFh, hasRenderableSelection, loadedFramesKey, selectionKey]);
+  }, [
+    model,
+    run,
+    variable,
+    resolvedRunForRequests,
+    runManifest,
+    selectedVariableDefaultFh,
+    selectedModelDefaultFrameSelection,
+    hasRenderableSelection,
+    loadedFramesKey,
+    selectionKey,
+  ]);
 
   useEffect(() => {
     const generation = requestGenerationRef.current;
@@ -4717,8 +4753,12 @@ export default function App() {
                 return merged.length === prevRows.length ? prevRows : merged;
               });
               const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
-              setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
-              setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
+              setForecastHour((prev) =>
+                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+              );
+              setTargetForecastHour((prev) =>
+                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+              );
             }
             return;
           }
@@ -4729,8 +4769,12 @@ export default function App() {
           }
           setFrameRows((prevRows) => (rows.length === prevRows.length ? prevRows : rows));
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
-          setForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
-          setTargetForecastHour((prev) => resolveForecastHour(frames, prev, selectedVariableDefaultFh));
+          setForecastHour((prev) =>
+            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          );
+          setTargetForecastHour((prev) =>
+            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          );
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
             return;
@@ -4745,7 +4789,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, hasRenderableSelection, loadedFramesKey, selectionKey]);
+  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
