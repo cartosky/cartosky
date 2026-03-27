@@ -1504,6 +1504,14 @@ export function MapCanvas({
   const runCrossfade = useCallback(
     (map: maplibregl.Map, fromBuffer: OverlayBuffer, toBuffer: OverlayBuffer, targetOpacity: number) => {
       cancelCrossfade();
+
+      // When SINGLE_OVERLAY_SOURCE is enabled, both buffers are the same layer.
+      // A dual-buffer crossfade is meaningless — just snap to target opacity.
+      if (fromBuffer === toBuffer) {
+        setLayerOpacity(map, layerId(toBuffer), targetOpacity);
+        return;
+      }
+
       const token = fadeTokenRef.current;
       const started = performance.now();
 
@@ -1546,6 +1554,13 @@ export function MapCanvas({
 
   const runMicroCrossfade = useCallback(
     (map: maplibregl.Map, fromBuffer: OverlayBuffer, toBuffer: OverlayBuffer, targetOpacity: number, token: number) => {
+      // When SINGLE_OVERLAY_SOURCE is enabled, both buffers are the same layer.
+      // A dual-buffer micro-crossfade is meaningless — just snap to target opacity.
+      if (fromBuffer === toBuffer) {
+        setLayerOpacity(map, layerId(toBuffer), targetOpacity);
+        return;
+      }
+
       const started = performance.now();
       
       const tick = (now: number) => {
@@ -2079,7 +2094,10 @@ export function MapCanvas({
     if (tileUrl === activeTileUrlRef.current) {
       const source = sourceId(activeBufferRef.current);
       setLayerVisibility(map, layerId(activeBufferRef.current), true);
-      setLayerVisibility(map, layerId(otherBuffer(activeBufferRef.current)), false);
+      const inactive = otherBuffer(activeBufferRef.current);
+      if (inactive !== activeBufferRef.current) {
+        setLayerVisibility(map, layerId(inactive), false);
+      }
       onFrameLoadingChange?.(tileUrl, false, selectionScope);
       const readyCleanup = waitForSourceReady(
         map,
@@ -2147,14 +2165,16 @@ export function MapCanvas({
         // This avoids a brief basemap-white flash between frames.
         setLayerOpacity(map, layerId(previousActive), opacity);
         setLayerOpacity(map, layerId(inactiveBuffer), opacity);
-        window.requestAnimationFrame(() => {
+        if (previousActive !== inactiveBuffer) {
           window.requestAnimationFrame(() => {
-            if (token !== swapTokenRef.current) {
-              return;
-            }
-            setLayerOpacity(map, layerId(previousActive), HIDDEN_SWAP_BUFFER_OPACITY);
+            window.requestAnimationFrame(() => {
+              if (token !== swapTokenRef.current) {
+                return;
+              }
+              setLayerOpacity(map, layerId(previousActive), HIDDEN_SWAP_BUFFER_OPACITY);
+            });
           });
-        });
+        }
       } else if (crossfade) {
         runCrossfade(map, previousActive, inactiveBuffer, opacity);
       } else {
@@ -2169,15 +2189,17 @@ export function MapCanvas({
 
       // After promotion, keep only the active buffer visible so MapLibre stops
       // maintaining/reloading stale tiles on the inactive source.
-      window.requestAnimationFrame(() => {
+      if (previousActive !== inactiveBuffer) {
         window.requestAnimationFrame(() => {
-          if (token !== swapTokenRef.current) {
-            return;
-          }
-          setLayerVisibility(map, layerId(previousActive), false);
-          setLayerVisibility(map, layerId(inactiveBuffer), true);
+          window.requestAnimationFrame(() => {
+            if (token !== swapTokenRef.current) {
+              return;
+            }
+            setLayerVisibility(map, layerId(previousActive), false);
+            setLayerVisibility(map, layerId(inactiveBuffer), true);
+          });
         });
-      });
+      }
     };
 
     const readyCleanup = waitForSourceReady(map, inactiveSourceId, tileUrl, nextSwapRequestToken, swapSourceEventBaseline, mode, finishSwap, () => {
