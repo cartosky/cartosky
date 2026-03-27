@@ -1102,6 +1102,14 @@ export default function App() {
   const variableRef = useRef(variable);
   const lastLoopAdvanceRef = useRef<number | null>(null);
   const loopFrameDropSampleCounterRef = useRef(0);
+  // -- Imperative playback fast-path refs --
+  // Stable handle to MapCanvas's drawToLoopCanvas; set via onDrawLoopFrameRef callback.
+  const drawLoopFrameImperativeRef = useRef<((bitmap: ImageBitmap) => boolean) | null>(null);
+  // Pre-built contiguous sequence of { hour, bitmap } for the current playback session.
+  // Built when playback starts, refreshed as new frames decode during playback.
+  const playbackBitmapMapRef = useRef<Map<number, ImageBitmap> | null>(null);
+  // The forecast hour that was last imperatively drawn (not yet synced to React state).
+  const imperativePlaybackHourRef = useRef<number | null>(null);
   const tileFetchSampleCounterRef = useRef(0);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
@@ -1649,6 +1657,24 @@ export default function App() {
       }
       cached.lastUsedAt = Date.now();
       return cached.bitmap;
+    },
+    [loopCacheKey]
+  );
+
+  /** Build / refresh the bitmap map used by the imperative playback fast-path.
+   *  Only includes frames that are already decoded.  Returns a Map<hour, bitmap>
+   *  for O(1) lookups in the RAF tick. */
+  const buildPlaybackBitmapMap = useCallback(
+    (frameHours: number[], mode: RenderModeState): Map<number, ImageBitmap> => {
+      const map = new Map<number, ImageBitmap>();
+      for (const fh of frameHours) {
+        const key = loopCacheKey(fh, mode);
+        const cached = loopDecodedCacheRef.current.get(key);
+        if (cached) {
+          map.set(fh, cached.bitmap);
+        }
+      }
+      return map;
     },
     [loopCacheKey]
   );
@@ -3629,20 +3655,47 @@ export default function App() {
   // Playback ticker. Uses requestAnimationFrame plus an accumulator so cadence
   // tracks elapsed time without interval drift or teardown/rebuild churn.
   // Canvas-backed playback advances only when the next decoded bitmap is ready.
+  //
+  // FAST PATH: When the imperative draw handle is available, the ticker draws
+  // decoded bitmaps directly to the MapLibre canvas source without triggering
+  // React re-renders.  React state (forecastHour, targetForecastHour) is synced
+  // at a lower cadence (~100 ms) so the timeline slider still tracks the
+  // playhead.  This eliminates 4-16 ms of per-frame React reconciliation from
+  // the hot path.
   useEffect(() => {
     if (!isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
       return;
     }
+
+    // Build the initial bitmap map for the fast path.
+    const mode = visibleRenderModeRef.current;
+    playbackBitmapMapRef.current = buildPlaybackBitmapMap(loopFrameHoursRef.current, mode);
+    imperativePlaybackHourRef.current = null;
+
+    // Interval (ms) at which we flush the imperative playhead position back
+    // into React state so the timeline slider, valid-time label, etc. update.
+    const STATE_SYNC_INTERVAL_MS = 100;
+    let lastStateSyncTs = performance.now();
 
     lastLoopAdvanceRef.current = Date.now();
     let rafId: number | null = null;
     let previousTs = performance.now();
     let accumulatedMs = 0;
 
+    /** Flush the imperatively-tracked playhead into React state. */
+    const syncStateNow = () => {
+      const hour = imperativePlaybackHourRef.current;
+      if (hour !== null) {
+        setTargetForecastHour(hour);
+        setForecastHour(hour);
+        imperativePlaybackHourRef.current = null;
+      }
+    };
+
     const tick = (now: number) => {
       const frameHours = loopFrameHoursRef.current;
-      const mode = visibleRenderModeRef.current;
-      const currentHour = forecastHourRef.current;
+      const tickMode = visibleRenderModeRef.current;
+      const currentHour = imperativePlaybackHourRef.current ?? forecastHourRef.current;
       const currentIndex = frameHours.indexOf(currentHour);
       if (currentIndex < 0) {
         previousTs = now;
@@ -3656,6 +3709,8 @@ export default function App() {
 
       const nextIndex = currentIndex + 1;
       if (nextIndex >= frameHours.length) {
+        // End of sequence — sync final state before stopping.
+        syncStateNow();
         lastLoopAdvanceRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
@@ -3665,16 +3720,40 @@ export default function App() {
       const nextHour = frameHours[nextIndex];
       const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
       const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
-      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, mode, minAheadRequired, "canvas");
+      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, tickMode, minAheadRequired, "canvas");
       const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
       setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
 
       if (accumulatedMs >= AUTOPLAY_TICK_MS) {
-        if (isLoopFrameReadyForPresentationRef.current(nextHour, mode, "canvas")) {
+        if (isLoopFrameReadyForPresentationRef.current(nextHour, tickMode, "canvas")) {
           accumulatedMs -= AUTOPLAY_TICK_MS;
           lastLoopAdvanceRef.current = Date.now();
-          setTargetForecastHour(nextHour);
+
+          // --- FAST PATH: imperative draw bypassing React ---
+          const drawFn = drawLoopFrameImperativeRef.current;
+          const bitmapMap = playbackBitmapMapRef.current;
+          const bitmap = bitmapMap?.get(nextHour);
+          if (drawFn && bitmap) {
+            drawFn(bitmap);
+            forecastHourRef.current = nextHour;
+            imperativePlaybackHourRef.current = nextHour;
+
+            // Throttled React state sync.
+            if (now - lastStateSyncTs >= STATE_SYNC_INTERVAL_MS) {
+              lastStateSyncTs = now;
+              syncStateNow();
+            }
+          } else {
+            // --- FALLBACK: go through React state (e.g. frame decoded after
+            //     map was built, or draw handle not yet available). ---
+            // Refresh the bitmap map so the next tick can use the fast path.
+            playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
+            setTargetForecastHour(nextHour);
+          }
         } else {
+          // Frame not ready — refresh map in case new decodes completed.
+          playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
+
           const wallClockNow = Date.now();
           const lastAdvance = lastLoopAdvanceRef.current;
           if (lastAdvance !== null) {
@@ -3689,7 +3768,7 @@ export default function App() {
                   variable_id: variableRef.current || null,
                   forecast_hour: nextHour,
                   meta: {
-                    render_mode: mode,
+                    render_mode: tickMode,
                   },
                 });
                 trackRumDiagnosticMetric({
@@ -3700,7 +3779,7 @@ export default function App() {
                   variable_id: variableRef.current || null,
                   forecast_hour: nextHour,
                   meta: {
-                    render_mode: mode,
+                    render_mode: tickMode,
                     bucket:
                       gapMs >= 1000
                         ? "1000ms_plus"
@@ -3727,7 +3806,7 @@ export default function App() {
                 variable_id: variableRef.current || null,
                 forecast_hour: nextHour,
                 meta: {
-                  render_mode: mode,
+                  render_mode: tickMode,
                   stall_ms: gapMs,
                 },
               });
@@ -3745,12 +3824,17 @@ export default function App() {
       if (rafId !== null) {
         window.cancelAnimationFrame(rafId);
       }
+      // Flush any outstanding imperative playhead position into React state
+      // so the UI is consistent after the effect tears down.
+      syncStateNow();
+      playbackBitmapMapRef.current = null;
       lastLoopAdvanceRef.current = null;
     };
   }, [
     isPlaying,
     renderMode,
     loopFrameHours,
+    buildPlaybackBitmapMap,
   ]);
 
   useEffect(() => {
@@ -4931,6 +5015,15 @@ export default function App() {
     setZoomGestureActive(payload.gestureActive);
   }, []);
 
+  // Receives the imperative draw handle from MapCanvas. Stored in a ref so the
+  // RAF playback ticker can call it without going through React props/state.
+  const handleDrawLoopFrameRef = useCallback(
+    (draw: ((bitmap: ImageBitmap) => boolean) | null) => {
+      drawLoopFrameImperativeRef.current = draw;
+    },
+    []
+  );
+
   const handleMapReady = useCallback((map: MapLibreMap) => {
     mapInstanceRef.current = map;
     const center = map.getCenter();
@@ -5647,6 +5740,8 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={onHover}
           onMapHoverEnd={onHoverEnd}
+          onDrawLoopFrameRef={handleDrawLoopFrameRef}
+          loopImperativePlaybackActive={isPlaying && renderMode !== "tiles"}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
 

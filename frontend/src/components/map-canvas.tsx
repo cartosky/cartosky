@@ -783,6 +783,12 @@ type MapCanvasProps = {
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
+  /** Exposes the imperative loop-canvas draw function to the parent so the
+   *  playback ticker can blit decoded bitmaps without a React render cycle. */
+  onDrawLoopFrameRef?: (draw: ((bitmap: ImageBitmap) => boolean) | null) => void;
+  /** When true the playback ticker is driving the canvas imperatively; the
+   *  prop-based loopFrameBitmap draw should be suppressed to avoid flicker. */
+  loopImperativePlaybackActive?: boolean;
 };
 
 export function MapCanvas({
@@ -817,6 +823,8 @@ export function MapCanvas({
   onMapReady,
   onMapHover,
   onMapHoverEnd,
+  onDrawLoopFrameRef,
+  loopImperativePlaybackActive = false,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const loopCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -957,12 +965,29 @@ export function MapCanvas({
     [isLoaded, loopImageCoordinates]
   );
 
+  // Publish a thin imperative draw handle so the playback ticker in App.tsx
+  // can blit decoded bitmaps directly without triggering a React render cycle.
   useEffect(() => {
+    if (!onDrawLoopFrameRef) return;
+    const draw = (bitmap: ImageBitmap): boolean =>
+      drawToLoopCanvas(bitmap, bitmap.width, bitmap.height);
+    onDrawLoopFrameRef(draw);
+    return () => {
+      onDrawLoopFrameRef(null);
+    };
+  }, [drawToLoopCanvas, onDrawLoopFrameRef]);
+
+  useEffect(() => {
+    // When the imperative playback fast-path is active, the RAF ticker draws
+    // frames directly — skip the prop-based draw to avoid stale-frame flicker.
+    if (loopImperativePlaybackActive) {
+      return;
+    }
     if (!loopFrameBitmap) {
       return;
     }
     drawToLoopCanvas(loopFrameBitmap, loopFrameBitmap.width, loopFrameBitmap.height);
-  }, [loopFrameBitmap, drawToLoopCanvas]);
+  }, [loopFrameBitmap, drawToLoopCanvas, loopImperativePlaybackActive]);
 
   const initializeSourceTracking = useCallback((currentTileUrl: string) => {
     const sourceA = sourceId("a");
