@@ -4,8 +4,8 @@ import concurrent.futures
 import json
 import logging
 import shutil
-from collections.abc import Iterable
 from datetime import datetime, timezone
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -232,3 +232,29 @@ def pregenerate_loop_webp_for_run(
             else:
                 fail += 1
     return ok, fail
+
+
+def enforce_run_artifact_retention(root: Path, keep_runs: int) -> None:
+    if keep_runs < 1 or not root.exists():
+        return
+
+    run_entries: list[tuple[datetime, Path]] = []
+    for child in root.iterdir():
+        if child.name.startswith("."):
+            continue
+        run_id = child.stem if child.is_file() else child.name
+        run_dt = parse_run_id_datetime(run_id)
+        if run_dt is None:
+            continue
+        run_entries.append((run_dt, child))
+
+    if len(run_entries) <= keep_runs:
+        return
+
+    run_entries.sort(key=lambda pair: pair[0], reverse=True)
+    for _, old_path in run_entries[keep_runs:]:
+        logger.info("Removing old run artifact: %s", old_path)
+        if old_path.is_dir():
+            shutil.rmtree(old_path, ignore_errors=True)
+        else:
+            old_path.unlink(missing_ok=True)
