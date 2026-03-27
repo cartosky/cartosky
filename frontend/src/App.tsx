@@ -1194,13 +1194,21 @@ export default function App() {
   const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const overlayFadeOutZoom = useMemo(() => {
+    // When the render mode is "tiles" (high-zoom detail), disable the overlay
+    // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
+    // and overlay_fade_out_zoom_end: 7, which fades overlay opacity to 0 at
+    // exactly the zoom levels where tiles activate.  Suppressing the fade-out
+    // prevents a transparent tile layer at high zoom.
+    if (renderMode === "tiles") {
+      return null;
+    }
     const start = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_start);
     const end = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_end);
     if (start === null || end === null || end <= start) {
       return null;
     }
     return { start, end };
-  }, [selectedModelConstraints.overlay_fade_out_zoom_start, selectedModelConstraints.overlay_fade_out_zoom_end]);
+  }, [selectedModelConstraints.overlay_fade_out_zoom_start, selectedModelConstraints.overlay_fade_out_zoom_end, renderMode]);
 
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);

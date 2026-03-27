@@ -2334,7 +2334,25 @@ export function MapCanvas({
     if (!crossfade) {
       cancelCrossfade();
     }
-    cancelLoopToTileTransition();
+
+    // If a loop→tile crossfade is already in progress and we're not going
+    // back into loop mode, let it finish rather than canceling it.  Canceling
+    // here would snap tiles to full opacity before they've actually loaded,
+    // causing a transparent flash.  The transition will handle cleanup once
+    // the crossfade completes.
+    if (loopActive || !isLoopToTileTransitioningRef.current) {
+      cancelLoopToTileTransition();
+    }
+
+    if (isLoopToTileTransitioningRef.current && !loopActive) {
+      // Transition is still in progress — only update the loop-canvas layer
+      // visibility in case the bitmap source changed, but don't touch tile
+      // opacity or restart the transition.
+      const showLoop = hasLoopVisual;
+      setLayerVisibility(map, LOOP_LAYER_ID, showLoop && !hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, showLoop && hasCanvasLoopFrame);
+      return;
+    }
 
     if (loopActive) {
       isLoopToTileTransitioningRef.current = false;
