@@ -34,10 +34,10 @@ from app.services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
+from app.services.run_ids import RUN_ID_RE, format_run_id, parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
 
-RUN_ID_RE = re.compile(r"^(?P<day>\d{8})_(?P<hour>\d{2})z$")
 DEFAULT_DATA_ROOT = Path("/opt/cartosky/data")
 DEFAULT_PRIMARY_VAR = "tmp2m"
 DEFAULT_VARS = "tmp2m,tmp850,dp2m,precip_total,snowfall_total,wspd10m,wgst10m,refc,radar_ptype"
@@ -151,24 +151,11 @@ def _env_value(env_name: str | tuple[str, ...], fallback: str = "") -> str:
 
 
 def _parse_run_id_datetime(run_id: str) -> datetime | None:
-    match = RUN_ID_RE.match(run_id)
-    if not match:
-        return None
-    try:
-        day = match.group("day")
-        hour = int(match.group("hour"))
-        if not (0 <= hour <= 23):
-            return None
-        year = int(day[0:4])
-        month = int(day[4:6])
-        day_num = int(day[6:8])
-        return datetime(year, month, day_num, hour, tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    return parse_run_id_datetime(run_id)
 
 
 def _run_id_from_dt(run_dt: datetime) -> str:
-    return run_dt.strftime("%Y%m%d_%Hz")
+    return format_run_id(run_dt, include_minutes=False)
 
 
 def _parse_vars(value: str) -> list[str]:

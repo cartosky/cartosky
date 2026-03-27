@@ -662,12 +662,14 @@ Work:
 2. add MRMS-specific usage and performance telemetry
 3. surface stale or incomplete MRMS bundle state in admin views
 4. capture end-to-end observation-to-display latency where possible
+5. extract shared publish helpers from `scheduler.py` into a neutral module such as `publish_utils.py` so MRMS publish code no longer depends on scheduler-private helpers
 
 Done criteria:
 1. stale MRMS bundles are visible operationally
 2. latest scan age is measurable
 3. incomplete bundle states are diagnosable without filesystem inspection
 4. observation-to-display latency is measurable or explicitly documented as unavailable
+5. MRMS publish orchestration no longer relies on private scheduler helper reuse
 
 ## Testing Plan
 

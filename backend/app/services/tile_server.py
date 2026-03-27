@@ -29,6 +29,7 @@ from rio_tiler.errors import TileOutsideBounds
 
 from .builder.colorize import float_to_rgba
 from .render_resampling import rio_tiler_resampling_kwargs, use_value_render_for_variable, variable_color_map_id
+from .run_ids import RUN_ID_RE, parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,6 @@ TILES_PUBLIC_BASE_URL = _env_value(
     "TWF_V3_TILES_PUBLIC_BASE_URL",
     default="https://api.cartosky.com",
 ).rstrip("/")
-
-# Regex to match run IDs like 20260217_20z
-_RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
 
 # Cache headers per the caching strategy in ROADMAP_V3
 CACHE_HIT = "public, max-age=31536000, immutable"
@@ -441,7 +439,7 @@ def _latest_run_from_pointer(model: str) -> str | None:
         return None
 
     run_id = payload.get("run_id")
-    if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
+    if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
         logger.warning("Invalid run_id in LATEST.json at %s: %r", latest_path, run_id)
         return None
 
@@ -470,11 +468,17 @@ def _resolve_latest_run(model: str) -> str | None:
     runs = [
         child.name
         for child in d.iterdir()
-        if child.is_dir() and _RUN_ID_RE.match(child.name)
+        if child.is_dir() and RUN_ID_RE.match(child.name)
     ]
     if not runs:
         return None
-    return sorted(set(runs))[-1]
+    return sorted(
+        set(runs),
+        key=lambda run_id: (
+            parse_run_id_datetime(run_id).timestamp() if parse_run_id_datetime(run_id) is not None else float("-inf"),
+            run_id,
+        ),
+    )[-1]
 
 
 def _resolve_cog_path(model: str, run: str, var: str, fh: int) -> Path | None:

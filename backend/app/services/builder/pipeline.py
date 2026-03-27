@@ -412,14 +412,14 @@ def build_sidecar_json(
     value_downsample_factor: int = 1,
     quality: str = "full",
     quality_flags: list[str] | None = None,
+    valid_time_override: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the sidecar metadata dict per the artifact contract.
 
     The sidecar JSON is written alongside each frame's COGs and provides
     the frontend with all information needed to render legends and tooltips.
     """
-    # Compute valid time = run_date + fh hours
-    valid_time = run_date + timedelta(hours=fh)
+    valid_time = valid_time_override or (run_date + timedelta(hours=fh))
 
     model_kind = getattr(var_spec_model, "kind", None) if var_spec_model is not None else None
     model_units = getattr(var_spec_model, "units", None) if var_spec_model is not None else None

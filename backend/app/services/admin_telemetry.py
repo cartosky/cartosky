@@ -14,6 +14,7 @@ from typing import Any
 import rasterio
 
 from ..models.registry import MODEL_REGISTRY
+from .run_ids import RUN_ID_RE, parse_run_id_datetime
 
 TELEMETRY_DB_PATH = Path(
     os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
@@ -107,8 +108,6 @@ PERF_TARGETS_MS = {
 }
 
 STATUS_KEEP_RUNS_PER_MODEL = 4
-
-RUN_ID_RE = re.compile(r"^(?P<day>\d{8})_(?P<hour>\d{2})z$")
 
 _db_init_lock = threading.Lock()
 _db_initialized = False
@@ -332,21 +331,7 @@ def _load_json_file(path: Path) -> dict[str, Any] | None:
 
 
 def _parse_run_id_datetime(run_id: str) -> datetime | None:
-    match = RUN_ID_RE.match(run_id)
-    if not match:
-        return None
-    try:
-        day = match.group("day")
-        hour = int(match.group("hour"))
-        return datetime(
-            int(day[0:4]),
-            int(day[4:6]),
-            int(day[6:8]),
-            hour,
-            tzinfo=timezone.utc,
-        )
-    except ValueError:
-        return None
+    return parse_run_id_datetime(run_id)
 
 
 def _parse_manifest_timestamp(value: Any) -> int | None:
@@ -377,11 +362,11 @@ def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> lis
     if not model_root.is_dir():
         return []
     run_ids = sorted(
-        [
-            path.name
-            for path in model_root.iterdir()
-            if path.is_dir() and RUN_ID_RE.match(path.name)
-        ],
+        (path.name for path in model_root.iterdir() if path.is_dir() and RUN_ID_RE.match(path.name)),
+        key=lambda run_id: (
+            _parse_run_id_datetime(run_id).timestamp() if _parse_run_id_datetime(run_id) is not None else float("-inf"),
+            run_id,
+        ),
         reverse=True,
     )
     return run_ids[: max(1, int(keep_runs))]
@@ -406,11 +391,11 @@ def _reviewable_run_ids_from_disk(data_root: Path, model_id: str, *, keep_runs: 
         return []
 
     published_runs = sorted(
-        [
-            path.name
-            for path in published_model_root.iterdir()
-            if path.is_dir() and re.match(r"^\d{8}_\d{2}z$", path.name)
-        ],
+        (path.name for path in published_model_root.iterdir() if path.is_dir() and RUN_ID_RE.match(path.name)),
+        key=lambda run_id: (
+            _parse_run_id_datetime(run_id).timestamp() if _parse_run_id_datetime(run_id) is not None else float("-inf"),
+            run_id,
+        ),
         reverse=True,
     )
 

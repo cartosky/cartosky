@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from app.models.mrms import MRMS_MODEL
+from app.services.builder.colorize import float_to_rgba
+from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params, write_rgba_cog, write_value_cog
+from app.services.builder.pipeline import build_sidecar_json
+from app.services.run_ids import format_run_id
+from app.services.scheduler import (
+    DEFAULT_LOOP_WEBP_MAX_DIM,
+    DEFAULT_LOOP_WEBP_QUALITY,
+    DEFAULT_LOOP_WEBP_TIER1_MAX_DIM,
+    DEFAULT_LOOP_WEBP_TIER1_QUALITY,
+    _pregenerate_loop_webp_for_run,
+    _promote_run,
+    _write_latest_pointer,
+    _write_run_manifest,
+)
+
+logger = logging.getLogger(__name__)
+
+MRMS_MODEL_ID = "mrms"
+MRMS_REGION_ID = "conus"
+MRMS_VARIABLE_ID = "reflectivity"
+MRMS_COLOR_MAP_ID = "mrms_reflectivity"
+
+
+@dataclass(frozen=True)
+class MRMSBundleFrame:
+    valid_time: datetime
+    values: np.ndarray
+    quality: str = "full"
+    quality_flags: list[str] = field(default_factory=list)
+    source_url: str | None = None
+    source_filename: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MRMSLoopPublishSettings:
+    loop_cache_root: Path
+    workers: int = 2
+    tier0_quality: int = DEFAULT_LOOP_WEBP_QUALITY
+    tier0_max_dim: int = DEFAULT_LOOP_WEBP_MAX_DIM
+    tier0_fixed_w: int = 0
+    tier1_quality: int = DEFAULT_LOOP_WEBP_TIER1_QUALITY
+    tier1_max_dim: int = DEFAULT_LOOP_WEBP_TIER1_MAX_DIM
+    tier1_fixed_w: int = 0
+
+
+@dataclass(frozen=True)
+class MRMSPublishResult:
+    run_id: str
+    published_run_dir: Path
+    manifest_path: Path
+    frame_count: int
+
+
+def publish_mrms_bundle(
+    *,
+    data_root: Path,
+    frames: list[MRMSBundleFrame],
+    publish_time: datetime | None = None,
+    loop_settings: MRMSLoopPublishSettings | None = None,
+) -> MRMSPublishResult:
+    if not frames:
+        raise ValueError("MRMS bundle publish requires at least one frame")
+
+    publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    run_id = format_run_id(publish_dt, include_minutes=True)
+
+    ordered_frames = sorted(frames, key=lambda item: item.valid_time.astimezone(timezone.utc))
+    targets: list[tuple[str, int]] = []
+    for fh, frame in enumerate(ordered_frames):
+        write_mrms_frame(
+            data_root=data_root,
+            run_id=run_id,
+            forecast_hour=fh,
+            frame=frame,
+        )
+        targets.append((MRMS_VARIABLE_ID, fh))
+
+    _promote_run(data_root, MRMS_MODEL_ID, run_id)
+    _write_run_manifest(
+        data_root=data_root,
+        model=MRMS_MODEL_ID,
+        run_id=run_id,
+        targets=targets,
+        plugin=MRMS_MODEL,
+    )
+    _write_latest_pointer(data_root, MRMS_MODEL_ID, run_id)
+
+    if loop_settings is not None:
+        _pregenerate_loop_webp_for_run(
+            data_root=data_root,
+            model=MRMS_MODEL_ID,
+            run_id=run_id,
+            loop_cache_root=loop_settings.loop_cache_root,
+            workers=loop_settings.workers,
+            tier0_quality=loop_settings.tier0_quality,
+            tier0_max_dim=loop_settings.tier0_max_dim,
+            tier0_fixed_w=loop_settings.tier0_fixed_w,
+            tier1_quality=loop_settings.tier1_quality,
+            tier1_max_dim=loop_settings.tier1_max_dim,
+            tier1_fixed_w=loop_settings.tier1_fixed_w,
+            variables=(MRMS_VARIABLE_ID,),
+            forecast_hours=range(len(ordered_frames)),
+        )
+
+    manifest_path = data_root / "manifests" / MRMS_MODEL_ID / f"{run_id}.json"
+    published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id
+    return MRMSPublishResult(
+        run_id=run_id,
+        published_run_dir=published_run_dir,
+        manifest_path=manifest_path,
+        frame_count=len(ordered_frames),
+    )
+
+
+def write_mrms_frame(
+    *,
+    data_root: Path,
+    run_id: str,
+    forecast_hour: int,
+    frame: MRMSBundleFrame,
+) -> None:
+    values = np.asarray(frame.values, dtype=np.float32)
+    expected_height, expected_width = _expected_target_shape()
+    if values.shape != (expected_height, expected_width):
+        raise ValueError(
+            "MRMS frame shape does not match the configured CartoSky target grid: "
+            f"got={values.shape} expected={(expected_height, expected_width)}"
+        )
+
+    fh_str = f"fh{int(forecast_hour):03d}"
+    staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    rgba_path = staging_dir / f"{fh_str}.rgba.cog.tif"
+    value_path = staging_dir / f"{fh_str}.val.cog.tif"
+    sidecar_path = staging_dir / f"{fh_str}.json"
+
+    rgba, colorize_meta = float_to_rgba(values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
+    write_rgba_cog(
+        rgba,
+        rgba_path,
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+        kind="discrete",
+        color_map_id=MRMS_COLOR_MAP_ID,
+    )
+    write_value_cog(
+        values,
+        value_path,
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+    )
+
+    run_dt = datetime.now(timezone.utc)
+    sidecar = build_sidecar_json(
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+        run_id=run_id,
+        var_id=MRMS_VARIABLE_ID,
+        fh=int(forecast_hour),
+        run_date=run_dt,
+        colorize_meta=colorize_meta,
+        var_spec={"type": "discrete", "units": "dBZ"},
+        var_spec_model=None,
+        value_downsample_factor=1,
+        quality=frame.quality,
+        quality_flags=frame.quality_flags,
+        valid_time_override=frame.valid_time.astimezone(timezone.utc),
+    )
+    if frame.source_url:
+        sidecar["source_url"] = frame.source_url
+    if frame.source_filename:
+        sidecar["source_filename"] = frame.source_filename
+    if frame.metadata:
+        sidecar["source_metadata"] = dict(frame.metadata)
+    _write_json_atomic(sidecar_path, sidecar)
+
+
+def _expected_target_shape() -> tuple[int, int]:
+    bbox, grid_m = get_grid_params(MRMS_MODEL_ID, MRMS_REGION_ID)
+    _, height, width = compute_transform_and_shape(bbox, grid_m)
+    return int(height), int(width)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    tmp_path.replace(path)

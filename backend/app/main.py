@@ -57,6 +57,7 @@ from .services.render_resampling import (
     variable_kind,
     variable_color_map_id,
 )
+from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services import admin_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service
 from backend.app.auth import twf_oauth
 
@@ -93,8 +94,6 @@ LOOP_URL_PREFIX = _normalized_path_prefix(
     default="/loop/",
 )
 CAPABILITIES_CONTRACT_VERSION = "v1"
-
-_RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
 _JSON_CACHE_RECHECK_SECONDS = float(
     _env_value(
         "CARTOSKY_JSON_CACHE_RECHECK_SECONDS",
@@ -1829,13 +1828,7 @@ _LOOP_MANIFEST_BBOX_DENSIFY_POINTS = 21
 
 
 def _run_hour(run_id: str) -> int | None:
-    match = _RUN_ID_RE.match(run_id)
-    if not match:
-        return None
-    try:
-        return int(run_id[9:11])
-    except ValueError:
-        return None
+    return run_id_hour(run_id)
 
 
 @lru_cache(maxsize=64)
@@ -1863,6 +1856,13 @@ def _model_allowed_cycle_hours(model: str) -> set[int]:
 
 
 def _run_matches_model_cycle(model: str, run_id: str) -> bool:
+    capabilities = list_model_capabilities().get(model.strip().lower())
+    if capabilities is not None:
+        product = str(getattr(capabilities, "product", "") or "").strip().lower()
+        ui_constraints = getattr(capabilities, "ui_constraints", {}) or {}
+        time_axis_mode = str(ui_constraints.get("time_axis_mode", "")).strip().lower()
+        if product == "obs" or time_axis_mode == "observed":
+            return parse_run_id_datetime(run_id) is not None
     hour = _run_hour(run_id)
     if hour is None:
         return False
@@ -2051,7 +2051,7 @@ def _latest_run_from_pointer(model: str) -> str | None:
         return None
 
     run_id = payload.get("run_id")
-    if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
+    if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
         logger.warning("Invalid run_id in LATEST.json at %s: %r", latest_path, run_id)
         return None
     if not _run_matches_model_cycle(model, run_id):
@@ -2073,14 +2073,21 @@ def _scan_manifest_runs(model: str) -> list[str]:
     runs: list[str] = []
     for file_path in model_manifest_dir.glob("*.json"):
         run_id = file_path.stem
-        if not _RUN_ID_RE.match(run_id):
+        if not RUN_ID_RE.match(run_id):
             continue
         if not _run_matches_model_cycle(model, run_id):
             continue
         if not (PUBLISHED_ROOT / model / run_id).is_dir():
             continue
         runs.append(run_id)
-    return sorted(set(runs), reverse=True)
+    return sorted(
+        set(runs),
+        key=lambda run_id: (
+            (parse_run_id_datetime(run_id).timestamp() if parse_run_id_datetime(run_id) is not None else float("-inf")),
+            run_id,
+        ),
+        reverse=True,
+    )
 
 
 def _serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:
@@ -2199,8 +2206,10 @@ def _published_run_observability_rows() -> list[dict[str, float | str]]:
         completion_ratio = (ready_variables / total_variables) if total_variables > 0 else 0.0
         run_age_hours = 0.0
         try:
-            run_dt = datetime.strptime(latest_run, "%Y%m%d_%Hz")
-            run_age_hours = max(0.0, (now_utc - run_dt).total_seconds() / 3600.0)
+            run_dt = parse_run_id_datetime(latest_run)
+            if run_dt is None:
+                raise ValueError(latest_run)
+            run_age_hours = max(0.0, (now_utc - run_dt.replace(tzinfo=None)).total_seconds() / 3600.0)
         except ValueError:
             run_age_hours = 0.0
         rows.append(
@@ -2278,7 +2287,7 @@ def _resolve_latest_run(model: str) -> str | None:
 def _resolve_run(model: str, run: str) -> str | None:
     if run == "latest":
         return _resolve_latest_run(model)
-    if not _RUN_ID_RE.match(run):
+    if not RUN_ID_RE.match(run):
         return None
     if not _run_matches_model_cycle(model, run):
         return None
