@@ -47,6 +47,20 @@ export function formatRunLabel(runId: string): string {
   return `${timeLabel} ${month}/${day}`;
 }
 
+export function formatObservedRunLabel(runId: string): string {
+  const parsed = parseRunId(runId);
+  if (!parsed) {
+    return runId;
+  }
+  const timeLabel = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+  const month = parsed.getMonth() + 1;
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${timeLabel} ${month}/${day}`;
+}
+
 export function formatObservedValidTime(iso: string | null | undefined): string | null {
   const parsed = parseIsoDate(iso);
   if (!parsed) {
@@ -59,7 +73,6 @@ export function formatObservedValidTime(iso: string | null | undefined): string 
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
     timeZoneName: "short",
   }).format(parsed);
 }
@@ -69,9 +82,10 @@ export function formatObservedCompactTime(iso: string | null | undefined): strin
   if (!parsed) {
     return null;
   }
-  const hours = String(parsed.getUTCHours()).padStart(2, "0");
-  const minutes = String(parsed.getUTCMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}Z`;
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
 }
 
 export function frameValidTime(row: { valid_time?: string; meta?: { meta?: { valid_time?: string | null } | null } | null } | null | undefined): string | null {

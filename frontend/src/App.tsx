@@ -1526,8 +1526,8 @@ export default function App() {
   }, [selectionKey]);
 
   const runOptions = useMemo<Option[]>(() => {
-    return buildRunOptions(runs, latestRunId);
-  }, [runs, latestRunId]);
+    return buildRunOptions(runs, latestRunId, selectedTimeAxisMode);
+  }, [runs, latestRunId, selectedTimeAxisMode]);
 
   const loopFrameTier0FallbackByHour = useMemo(() => {
     const map = new Map<number, string>();
@@ -5610,13 +5610,13 @@ export default function App() {
       return fromOptions;
     }
     if (run === "latest") {
-      return latestRunId ? `Latest (${formatRunLabel(latestRunId)})` : "Latest";
+      return latestRunId ? `Latest (${formatRunLabel(latestRunId, selectedTimeAxisMode)})` : "Latest";
     }
-    return formatRunLabel(run);
-  }, [runOptions, run, latestRunId]);
+    return formatRunLabel(run, selectedTimeAxisMode);
+  }, [runOptions, run, latestRunId, selectedTimeAxisMode]);
   const latestAvailableRunLabel = useMemo(() => {
-    return latestRunId ? formatRunLabel(latestRunId) : null;
-  }, [latestRunId]);
+    return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
+  }, [latestRunId, selectedTimeAxisMode]);
   const hasNewerRunAvailable = Boolean(
     latestRunId
     && run !== "latest"

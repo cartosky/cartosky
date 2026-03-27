@@ -1,4 +1,4 @@
-import { formatObservedCompactTime, formatRunLabel } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel } from "@/lib/time-axis";
 
 type BuildShareSummaryInput = {
   modelId: string;
@@ -59,12 +59,12 @@ function modelLabel(modelId: string): string {
   return MODEL_LABELS[key] ?? key.toUpperCase();
 }
 
-function runLabel(runId: string): string {
+function runLabel(runId: string, timeAxisMode: "forecast" | "observed" = "forecast"): string {
   const trimmed = runId.trim();
   if (!trimmed) {
     return "Latest";
   }
-  return formatRunLabel(trimmed);
+  return timeAxisMode === "observed" ? formatObservedRunLabel(trimmed) : formatRunLabel(trimmed);
 }
 
 function variableLabel(variableId: string, preferred?: string | null): string {
@@ -114,7 +114,7 @@ function formatTimeSummary(input: BuildShareSummaryInput): string {
 export function buildShareSummary(input: BuildShareSummaryInput): ShareSummary {
   const shortSummary = [
     modelLabel(input.modelId),
-    runLabel(input.runId),
+    runLabel(input.runId, input.timeAxisMode ?? "forecast"),
     formatTimeSummary(input),
     variableLabel(input.variableId, input.variableDisplayName),
   ].join(" • ");

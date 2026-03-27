@@ -1,19 +1,24 @@
-import { formatRunLabel as formatRunLabelFromTimeAxis, parseRunId } from "@/lib/time-axis";
+import {
+  formatObservedRunLabel,
+  formatRunLabel as formatRunLabelFromTimeAxis,
+  parseRunId,
+  type TimeAxisMode,
+} from "@/lib/time-axis";
 
 export type RunOption = {
   value: string;
   label: string;
 };
 
-export function formatRunLabel(runId: string): string {
-  return formatRunLabelFromTimeAxis(runId);
+export function formatRunLabel(runId: string, timeAxisMode: TimeAxisMode = "forecast"): string {
+  return timeAxisMode === "observed" ? formatObservedRunLabel(runId) : formatRunLabelFromTimeAxis(runId);
 }
 
-export function latestRunLabel(runId: string | null): string {
+export function latestRunLabel(runId: string | null, timeAxisMode: TimeAxisMode = "forecast"): string {
   if (!runId) {
     return "Latest";
   }
-  return `Latest (${formatRunLabel(runId)})`;
+  return `Latest (${formatRunLabel(runId, timeAxisMode)})`;
 }
 
 export function sortRunIdsDescending(runs: string[]): string[] {
@@ -31,12 +36,16 @@ export function pickLatestRunId(runs: string[]): string | null {
   return sortRunIdsDescending(runs)[0] ?? null;
 }
 
-export function buildRunOptions(runs: string[], latestRunId: string | null): RunOption[] {
+export function buildRunOptions(
+  runs: string[],
+  latestRunId: string | null,
+  timeAxisMode: TimeAxisMode = "forecast"
+): RunOption[] {
   const concrete = sortRunIdsDescending(runs)
     .filter((runId) => runId !== latestRunId);
 
   return [
-    { value: "latest", label: latestRunLabel(latestRunId) },
-    ...concrete.map((runId) => ({ value: runId, label: formatRunLabel(runId) })),
+    { value: "latest", label: latestRunLabel(latestRunId, timeAxisMode) },
+    ...concrete.map((runId) => ({ value: runId, label: formatRunLabel(runId, timeAxisMode) })),
   ];
 }
