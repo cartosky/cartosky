@@ -5241,11 +5241,12 @@ export default function App() {
   const committedLoopHour = Number.isFinite(loopDisplayHour) ? (loopDisplayHour as number) : null;
   // Loop presentation is bitmap-backed. During a variable switch, fall back to
   // the holdover bitmap from the outgoing selection until the new selection's
-  // first frame is ready.
-  const targetLoopBitmap = hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
+  // first frame is ready.  When the render mode has switched to tiles (high-zoom
+  // detail), suppress all loop bitmaps so the tile layers can take over.
+  const targetLoopBitmap = renderMode !== "tiles" && hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
     ? getDecodedLoopBitmap(activeLoopHour, loopPlaybackRenderMode)
     : null;
-  const committedLoopBitmap = committedLoopHour !== null && hasDecodedLoopFrame(committedLoopHour, loopPlaybackRenderMode)
+  const committedLoopBitmap = renderMode !== "tiles" && committedLoopHour !== null && hasDecodedLoopFrame(committedLoopHour, loopPlaybackRenderMode)
     ? getDecodedLoopBitmap(committedLoopHour, loopPlaybackRenderMode)
     : null;
   const newLoopBitmap = targetLoopBitmap ?? committedLoopBitmap;
