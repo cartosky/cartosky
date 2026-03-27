@@ -8,6 +8,13 @@ export type ObservedSourceStatus = {
   ageMinutes: number | null;
 };
 
+type ObservedAvailabilityInput = {
+  freshness_state?: string | null;
+  latest_scan_age_minutes?: number | null;
+  usable?: boolean | null;
+  degraded_reason?: string | null;
+};
+
 const RUN_ID_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})?z$/i;
 
 export function parseRunId(runId: string | null | undefined): Date | null {
@@ -130,6 +137,54 @@ export function deriveObservedSourceStatus(params: {
     label: "Live",
     description: `Newest scan is ${ageMinutes} minute${ageMinutes === 1 ? "" : "s"} old.`,
     ageMinutes,
+  };
+}
+
+export function observedSourceStatusFromAvailability(
+  input: ObservedAvailabilityInput | null | undefined
+): ObservedSourceStatus | null {
+  const freshnessState = String(input?.freshness_state ?? "").trim().toLowerCase();
+  if (!freshnessState) {
+    return null;
+  }
+  const ageMinutes = Number.isFinite(input?.latest_scan_age_minutes)
+    ? Math.max(0, Number(input?.latest_scan_age_minutes))
+    : null;
+  const degradedReason = String(input?.degraded_reason ?? "").trim().replace(/_/g, " ");
+  const ageDescription =
+    ageMinutes === null
+      ? null
+      : `Newest scan is ${ageMinutes} minute${ageMinutes === 1 ? "" : "s"} old.`;
+
+  if (freshnessState === "live") {
+    return {
+      tone: "live",
+      label: "Live",
+      description: ageDescription ?? "Newest scan is within the normal freshness window.",
+      ageMinutes,
+    };
+  }
+  if (freshnessState === "delayed") {
+    return {
+      tone: "delayed",
+      label: "Delayed",
+      description: ageDescription ?? "Newest scan is delayed.",
+      ageMinutes,
+    };
+  }
+  if (freshnessState === "stale") {
+    return {
+      tone: "stale",
+      label: "Stale",
+      description: ageDescription ?? "Newest scan is stale.",
+      ageMinutes,
+    };
+  }
+  return {
+    tone: "unavailable",
+    label: "Unavailable",
+    description: degradedReason ? `MRMS is unavailable: ${degradedReason}.` : "No publishable MRMS bundle is available.",
+    ageMinutes: null,
   };
 }
 

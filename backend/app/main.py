@@ -42,6 +42,7 @@ from .models.serialization import (
     serialize_model_capability,
     serialize_variable_capability,
 )
+from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
 from .services.builder.colorize import float_to_rgba
 from .services.render_resampling import (
     allow_high_quality_loop_resampling,
@@ -2158,12 +2159,13 @@ def _availability_for_models(
 ) -> dict[str, dict[str, Any]]:
     availability: dict[str, dict[str, Any]] = {}
     for model_id in model_ids:
+        model_capability = capabilities_by_model.get(model_id)
         published_runs = _scan_manifest_runs(model_id)
         latest_run = _resolve_latest_run(model_id)
         latest_run_ready, latest_run_ready_vars, latest_run_ready_frame_count = _latest_run_readiness(
             model_id,
             latest_run,
-            model_capability=capabilities_by_model.get(model_id),
+            model_capability=model_capability,
         )
         availability[model_id] = {
             "latest_run": latest_run,
@@ -2172,6 +2174,14 @@ def _availability_for_models(
             "latest_run_ready_vars": latest_run_ready_vars,
             "latest_run_ready_frame_count": latest_run_ready_frame_count,
         }
+        if is_observed_model_capability(model_capability):
+            availability[model_id].update(
+                build_observed_bundle_health(
+                    latest_run=latest_run,
+                    manifest=_load_manifest(model_id, latest_run) if latest_run else None,
+                    source=model_id,
+                )
+            )
     return availability
 
 
@@ -2212,13 +2222,19 @@ def _published_run_observability_rows() -> list[dict[str, float | str]]:
             run_age_hours = max(0.0, (now_utc - run_dt.replace(tzinfo=None)).total_seconds() / 3600.0)
         except ValueError:
             run_age_hours = 0.0
-        rows.append(
-            {
-                "model_id": model_id,
-                "run_age_hours": run_age_hours,
-                "completion_ratio": completion_ratio,
-            }
-        )
+        row: dict[str, float | str | bool | None] = {
+            "model_id": model_id,
+            "run_age_hours": run_age_hours,
+            "completion_ratio": completion_ratio,
+        }
+        if is_observed_model_capability(capabilities_by_model.get(model_id)):
+            latest_scan_age_minutes = item.get("latest_scan_age_minutes")
+            if isinstance(latest_scan_age_minutes, (int, float)):
+                row["run_age_hours"] = max(0.0, float(latest_scan_age_minutes) / 60.0)
+                row["latest_scan_age_minutes"] = float(latest_scan_age_minutes)
+            row["freshness_state"] = str(item.get("freshness_state") or "unavailable")
+            row["usable"] = bool(item.get("usable"))
+        rows.append(row)
     return rows
 
 

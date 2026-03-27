@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,17 +12,19 @@ from app.models.mrms import MRMS_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params, write_rgba_cog, write_value_cog
 from app.services.builder.pipeline import build_sidecar_json
-from app.services.run_ids import format_run_id
-from app.services.scheduler import (
+from app.services.observed_bundle_health import build_observed_bundle_health
+from app.services.publish_utils import (
     DEFAULT_LOOP_WEBP_MAX_DIM,
     DEFAULT_LOOP_WEBP_QUALITY,
     DEFAULT_LOOP_WEBP_TIER1_MAX_DIM,
     DEFAULT_LOOP_WEBP_TIER1_QUALITY,
-    _pregenerate_loop_webp_for_run,
-    _promote_run,
-    _write_latest_pointer,
-    _write_run_manifest,
+    pregenerate_loop_webp_for_run,
+    promote_run,
+    write_json_atomic,
+    write_latest_pointer,
+    write_run_manifest,
 )
+from app.services.run_ids import format_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -88,18 +89,39 @@ def publish_mrms_bundle(
         )
         targets.append((MRMS_VARIABLE_ID, fh))
 
-    _promote_run(data_root, MRMS_MODEL_ID, run_id)
-    _write_run_manifest(
+    promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
+    write_run_manifest(
         data_root=data_root,
         model=MRMS_MODEL_ID,
         run_id=run_id,
         targets=targets,
         plugin=MRMS_MODEL,
+        metadata=build_observed_bundle_health(
+            latest_run=run_id,
+            manifest={
+                "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "variables": {
+                    MRMS_VARIABLE_ID: {
+                        "expected_frames": len(ordered_frames),
+                        "available_frames": len(ordered_frames),
+                        "frames": [
+                            {
+                                "fh": fh,
+                                "valid_time": frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            }
+                            for fh, frame in enumerate(ordered_frames)
+                        ],
+                    }
+                },
+            },
+            source=MRMS_MODEL_ID,
+            now_utc=publish_dt,
+        ),
     )
-    _write_latest_pointer(data_root, MRMS_MODEL_ID, run_id)
+    write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
 
     if loop_settings is not None:
-        _pregenerate_loop_webp_for_run(
+        pregenerate_loop_webp_for_run(
             data_root=data_root,
             model=MRMS_MODEL_ID,
             run_id=run_id,
@@ -186,17 +208,10 @@ def write_mrms_frame(
         sidecar["source_filename"] = frame.source_filename
     if frame.metadata:
         sidecar["source_metadata"] = dict(frame.metadata)
-    _write_json_atomic(sidecar_path, sidecar)
+    write_json_atomic(sidecar_path, sidecar)
 
 
 def _expected_target_shape() -> tuple[int, int]:
     bbox, grid_m = get_grid_params(MRMS_MODEL_ID, MRMS_REGION_ID)
     _, height, width = compute_transform_and_shape(bbox, grid_m)
     return int(height), int(width)
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
-    tmp_path.replace(path)

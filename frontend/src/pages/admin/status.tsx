@@ -9,6 +9,7 @@ import {
   type StatusResult,
   type TwfStatus,
 } from "@/lib/admin-api";
+import { formatObservedValidTime, formatRunLabel } from "@/lib/time-axis";
 
 type WindowValue = "24h" | "7d" | "30d";
 type ViewFilter = "issues" | "artifacts" | "stale" | "all";
@@ -39,9 +40,20 @@ function issueLabel(issueType: string): string {
   if (issueType === "run_stalled") return "Run stalled";
   if (issueType === "run_incomplete") return "Run incomplete";
   if (issueType === "stale_run") return "Stale latest run";
+  if (issueType === "bundle_unavailable") return "Bundle unavailable";
+  if (issueType === "bundle_stalled") return "Bundle stalled";
+  if (issueType === "stale_bundle") return "Stale bundle";
+  if (issueType === "delayed_bundle") return "Delayed bundle";
   if (issueType === "manifest_missing") return "Missing manifest";
   if (issueType === "manifest_invalid") return "Invalid manifest";
   return "Healthy";
+}
+
+function freshnessTone(state: string | null | undefined): "pass" | "warning" | "fail" {
+  if (state === "live") return "pass";
+  if (state === "delayed") return "warning";
+  if (state === "stale" || state === "unavailable") return "fail";
+  return "pass";
 }
 
 function StatusBadge(props: { tone: "pass" | "warning" | "fail"; label: string }) {
@@ -93,7 +105,14 @@ function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
   if (view === "issues") return rows.filter((row) => row.status !== "healthy");
   if (view === "artifacts") return rows.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
-  return rows.filter((row) => row.issue_type === "stale_run" || row.issue_type === "run_stalled");
+  return rows.filter((row) => (
+    row.issue_type === "stale_run"
+    || row.issue_type === "run_stalled"
+    || row.issue_type === "bundle_unavailable"
+    || row.issue_type === "bundle_stalled"
+    || row.issue_type === "stale_bundle"
+    || row.issue_type === "delayed_bundle"
+  ));
 }
 
 function viewLabel(view: ViewFilter): string {
@@ -181,7 +200,14 @@ export default function AdminStatusPage() {
   const modelOptions = Array.from(new Set(results.map((item) => item.model_id))).sort();
   const issueRows = results.filter((row) => row.status !== "healthy");
   const artifactRows = results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
-  const staleRows = results.filter((row) => row.issue_type === "stale_run" || row.issue_type === "run_stalled");
+  const staleRows = results.filter((row) => (
+    row.issue_type === "stale_run"
+    || row.issue_type === "run_stalled"
+    || row.issue_type === "bundle_unavailable"
+    || row.issue_type === "bundle_stalled"
+    || row.issue_type === "stale_bundle"
+    || row.issue_type === "delayed_bundle"
+  ));
   const healthyRows = results.filter((row) => row.status === "healthy");
   const emptyStateMessage =
     results.length === 0
@@ -362,11 +388,13 @@ export default function AdminStatusPage() {
         </div>
 
         <div ref={tableScrollRef} onScroll={() => syncScroll("table")} className="overflow-x-auto pb-2">
-          <table className="w-max min-w-[1220px] border-separate border-spacing-y-2 text-left text-sm">
+          <table className="w-max min-w-[1420px] border-separate border-spacing-y-2 text-left text-sm">
             <thead className="text-white/48">
               <tr>
                 <th className="px-3 py-2 font-medium">Model</th>
                 <th className="px-3 py-2 font-medium">Run</th>
+                <th className="px-3 py-2 font-medium">Freshness</th>
+                <th className="px-3 py-2 font-medium">Latest Scan</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Issue type</th>
                 <th className="px-3 py-2 font-medium">Summary</th>
@@ -379,7 +407,7 @@ export default function AdminStatusPage() {
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/48">
+                  <td colSpan={11} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/48">
                     {emptyStateMessage}
                   </td>
                 </tr>
@@ -394,7 +422,19 @@ export default function AdminStatusPage() {
                     ].join(" ")}
                   >
                     <td className="rounded-l-2xl border-y border-l border-white/10 px-3 py-3 font-semibold">{item.model_id}</td>
-                    <td className="border-y border-white/10 px-3 py-3">{item.run_id}</td>
+                    <td className="border-y border-white/10 px-3 py-3">{formatRunLabel(item.run_id)}</td>
+                    <td className="border-y border-white/10 px-3 py-3">
+                      {item.time_axis_mode === "observed" && item.freshness_state ? (
+                        <StatusBadge tone={freshnessTone(item.freshness_state)} label={item.freshness_state} />
+                      ) : (
+                        <span className="text-white/40">—</span>
+                      )}
+                    </td>
+                    <td className="border-y border-white/10 px-3 py-3 text-white/68">
+                      {item.time_axis_mode === "observed"
+                        ? (formatObservedValidTime(item.latest_scan_valid_time ?? null) ?? "—")
+                        : "—"}
+                    </td>
                     <td className="border-y border-white/10 px-3 py-3">
                       <StatusBadge tone={issueTone(item)} label={item.status} />
                     </td>
@@ -450,6 +490,42 @@ export default function AdminStatusPage() {
                   <div className="mt-3"><StatusBadge tone={issueTone(selected)} label={issueLabel(selected.issue_type)} /></div>
                 </div>
               </div>
+
+              {selected.time_axis_mode === "observed" ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Freshness</div>
+                    <div className="mt-3">
+                      <StatusBadge
+                        tone={freshnessTone(selected.freshness_state)}
+                        label={selected.freshness_state ?? "unknown"}
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Latest scan</div>
+                    <div className="mt-2 text-sm leading-6 text-white">
+                      {formatObservedValidTime(selected.latest_scan_valid_time ?? null) ?? "—"}
+                    </div>
+                    <div className="mt-1 text-sm text-white/60">
+                      {Number.isFinite(selected.latest_scan_age_minutes)
+                        ? `${selected.latest_scan_age_minutes} minutes old`
+                        : "Age unavailable"}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Bundle publish</div>
+                    <div className="mt-2 text-sm leading-6 text-white">
+                      {formatObservedValidTime(selected.bundle_published_at ?? null) ?? "—"}
+                    </div>
+                    <div className="mt-1 text-sm text-white/60">
+                      {Number.isFinite(selected.observation_to_publish_latency_seconds)
+                        ? `${Math.round((selected.observation_to_publish_latency_seconds ?? 0) / 60)} min obs-to-publish`
+                        : "Latency unavailable"}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
                 <div className="text-xs uppercase tracking-[0.22em] text-white/42">Summary</div>

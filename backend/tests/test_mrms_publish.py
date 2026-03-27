@@ -49,7 +49,7 @@ def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         mrms_publish,
-        "_pregenerate_loop_webp_for_run",
+        "pregenerate_loop_webp_for_run",
         lambda **_: (0, 0),
     )
 
@@ -89,6 +89,11 @@ def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
     assert latest_payload["run_id"] == "20260327_1206z"
 
     manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["metadata"]["source"] == "mrms"
+    assert manifest["metadata"]["time_axis_mode"] == "observed"
+    assert manifest["metadata"]["latest_scan_valid_time"] == "2026-03-27T12:02:00Z"
+    assert manifest["metadata"]["target_frame_count"] == 2
+    assert manifest["metadata"]["available_frame_count"] == 2
     reflectivity = manifest["variables"]["reflectivity"]
     assert reflectivity["expected_frames"] == 2
     assert reflectivity["available_frames"] == 2

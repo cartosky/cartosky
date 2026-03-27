@@ -13,7 +13,7 @@ _REGISTRY = CollectorRegistry()
 _SUMMARY_LOCK = threading.Lock()
 _RECENT_HTTP_OBSERVATIONS: deque[tuple[str, float, str]] = deque(maxlen=4096)
 _SAMPLE_CACHE_RESULTS: dict[tuple[str, str], int] = {}
-_PUBLISHED_RUN_HEALTH: dict[str, dict[str, float]] = {}
+_PUBLISHED_RUN_HEALTH: dict[str, dict[str, Any]] = {}
 _SAMPLE_CACHE_ENTRIES: dict[str, int] = {}
 
 HTTP_REQUESTS_TOTAL = Counter(
@@ -115,8 +115,8 @@ def set_sample_cache_entries(*, endpoint: str, entries: int) -> None:
         _SAMPLE_CACHE_ENTRIES[endpoint_label] = safe_entries
 
 
-def replace_published_run_health(rows: list[dict[str, float | str]]) -> None:
-    next_snapshot: dict[str, dict[str, float]] = {}
+def replace_published_run_health(rows: list[dict[str, float | str | bool | None]]) -> None:
+    next_snapshot: dict[str, dict[str, Any]] = {}
     for row in rows:
         model_id = str(row.get("model_id") or "").strip().lower()
         if not model_id:
@@ -129,6 +129,14 @@ def replace_published_run_health(rows: list[dict[str, float | str]]) -> None:
             "run_age_hours": age_hours,
             "completion_ratio": completion_ratio,
         }
+        freshness_state = row.get("freshness_state")
+        if isinstance(freshness_state, str) and freshness_state:
+            next_snapshot[model_id]["freshness_state"] = freshness_state
+        latest_scan_age_minutes = row.get("latest_scan_age_minutes")
+        if isinstance(latest_scan_age_minutes, (int, float)):
+            next_snapshot[model_id]["latest_scan_age_minutes"] = max(0.0, float(latest_scan_age_minutes))
+        if "usable" in row:
+            next_snapshot[model_id]["usable"] = bool(row.get("usable"))
     with _SUMMARY_LOCK:
         _PUBLISHED_RUN_HEALTH.clear()
         _PUBLISHED_RUN_HEALTH.update(next_snapshot)
@@ -192,6 +200,13 @@ def get_observability_summary() -> dict[str, Any]:
                 "model_id": model_id,
                 "run_age_hours": round(values["run_age_hours"], 2),
                 "completion_ratio": round(values["completion_ratio"], 3),
+                "freshness_state": values.get("freshness_state"),
+                "latest_scan_age_minutes": (
+                    round(float(values["latest_scan_age_minutes"]), 1)
+                    if isinstance(values.get("latest_scan_age_minutes"), (int, float))
+                    else None
+                ),
+                "usable": bool(values.get("usable")) if "usable" in values else None,
             }
             for model_id, values in sorted(published_health.items())
         ],

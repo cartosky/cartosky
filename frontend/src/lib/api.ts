@@ -13,6 +13,7 @@ export type ModelOption = {
 
 export type ModelTimeAxisMode = "forecast" | "observed";
 export type ModelDefaultFrameSelection = "first" | "latest";
+export type AvailabilityFreshnessState = "live" | "delayed" | "stale" | "unavailable";
 
 export type CapabilityModelDefaults = Record<string, unknown> & {
   default_var_key?: string;
@@ -66,6 +67,19 @@ export type CapabilitiesResponse = {
       latest_run_ready?: boolean;
       latest_run_ready_vars?: string[];
       latest_run_ready_frame_count?: number;
+      source?: string | null;
+      time_axis_mode?: ModelTimeAxisMode | null;
+      latest_scan_valid_time?: string | null;
+      latest_scan_age_minutes?: number | null;
+      bundle_published_at?: string | null;
+      bundle_age_seconds?: number | null;
+      observation_to_publish_latency_seconds?: number | null;
+      target_frame_count?: number | null;
+      available_frame_count?: number | null;
+      stale?: boolean | null;
+      usable?: boolean | null;
+      degraded_reason?: string | null;
+      freshness_state?: AvailabilityFreshnessState | null;
     }
   >;
 };

@@ -14,6 +14,7 @@ from typing import Any
 import rasterio
 
 from ..models.registry import MODEL_REGISTRY
+from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
 
 TELEMETRY_DB_PATH = Path(
@@ -1495,12 +1496,26 @@ def _scan_run_issue(
     run_dt = _parse_run_id_datetime(run_id)
     run_timestamp = int(run_dt.timestamp()) if run_dt is not None else None
     latest_for_model = run_id == latest_run_id
+    plugin = MODEL_REGISTRY.get(model_id)
+    model_capability = getattr(plugin, "capabilities", None) if plugin is not None else None
+    observed_model = is_observed_model_capability(model_capability)
+    observed_bundle = (
+        build_observed_bundle_health(
+            latest_run=run_id,
+            manifest=manifest,
+            source=model_id,
+            now_utc=now_utc,
+        )
+        if observed_model
+        else {}
+    )
 
     base_row = {
         "id": f"{model_id}:{run_id}",
         "model_id": model_id,
         "run_id": run_id,
         "latest_for_model": latest_for_model,
+        "time_axis_mode": "observed" if observed_model else "forecast",
         "run_timestamp": run_timestamp,
         "run_age_hours": round(max(0.0, (now_utc.timestamp() - (run_timestamp or now_utc.timestamp())) / 3600.0), 1),
         "expected_frames": 0,
@@ -1511,6 +1526,14 @@ def _scan_run_issue(
         "incomplete_variable_count": 0,
         "incomplete_variables": [],
         "sample_paths": [],
+        "latest_scan_valid_time": observed_bundle.get("latest_scan_valid_time"),
+        "latest_scan_age_minutes": observed_bundle.get("latest_scan_age_minutes"),
+        "bundle_published_at": observed_bundle.get("bundle_published_at"),
+        "bundle_age_seconds": observed_bundle.get("bundle_age_seconds"),
+        "freshness_state": observed_bundle.get("freshness_state"),
+        "usable": observed_bundle.get("usable"),
+        "degraded_reason": observed_bundle.get("degraded_reason"),
+        "observation_to_publish_latency_seconds": observed_bundle.get("observation_to_publish_latency_seconds"),
     }
 
     if manifest is None:
@@ -1618,6 +1641,22 @@ def _scan_run_issue(
         status = "error"
         issue_type = "artifact_failure"
         summary = f"{missing_artifact_count} missing artifacts and {unreadable_artifact_count} unreadable value grids detected."
+    elif observed_model and latest_for_model and observed_bundle.get("freshness_state") == "unavailable":
+        status = "error"
+        issue_type = "bundle_unavailable"
+        summary = "Latest observed bundle is unavailable or missing required scan metadata."
+    elif observed_model and latest_for_model and observed_bundle.get("freshness_state") == "stale" and available_frames < expected_frames:
+        status = "error"
+        issue_type = "bundle_stalled"
+        summary = f"Latest observed bundle is stale and incomplete at {available_frames}/{expected_frames} frames."
+    elif observed_model and latest_for_model and observed_bundle.get("freshness_state") == "stale":
+        status = "warning"
+        issue_type = "stale_bundle"
+        summary = "Latest observed bundle is older than the freshness threshold."
+    elif observed_model and latest_for_model and observed_bundle.get("freshness_state") == "delayed":
+        status = "warning"
+        issue_type = "delayed_bundle"
+        summary = "Latest observed bundle is delayed beyond the normal freshness window."
     elif latest_for_model and stale_latest and available_frames < expected_frames:
         status = "error"
         issue_type = "run_stalled"
@@ -1633,6 +1672,11 @@ def _scan_run_issue(
 
     return {
         **base_row,
+        "run_age_hours": (
+            round(float(observed_bundle["latest_scan_age_minutes"]) / 60.0, 1)
+            if observed_model and isinstance(observed_bundle.get("latest_scan_age_minutes"), (int, float))
+            else base_row["run_age_hours"]
+        ),
         "status": status,
         "issue_type": issue_type,
         "summary": summary,

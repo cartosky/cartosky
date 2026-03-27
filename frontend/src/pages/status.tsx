@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchCapabilities } from "@/lib/api";
+import { fetchCapabilities, readCapabilityTimeAxisMode, type CapabilitiesResponse, type CapabilityModel } from "@/lib/api";
+import { formatObservedCompactTime, formatRunLabel, observedSourceStatusFromAvailability } from "@/lib/time-axis";
 
 function GlassCard({
   title,
@@ -50,35 +51,19 @@ function Pill({
   );
 }
 
-function formatRunLabel(runId?: string): string {
-  if (!runId) return "—";
-  const normalized = runId.trim();
-  if (!normalized) return "—";
-  if (normalized.toLowerCase() === "latest") return "Latest";
-
-  const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
-  if (runMatch) {
-    const [, year, month, day, hour] = runMatch;
-    const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0));
-    const dateLabel = new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC",
-    }).format(runDate);
-    return `${hour}Z (${dateLabel})`;
-  }
-
-  const hourMatch = normalized.match(/_(\d{2})z$/i);
-  if (hourMatch) return `${hourMatch[1]}Z`;
-  return normalized;
-}
-
 function pct(n: number) {
   if (!Number.isFinite(n)) return "—";
   return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
 }
 
-type Capabilities = any; // keep loose; you already have this shape in your project
+function pillTone(value: string): "good" | "warn" | "bad" | "neutral" {
+  if (value === "good" || value === "live") return "good";
+  if (value === "warn" || value === "delayed") return "warn";
+  if (value === "bad" || value === "stale") return "bad";
+  return "neutral";
+}
+
+type Capabilities = CapabilitiesResponse;
 
 type Manifest = {
   model: string;
@@ -197,14 +182,20 @@ export default function Status() {
 
   const modelRows = useMemo(() => {
     const availability = caps?.availability ?? {};
+    const modelCatalog = caps?.model_catalog ?? {};
     const modelIds = Object.keys(availability).map((k) => k.toLowerCase());
 
     return modelIds.map((modelId) => {
       const a = availability?.[modelId] ?? availability?.[modelId.toUpperCase()] ?? {};
-      const latestRun: string | undefined = a?.latest_run;
+      const modelCapability = (modelCatalog[modelId] ?? modelCatalog[modelId.toUpperCase()]) as CapabilityModel | undefined;
+      const timeAxisMode = readCapabilityTimeAxisMode(modelCapability);
+      const observedStatus = timeAxisMode === "observed" ? observedSourceStatusFromAvailability(a) : null;
+      const latestRun: string | undefined = typeof a?.latest_run === "string" ? a.latest_run : undefined;
 
       const latestReady: boolean | undefined = a?.latest_run_ready;
-      const readyVars: number | undefined = a?.latest_run_ready_vars;
+      const readyVars: number | undefined = Array.isArray(a?.latest_run_ready_vars)
+        ? a.latest_run_ready_vars.length
+        : undefined;
       const readyFrames: number | undefined = a?.latest_run_ready_frame_count;
 
       const manifest = latestRun && latestRun !== "latest" ? manifests[modelId] : undefined;
@@ -219,21 +210,22 @@ export default function Status() {
 
       const totalVars = Number.isFinite(readyVars) ? Math.max(readyVars ?? 0, varKeys.length) : varKeys.length;
 
-      const state = classifyOverall({
-      latestReady,
-      readyVars,
-      totalVars: totalVars || undefined,
-      frameRatio,
-      availableFrames:
-      expectedTotal > 0
-        ? availableTotal
-        : Number.isFinite(readyFrames)
-        ? readyFrames
-        : 0,
+      const state = observedStatus ?? classifyOverall({
+        latestReady,
+        readyVars,
+        totalVars: totalVars || undefined,
+        frameRatio,
+        availableFrames:
+          expectedTotal > 0
+            ? availableTotal
+            : Number.isFinite(readyFrames)
+              ? readyFrames
+              : 0,
       });
 
       return {
         modelId,
+        timeAxisMode,
         latestRun,
         latestReady,
         readyVars,
@@ -242,6 +234,10 @@ export default function Status() {
         availableTotal,
         frameRatio,
         state,
+        latestScanValidTime: typeof a?.latest_scan_valid_time === "string" ? a.latest_scan_valid_time : null,
+        bundlePublishedAt: typeof a?.bundle_published_at === "string" ? a.bundle_published_at : null,
+        usable: a?.usable === true,
+        degradedReason: typeof a?.degraded_reason === "string" ? a.degraded_reason : null,
       };
     });
   }, [caps, manifests]);
@@ -361,10 +357,12 @@ export default function Status() {
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-black/25 backdrop-blur-xl overflow-hidden">
-          <div className="grid grid-cols-6 gap-0 text-xs text-white/60 border-b border-white/10 bg-white/5">
+          <div className="grid grid-cols-8 gap-0 text-xs text-white/60 border-b border-white/10 bg-white/5">
             <div className="px-4 py-3">Model</div>
             <div className="px-4 py-3">Latest Run</div>
             <div className="px-4 py-3">State</div>
+            <div className="px-4 py-3">Latest Scan</div>
+            <div className="px-4 py-3">Published</div>
             <div className="px-4 py-3">Vars Ready</div>
             <div className="px-4 py-3">Frames</div>
             <div className="px-4 py-3">Progress</div>
@@ -374,7 +372,7 @@ export default function Status() {
             <div className="px-4 py-4 text-sm text-white/70">No models found in capabilities.</div>
           ) : (
             modelRows.map((r) => {
-              const tone = r.state.tone;
+              const tone = pillTone(String(r.state.tone));
               const varsLabel =
                 Number.isFinite(r.readyVars) ? `${r.readyVars}` : r.expectedTotal > 0 ? "—" : "—";
 
@@ -384,12 +382,22 @@ export default function Status() {
               return (
                 <div
                   key={r.modelId}
-                  className="grid grid-cols-6 text-sm text-white/80 border-b border-white/5 last:border-b-0"
+                  className="grid grid-cols-8 text-sm text-white/80 border-b border-white/5 last:border-b-0"
                 >
                   <div className="px-4 py-3 font-medium uppercase">{r.modelId}</div>
-                  <div className="px-4 py-3 text-white/70">{formatRunLabel(r.latestRun)}</div>
+                  <div className="px-4 py-3 text-white/70">{r.latestRun ? formatRunLabel(r.latestRun) : "—"}</div>
                   <div className="px-4 py-3">
                     <Pill tone={tone}>{r.state.label}</Pill>
+                  </div>
+                  <div className="px-4 py-3 text-white/70">
+                    {r.timeAxisMode === "observed" && r.latestScanValidTime
+                      ? formatObservedCompactTime(r.latestScanValidTime) ?? "—"
+                      : "—"}
+                  </div>
+                  <div className="px-4 py-3 text-white/70">
+                    {r.timeAxisMode === "observed" && r.bundlePublishedAt
+                      ? formatObservedCompactTime(r.bundlePublishedAt) ?? "—"
+                      : "—"}
                   </div>
                   <div className="px-4 py-3 text-white/70">{varsLabel}</div>
                   <div className="px-4 py-3 text-white/70">{framesLabel}</div>

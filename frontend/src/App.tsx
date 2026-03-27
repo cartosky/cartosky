@@ -54,7 +54,14 @@ import {
 import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
 import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
-import { deriveObservedSourceStatus, frameValidTime, formatObservedCompactTime, runIdToIso, type TimeAxisMode } from "@/lib/time-axis";
+import {
+  deriveObservedSourceStatus,
+  frameValidTime,
+  formatObservedCompactTime,
+  observedSourceStatusFromAvailability,
+  runIdToIso,
+  type TimeAxisMode,
+} from "@/lib/time-axis";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
@@ -1451,6 +1458,10 @@ export default function App() {
       return null;
     }
     const availability = model ? capabilities?.availability?.[model] : null;
+    const authoritativeStatus = observedSourceStatusFromAvailability(availability);
+    if (authoritativeStatus) {
+      return authoritativeStatus;
+    }
     return deriveObservedSourceStatus({
       latestRunAvailable: Boolean(availability?.latest_run),
       latestRunReady: availability?.latest_run_ready,
@@ -1458,6 +1469,46 @@ export default function App() {
       availableFrameCount: frameRows.length,
     });
   }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length]);
+  const buildObservedTelemetryMeta = useCallback(
+    (frameHour?: number | null, extraMeta?: Record<string, unknown> | null): Record<string, unknown> | undefined => {
+      const base = extraMeta ? { ...extraMeta } : {};
+      if (selectedTimeAxisMode !== "observed") {
+        return Object.keys(base).length > 0 ? base : undefined;
+      }
+      const availability = model ? capabilities?.availability?.[model] : null;
+      const hour = Number.isFinite(frameHour) ? Number(frameHour) : forecastHour;
+      const frameValidTimeISO = Number.isFinite(hour)
+        ? (frameValidTimesByHour[hour] ?? currentFrameValidTimeISO ?? null)
+        : (currentFrameValidTimeISO ?? null);
+      const parsedValidTime = frameValidTimeISO ? new Date(frameValidTimeISO) : null;
+      const observationAgeMs = parsedValidTime && Number.isFinite(parsedValidTime.getTime())
+        ? Math.max(0, Date.now() - parsedValidTime.getTime())
+        : null;
+      return {
+        ...base,
+        time_axis_mode: "observed",
+        source_status: observedSourceStatus?.tone ?? null,
+        source_status_label: observedSourceStatus?.label ?? null,
+        latest_scan_valid_time:
+          (typeof availability?.latest_scan_valid_time === "string" && availability.latest_scan_valid_time)
+          || newestFrameValidTimeISO
+          || null,
+        latest_scan_age_minutes: observedSourceStatus?.ageMinutes ?? null,
+        frame_valid_time: frameValidTimeISO,
+        observation_age_ms: observationAgeMs,
+      };
+    },
+    [
+      capabilities,
+      currentFrameValidTimeISO,
+      forecastHour,
+      frameValidTimesByHour,
+      model,
+      newestFrameValidTimeISO,
+      observedSourceStatus,
+      selectedTimeAxisMode,
+    ]
+  );
 
   useEffect(() => {
     selectionEpochRef.current = selectionEpoch;
@@ -1631,10 +1682,10 @@ export default function App() {
           run_id: telemetryRunId,
           region_id: region || null,
           forecast_hour: Number.isFinite(fh) ? fh : null,
-          meta: {
+          meta: buildObservedTelemetryMeta(fh, {
             render_mode: mode,
             cache_hit: true,
-          },
+          }),
         });
         loopReadyHoursRef.current.add(fh);
         return true;
@@ -1683,17 +1734,17 @@ export default function App() {
         run_id: telemetryRunId,
         region_id: region || null,
         forecast_hour: Number.isFinite(fh) ? fh : null,
-        meta: {
+        meta: buildObservedTelemetryMeta(fh, {
           render_mode: mode,
           cache_hit: false,
           fetch_ms: decoded.fetchMs,
           decode_ms: decoded.decodeMs,
-        },
+        }),
       });
       loopReadyHoursRef.current.add(fh);
       return true;
     },
-    [loopCacheKey, resolveLoopUrlForHour, upsertLoopDecodedCache, model, variable, telemetryRunId, region]
+    [buildObservedTelemetryMeta, loopCacheKey, resolveLoopUrlForHour, upsertLoopDecodedCache, model, variable, telemetryRunId, region]
   );
 
   const hasDecodedLoopFrame = useCallback(
@@ -2944,14 +2995,14 @@ export default function App() {
       run_id: pending.runId,
       region_id: pending.regionId,
       forecast_hour: pending.forecastHour,
-      meta: {
+      meta: buildObservedTelemetryMeta(pending.forecastHour, {
         render_target: pending.renderTarget,
         completion: reason,
         ...(pending.traceMeta ?? {}),
         ...phase0aMeta,
-      },
+      }),
     });
-  }, []);
+  }, [buildObservedTelemetryMeta]);
 
   const startPendingFrameMetric = useCallback(
     (args: {
@@ -3332,6 +3383,7 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
+      meta: buildObservedTelemetryMeta(frameHour),
     });
     trackRumDiagnosticMetric({
       metric_name: "first_overlay_visible_duration",
@@ -3343,7 +3395,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
     });
-  }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
+  }, [buildObservedTelemetryMeta, telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
   useEffect(() => {
     if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
@@ -3368,10 +3420,10 @@ export default function App() {
           run_id: telemetryRunId,
           region_id: region || null,
           forecast_hour: commit.displayHour,
-          meta: {
+          meta: buildObservedTelemetryMeta(commit.displayHour, {
             render_mode: commit.renderMode,
             presentation_path: commit.presentationPath,
-          },
+          }),
         });
       }
     }
@@ -3400,10 +3452,10 @@ export default function App() {
           run_id: telemetryRunId,
           region_id: region || null,
           forecast_hour: commit.displayHour,
-          meta: {
+          meta: buildObservedTelemetryMeta(commit.displayHour, {
             render_mode: commit.renderMode,
             presentation_path: commit.presentationPath,
-          },
+          }),
         });
 
         const pending = pendingFrameMetricRef.current;
@@ -3432,6 +3484,7 @@ export default function App() {
               run_id: pendingLoopStart.runId,
               region_id: pendingLoopStart.regionId,
               forecast_hour: commit.displayHour,
+              meta: buildObservedTelemetryMeta(commit.displayHour),
             });
           }
         }
@@ -3453,6 +3506,7 @@ export default function App() {
     loadedFramesKey,
     telemetryRunId,
     region,
+    buildObservedTelemetryMeta,
     finalizePendingFrameMetric,
     finalizePendingVariableSwitch,
     isPlaying,
@@ -5084,6 +5138,7 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      meta: buildObservedTelemetryMeta(forecastHour),
     });
     captureProductAnalyticsEvent("animation_started", {
       model_id: model || null,
@@ -5120,6 +5175,7 @@ export default function App() {
     variable,
     telemetryRunId,
     region,
+    buildObservedTelemetryMeta,
   ]);
 
   useEffect(() => {
@@ -5269,6 +5325,7 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: nextRegion,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      meta: buildObservedTelemetryMeta(forecastHour),
     });
     captureProductAnalyticsEvent("region_selected", {
       model_id: model || null,
@@ -5277,7 +5334,7 @@ export default function App() {
       region_id: nextRegion,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, telemetryRunId, forecastHour]);
+  }, [model, variable, telemetryRunId, forecastHour, buildObservedTelemetryMeta]);
 
   const handleModelChange = useCallback((nextModel: string) => {
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
@@ -5294,6 +5351,7 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      meta: buildObservedTelemetryMeta(forecastHour),
     });
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
@@ -5302,7 +5360,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [variable, telemetryRunId, region, forecastHour]);
+  }, [variable, telemetryRunId, region, forecastHour, buildObservedTelemetryMeta]);
 
   const handleRunChange = useCallback((nextRun: string) => {
     setRun(nextRun);
@@ -5373,6 +5431,7 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      meta: buildObservedTelemetryMeta(forecastHour),
     });
     captureProductAnalyticsEvent("variable_selected", {
       model_id: model || null,
@@ -5381,7 +5440,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, isLoopDisplayActive, loopPlaybackRenderMode, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, isLoopDisplayActive, loopPlaybackRenderMode, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles, buildObservedTelemetryMeta]);
 
   useEffect(() => {
     if (

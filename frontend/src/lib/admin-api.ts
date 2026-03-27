@@ -109,6 +109,7 @@ export type StatusResult = {
   id: string;
   model_id: string;
   run_id: string;
+  time_axis_mode?: "forecast" | "observed";
   status: "healthy" | "warning" | "error";
   issue_type: string;
   summary: string;
@@ -116,6 +117,14 @@ export type StatusResult = {
   run_timestamp?: number | null;
   run_age_hours: number;
   last_updated_at?: number | null;
+  latest_scan_valid_time?: string | null;
+  latest_scan_age_minutes?: number | null;
+  bundle_published_at?: string | null;
+  bundle_age_seconds?: number | null;
+  freshness_state?: "live" | "delayed" | "stale" | "unavailable" | null;
+  usable?: boolean | null;
+  degraded_reason?: string | null;
+  observation_to_publish_latency_seconds?: number | null;
   expected_frames: number;
   available_frames: number;
   completion_pct: number;
@@ -168,6 +177,9 @@ export type AdminObservabilitySummaryResponse = {
     model_id: string;
     run_age_hours: number;
     completion_ratio: number;
+    freshness_state?: "live" | "delayed" | "stale" | "unavailable" | null;
+    latest_scan_age_minutes?: number | null;
+    usable?: boolean | null;
   }>;
 };
 
