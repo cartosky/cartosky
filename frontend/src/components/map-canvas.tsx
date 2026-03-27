@@ -1889,8 +1889,10 @@ export function MapCanvas({
       } else {
         setLayerVisibility(map, layerId(activeBuffer), true);
         setLayerOpacity(map, layerId(activeBuffer), opacity);
-        setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-        setLayerVisibility(map, layerId(inactiveBuffer), false);
+        if (inactiveBuffer !== activeBuffer) {
+          setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+          setLayerVisibility(map, layerId(inactiveBuffer), false);
+        }
       }
 
       if (loopFrameBitmap) {
@@ -2427,9 +2429,13 @@ export function MapCanvas({
       isLoopToTileTransitioningRef.current = true;
       const transitionToken = ++loopToTileTokenRef.current;
       setLayerVisibility(map, layerId(activeBuffer), true);
-      setLayerVisibility(map, layerId(inactiveBuffer), false);
+      if (inactiveBuffer !== activeBuffer) {
+        setLayerVisibility(map, layerId(inactiveBuffer), false);
+      }
       setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+      if (inactiveBuffer !== activeBuffer) {
+        setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+      }
       setLayerVisibility(map, LOOP_LAYER_ID, !hasCanvasLoopFrame);
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, hasCanvasLoopFrame);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
@@ -2518,8 +2524,10 @@ export function MapCanvas({
       isLoopToTileTransitioningRef.current = false;
       setLayerVisibility(map, layerId(activeBuffer), true);
       setLayerOpacity(map, layerId(activeBuffer), targetOpacity);
-      setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
-      setLayerVisibility(map, layerId(inactiveBuffer), false);
+      if (inactiveBuffer !== activeBuffer) {
+        setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+        setLayerVisibility(map, layerId(inactiveBuffer), false);
+      }
       setLayerVisibility(map, LOOP_LAYER_ID, false);
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
