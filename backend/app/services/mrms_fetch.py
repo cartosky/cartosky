@@ -22,6 +22,8 @@ MRMS_FILE_RE = re.compile(
     r"MRMS_MergedBaseReflectivityQC_00\.50_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
     re.IGNORECASE,
 )
+WGRIB2_GRID_SHAPE_RE = re.compile(r"\((?P<nx>\d+)\s*x\s*(?P<ny>\d+)\)")
+WGRIB2_UNDEFINED_SENTINEL = np.float32(9.999e20)
 
 
 class MRMSFetchError(RuntimeError):
@@ -206,28 +208,48 @@ def _decode_with_wgrib2(scan_path: Path, *, valid_time: datetime) -> MRMSDecoded
     if not wgrib2_path:
         raise MRMSDecodeError("wgrib2 is not installed")
 
-    try:
-        import xarray as xr
-    except Exception as exc:  # pragma: no cover - optional runtime dependency
-        raise MRMSDecodeError("xarray is required for the wgrib2 decoder path") from exc
-
-    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
-        netcdf_path = Path(tmp.name)
+    nx, ny = _read_wgrib2_grid_shape(scan_path, wgrib2_path=wgrib2_path)
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+        bin_path = Path(tmp.name)
     try:
         subprocess.run(
-            [wgrib2_path, str(scan_path), "-netcdf", str(netcdf_path)],
+            [
+                wgrib2_path,
+                str(scan_path),
+                "-d",
+                "1",
+                "-order",
+                "we:ns",
+                "-no_header",
+                "-bin",
+                str(bin_path),
+            ],
             check=True,
             capture_output=True,
             text=True,
         )
-        with xr.open_dataset(netcdf_path) as ds:  # pragma: no cover - requires optional deps
-            data_vars = list(ds.data_vars)
-            if not data_vars:
-                raise MRMSDecodeError(f"No data variables found in decoded MRMS NetCDF: {scan_path}")
-            values = np.asarray(ds[data_vars[0]].squeeze().values, dtype=np.float32)
-        return MRMSDecodedScan(valid_time=valid_time, values=values, decoder="wgrib2")
+        values = np.fromfile(bin_path, dtype=np.float32)
+        expected_points = nx * ny
+        if values.size != expected_points:
+            raise MRMSDecodeError(
+                f"Decoded MRMS grid size mismatch for {scan_path}: got={values.size} expected={expected_points}"
+            )
+        values = values.reshape((ny, nx))
+        undefined_mask = np.abs(values) >= WGRIB2_UNDEFINED_SENTINEL
+        if undefined_mask.any():
+            values = values.copy()
+            values[undefined_mask] = np.nan
+        return MRMSDecodedScan(
+            valid_time=valid_time,
+            values=values,
+            decoder="wgrib2",
+            metadata={
+                "grid_shape": [int(ny), int(nx)],
+                "grid_order": "we:ns",
+            },
+        )
     finally:
-        netcdf_path.unlink(missing_ok=True)
+        bin_path.unlink(missing_ok=True)
 
 
 def _decode_with_pygrib(scan_path: Path, *, valid_time: datetime) -> MRMSDecodedScan:
@@ -242,3 +264,23 @@ def _decode_with_pygrib(scan_path: Path, *, valid_time: datetime) -> MRMSDecoded
             raise MRMSDecodeError(f"No GRIB messages found in {scan_path}")
         values = np.asarray(messages[0].values, dtype=np.float32)
     return MRMSDecodedScan(valid_time=valid_time, values=values, decoder="pygrib")
+
+
+def _read_wgrib2_grid_shape(scan_path: Path, *, wgrib2_path: str) -> tuple[int, int]:
+    proc = subprocess.run(
+        [wgrib2_path, str(scan_path), "-d", "1", "-grid"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    nx, ny = _parse_wgrib2_grid_shape(proc.stdout)
+    if nx < 1 or ny < 1:
+        raise MRMSDecodeError(f"Invalid MRMS grid shape for {scan_path}: {(nx, ny)}")
+    return nx, ny
+
+
+def _parse_wgrib2_grid_shape(stdout: str) -> tuple[int, int]:
+    match = WGRIB2_GRID_SHAPE_RE.search(stdout or "")
+    if match is None:
+        raise MRMSDecodeError("Unable to parse wgrib2 grid dimensions from command output")
+    return int(match.group("nx")), int(match.group("ny"))
