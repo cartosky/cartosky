@@ -7,10 +7,17 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from rasterio.transform import Affine
 
 from app.models.mrms import MRMS_MODEL
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params, write_rgba_cog, write_value_cog
+from app.services.builder.cog_writer import (
+    compute_transform_and_shape,
+    get_grid_params,
+    warp_to_target_grid,
+    write_rgba_cog,
+    write_value_cog,
+)
 from app.services.builder.pipeline import build_sidecar_json
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
@@ -38,6 +45,8 @@ MRMS_COLOR_MAP_ID = "mrms_reflectivity"
 class MRMSBundleFrame:
     valid_time: datetime
     values: np.ndarray
+    source_crs: Any | None = None
+    source_transform: Affine | None = None
     quality: str = "full"
     quality_flags: list[str] = field(default_factory=list)
     source_url: str | None = None
@@ -155,12 +164,7 @@ def write_mrms_frame(
     frame: MRMSBundleFrame,
 ) -> None:
     values = np.asarray(frame.values, dtype=np.float32)
-    expected_height, expected_width = _expected_target_shape()
-    if values.shape != (expected_height, expected_width):
-        raise ValueError(
-            "MRMS frame shape does not match the configured CartoSky target grid: "
-            f"got={values.shape} expected={(expected_height, expected_width)}"
-        )
+    values = _warp_frame_to_target_grid(values, frame=frame)
 
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
@@ -215,3 +219,24 @@ def _expected_target_shape() -> tuple[int, int]:
     bbox, grid_m = get_grid_params(MRMS_MODEL_ID, MRMS_REGION_ID)
     _, height, width = compute_transform_and_shape(bbox, grid_m)
     return int(height), int(width)
+
+
+def _warp_frame_to_target_grid(values: np.ndarray, *, frame: MRMSBundleFrame) -> np.ndarray:
+    expected_height, expected_width = _expected_target_shape()
+    if frame.source_crs is not None and frame.source_transform is not None:
+        warped_values, _ = warp_to_target_grid(
+            values,
+            frame.source_crs,
+            frame.source_transform,
+            model=MRMS_MODEL_ID,
+            region=MRMS_REGION_ID,
+            resampling="bilinear",
+        )
+        return np.asarray(warped_values, dtype=np.float32)
+
+    if values.shape != (expected_height, expected_width):
+        raise ValueError(
+            "MRMS frame shape does not match the configured CartoSky target grid: "
+            f"got={values.shape} expected={(expected_height, expected_width)}"
+        )
+    return values

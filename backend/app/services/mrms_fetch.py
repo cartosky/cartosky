@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 import numpy as np
+from rasterio.transform import Affine, from_origin
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class MRMSDecodedScan:
     valid_time: datetime
     values: np.ndarray
     decoder: str
+    source_crs: Any | None = None
+    source_transform: Affine | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -247,8 +250,19 @@ def _decode_with_pygrib(scan_path: Path, *, valid_time: datetime) -> MRMSDecoded
         messages = list(grib)
         if not messages:
             raise MRMSDecodeError(f"No GRIB messages found in {scan_path}")
-        values = np.asarray(messages[0].values, dtype=np.float32)
-    return MRMSDecodedScan(valid_time=valid_time, values=values, decoder="pygrib")
+        message = messages[0]
+        values = np.asarray(message.values, dtype=np.float32)
+        source_transform, values = _pygrib_source_transform(message, values)
+    return MRMSDecodedScan(
+        valid_time=valid_time,
+        values=values,
+        decoder="pygrib",
+        source_crs="EPSG:4326",
+        source_transform=source_transform,
+        metadata={
+            "source_grid_shape": [int(values.shape[0]), int(values.shape[1])],
+        },
+    )
 
 
 def _read_wgrib2_grid_shape(scan_path: Path, *, wgrib2_path: str) -> tuple[int, int]:
@@ -294,3 +308,46 @@ def _parse_wgrib2_grid_shape(stdout: str) -> tuple[int, int]:
     if match is None:
         raise MRMSDecodeError("Unable to parse wgrib2 grid dimensions from command output")
     return int(match.group("nx")), int(match.group("ny"))
+
+
+def _pygrib_source_transform(message: Any, values: np.ndarray) -> tuple[Affine, np.ndarray]:
+    lats, lons = message.latlons()
+    lats = np.asarray(lats, dtype=np.float64)
+    lons = np.asarray(lons, dtype=np.float64)
+    if lats.shape != values.shape or lons.shape != values.shape:
+        raise MRMSDecodeError(
+            f"MRMS lat/lon grid shape mismatch: values={values.shape} lats={lats.shape} lons={lons.shape}"
+        )
+
+    lons = np.where(lons > 180.0, lons - 360.0, lons)
+    oriented_values = np.asarray(values, dtype=np.float32)
+
+    top_lat = float(np.nanmean(lats[0, :]))
+    bottom_lat = float(np.nanmean(lats[-1, :]))
+    if top_lat < bottom_lat:
+        oriented_values = np.flipud(oriented_values)
+        lats = np.flipud(lats)
+        lons = np.flipud(lons)
+
+    left_lon = float(np.nanmean(lons[:, 0]))
+    right_lon = float(np.nanmean(lons[:, -1]))
+    if left_lon > right_lon:
+        oriented_values = np.fliplr(oriented_values)
+        lats = np.fliplr(lats)
+        lons = np.fliplr(lons)
+
+    dx = _regular_step(np.diff(lons, axis=1))
+    dy = _regular_step(np.diff(lats, axis=0))
+    west = float(lons[0, 0]) - (dx / 2.0)
+    north = float(lats[0, 0]) + (dy / 2.0)
+    return from_origin(west, north, dx, dy), oriented_values
+
+
+def _regular_step(deltas: np.ndarray) -> float:
+    finite = np.asarray(deltas, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    finite = np.abs(finite)
+    finite = finite[finite > 0]
+    if finite.size == 0:
+        raise MRMSDecodeError("Unable to infer regular grid spacing from MRMS lat/lon coordinates")
+    return float(np.median(finite))

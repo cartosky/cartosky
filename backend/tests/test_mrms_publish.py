@@ -38,6 +38,11 @@ def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mrms_publish, "_expected_target_shape", lambda: (2, 3))
     monkeypatch.setattr(
         mrms_publish,
+        "warp_to_target_grid",
+        lambda values, *args, **kwargs: (np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(
+        mrms_publish,
         "write_rgba_cog",
         lambda rgba, output_path, **_: Path(output_path).write_bytes(b"rgba") or Path(output_path),
     )
@@ -105,6 +110,36 @@ def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
     sidecar = json.loads((result.published_run_dir / "reflectivity" / "fh001.json").read_text())
     assert sidecar["valid_time"] == "2026-03-27T12:02:00Z"
     assert sidecar["source_filename"] == "scan1.grib2.gz"
+
+
+def test_publish_mrms_bundle_warps_native_grid_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    captured: dict[str, tuple[int, int]] = {}
+
+    def _warp(values, *args, **kwargs):
+        captured["input_shape"] = np.asarray(values).shape
+        return np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.ones((4, 5), dtype=np.float32),
+        source_crs="EPSG:4326",
+        source_transform=from_origin(-130.0, 55.0, 0.01, 0.01),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    assert result.frame_count == 1
+    assert captured["input_shape"] == (4, 5)
 
 
 def test_failed_publish_preserves_previous_latest_pointer(

@@ -225,6 +225,8 @@ def _decode_scan_ref(
     return MRMSBundleFrame(
         valid_time=decoded.valid_time,
         values=decoded.values,
+        source_crs=getattr(decoded, "source_crs", None),
+        source_transform=getattr(decoded, "source_transform", None),
         source_url=scan.url,
         source_filename=scan.filename,
         metadata={

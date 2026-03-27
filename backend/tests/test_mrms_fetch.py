@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.mrms_fetch import (
     WGRIB2_UNDEFINED_SENTINEL,
     _decode_with_wgrib2,
+    _pygrib_source_transform,
     discover_recent_scans_from_listing_html,
     freeze_bundle_scans,
 )
@@ -121,3 +122,20 @@ def test_wgrib2_decoder_falls_back_when_order_option_fails(monkeypatch, tmp_path
 
     assert decoded.metadata["grid_order"] == "we:sn"
     np.testing.assert_allclose(decoded.values, np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32))
+
+
+def test_pygrib_source_transform_normalizes_to_north_up_west_east() -> None:
+    class _Message:
+        def latlons(self):
+            lats = np.array([[30.0, 30.0, 30.0], [31.0, 31.0, 31.0]], dtype=np.float64)
+            lons = np.array([[-97.0, -98.0, -99.0], [-97.0, -98.0, -99.0]], dtype=np.float64)
+            return lats, lons
+
+    values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    transform, oriented = _pygrib_source_transform(_Message(), values)
+
+    np.testing.assert_allclose(oriented, np.array([[6.0, 5.0, 4.0], [3.0, 2.0, 1.0]], dtype=np.float32))
+    assert round(transform.c, 6) == -99.5
+    assert round(transform.f, 6) == 31.5
+    assert round(transform.a, 6) == 1.0
+    assert round(abs(transform.e), 6) == 1.0
