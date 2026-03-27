@@ -24,7 +24,7 @@ _VALUE_RENDER_MODEL_ALLOWLIST = {"gfs"}
 _TARGETED_VALUE_RENDER_MODELS = {"hrrr", "nam", "nbm"}
 _TARGETED_VALUE_RENDER_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
 _BILINEAR_ONLY_LOOP_DOWNSCALE_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
-_LOSSLESS_LOOP_WEBP_TARGETS = {("gfs", "snowfall_total")}
+_LOSSLESS_LOOP_WEBP_TARGETS: set[tuple[str, str]] = set()
 _EXPANDED_LOOP_WIDTH_CONTINUOUS_MODELS = {"gfs"}
 _TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
     0: 2300,

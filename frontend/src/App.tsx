@@ -4961,7 +4961,7 @@ export default function App() {
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
         setIsPreloadingForPlay(false);
-        showTransientFrameStatus("High detail mode — zoom out for smooth loop");
+        showTransientFrameStatus("High detail mode — zoom out for animation playback");
         return;
       }
       if (!canUseLoopPlayback) {
@@ -5025,7 +5025,7 @@ export default function App() {
     if (isPlaying && renderMode === "tiles") {
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(false);
-      showTransientFrameStatus("High detail mode — zoom out for smooth loop");
+      showTransientFrameStatus("High detail mode — zoom out for animation playback");
     }
   }, [isPlaying, renderMode, showTransientFrameStatus]);
 
@@ -5844,7 +5844,7 @@ export default function App() {
         {renderMode === "tiles" && canUseLoopPlayback && isHighDetailZoom && (
           <div className="glass fixed bottom-[6.5rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs">
             <AlertCircle className="h-3.5 w-3.5" />
-            High detail mode — zoom out for smooth loop
+            High detail mode — zoom out for animation playback
           </div>
         )}
 

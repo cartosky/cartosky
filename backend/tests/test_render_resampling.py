@@ -308,13 +308,16 @@ def test_loop_high_quality_resampling_disabled_for_precip_and_snow_totals():
     assert render_resampling.allow_high_quality_loop_resampling(model_id="gfs", var_key="tmp2m") is True
 
 
-def test_only_gfs_snowfall_total_uses_lossless_loop_webp():
+def test_no_lossless_loop_webp_targets():
+    # All models/vars use lossy encoding; lossless targets were removed
+    # because the alpha-mask constraint in the value-render path is the
+    # proper fix for GFS snowfall_total gray-dot artifacts.
     assert render_resampling.loop_webp_save_kwargs(
         model_id="gfs",
         var_key="snowfall_total",
         quality=82,
     ) == {
-        "lossless": True,
+        "quality": 82,
         "method": 6,
     }
 

@@ -2542,6 +2542,28 @@ def _render_loop_rgba_hwc(
                     color_map_id,
                     meta_var_key=var_key,
                 )
+                # Constrain value-render alpha using the build-time RGBA COG
+                # alpha band.  Bilinear resampling of float values creates
+                # interpolated edge values that survive the transparent_below_min
+                # threshold and map to visible (gray) colors.  The RGBA COG was
+                # colorized at native resolution where transparency decisions
+                # are correct; reading its alpha with nearest resampling and
+                # applying it as an upper bound removes those artifacts.
+                if cog_path.is_file():
+                    try:
+                        with rasterio.open(cog_path) as rgba_ds:
+                            build_alpha = rgba_ds.read(
+                                indexes=4,
+                                out_shape=(out_h, out_w),
+                                resampling=Resampling.nearest,
+                            )
+                        rgba[3] = np.minimum(rgba[3], build_alpha)
+                    except Exception:
+                        logger.debug(
+                            "Failed to read RGBA alpha mask for value-render constraint: model=%s var=%s",
+                            model_id,
+                            var_key,
+                        )
                 return np.moveaxis(rgba, 0, -1)
             except Exception:
                 logger.exception(

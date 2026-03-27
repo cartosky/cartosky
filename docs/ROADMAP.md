@@ -469,3 +469,36 @@ Technical
 Business
 - Clear path to a future Pro tier.
 - Better understanding of which workflows users would actually pay for.
+
+## RoadMap Condensed
+**PHASE 1 - Immediate Value (retain + attract users)**
+- [ ] Add radar, obs, NWS forecasts
+- [ ] Add selected new variables
+- [ ] Add Kuchera to NAM and GFS
+- [ ] Add selected new models
+- [ ] Add groups/titles in dropdown
+- [ ] Add lightweight feedback collection/ability
+
+**LAUNCH PUBLIC BETA TO TWF**
+* Can users check radar?
+* Can users compare at least 2-3 models manually?
+* Can users view current conditions + forecast?
+* Does the app feel broken?
+
+**PHASE 2 - Feedback-Driven Expansion**
+- [ ] Top 3 user-requested additions from beta
+
+**PHASE 3 - Stickiness**
+- [ ] Comparison tools
+- [ ] GIF/trends
+- [ ] Model consensus/probabilities
+
+**PHASE 4 - SCALE + UX**
+- [ ] Redesign frontend
+- [ ] Expand to North America
+- [ ] Add “storm/event” mode
+- [ ] Add social sharing targets
+
+**PHASE 5 - Platform + Monetization**
+- [ ] Setup CSKY account system
+- [ ] Lay groundwork for monetization (free/pro tiers)
