@@ -2536,34 +2536,29 @@ def _render_loop_rgba_hwc(
                         out_shape=(out_h, out_w),
                         resampling=render_resampling,
                     ).astype(np.float32, copy=False)
+                    # Suppress bilinear interpolation artifacts at data/no-data
+                    # boundaries.  The coarse GFS grid (~25 km) causes bilinear
+                    # resampling to create small interpolated values (e.g.
+                    # 0.1-0.5") where native pixels transition from 0 to
+                    # positive snowfall.  These survive transparent_below_min
+                    # and map to visible gray colors.  Fix: read the native
+                    # values with *nearest* resampling to build a binary mask
+                    # of pixels that truly have data, then zero out any
+                    # interpolated values that fall in originally-empty cells.
+                    # This preserves smooth color blending within snow areas.
+                    nearest_values = value_ds.read(
+                        1,
+                        out_shape=(out_h, out_w),
+                        resampling=Resampling.nearest,
+                    ).astype(np.float32, copy=False)
+                    no_data_mask = nearest_values == 0.0
+                    sampled_values[no_data_mask] = 0.0
                 sampled_values = _maybe_blur_loop_values(sampled_values, sigma=blur_sigma)
                 rgba, _ = float_to_rgba(
                     sampled_values,
                     color_map_id,
                     meta_var_key=var_key,
                 )
-                # Constrain value-render alpha using the build-time RGBA COG
-                # alpha band.  Bilinear resampling of float values creates
-                # interpolated edge values that survive the transparent_below_min
-                # threshold and map to visible (gray) colors.  The RGBA COG was
-                # colorized at native resolution where transparency decisions
-                # are correct; reading its alpha with nearest resampling and
-                # applying it as an upper bound removes those artifacts.
-                if cog_path.is_file():
-                    try:
-                        with rasterio.open(cog_path) as rgba_ds:
-                            build_alpha = rgba_ds.read(
-                                indexes=4,
-                                out_shape=(out_h, out_w),
-                                resampling=Resampling.nearest,
-                            )
-                        rgba[3] = np.minimum(rgba[3], build_alpha)
-                    except Exception:
-                        logger.debug(
-                            "Failed to read RGBA alpha mask for value-render constraint: model=%s var=%s",
-                            model_id,
-                            var_key,
-                        )
                 return np.moveaxis(rgba, 0, -1)
             except Exception:
                 logger.exception(

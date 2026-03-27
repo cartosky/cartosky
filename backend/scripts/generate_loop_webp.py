@@ -190,20 +190,16 @@ def convert_job(job: Job, model_id: str, quality: int, max_dim: int) -> tuple[Jo
                     out_shape=(out_h, out_w),
                     resampling=resampling,
                 ).astype(np.float32, copy=False)
+                # Suppress bilinear interpolation artifacts at data/no-data
+                # boundaries (see _render_loop_rgba_hwc for full explanation).
+                nearest_values = value_ds.read(
+                    1,
+                    out_shape=(out_h, out_w),
+                    resampling=Resampling.nearest,
+                ).astype(np.float32, copy=False)
+                no_data_mask = nearest_values == 0.0
+                sampled_values[no_data_mask] = 0.0
             rgba_chw, _ = float_to_rgba(sampled_values, color_map_id, meta_var_key=job.variable)
-            # Constrain value-render alpha using the build-time RGBA COG
-            # alpha band so bilinear interpolation artifacts at snow/no-snow
-            # boundaries do not appear as spurious gray pixels.
-            try:
-                with rasterio.open(job.cog_path) as rgba_ds:
-                    build_alpha = rgba_ds.read(
-                        indexes=4,
-                        out_shape=(out_h, out_w),
-                        resampling=Resampling.nearest,
-                    )
-                rgba_chw[3] = np.minimum(rgba_chw[3], build_alpha)
-            except Exception:
-                pass
             rgba = np.moveaxis(rgba_chw, 0, -1)
         else:
             with rasterio.open(job.cog_path) as ds:
