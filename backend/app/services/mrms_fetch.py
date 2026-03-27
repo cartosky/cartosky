@@ -212,22 +212,7 @@ def _decode_with_wgrib2(scan_path: Path, *, valid_time: datetime) -> MRMSDecoded
     with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
         bin_path = Path(tmp.name)
     try:
-        subprocess.run(
-            [
-                wgrib2_path,
-                str(scan_path),
-                "-d",
-                "1",
-                "-order",
-                "we:ns",
-                "-no_header",
-                "-bin",
-                str(bin_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        extract_order = _run_wgrib2_binary_extract(scan_path, bin_path=bin_path, wgrib2_path=wgrib2_path)
         values = np.fromfile(bin_path, dtype=np.float32)
         expected_points = nx * ny
         if values.size != expected_points:
@@ -245,7 +230,7 @@ def _decode_with_wgrib2(scan_path: Path, *, valid_time: datetime) -> MRMSDecoded
             decoder="wgrib2",
             metadata={
                 "grid_shape": [int(ny), int(nx)],
-                "grid_order": "we:ns",
+                "grid_order": extract_order,
             },
         )
     finally:
@@ -277,6 +262,31 @@ def _read_wgrib2_grid_shape(scan_path: Path, *, wgrib2_path: str) -> tuple[int, 
     if nx < 1 or ny < 1:
         raise MRMSDecodeError(f"Invalid MRMS grid shape for {scan_path}: {(nx, ny)}")
     return nx, ny
+
+
+def _run_wgrib2_binary_extract(scan_path: Path, *, bin_path: Path, wgrib2_path: str) -> str:
+    attempts = [
+        ("we:ns", [wgrib2_path, str(scan_path), "-d", "1", "-order", "we:ns", "-no_header", "-bin", str(bin_path)]),
+        ("we:sn", [wgrib2_path, str(scan_path), "-d", "1", "-no_header", "-bin", str(bin_path)]),
+    ]
+    errors: list[str] = []
+    for order_name, cmd in attempts:
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return order_name
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            detail = stderr or stdout or str(exc)
+            errors.append(f"{order_name}: {detail}")
+            continue
+    joined = "; ".join(errors) if errors else "unknown wgrib2 failure"
+    raise MRMSDecodeError(f"wgrib2 binary extraction failed for {scan_path}: {joined}")
 
 
 def _parse_wgrib2_grid_shape(stdout: str) -> tuple[int, int]:

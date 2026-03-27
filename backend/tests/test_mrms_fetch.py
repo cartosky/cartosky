@@ -92,3 +92,32 @@ def test_wgrib2_decoder_extracts_binary_grid_without_netcdf(monkeypatch, tmp_pat
     np.testing.assert_allclose(decoded.values[0, :], np.array([1.0, 2.0, 3.0], dtype=np.float32))
     assert np.isnan(decoded.values[1, 1])
     assert decoded.values[1, 2] == np.float32(6.0)
+
+
+def test_wgrib2_decoder_falls_back_when_order_option_fails(monkeypatch, tmp_path: Path) -> None:
+    scan_path = tmp_path / "MRMS_MergedBaseReflectivityQC_00.50_20260327-120200.grib2"
+    scan_path.write_bytes(b"fake-grib")
+
+    monkeypatch.setattr("app.services.mrms_fetch.shutil.which", lambda name: "/usr/local/bin/wgrib2")
+
+    written_values = np.array([10.0, 11.0, 12.0, 13.0], dtype=np.float32)
+
+    def _run(cmd: list[str], *, check: bool, capture_output: bool, text: bool):
+        if "-grid" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="grid info (2 x 2)", stderr="")
+        if "-bin" in cmd and "-order" in cmd:
+            raise subprocess.CalledProcessError(8, cmd, output="", stderr="unknown option -order")
+        if "-bin" in cmd:
+            written_values.tofile(Path(cmd[-1]))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"Unexpected wgrib2 invocation: {cmd}")
+
+    monkeypatch.setattr("app.services.mrms_fetch.subprocess.run", _run)
+
+    decoded = _decode_with_wgrib2(
+        scan_path,
+        valid_time=datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc),
+    )
+
+    assert decoded.metadata["grid_order"] == "we:sn"
+    np.testing.assert_allclose(decoded.values, np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32))
