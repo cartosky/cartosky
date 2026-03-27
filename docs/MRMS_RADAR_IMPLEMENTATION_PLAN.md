@@ -15,6 +15,55 @@ This is the cleanest fit for the current codebase because:
 3. the frontend already plays ordered frame sequences from `frames` and `loop-manifest`
 4. sidecars already support per-frame `valid_time`
 
+## Execution Checklist
+This is the short path to execution for V1.
+
+### Before Coding Phase 2
+1. Confirm the exact NOAA/NCEP MRMS GRIB2 URL pattern and file naming for `MRMS Merged Base Reflectivity QC`.
+2. Confirm deployment support for `wgrib2` in all target environments.
+3. Decide the initial rolling-window target if different from the default 120 minutes.
+4. Lock MRMS freshness and availability states:
+   - `Live`: newest scan within normal freshness window
+   - `Delayed`: newest scan older than expected but under stale threshold
+   - `Stale`: newest scan older than 15 minutes
+   - `Unavailable`: no publishable MRMS bundle
+
+### Required Prototype Gate
+1. Fetch one representative rolling MRMS input set.
+2. Decode it with `wgrib2`.
+3. Validate `pygrib` fallback on the same input set.
+4. Build one complete bundle:
+   - `val.cog`
+   - `rgba.cog`
+   - sidecars
+   - loop assets
+5. Record:
+   - total build time
+   - decode time
+   - loop generation time
+   - CPU and memory peaks
+6. Decide whether full immutable rebuilds fit within cadence.
+
+### V1 Implementation Order
+1. Add observed-source capability metadata.
+2. Register `mrms` and `reflectivity`.
+3. Build MRMS fetch and publish flow.
+4. Validate frames, loop-manifest, and sampling against MRMS.
+5. Add observed-time UI behavior.
+6. Add stale and unavailable MRMS viewer states.
+7. Add telemetry and admin freshness visibility.
+
+### V1 Done Checklist
+1. `mrms` is selectable in the viewer.
+2. MRMS uses `MRMS Merged Base Reflectivity QC` raw values.
+3. `wgrib2` is documented and working in deployment.
+4. The latest-only rolling bundle publishes immutably.
+5. Sampling works for MRMS.
+6. MRMS opens on the newest frame.
+7. MRMS uses observed timestamps instead of `FH`.
+8. Stale and unavailable MRMS states are visible to users.
+9. Forecast products still behave exactly as before.
+
 ## V1 Decisions Locked
 These are hard decisions for the first MRMS release.
 
@@ -50,8 +99,7 @@ These are reasonable defaults to keep the plan executable. They can be made conf
 4. Region target:
    - `conus` first
 5. Source transport:
-   - raw MRMS scientific files or API payloads are available upstream
-   - exact transport format must be locked before Phase 2 implementation starts
+   - NOAA/NCEP HTTP MRMS GRIB2
 6. Poll cadence:
    - MRMS publish orchestration will run on a much tighter cadence than forecast schedulers
    - the exact cadence should be based on observed upstream availability and measured build cost
@@ -164,21 +212,31 @@ That means:
 4. frontend time semantics should be model or source driven, not variable specific.
 
 ## Upstream Product Lock
-Before Phase 2 coding begins, the exact upstream source details must be pinned down in implementation notes or config.
+The V1 upstream acquisition path is now locked.
 
-Required lock items:
-1. exact upstream MRMS product identifier for `Merged Base Reflectivity QC`
+Locked V1 choices:
+1. upstream product:
+   - `MRMS Merged Base Reflectivity QC`
+2. transport:
+   - NOAA/NCEP HTTP MRMS GRIB2
+3. preferred decoder:
+   - `wgrib2`
+4. fallback decoder:
+   - `pygrib`
+5. downstream processing:
+   - reuse CartoSky's existing raster colorization, `val.cog`, and loop pipeline
+6. publish model:
+   - immutable rolling bundles
+   - latest-only for v1
+
+Still-required implementation details to pin down:
+1. exact upstream URL pattern and file naming convention
 2. native cadence
 3. native spatial resolution
-4. source transport format
-5. expected latency from observation time to availability
-6. retention expectation upstream
-7. nodata and missing-value handling rules
-
-Working default if not otherwise specified:
-1. NOAA-hosted MRMS GRIB2 over HTTPS should be treated as the likely baseline transport to validate first
-
-This is not a final implementation decision yet, but it is the fallback assumption the team should start from if no other transport is selected before Phase 2.
+4. expected latency from observation time to availability
+5. retention expectation upstream
+6. nodata and missing-value handling rules
+7. deployment and packaging expectations for `wgrib2`
 
 ## Target Backend Architecture
 
@@ -223,7 +281,7 @@ Recommended new files:
 Responsibility split:
 1. `mrms_fetch.py`
    - discover latest upstream scans
-   - fetch raw reflectivity values
+   - fetch NOAA/NCEP MRMS GRIB2 files over HTTP
    - normalize timestamps and grid metadata
 2. `mrms_publish.py`
    - assemble a rolling window
@@ -253,6 +311,11 @@ Why:
 2. `val.cog` enables sampling for v1
 3. sidecars carry `valid_time`, legend metadata, and freshness metadata
 
+Decoder rule:
+1. `wgrib2` is the primary supported production decoder for MRMS GRIB2.
+2. `pygrib` is the fallback path for environments where `wgrib2` is unavailable or for local experimentation.
+3. The ingest layer should normalize decoder output into one internal frame payload shape before the rest of the pipeline sees it.
+
 ### 4) Build Loop Assets The Same Way As Other Sources
 The frontend already supports loop manifests and loop WebP tiers.
 
@@ -271,7 +334,7 @@ This is the backend sequence that needs to be implemented.
    - oldest scan -> `fh000`
    - newest scan -> highest `fh`
 5. For each frame:
-   - load raw reflectivity values
+   - decode raw reflectivity values from MRMS GRIB2 using `wgrib2` as the preferred path or `pygrib` as fallback
    - normalize nodata handling
    - write `val.cog`
    - colorize values using a CartoSky reflectivity palette
@@ -289,14 +352,17 @@ Before full Phase 2 implementation is committed, run a focused prototype for one
 
 The prototype must answer:
 1. how long it takes to fetch and normalize a full rolling input set
-2. how long it takes to build all `val.cog` and `rgba.cog` artifacts
-3. how long loop asset generation takes
-4. peak CPU and memory use during the build
-5. whether the full build comfortably fits inside the intended MRMS update cadence
+2. how long `wgrib2` decode takes on a representative bundle
+3. whether `pygrib` fallback is operationally acceptable if used
+4. how long it takes to build all `val.cog` and `rgba.cog` artifacts
+5. how long loop asset generation takes
+6. peak CPU and memory use during the build
+7. whether the full build comfortably fits inside the intended MRMS update cadence
 
 Decision rule:
 1. if a full immutable rebuild fits comfortably within cadence, keep the simpler full-bundle publish model
 2. if it does not, then evaluate artifact reuse or incremental build strategies after measurement, not before
+3. if `pygrib` is materially slower or less reliable, treat it as non-production fallback only
 
 ## Explicit Artifact Questions Answered
 
@@ -355,13 +421,12 @@ These states must be handled in the backend, not discovered first in the fronten
 The frontend must have explicit user-facing behavior for stale or unavailable MRMS data.
 
 Required V1 behavior:
-1. If MRMS has a valid latest bundle, the source remains selectable.
-2. If the latest bundle is stale but still usable, the viewer should show a visible stale-state indicator rather than silently presenting it as fresh.
-3. If MRMS has no usable latest bundle, the source should not fail mysteriously after selection.
-4. The viewer should surface one of these explicit states:
-   - unavailable
-   - stale
-   - incomplete but usable
+1. If MRMS has a publishable latest bundle and the newest scan is within the normal freshness window, show `Live`.
+2. If the newest scan is older than expected but younger than the stale threshold, show `Delayed`.
+3. If the newest scan is older than 15 minutes but the bundle is still usable, show `Stale`.
+4. If MRMS has no publishable bundle, show `Unavailable`.
+5. If MRMS has a valid latest bundle, the source remains selectable.
+6. If MRMS has no usable latest bundle, the source should not fail mysteriously after selection.
 
 Minimum UX requirement:
 1. do not hide MRMS problems behind generic loading behavior
@@ -382,6 +447,11 @@ Recommended bundle metadata:
 8. `time_axis_mode = "observed"`
 9. `usable`
 10. `degraded_reason` when applicable
+11. `freshness_state` with one of:
+   - `live`
+   - `delayed`
+   - `stale`
+   - `unavailable`
 
 Recommended per-frame sidecar metadata:
 1. `valid_time`
@@ -453,9 +523,10 @@ Repo-specific note:
 MRMS is a near-real-time source, so freshness must be visible to users.
 
 Required V1 behavior:
-1. if MRMS is stale, indicate that in the viewer
-2. if MRMS is unavailable, do not leave the user in an ambiguous loading state
-3. if MRMS is incomplete but usable, indicate degraded state without blocking use
+1. if MRMS is live, indicate normal operation
+2. if MRMS is delayed, indicate that the newest scan is older than expected
+3. if MRMS is stale, indicate that clearly in the viewer
+4. if MRMS is unavailable, do not leave the user in an ambiguous loading state
 
 Suggested repo touchpoints:
 1. `frontend/src/App.tsx`
@@ -541,13 +612,15 @@ Files:
 Work:
 1. discover upstream scans
 2. freeze the input scan list for a bundle
-3. load raw reflectivity values
-4. build `val.cog`, `rgba.cog`, and sidecars
-5. generate loop assets
-6. write manifest JSON
-7. publish atomically
-8. preserve prior `latest` if new publish fails validation
-9. validate full-bundle build cost against intended cadence before optimizing for incremental reuse
+3. fetch NOAA/NCEP MRMS GRIB2 inputs
+4. decode raw reflectivity values with `wgrib2` as preferred or `pygrib` as fallback
+5. build `val.cog`, `rgba.cog`, and sidecars
+6. generate loop assets
+7. write manifest JSON
+8. publish atomically
+9. preserve prior `latest` if new publish fails validation
+10. validate full-bundle build cost against intended cadence before optimizing for incremental reuse
+11. validate `wgrib2` as the production decoder path
 
 Done criteria:
 1. `/api/v4/mrms/latest/manifest` resolves
@@ -555,6 +628,7 @@ Done criteria:
 3. `/api/v4/mrms/latest/reflectivity/loop-manifest` is playable by the existing frontend
 4. sampling endpoints work against MRMS frame indices
 5. measured full-bundle build time is documented against MRMS cadence expectations
+6. deployment assumptions for `wgrib2` are documented
 
 ### Phase 3: Observed Timeline UX
 Files:
@@ -568,13 +642,13 @@ Work:
 2. open MRMS on the newest frame
 3. show observed timestamps in the timeline UI
 4. update screenshot and share labeling
-5. surface stale or unavailable MRMS state explicitly in the viewer
+5. surface `Live`, `Delayed`, `Stale`, and `Unavailable` MRMS state explicitly in the viewer
 
 Done criteria:
 1. MRMS opens on the newest frame
 2. no user-facing `FH` text appears for MRMS
 3. forecast models still behave the same as before
-4. stale or unavailable MRMS state is visible and understandable to users
+4. `Live`, `Delayed`, `Stale`, and `Unavailable` MRMS states are visible and understandable to users
 
 ### Phase 4: Freshness, Telemetry, And Hardening
 Files:
