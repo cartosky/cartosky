@@ -204,6 +204,30 @@ RADAR_PTYPE_LEVELS_BY_TYPE = {
     for key in RADAR_PTYPE_ORDER
 }
 
+
+def _build_mrms_reflectivity_palette() -> tuple[list[float], list[str]]:
+    levels = [float(value) for value in range(10, 61)]
+    colors = _expand_hex_ramp(
+        [
+            "#8dff7a",
+            "#48ef52",
+            "#1ebc33",
+            "#0f7a21",
+            "#cfff2f",
+            "#ffe14a",
+            "#ff9a3d",
+            "#f54b32",
+            "#bf1631",
+            "#a3007f",
+            "#ff33cc",
+        ],
+        len(levels),
+    )
+    return levels, colors
+
+
+MRMS_REFLECTIVITY_LEVELS, MRMS_REFLECTIVITY_COLORS = _build_mrms_reflectivity_palette()
+
 # 2m temperature (°F) palette
 TMP2M_F_COLOR_ANCHORS = [
     (-60, "#184a6a"), (-59, "#1e506b"), (-58, "#225a70"), (-57, "#2b6377"), (-56, "#357081"),
@@ -470,10 +494,11 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "units": "dBZ",
         # Keep the MRMS reflectivity palette separate from forecast reflectivity
         # metadata so we can tune the observed product independently later.
-        "levels": RADAR_CONFIG["rain"]["levels"][1:],
-        "colors": RADAR_CONFIG["rain"]["colors"][1:],
+        "levels": MRMS_REFLECTIVITY_LEVELS,
+        "colors": MRMS_REFLECTIVITY_COLORS,
         "display_name": "Merged Base Reflectivity QC",
         "legend_title": "MRMS Reflectivity (dBZ)",
+        "transparent_below_min": True,
     },
 }
 

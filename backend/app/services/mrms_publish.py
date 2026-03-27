@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 from rasterio.transform import Affine
+from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
 from app.models.mrms import MRMS_MODEL
 from app.services.builder.colorize import float_to_rgba
@@ -40,6 +41,7 @@ MRMS_MODEL_ID = "mrms"
 MRMS_REGION_ID = "conus"
 MRMS_VARIABLE_ID = "reflectivity"
 MRMS_COLOR_MAP_ID = "mrms_reflectivity"
+MRMS_DISPLAY_SMOOTHING_SIGMA = 0.7
 
 
 @dataclass(frozen=True)
@@ -187,6 +189,7 @@ def write_mrms_frame(
 ) -> None:
     values = np.asarray(frame.values, dtype=np.float32)
     values = _warp_frame_to_target_grid(values, frame=frame)
+    display_values = _display_values_for_colorize(values)
 
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
@@ -196,7 +199,7 @@ def write_mrms_frame(
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    rgba, colorize_meta = float_to_rgba(values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
+    rgba, colorize_meta = float_to_rgba(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
     write_rgba_cog(
         rgba,
         rgba_path,
@@ -262,3 +265,23 @@ def _warp_frame_to_target_grid(values: np.ndarray, *, frame: MRMSBundleFrame) ->
             f"got={values.shape} expected={(expected_height, expected_width)}"
         )
     return values
+
+
+def _display_values_for_colorize(values: np.ndarray, *, sigma: float = MRMS_DISPLAY_SMOOTHING_SIGMA) -> np.ndarray:
+    if sigma <= 0.0:
+        return values
+
+    finite_mask = np.isfinite(values)
+    if not finite_mask.any():
+        return values
+
+    data_filled = np.where(finite_mask, values, 0.0).astype(np.float32, copy=False)
+    weight = np.where(finite_mask, 1.0, 0.0).astype(np.float32, copy=False)
+
+    num = gaussian_filter(data_filled, sigma=sigma, mode="nearest", truncate=3.0)
+    den = gaussian_filter(weight, sigma=sigma, mode="nearest", truncate=3.0)
+
+    smoothed = np.full(values.shape, np.nan, dtype=np.float32)
+    np.divide(num, den, out=smoothed, where=den > 1e-6)
+    smoothed[~finite_mask] = np.nan
+    return smoothed

@@ -142,6 +142,52 @@ def test_publish_mrms_bundle_warps_native_grid_before_write(
     assert captured["input_shape"] == (4, 5)
 
 
+def test_publish_mrms_bundle_smooths_display_only_not_value_grid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    captured: dict[str, np.ndarray] = {}
+
+    monkeypatch.setattr(
+        mrms_publish,
+        "_display_values_for_colorize",
+        lambda values, **_: np.asarray(values, dtype=np.float32) + np.float32(1.5),
+    )
+
+    def _float_to_rgba(values, *_args, **_kwargs):
+        captured["rgba_input"] = np.asarray(values, dtype=np.float32).copy()
+        rgba = np.zeros((4, values.shape[0], values.shape[1]), dtype=np.uint8)
+        return rgba, {"legend_title": "MRMS Reflectivity (dBZ)"}
+
+    def _write_value(values, output_path, **_kwargs):
+        captured["value_input"] = np.asarray(values, dtype=np.float32).copy()
+        return _write_test_value_raster(Path(output_path), captured["value_input"]) or Path(output_path)
+
+    monkeypatch.setattr(mrms_publish, "float_to_rgba", _float_to_rgba)
+    monkeypatch.setattr(mrms_publish, "write_value_cog", _write_value)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+    mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    np.testing.assert_allclose(
+        captured["rgba_input"],
+        np.array([[11.5, 13.5, 15.5], [17.5, 19.5, 21.5]], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        captured["value_input"],
+        np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+
 def test_failed_publish_preserves_previous_latest_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
