@@ -104,6 +104,7 @@ export type LegendMeta = {
   display_name?: string;
   legend_title?: string;
   units?: string;
+  valid_time?: string;
   legend_stops?: LegendStops;
   legend?: { type?: string; stops?: LegendStops };
   colors?: string[];
@@ -128,6 +129,7 @@ export type FrameRow = {
   fh: number;
   has_cog: boolean;
   run?: string;
+  valid_time?: string;
   tile_url_template?: string;
   loop_webp_url?: string;
   loop_webp_tier0_url?: string;
@@ -393,6 +395,18 @@ export async function fetchFrames(
   }
   return response
     .filter((row) => row && row.has_cog && Number.isFinite(Number(row.fh)))
+    .map((row) => {
+      const nestedValidTime = row?.meta?.meta?.valid_time;
+      return {
+        ...row,
+        valid_time:
+          typeof row?.valid_time === "string" && row.valid_time.trim()
+            ? row.valid_time.trim()
+            : typeof nestedValidTime === "string" && nestedValidTime.trim()
+              ? nestedValidTime.trim()
+              : undefined,
+      };
+    })
     .sort((a, b) => Number(a.fh) - Number(b.fh));
 }
 

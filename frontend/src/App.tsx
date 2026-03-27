@@ -27,6 +27,7 @@ import {
   fetchRuns,
   fetchSampleBatch,
   readCapabilityDefaultFrameSelection,
+  readCapabilityTimeAxisMode,
 } from "@/lib/api";
 import {
   anchorBatchPointsFromGeoJson,
@@ -53,6 +54,7 @@ import {
 import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
 import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
+import { deriveObservedSourceStatus, frameValidTime, formatObservedCompactTime, runIdToIso, type TimeAxisMode } from "@/lib/time-axis";
 import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
@@ -385,12 +387,16 @@ function buildFallbackSharePayload(params: {
   runLabel: string;
   variableLabel: string;
   forecastHour: number;
+  timeAxisMode: TimeAxisMode;
+  validTimeISO?: string | null;
   permalink: string;
 }): SharePayload {
-  const forecastLabel = Number.isFinite(params.forecastHour)
-    ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
-    : "FH n/a";
-  const summary = [params.modelLabel, params.runLabel, forecastLabel, params.variableLabel]
+  const timeLabel = params.timeAxisMode === "observed"
+    ? (params.validTimeISO ? `Observed ${formatObservedCompactTime(params.validTimeISO) ?? params.validTimeISO}` : "Observed time n/a")
+    : (Number.isFinite(params.forecastHour)
+      ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
+      : "FH n/a");
+  const summary = [params.modelLabel, params.runLabel, timeLabel, params.variableLabel]
     .map((part) => part.trim())
     .filter(Boolean)
     .join(" • ");
@@ -549,6 +555,11 @@ function resolveManifestFrames(
       fh,
       has_cog: true,
       run: manifest.run,
+      valid_time: typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : undefined,
+      meta:
+        typeof frame?.valid_time === "string" && frame.valid_time.trim()
+          ? { meta: { valid_time: frame.valid_time.trim() } }
+          : undefined,
     });
   }
   rows.sort((a, b) => Number(a.fh) - Number(b.fh));
@@ -748,14 +759,6 @@ async function warmLoopImageUrl(url: string, signal?: AbortSignal): Promise<bool
   } catch {
     return false;
   }
-}
-
-function runIdToIso(runId: string | null): string | null {
-  if (!runId) return null;
-  const match = runId.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
-  if (!match) return null;
-  const [, year, month, day, hour] = match;
-  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0)).toISOString();
 }
 
 function isPrecipPtypeLegendMeta(
@@ -1217,6 +1220,7 @@ export default function App() {
   const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
+  const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1390,6 +1394,42 @@ export default function App() {
   );
 
   const currentFrame = frameByHour.get(forecastHour) ?? frameRows[0] ?? null;
+  const frameValidTimesByHour = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const row of frameRows) {
+      const fh = Number(row?.fh);
+      const validTime = frameValidTime(row);
+      if (!Number.isFinite(fh) || !validTime) {
+        continue;
+      }
+      map[fh] = validTime;
+    }
+    const manifestFrames = runManifest?.variables?.[variable]?.frames;
+    if (Array.isArray(manifestFrames)) {
+      for (const frame of manifestFrames) {
+        const fh = Number(frame?.fh);
+        const validTime = typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : null;
+        if (!Number.isFinite(fh) || !validTime || map[fh]) {
+          continue;
+        }
+        map[fh] = validTime;
+      }
+    }
+    return map;
+  }, [frameRows, runManifest, variable]);
+  const currentFrameValidTimeISO = useMemo(() => {
+    return frameValidTimesByHour[forecastHour] ?? frameValidTime(currentFrame) ?? null;
+  }, [frameValidTimesByHour, forecastHour, currentFrame]);
+  const newestFrameValidTimeISO = useMemo(() => {
+    const orderedHours = Object.keys(frameValidTimesByHour)
+      .map((key) => Number(key))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    if (orderedHours.length === 0) {
+      return null;
+    }
+    return frameValidTimesByHour[orderedHours[orderedHours.length - 1]] ?? null;
+  }, [frameValidTimesByHour]);
   const latestRunId = useMemo(() => {
     const manifestLatest =
       run === "latest" && runManifest?.model === model ? (runManifest.run ?? null) : null;
@@ -1406,6 +1446,18 @@ export default function App() {
   const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+  const observedSourceStatus = useMemo(() => {
+    if (selectedTimeAxisMode !== "observed") {
+      return null;
+    }
+    const availability = model ? capabilities?.availability?.[model] : null;
+    return deriveObservedSourceStatus({
+      latestRunAvailable: Boolean(availability?.latest_run),
+      latestRunReady: availability?.latest_run_ready,
+      newestValidTimeISO: newestFrameValidTimeISO,
+      availableFrameCount: frameRows.length,
+    });
+  }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length]);
 
   useEffect(() => {
     selectionEpochRef.current = selectionEpoch;
@@ -4893,7 +4945,10 @@ export default function App() {
       if (chosenHour !== null) {
         if (chosenStep > 1) {
           const skippedHour = frameHours[nextIndex];
-          showTransientFrameStatus(`Frame unavailable (FH ${skippedHour})`);
+          const skippedLabel = selectedTimeAxisMode === "observed"
+            ? (formatObservedCompactTime(frameValidTimesByHour[skippedHour]) ?? "observed frame")
+            : `FH ${skippedHour}`;
+          showTransientFrameStatus(`Frame unavailable (${skippedLabel})`);
         }
         setTargetForecastHour(chosenHour);
         return;
@@ -4910,6 +4965,8 @@ export default function App() {
     isTileReady,
     tileUrlForHour,
     showTransientFrameStatus,
+    selectedTimeAxisMode,
+    frameValidTimesByHour,
     bufferSnapshot.bufferedAheadCount,
     playbackPolicy.minAheadWhilePlaying,
     renderMode,
@@ -5607,6 +5664,9 @@ export default function App() {
         label: selectedVariableLabel || variable || "Variable",
       },
       fh: Number.isFinite(forecastHour) ? Math.round(forecastHour) : 0,
+      timeAxisMode: selectedTimeAxisMode,
+      validTimeISO: currentFrameValidTimeISO,
+      sourceStatusLabel: observedSourceStatus?.label ?? null,
       region: {
         id: region || "region",
         label: selectedRegionLabel || region || "Region",
@@ -5631,6 +5691,9 @@ export default function App() {
     anchorDisplayGeoJson,
     selectedVariableLabel,
     forecastHour,
+    selectedTimeAxisMode,
+    currentFrameValidTimeISO,
+    observedSourceStatus,
     region,
     selectedRegionLabel,
     isLoopDisplayActive,
@@ -5649,6 +5712,8 @@ export default function App() {
       runLabel: selectedRunLabel || runForSummary || "Run",
       variableLabel: selectedVariableLabel || variable || "Variable",
       forecastHour,
+      timeAxisMode: selectedTimeAxisMode,
+      validTimeISO: currentFrameValidTimeISO,
       permalink,
     });
 
@@ -5672,6 +5737,8 @@ export default function App() {
           regionId: region || "region",
           regionLabel: regionPresets[region]?.label ?? null,
           forecastHour: Number.isFinite(forecastHour) ? forecastHour : null,
+          timeAxisMode: selectedTimeAxisMode,
+          validTimeISO: currentFrameValidTimeISO,
           centerLat: Number.isFinite(mapView.lat) ? mapView.lat : null,
           centerLon: Number.isFinite(mapView.lon) ? mapView.lon : null,
           zoom: Number.isFinite(mapView.z) ? mapView.z : null,
@@ -5698,8 +5765,10 @@ export default function App() {
     selectedCapabilityVarMap,
     selectedModelLabel,
     selectedRunLabel,
+    selectedTimeAxisMode,
     selectedVariableLabel,
     variable,
+    currentFrameValidTimeISO,
   ]);
 
   useEffect(() => {
@@ -5797,6 +5866,9 @@ export default function App() {
         latestAvailableRunLabel={latestAvailableRunLabel}
         hasNewerRunAvailable={hasNewerRunAvailable}
         onViewLatestRun={hasNewerRunAvailable ? handleViewLatestRun : undefined}
+        sourceStatusLabel={observedSourceStatus?.label ?? null}
+        sourceStatusDescription={observedSourceStatus?.description ?? null}
+        sourceStatusTone={observedSourceStatus?.tone ?? null}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -6086,6 +6158,11 @@ export default function App() {
           isPlaying={controlsIsPlaying}
           setIsPlaying={handleSetIsPlaying}
           runDateTimeISO={runDateTimeISO}
+          timeAxisMode={selectedTimeAxisMode}
+          validTimeISO={currentFrameValidTimeISO}
+          frameValidTimesByHour={frameValidTimesByHour}
+          sourceStatusLabel={observedSourceStatus?.label ?? null}
+          sourceStatusTone={observedSourceStatus?.tone ?? null}
           disabled={loading}
           playDisabled={loading || selectableFrameHours.length === 0}
           transientStatus={frameStatusMessage}

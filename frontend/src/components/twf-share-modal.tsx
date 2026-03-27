@@ -6,6 +6,7 @@ import { API_ORIGIN } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
 import { getSharePrefs, setSharePrefs, type SharePrefs } from "@/lib/share_prefs";
+import { formatObservedCompactTime } from "@/lib/time-axis";
 
 export type SharePayload = {
   permalink: string;
@@ -270,10 +271,14 @@ function sanitizeFilenamePart(value: string): string {
 }
 
 function screenshotFilename(state: ScreenshotExportState): string {
+  const observedFramePart =
+    state.timeAxisMode === "observed"
+      ? sanitizeFilenamePart(formatObservedCompactTime(state.validTimeISO) ?? "observed")
+      : null;
   const parts = [
     sanitizeFilenamePart(state.model),
     sanitizeFilenamePart(state.run),
-    `fh${Number.isFinite(state.fh) ? Math.max(0, Math.round(state.fh)) : 0}`,
+    observedFramePart ?? `fh${Number.isFinite(state.fh) ? Math.max(0, Math.round(state.fh)) : 0}`,
     sanitizeFilenamePart(state.variable.key || state.variable.label),
     sanitizeFilenamePart(state.region?.id ?? "region"),
   ];

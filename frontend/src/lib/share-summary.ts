@@ -1,3 +1,5 @@
+import { formatObservedCompactTime, formatRunLabel } from "@/lib/time-axis";
+
 type BuildShareSummaryInput = {
   modelId: string;
   runId: string;
@@ -6,6 +8,8 @@ type BuildShareSummaryInput = {
   regionId: string;
   regionLabel?: string | null;
   forecastHour: number | null;
+  timeAxisMode?: "forecast" | "observed";
+  validTimeISO?: string | null;
   centerLat: number | null;
   centerLon: number | null;
   zoom: number | null;
@@ -16,9 +20,6 @@ type ShareSummary = {
   shortSummary: string;
   detailsSummary: string;
 };
-
-const RUN_ID_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i;
-const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const MODEL_LABELS: Record<string, string> = {
   hrrr: "HRRR",
@@ -60,20 +61,10 @@ function modelLabel(modelId: string): string {
 
 function runLabel(runId: string): string {
   const trimmed = runId.trim();
-  const match = trimmed.match(RUN_ID_RE);
-  if (!match) {
-    return trimmed || "Latest";
+  if (!trimmed) {
+    return "Latest";
   }
-  const [, yearRaw, monthRaw, dayRaw, hourRaw] = match;
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  const hour = Number(hourRaw);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(hour)) {
-    return trimmed;
-  }
-  const monthLabel = MONTHS_SHORT[Math.max(0, Math.min(11, month - 1))] ?? monthRaw;
-  return `${monthLabel} ${day}, ${year} ${hourRaw}Z`;
+  return formatRunLabel(trimmed);
 }
 
 function variableLabel(variableId: string, preferred?: string | null): string {
@@ -112,11 +103,19 @@ function formatForecastHour(forecastHour: number | null): string {
   return `Forecast hour ${Math.round(forecastHour as number)}`;
 }
 
+function formatTimeSummary(input: BuildShareSummaryInput): string {
+  if (input.timeAxisMode === "observed") {
+    const observed = formatObservedCompactTime(input.validTimeISO);
+    return observed ? `Observed ${observed}` : "Observed time n/a";
+  }
+  return formatForecastHour(input.forecastHour);
+}
+
 export function buildShareSummary(input: BuildShareSummaryInput): ShareSummary {
   const shortSummary = [
     modelLabel(input.modelId),
     runLabel(input.runId),
-    formatForecastHour(input.forecastHour),
+    formatTimeSummary(input),
     variableLabel(input.variableId, input.variableDisplayName),
   ].join(" • ");
 

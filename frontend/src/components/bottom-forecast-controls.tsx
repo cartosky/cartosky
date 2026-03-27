@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Clock, Pause, Play } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
+import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { formatObservedCompactTime, formatObservedValidTime } from "@/lib/time-axis";
 import {
   Tooltip,
   TooltipContent,
@@ -20,23 +22,49 @@ type BottomForecastControlsProps = {
   isPlaying: boolean;
   setIsPlaying: (value: boolean) => void;
   runDateTimeISO: string | null;
+  timeAxisMode?: TimeAxisMode;
+  validTimeISO?: string | null;
+  frameValidTimesByHour?: Record<number, string>;
+  sourceStatusLabel?: string | null;
+  sourceStatusTone?: ObservedSourceStatusTone | null;
   disabled: boolean;
   playDisabled?: boolean;
   transientStatus?: string | null;
   layoutMode?: ViewerLayoutMode;
 };
 
-function formatValidTime(runDateISO: string | null, forecastHour: number): {
+function formatTimelineDisplay(params: {
+  runDateISO: string | null;
+  forecastHour: number;
+  timeAxisMode: TimeAxisMode;
+  validTimeISO?: string | null;
+}): {
   primary: string;
   secondary: string;
+  compactValue: string;
+  axisLabel: string;
 } | null {
-  if (!runDateISO) return null;
+  if (params.timeAxisMode === "observed") {
+    const primary = formatObservedValidTime(params.validTimeISO);
+    const compactValue = formatObservedCompactTime(params.validTimeISO);
+    if (!primary || !compactValue) {
+      return null;
+    }
+    return {
+      primary,
+      secondary: "Observed",
+      compactValue,
+      axisLabel: "Observed Time",
+    };
+  }
+
+  if (!params.runDateISO) return null;
 
   try {
-    const runDate = new Date(runDateISO);
+    const runDate = new Date(params.runDateISO);
     if (Number.isNaN(runDate.getTime())) return null;
 
-    const validDate = new Date(runDate.getTime() + forecastHour * 60 * 60 * 1000);
+    const validDate = new Date(runDate.getTime() + params.forecastHour * 60 * 60 * 1000);
 
     const primary = new Intl.DateTimeFormat("en-US", {
       weekday: "short",
@@ -48,11 +76,31 @@ function formatValidTime(runDateISO: string | null, forecastHour: number): {
       timeZoneName: "short",
     }).format(validDate);
 
-    const secondary = `FH ${forecastHour}`;
+    const secondary = `FH ${params.forecastHour}`;
 
-    return { primary, secondary };
+    return {
+      primary,
+      secondary,
+      compactValue: `${params.forecastHour}h`,
+      axisLabel: "Forecast Hour",
+    };
   } catch {
     return null;
+  }
+}
+
+function statusBadgeClass(tone: ObservedSourceStatusTone | null | undefined): string {
+  switch (tone) {
+    case "live":
+      return "border-emerald-300/35 bg-emerald-300/12 text-emerald-50";
+    case "delayed":
+      return "border-amber-300/35 bg-amber-300/12 text-amber-50";
+    case "stale":
+      return "border-orange-300/35 bg-orange-300/14 text-orange-50";
+    case "unavailable":
+      return "border-rose-300/35 bg-rose-300/12 text-rose-50";
+    default:
+      return "border-border/35 bg-background/35 text-foreground/90";
   }
 }
 
@@ -64,6 +112,11 @@ export function BottomForecastControls({
   isPlaying,
   setIsPlaying,
   runDateTimeISO,
+  timeAxisMode = "forecast",
+  validTimeISO = null,
+  frameValidTimesByHour,
+  sourceStatusLabel = null,
+  sourceStatusTone = null,
   disabled,
   playDisabled = false,
   transientStatus,
@@ -76,8 +129,16 @@ export function BottomForecastControls({
   const lastSentHourRef = useRef<number | null>(null);
 
   const validTime = useMemo(
-    () => formatValidTime(runDateTimeISO, previewHour ?? forecastHour),
-    [runDateTimeISO, forecastHour, previewHour]
+    () => formatTimelineDisplay({
+      runDateISO: runDateTimeISO,
+      forecastHour: previewHour ?? forecastHour,
+      timeAxisMode,
+      validTimeISO:
+        timeAxisMode === "observed"
+          ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
+          : validTimeISO,
+    }),
+    [runDateTimeISO, forecastHour, previewHour, timeAxisMode, validTimeISO, frameValidTimesByHour]
   );
 
   const hasFrames = availableFrames.length > 0;
@@ -136,10 +197,22 @@ export function BottomForecastControls({
                 {validTime ? (
                   <div className="truncate text-xs font-semibold text-foreground">{validTime.primary}</div>
                 ) : (
-                  <div className="text-[10px] text-muted-foreground">Valid time unavailable</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
+                  </div>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                {sourceStatusLabel ? (
+                  <div
+                    className={cn(
+                      "rounded-md border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider",
+                      statusBadgeClass(sourceStatusTone)
+                    )}
+                  >
+                    {sourceStatusLabel}
+                  </div>
+                ) : null}
                 {transientStatus ? (
                   <div className="flex items-center gap-1 rounded-md border border-border/35 bg-background/35 px-2 py-1 text-[9px] text-foreground/90">
                     <AlertCircle className="h-3 w-3" />
@@ -236,10 +309,10 @@ export function BottomForecastControls({
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
                   <Clock className="h-3 w-3" />
-                  Forecast Hour
+                  {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : "Forecast Hour")}
                 </span>
                 <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95 transition-all duration-150">
-                  {forecastHour}h
+                  {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : `${forecastHour}h`)}
                 </span>
               </div>
               <Slider
@@ -271,6 +344,16 @@ export function BottomForecastControls({
             </div>
 
             <div className="flex shrink-0 flex-col items-end gap-1 border-l border-border/30 pl-5 sm:min-w-[220px]">
+              {sourceStatusLabel ? (
+                <div
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider",
+                    statusBadgeClass(sourceStatusTone)
+                  )}
+                >
+                  {sourceStatusLabel}
+                </div>
+              ) : null}
               {transientStatus ? (
                 <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[10px] text-foreground/90">
                   <AlertCircle className="h-3 w-3" />
@@ -289,7 +372,9 @@ export function BottomForecastControls({
               ) : (
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground">Valid time unavailable</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
+                  </span>
                 </div>
               )}
             </div>

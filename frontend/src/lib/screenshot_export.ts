@@ -1,6 +1,8 @@
 import maplibregl from "maplibre-gl";
 import type { LegendPayload } from "@/components/map-legend";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
+import type { TimeAxisMode } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedValidTime } from "@/lib/time-axis";
 
 export type ScreenshotExportState = {
   style: any;
@@ -14,6 +16,9 @@ export type ScreenshotExportState = {
   run: string;
   variable: { key: string; label: string };
   fh: number;
+  timeAxisMode?: TimeAxisMode;
+  validTimeISO?: string | null;
+  sourceStatusLabel?: string | null;
   region?: { id: string; label: string };
   loopEnabled: boolean;
   capturedMapDataUrl?: string;
@@ -204,6 +209,11 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
   const variableLabel = units && !baseVariableLabel.toLowerCase().includes(`(${units.toLowerCase()})`)
     ? `${baseVariableLabel} (${units})`
     : baseVariableLabel;
+  if (state.timeAxisMode === "observed") {
+    const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
+    const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
+    return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
+  }
   return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
 }
 

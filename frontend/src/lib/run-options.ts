@@ -1,17 +1,12 @@
+import { formatRunLabel as formatRunLabelFromTimeAxis, parseRunId } from "@/lib/time-axis";
+
 export type RunOption = {
   value: string;
   label: string;
 };
 
-const RUN_ID_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i;
-
 export function formatRunLabel(runId: string): string {
-  const match = runId.match(RUN_ID_RE);
-  if (!match) {
-    return runId;
-  }
-  const [, , month, day, hour] = match;
-  return `${hour}Z ${Number(month)}/${day}`;
+  return formatRunLabelFromTimeAxis(runId);
 }
 
 export function latestRunLabel(runId: string | null): string {
@@ -22,7 +17,14 @@ export function latestRunLabel(runId: string | null): string {
 }
 
 export function sortRunIdsDescending(runs: string[]): string[] {
-  return Array.from(new Set(runs.filter(Boolean))).sort((a, b) => b.localeCompare(a));
+  return Array.from(new Set(runs.filter(Boolean))).sort((left, right) => {
+    const leftTime = parseRunId(left)?.getTime() ?? Number.NEGATIVE_INFINITY;
+    const rightTime = parseRunId(right)?.getTime() ?? Number.NEGATIVE_INFINITY;
+    if (leftTime !== rightTime) {
+      return rightTime - leftTime;
+    }
+    return right.localeCompare(left);
+  });
 }
 
 export function pickLatestRunId(runs: string[]): string | null {

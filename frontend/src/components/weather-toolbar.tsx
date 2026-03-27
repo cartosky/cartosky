@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { BasemapMode } from "@/components/map-canvas";
+import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
@@ -60,7 +61,50 @@ type WeatherToolbarProps = {
   latestAvailableRunLabel?: string | null;
   hasNewerRunAvailable?: boolean;
   onViewLatestRun?: () => void;
+  sourceStatusLabel?: string | null;
+  sourceStatusDescription?: string | null;
+  sourceStatusTone?: ObservedSourceStatusTone | null;
 };
+
+function sourceStatusBadgeClass(tone: ObservedSourceStatusTone | null | undefined): string {
+  switch (tone) {
+    case "live":
+      return "border-emerald-300/24 bg-emerald-300/[0.08] text-emerald-50";
+    case "delayed":
+      return "border-amber-300/24 bg-amber-300/[0.08] text-amber-50";
+    case "stale":
+      return "border-orange-300/24 bg-orange-300/[0.1] text-orange-50";
+    case "unavailable":
+      return "border-rose-300/24 bg-rose-300/[0.08] text-rose-50";
+    default:
+      return "border-white/10 bg-white/8 text-white/78";
+  }
+}
+
+function SourceStatusBadge({
+  label,
+  description,
+  tone,
+  compact = false,
+}: {
+  label: string;
+  description?: string | null;
+  tone?: ObservedSourceStatusTone | null;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      title={description ?? label}
+      className={cn(
+        "inline-flex items-center rounded-full border font-semibold uppercase tracking-[0.18em]",
+        compact ? "px-2 py-1 text-[10px]" : "px-3 py-2 text-[10px]",
+        sourceStatusBadgeClass(tone)
+      )}
+    >
+      {label}
+    </div>
+  );
+}
 
 function ToolbarSelect(props: {
   label: string;
@@ -303,6 +347,9 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     latestAvailableRunLabel,
     hasNewerRunAvailable = false,
     onViewLatestRun,
+    sourceStatusLabel,
+    sourceStatusDescription,
+    sourceStatusTone,
   } = props;
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const isDesktopLayout = layoutMode === "desktop";
@@ -388,6 +435,14 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               hideLabel
               triggerClassName="min-w-[248px] max-w-[248px] rounded-full border-white/10 bg-white/8 px-3"
             />
+
+            {sourceStatusLabel ? (
+              <SourceStatusBadge
+                label={sourceStatusLabel}
+                description={sourceStatusDescription}
+                tone={sourceStatusTone}
+              />
+            ) : null}
           </div>
 
         </div>
@@ -418,8 +473,17 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
 
-          {isCompactTouchLayout ? (
-            <div className="min-w-0 flex flex-1 items-center gap-1 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="min-w-0 flex flex-1 items-center gap-1 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {sourceStatusLabel ? (
+              <SourceStatusBadge
+                label={sourceStatusLabel}
+                description={sourceStatusDescription}
+                tone={sourceStatusTone}
+                compact
+              />
+            ) : null}
+            {isCompactTouchLayout ? (
+              <>
               <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
                 {selectedRunLabel}
               </span>
@@ -429,8 +493,9 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               <span className="max-w-[180px] truncate rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/74">
                 {selectedVariableLabel}
               </span>
-            </div>
-          ) : null}
+              </>
+            ) : null}
+          </div>
         </div>
 
         {mobilePanelOpen ? (

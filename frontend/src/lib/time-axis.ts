@@ -1,0 +1,143 @@
+export type TimeAxisMode = "forecast" | "observed";
+export type ObservedSourceStatusTone = "live" | "delayed" | "stale" | "unavailable";
+
+export type ObservedSourceStatus = {
+  tone: ObservedSourceStatusTone;
+  label: string;
+  description: string;
+  ageMinutes: number | null;
+};
+
+const RUN_ID_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})?z$/i;
+
+export function parseRunId(runId: string | null | undefined): Date | null {
+  const trimmed = String(runId ?? "").trim();
+  const match = trimmed.match(RUN_ID_RE);
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day, hour, minuteRaw] = match;
+  const minute = Number(minuteRaw ?? "0");
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), minute, 0));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function runIdToIso(runId: string | null | undefined): string | null {
+  const parsed = parseRunId(runId);
+  return parsed ? parsed.toISOString() : null;
+}
+
+export function formatRunLabel(runId: string): string {
+  const parsed = parseRunId(runId);
+  if (!parsed) {
+    return runId;
+  }
+  const month = parsed.getUTCMonth() + 1;
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  const hour = String(parsed.getUTCHours()).padStart(2, "0");
+  const minute = parsed.getUTCMinutes();
+  const timeLabel = minute > 0 ? `${hour}:${String(minute).padStart(2, "0")}Z` : `${hour}Z`;
+  return `${timeLabel} ${month}/${day}`;
+}
+
+export function formatObservedValidTime(iso: string | null | undefined): string | null {
+  const parsed = parseIsoDate(iso);
+  if (!parsed) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  }).format(parsed);
+}
+
+export function formatObservedCompactTime(iso: string | null | undefined): string | null {
+  const parsed = parseIsoDate(iso);
+  if (!parsed) {
+    return null;
+  }
+  const hours = String(parsed.getUTCHours()).padStart(2, "0");
+  const minutes = String(parsed.getUTCMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}Z`;
+}
+
+export function frameValidTime(row: { valid_time?: string; meta?: { meta?: { valid_time?: string | null } | null } | null } | null | undefined): string | null {
+  const direct = typeof row?.valid_time === "string" && row.valid_time.trim() ? row.valid_time.trim() : null;
+  if (direct) {
+    return direct;
+  }
+  const nested = row?.meta?.meta?.valid_time;
+  return typeof nested === "string" && nested.trim() ? nested.trim() : null;
+}
+
+export function deriveObservedSourceStatus(params: {
+  latestRunAvailable: boolean;
+  latestRunReady: boolean | null | undefined;
+  newestValidTimeISO: string | null | undefined;
+  availableFrameCount: number;
+  nowMs?: number;
+  delayedThresholdMinutes?: number;
+  staleThresholdMinutes?: number;
+}): ObservedSourceStatus {
+  const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? 8);
+  const staleThresholdMinutes = Math.max(delayedThresholdMinutes, params.staleThresholdMinutes ?? 15);
+
+  if (!params.latestRunAvailable || params.latestRunReady === false || params.availableFrameCount <= 0) {
+    return {
+      tone: "unavailable",
+      label: "Unavailable",
+      description: "No publishable MRMS bundle is available.",
+      ageMinutes: null,
+    };
+  }
+
+  const newest = parseIsoDate(params.newestValidTimeISO);
+  if (!newest) {
+    return {
+      tone: "unavailable",
+      label: "Unavailable",
+      description: "Latest scan time is unavailable.",
+      ageMinutes: null,
+    };
+  }
+
+  const nowMs = params.nowMs ?? Date.now();
+  const ageMinutes = Math.max(0, Math.round((nowMs - newest.getTime()) / 60000));
+  if (ageMinutes >= staleThresholdMinutes) {
+    return {
+      tone: "stale",
+      label: "Stale",
+      description: `Newest scan is ${ageMinutes} minutes old.`,
+      ageMinutes,
+    };
+  }
+  if (ageMinutes >= delayedThresholdMinutes) {
+    return {
+      tone: "delayed",
+      label: "Delayed",
+      description: `Newest scan is ${ageMinutes} minutes old.`,
+      ageMinutes,
+    };
+  }
+  return {
+    tone: "live",
+    label: "Live",
+    description: `Newest scan is ${ageMinutes} minute${ageMinutes === 1 ? "" : "s"} old.`,
+    ageMinutes,
+  };
+}
+
+function parseIsoDate(value: string | null | undefined): Date | null {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
