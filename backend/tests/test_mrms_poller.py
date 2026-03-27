@@ -27,6 +27,7 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
         download_timeout_seconds=15.0,
         preferred_decoder="wgrib2",
         fallback_decoder="pygrib",
+        frame_write_workers=1,
         loop_pregenerate_enabled=False,
         loop_cache_root=tmp_path / "loop_cache",
         loop_workers=1,

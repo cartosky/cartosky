@@ -47,6 +47,7 @@ DEFAULT_LISTING_TIMEOUT_SECONDS = 15.0
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 DEFAULT_PREFERRED_DECODER = "wgrib2"
 DEFAULT_FALLBACK_DECODER = "pygrib"
+DEFAULT_FRAME_WRITE_WORKERS = 2
 DEFAULT_LOOP_PREGENERATE_ENABLED = True
 DEFAULT_LOOP_CACHE_ROOT = Path("/opt/cartosky/data/loop_cache")
 DEFAULT_LOOP_PREGENERATE_WORKERS = 2
@@ -64,6 +65,7 @@ class MRMSPollerConfig:
     download_timeout_seconds: float
     preferred_decoder: str
     fallback_decoder: str
+    frame_write_workers: int
     loop_pregenerate_enabled: bool
     loop_cache_root: Path
     loop_workers: int
@@ -181,6 +183,7 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         frames=frames,
         publish_time=datetime.now(timezone.utc),
         loop_settings=_loop_settings(config) if config.loop_pregenerate_enabled else None,
+        frame_write_workers=config.frame_write_workers,
     )
     _enforce_retention(config)
 
@@ -436,6 +439,11 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
         ),
         preferred_decoder=_env_value("CARTOSKY_MRMS_PREFERRED_DECODER", default=DEFAULT_PREFERRED_DECODER),
         fallback_decoder=_env_value("CARTOSKY_MRMS_FALLBACK_DECODER", default=DEFAULT_FALLBACK_DECODER),
+        frame_write_workers=_int_env(
+            "CARTOSKY_MRMS_FRAME_WRITE_WORKERS",
+            DEFAULT_FRAME_WRITE_WORKERS,
+            minimum=1,
+        ),
         loop_pregenerate_enabled=_bool_env(
             "CARTOSKY_MRMS_LOOP_PREGENERATE_ENABLED",
             DEFAULT_LOOP_PREGENERATE_ENABLED,

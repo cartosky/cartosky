@@ -1459,7 +1459,14 @@ export default function App() {
     }
     const availability = model ? capabilities?.availability?.[model] : null;
     const authoritativeStatus = observedSourceStatusFromAvailability(availability);
-    if (authoritativeStatus) {
+    if (
+      authoritativeStatus &&
+      !(
+        authoritativeStatus.tone === "unavailable" &&
+        newestFrameValidTimeISO &&
+        frameRows.length > 0
+      )
+    ) {
       return authoritativeStatus;
     }
     return deriveObservedSourceStatus({

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -80,6 +81,7 @@ def publish_mrms_bundle(
     frames: list[MRMSBundleFrame],
     publish_time: datetime | None = None,
     loop_settings: MRMSLoopPublishSettings | None = None,
+    frame_write_workers: int = 1,
 ) -> MRMSPublishResult:
     if not frames:
         raise ValueError("MRMS bundle publish requires at least one frame")
@@ -89,14 +91,34 @@ def publish_mrms_bundle(
 
     ordered_frames = sorted(frames, key=lambda item: item.valid_time.astimezone(timezone.utc))
     targets: list[tuple[str, int]] = []
-    for fh, frame in enumerate(ordered_frames):
-        write_mrms_frame(
-            data_root=data_root,
-            run_id=run_id,
-            forecast_hour=fh,
-            frame=frame,
-        )
-        targets.append((MRMS_VARIABLE_ID, fh))
+    max_workers = max(1, int(frame_write_workers))
+    frame_jobs = [(fh, frame) for fh, frame in enumerate(ordered_frames)]
+    if max_workers <= 1 or len(frame_jobs) <= 1:
+        for fh, frame in frame_jobs:
+            write_mrms_frame(
+                data_root=data_root,
+                run_id=run_id,
+                forecast_hour=fh,
+                frame=frame,
+            )
+            targets.append((MRMS_VARIABLE_ID, fh))
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(frame_jobs))) as pool:
+            future_map = {
+                pool.submit(
+                    write_mrms_frame,
+                    data_root=data_root,
+                    run_id=run_id,
+                    forecast_hour=fh,
+                    frame=frame,
+                ): fh
+                for fh, frame in frame_jobs
+            }
+            for future in concurrent.futures.as_completed(future_map):
+                fh = future_map[future]
+                future.result()
+                targets.append((MRMS_VARIABLE_ID, fh))
+        targets.sort(key=lambda item: item[1])
 
     promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
     write_run_manifest(
