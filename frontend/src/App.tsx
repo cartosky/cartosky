@@ -5842,7 +5842,7 @@ export default function App() {
         )}
 
         {renderMode === "tiles" && canUseLoopPlayback && isHighDetailZoom && (
-          <div className="glass absolute left-1/2 top-14 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs">
+          <div className="glass fixed bottom-[6.5rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs">
             <AlertCircle className="h-3.5 w-3.5" />
             High detail mode — zoom out for smooth loop
           </div>
