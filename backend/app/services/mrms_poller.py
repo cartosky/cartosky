@@ -42,7 +42,7 @@ DEFAULT_DATA_ROOT = Path("/opt/cartosky/data")
 DEFAULT_POLL_SECONDS = 120
 DEFAULT_KEEP_RUNS = 6
 DEFAULT_WINDOW_MINUTES = 120
-DEFAULT_FRAME_CADENCE_MINUTES = 2
+DEFAULT_FRAME_CADENCE_MINUTES = 5
 DEFAULT_LISTING_TIMEOUT_SECONDS = 15.0
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 DEFAULT_PREFERRED_DECODER = "wgrib2"
@@ -98,7 +98,11 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         limit=max(target_frame_count * 3, target_frame_count),
         timeout_seconds=config.listing_timeout_seconds,
     )
-    frozen = freeze_bundle_scans(scans, max_frames=target_frame_count)
+    frozen = freeze_bundle_scans(
+        scans,
+        max_frames=target_frame_count,
+        frame_cadence_minutes=config.frame_cadence_minutes,
+    )
     logger.info(
         "MRMS bundle candidate discovered=%d frozen=%d target=%d",
         len(scans),

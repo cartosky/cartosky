@@ -104,10 +104,13 @@ def freeze_bundle_scans(
     scans: list[MRMSScanRef],
     *,
     max_frames: int,
+    frame_cadence_minutes: int = 1,
     newest_valid_time: datetime | None = None,
 ) -> list[MRMSScanRef]:
     if max_frames < 1:
         raise ValueError("max_frames must be >= 1")
+    if frame_cadence_minutes < 1:
+        raise ValueError("frame_cadence_minutes must be >= 1")
 
     newest_utc = newest_valid_time.astimezone(timezone.utc) if newest_valid_time is not None else None
     deduped: dict[datetime, MRMSScanRef] = {}
@@ -118,9 +121,29 @@ def freeze_bundle_scans(
         deduped[valid_time] = scan
 
     ordered = sorted(deduped.values(), key=lambda item: item.valid_time)
-    if len(ordered) > max_frames:
+    if not ordered:
+        return []
+
+    safe_cadence = max(1, int(frame_cadence_minutes))
+    if safe_cadence == 1:
         ordered = ordered[-max_frames:]
-    return ordered
+        return ordered
+
+    anchor = ordered[-1].valid_time.astimezone(timezone.utc)
+    bucket_seconds = safe_cadence * 60
+    selected_by_bucket: dict[int, MRMSScanRef] = {}
+    for scan in sorted(ordered, key=lambda item: item.valid_time, reverse=True):
+        age_seconds = max(0, int((anchor - scan.valid_time.astimezone(timezone.utc)).total_seconds()))
+        bucket_index = age_seconds // bucket_seconds
+        if bucket_index >= max_frames:
+            continue
+        if bucket_index not in selected_by_bucket:
+            selected_by_bucket[bucket_index] = scan
+
+    selected = sorted(selected_by_bucket.values(), key=lambda item: item.valid_time)
+    if len(selected) > max_frames:
+        selected = selected[-max_frames:]
+    return selected
 
 
 def download_scan(scan: MRMSScanRef, *, dest_dir: Path, timeout_seconds: float = 30.0) -> Path:

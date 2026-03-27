@@ -57,6 +57,32 @@ def test_freeze_bundle_scans_returns_oldest_to_newest_window() -> None:
     ]
 
 
+def test_freeze_bundle_scans_samples_newest_scan_per_cadence_bucket() -> None:
+    scans = discover_recent_scans_from_listing_html(
+        """
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120000.grib2.gz">1</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120200.grib2.gz">2</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120400.grib2.gz">3</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120600.grib2.gz">4</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120800.grib2.gz">5</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-121000.grib2.gz">6</a>
+        """,
+        base_url="https://mrms.ncep.noaa.gov/2D/MergedBaseReflectivityQC/",
+    )
+
+    frozen = freeze_bundle_scans(
+        scans,
+        max_frames=3,
+        frame_cadence_minutes=5,
+        newest_valid_time=datetime(2026, 3, 27, 12, 10, tzinfo=timezone.utc),
+    )
+    assert [scan.valid_time.isoformat() for scan in frozen] == [
+        "2026-03-27T12:00:00+00:00",
+        "2026-03-27T12:04:00+00:00",
+        "2026-03-27T12:10:00+00:00",
+    ]
+
+
 def test_wgrib2_decoder_extracts_binary_grid_without_netcdf(monkeypatch, tmp_path: Path) -> None:
     scan_path = tmp_path / "MRMS_MergedBaseReflectivityQC_00.50_20260327-120200.grib2"
     scan_path.write_bytes(b"fake-grib")
