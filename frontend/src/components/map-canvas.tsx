@@ -147,7 +147,17 @@ function prefetchLayerId(index: number): string {
   return `twf-prefetch-${index}`;
 }
 
-function getResamplingMode(variableKind?: string | null): "nearest" | "linear" {
+function getResamplingMode(
+  variableKind?: string | null,
+  displayResamplingOverride?: string | null
+): "nearest" | "linear" {
+  const normalizedOverride = String(displayResamplingOverride ?? "").trim().toLowerCase();
+  if (normalizedOverride === "nearest" || normalizedOverride === "linear") {
+    return normalizedOverride;
+  }
+  if (normalizedOverride === "bilinear") {
+    return "linear";
+  }
   const normalizedKind = String(variableKind ?? "").trim().toLowerCase();
   if (normalizedKind === "discrete" || normalizedKind === "indexed" || normalizedKind === "categorical") {
     return "nearest";
@@ -155,12 +165,16 @@ function getResamplingMode(variableKind?: string | null): "nearest" | "linear" {
   return "linear";
 }
 
-function getLoopResamplingMode(variable?: string, variableKind?: string | null): "nearest" | "linear" {
+function getLoopResamplingMode(
+  variable?: string,
+  variableKind?: string | null,
+  displayResamplingOverride?: string | null
+): "nearest" | "linear" {
   const variableId = String(variable ?? "").trim().toLowerCase();
   if (variableId === "radar_ptype") {
     return "linear";
   }
-  return getResamplingMode(variableKind);
+  return getResamplingMode(variableKind, displayResamplingOverride);
 }
 
 function loopCoordinatesFromBbox(
@@ -448,6 +462,7 @@ export function buildMapStyle(
   opacity: number,
   variable?: string,
   variableKind?: string | null,
+  displayResamplingOverride?: string | null,
   overlayFadeOutZoom?: { start: number; end: number } | null,
   contourGeoJsonUrl?: string | null,
   loopImageCoordinates: [[number, number], [number, number], [number, number], [number, number]] = loopCoordinatesFromBbox(null),
@@ -455,8 +470,8 @@ export function buildMapStyle(
   options: MapStyleOptions = {}
 ): StyleSpecification {
   const { includeRuntimeLoopCanvas = true, includeRuntimeLoopImageSource = false } = options;
-  const resamplingMode = getResamplingMode(variableKind);
-  const loopResamplingMode = getLoopResamplingMode(variable, variableKind);
+  const resamplingMode = getResamplingMode(variableKind, displayResamplingOverride);
+  const loopResamplingMode = getLoopResamplingMode(variable, variableKind, displayResamplingOverride);
   const paintSettings = getOverlayPaintSettings(variable, basemapMode);
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
   const labelTiles = basemapMode === "dark" ? CARTO_DARK_LABEL_TILES : CARTO_LIGHT_LABEL_TILES;
@@ -765,6 +780,7 @@ type MapCanvasProps = {
   mode: PlaybackMode;
   variable?: string;
   variableKind?: string | null;
+  displayResamplingOverride?: string | null;
   overlayFadeOutZoom?: { start: number; end: number } | null;
   basemapMode: BasemapMode;
   prefetchTileUrls?: string[];
@@ -805,6 +821,7 @@ export function MapCanvas({
   mode,
   variable,
   variableKind,
+  displayResamplingOverride = null,
   overlayFadeOutZoom = null,
   basemapMode,
   prefetchTileUrls = [],
@@ -1052,14 +1069,15 @@ export function MapCanvas({
       id: string,
       variableId?: string,
       variableKindId?: string | null,
+      displayResamplingOverrideValue?: string | null,
       basemapModeValue: BasemapMode = "light"
     ) => {
       if (!map.getLayer(id)) {
         return;
       }
       const resamplingMode = id === LOOP_LAYER_ID || id === LOOP_CANVAS_LAYER_ID
-        ? getLoopResamplingMode(variableId, variableKindId)
-        : getResamplingMode(variableKindId);
+        ? getLoopResamplingMode(variableId, variableKindId, displayResamplingOverrideValue)
+        : getResamplingMode(variableKindId, displayResamplingOverrideValue);
       const paintSettings = getOverlayPaintSettings(variableId, basemapModeValue);
       map.setPaintProperty(id, "raster-resampling", resamplingMode);
       map.setPaintProperty(id, "raster-contrast", paintSettings.contrast);
@@ -1708,6 +1726,7 @@ export function MapCanvas({
         opacity,
         variable,
         variableKind,
+        displayResamplingOverride,
         overlayFadeOutZoom,
         contourGeoJsonUrl,
         loopImageCoordinates,
@@ -1866,6 +1885,7 @@ export function MapCanvas({
       opacity,
       variable,
       variableKind,
+      displayResamplingOverride,
       overlayFadeOutZoom,
       contourGeoJsonUrl,
       loopImageCoordinates,
@@ -1920,13 +1940,13 @@ export function MapCanvas({
         variable === "tmp2m" && !loopActive && !isLoopToTileTransitioningRef.current
       );
 
-      setLayerRasterPaint(map, layerId("a"), variable, variableKind, basemapMode);
-      setLayerRasterPaint(map, layerId("b"), variable, variableKind, basemapMode);
+      setLayerRasterPaint(map, layerId("a"), variable, variableKind, displayResamplingOverride, basemapMode);
+      setLayerRasterPaint(map, layerId("b"), variable, variableKind, displayResamplingOverride, basemapMode);
       for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
-        setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, basemapMode);
+        setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, displayResamplingOverride, basemapMode);
       }
-      setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, basemapMode);
-      setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, basemapMode);
+      setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, displayResamplingOverride, basemapMode);
+      setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, displayResamplingOverride, basemapMode);
 
       enforceLayerOrder(map);
     };
@@ -2596,14 +2616,14 @@ export function MapCanvas({
       return;
     }
 
-    setLayerRasterPaint(map, layerId("a"), variable, variableKind, basemapMode);
-    setLayerRasterPaint(map, layerId("b"), variable, variableKind, basemapMode);
+    setLayerRasterPaint(map, layerId("a"), variable, variableKind, displayResamplingOverride, basemapMode);
+    setLayerRasterPaint(map, layerId("b"), variable, variableKind, displayResamplingOverride, basemapMode);
     for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
-      setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, basemapMode);
+      setLayerRasterPaint(map, prefetchLayerId(idx), variable, variableKind, displayResamplingOverride, basemapMode);
     }
-    setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, basemapMode);
-    setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, basemapMode);
-  }, [isLoaded, variable, variableKind, basemapMode, setLayerRasterPaint]);
+    setLayerRasterPaint(map, LOOP_LAYER_ID, variable, variableKind, displayResamplingOverride, basemapMode);
+    setLayerRasterPaint(map, LOOP_CANVAS_LAYER_ID, variable, variableKind, displayResamplingOverride, basemapMode);
+  }, [isLoaded, variable, variableKind, displayResamplingOverride, basemapMode, setLayerRasterPaint]);
 
   useEffect(() => {
     const map = mapRef.current;

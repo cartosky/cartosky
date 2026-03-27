@@ -499,6 +499,9 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Merged Base Reflectivity QC",
         "legend_title": "MRMS Reflectivity (dBZ)",
         "transparent_below_min": True,
+        # MRMS is displayed as a smoothed visual field even though sampling
+        # remains on the unsmoothed value raster.
+        "display_resampling_override": "bilinear",
     },
 }
 

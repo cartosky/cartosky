@@ -1224,7 +1224,12 @@ export default function App() {
   );
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedVariableKind = selectedCapabilityVarMap.get(variable)?.kind ?? null;
+  const selectedVariableDisplayResamplingOverride =
+    selectedCapabilityVarMap.get(variable)?.displayResamplingOverride ?? null;
   const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
+  const visualVariableDisplayResamplingOverride =
+    selectedCapabilityVarMap.get(visualVariable)?.displayResamplingOverride
+    ?? selectedVariableDisplayResamplingOverride;
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
@@ -2357,6 +2362,10 @@ export default function App() {
   // keep its paint settings in effect until the new variable is promoting.
   const displayedOverlayVariable = (isLoopDisplayActive || isVariableSwitching) ? (visualVariable || variable) : variable;
   const displayedOverlayVariableKind = (isLoopDisplayActive || isVariableSwitching) ? visualVariableKind : selectedVariableKind;
+  const displayedOverlayVariableDisplayResamplingOverride =
+    (isLoopDisplayActive || isVariableSwitching)
+      ? visualVariableDisplayResamplingOverride
+      : selectedVariableDisplayResamplingOverride;
 
   const contourGeoJsonUrl = useMemo(() => {
     if (!firstWeatherFramePainted) {
@@ -5708,6 +5717,7 @@ export default function App() {
       opacity,
       variable,
       displayedOverlayVariableKind,
+      displayedOverlayVariableDisplayResamplingOverride,
       overlayFadeOutZoom,
       contourGeoJsonUrl,
       loopCoordinates,
@@ -5749,7 +5759,8 @@ export default function App() {
     tileUrl,
     opacity,
     variable,
-    displayedOverlayVariableKind,
+      displayedOverlayVariableKind,
+      displayedOverlayVariableDisplayResamplingOverride,
     overlayFadeOutZoom,
     contourGeoJsonUrl,
     loopManifest,
@@ -5951,6 +5962,7 @@ export default function App() {
           mode={isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
           variable={displayedOverlayVariable}
           variableKind={displayedOverlayVariableKind}
+          displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
           prefetchTileUrls={isLoopDisplayActive ? [] : prefetchTileUrls}
