@@ -97,6 +97,12 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         timeout_seconds=config.listing_timeout_seconds,
     )
     frozen = freeze_bundle_scans(scans, max_frames=target_frame_count)
+    logger.info(
+        "MRMS bundle candidate discovered=%d frozen=%d target=%d",
+        len(scans),
+        len(frozen),
+        target_frame_count,
+    )
     if not frozen:
         return MRMSPollerCycleResult(
             action="noop",
@@ -129,9 +135,25 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
     failed_scans: list[str] = []
     with tempfile.TemporaryDirectory(prefix="cartosky-mrms-") as tmpdir:
         download_dir = Path(tmpdir)
-        for scan in frozen:
+        total_scans = len(frozen)
+        for index, scan in enumerate(frozen, start=1):
+            logger.info(
+                "MRMS frame %d/%d fetching %s valid=%s",
+                index,
+                total_scans,
+                scan.filename,
+                _format_iso(scan.valid_time),
+            )
             try:
-                frames.append(_decode_scan_ref(scan, download_dir=download_dir, config=config))
+                decoded_frame = _decode_scan_ref(scan, download_dir=download_dir, config=config)
+                frames.append(decoded_frame)
+                logger.info(
+                    "MRMS frame %d/%d ready decoder=%s shape=%s",
+                    index,
+                    total_scans,
+                    str(decoded_frame.metadata.get("decoder", "unknown")),
+                    tuple(decoded_frame.values.shape),
+                )
             except Exception as exc:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
                 failed_scans.append(scan.filename)
@@ -147,6 +169,13 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
             message="No publishable MRMS bundle could be built from the frozen scan window.",
         )
 
+    logger.info(
+        "MRMS publish starting frames=%d failed=%d latest_scan=%s loop_pregen=%s",
+        len(frames),
+        len(failed_scans),
+        _format_iso(newest_scan_valid_time),
+        config.loop_pregenerate_enabled,
+    )
     publish_result = publish_mrms_bundle(
         data_root=config.data_root,
         frames=frames,
