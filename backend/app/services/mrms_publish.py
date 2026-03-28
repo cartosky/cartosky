@@ -41,7 +41,7 @@ MRMS_MODEL_ID = "mrms"
 MRMS_REGION_ID = "conus"
 MRMS_VARIABLE_ID = "reflectivity"
 MRMS_COLOR_MAP_ID = "mrms_reflectivity"
-MRMS_DISPLAY_SMOOTHING_SIGMA = 0.7
+MRMS_DISPLAY_SMOOTHING_SIGMA = 0.45
 
 
 @dataclass(frozen=True)

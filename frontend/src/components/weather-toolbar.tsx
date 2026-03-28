@@ -61,6 +61,7 @@ type WeatherToolbarProps = {
   latestAvailableRunLabel?: string | null;
   hasNewerRunAvailable?: boolean;
   onViewLatestRun?: () => void;
+  runSelectionLocked?: boolean;
   sourceStatusLabel?: string | null;
   sourceStatusDescription?: string | null;
   sourceStatusTone?: ObservedSourceStatusTone | null;
@@ -347,6 +348,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     latestAvailableRunLabel,
     hasNewerRunAvailable = false,
     onViewLatestRun,
+    runSelectionLocked = false,
     sourceStatusLabel,
     sourceStatusDescription,
     sourceStatusTone,
@@ -404,22 +406,22 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               value={run}
               onValueChange={onRunChange}
               options={runMenuOptions}
-              disabled={disabled}
+              disabled={disabled || runSelectionLocked}
               placeholder="Run"
               hideLabel
               selectedLabelOverride={runDisplayLabel}
-              highlightState={hasNewerRunAvailable}
+              highlightState={!runSelectionLocked && hasNewerRunAvailable}
               menuActionLabel={
-                hasNewerRunAvailable
+                !runSelectionLocked && hasNewerRunAvailable
                   ? "View latest run"
                   : null
               }
               menuActionDescription={
-                hasNewerRunAvailable && latestAvailableRunLabel
+                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
                   ? `${latestAvailableRunLabel} available`
                   : null
               }
-              onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
+              onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
               triggerClassName="min-w-[142px] max-w-[142px] rounded-full border-white/10 bg-white/8 px-3"
             />
 
@@ -530,21 +532,21 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 value={run}
                 onValueChange={onRunChange}
                 options={runMenuOptions}
-                disabled={disabled}
+                disabled={disabled || runSelectionLocked}
                 placeholder="Run"
                 selectedLabelOverride={runDisplayLabel}
-                highlightState={hasNewerRunAvailable}
+                highlightState={!runSelectionLocked && hasNewerRunAvailable}
                 menuActionLabel={
-                  hasNewerRunAvailable
+                  !runSelectionLocked && hasNewerRunAvailable
                     ? "View latest run"
                     : null
                 }
                 menuActionDescription={
-                  hasNewerRunAvailable && latestAvailableRunLabel
+                  !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
                     ? `${latestAvailableRunLabel} available`
                     : null
                 }
-                onMenuAction={hasNewerRunAvailable ? onViewLatestRun : undefined}
+                onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
               />
 
               <ToolbarSelect

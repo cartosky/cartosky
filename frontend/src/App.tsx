@@ -27,6 +27,7 @@ import {
   fetchRuns,
   fetchSampleBatch,
   readCapabilityDefaultFrameSelection,
+  readCapabilityLatestOnly,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
 import {
@@ -1230,6 +1231,7 @@ export default function App() {
   const visualVariableDisplayResamplingOverride =
     selectedCapabilityVarMap.get(visualVariable)?.displayResamplingOverride
     ?? selectedVariableDisplayResamplingOverride;
+  const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
@@ -4815,6 +4817,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!selectedModelLatestOnly || run === "latest") {
+      return;
+    }
+    setRun("latest");
+    setNewRunNotice(null);
+  }, [selectedModelLatestOnly, run]);
+
+  useEffect(() => {
     if (!model || !variable || !hasRenderableSelection || run !== "latest" || !isPageVisible) {
       return;
     }
@@ -4836,7 +4846,12 @@ export default function App() {
           setCapabilities((current) => withUpdatedLatestRun(current, model, nextLatestRunId, nextRuns));
 
           const currentlyViewedRun = resolvedRunForRequests;
-          if (currentlyViewedRun && nextLatestRunId && nextLatestRunId !== currentlyViewedRun) {
+          if (
+            !selectedModelLatestOnly
+            && currentlyViewedRun
+            && nextLatestRunId
+            && nextLatestRunId !== currentlyViewedRun
+          ) {
             setRun(currentlyViewedRun);
             setNewRunNotice({
               model,
@@ -4911,7 +4926,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey]);
+  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -5627,6 +5642,8 @@ export default function App() {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);
   const hasNewerRunAvailable = Boolean(
+    !selectedModelLatestOnly
+    && 
     latestRunId
     && run !== "latest"
     && run !== latestRunId
@@ -5946,6 +5963,7 @@ export default function App() {
         sourceStatusLabel={observedSourceStatus?.label ?? null}
         sourceStatusDescription={observedSourceStatus?.description ?? null}
         sourceStatusTone={observedSourceStatus?.tone ?? null}
+        runSelectionLocked={selectedModelLatestOnly}
       />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
