@@ -23,6 +23,7 @@ from app.services.mrms_publish import (
     MRMSBundleFrame,
     MRMSLoopPublishSettings,
     MRMSPublishResult,
+    load_latest_published_mrms_frames,
     publish_mrms_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
@@ -122,6 +123,11 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
 
     newest_scan_valid_time = frozen[-1].valid_time.astimezone(timezone.utc)
     latest_published_valid_time, latest_bundle_complete = _latest_published_bundle_state(config.data_root)
+    latest_run_id, previous_frames = load_latest_published_mrms_frames(config.data_root)
+    previously_published_valid_times = {
+        frame.valid_time.astimezone(timezone.utc)
+        for frame in previous_frames
+    }
     if (
         latest_published_valid_time is not None
         and newest_scan_valid_time <= latest_published_valid_time
@@ -137,12 +143,23 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
             message="No new MRMS scan beyond the current published latest bundle.",
         )
 
+    scans_to_decode = [
+        scan for scan in frozen
+        if scan.valid_time.astimezone(timezone.utc) not in previously_published_valid_times
+    ]
+    logger.info(
+        "MRMS incremental window previous_run=%s reused=%d decode=%d",
+        latest_run_id or "<none>",
+        max(0, len(frozen) - len(scans_to_decode)),
+        len(scans_to_decode),
+    )
+
     frames: list[MRMSBundleFrame] = []
     failed_scans: list[str] = []
     with tempfile.TemporaryDirectory(prefix="cartosky-mrms-") as tmpdir:
         download_dir = Path(tmpdir)
-        total_scans = len(frozen)
-        for index, scan in enumerate(frozen, start=1):
+        total_scans = len(scans_to_decode)
+        for index, scan in enumerate(scans_to_decode, start=1):
             logger.info(
                 "MRMS frame %d/%d fetching %s valid=%s",
                 index,
@@ -164,7 +181,18 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
                 failed_scans.append(scan.filename)
 
-    if not frames:
+    available_valid_times = {
+        frame.valid_time.astimezone(timezone.utc)
+        for frame in previous_frames
+    }
+    available_valid_times.update(frame.valid_time.astimezone(timezone.utc) for frame in frames)
+    frozen_valid_times = {
+        scan.valid_time.astimezone(timezone.utc)
+        for scan in frozen
+    }
+    available_for_window = len(available_valid_times.intersection(frozen_valid_times))
+
+    if not frames and available_for_window == 0:
         return MRMSPollerCycleResult(
             action="noop",
             latest_scan_valid_time=_format_iso(newest_scan_valid_time),
@@ -176,8 +204,10 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         )
 
     logger.info(
-        "MRMS publish starting frames=%d failed=%d latest_scan=%s loop_pregen=%s",
+        "MRMS publish starting new=%d reused=%d available=%d failed=%d latest_scan=%s loop_pregen=%s",
         len(frames),
+        max(0, available_for_window - len(frames)),
+        available_for_window,
         len(failed_scans),
         _format_iso(newest_scan_valid_time),
         config.loop_pregenerate_enabled,
@@ -188,12 +218,15 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         publish_time=datetime.now(timezone.utc),
         loop_settings=_loop_settings(config) if config.loop_pregenerate_enabled else None,
         frame_write_workers=config.frame_write_workers,
+        previous_frames=previous_frames,
+        target_frame_count=len(frozen),
+        expected_frame_count=len(frozen),
     )
     _enforce_retention(config)
 
     message = (
         f"Published MRMS bundle {publish_result.run_id} "
-        f"with {len(frames)}/{len(frozen)} frames"
+        f"with {available_for_window}/{len(frozen)} frames"
     )
     if failed_scans:
         message += f" ({len(failed_scans)} failed scans skipped)"
@@ -203,7 +236,7 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         latest_scan_valid_time=_format_iso(newest_scan_valid_time),
         published_run_id=publish_result.run_id,
         expected_frame_count=len(frozen),
-        decoded_frame_count=len(frames),
+        decoded_frame_count=available_for_window,
         failed_scan_count=len(failed_scans),
         message=message,
     )

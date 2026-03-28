@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services import mrms_poller
 from app.services.mrms_fetch import MRMSScanRef
-from app.services.mrms_publish import MRMSPublishResult
+from app.services.mrms_publish import MRMSPublishResult, MRMSPublishedFrame
 
 
 def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
@@ -216,3 +217,84 @@ def test_run_once_retries_same_latest_scan_when_existing_bundle_is_incomplete(tm
 
     result = mrms_poller.run_once(config)
     assert result.action == "published"
+
+
+def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    older = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    newer = datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc)
+    scans = [
+        MRMSScanRef(valid_time=older, url="https://example.test/a.grib2.gz", filename="a.grib2.gz"),
+        MRMSScanRef(valid_time=newer, url="https://example.test/b.grib2.gz", filename="b.grib2.gz"),
+    ]
+
+    monkeypatch.setattr(mrms_poller, "discover_recent_scans_http", lambda **_: scans)
+    monkeypatch.setattr(mrms_poller, "freeze_bundle_scans", lambda items, **_: items)
+    monkeypatch.setattr(mrms_poller, "_latest_published_bundle_state", lambda _: (older, True))
+    monkeypatch.setattr(mrms_poller, "download_scan", lambda scan, **_: tmp_path / scan.filename)
+
+    previous_sidecar = {
+        "contract_version": "3.0",
+        "model": "mrms",
+        "run": "20260327_1200z",
+        "var": "reflectivity",
+        "fh": 0,
+        "valid_time": "2026-03-27T12:00:00Z",
+        "units": "dBZ",
+        "kind": "discrete",
+        "quality": "full",
+        "quality_flags": [],
+    }
+    monkeypatch.setattr(
+        mrms_poller,
+        "load_latest_published_mrms_frames",
+        lambda _data_root: (
+            "20260327_1200z",
+            [
+                MRMSPublishedFrame(
+                    valid_time=older,
+                    rgba_path=tmp_path / "old.rgba.cog.tif",
+                    value_path=tmp_path / "old.val.cog.tif",
+                    sidecar=json.loads(json.dumps(previous_sidecar)),
+                )
+            ],
+        ),
+    )
+
+    decoded_times: list[datetime] = []
+
+    class _Decoded:
+        def __init__(self, valid_time):
+            self.valid_time = valid_time
+            self.values = np.ones((2, 2), dtype=np.float32)
+            self.decoder = "pygrib"
+            self.metadata = {}
+
+    def _decode(path, valid_time, **_):
+        decoded_times.append(valid_time)
+        return _Decoded(valid_time)
+
+    monkeypatch.setattr(mrms_poller, "decode_scan", _decode)
+
+    captured: dict[str, object] = {}
+
+    def _publish(**kwargs):
+        captured["previous_frames"] = kwargs.get("previous_frames")
+        captured["frames"] = kwargs.get("frames")
+        captured["target_frame_count"] = kwargs.get("target_frame_count")
+        return MRMSPublishResult(
+            run_id="20260327_1204z",
+            published_run_dir=tmp_path / "published" / "mrms" / "20260327_1204z",
+            manifest_path=tmp_path / "manifests" / "mrms" / "20260327_1204z.json",
+            frame_count=2,
+        )
+
+    monkeypatch.setattr(mrms_poller, "publish_mrms_bundle", _publish)
+    monkeypatch.setattr(mrms_poller, "_enforce_retention", lambda _: None)
+
+    result = mrms_poller.run_once(config)
+    assert result.action == "published"
+    assert decoded_times == [newer]
+    assert len(captured["previous_frames"]) == 1
+    assert len(captured["frames"]) == 1
+    assert captured["target_frame_count"] == 2

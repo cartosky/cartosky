@@ -220,3 +220,62 @@ def test_failed_publish_preserves_previous_latest_pointer(
     latest_payload = json.loads((tmp_path / "published" / "mrms" / "LATEST.json").read_text())
     assert latest_payload["run_id"] == "20260327_1206z"
     assert not (tmp_path / "published" / "mrms" / "20260327_1208z").exists()
+
+
+def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+
+    base_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    initial_frames = [
+        mrms_publish.MRMSBundleFrame(
+            valid_time=base_time + timedelta(minutes=offset),
+            values=np.full((2, 3), 10.0 + offset, dtype=np.float32),
+            source_filename=f"scan-{offset}.grib2.gz",
+        )
+        for offset in (0, 5, 10)
+    ]
+    first = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=initial_frames,
+        publish_time=datetime(2026, 3, 27, 12, 12, tzinfo=timezone.utc),
+        target_frame_count=3,
+        expected_frame_count=3,
+    )
+
+    previous_run_id, previous_frames = mrms_publish.load_latest_published_mrms_frames(tmp_path)
+    assert previous_run_id == first.run_id
+    assert len(previous_frames) == 3
+
+    second = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[
+            mrms_publish.MRMSBundleFrame(
+                valid_time=base_time + timedelta(minutes=15),
+                values=np.full((2, 3), 25.0, dtype=np.float32),
+                source_filename="scan-15.grib2.gz",
+            )
+        ],
+        previous_frames=previous_frames,
+        publish_time=datetime(2026, 3, 27, 12, 16, tzinfo=timezone.utc),
+        target_frame_count=3,
+        expected_frame_count=3,
+    )
+
+    manifest = json.loads(second.manifest_path.read_text())
+    reflectivity = manifest["variables"]["reflectivity"]
+    assert reflectivity["frames"] == [
+        {"fh": 0, "valid_time": "2026-03-27T12:05:00Z"},
+        {"fh": 1, "valid_time": "2026-03-27T12:10:00Z"},
+        {"fh": 2, "valid_time": "2026-03-27T12:15:00Z"},
+    ]
+
+    reused_sidecar = json.loads((second.published_run_dir / "reflectivity" / "fh000.json").read_text())
+    assert reused_sidecar["run"] == second.run_id
+    assert reused_sidecar["fh"] == 0
+    assert reused_sidecar["valid_time"] == "2026-03-27T12:05:00Z"
+
+    new_sidecar = json.loads((second.published_run_dir / "reflectivity" / "fh002.json").read_text())
+    assert new_sidecar["valid_time"] == "2026-03-27T12:15:00Z"
