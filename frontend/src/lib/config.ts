@@ -18,20 +18,13 @@ const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
 export const WEBP_RENDER_MODE_THRESHOLDS = {
   tier0Max: 5.8,
-  tier1Max: 6.6,
   hysteresis: 0.2,
   dwellMs: 200,
-  desktopHiDpiMinDpr: 1.75,
-  desktopHiDpiTier1Bias: 0.35,
 };
 
-export type CanonicalSingleWebpTierMode = "webp_tier0" | "webp_tier1";
+export type CanonicalSingleWebpTierMode = "webp_tier0";
 
 export function getCanonicalSingleWebpTierMode(): CanonicalSingleWebpTierMode {
-  const raw = String(import.meta.env.VITE_CANONICAL_SINGLE_WEBP_TIER ?? "").trim().toLowerCase();
-  if (raw === "tier1" || raw === "webp_tier1") {
-    return "webp_tier1";
-  }
   return "webp_tier0";
 }
 

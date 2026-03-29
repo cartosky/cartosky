@@ -1,5 +1,7 @@
 # WebP-Default Render Path — Gate-Based Implementation Plan
 
+> Historical note: the current production pipeline now treats `webp_tier1` as legacy compatibility only. Active loop pre-generation and frontend loop consumption are tier 0 only.
+
 ## Scope
 
 Implement a WebP-first render architecture with two WebP tiers and deterministic fallback to tiles, while keeping sampling authoritative from data artifacts (`val.cog.tif`) in all render modes.

@@ -31,9 +31,6 @@ from app.services.publish_utils import (
     DEFAULT_LOOP_WEBP_MAX_DIM,
     DEFAULT_LOOP_WEBP_QUALITY,
     DEFAULT_LOOP_WEBP_TIER0_FIXED_W,
-    DEFAULT_LOOP_WEBP_TIER1_FIXED_W,
-    DEFAULT_LOOP_WEBP_TIER1_MAX_DIM,
-    DEFAULT_LOOP_WEBP_TIER1_QUALITY,
     enforce_run_artifact_retention,
 )
 
@@ -73,9 +70,6 @@ class MRMSPollerConfig:
     loop_tier0_quality: int
     loop_tier0_max_dim: int
     loop_tier0_fixed_w: int
-    loop_tier1_quality: int
-    loop_tier1_max_dim: int
-    loop_tier1_fixed_w: int
 
 
 @dataclass(frozen=True)
@@ -383,9 +377,6 @@ def _loop_settings(config: MRMSPollerConfig) -> MRMSLoopPublishSettings:
         tier0_quality=config.loop_tier0_quality,
         tier0_max_dim=config.loop_tier0_max_dim,
         tier0_fixed_w=config.loop_tier0_fixed_w,
-        tier1_quality=config.loop_tier1_quality,
-        tier1_max_dim=config.loop_tier1_max_dim,
-        tier1_fixed_w=config.loop_tier1_fixed_w,
     )
 
 
@@ -493,9 +484,6 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
         loop_tier0_quality=_int_env("CARTOSKY_LOOP_WEBP_QUALITY", DEFAULT_LOOP_WEBP_QUALITY, minimum=1),
         loop_tier0_max_dim=_int_env("CARTOSKY_LOOP_WEBP_MAX_DIM", DEFAULT_LOOP_WEBP_MAX_DIM, minimum=64),
         loop_tier0_fixed_w=_int_env("CARTOSKY_LOOP_WEBP_TIER0_FIXED_W", DEFAULT_LOOP_WEBP_TIER0_FIXED_W, minimum=64),
-        loop_tier1_quality=_int_env("CARTOSKY_LOOP_WEBP_TIER1_QUALITY", DEFAULT_LOOP_WEBP_TIER1_QUALITY, minimum=1),
-        loop_tier1_max_dim=_int_env("CARTOSKY_LOOP_WEBP_TIER1_MAX_DIM", DEFAULT_LOOP_WEBP_TIER1_MAX_DIM, minimum=64),
-        loop_tier1_fixed_w=_int_env("CARTOSKY_LOOP_WEBP_TIER1_FIXED_W", DEFAULT_LOOP_WEBP_TIER1_FIXED_W, minimum=64),
     )
 
 

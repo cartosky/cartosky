@@ -28,8 +28,6 @@ from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
     DEFAULT_LOOP_WEBP_MAX_DIM,
     DEFAULT_LOOP_WEBP_QUALITY,
-    DEFAULT_LOOP_WEBP_TIER1_MAX_DIM,
-    DEFAULT_LOOP_WEBP_TIER1_QUALITY,
     pregenerate_loop_webp_for_run,
     promote_run,
     write_json_atomic,
@@ -68,9 +66,6 @@ class MRMSLoopPublishSettings:
     tier0_quality: int = DEFAULT_LOOP_WEBP_QUALITY
     tier0_max_dim: int = DEFAULT_LOOP_WEBP_MAX_DIM
     tier0_fixed_w: int = 0
-    tier1_quality: int = DEFAULT_LOOP_WEBP_TIER1_QUALITY
-    tier1_max_dim: int = DEFAULT_LOOP_WEBP_TIER1_MAX_DIM
-    tier1_fixed_w: int = 0
 
 
 @dataclass(frozen=True)
@@ -289,9 +284,6 @@ def publish_mrms_bundle(
             tier0_quality=loop_settings.tier0_quality,
             tier0_max_dim=loop_settings.tier0_max_dim,
             tier0_fixed_w=loop_settings.tier0_fixed_w,
-            tier1_quality=loop_settings.tier1_quality,
-            tier1_max_dim=loop_settings.tier1_max_dim,
-            tier1_fixed_w=loop_settings.tier1_fixed_w,
             variables=(MRMS_VARIABLE_ID,),
             forecast_hours=range(len(ordered_valid_times)),
         )

@@ -35,9 +35,6 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
         loop_tier0_quality=82,
         loop_tier0_max_dim=1600,
         loop_tier0_fixed_w=1600,
-        loop_tier1_quality=86,
-        loop_tier1_max_dim=2400,
-        loop_tier1_fixed_w=2400,
     )
 
 

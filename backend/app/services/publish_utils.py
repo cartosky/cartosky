@@ -176,10 +176,8 @@ def pregenerate_loop_webp_for_run(
     allowed_variables = {str(item).strip().lower() for item in (variables or []) if str(item).strip()}
     allowed_fhs = {int(item) for item in (forecast_hours or [])}
     allowed_tiers = {int(item) for item in (tiers or [])}
-    tier_specs = (
-        (0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),
-        (1, int(tier1_quality), int(tier1_max_dim), int(tier1_fixed_w)),
-    )
+    # Tier 1 remains legacy-only. Active pre-generation now writes tier 0 only.
+    tier_specs = ((0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),)
 
     jobs: list[tuple[str, Path, Path | None, Path, int, int, int, int]] = []
     for var_dir in sorted([path for path in published_run.iterdir() if path.is_dir()]):

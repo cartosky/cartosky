@@ -1421,10 +1421,8 @@ def _pregenerate_loop_webp_for_run(
     allowed_fhs = {int(item) for item in (forecast_hours or [])}
     allowed_tiers = {int(item) for item in (tiers or [])}
 
-    tier_specs = (
-        (0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),
-        (1, int(tier1_quality), int(tier1_max_dim), int(tier1_fixed_w)),
-    )
+    # Tier 1 remains legacy-only. Active pre-generation now writes tier 0 only.
+    tier_specs = ((0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),)
 
     jobs: list[tuple[str, Path, Path | None, Path, int, int, int, int]] = []
     for var_dir in sorted([p for p in published_run.iterdir() if p.is_dir()]):
@@ -1449,15 +1447,13 @@ def _pregenerate_loop_webp_for_run(
         return 0, 0
 
     logger.info(
-        "Loop pre-generate start: model=%s run=%s jobs=%d workers=%d tier0=(q=%d,max=%d) tier1=(q=%d,max=%d) vars=%s fhs=%s tiers=%s root=%s",
+        "Loop pre-generate start: model=%s run=%s jobs=%d workers=%d tier0=(q=%d,max=%d) vars=%s fhs=%s tiers=%s root=%s",
         model,
         run_id,
         len(jobs),
         workers,
         tier0_quality,
         tier0_max_dim,
-        tier1_quality,
-        tier1_max_dim,
         sorted(allowed_variables) if allowed_variables else None,
         sorted(allowed_fhs) if allowed_fhs else None,
         sorted(allowed_tiers) if allowed_tiers else None,

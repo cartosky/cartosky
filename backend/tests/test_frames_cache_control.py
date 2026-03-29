@@ -156,9 +156,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         temp_tier0_path = loop_cache_root / model / run_id / temp_var / "tier0" / f"fh{fh:03d}.loop.webp"
         temp_tier0_path.parent.mkdir(parents=True, exist_ok=True)
         temp_tier0_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
-    tier1_path = loop_cache_root / model / run_id / var / "tier1" / "fh000.loop.webp"
-    tier1_path.parent.mkdir(parents=True, exist_ok=True)
-    tier1_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
     for fh in (0, 1):
         nam_tier0_path = loop_cache_root / nam_model / nam_run_id / var / "tier0" / f"fh{fh:03d}.loop.webp"
         nam_tier0_path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,13 +214,7 @@ async def test_radar_ptype_frame_loop_urls_use_runtime_paths_when_pregenerated(c
     assert first["loop_webp_url"].startswith("/api/v4/hrrr/20260224_14z/radar_ptype/0/loop.webp")
     assert "/loop.webp?tier=0" in first["loop_webp_url"]
     assert first["loop_webp_tier0_url"].startswith("/api/v4/hrrr/20260224_14z/radar_ptype/0/loop.webp")
-
-    tier1_row = next((row for row in rows if row.get("loop_webp_tier1_url")), None)
-    assert tier1_row is not None
-    assert tier1_row["loop_webp_tier1_url"].startswith(
-        f"/api/v4/hrrr/20260224_14z/radar_ptype/{tier1_row['fh']}/loop.webp"
-    )
-    assert "/loop.webp?tier=1" in tier1_row["loop_webp_tier1_url"]
+    assert all("loop_webp_tier1_url" not in row for row in rows)
 
 
 async def test_nam_radar_ptype_runtime_loop_urls_are_emitted_when_pregenerated(
@@ -275,7 +266,7 @@ async def test_loop_manifest_includes_tier0_runtime_fallback_without_pregenerate
     assert response.status_code == 200
     payload = response.json()
     loop_tiers = payload.get("loop_tiers", [])
-    assert isinstance(loop_tiers, list) and len(loop_tiers) == 2
+    assert isinstance(loop_tiers, list) and len(loop_tiers) == 1
 
     tier0 = next((entry for entry in loop_tiers if entry.get("tier") == 0), None)
     assert tier0 is not None

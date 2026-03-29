@@ -249,11 +249,6 @@ LOOP_TIER_CONFIG: dict[int, dict[str, int]] = {
         "quality": LOOP_WEBP_QUALITY,
         "fixed_w": LOOP_WEBP_TIER0_FIXED_W,
     },
-    1: {
-        "max_dim": LOOP_WEBP_TIER1_MAX_DIM,
-        "quality": LOOP_WEBP_TIER1_QUALITY,
-        "fixed_w": LOOP_WEBP_TIER1_FIXED_W,
-    },
 }
 
 CACHE_HIT = "public, max-age=31536000, immutable"
@@ -3056,7 +3051,7 @@ def get_bootstrap_v4(
                     fh = item.get("fh")
                     if not isinstance(fh, int):
                         continue
-                    tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+                    tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
                         selected_model,
                         selected_run,
                         selected_var,
@@ -3071,7 +3066,6 @@ def get_bootstrap_v4(
                             "run": selected_run,
                             "loop_webp_url": tier0_url,
                             "loop_webp_tier0_url": tier0_url,
-                            "loop_webp_tier1_url": tier1_url,
                             "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
                         }
                     )
@@ -3307,7 +3301,7 @@ def list_frames(request: Request, model: str, run: str, var: str):
             if not isinstance(fh, int):
                 continue
 
-            tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+            tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
                 model,
                 resolved,
                 var,
@@ -3324,7 +3318,6 @@ def list_frames(request: Request, model: str, run: str, var: str):
                     "run": resolved,
                     "loop_webp_url": tier0_url,
                     "loop_webp_tier0_url": tier0_url,
-                    "loop_webp_tier1_url": tier1_url,
                     "meta": {"meta": meta},
                 }
             )
@@ -3403,7 +3396,7 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
     version_token = _run_version_token(model, resolved)
 
     build_started_at = time.perf_counter()
-    tier_frames: dict[int, list[dict[str, Any]]] = {0: [], 1: []}
+    tier_frames: dict[int, list[dict[str, Any]]] = {0: []}
     with otel_tracing.start_as_current_span(
         "loop_manifest.build",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
@@ -3415,7 +3408,7 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
             if not isinstance(fh, int):
                 continue
 
-            tier0_url, tier1_url = _resolve_loop_urls_for_frame(
+            tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
                 model,
                 resolved,
                 var,
@@ -3425,20 +3418,15 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
             )
             if tier0_url:
                 tier_frames[0].append({"fh": fh, "url": tier0_url})
-            if tier1_url:
-                tier_frames[1].append({"fh": fh, "url": tier1_url})
         otel_tracing.set_current_attributes(
             {
                 "cartosky.loop_tier0_frames": len(tier_frames[0]),
-                "cartosky.loop_tier1_frames": len(tier_frames[1]),
             }
         )
 
     tier_frames[0].sort(key=lambda row: int(row["fh"]))
-    tier_frames[1].sort(key=lambda row: int(row["fh"]))
 
     tier0_dim = LOOP_TIER_CONFIG.get(0, {}).get("max_dim", LOOP_WEBP_MAX_DIM)
-    tier1_dim = LOOP_TIER_CONFIG.get(1, {}).get("max_dim", LOOP_WEBP_TIER1_MAX_DIM)
     payload = {
         "manifest_version": LOOP_MANIFEST_VERSION,
         "run": resolved,
@@ -3451,11 +3439,6 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
                 "tier": 0,
                 "max_dim": int(tier0_dim),
                 "frames": tier_frames[0],
-            },
-            {
-                "tier": 1,
-                "max_dim": int(tier1_dim),
-                "frames": tier_frames[1],
             },
         ],
     }

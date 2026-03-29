@@ -122,7 +122,7 @@ function recentMedianSample(samples: readonly number[], maxSamples = 12): number
   return (recent[middle - 1] + recent[middle]) / 2;
 }
 
-type RenderModeState = "webp_tier0" | "webp_tier1" | "tiles";
+type RenderModeState = "webp_tier0" | "tiles";
 const SINGLE_TIER_WEBP_MODE: RenderModeState = getCanonicalSingleWebpTierMode();
 
 type BufferSnapshot = {
@@ -289,17 +289,17 @@ type VariableSwitchState = {
   visualState: "holding_old" | "warming_new" | "promoting_new";
 };
 
+type ScrubCommitIntent = {
+  hour: number;
+  direction: 1 | -1 | 0;
+  startedAt: number;
+};
+
 type ScrubPhase0aSnapshot = {
   liveStartedAt: number | null;
   liveEventCount: number;
   supersededCount: number;
   lastRequestedHour: number | null;
-};
-
-type ScrubCommitIntent = {
-  hour: number;
-  direction: 1 | -1 | 0;
-  startedAt: number;
 };
 
 function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
@@ -602,7 +602,6 @@ function mergeManifestRowsWithPrevious(
       tile_url_template: row.tile_url_template ?? previous.tile_url_template,
       loop_webp_url: row.loop_webp_url ?? previous.loop_webp_url,
       loop_webp_tier0_url: row.loop_webp_tier0_url ?? previous.loop_webp_tier0_url,
-      loop_webp_tier1_url: row.loop_webp_tier1_url ?? previous.loop_webp_tier1_url,
     };
   });
 }
@@ -682,30 +681,17 @@ function isLikelyMobileLoopDevice(): boolean {
 }
 
 function getRenderModeThresholds() {
-  const base = WEBP_RENDER_MODE_THRESHOLDS;
-  if (typeof window === "undefined" || isLikelyMobileLoopDevice()) {
-    return base;
-  }
-
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  if (dpr < base.desktopHiDpiMinDpr) {
-    return base;
-  }
-
-  return {
-    ...base,
-    tier1Max: base.tier1Max + base.desktopHiDpiTier1Bias,
-  };
+  return WEBP_RENDER_MODE_THRESHOLDS;
 }
 
 function nextRenderModeByHysteresis(current: RenderModeState, effectiveZoom: number): RenderModeState {
-  const { tier1Max, hysteresis } = getRenderModeThresholds();
+  const { tier0Max, hysteresis } = getRenderModeThresholds();
 
   if (current === "tiles") {
-    return effectiveZoom <= tier1Max - hysteresis ? SINGLE_TIER_WEBP_MODE : "tiles";
+    return effectiveZoom <= tier0Max - hysteresis ? SINGLE_TIER_WEBP_MODE : "tiles";
   }
 
-  return effectiveZoom > tier1Max + hysteresis ? "tiles" : SINGLE_TIER_WEBP_MODE;
+  return effectiveZoom > tier0Max + hysteresis ? "tiles" : SINGLE_TIER_WEBP_MODE;
 }
 
 async function preloadLoopFrame(
@@ -1570,35 +1556,6 @@ export default function App() {
     return map;
   }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest]);
 
-  const loopTier1UrlByHour = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const row of frameRows) {
-      const fh = Number(row?.fh);
-      const loopUrl = row?.loop_webp_tier1_url;
-      if (!Number.isFinite(fh) || !loopUrl) {
-        continue;
-      }
-      const absolute = /^https?:\/\//i.test(loopUrl)
-        ? loopUrl
-        : `${apiRoot}${loopUrl.startsWith("/") ? "" : "/"}${loopUrl}`;
-      map.set(fh, absolute);
-    }
-    const tier1 = loopManifest?.loop_tiers.find((entry) => Number(entry?.tier) === 1);
-    const frames = Array.isArray(tier1?.frames) ? tier1.frames : [];
-    for (const frame of frames) {
-      const fh = Number(frame?.fh);
-      const loopUrl = frame?.url;
-      if (!Number.isFinite(fh) || !loopUrl) {
-        continue;
-      }
-      const absolute = /^https?:\/\//i.test(loopUrl)
-        ? loopUrl
-        : `${apiRoot}${loopUrl.startsWith("/") ? "" : "/"}${loopUrl}`;
-      map.set(fh, absolute);
-    }
-    return map;
-  }, [apiRoot, frameRows, loopManifest]);
-
   const loopUrlByHour = useMemo(() => new Map(loopTier0UrlByHour), [loopTier0UrlByHour]);
 
   const loopFrameHours = useMemo(() => {
@@ -1614,12 +1571,9 @@ export default function App() {
 
   const resolveLoopUrlForHour = useCallback(
     (fh: number, _preferredMode: RenderModeState): string | null => {
-      if (SINGLE_TIER_WEBP_MODE === "webp_tier1") {
-        return loopTier1UrlByHour.get(fh) ?? loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh) ?? null;
-      }
       return loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh) ?? null;
     },
-    [loopTier0UrlByHour, loopTier1UrlByHour, loopUrlByHour]
+    [loopTier0UrlByHour, loopUrlByHour]
   );
   const isCurrentSelectionLoaded = loadedFramesKey === selectionKey;
   const loopSelectionReady = isCurrentSelectionLoaded && loopFrameHours.length > 0;
@@ -1897,7 +1851,7 @@ export default function App() {
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
     const thresholds = getRenderModeThresholds();
-    const highDetailCutoff = thresholds.tier1Max + thresholds.hysteresis;
+    const highDetailCutoff = thresholds.tier0Max + thresholds.hysteresis;
     return effectiveZoom > highDetailCutoff;
   }, [mapZoom]);
 
