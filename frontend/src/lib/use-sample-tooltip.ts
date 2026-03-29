@@ -73,6 +73,20 @@ export type SampleContext = {
   fh: number;
 };
 
+const MRMS_VISIBLE_REFLECTIVITY_MIN_DBZ = 10;
+
+function isTooltipVisibleSample(ctx: SampleContext, result: SampleResult | null): result is SampleResult {
+  if (!result) {
+    return false;
+  }
+  const model = ctx.model.trim().toLowerCase();
+  const varId = ctx.varId.trim().toLowerCase();
+  if (model === "mrms" && varId === "reflectivity" && Number(result.value) < MRMS_VISIBLE_REFLECTIVITY_MIN_DBZ) {
+    return false;
+  }
+  return true;
+}
+
 function hasValidSampleContext(ctx: SampleContext): boolean {
   return Boolean(
     ctx.model.trim() &&
@@ -122,7 +136,7 @@ export function useSampleTooltip(ctx: SampleContext) {
         const cached = cacheRef.current.get(key);
         if (cached !== undefined) {
           if (gen !== genRef.current) return; // stale
-          if (cached === null) {
+          if (!isTooltipVisibleSample(ctx, cached)) {
             setTooltip(null);
           } else {
             setTooltip({ value: cached.value, units: cached.units, x, y });
@@ -146,7 +160,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           .then((result) => {
             cacheRef.current.set(key, result);
             if (gen !== genRef.current) return; // stale — cursor already moved
-            if (!result) {
+            if (!isTooltipVisibleSample(ctx, result)) {
               setTooltip(null);
               return;
             }

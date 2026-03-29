@@ -4668,7 +4668,7 @@ export default function App() {
       setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
     }
 
-    if (variable && resolveAnchorDisplayRule(variable).mode === "hidden") {
+    if (model === "mrms" || (variable && resolveAnchorDisplayRule(variable).mode === "hidden")) {
       anchorBatchLastAppliedHourRef.current = null;
       anchorBatchLastAppliedSelectionKeyRef.current = "";
       resetAnchorBatchQueue(true);

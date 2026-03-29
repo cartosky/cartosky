@@ -25,6 +25,9 @@ _TARGETED_VALUE_RENDER_MODELS = {"hrrr", "nam", "nbm"}
 _TARGETED_VALUE_RENDER_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
 _BILINEAR_ONLY_LOOP_DOWNSCALE_VARS = {"snowfall_total", "snowfall_kuchera_total", "precip_total"}
 _LOSSLESS_LOOP_WEBP_TARGETS: set[tuple[str, str]] = set()
+_TARGETED_VALUE_RENDER_MODEL_VARS: set[tuple[str, str]] = {
+    ("mrms", "reflectivity"),
+}
 _EXPANDED_LOOP_WIDTH_CONTINUOUS_MODELS = {"gfs"}
 _TARGETED_LOOP_FIXED_WIDTHS: dict[int, int] = {
     0: 2300,
@@ -41,6 +44,7 @@ _TARGETED_LOOP_MAX_DIMS: dict[tuple[str, int], int] = {
     ("radar_ptype", 0): 2048,
 }
 _TARGETED_LOOP_QUALITY: dict[tuple[str, int], int] = {
+    ("reflectivity", 0): 90,
     ("radar_ptype", 0): 92,
     ("radar_ptype", 1): 90,
 }
@@ -215,6 +219,9 @@ def use_value_render_for_variable(
     var_norm = str(var_key or "").strip().lower()
     if not model_norm or not var_norm:
         return False
+
+    if (model_norm, var_norm) in _TARGETED_VALUE_RENDER_MODEL_VARS:
+        return True
 
     resolved_kind = _normalize_kind(kind) or _normalize_kind(variable_kind(model_norm, var_norm))
     if resolved_kind != "continuous":
