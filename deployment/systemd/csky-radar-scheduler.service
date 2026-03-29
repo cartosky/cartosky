@@ -1,5 +1,5 @@
 [Unit]
-Description=CartoSky MRMS Scheduler
+Description=CartoSky Radar Scheduler
 Wants=network-online.target
 After=network-online.target
 
@@ -10,7 +10,7 @@ Group=cartosky
 UMask=0027
 LimitNOFILE=65536
 WorkingDirectory=/opt/cartosky/backend
-EnvironmentFile=-/etc/cartosky/scheduler-mrms.env
+EnvironmentFile=-/etc/cartosky/scheduler-radar.env
 Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.mrms_poller
 Restart=always
