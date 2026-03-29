@@ -124,8 +124,8 @@ Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on
 | `CARTOSKY_LOOP_CACHE_ROOT` | `./data/loop_cache` | Loop WebP cache directory |
 | `CARTOSKY_LOOP_URL_PREFIX` | `/loop/` | URL prefix emitted for pre-generated loop assets |
 | `CARTOSKY_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
-| `CARTOSKY_LOOP_WEBP_MAX_DIM` | `1600` | Tier 0 max dimension (px) |
-| `CARTOSKY_LOOP_WEBP_TIER0_FIXED_W` | `1600` | Tier 0 fixed output width (px) for continuous loop frames |
+| `CARTOSKY_LOOP_WEBP_MAX_DIM` | `2300` | Tier 0 max dimension (px) |
+| `CARTOSKY_LOOP_WEBP_TIER0_FIXED_W` | `2300` | Tier 0 fixed output width (px) for continuous loop frames |
 | `CARTOSKY_LOOP_WEBP_TIER1_QUALITY` | `86` | Legacy tier 1 compatibility setting; active pre-generation is tier 0 only |
 | `CARTOSKY_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Legacy tier 1 compatibility setting |
 | `CARTOSKY_LOOP_WEBP_TIER1_FIXED_W` | `2400` | Legacy tier 1 compatibility setting |
@@ -244,7 +244,7 @@ The frontend selects a render mode per session based on network and display cond
 
 | Mode | Description |
 |---|---|
-| `webp_tier0` | Pre-rendered animated WebP, ≤ 1600 px |
+| `webp_tier0` | Pre-rendered animated WebP, ≤ 2300 px |
 | `tiles` | Live COG → PNG tile fetching via tile server |
 
 Mode switching uses configurable score thresholds with hysteresis to avoid flapping (`WEBP_RENDER_MODE_THRESHOLDS` in `frontend/src/lib/config.ts`).

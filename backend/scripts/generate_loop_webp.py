@@ -54,7 +54,7 @@ DEFAULT_WEBP_QUALITY = int(
     _env_value("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY", default="82")
 )
 DEFAULT_WEBP_MAX_DIM = int(
-    _env_value("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="1600")
+    _env_value("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM", default="2300")
 )
 DEFAULT_LOOP_OUTPUT_ROOT = _env_value(
     "CARTOSKY_LOOP_CACHE_ROOT",
@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
         "--max-dim",
         type=int,
         default=DEFAULT_WEBP_MAX_DIM,
-        help="Max output dimension in px (default: 1600)",
+        help="Max output dimension in px (default: 2300)",
     )
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
     parser.add_argument(

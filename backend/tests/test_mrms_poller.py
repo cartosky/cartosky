@@ -33,8 +33,8 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
         loop_cache_root=tmp_path / "loop_cache",
         loop_workers=1,
         loop_tier0_quality=82,
-        loop_tier0_max_dim=1600,
-        loop_tier0_fixed_w=1600,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
     )
 
 
