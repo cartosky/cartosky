@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -41,6 +41,7 @@ class MRMSScanRef:
     url: str
     filename: str
     size_bytes: int | None = None
+    source_valid_time: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -115,10 +116,16 @@ def freeze_bundle_scans(
     newest_utc = newest_valid_time.astimezone(timezone.utc) if newest_valid_time is not None else None
     deduped: dict[datetime, MRMSScanRef] = {}
     for scan in scans:
-        valid_time = scan.valid_time.astimezone(timezone.utc)
-        if newest_utc is not None and valid_time > newest_utc:
+        source_valid_time = (scan.source_valid_time or scan.valid_time).astimezone(timezone.utc)
+        if newest_utc is not None and source_valid_time > newest_utc:
             continue
-        deduped[valid_time] = scan
+        deduped[source_valid_time] = MRMSScanRef(
+            valid_time=scan.valid_time.astimezone(timezone.utc),
+            url=scan.url,
+            filename=scan.filename,
+            size_bytes=scan.size_bytes,
+            source_valid_time=source_valid_time,
+        )
 
     ordered = sorted(deduped.values(), key=lambda item: item.valid_time)
     if not ordered:
@@ -129,18 +136,28 @@ def freeze_bundle_scans(
         ordered = ordered[-max_frames:]
         return ordered
 
-    anchor = ordered[-1].valid_time.astimezone(timezone.utc)
-    bucket_seconds = safe_cadence * 60
-    selected_by_bucket: dict[int, MRMSScanRef] = {}
-    for scan in sorted(ordered, key=lambda item: item.valid_time, reverse=True):
-        age_seconds = max(0, int((anchor - scan.valid_time.astimezone(timezone.utc)).total_seconds()))
-        bucket_index = age_seconds // bucket_seconds
-        if bucket_index >= max_frames:
+    anchor = _floor_to_cadence((ordered[-1].source_valid_time or ordered[-1].valid_time).astimezone(timezone.utc), safe_cadence)
+    selected_by_slot: dict[datetime, MRMSScanRef] = {}
+    oldest_slot = anchor
+    if max_frames > 1:
+        oldest_slot = anchor - timedelta(minutes=(max_frames - 1) * safe_cadence)
+    for scan in sorted(ordered, key=lambda item: (item.source_valid_time or item.valid_time), reverse=True):
+        source_valid_time = (scan.source_valid_time or scan.valid_time).astimezone(timezone.utc)
+        slot_time = _ceil_to_cadence(source_valid_time, safe_cadence)
+        if slot_time > anchor:
             continue
-        if bucket_index not in selected_by_bucket:
-            selected_by_bucket[bucket_index] = scan
+        if slot_time < oldest_slot:
+            continue
+        if slot_time not in selected_by_slot:
+            selected_by_slot[slot_time] = MRMSScanRef(
+                valid_time=slot_time,
+                url=scan.url,
+                filename=scan.filename,
+                size_bytes=scan.size_bytes,
+                source_valid_time=source_valid_time,
+            )
 
-    selected = sorted(selected_by_bucket.values(), key=lambda item: item.valid_time)
+    selected = sorted(selected_by_slot.values(), key=lambda item: item.valid_time)
     if len(selected) > max_frames:
         selected = selected[-max_frames:]
     return selected
@@ -206,7 +223,21 @@ def _scan_ref_from_filename(filename: str, *, base_url: str) -> MRMSScanRef | No
         valid_time=valid_time,
         url=urljoin(base_url, filename),
         filename=filename,
+        source_valid_time=valid_time,
     )
+
+
+def _floor_to_cadence(value: datetime, cadence_minutes: int) -> datetime:
+    safe_cadence = max(1, int(cadence_minutes))
+    floored_minute = (value.minute // safe_cadence) * safe_cadence
+    return value.replace(minute=floored_minute, second=0, microsecond=0)
+
+
+def _ceil_to_cadence(value: datetime, cadence_minutes: int) -> datetime:
+    floored = _floor_to_cadence(value, cadence_minutes)
+    if value == floored:
+        return floored
+    return floored + timedelta(minutes=max(1, int(cadence_minutes)))
 
 
 def _valid_time_from_filename(filename: str) -> datetime | None:

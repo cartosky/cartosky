@@ -106,7 +106,7 @@ export function deriveObservedSourceStatus(params: {
   delayedThresholdMinutes?: number;
   staleThresholdMinutes?: number;
 }): ObservedSourceStatus {
-  const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? 8);
+  const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? 10);
   const staleThresholdMinutes = Math.max(delayedThresholdMinutes, params.staleThresholdMinutes ?? 15);
 
   if (!params.latestRunAvailable || params.latestRunReady === false || params.availableFrameCount <= 0) {

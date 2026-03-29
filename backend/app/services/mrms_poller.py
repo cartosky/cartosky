@@ -165,7 +165,7 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
                 index,
                 total_scans,
                 scan.filename,
-                _format_iso(scan.valid_time),
+                _format_iso(scan.source_valid_time or scan.valid_time),
             )
             try:
                 decoded_frame = _decode_scan_ref(scan, download_dir=download_dir, config=config)
@@ -292,7 +292,8 @@ def _decode_scan_ref(
         fallback_decoder=config.fallback_decoder,
     )
     return MRMSBundleFrame(
-        valid_time=decoded.valid_time,
+        valid_time=scan.valid_time,
+        source_valid_time=decoded.valid_time,
         values=decoded.values,
         source_crs=getattr(decoded, "source_crs", None),
         source_transform=getattr(decoded, "source_transform", None),

@@ -78,8 +78,45 @@ def test_freeze_bundle_scans_samples_newest_scan_per_cadence_bucket() -> None:
     )
     assert [scan.valid_time.isoformat() for scan in frozen] == [
         "2026-03-27T12:00:00+00:00",
+        "2026-03-27T12:05:00+00:00",
+        "2026-03-27T12:10:00+00:00",
+    ]
+    assert [scan.source_valid_time.isoformat() for scan in frozen] == [
+        "2026-03-27T12:00:00+00:00",
         "2026-03-27T12:04:00+00:00",
         "2026-03-27T12:10:00+00:00",
+    ]
+
+
+def test_freeze_bundle_scans_aligns_irregular_scans_to_wall_clock_slots() -> None:
+    scans = discover_recent_scans_from_listing_html(
+        """
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-115920.grib2.gz">0</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120358.grib2.gz">1</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120542.grib2.gz">2</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120816.grib2.gz">3</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120953.grib2.gz">4</a>
+        <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-121201.grib2.gz">5</a>
+        """,
+        base_url="https://mrms.ncep.noaa.gov/2D/MergedBaseReflectivityQC/",
+    )
+
+    frozen = freeze_bundle_scans(
+        scans,
+        max_frames=3,
+        frame_cadence_minutes=5,
+        newest_valid_time=datetime(2026, 3, 27, 12, 13, tzinfo=timezone.utc),
+    )
+
+    assert [scan.valid_time.isoformat() for scan in frozen] == [
+        "2026-03-27T12:00:00+00:00",
+        "2026-03-27T12:05:00+00:00",
+        "2026-03-27T12:10:00+00:00",
+    ]
+    assert [scan.source_valid_time.isoformat() for scan in frozen] == [
+        "2026-03-27T11:59:20+00:00",
+        "2026-03-27T12:03:58+00:00",
+        "2026-03-27T12:09:53+00:00",
     ]
 
 

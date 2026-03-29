@@ -15,6 +15,41 @@ herbie_cache/
 # OS
 .DS_Store
 
+# Playwright
+frontend/tests/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+frontend/playwright.config.ts
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production
+frontend/dist/
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Local env files
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# IDE
+frontend/.vscode/
+frontend/.idea/
+frontend/.vs/
+
 # Additional files to ignore
 extract_colorbar.py
 ~HOME

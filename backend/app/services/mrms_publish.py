@@ -51,6 +51,7 @@ MRMS_DISPLAY_SMOOTHING_SIGMA = 0.45
 class MRMSBundleFrame:
     valid_time: datetime
     values: np.ndarray
+    source_valid_time: datetime | None = None
     source_crs: Any | None = None
     source_transform: Affine | None = None
     quality: str = "full"
@@ -83,6 +84,7 @@ class MRMSPublishResult:
 @dataclass(frozen=True)
 class MRMSPublishedFrame:
     valid_time: datetime
+    source_valid_time: datetime | None
     rgba_path: Path
     value_path: Path
     sidecar: dict[str, Any]
@@ -145,6 +147,7 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
         frames.append(
             MRMSPublishedFrame(
                 valid_time=valid_time,
+                source_valid_time=_source_valid_time_from_sidecar(sidecar, fallback=valid_time),
                 rgba_path=rgba_path,
                 value_path=value_path,
                 sidecar=sidecar,
@@ -235,6 +238,10 @@ def publish_mrms_bundle(
         item.valid_time.astimezone(timezone.utc)
         for item in ordered_frame_inputs
     ]
+    ordered_source_valid_times = [
+        (item.source_valid_time or item.valid_time).astimezone(timezone.utc)
+        for item in ordered_frame_inputs
+    ]
     manifest_target_frame_count = (
         max(1, int(expected_frame_count))
         if expected_frame_count is not None
@@ -259,9 +266,9 @@ def publish_mrms_bundle(
                         "frames": [
                             {
                                 "fh": fh,
-                                "valid_time": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "valid_time": source_valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                             }
-                            for fh, valid_time in enumerate(ordered_valid_times)
+                            for fh, source_valid_time in enumerate(ordered_source_valid_times)
                         ],
                     }
                 },
@@ -354,8 +361,11 @@ def write_mrms_frame(
         sidecar["source_url"] = frame.source_url
     if frame.source_filename:
         sidecar["source_filename"] = frame.source_filename
-    if frame.metadata:
-        sidecar["source_metadata"] = dict(frame.metadata)
+    source_metadata = dict(frame.metadata) if frame.metadata else {}
+    if frame.source_valid_time is not None:
+        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if source_metadata:
+        sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
 
 
@@ -381,6 +391,10 @@ def reuse_mrms_frame(
     sidecar["run"] = run_id
     sidecar["fh"] = int(forecast_hour)
     sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if frame.source_valid_time is not None:
+        source_metadata = dict(sidecar.get("source_metadata") or {})
+        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
 
 
@@ -399,6 +413,18 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
+
+
+def _source_valid_time_from_sidecar(sidecar: dict[str, Any], *, fallback: datetime) -> datetime:
+    source_meta = sidecar.get("source_metadata")
+    if isinstance(source_meta, dict):
+        raw = source_meta.get("actual_valid_time")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                return datetime.strptime(raw.strip(), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+    return fallback.astimezone(timezone.utc)
 
 
 def _expected_target_shape() -> tuple[int, int]:

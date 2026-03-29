@@ -472,7 +472,8 @@ Business
 
 ## RoadMap Condensed
 **PHASE 1 - Immediate Value (retain + attract users)**
-- [ ] Add radar, obs, NWS forecasts
+- [ ] Add radar
+- [ ] Add obs, NWS forecasts, AFDs for cities
 - [ ] Add selected new variables
 - [ ] Add Kuchera to NAM and GFS
 - [ ] Add selected new models

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-OBSERVED_DELAYED_THRESHOLD_MINUTES = 8
+OBSERVED_DELAYED_THRESHOLD_MINUTES = 10
 OBSERVED_STALE_THRESHOLD_MINUTES = 15
 
 
