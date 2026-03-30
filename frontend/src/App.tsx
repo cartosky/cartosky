@@ -2354,10 +2354,39 @@ export default function App() {
     resolvedRunForRequests,
   ]);
 
-  const legend = useMemo(() => {
+  const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
     return buildLegend(normalizedMeta, opacity);
   }, [currentFrame, frameRows, opacity]);
+  const legendHoldKey = useMemo(
+    () => `${selectedTimeAxisMode}:${model}:${variable}`,
+    [selectedTimeAxisMode, model, variable]
+  );
+  const [stableObservedLegend, setStableObservedLegend] = useState<LegendPayload | null>(null);
+  const stableObservedLegendKeyRef = useRef("");
+
+  useEffect(() => {
+    if (stableObservedLegendKeyRef.current !== legendHoldKey) {
+      stableObservedLegendKeyRef.current = legendHoldKey;
+      setStableObservedLegend(rawLegend);
+      return;
+    }
+    if (rawLegend) {
+      setStableObservedLegend(rawLegend);
+    } else if (selectedTimeAxisMode !== "observed") {
+      setStableObservedLegend(null);
+    }
+  }, [legendHoldKey, rawLegend, selectedTimeAxisMode]);
+
+  const legend = useMemo(() => {
+    if (rawLegend) {
+      return rawLegend;
+    }
+    if (selectedTimeAxisMode === "observed" && stableObservedLegend) {
+      return { ...stableObservedLegend, opacity };
+    }
+    return null;
+  }, [opacity, rawLegend, selectedTimeAxisMode, stableObservedLegend]);
 
   const prefetchHours = useMemo(() => {
     if (!hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
