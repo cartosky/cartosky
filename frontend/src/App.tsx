@@ -1139,6 +1139,7 @@ export default function App() {
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
   const suppressNextUrlSyncRef = useRef(true);
+  const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
   const anchorSelectionKeyRef = useRef("");
   const anchorBatchAbortRef = useRef<AbortController | null>(null);
   const anchorBatchInFlightHourRef = useRef<number | null>(null);
@@ -1602,6 +1603,10 @@ export default function App() {
   }, [selectionEpoch]);
 
   useEffect(() => {
+    gridReadyFrameUrlsRef.current = new Set();
+  }, [selectionKey]);
+
+  useEffect(() => {
     setSelectionEpoch((current) => current + 1);
   }, [selectionKey]);
 
@@ -1731,6 +1736,13 @@ export default function App() {
       ? frameUrl
       : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
   }, [activeGridFrame, apiRoot]);
+  const isGridFrameReady = useCallback((frameUrl: string | null | undefined): boolean => {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized) {
+      return false;
+    }
+    return gridReadyFrameUrlsRef.current.has(normalized);
+  }, []);
   const webpDecodeCacheBudgetBytes = useMemo(() => {
     if (typeof navigator === "undefined") {
       return WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES;
@@ -5258,11 +5270,15 @@ export default function App() {
         return;
       }
       const nextHour = gridFrameHours[nextIndex];
+      const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
+      if (!isGridFrameReady(nextUrl)) {
+        return;
+      }
       setTargetForecastHour(nextHour);
     }, AUTOPLAY_TICK_MS);
 
     return () => window.clearInterval(interval);
-  }, [forecastHour, gridFrameHours, isGridPlayable, isPlaying, targetForecastHour]);
+  }, [forecastHour, gridFrameByHour, gridFrameHours, isGridFrameReady, isGridPlayable, isPlaying, targetForecastHour]);
 
   useEffect(() => {
     if (!isPreloadingForPlay) {
@@ -5586,6 +5602,13 @@ export default function App() {
     }
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
   }, [forecastHour, selectionKey, trackFirstViewerFrame]);
+  const handleGridFrameReady = useCallback((frameUrl: string) => {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized) {
+      return;
+    }
+    gridReadyFrameUrlsRef.current.add(normalized);
+  }, []);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
     setRegion(nextRegion);
@@ -6257,6 +6280,7 @@ export default function App() {
           onFrameLoadingChange={handleFrameLoadingChange}
           onTileViewportReady={handleTileViewportReady}
           onGridFrameVisible={handleGridFrameVisible}
+          onGridFrameReady={handleGridFrameReady}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}

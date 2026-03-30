@@ -805,6 +805,7 @@ type MapCanvasProps = {
   onZoomRoutingSignal?: (payload: { zoom: number; gestureActive: boolean }) => void;
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
+  onGridFrameReady?: (frameUrl: string) => void;
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
@@ -852,6 +853,7 @@ export function MapCanvas({
   onZoomRoutingSignal,
   onViewportChange,
   onGridFrameVisible,
+  onGridFrameReady,
   onMapReady,
   onMapHover,
   onMapHoverEnd,
@@ -937,6 +939,8 @@ export function MapCanvas({
       return [] as string[];
     }
     const urls: string[] = [];
+    const aheadTarget = mode === "autoplay" ? 8 : mode === "variable-switch" ? 5 : 4;
+    const behindTarget = mode === "autoplay" ? 2 : 3;
     const pushFrameUrl = (hour: number) => {
       const frame = frames.find((entry) => Number(entry?.fh) === hour);
       const url = String(frame?.url ?? "").trim();
@@ -944,16 +948,18 @@ export function MapCanvas({
         urls.push(url);
       }
     };
-    for (let step = 1; step <= 2; step += 1) {
+    for (let step = 1; step <= aheadTarget; step += 1) {
       if (pivot + step < frameHours.length) {
         pushFrameUrl(frameHours[pivot + step]);
       }
+    }
+    for (let step = 1; step <= behindTarget; step += 1) {
       if (pivot - step >= 0) {
         pushFrameUrl(frameHours[pivot - step]);
       }
     }
     return urls;
-  }, [gridFrameHour, gridFrameUrl, gridManifest]);
+  }, [gridFrameHour, gridFrameUrl, gridManifest, mode]);
   const hasBitmapCanvasLoopFrame = Boolean(loopFrameBitmap);
   const hasReadyLoopCanvasFrame = Boolean(
     readyLoopCanvasFrame &&
@@ -2057,6 +2063,7 @@ export function MapCanvas({
       selectionKey,
       prefetchUrls: gridPrefetchUrls,
       onFrameVisible: onGridFrameVisible,
+      onFrameReady: onGridFrameReady,
     });
 
     const shouldShowGrid = Boolean(gridActive && gridManifest && gridFrameUrl);
@@ -2102,6 +2109,7 @@ export function MapCanvas({
     isLoaded,
     loopActive,
     onGridFrameVisible,
+    onGridFrameReady,
     opacity,
     overlayFadeOutZoom,
     selectionEpoch,

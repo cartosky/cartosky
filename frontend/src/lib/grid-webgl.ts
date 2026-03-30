@@ -26,6 +26,7 @@ export type GridWebglLayerConfig = {
   selectionKey: string;
   prefetchUrls?: string[];
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
+  onFrameReady?: ((frameUrl: string) => void) | null;
 };
 
 function mercatorXFromMeters(x: number): number {
@@ -154,6 +155,10 @@ function expandUint16BytesToRgba(bytes: Uint8Array): Uint8Array {
   return expanded;
 }
 
+function decodePackedValue(sample: [number, number, number, number]): number {
+  return sample[0] + sample[1] * 256;
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -233,10 +238,11 @@ export class GridWebglLayerController {
   private selectionKey = "";
   private prefetchUrls: string[] = [];
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
+  private onFrameReady: ((frameUrl: string) => void) | null = null;
   private frameCache = new Map<string, CachedFrame>();
   private frameCacheBytes = 0;
   private prefetchInFlight = new Set<string>();
-  private frameAbortController: AbortController | null = null;
+  private frameFetches = new Map<string, Promise<Uint8Array<ArrayBufferLike> | null>>();
   private currentFrameSignature: string | null = null;
   private currentTextureSignature: string | null = null;
   private visibleNotifiedSignature: string | null = null;
@@ -246,12 +252,18 @@ export class GridWebglLayerController {
   private program: WebGLProgram | null = null;
   private vertexBuffer: WebGLBuffer | null = null;
   private texCoordBuffer: WebGLBuffer | null = null;
-  private dataTexture: WebGLTexture | null = null;
+  private dataTextures: [WebGLTexture | null, WebGLTexture | null] = [null, null];
   private lutTexture: WebGLTexture | null = null;
   private lutPixels: Uint8Array<ArrayBufferLike> = new Uint8Array(256 * 4);
   private lutMin = 0;
   private lutMax = 1;
   private lutDirty = true;
+  private currentTextureIndex = 0;
+  private previousTextureIndex = 0;
+  private hasTexture = false;
+  private hasPreviousTexture = false;
+  private transitionStartedAt = 0;
+  private transitionDurationMs = 90;
 
   createLayer(): maplibregl.CustomLayerInterface {
     return {
@@ -298,6 +310,7 @@ export class GridWebglLayerController {
     this.selectionKey = config.selectionKey;
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
     this.onFrameVisible = config.onFrameVisible ?? null;
+    this.onFrameReady = config.onFrameReady ?? null;
     if (this.legend !== config.legend) {
       this.legend = config.legend;
       this.rebuildLegendTexture();
@@ -305,7 +318,6 @@ export class GridWebglLayerController {
 
     const nextSignature = this.buildFrameSignature(this.frameUrl);
     if (!this.active || !this.frameUrl || !this.manifest) {
-      this.frameAbortController?.abort();
       this.currentFrameSignature = nextSignature;
       this.map?.triggerRepaint();
       return;
@@ -324,7 +336,6 @@ export class GridWebglLayerController {
   }
 
   remove(map?: maplibregl.Map | null) {
-    this.frameAbortController?.abort();
     const target = map ?? this.map;
     if (target?.getLayer(GRID_WEBGL_LAYER_ID)) {
       target.removeLayer(GRID_WEBGL_LAYER_ID);
@@ -368,6 +379,7 @@ export class GridWebglLayerController {
       precision mediump float;
       varying vec2 v_texCoord;
       uniform sampler2D u_data;
+      uniform sampler2D u_prevData;
       uniform sampler2D u_lut;
       uniform float u_scale;
       uniform float u_offset;
@@ -375,29 +387,40 @@ export class GridWebglLayerController {
       uniform float u_valueMin;
       uniform float u_valueMax;
       uniform float u_opacity;
-      void main() {
-        vec4 sample = texture2D(u_data, v_texCoord);
+      uniform float u_mixAmount;
+      uniform float u_hasPrevious;
+      vec4 colorizeSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
         float high = floor(sample.g * 255.0 + 0.5);
         float encoded = low + high * 256.0;
         if (abs(encoded - u_nodata) < 0.5) {
-          discard;
+          return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float decoded = encoded * u_scale + u_offset;
         float denom = max(0.000001, u_valueMax - u_valueMin);
         float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
-        vec4 lut = texture2D(u_lut, vec2(t, 0.5));
-        gl_FragColor = vec4(lut.rgb, lut.a * u_opacity);
+        return texture2D(u_lut, vec2(t, 0.5));
+      }
+      void main() {
+        vec4 current = colorizeSample(texture2D(u_data, v_texCoord));
+        vec4 previous = u_hasPrevious > 0.5
+          ? colorizeSample(texture2D(u_prevData, v_texCoord))
+          : current;
+        vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
+        if (mixed.a <= 0.0) {
+          discard;
+        }
+        gl_FragColor = vec4(mixed.rgb, mixed.a * u_opacity);
       }
     `;
 
     this.program = createProgram(gl, vertexSource, fragmentSource);
     this.vertexBuffer = gl.createBuffer();
     this.texCoordBuffer = gl.createBuffer();
-    this.dataTexture = gl.createTexture();
+    this.dataTextures = [gl.createTexture(), gl.createTexture()];
     this.lutTexture = gl.createTexture();
 
-    if (!this.vertexBuffer || !this.texCoordBuffer || !this.dataTexture || !this.lutTexture) {
+    if (!this.vertexBuffer || !this.texCoordBuffer || !this.dataTextures[0] || !this.dataTextures[1] || !this.lutTexture) {
       throw new Error("Failed to initialize grid WebGL resources");
     }
 
@@ -442,7 +465,8 @@ export class GridWebglLayerController {
   private uploadFrameTexture(bytes: Uint8Array<ArrayBufferLike>, signature: string) {
     const gl = this.gl;
     const grid = this.manifest?.grid;
-    if (!gl || !this.dataTexture || !grid) {
+    const targetTexture = this.dataTextures[this.hasTexture ? 1 - this.currentTextureIndex : this.currentTextureIndex];
+    if (!gl || !targetTexture || !grid) {
       this.pendingFrameBytes = bytes;
       this.pendingFrameSignature = signature;
       return;
@@ -450,7 +474,7 @@ export class GridWebglLayerController {
 
     const width = Math.max(1, Math.floor(Number(grid.width) || 1));
     const height = Math.max(1, Math.floor(Number(grid.height) || 1));
-    gl.bindTexture(gl.TEXTURE_2D, this.dataTexture);
+    gl.bindTexture(gl.TEXTURE_2D, targetTexture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -467,6 +491,17 @@ export class GridWebglLayerController {
 
     this.pendingFrameBytes = bytes;
     this.pendingFrameSignature = signature;
+    if (this.hasTexture) {
+      this.previousTextureIndex = this.currentTextureIndex;
+      this.hasPreviousTexture = true;
+      this.currentTextureIndex = 1 - this.currentTextureIndex;
+      this.transitionStartedAt = performance.now();
+    } else {
+      this.currentTextureIndex = this.currentTextureIndex;
+      this.transitionStartedAt = performance.now();
+      this.hasPreviousTexture = false;
+    }
+    this.hasTexture = true;
     this.currentTextureSignature = signature;
     this.map?.triggerRepaint();
   }
@@ -482,31 +517,17 @@ export class GridWebglLayerController {
       return;
     }
 
-    this.frameAbortController?.abort();
-    const controller = new AbortController();
-    this.frameAbortController = controller;
-
     try {
-      const response = await fetch(frameUrl, { credentials: "omit", signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`Grid frame request failed: ${response.status}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      if (controller.signal.aborted) {
+      const bytes = await this.fetchFrameBytes(frameUrl);
+      if (!bytes) {
         return;
       }
-      const bytes = new Uint8Array(arrayBuffer);
-      this.upsertFrameCache(frameUrl, bytes);
       if (signature !== this.currentFrameSignature) {
         return;
       }
       this.uploadFrameTexture(bytes, signature);
     } catch {
-      if (controller.signal.aborted) {
-        return;
-      }
-      this.currentTextureSignature = null;
-      this.map?.triggerRepaint();
+      // Keep the previously-visible frame on screen if the new one fails.
     }
   }
 
@@ -516,17 +537,40 @@ export class GridWebglLayerController {
     }
     this.prefetchInFlight.add(frameUrl);
     try {
-      const response = await fetch(frameUrl, { credentials: "omit" });
-      if (!response.ok) {
-        return;
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      this.upsertFrameCache(frameUrl, bytes);
+      await this.fetchFrameBytes(frameUrl);
     } catch {
       // Best-effort warm path only.
     } finally {
       this.prefetchInFlight.delete(frameUrl);
     }
+  }
+
+  private async fetchFrameBytes(frameUrl: string): Promise<Uint8Array<ArrayBufferLike> | null> {
+    const cached = this.frameCache.get(frameUrl);
+    if (cached) {
+      cached.lastUsedAt = Date.now();
+      return cached.bytes;
+    }
+    const inFlight = this.frameFetches.get(frameUrl);
+    if (inFlight) {
+      return inFlight;
+    }
+    const request = fetch(frameUrl, { credentials: "omit" })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Grid frame request failed: ${response.status}`);
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        this.upsertFrameCache(frameUrl, bytes);
+        this.onFrameReady?.(frameUrl);
+        return bytes;
+      })
+      .catch(() => null)
+      .finally(() => {
+        this.frameFetches.delete(frameUrl);
+      });
+    this.frameFetches.set(frameUrl, request);
+    return request;
   }
 
   private upsertFrameCache(frameUrl: string, bytes: Uint8Array<ArrayBufferLike>) {
@@ -567,7 +611,7 @@ export class GridWebglLayerController {
       || !program
       || !this.active
       || !grid
-      || !this.dataTexture
+      || !this.dataTextures[this.currentTextureIndex]
       || !this.lutTexture
       || !this.vertexBuffer
       || !this.texCoordBuffer
@@ -599,7 +643,10 @@ export class GridWebglLayerController {
     const valueMaxLocation = gl.getUniformLocation(program, "u_valueMax");
     const opacityLocation = gl.getUniformLocation(program, "u_opacity");
     const dataLocation = gl.getUniformLocation(program, "u_data");
+    const prevDataLocation = gl.getUniformLocation(program, "u_prevData");
     const lutLocation = gl.getUniformLocation(program, "u_lut");
+    const mixLocation = gl.getUniformLocation(program, "u_mixAmount");
+    const hasPrevLocation = gl.getUniformLocation(program, "u_hasPrevious");
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.enableVertexAttribArray(positionLocation);
@@ -616,16 +663,31 @@ export class GridWebglLayerController {
     gl.uniform1f(valueMinLocation, this.lutMin);
     gl.uniform1f(valueMaxLocation, this.lutMax);
     gl.uniform1f(opacityLocation, resolvedOpacity);
+    const elapsed = performance.now() - this.transitionStartedAt;
+    const mixAmount = this.hasPreviousTexture
+      ? Math.max(0, Math.min(1, elapsed / Math.max(1, this.transitionDurationMs)))
+      : 1;
+    gl.uniform1f(mixLocation, mixAmount);
+    gl.uniform1f(hasPrevLocation, this.hasPreviousTexture ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.dataTexture);
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTextures[this.currentTextureIndex]);
     gl.uniform1i(dataLocation, 0);
 
     gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.hasPreviousTexture ? this.dataTextures[this.previousTextureIndex] : this.dataTextures[this.currentTextureIndex]);
+    gl.uniform1i(prevDataLocation, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.lutTexture);
-    gl.uniform1i(lutLocation, 1);
+    gl.uniform1i(lutLocation, 2);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (this.hasPreviousTexture && mixAmount < 1) {
+      this.map?.triggerRepaint();
+    } else if (mixAmount >= 1) {
+      this.hasPreviousTexture = false;
+    }
 
     if (
       this.onFrameVisible
@@ -654,8 +716,10 @@ export class GridWebglLayerController {
       if (this.texCoordBuffer) {
         gl.deleteBuffer(this.texCoordBuffer);
       }
-      if (this.dataTexture) {
-        gl.deleteTexture(this.dataTexture);
+      for (const texture of this.dataTextures) {
+        if (texture) {
+          gl.deleteTexture(texture);
+        }
       }
       if (this.lutTexture) {
         gl.deleteTexture(this.lutTexture);
@@ -664,7 +728,7 @@ export class GridWebglLayerController {
     this.program = null;
     this.vertexBuffer = null;
     this.texCoordBuffer = null;
-    this.dataTexture = null;
+    this.dataTextures = [null, null];
     this.lutTexture = null;
     this.gl = null;
     this.map = null;
