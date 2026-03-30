@@ -95,6 +95,54 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
+def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260330_12z"
+    var = "snowfall_total"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    monkeypatch.setenv("CARTOSKY_GRID_V1_ALLOWLIST", "gfs:snowfall_total")
+    config_module.grid_v1_allowlist.cache_clear()
+
+    ok, fail, manifest_ok = build_grid_v1_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
+    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    assert frame_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 123
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 486
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "snowfall_total"
+    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "in"
+
+
 pytestmark = pytest.mark.anyio
 
 

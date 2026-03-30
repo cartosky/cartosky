@@ -11,6 +11,15 @@ const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
+const MIPMAP_FILTER_COLOR_MAP_IDS = new Set([
+  "tmp2m",
+  "dp2m",
+  "tmp850",
+  "wspd10m",
+  "wgst10m",
+  "precip_total",
+  "snowfall_total",
+]);
 
 export type GridFrameVisiblePayload = {
   frameHour: number;
@@ -176,6 +185,11 @@ function resolveTextureCacheBudgetBytes(): number {
 
 function expectedPackedFrameByteLength(width: number, height: number): number {
   return Math.max(0, Math.floor(width) * Math.floor(height) * 2);
+}
+
+function shouldUseMipmapFiltering(manifest: GridManifestResponse | null): boolean {
+  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
+  return MIPMAP_FILTER_COLOR_MAP_IDS.has(colorMapId);
 }
 
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -580,9 +594,15 @@ export class GridWebglLayerController {
       });
       return null;
     }
+    const useMipmaps = this.isWebGL2 && shouldUseMipmapFiltering(this.manifest);
+
     gl.bindTexture(gl.TEXTURE_2D, targetTexture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(
+      gl.TEXTURE_2D,
+      gl.TEXTURE_MIN_FILTER,
+      useMipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -593,6 +613,10 @@ export class GridWebglLayerController {
     } else {
       const rgba = expandUint16BytesToRgba(bytes);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    }
+
+    if (useMipmaps) {
+      gl.generateMipmap(gl.TEXTURE_2D);
     }
 
     this.textureCache.set(frameUrl, {
