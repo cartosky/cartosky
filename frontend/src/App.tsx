@@ -102,6 +102,7 @@ const FRAME_HARD_DEADLINE_MS = 30_000;
 const FRAME_RETRY_BASE_MS = 1200;
 const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
 const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
+const ANCHOR_BATCH_SUPERSEDE_MS = 120;
 const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const EMPTY_TILE_DATA_URL =
@@ -1150,6 +1151,7 @@ export default function App() {
   const anchorSelectionKeyRef = useRef("");
   const anchorBatchAbortRef = useRef<AbortController | null>(null);
   const anchorBatchInFlightHourRef = useRef<number | null>(null);
+  const anchorBatchInFlightStartedAtRef = useRef(0);
   const anchorBatchInFlightSelectionKeyRef = useRef("");
   const anchorBatchPendingHourRef = useRef<number | null>(null);
   const anchorBatchLastAppliedHourRef = useRef<number | null>(null);
@@ -1346,6 +1348,7 @@ export default function App() {
     }
     anchorBatchAbortRef.current = null;
     anchorBatchInFlightHourRef.current = null;
+    anchorBatchInFlightStartedAtRef.current = 0;
     anchorBatchInFlightSelectionKeyRef.current = "";
   }, []);
 
@@ -1358,6 +1361,7 @@ export default function App() {
       const controller = new AbortController();
       anchorBatchAbortRef.current = controller;
       anchorBatchInFlightHourRef.current = requestedHour;
+      anchorBatchInFlightStartedAtRef.current = performance.now();
       anchorBatchInFlightSelectionKeyRef.current = context.selectionKey;
 
       fetchSampleBatch({
@@ -1410,6 +1414,7 @@ export default function App() {
           if (anchorBatchAbortRef.current === controller) {
             anchorBatchAbortRef.current = null;
             anchorBatchInFlightHourRef.current = null;
+            anchorBatchInFlightStartedAtRef.current = 0;
             anchorBatchInFlightSelectionKeyRef.current = "";
           }
 
@@ -5073,6 +5078,14 @@ export default function App() {
     if (anchorBatchAbortRef.current && anchorBatchInFlightSelectionKeyRef.current === selectionKey) {
       if (anchorBatchInFlightHourRef.current === visibleOverlayHour) {
         anchorBatchPendingHourRef.current = null;
+        return;
+      }
+      const inFlightAgeMs = Math.max(0, performance.now() - anchorBatchInFlightStartedAtRef.current);
+      if (context.deferToLatest && inFlightAgeMs >= ANCHOR_BATCH_SUPERSEDE_MS) {
+        resetAnchorBatchQueue(true);
+        anchorBatchContextRef.current = context;
+        anchorBatchPendingHourRef.current = null;
+        startAnchorBatchRequest(visibleOverlayHour, context);
         return;
       }
       anchorBatchPendingHourRef.current = visibleOverlayHour;

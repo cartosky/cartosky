@@ -913,6 +913,9 @@ export function MapCanvas({
   onMapReadyRef.current = onMapReady;
   const onViewportChangeRef = useRef(onViewportChange);
   onViewportChangeRef.current = onViewportChange;
+  const contourRequestTokenRef = useRef(0);
+  const contourAbortRef = useRef<AbortController | null>(null);
+  const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
 
   const view = useMemo(() => {
     return regionViews?.[region] ?? {
@@ -1881,7 +1884,67 @@ export function MapCanvas({
     if (!source || typeof source.setData !== "function") {
       return;
     }
-    source.setData((contourGeoJsonUrl ?? EMPTY_FEATURE_COLLECTION) as any);
+    const normalizedUrl = String(contourGeoJsonUrl ?? "").trim();
+    const requestToken = ++contourRequestTokenRef.current;
+    contourAbortRef.current?.abort();
+    contourAbortRef.current = null;
+
+    if (!normalizedUrl) {
+      source.setData(EMPTY_FEATURE_COLLECTION as any);
+      return;
+    }
+
+    const cached = contourCacheRef.current.get(normalizedUrl);
+    if (cached) {
+      source.setData(cached as any);
+      return;
+    }
+
+    const controller = new AbortController();
+    contourAbortRef.current = controller;
+
+    void fetch(normalizedUrl, {
+      credentials: "omit",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Contour request failed: ${response.status}`);
+        }
+        return (await response.json()) as GeoJSON.FeatureCollection;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted || contourRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        contourCacheRef.current.set(normalizedUrl, payload);
+        while (contourCacheRef.current.size > 16) {
+          const oldestKey = contourCacheRef.current.keys().next().value;
+          if (!oldestKey) {
+            break;
+          }
+          contourCacheRef.current.delete(oldestKey);
+        }
+        source.setData(payload as any);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.warn("[map] contour fetch failed", { contourGeoJsonUrl: normalizedUrl, error });
+      })
+      .finally(() => {
+        if (contourAbortRef.current === controller) {
+          contourAbortRef.current = null;
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (contourAbortRef.current === controller) {
+        contourAbortRef.current = null;
+      }
+    };
   }, [contourGeoJsonUrl, isLoaded]);
 
   useEffect(() => {
