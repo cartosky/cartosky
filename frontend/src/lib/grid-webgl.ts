@@ -474,7 +474,7 @@ export class GridWebglLayerController {
       uniform vec2 u_texSize;
 
       // Decode a single texel from raw R/G bytes to a physical value.
-      // Returns the decoded value, or -1e30 if nodata / below-min.
+      // Returns the decoded value, or -1e30 if nodata.
       float decodeSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
         float high = floor(sample.g * 255.0 + 0.5);
@@ -482,11 +482,7 @@ export class GridWebglLayerController {
         if (abs(encoded - u_nodata) < 0.5) {
           return -1e30;
         }
-        float decoded = encoded * u_scale + u_offset;
-        if (decoded <= u_transparentBelowMin) {
-          return -1e30;
-        }
-        return decoded;
+        return encoded * u_scale + u_offset;
       }
 
       // Bilinear interpolation in decoded value space, then LUT lookup.
@@ -535,6 +531,9 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float decoded = (s00 * bw00 + s10 * bw10 + s01 * bw01 + s11 * bw11) / wSum;
+        if (decoded <= u_transparentBelowMin) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
 
         // Normalise to [0,1] and apply power-norm gamma.
         float denom = max(0.000001, u_valueMax - u_valueMin);
