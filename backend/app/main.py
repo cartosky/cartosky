@@ -2374,6 +2374,15 @@ def _run_version_token(model: str, run: str) -> str:
     return f"{run}-{mtime_ns}"
 
 
+def _grid_v1_version_token(model: str, run: str, var: str) -> str:
+    path = grid_v1_manifest_path(DATA_ROOT, model, run, var)
+    try:
+        mtime_ns = int(path.stat().st_mtime_ns)
+    except OSError:
+        mtime_ns = 0
+    return f"{run}-{var}-{mtime_ns}"
+
+
 def _published_var_dir(model: str, run: str, var: str) -> Path:
     return PUBLISHED_ROOT / model / run / var
 
@@ -3312,7 +3321,7 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
     run_complete = _manifest_run_complete(manifest)
 
-    version_token = _run_version_token(model, resolved)
+    version_token = _grid_v1_version_token(model, resolved, var)
 
     frames_build_started_at = time.perf_counter()
     frames: list[dict] = []
@@ -3419,7 +3428,7 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
         [item for item in frame_entries if isinstance(item, dict)],
     )
 
-    version_token = _run_version_token(model, resolved)
+    version_token = _grid_v1_version_token(model, resolved, var)
 
     build_started_at = time.perf_counter()
     tier_frames: dict[int, list[dict[str, Any]]] = {0: []}
@@ -3522,7 +3531,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
     if manifest is None:
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
-    version_token = _run_version_token(model, resolved)
+    version_token = _grid_v1_version_token(model, resolved, var)
     build_started_at = time.perf_counter()
     payload = dict(manifest)
     lods = payload.get("lods")

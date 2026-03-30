@@ -165,7 +165,7 @@ async def test_grid_manifest_endpoint_returns_urls_and_server_timing(client: htt
     assert payload["subtype"] == "grid_webgl_v1"
     frame = payload["lods"][0]["frames"][0]
     assert frame["fh"] == 0
-    assert frame["url"].startswith("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin?v=")
+    assert frame["url"].startswith("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin?v=20260330_12z-tmp2m-")
 
 
 async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClient) -> None:
