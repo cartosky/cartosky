@@ -205,7 +205,7 @@ type AnchorBatchRequestContext = {
   variable: string;
   baseCollection: AnchorFeatureCollection;
   points: Array<{ id: string; lat: number; lon: number }>;
-  isScrubbing: boolean;
+  deferToLatest: boolean;
 };
 
 type Option = {
@@ -1005,6 +1005,7 @@ export default function App() {
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
+  const [visibleGridFrameHour, setVisibleGridFrameHour] = useState<number | null>(null);
 
   const isVariableSwitching = useMemo(() => {
     if (!variableSwitchState) {
@@ -1379,10 +1380,10 @@ export default function App() {
           anchorBatchLastAppliedSelectionKeyRef.current = context.selectionKey;
           setAnchorDisplayGeoJson(
             buildAnchorDisplayGeoJson({
-              baseCollection: context.baseCollection,
-              varKey: context.variable,
-              values: payload?.values ?? {},
-              units: payload?.units ?? "",
+      baseCollection: context.baseCollection,
+      varKey: context.variable,
+      values: payload?.values ?? {},
+      units: payload?.units ?? "",
             })
           );
         })
@@ -1419,7 +1420,7 @@ export default function App() {
           if (latestContext.generation !== requestGenerationRef.current) {
             return;
           }
-          if (!latestContext.isScrubbing) {
+          if (!latestContext.deferToLatest) {
             anchorBatchPendingHourRef.current = null;
             return;
           }
@@ -1613,6 +1614,7 @@ export default function App() {
     gridPlaybackHourRef.current = null;
     setGridReadyVersion(0);
     setIsGridPreloadingForPlay(false);
+    setVisibleGridFrameHour(null);
   }, [selectionKey]);
 
   useEffect(() => {
@@ -2394,11 +2396,27 @@ export default function App() {
     && loopSelectionReady;
   const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : renderMode;
   const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
-  const mapForecastHour = isLoopDisplayActive ? targetForecastHour : forecastHour;
+  const visibleGridOverlayHour = useMemo(() => {
+    if (!isGridLowMidActive) {
+      return null;
+    }
+    if (Number.isFinite(visibleGridFrameHour)) {
+      return Number(visibleGridFrameHour);
+    }
+    if (Number.isFinite(resolvedGridDisplayHour)) {
+      return Number(resolvedGridDisplayHour);
+    }
+    return Number.isFinite(forecastHour) ? forecastHour : null;
+  }, [forecastHour, isGridLowMidActive, resolvedGridDisplayHour, visibleGridFrameHour]);
+  const mapForecastHour = isLoopDisplayActive
+    ? targetForecastHour
+    : (Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour);
   const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
     ? resolvedLoopTargetForecastHour
     : (loopDisplayHour ?? resolvedLoopTargetForecastHour);
-  const visibleOverlayHour = isLoopDisplayActive ? visibleLoopOverlayHour : forecastHour;
+  const visibleOverlayHour = isLoopDisplayActive
+    ? visibleLoopOverlayHour
+    : (Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour);
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
@@ -5023,12 +5041,12 @@ export default function App() {
       variable,
       baseCollection: anchorBaseGeoJson,
       points: anchorBatchPoints,
-      isScrubbing,
+      deferToLatest: isScrubbing || isPlaying || isGridPreloadingForPlay,
     };
 
     anchorBatchContextRef.current = context;
 
-    if (!isScrubbing) {
+    if (!context.deferToLatest) {
       anchorBatchPendingHourRef.current = null;
       if (
         anchorBatchLastAppliedSelectionKeyRef.current === selectionKey
@@ -5075,6 +5093,8 @@ export default function App() {
     anchorBaseGeoJson,
     anchorBatchPoints,
     hasRenderableSelection,
+    isGridPreloadingForPlay,
+    isPlaying,
     isScrubbing,
     loadedFramesKey,
     model,
@@ -5785,6 +5805,9 @@ export default function App() {
       || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey)
     ) {
       return;
+    }
+    if (Number.isFinite(payload.frameHour)) {
+      setVisibleGridFrameHour(payload.frameHour);
     }
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
   }, [forecastHour, selectionKey, trackFirstViewerFrame]);
