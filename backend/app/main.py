@@ -37,6 +37,7 @@ from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
+from .config import grid_v1_enabled
 from .models.registry import list_model_capabilities
 from .models.serialization import (
     serialize_model_capability,
@@ -44,6 +45,11 @@ from .models.serialization import (
 )
 from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
 from .services.builder.colorize import float_to_rgba
+from .services.grid_v1 import (
+    grid_v1_frame_path,
+    grid_v1_manifest_path,
+    grid_v1_supported,
+)
 from .services.render_resampling import (
     allow_high_quality_loop_resampling,
     compute_loop_output_shape,
@@ -1803,6 +1809,7 @@ _DS_CACHE_MAX = 16
 
 _manifest_cache: dict[str, dict[str, Any]] = {}
 _sidecar_cache: dict[str, dict[str, Any]] = {}
+_grid_manifest_cache: dict[str, dict[str, Any]] = {}
 _json_cache_lock = threading.Lock()
 
 
@@ -2384,6 +2391,24 @@ def _resolve_sidecar(model: str, run: str, var: str, fh: int) -> dict | None:
     if candidate.is_file():
         return _load_json_cached(candidate, _sidecar_cache)
     return None
+
+
+def _load_grid_manifest(model: str, run: str, var: str) -> dict[str, Any] | None:
+    path = grid_v1_manifest_path(DATA_ROOT, model, run, var)
+    if not path.is_file():
+        return None
+    loaded = _load_json_cached(path, _grid_manifest_cache)
+    if isinstance(loaded, dict):
+        return loaded
+    return None
+
+
+def _grid_v1_file_url(model: str, run: str, var: str, filename: str, *, version_token: str) -> str:
+    safe_filename = Path(filename).name
+    return (
+        f"/api/v4/grid/v1/{model}/{run}/{var}/{safe_filename}"
+        f"?v={version_token}"
+    )
 
 
 def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int) -> Path | None:
@@ -3466,6 +3491,105 @@ def get_loop_manifest(request: Request, model: str, run: str, var: str):
             "ETag": etag,
             "Server-Timing": timing_header,
         },
+    )
+
+
+@app.get("/api/v4/{model}/{run}/{var}/grid-manifest")
+def get_grid_manifest(request: Request, model: str, run: str, var: str):
+    started_at = time.perf_counter()
+    resolve_started_at = time.perf_counter()
+    with otel_tracing.start_as_current_span(
+        "grid_manifest.resolve",
+        attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
+    ):
+        resolved = _resolve_run(model, run)
+        if resolved:
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
+    resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
+    if resolved is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+    if not grid_v1_enabled() or not grid_v1_supported(model, var):
+        return Response(status_code=404, content='{"error": "grid manifest not enabled"}', media_type="application/json")
+
+    manifest_started_at = time.perf_counter()
+    with otel_tracing.start_as_current_span(
+        "grid_manifest.load",
+        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
+    ):
+        manifest = _load_grid_manifest(model, resolved, var)
+    manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
+    if manifest is None:
+        return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
+
+    version_token = _run_version_token(model, resolved)
+    build_started_at = time.perf_counter()
+    payload = dict(manifest)
+    lods = payload.get("lods")
+    if isinstance(lods, list):
+        next_lods: list[dict[str, Any]] = []
+        for lod in lods:
+            if not isinstance(lod, dict):
+                continue
+            next_lod = dict(lod)
+            frames = lod.get("frames")
+            next_frames: list[dict[str, Any]] = []
+            if isinstance(frames, list):
+                for frame in frames:
+                    if not isinstance(frame, dict):
+                        continue
+                    filename = str(frame.get("file") or "").strip()
+                    fh = frame.get("fh")
+                    if not filename or not isinstance(fh, int):
+                        continue
+                    next_frame = dict(frame)
+                    next_frame["url"] = _grid_v1_file_url(model, resolved, var, filename, version_token=version_token)
+                    next_frames.append(next_frame)
+            next_frames.sort(key=lambda item: int(item.get("fh", 0)))
+            next_lod["frames"] = next_frames
+            next_lods.append(next_lod)
+        payload["lods"] = next_lods
+    build_ms = (time.perf_counter() - build_started_at) * 1000.0
+
+    cache_control = "public, max-age=60"
+    etag = _make_etag(payload)
+    timing_header = _format_server_timing(
+        [
+            ("grid_manifest_resolve", resolve_ms),
+            ("grid_manifest_load", manifest_ms),
+            ("grid_manifest_build", build_ms),
+            ("grid_manifest_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
+    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
+        return r304
+
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": cache_control,
+            "ETag": etag,
+            "Server-Timing": timing_header,
+        },
+    )
+
+
+@app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
+def get_grid_v1_file(model: str, run: str, var: str, filename: str):
+    resolved = _resolve_run(model, run)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not grid_v1_enabled() or not grid_v1_supported(model, var):
+        raise HTTPException(status_code=404, detail="Grid artifact not enabled")
+    safe_filename = Path(filename).name
+    candidate = grid_v1_frame_path(DATA_ROOT, model, resolved, var, 0).parent / safe_filename
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Grid artifact not found")
+    return FileResponse(
+        candidate,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 

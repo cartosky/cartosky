@@ -19,9 +19,11 @@ from PIL import Image, ImageFilter
 from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
+from app.config import grid_v1_build_enabled, grid_v1_workers
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
 from app.services.builder.pipeline import build_frame, build_frame_bundle
+from app.services.grid_v1 import build_grid_v1_for_run
 from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
@@ -1603,6 +1605,25 @@ def _process_run(
                     forecast_hours=loop_prewarm_fhs,
                     tiers=(0,),
                 )
+        if grid_v1_build_enabled():
+            try:
+                grid_ok, grid_fail, manifest_ok = build_grid_v1_for_run(
+                    data_root=data_root,
+                    model=model_id,
+                    run=run_id,
+                    workers=grid_v1_workers(),
+                )
+                logger.info(
+                    "grid_v1 shadow build: run=%s model=%s reason=%s frame_success=%d frame_failed=%d manifests=%d",
+                    run_id,
+                    model_id,
+                    reason,
+                    grid_ok,
+                    grid_fail,
+                    manifest_ok,
+                )
+            except Exception:
+                logger.exception("grid_v1 shadow build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
         logger.info(
             "Published run snapshot: run=%s model=%s reason=%s built=%d/%d",
             run_id,

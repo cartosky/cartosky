@@ -32,6 +32,24 @@ def grid_v1_enabled() -> bool:
 
 
 @lru_cache(maxsize=1)
+def grid_v1_build_enabled() -> bool:
+    return _env_bool("CARTOSKY_GRID_V1_BUILD_ENABLED", default=False)
+
+
+@lru_cache(maxsize=1)
+def grid_v1_workers() -> int:
+    raw = _env_value("CARTOSKY_GRID_V1_WORKERS", default="1").strip()
+    if not raw:
+        return 1
+    try:
+        parsed = int(raw)
+    except ValueError:
+        logger.warning("Invalid CARTOSKY_GRID_V1_WORKERS=%r; using fallback=1", raw)
+        return 1
+    return max(1, parsed)
+
+
+@lru_cache(maxsize=1)
 def grid_v1_allowlist() -> set[tuple[str, str]]:
     raw = _env_value("CARTOSKY_GRID_V1_ALLOWLIST", default="hrrr:tmp2m")
     allowed: set[tuple[str, str]] = set()
