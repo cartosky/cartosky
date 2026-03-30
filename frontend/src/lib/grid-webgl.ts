@@ -557,7 +557,8 @@ export class GridWebglLayerController {
         if (mixed.a <= 0.0) {
           discard;
         }
-        gl_FragColor = vec4(mixed.rgb, mixed.a * u_opacity);
+        float finalAlpha = mixed.a * u_opacity;
+        gl_FragColor = vec4(mixed.rgb * finalAlpha, finalAlpha);
       }
     `;
 
@@ -939,7 +940,7 @@ export class GridWebglLayerController {
 
     gl.useProgram(program);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.enableVertexAttribArray(bindings.positionLocation);
