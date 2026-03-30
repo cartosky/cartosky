@@ -11,6 +11,7 @@ import rasterio
 
 from ..config import grid_v1_allowlist
 from .colormaps import get_color_map_spec
+from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import variable_color_map_id
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,14 @@ def grid_v1_frame_path(data_root: Path, model: str, run: str, var: str, fh: int,
     return grid_v1_dir(data_root, model, run, var) / grid_v1_frame_filename(fh, level=level)
 
 
+def grid_v1_frame_meta_filename(fh: int, *, level: int = GRID_V1_LEVEL) -> str:
+    return f"fh{int(fh):03d}.l{int(level)}.meta.json"
+
+
+def grid_v1_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_V1_LEVEL) -> Path:
+    return grid_v1_dir(data_root, model, run, var) / grid_v1_frame_meta_filename(fh, level=level)
+
+
 def expected_grid_v1_frame_size_bytes(*, width: int, height: int) -> int:
     return max(0, int(width) * int(height) * 2)
 
@@ -89,7 +98,9 @@ def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: i
 
 def _write_frame_from_value_cog(
     *,
+    data_root: Path,
     model: str,
+    run: str,
     var: str,
     fh: int,
     value_cog_path: Path,
@@ -101,14 +112,14 @@ def _write_frame_from_value_cog(
 
     with rasterio.open(value_cog_path) as ds:
         values = ds.read(1).astype(np.float32, copy=False)
+        display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
         encoded = _encode_values(
-            values,
+            display_values,
             scale=float(packing["scale"]),
             offset=float(packing["offset"]),
             nodata=int(packing["nodata"]),
         )
-        width = int(ds.width)
-        height = int(ds.height)
+        height, width = encoded.shape
         bounds = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
         crs_text = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
 
@@ -117,7 +128,7 @@ def _write_frame_from_value_cog(
     tmp_path.write_bytes(encoded.astype("<u2", copy=False).tobytes(order="C"))
     tmp_path.replace(out_path)
 
-    return {
+    frame_meta = {
         "fh": int(fh),
         "file": out_path.name,
         "width": width,
@@ -125,6 +136,10 @@ def _write_frame_from_value_cog(
         "bbox": bounds,
         "projection": crs_text,
     }
+    if prep_meta:
+        frame_meta["display_prep"] = prep_meta
+    write_json_atomic(grid_v1_frame_meta_path(data_root, model, run, var, fh), frame_meta)
+    return frame_meta
 
 
 def _build_palette_block(model: str, var: str) -> dict[str, Any]:
@@ -162,6 +177,7 @@ def _build_manifest_for_var(
     bbox: list[float] | None = None
     projection = GRID_V1_PROJECTION
     units = str(packing.get("units") or "")
+    display_prep: dict[str, Any] | None = None
 
     for sidecar_path in sorted(var_dir.glob("fh*.json")):
         fh_token = sidecar_path.stem
@@ -172,6 +188,7 @@ def _build_manifest_for_var(
         except ValueError:
             continue
         frame_path = grid_v1_frame_path(data_root, model, run, var, fh)
+        frame_meta_path = grid_v1_frame_meta_path(data_root, model, run, var, fh)
         value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
         if not frame_path.is_file() or not value_cog_path.is_file():
             continue
@@ -181,9 +198,19 @@ def _build_manifest_for_var(
             continue
         if not units:
             units = str(sidecar.get("units") or units or "")
-        with rasterio.open(value_cog_path) as ds:
-            expected_size_bytes = expected_grid_v1_frame_size_bytes(width=int(ds.width), height=int(ds.height))
+        frame_meta: dict[str, Any] | None = None
+        if frame_meta_path.is_file():
+            try:
+                frame_meta = json.loads(frame_meta_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                frame_meta = None
+        if frame_meta is not None:
+            frame_width = int(frame_meta.get("width") or 0)
+            frame_height = int(frame_meta.get("height") or 0)
+            frame_bbox = frame_meta.get("bbox")
+            frame_projection = str(frame_meta.get("projection") or GRID_V1_PROJECTION)
             actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
+            expected_size_bytes = expected_grid_v1_frame_size_bytes(width=frame_width, height=frame_height)
             if actual_size_bytes != expected_size_bytes:
                 logger.warning(
                     "Skipping invalid grid_v1 frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
@@ -196,10 +223,33 @@ def _build_manifest_for_var(
                 )
                 continue
             if width is None:
-                width = int(ds.width)
-                height = int(ds.height)
-                bbox = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-                projection = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
+                width = frame_width
+                height = frame_height
+                if isinstance(frame_bbox, list) and len(frame_bbox) == 4:
+                    bbox = [float(frame_bbox[0]), float(frame_bbox[1]), float(frame_bbox[2]), float(frame_bbox[3])]
+                projection = frame_projection
+            if display_prep is None and isinstance(frame_meta.get("display_prep"), dict):
+                display_prep = dict(frame_meta["display_prep"])
+        else:
+            with rasterio.open(value_cog_path) as ds:
+                expected_size_bytes = expected_grid_v1_frame_size_bytes(width=int(ds.width), height=int(ds.height))
+                actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
+                if actual_size_bytes != expected_size_bytes:
+                    logger.warning(
+                        "Skipping invalid grid_v1 frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
+                        model,
+                        run,
+                        var,
+                        fh,
+                        actual_size_bytes,
+                        expected_size_bytes,
+                    )
+                    continue
+                if width is None:
+                    width = int(ds.width)
+                    height = int(ds.height)
+                    bbox = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
+                    projection = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
         frame_entry: dict[str, Any] = {
             "fh": fh,
             "file": frame_path.name,
@@ -241,6 +291,8 @@ def _build_manifest_for_var(
             }
         ],
     }
+    if display_prep:
+        manifest["display_prep"] = display_prep
     write_json_atomic(grid_v1_manifest_path(data_root, model, run, var), manifest)
     return True
 
@@ -290,7 +342,9 @@ def build_grid_v1_for_run(
         futures = [
             pool.submit(
                 _write_frame_from_value_cog,
+                data_root=data_root,
                 model=model,
+                run=run,
                 var=var,
                 fh=fh,
                 value_cog_path=value_cog_path,
