@@ -5,7 +5,10 @@ import type { GridManifestResponse } from "@/lib/api";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
 
-const GRID_FRAME_CACHE_BUDGET_BYTES = 72 * 1024 * 1024;
+const GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
+const GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
+const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
+const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 
 export type GridFrameVisiblePayload = {
@@ -155,8 +158,19 @@ function expandUint16BytesToRgba(bytes: Uint8Array): Uint8Array {
   return expanded;
 }
 
-function decodePackedValue(sample: [number, number, number, number]): number {
-  return sample[0] + sample[1] * 256;
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+}
+
+function resolveFrameCacheBudgetBytes(): number {
+  return isMobileDevice() ? GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES : GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES;
+}
+
+function resolveTextureCacheBudgetBytes(): number {
+  return isMobileDevice() ? GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES : GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;
 }
 
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -224,7 +238,32 @@ type CachedFrame = {
   lastUsedAt: number;
 };
 
+type CachedTexture = {
+  texture: WebGLTexture;
+  lastUsedAt: number;
+  bytes: number;
+};
+
+type ProgramBindings = {
+  positionLocation: number;
+  texCoordLocation: number;
+  matrixLocation: WebGLUniformLocation | null;
+  scaleLocation: WebGLUniformLocation | null;
+  offsetLocation: WebGLUniformLocation | null;
+  nodataLocation: WebGLUniformLocation | null;
+  valueMinLocation: WebGLUniformLocation | null;
+  valueMaxLocation: WebGLUniformLocation | null;
+  opacityLocation: WebGLUniformLocation | null;
+  dataLocation: WebGLUniformLocation | null;
+  prevDataLocation: WebGLUniformLocation | null;
+  lutLocation: WebGLUniformLocation | null;
+  mixLocation: WebGLUniformLocation | null;
+  hasPrevLocation: WebGLUniformLocation | null;
+};
+
 export class GridWebglLayerController {
+  private readonly frameCacheBudgetBytes = resolveFrameCacheBudgetBytes();
+  private readonly textureCacheBudgetBytes = resolveTextureCacheBudgetBytes();
   private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
   private active = false;
@@ -241,29 +280,37 @@ export class GridWebglLayerController {
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private frameCache = new Map<string, CachedFrame>();
   private frameCacheBytes = 0;
+  private textureCache = new Map<string, CachedTexture>();
+  private textureCacheBytes = 0;
   private prefetchInFlight = new Set<string>();
   private frameFetches = new Map<string, Promise<Uint8Array<ArrayBufferLike> | null>>();
+  private textureWarmQueue: string[] = [];
+  private textureWarmQueued = new Set<string>();
+  private textureWarmRafId: number | null = null;
   private currentFrameSignature: string | null = null;
   private currentTextureSignature: string | null = null;
+  private currentTextureUrl: string | null = null;
+  private previousTextureUrl: string | null = null;
   private visibleNotifiedSignature: string | null = null;
   private pendingFrameBytes: Uint8Array<ArrayBufferLike> | null = null;
   private pendingFrameSignature: string | null = null;
+  private pendingFrameUrl: string | null = null;
   private isWebGL2 = false;
   private program: WebGLProgram | null = null;
+  private bindings: ProgramBindings | null = null;
   private vertexBuffer: WebGLBuffer | null = null;
   private texCoordBuffer: WebGLBuffer | null = null;
-  private dataTextures: [WebGLTexture | null, WebGLTexture | null] = [null, null];
   private lutTexture: WebGLTexture | null = null;
   private lutPixels: Uint8Array<ArrayBufferLike> = new Uint8Array(256 * 4);
   private lutMin = 0;
   private lutMax = 1;
   private lutDirty = true;
-  private currentTextureIndex = 0;
-  private previousTextureIndex = 0;
-  private hasTexture = false;
+  private currentTexture: WebGLTexture | null = null;
+  private previousTexture: WebGLTexture | null = null;
   private hasPreviousTexture = false;
   private transitionStartedAt = 0;
   private transitionDurationMs = 90;
+  private quadSignature: string | null = null;
 
   createLayer(): maplibregl.CustomLayerInterface {
     return {
@@ -276,8 +323,8 @@ export class GridWebglLayerController {
         this.isWebGL2 = typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext;
         this.initializeGlResources();
         this.uploadLutTexture();
-        if (this.pendingFrameBytes && this.pendingFrameSignature) {
-          this.uploadFrameTexture(this.pendingFrameBytes, this.pendingFrameSignature);
+        if (this.pendingFrameBytes && this.pendingFrameSignature && this.pendingFrameUrl) {
+          this.activateFrameTexture(this.pendingFrameUrl, this.pendingFrameBytes, this.pendingFrameSignature);
         } else if (this.active && this.frameUrl) {
           void this.ensureFrameLoaded(this.frameUrl, this.currentFrameSignature);
         }
@@ -329,8 +376,10 @@ export class GridWebglLayerController {
       void this.ensureFrameLoaded(this.frameUrl, nextSignature);
     }
 
+    this.scheduleTextureWarm(this.frameUrl);
     for (const prefetchUrl of this.prefetchUrls) {
       void this.prefetchFrame(prefetchUrl);
+      this.scheduleTextureWarm(prefetchUrl);
     }
     this.map?.triggerRepaint();
   }
@@ -417,17 +466,32 @@ export class GridWebglLayerController {
     this.program = createProgram(gl, vertexSource, fragmentSource);
     this.vertexBuffer = gl.createBuffer();
     this.texCoordBuffer = gl.createBuffer();
-    this.dataTextures = [gl.createTexture(), gl.createTexture()];
     this.lutTexture = gl.createTexture();
 
-    if (!this.vertexBuffer || !this.texCoordBuffer || !this.dataTextures[0] || !this.dataTextures[1] || !this.lutTexture) {
+    if (!this.vertexBuffer || !this.texCoordBuffer || !this.lutTexture) {
       throw new Error("Failed to initialize grid WebGL resources");
     }
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(this.resolveBbox()), gl.STATIC_DRAW);
+    this.bindings = {
+      positionLocation: gl.getAttribLocation(this.program, "a_pos"),
+      texCoordLocation: gl.getAttribLocation(this.program, "a_texCoord"),
+      matrixLocation: gl.getUniformLocation(this.program, "u_matrix"),
+      scaleLocation: gl.getUniformLocation(this.program, "u_scale"),
+      offsetLocation: gl.getUniformLocation(this.program, "u_offset"),
+      nodataLocation: gl.getUniformLocation(this.program, "u_nodata"),
+      valueMinLocation: gl.getUniformLocation(this.program, "u_valueMin"),
+      valueMaxLocation: gl.getUniformLocation(this.program, "u_valueMax"),
+      opacityLocation: gl.getUniformLocation(this.program, "u_opacity"),
+      dataLocation: gl.getUniformLocation(this.program, "u_data"),
+      prevDataLocation: gl.getUniformLocation(this.program, "u_prevData"),
+      lutLocation: gl.getUniformLocation(this.program, "u_lut"),
+      mixLocation: gl.getUniformLocation(this.program, "u_mixAmount"),
+      hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
+    };
+
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, buildQuadTexCoords(), gl.STATIC_DRAW);
+    this.uploadQuadVerticesIfNeeded();
   }
 
   private resolveBbox(): [number, number, number, number] {
@@ -438,13 +502,19 @@ export class GridWebglLayerController {
     return [-14922340, 2714341, -6679169, 7361866];
   }
 
-  private uploadQuadVertices() {
+  private uploadQuadVerticesIfNeeded() {
     const gl = this.gl;
     if (!gl || !this.vertexBuffer) {
       return;
     }
+    const bbox = this.resolveBbox();
+    const signature = bbox.join(",");
+    if (signature === this.quadSignature) {
+      return;
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(this.resolveBbox()), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(bbox), gl.STATIC_DRAW);
+    this.quadSignature = signature;
   }
 
   private uploadLutTexture() {
@@ -462,14 +532,25 @@ export class GridWebglLayerController {
     this.lutDirty = false;
   }
 
-  private uploadFrameTexture(bytes: Uint8Array<ArrayBufferLike>, signature: string) {
+  private createTextureFromBytes(frameUrl: string, bytes: Uint8Array<ArrayBufferLike> | null): WebGLTexture | null {
     const gl = this.gl;
     const grid = this.manifest?.grid;
-    const targetTexture = this.dataTextures[this.hasTexture ? 1 - this.currentTextureIndex : this.currentTextureIndex];
-    if (!gl || !targetTexture || !grid) {
-      this.pendingFrameBytes = bytes;
-      this.pendingFrameSignature = signature;
-      return;
+    if (!gl || !grid) {
+      return null;
+    }
+
+    const existing = this.textureCache.get(frameUrl);
+    if (existing) {
+      existing.lastUsedAt = Date.now();
+      return existing.texture;
+    }
+    if (!bytes) {
+      return null;
+    }
+
+    const targetTexture = gl.createTexture();
+    if (!targetTexture) {
+      return null;
     }
 
     const width = Math.max(1, Math.floor(Number(grid.width) || 1));
@@ -489,20 +570,41 @@ export class GridWebglLayerController {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     }
 
-    this.pendingFrameBytes = bytes;
+    this.textureCache.set(frameUrl, {
+      texture: targetTexture,
+      lastUsedAt: Date.now(),
+      bytes: bytes.byteLength,
+    });
+    this.textureCacheBytes += bytes.byteLength;
+    this.evictTextureCache(frameUrl);
+    return targetTexture;
+  }
+
+  private activateFrameTexture(frameUrl: string, bytes: Uint8Array<ArrayBufferLike> | null, signature: string) {
+    const targetTexture = this.createTextureFromBytes(frameUrl, bytes);
+    if (!targetTexture) {
+      this.pendingFrameBytes = bytes;
+      this.pendingFrameSignature = signature;
+      this.pendingFrameUrl = frameUrl;
+      return;
+    }
+
+    this.pendingFrameBytes = bytes ?? this.frameCache.get(frameUrl)?.bytes ?? null;
     this.pendingFrameSignature = signature;
-    if (this.hasTexture) {
-      this.previousTextureIndex = this.currentTextureIndex;
+    this.pendingFrameUrl = frameUrl;
+    if (this.currentTexture && this.currentTextureUrl && this.currentTextureUrl !== frameUrl) {
+      this.previousTexture = this.currentTexture;
+      this.previousTextureUrl = this.currentTextureUrl;
       this.hasPreviousTexture = true;
-      this.currentTextureIndex = 1 - this.currentTextureIndex;
-      this.transitionStartedAt = performance.now();
     } else {
-      this.currentTextureIndex = this.currentTextureIndex;
-      this.transitionStartedAt = performance.now();
+      this.previousTexture = null;
+      this.previousTextureUrl = null;
       this.hasPreviousTexture = false;
     }
-    this.hasTexture = true;
+    this.currentTexture = targetTexture;
+    this.currentTextureUrl = frameUrl;
     this.currentTextureSignature = signature;
+    this.transitionStartedAt = performance.now();
     this.map?.triggerRepaint();
   }
 
@@ -510,10 +612,16 @@ export class GridWebglLayerController {
     if (!signature) {
       return;
     }
+    const warmTexture = this.textureCache.get(frameUrl);
+    if (warmTexture) {
+      warmTexture.lastUsedAt = Date.now();
+      this.activateFrameTexture(frameUrl, this.frameCache.get(frameUrl)?.bytes ?? new Uint8Array(), signature);
+      return;
+    }
     const cached = this.frameCache.get(frameUrl);
     if (cached) {
       cached.lastUsedAt = Date.now();
-      this.uploadFrameTexture(cached.bytes, signature);
+      this.activateFrameTexture(frameUrl, cached.bytes, signature);
       return;
     }
 
@@ -525,7 +633,7 @@ export class GridWebglLayerController {
       if (signature !== this.currentFrameSignature) {
         return;
       }
-      this.uploadFrameTexture(bytes, signature);
+      this.activateFrameTexture(frameUrl, bytes, signature);
     } catch {
       // Keep the previously-visible frame on screen if the new one fails.
     }
@@ -581,7 +689,7 @@ export class GridWebglLayerController {
     this.frameCache.set(frameUrl, { bytes, lastUsedAt: Date.now() });
     this.frameCacheBytes += bytes.byteLength;
 
-    while (this.frameCacheBytes > GRID_FRAME_CACHE_BUDGET_BYTES && this.frameCache.size > 1) {
+    while (this.frameCacheBytes > this.frameCacheBudgetBytes && this.frameCache.size > 1) {
       let lruKey: string | null = null;
       let oldest = Number.POSITIVE_INFINITY;
       for (const [candidateKey, candidate] of this.frameCache.entries()) {
@@ -602,16 +710,89 @@ export class GridWebglLayerController {
     }
   }
 
+  private evictTextureCache(preferredUrl?: string | null) {
+    while (this.textureCacheBytes > this.textureCacheBudgetBytes && this.textureCache.size > 1) {
+      let lruKey: string | null = null;
+      let oldest = Number.POSITIVE_INFINITY;
+      for (const [candidateKey, candidate] of this.textureCache.entries()) {
+        if (
+          candidateKey === preferredUrl
+          || candidateKey === this.currentTextureUrl
+          || candidateKey === this.previousTextureUrl
+          || this.textureWarmQueued.has(candidateKey)
+        ) {
+          continue;
+        }
+        if (candidate.lastUsedAt < oldest) {
+          oldest = candidate.lastUsedAt;
+          lruKey = candidateKey;
+        }
+      }
+      if (!lruKey) {
+        break;
+      }
+      const evicted = this.textureCache.get(lruKey);
+      if (!evicted) {
+        break;
+      }
+      this.textureCache.delete(lruKey);
+      this.textureCacheBytes -= evicted.bytes;
+      this.gl?.deleteTexture(evicted.texture);
+    }
+  }
+
+  private scheduleTextureWarm(frameUrl: string | null) {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized || this.textureCache.has(normalized) || this.textureWarmQueued.has(normalized)) {
+      return;
+    }
+    this.textureWarmQueued.add(normalized);
+    this.textureWarmQueue.push(normalized);
+    if (this.textureWarmRafId !== null || typeof window === "undefined") {
+      return;
+    }
+    this.textureWarmRafId = window.requestAnimationFrame(() => {
+      this.textureWarmRafId = null;
+      void this.pumpTextureWarmQueue();
+    });
+  }
+
+  private async pumpTextureWarmQueue() {
+    while (this.textureWarmQueue.length > 0) {
+      const nextUrl = this.textureWarmQueue.shift() ?? "";
+      this.textureWarmQueued.delete(nextUrl);
+      if (!nextUrl || this.textureCache.has(nextUrl)) {
+        continue;
+      }
+      const bytes = await this.fetchFrameBytes(nextUrl);
+      if (!bytes || !this.gl) {
+        continue;
+      }
+      this.createTextureFromBytes(nextUrl, bytes);
+      this.map?.triggerRepaint();
+      break;
+    }
+
+    if (this.textureWarmQueue.length > 0 && this.textureWarmRafId === null && typeof window !== "undefined") {
+      this.textureWarmRafId = window.requestAnimationFrame(() => {
+        this.textureWarmRafId = null;
+        void this.pumpTextureWarmQueue();
+      });
+    }
+  }
+
   private render(matrix: number[]) {
     const gl = this.gl;
     const program = this.program;
+    const bindings = this.bindings;
     const grid = this.manifest?.grid;
     if (
       !gl
       || !program
+      || !bindings
       || !this.active
       || !grid
-      || !this.dataTextures[this.currentTextureIndex]
+      || !this.currentTexture
       || !this.lutTexture
       || !this.vertexBuffer
       || !this.texCoordBuffer
@@ -620,7 +801,7 @@ export class GridWebglLayerController {
       return;
     }
 
-    this.uploadQuadVertices();
+    this.uploadQuadVerticesIfNeeded();
     this.uploadLutTexture();
 
     const zoom = this.map?.getZoom() ?? 0;
@@ -633,54 +814,39 @@ export class GridWebglLayerController {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    const positionLocation = gl.getAttribLocation(program, "a_pos");
-    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
-    const matrixLocation = gl.getUniformLocation(program, "u_matrix");
-    const scaleLocation = gl.getUniformLocation(program, "u_scale");
-    const offsetLocation = gl.getUniformLocation(program, "u_offset");
-    const nodataLocation = gl.getUniformLocation(program, "u_nodata");
-    const valueMinLocation = gl.getUniformLocation(program, "u_valueMin");
-    const valueMaxLocation = gl.getUniformLocation(program, "u_valueMax");
-    const opacityLocation = gl.getUniformLocation(program, "u_opacity");
-    const dataLocation = gl.getUniformLocation(program, "u_data");
-    const prevDataLocation = gl.getUniformLocation(program, "u_prevData");
-    const lutLocation = gl.getUniformLocation(program, "u_lut");
-    const mixLocation = gl.getUniformLocation(program, "u_mixAmount");
-    const hasPrevLocation = gl.getUniformLocation(program, "u_hasPrevious");
-
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(bindings.positionLocation);
+    gl.vertexAttribPointer(bindings.positionLocation, 2, gl.FLOAT, false, 0, 0);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
-    gl.enableVertexAttribArray(texCoordLocation);
-    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(bindings.texCoordLocation);
+    gl.vertexAttribPointer(bindings.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-    gl.uniformMatrix4fv(matrixLocation, false, matrix);
-    gl.uniform1f(scaleLocation, Number(grid.scale) || 1);
-    gl.uniform1f(offsetLocation, Number(grid.offset) || 0);
-    gl.uniform1f(nodataLocation, Number(grid.nodata) || 65535);
-    gl.uniform1f(valueMinLocation, this.lutMin);
-    gl.uniform1f(valueMaxLocation, this.lutMax);
-    gl.uniform1f(opacityLocation, resolvedOpacity);
+    gl.uniformMatrix4fv(bindings.matrixLocation, false, matrix);
+    gl.uniform1f(bindings.scaleLocation, Number(grid.scale) || 1);
+    gl.uniform1f(bindings.offsetLocation, Number(grid.offset) || 0);
+    gl.uniform1f(bindings.nodataLocation, Number(grid.nodata) || 65535);
+    gl.uniform1f(bindings.valueMinLocation, this.lutMin);
+    gl.uniform1f(bindings.valueMaxLocation, this.lutMax);
+    gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     const elapsed = performance.now() - this.transitionStartedAt;
     const mixAmount = this.hasPreviousTexture
       ? Math.max(0, Math.min(1, elapsed / Math.max(1, this.transitionDurationMs)))
       : 1;
-    gl.uniform1f(mixLocation, mixAmount);
-    gl.uniform1f(hasPrevLocation, this.hasPreviousTexture ? 1 : 0);
+    gl.uniform1f(bindings.mixLocation, mixAmount);
+    gl.uniform1f(bindings.hasPrevLocation, this.hasPreviousTexture ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.dataTextures[this.currentTextureIndex]);
-    gl.uniform1i(dataLocation, 0);
+    gl.bindTexture(gl.TEXTURE_2D, this.currentTexture);
+    gl.uniform1i(bindings.dataLocation, 0);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.hasPreviousTexture ? this.dataTextures[this.previousTextureIndex] : this.dataTextures[this.currentTextureIndex]);
-    gl.uniform1i(prevDataLocation, 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.hasPreviousTexture ? this.previousTexture : this.currentTexture);
+    gl.uniform1i(bindings.prevDataLocation, 1);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.lutTexture);
-    gl.uniform1i(lutLocation, 2);
+    gl.uniform1i(bindings.lutLocation, 2);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     if (this.hasPreviousTexture && mixAmount < 1) {
@@ -716,20 +882,32 @@ export class GridWebglLayerController {
       if (this.texCoordBuffer) {
         gl.deleteBuffer(this.texCoordBuffer);
       }
-      for (const texture of this.dataTextures) {
-        if (texture) {
-          gl.deleteTexture(texture);
-        }
+      for (const entry of this.textureCache.values()) {
+        gl.deleteTexture(entry.texture);
       }
       if (this.lutTexture) {
         gl.deleteTexture(this.lutTexture);
       }
     }
+    if (this.textureWarmRafId !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(this.textureWarmRafId);
+    }
     this.program = null;
+    this.bindings = null;
     this.vertexBuffer = null;
     this.texCoordBuffer = null;
-    this.dataTextures = [null, null];
     this.lutTexture = null;
+    this.textureCache.clear();
+    this.textureCacheBytes = 0;
+    this.textureWarmQueue = [];
+    this.textureWarmQueued.clear();
+    this.textureWarmRafId = null;
+    this.currentTexture = null;
+    this.previousTexture = null;
+    this.currentTextureUrl = null;
+    this.previousTextureUrl = null;
+    this.pendingFrameUrl = null;
+    this.quadSignature = null;
     this.gl = null;
     this.map = null;
   }

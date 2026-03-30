@@ -1125,6 +1125,7 @@ export default function App() {
   const failedRumCountRef = useRef(0);
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
+  const targetForecastHourRef = useRef(targetForecastHour);
   const lastLoopAdvanceRef = useRef<number | null>(null);
   const loopFrameDropSampleCounterRef = useRef(0);
   // -- Imperative playback fast-path refs --
@@ -1140,6 +1141,7 @@ export default function App() {
   const lastSyncedPermalinkSearchRef = useRef("");
   const suppressNextUrlSyncRef = useRef(true);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
+  const gridPlaybackHourRef = useRef<number | null>(null);
   const anchorSelectionKeyRef = useRef("");
   const anchorBatchAbortRef = useRef<AbortController | null>(null);
   const anchorBatchInFlightHourRef = useRef<number | null>(null);
@@ -1604,6 +1606,7 @@ export default function App() {
 
   useEffect(() => {
     gridReadyFrameUrlsRef.current = new Set();
+    gridPlaybackHourRef.current = null;
   }, [selectionKey]);
 
   useEffect(() => {
@@ -2040,6 +2043,10 @@ export default function App() {
   useEffect(() => {
     forecastHourRef.current = forecastHour;
   }, [forecastHour]);
+
+  useEffect(() => {
+    targetForecastHourRef.current = targetForecastHour;
+  }, [targetForecastHour]);
 
   useLayoutEffect(() => {
     modelRef.current = model;
@@ -5251,34 +5258,61 @@ export default function App() {
 
   useEffect(() => {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
+      gridPlaybackHourRef.current = null;
       return;
     }
 
-    const interval = window.setInterval(() => {
-      const currentHour = Number.isFinite(targetForecastHour) ? targetForecastHour : forecastHour;
+    let rafId: number | null = null;
+    let previousTs = performance.now();
+    let accumulatedMs = 0;
+
+    const tick = (now: number) => {
+      const currentHour = gridPlaybackHourRef.current
+        ?? (Number.isFinite(targetForecastHourRef.current) ? targetForecastHourRef.current : forecastHourRef.current);
       const currentIndex = gridFrameHours.indexOf(currentHour);
       if (currentIndex < 0) {
         const firstHour = gridFrameHours[0];
         if (Number.isFinite(firstHour)) {
+          gridPlaybackHourRef.current = firstHour;
           setTargetForecastHour(firstHour);
         }
+        previousTs = now;
+        rafId = window.requestAnimationFrame(tick);
         return;
       }
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= gridFrameHours.length) {
-        setIsPlaying(false);
-        return;
-      }
-      const nextHour = gridFrameHours[nextIndex];
-      const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
-      if (!isGridFrameReady(nextUrl)) {
-        return;
-      }
-      setTargetForecastHour(nextHour);
-    }, AUTOPLAY_TICK_MS);
+      const deltaMs = Math.max(0, now - previousTs);
+      previousTs = now;
+      accumulatedMs = Math.min(accumulatedMs + deltaMs, AUTOPLAY_TICK_MS * 4);
 
-    return () => window.clearInterval(interval);
-  }, [forecastHour, gridFrameByHour, gridFrameHours, isGridFrameReady, isGridPlayable, isPlaying, targetForecastHour]);
+      while (accumulatedMs >= AUTOPLAY_TICK_MS) {
+        const nextIndex = currentIndex + 1;
+        if (nextIndex >= gridFrameHours.length) {
+          gridPlaybackHourRef.current = null;
+          setIsPlaying(false);
+          return;
+        }
+        const nextHour = gridFrameHours[nextIndex];
+        const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
+        if (!isGridFrameReady(nextUrl)) {
+          break;
+        }
+        accumulatedMs -= AUTOPLAY_TICK_MS;
+        gridPlaybackHourRef.current = nextHour;
+        setTargetForecastHour(nextHour);
+        break;
+      }
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      gridPlaybackHourRef.current = null;
+    };
+  }, [gridFrameByHour, gridFrameHours, isGridFrameReady, isGridPlayable, isPlaying]);
 
   useEffect(() => {
     if (!isPreloadingForPlay) {
@@ -5352,6 +5386,7 @@ export default function App() {
   const handleSetIsPlaying = useCallback((value: boolean) => {
     if (!value) {
       pendingLoopStartMetricRef.current = null;
+      gridPlaybackHourRef.current = null;
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
@@ -5412,6 +5447,9 @@ export default function App() {
     });
 
     if (canUseGridPlayback) {
+      gridPlaybackHourRef.current = Number.isFinite(targetForecastHour)
+        ? targetForecastHour
+        : (Number.isFinite(forecastHour) ? forecastHour : null);
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
@@ -5449,6 +5487,8 @@ export default function App() {
     telemetryRunId,
     region,
     buildObservedTelemetryMeta,
+    targetForecastHour,
+    forecastHour,
   ]);
 
   useEffect(() => {

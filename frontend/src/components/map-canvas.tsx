@@ -939,8 +939,18 @@ export function MapCanvas({
       return [] as string[];
     }
     const urls: string[] = [];
-    const aheadTarget = mode === "autoplay" ? 8 : mode === "variable-switch" ? 5 : 4;
-    const behindTarget = mode === "autoplay" ? 2 : 3;
+    const remainingAhead = Math.max(0, frameHours.length - 1 - pivot);
+    const remainingBehind = Math.max(0, pivot);
+    const aheadTarget = mode === "autoplay"
+      ? Math.min(remainingAhead, frameHours.length <= 60 ? remainingAhead : 24)
+      : mode === "variable-switch"
+        ? Math.min(remainingAhead, 14)
+        : Math.min(remainingAhead, 10);
+    const behindTarget = mode === "autoplay"
+      ? Math.min(remainingBehind, 8)
+      : mode === "variable-switch"
+        ? Math.min(remainingBehind, 6)
+        : Math.min(remainingBehind, 5);
     const pushFrameUrl = (hour: number) => {
       const frame = frames.find((entry) => Number(entry?.fh) === hour);
       const url = String(frame?.url ?? "").trim();
