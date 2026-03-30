@@ -14,6 +14,7 @@ import {
   type CapabilityModel,
   type CapabilityVariable,
   type FrameRow,
+  type GridManifestResponse,
   type LegendMeta,
   type LoopManifestResponse,
   type ModelDefaultFrameSelection,
@@ -22,6 +23,7 @@ import {
   fetchManifest,
   fetchCapabilities,
   fetchFrames,
+  fetchGridManifest,
   fetchLoopManifest,
   fetchRegionPresets,
   fetchRuns,
@@ -944,6 +946,7 @@ export default function App() {
   const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [loopManifest, setLoopManifest] = useState<LoopManifestResponse | null>(null);
+  const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
   const [regionPresets, setRegionPresets] = useState<Record<string, RegionPreset>>({});
   const [anchorBaseGeoJson, setAnchorBaseGeoJson] = useState<AnchorFeatureCollection | null>(null);
   const [anchorDisplayGeoJson, setAnchorDisplayGeoJson] = useState<AnchorFeatureCollection | null>(null);
@@ -1234,9 +1237,6 @@ export default function App() {
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectedVariableRenderSubstrates = selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"];
   const selectionSupportsGridV1 = gridV1Enabled && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
-  // Phase 0 only wires substrate selection state and permalink/query-param support.
-  // The actual grid manifest fetch and WebGL render path are added in later phases,
-  // so legacy remains the active renderer regardless of this resolved preference.
   const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
     if (weatherSubstrateOverride === "legacy") {
       return "legacy";
@@ -1257,7 +1257,7 @@ export default function App() {
     selectionSupportsGridV1,
     weatherSubstrateOverride,
   ]);
-  void selectedWeatherSubstrate;
+  const prefersGridSubstrate = selectedWeatherSubstrate === "grid_webgl_v1";
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1483,6 +1483,56 @@ export default function App() {
   const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
   const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+
+  useEffect(() => {
+    if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGridV1) {
+      setGridManifest(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const startedAt = performance.now();
+    setGridManifest(null);
+
+    fetchGridManifest(model, resolvedRunForRequests, variable, { signal: controller.signal })
+      .then((manifest) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setGridManifest(manifest);
+        trackPerfEvent({
+          event_name: "grid_manifest_resolve",
+          duration_ms: Math.max(0, performance.now() - startedAt),
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          meta: {
+            substrate: "grid_webgl_v1",
+            success: Boolean(manifest),
+          },
+        });
+      })
+      .catch(() => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setGridManifest(null);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    hasRenderableSelection,
+    model,
+    prefersGridSubstrate,
+    region,
+    resolvedRunForRequests,
+    selectionSupportsGridV1,
+    telemetryRunId,
+    variable,
+  ]);
   const observedSourceStatus = useMemo(() => {
     if (selectedTimeAxisMode !== "observed") {
       return null;
@@ -1614,7 +1664,73 @@ export default function App() {
   );
   const isCurrentSelectionLoaded = loadedFramesKey === selectionKey;
   const loopSelectionReady = isCurrentSelectionLoaded && loopFrameHours.length > 0;
-
+  const gridLod0 = useMemo(() => {
+    if (!gridManifest?.lods?.length) {
+      return null;
+    }
+    return gridManifest.lods.find((entry) => Number(entry?.level) === 0) ?? gridManifest.lods[0] ?? null;
+  }, [gridManifest]);
+  const gridFrameByHour = useMemo(() => {
+    const map = new Map<number, NonNullable<typeof gridLod0>["frames"][number]>();
+    const frames = Array.isArray(gridLod0?.frames) ? gridLod0.frames : [];
+    for (const frame of frames) {
+      const fh = Number(frame?.fh);
+      if (!Number.isFinite(fh)) {
+        continue;
+      }
+      map.set(fh, frame);
+    }
+    return map;
+  }, [gridLod0]);
+  const gridFrameHours = useMemo(() => {
+    return Array.from(gridFrameByHour.keys()).sort((a, b) => a - b);
+  }, [gridFrameByHour]);
+  const resolvedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
+    if (
+      prefersGridSubstrate
+      && gridManifest
+      && gridLod0
+      && gridFrameHours.length > 0
+    ) {
+      return "grid_webgl_v1";
+    }
+    return "legacy";
+  }, [gridFrameHours.length, gridLod0, gridManifest, prefersGridSubstrate]);
+  const canUseGridPlayback = useMemo(() => {
+    if (resolvedWeatherSubstrate !== "grid_webgl_v1" || gridFrameHours.length <= 1) {
+      return false;
+    }
+    return gridFrameHours.every((fh) => Boolean(gridFrameByHour.get(fh)?.url));
+  }, [gridFrameByHour, gridFrameHours, resolvedWeatherSubstrate]);
+  const requestedGridDisplayHour = useMemo(() => {
+    const requested = (isPlaying || isScrubbing || isVariableSwitching) ? targetForecastHour : forecastHour;
+    if (Number.isFinite(requested)) {
+      return Number(requested);
+    }
+    return gridFrameHours[0] ?? null;
+  }, [forecastHour, gridFrameHours, isPlaying, isScrubbing, isVariableSwitching, targetForecastHour]);
+  const resolvedGridDisplayHour = useMemo(() => {
+    if (gridFrameHours.length === 0) {
+      return null;
+    }
+    const requested = Number.isFinite(requestedGridDisplayHour) ? Number(requestedGridDisplayHour) : gridFrameHours[0];
+    return nearestFrame(gridFrameHours, requested);
+  }, [gridFrameHours, requestedGridDisplayHour]);
+  const activeGridFrame = useMemo(() => {
+    if (!Number.isFinite(resolvedGridDisplayHour)) {
+      return null;
+    }
+    return gridFrameByHour.get(Number(resolvedGridDisplayHour)) ?? null;
+  }, [gridFrameByHour, resolvedGridDisplayHour]);
+  const activeGridFrameUrl = useMemo(() => {
+    const frameUrl = activeGridFrame?.url;
+    if (!frameUrl) {
+      return null;
+    }
+    return /^https?:\/\//i.test(frameUrl)
+      ? frameUrl
+      : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
+  }, [activeGridFrame, apiRoot]);
   const webpDecodeCacheBudgetBytes = useMemo(() => {
     if (typeof navigator === "undefined") {
       return WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES;
@@ -1879,11 +1995,14 @@ export default function App() {
   );
 
   const canUseLoopPlayback = useMemo(() => {
+    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
+      return false;
+    }
     if (loopFrameHours.length <= 1) {
       return false;
     }
     return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
-  }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
+  }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour, resolvedWeatherSubstrate]);
 
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
@@ -1891,6 +2010,17 @@ export default function App() {
     const highDetailCutoff = thresholds.tier0Max + thresholds.hysteresis;
     return effectiveZoom > highDetailCutoff;
   }, [mapZoom]);
+  const isGridLowMidActive = useMemo(() => {
+    return Boolean(
+      resolvedWeatherSubstrate === "grid_webgl_v1"
+      && !isHighDetailZoom
+      && gridManifest
+      && gridLod0
+      && Array.isArray(gridManifest.bbox)
+      && gridManifest.bbox.length === 4
+      && activeGridFrameUrl
+    );
+  }, [activeGridFrameUrl, gridLod0, gridManifest, isHighDetailZoom, resolvedWeatherSubstrate]);
 
   useEffect(() => {
     forecastHourRef.current = forecastHour;
@@ -5170,7 +5300,7 @@ export default function App() {
         showTransientFrameStatus("High detail mode — zoom out for animation playback");
         return;
       }
-      if (!canUseLoopPlayback) {
+      if (!canUseLoopPlayback && !canUseGridPlayback) {
         pendingLoopStartMetricRef.current = null;
         setIsPlaying(false);
         setIsLoopAutoplayBuffering(false);
@@ -5199,6 +5329,15 @@ export default function App() {
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
 
+    if (canUseGridPlayback) {
+      setIsLoopAutoplayBuffering(false);
+      setIsLoopPreloading(false);
+      setIsPreloadingForPlay(false);
+      setIsPlaying(true);
+      showTransientFrameStatus("Starting grid playback");
+      return;
+    }
+
     if (!canUseLoopPlayback || !webpDefaultEnabled) {
       pendingLoopStartMetricRef.current = null;
       setIsPlaying(false);
@@ -5216,6 +5355,7 @@ export default function App() {
   }, [
     loading,
     frameHours.length,
+    canUseGridPlayback,
     canUseLoopPlayback,
     isHighDetailZoom,
     webpDefaultEnabled,
@@ -5230,12 +5370,12 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isPlaying && renderMode === "tiles") {
+    if (isPlaying && renderMode === "tiles" && !canUseGridPlayback) {
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(false);
       showTransientFrameStatus("High detail mode — zoom out for animation playback");
     }
-  }, [isPlaying, renderMode, showTransientFrameStatus]);
+  }, [canUseGridPlayback, isPlaying, renderMode, showTransientFrameStatus]);
 
   useEffect(() => {
     const pendingLoop = pendingInitialLoopRef.current;
@@ -5366,6 +5506,20 @@ export default function App() {
     trackFirstViewerFrame,
     selectionKey,
   ]);
+
+  const handleGridFrameVisible = useCallback((payload: {
+    frameHour: number;
+    selectionEpoch?: number;
+    selectionKey?: string;
+  }) => {
+    if (
+      (payload.selectionEpoch !== undefined && payload.selectionEpoch !== selectionEpochRef.current)
+      || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey)
+    ) {
+      return;
+    }
+    trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
+  }, [forecastHour, selectionKey, trackFirstViewerFrame]);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
     setRegion(nextRegion);
@@ -5993,6 +6147,11 @@ export default function App() {
           tileUrl={tileUrl}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
+          gridManifest={isGridLowMidActive ? gridManifest : null}
+          gridFrameUrl={isGridLowMidActive ? activeGridFrameUrl : null}
+          gridFrameHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
+          gridLegend={isGridLowMidActive ? legend : null}
+          gridActive={isGridLowMidActive}
           contourGeoJsonUrl={contourGeoJsonUrl}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}
@@ -6005,7 +6164,7 @@ export default function App() {
           displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
-          prefetchTileUrls={isLoopDisplayActive ? [] : prefetchTileUrls}
+          prefetchTileUrls={isLoopDisplayActive || isGridLowMidActive ? [] : prefetchTileUrls}
           crossfade={isVariableSwitching}
           loopImageUrl={activeLoopUrl}
           loopFrameBitmap={activeLoopBitmap}
@@ -6015,6 +6174,7 @@ export default function App() {
           onTileReady={handleTileReady}
           onFrameLoadingChange={handleFrameLoadingChange}
           onTileViewportReady={handleTileViewportReady}
+          onGridFrameVisible={handleGridFrameVisible}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}

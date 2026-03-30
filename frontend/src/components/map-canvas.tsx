@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
+import type { LegendPayload } from "@/components/map-legend";
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import type { GridManifestResponse } from "@/lib/api";
 import { MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
+import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
@@ -770,6 +773,11 @@ type MapCanvasProps = {
   tileUrl: string;
   selectionKey: string;
   selectionEpoch: number;
+  gridManifest?: GridManifestResponse | null;
+  gridFrameUrl?: string | null;
+  gridFrameHour?: number | null;
+  gridLegend?: LegendPayload | null;
+  gridActive?: boolean;
   contourGeoJsonUrl?: string | null;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
@@ -796,6 +804,7 @@ type MapCanvasProps = {
   onZoomBucketChange?: (bucket: number) => void;
   onZoomRoutingSignal?: (payload: { zoom: number; gestureActive: boolean }) => void;
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
+  onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
@@ -811,6 +820,11 @@ export function MapCanvas({
   tileUrl,
   selectionKey,
   selectionEpoch,
+  gridManifest = null,
+  gridFrameUrl = null,
+  gridFrameHour = null,
+  gridLegend = null,
+  gridActive = false,
   contourGeoJsonUrl,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
@@ -837,6 +851,7 @@ export function MapCanvas({
   onZoomBucketChange,
   onZoomRoutingSignal,
   onViewportChange,
+  onGridFrameVisible,
   onMapReady,
   onMapHover,
   onMapHoverEnd,
@@ -846,6 +861,10 @@ export function MapCanvas({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const loopCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const gridWebglControllerRef = useRef<GridWebglLayerController | null>(null);
+  if (!gridWebglControllerRef.current) {
+    gridWebglControllerRef.current = new GridWebglLayerController();
+  }
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [readyLoopImageFrame, setReadyLoopImageFrame] = useState<{
@@ -903,6 +922,38 @@ export function MapCanvas({
     () => loopCoordinatesFromBbox(loopImageBbox),
     [loopImageBbox]
   );
+  const gridPrefetchUrls = useMemo(() => {
+    if (!gridManifest?.lods?.length || !gridFrameUrl || !Number.isFinite(gridFrameHour)) {
+      return [] as string[];
+    }
+    const lod = gridManifest.lods.find((entry) => Number(entry?.level) === 0) ?? gridManifest.lods[0] ?? null;
+    const frames = Array.isArray(lod?.frames) ? lod.frames : [];
+    const frameHours = frames
+      .map((entry) => Number(entry?.fh))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const pivot = frameHours.indexOf(Number(gridFrameHour));
+    if (pivot < 0) {
+      return [] as string[];
+    }
+    const urls: string[] = [];
+    const pushFrameUrl = (hour: number) => {
+      const frame = frames.find((entry) => Number(entry?.fh) === hour);
+      const url = String(frame?.url ?? "").trim();
+      if (url && url !== gridFrameUrl && !urls.includes(url)) {
+        urls.push(url);
+      }
+    };
+    for (let step = 1; step <= 2; step += 1) {
+      if (pivot + step < frameHours.length) {
+        pushFrameUrl(frameHours[pivot + step]);
+      }
+      if (pivot - step >= 0) {
+        pushFrameUrl(frameHours[pivot - step]);
+      }
+    }
+    return urls;
+  }, [gridFrameHour, gridFrameUrl, gridManifest]);
   const hasBitmapCanvasLoopFrame = Boolean(loopFrameBitmap);
   const hasReadyLoopCanvasFrame = Boolean(
     readyLoopCanvasFrame &&
@@ -1235,6 +1286,9 @@ export function MapCanvas({
     }
     if (map.getLayer(LOOP_CANVAS_LAYER_ID)) {
       map.moveLayer(LOOP_CANVAS_LAYER_ID, "twf-labels");
+    }
+    if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
+      map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
     }
     if (map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(COASTLINE_LAYER_ID, "twf-labels");
@@ -1767,6 +1821,7 @@ export function MapCanvas({
       initializeSourceTracking(tileUrl);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
+      gridWebglControllerRef.current?.ensureAttached(map, COASTLINE_LAYER_ID);
       onMapReadyRef.current?.(map);
     });
 
@@ -1783,6 +1838,7 @@ export function MapCanvas({
       cancelCrossfade();
       cancelLoopToTileTransition();
       clearAnchorMarkers();
+      gridWebglControllerRef.current?.remove(map);
       map.remove();
       mapRef.current = null;
       cancelPendingLoopImageUpdate();
@@ -1897,6 +1953,7 @@ export function MapCanvas({
         return;
       }
 
+      gridWebglControllerRef.current?.ensureAttached(map, COASTLINE_LAYER_ID);
       initializeSourceTracking(activeTileUrlRef.current);
 
       const activeBuffer = activeBufferRef.current;
@@ -1978,6 +2035,78 @@ export function MapCanvas({
     setLayerRasterPaint,
     variable,
     variableKind,
+  ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const controller = gridWebglControllerRef.current;
+    if (!map || !isLoaded || !controller) {
+      return;
+    }
+
+    controller.ensureAttached(map, COASTLINE_LAYER_ID);
+    controller.update({
+      active: Boolean(gridActive && gridManifest && gridFrameUrl),
+      manifest: gridManifest,
+      frameUrl: gridFrameUrl,
+      frameHour: gridFrameHour,
+      legend: gridLegend,
+      opacity,
+      overlayFadeOutZoom,
+      selectionEpoch,
+      selectionKey,
+      prefetchUrls: gridPrefetchUrls,
+      onFrameVisible: onGridFrameVisible,
+    });
+
+    const shouldShowGrid = Boolean(gridActive && gridManifest && gridFrameUrl);
+    const activeBuffer = activeBufferRef.current;
+    const inactiveBuffer = otherBuffer(activeBuffer);
+    const shouldShowLoop = Boolean((loopActive || isLoopToTileTransitioningRef.current) && hasLoopVisual);
+
+    if (shouldShowGrid) {
+      setLayerVisibility(map, layerId("a"), false);
+      setLayerVisibility(map, layerId("b"), false);
+      setLayerOpacity(map, layerId("a"), HIDDEN_SWAP_BUFFER_OPACITY);
+      setLayerOpacity(map, layerId("b"), HIDDEN_SWAP_BUFFER_OPACITY);
+      for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
+        setLayerVisibility(map, prefetchLayerId(idx), false);
+        setLayerOpacity(map, prefetchLayerId(idx), HIDDEN_PREFETCH_OPACITY);
+      }
+      setLayerVisibility(map, LOOP_LAYER_ID, false);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+    } else {
+      setLayerVisibility(map, layerId(activeBuffer), !loopActive);
+      setLayerOpacity(map, layerId(activeBuffer), opacity);
+      if (inactiveBuffer !== activeBuffer) {
+        setLayerVisibility(map, layerId(inactiveBuffer), false);
+        setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+      }
+      setLayerVisibility(map, LOOP_LAYER_ID, shouldShowLoop && !hasCanvasLoopFrame);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, shouldShowLoop && hasCanvasLoopFrame);
+      setLayerOpacity(map, LOOP_LAYER_ID, opacity);
+      setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, opacity);
+    }
+
+    enforceLayerOrder(map);
+  }, [
+    enforceLayerOrder,
+    gridActive,
+    gridFrameHour,
+    gridFrameUrl,
+    gridLegend,
+    gridManifest,
+    gridPrefetchUrls,
+    hasCanvasLoopFrame,
+    hasLoopVisual,
+    isLoaded,
+    loopActive,
+    onGridFrameVisible,
+    opacity,
+    overlayFadeOutZoom,
+    selectionEpoch,
+    selectionKey,
+    setLayerOpacity,
   ]);
 
   useEffect(() => {

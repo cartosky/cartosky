@@ -175,6 +175,48 @@ export type LoopManifestResponse = {
   loop_tiers: LoopManifestTier[];
 };
 
+export type GridManifestFrame = {
+  fh: number;
+  file: string;
+  valid_time?: string;
+  url?: string;
+};
+
+export type GridManifestLod = {
+  level: number;
+  width: number;
+  height: number;
+  frames: GridManifestFrame[];
+};
+
+export type GridManifestGrid = {
+  width: number;
+  height: number;
+  dtype: string;
+  endianness: string;
+  scale: number;
+  offset: number;
+  nodata: number;
+  units?: string;
+};
+
+export type GridManifestPalette = {
+  color_map_id?: string | null;
+};
+
+export type GridManifestResponse = {
+  manifest_version: number;
+  subtype: WeatherSubstrate | string;
+  model: string;
+  run: string;
+  var: string;
+  projection?: string;
+  bbox?: [number, number, number, number];
+  grid: GridManifestGrid;
+  palette?: GridManifestPalette;
+  lods: GridManifestLod[];
+};
+
 export type RunManifestFrame = {
   fh: number;
   valid_time?: string;
@@ -462,6 +504,33 @@ export async function fetchLoopManifest(
       options
     );
     if (!response || !Array.isArray(response.loop_tiers)) {
+      return null;
+    }
+    return response;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchGridManifest(
+  model: string,
+  run: string,
+  varKey: string,
+  options?: FetchOptions
+): Promise<GridManifestResponse | null> {
+  const runKey = run || "latest";
+  try {
+    const response = await fetchJson<GridManifestResponse>(
+      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest`,
+      options
+    );
+    if (
+      !response
+      || !Array.isArray(response.lods)
+      || !response.grid
+      || !Number.isFinite(Number(response.grid.width))
+      || !Number.isFinite(Number(response.grid.height))
+    ) {
       return null;
     }
     return response;

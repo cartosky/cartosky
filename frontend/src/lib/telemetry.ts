@@ -22,6 +22,7 @@ type PerfEventInput = TelemetryBase & {
     | "tile_fetch"
     | "animation_stall"
     | "loop_manifest_resolve"
+    | "grid_manifest_resolve"
     | "loop_decode_ready"
     | "loop_decode_to_commit"
     | "loop_commit_to_visible"
