@@ -202,6 +202,7 @@ export type GridManifestGrid = {
 
 export type GridManifestPalette = {
   color_map_id?: string | null;
+  power_norm_gamma?: number | null;
 };
 
 export type GridManifestResponse = {

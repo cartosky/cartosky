@@ -10,6 +10,7 @@ import numpy as np
 import rasterio
 
 from ..config import grid_v1_allowlist
+from .colormaps import get_color_map_spec
 from .render_resampling import variable_color_map_id
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,20 @@ def _write_frame_from_value_cog(
     }
 
 
+def _build_palette_block(model: str, var: str) -> dict[str, Any]:
+    color_map_id = variable_color_map_id(model, var)
+    palette: dict[str, Any] = {"color_map_id": color_map_id}
+    if color_map_id:
+        try:
+            spec = get_color_map_spec(color_map_id)
+        except KeyError:
+            spec = {}
+        gamma = spec.get("power_norm_gamma")
+        if gamma is not None:
+            palette["power_norm_gamma"] = float(gamma)
+    return palette
+
+
 def _build_manifest_for_var(
     *,
     data_root: Path,
@@ -216,9 +231,7 @@ def _build_manifest_for_var(
             "nodata": int(packing["nodata"]),
             "units": units,
         },
-        "palette": {
-            "color_map_id": variable_color_map_id(model, var),
-        },
+        "palette": _build_palette_block(model, var),
         "lods": [
             {
                 "level": GRID_V1_LEVEL,

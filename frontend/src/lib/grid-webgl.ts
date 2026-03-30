@@ -12,13 +12,17 @@ const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
-const MIPMAP_FILTER_COLOR_MAP_IDS = new Set([
-  "tmp2m",
-  "dp2m",
-  "tmp850",
-  "wspd10m",
-  "wgst10m",
-]);
+// Mipmap filtering on the data texture is disabled because the texture stores
+// uint16-encoded values split across two bytes (R=low, G=high).  GPU mipmap
+// generation averages the channels independently, which produces incorrect
+// decoded values whenever the low byte wraps around a 256-boundary.  Those
+// incorrect values then map to wrong LUT colours, creating visible
+// contour-line artefacts at specific temperature/value thresholds.
+//
+// Smoothness is provided instead by LINEAR filtering on the LUT texture and
+// by LINEAR min/mag filtering on the data texture (which only affects
+// immediately adjacent pixels, keeping byte-boundary artefacts negligible).
+const MIPMAP_FILTER_COLOR_MAP_IDS = new Set<string>([]);
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
   ["precip_total", 0.01],
   ["snowfall_total", 0.1],
@@ -200,6 +204,11 @@ function transparentBelowMinForManifest(manifest: GridManifestResponse | null): 
   return TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID.get(colorMapId) ?? Number.NEGATIVE_INFINITY;
 }
 
+function powerNormGammaForManifest(manifest: GridManifestResponse | null): number {
+  const gamma = Number(manifest?.palette?.power_norm_gamma ?? 1);
+  return Number.isFinite(gamma) && gamma > 0 ? gamma : 1;
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -287,6 +296,7 @@ type ProgramBindings = {
   lutLocation: WebGLUniformLocation | null;
   mixLocation: WebGLUniformLocation | null;
   hasPrevLocation: WebGLUniformLocation | null;
+  powerNormGammaLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -475,6 +485,7 @@ export class GridWebglLayerController {
       uniform float u_transparentBelowMin;
       uniform float u_mixAmount;
       uniform float u_hasPrevious;
+      uniform float u_powerNormGamma;
       vec4 colorizeSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
         float high = floor(sample.g * 255.0 + 0.5);
@@ -488,6 +499,9 @@ export class GridWebglLayerController {
         }
         float denom = max(0.000001, u_valueMax - u_valueMin);
         float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
+        if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
+          t = pow(t, u_powerNormGamma);
+        }
         return texture2D(u_lut, vec2(t, 0.5));
       }
       void main() {
@@ -528,6 +542,7 @@ export class GridWebglLayerController {
       lutLocation: gl.getUniformLocation(this.program, "u_lut"),
       mixLocation: gl.getUniformLocation(this.program, "u_mixAmount"),
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
+      powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -899,6 +914,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.valueMaxLocation, this.lutMax);
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
+    gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
     const elapsed = performance.now() - this.transitionStartedAt;
     const mixAmount = this.hasPreviousTexture
       ? Math.max(0, Math.min(1, elapsed / Math.max(1, this.transitionDurationMs)))
