@@ -499,7 +499,16 @@ export class GridWebglLayerController {
         vec2 texel = uv * u_texSize - 0.5;
         vec2 f = fract(texel);
         vec2 base = (floor(texel) + 0.5) / u_texSize;
+        vec2 nearest = (floor(texel + 0.5) + 0.5) / u_texSize;
         vec2 step = 1.0 / u_texSize;
+        bool useNearestEdgeMask = u_transparentBelowMin > -1.0e20;
+
+        if (useNearestEdgeMask) {
+          float nearestValue = decodeSample(texture2D(tex, nearest));
+          if (nearestValue <= -1e29) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
+        }
 
         float v00 = decodeSample(texture2D(tex, base));
         float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
@@ -549,6 +558,9 @@ export class GridWebglLayerController {
                             max(0.000001, (1.0 - f.x) * (1.0 - f.y) + f.x * (1.0 - f.y) + (1.0 - f.x) * f.y + f.x * f.y);
 
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
+        if (useNearestEdgeMask) {
+          return vec4(color.rgb, color.a);
+        }
         return vec4(color.rgb, color.a * alphaWeight);
       }
 
