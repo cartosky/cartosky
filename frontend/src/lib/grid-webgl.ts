@@ -193,6 +193,11 @@ function powerNormGammaForManifest(manifest: GridManifestResponse | null): numbe
   return Number.isFinite(gamma) && gamma > 0 ? gamma : 1;
 }
 
+function useNearestSamplingForManifest(manifest: GridManifestResponse | null): boolean {
+  const mode = String(manifest?.display_prep?.shader_sampling ?? "").trim().toLowerCase();
+  return mode === "nearest";
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -282,6 +287,7 @@ type ProgramBindings = {
   hasPrevLocation: WebGLUniformLocation | null;
   powerNormGammaLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
+  useNearestSamplingLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -472,6 +478,7 @@ export class GridWebglLayerController {
       uniform float u_hasPrevious;
       uniform float u_powerNormGamma;
       uniform vec2 u_texSize;
+      uniform float u_useNearestSampling;
 
       // Decode a single texel from raw R/G bytes to a physical value.
       // Returns the decoded value, or -1e30 if nodata.
@@ -483,6 +490,28 @@ export class GridWebglLayerController {
           return -1e30;
         }
         return encoded * u_scale + u_offset;
+      }
+
+      vec4 mapDecodedValue(float decoded) {
+        if (decoded <= u_transparentBelowMin) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+
+        float denom = max(0.000001, u_valueMax - u_valueMin);
+        float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
+        if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
+          t = pow(t, u_powerNormGamma);
+        }
+
+        return texture2D(u_lut, vec2(t, 0.5));
+      }
+
+      vec4 sampleNearest(sampler2D tex, vec2 uv) {
+        float decoded = decodeSample(texture2D(tex, uv));
+        if (decoded <= -1e29) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        return mapDecodedValue(decoded);
       }
 
       // Bilinear interpolation in decoded value space, then LUT lookup.
@@ -531,29 +560,27 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float decoded = (s00 * bw00 + s10 * bw10 + s01 * bw01 + s11 * bw11) / wSum;
-        if (decoded <= u_transparentBelowMin) {
-          return vec4(0.0, 0.0, 0.0, 0.0);
+        vec4 color = mapDecodedValue(decoded);
+        if (color.a <= 0.0) {
+          return color;
         }
 
-        // Normalise to [0,1] and apply power-norm gamma.
-        float denom = max(0.000001, u_valueMax - u_valueMin);
-        float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
-        if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
-          t = pow(t, u_powerNormGamma);
-        }
-
-        // Alpha: blend toward transparent near data edges.
         float alphaWeight = (bw00 + bw10 + bw01 + bw11) /
                             max(0.000001, (1.0 - f.x) * (1.0 - f.y) + f.x * (1.0 - f.y) + (1.0 - f.x) * f.y + f.x * f.y);
-
-        vec4 color = texture2D(u_lut, vec2(t, 0.5));
         return vec4(color.rgb, color.a * alphaWeight);
       }
 
+      vec4 sampleValue(sampler2D tex, vec2 uv) {
+        if (u_useNearestSampling > 0.5) {
+          return sampleNearest(tex, uv);
+        }
+        return sampleBilinear(tex, uv);
+      }
+
       void main() {
-        vec4 current = sampleBilinear(u_data, v_texCoord);
+        vec4 current = sampleValue(u_data, v_texCoord);
         vec4 previous = u_hasPrevious > 0.5
-          ? sampleBilinear(u_prevData, v_texCoord)
+          ? sampleValue(u_prevData, v_texCoord)
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
         if (mixed.a <= 0.0) {
@@ -590,6 +617,7 @@ export class GridWebglLayerController {
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
       powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
+      useNearestSamplingLocation: gl.getUniformLocation(this.program, "u_useNearestSampling"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -960,6 +988,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
+    gl.uniform1f(bindings.useNearestSamplingLocation, useNearestSamplingForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
       Math.max(1, Math.floor(Number(grid.width) || 1)),
