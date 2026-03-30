@@ -474,19 +474,15 @@ export class GridWebglLayerController {
       uniform vec2 u_texSize;
 
       // Decode a single texel from raw R/G bytes to a physical value.
-      // Returns the decoded value, or -1e30 if nodata / below-min.
-      float decodeSample(vec4 sample) {
+      // Returns the decoded value, or -1e30 if nodata.
+      float decodeRawSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
         float high = floor(sample.g * 255.0 + 0.5);
         float encoded = low + high * 256.0;
         if (abs(encoded - u_nodata) < 0.5) {
           return -1e30;
         }
-        float decoded = encoded * u_scale + u_offset;
-        if (decoded <= u_transparentBelowMin) {
-          return -1e30;
-        }
-        return decoded;
+        return encoded * u_scale + u_offset;
       }
 
       // Bilinear interpolation in decoded value space, then LUT lookup.
@@ -504,16 +500,19 @@ export class GridWebglLayerController {
         bool useNearestEdgeMask = u_transparentBelowMin > -1.0e20;
 
         if (useNearestEdgeMask) {
-          float nearestValue = decodeSample(texture2D(tex, nearest));
+          float nearestValue = decodeRawSample(texture2D(tex, nearest));
           if (nearestValue <= -1e29) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
+          if (nearestValue <= 0.0) {
             return vec4(0.0, 0.0, 0.0, 0.0);
           }
         }
 
-        float v00 = decodeSample(texture2D(tex, base));
-        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
-        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
-        float v11 = decodeSample(texture2D(tex, base + step));
+        float v00 = decodeRawSample(texture2D(tex, base));
+        float v10 = decodeRawSample(texture2D(tex, base + vec2(step.x, 0.0)));
+        float v01 = decodeRawSample(texture2D(tex, base + vec2(0.0, step.y)));
+        float v11 = decodeRawSample(texture2D(tex, base + step));
 
         // Count valid (non-nodata) neighbours.
         float w00 = v00 > -1e29 ? 1.0 : 0.0;
@@ -545,6 +544,9 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float decoded = (s00 * bw00 + s10 * bw10 + s01 * bw01 + s11 * bw11) / wSum;
+        if (decoded <= u_transparentBelowMin) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
 
         // Normalise to [0,1] and apply power-norm gamma.
         float denom = max(0.000001, u_valueMax - u_valueMin);
