@@ -558,9 +558,6 @@ export class GridWebglLayerController {
                             max(0.000001, (1.0 - f.x) * (1.0 - f.y) + f.x * (1.0 - f.y) + (1.0 - f.x) * f.y + f.x * f.y);
 
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
-        if (useNearestEdgeMask) {
-          return vec4(color.rgb, color.a);
-        }
         return vec4(color.rgb, color.a * alphaWeight);
       }
 
