@@ -4928,12 +4928,7 @@ export default function App() {
             visualState: "warming_new",
           };
         });
-        setFrameRows((prevRows) => {
-          if (prevRows.length === rows.length && prevRows.every((r, i) => r.fh === rows[i].fh && r.tile_url_template === rows[i].tile_url_template)) {
-            return prevRows;
-          }
-          return rows;
-        });
+        setFrameRows(rows);
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
         const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
         setForecastHour((prev) =>
