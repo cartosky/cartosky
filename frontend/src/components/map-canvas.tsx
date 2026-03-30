@@ -1988,7 +1988,11 @@ export function MapCanvas({
         }
       }
 
-      if (loopFrameBitmap) {
+      if (gridActive) {
+        cancelPendingLoopImageUpdate();
+        setReadyLoopImageFrame(null);
+        setReadyLoopCanvasFrame(null);
+      } else if (loopFrameBitmap) {
         cancelPendingLoopImageUpdate();
       } else if (loopImageUrl) {
         queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
@@ -2511,7 +2515,11 @@ export function MapCanvas({
       return;
     }
 
-    if (loopFrameBitmap) {
+    if (gridActive) {
+      cancelPendingLoopImageUpdate();
+      setReadyLoopImageFrame(null);
+      setReadyLoopCanvasFrame(null);
+    } else if (loopFrameBitmap) {
       cancelPendingLoopImageUpdate();
     } else {
       queueLoopImageUpdate(map, loopImageUrl, loopImageCoordinates, { selectionEpoch, selectionKey });
@@ -2536,6 +2544,7 @@ export function MapCanvas({
     loopImageUrl,
     loopFrameBitmap,
     loopActive,
+    gridActive,
     variable,
     hasCanvasLoopFrame,
     hasLoopVisual,

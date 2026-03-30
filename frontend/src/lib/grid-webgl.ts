@@ -173,6 +173,10 @@ function resolveTextureCacheBudgetBytes(): number {
   return isMobileDevice() ? GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES : GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;
 }
 
+function expectedPackedFrameByteLength(width: number, height: number): number {
+  return Math.max(0, Math.floor(width) * Math.floor(height) * 2);
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -309,7 +313,7 @@ export class GridWebglLayerController {
   private previousTexture: WebGLTexture | null = null;
   private hasPreviousTexture = false;
   private transitionStartedAt = 0;
-  private transitionDurationMs = 90;
+  private transitionDurationMs = 0;
   private quadSignature: string | null = null;
 
   createLayer(): maplibregl.CustomLayerInterface {
@@ -555,6 +559,17 @@ export class GridWebglLayerController {
 
     const width = Math.max(1, Math.floor(Number(grid.width) || 1));
     const height = Math.max(1, Math.floor(Number(grid.height) || 1));
+    const expectedBytes = expectedPackedFrameByteLength(width, height);
+    if (bytes.byteLength < expectedBytes) {
+      console.warn("[grid-webgl] skipping undersized frame texture upload", {
+        frameUrl,
+        actualBytes: bytes.byteLength,
+        expectedBytes,
+        width,
+        height,
+      });
+      return null;
+    }
     gl.bindTexture(gl.TEXTURE_2D, targetTexture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -592,15 +607,9 @@ export class GridWebglLayerController {
     this.pendingFrameBytes = bytes ?? this.frameCache.get(frameUrl)?.bytes ?? null;
     this.pendingFrameSignature = signature;
     this.pendingFrameUrl = frameUrl;
-    if (this.currentTexture && this.currentTextureUrl && this.currentTextureUrl !== frameUrl) {
-      this.previousTexture = this.currentTexture;
-      this.previousTextureUrl = this.currentTextureUrl;
-      this.hasPreviousTexture = true;
-    } else {
-      this.previousTexture = null;
-      this.previousTextureUrl = null;
-      this.hasPreviousTexture = false;
-    }
+    this.previousTexture = null;
+    this.previousTextureUrl = null;
+    this.hasPreviousTexture = false;
     this.currentTexture = targetTexture;
     this.currentTextureUrl = frameUrl;
     this.currentTextureSignature = signature;
