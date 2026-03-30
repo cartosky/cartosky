@@ -10,6 +10,7 @@ const GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
+const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const MIPMAP_FILTER_COLOR_MAP_IDS = new Set([
   "tmp2m",
@@ -17,8 +18,10 @@ const MIPMAP_FILTER_COLOR_MAP_IDS = new Set([
   "tmp850",
   "wspd10m",
   "wgst10m",
-  "precip_total",
-  "snowfall_total",
+]);
+const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
+  ["precip_total", 0.01],
+  ["snowfall_total", 0.1],
 ]);
 
 export type GridFrameVisiblePayload = {
@@ -99,7 +102,7 @@ function lerpColor(left: [number, number, number, number], right: [number, numbe
   ] as [number, number, number, number];
 }
 
-function buildLegendLut(legend: LegendPayload | null, size = 256): { pixels: Uint8Array; min: number; max: number } {
+function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { pixels: Uint8Array; min: number; max: number } {
   const entries = Array.isArray(legend?.entries)
     ? legend.entries
       .map((entry) => ({ value: Number(entry.value), rgba: hexToRgba(entry.color) }))
@@ -192,6 +195,11 @@ function shouldUseMipmapFiltering(manifest: GridManifestResponse | null): boolea
   return MIPMAP_FILTER_COLOR_MAP_IDS.has(colorMapId);
 }
 
+function transparentBelowMinForManifest(manifest: GridManifestResponse | null): number {
+  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
+  return TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID.get(colorMapId) ?? Number.NEGATIVE_INFINITY;
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -273,6 +281,7 @@ type ProgramBindings = {
   valueMinLocation: WebGLUniformLocation | null;
   valueMaxLocation: WebGLUniformLocation | null;
   opacityLocation: WebGLUniformLocation | null;
+  transparentBelowMinLocation: WebGLUniformLocation | null;
   dataLocation: WebGLUniformLocation | null;
   prevDataLocation: WebGLUniformLocation | null;
   lutLocation: WebGLUniformLocation | null;
@@ -320,7 +329,7 @@ export class GridWebglLayerController {
   private vertexBuffer: WebGLBuffer | null = null;
   private texCoordBuffer: WebGLBuffer | null = null;
   private lutTexture: WebGLTexture | null = null;
-  private lutPixels: Uint8Array<ArrayBufferLike> = new Uint8Array(256 * 4);
+  private lutPixels: Uint8Array<ArrayBufferLike> = new Uint8Array(GRID_LUT_SIZE * 4);
   private lutMin = 0;
   private lutMax = 1;
   private lutDirty = true;
@@ -463,6 +472,7 @@ export class GridWebglLayerController {
       uniform float u_valueMin;
       uniform float u_valueMax;
       uniform float u_opacity;
+      uniform float u_transparentBelowMin;
       uniform float u_mixAmount;
       uniform float u_hasPrevious;
       vec4 colorizeSample(vec4 sample) {
@@ -473,6 +483,9 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float decoded = encoded * u_scale + u_offset;
+        if (decoded <= u_transparentBelowMin) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
         float denom = max(0.000001, u_valueMax - u_valueMin);
         float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
         return texture2D(u_lut, vec2(t, 0.5));
@@ -509,6 +522,7 @@ export class GridWebglLayerController {
       valueMinLocation: gl.getUniformLocation(this.program, "u_valueMin"),
       valueMaxLocation: gl.getUniformLocation(this.program, "u_valueMax"),
       opacityLocation: gl.getUniformLocation(this.program, "u_opacity"),
+      transparentBelowMinLocation: gl.getUniformLocation(this.program, "u_transparentBelowMin"),
       dataLocation: gl.getUniformLocation(this.program, "u_data"),
       prevDataLocation: gl.getUniformLocation(this.program, "u_prevData"),
       lutLocation: gl.getUniformLocation(this.program, "u_lut"),
@@ -555,7 +569,7 @@ export class GridWebglLayerController {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.lutPixels);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GRID_LUT_SIZE, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.lutPixels);
     this.lutDirty = false;
   }
 
@@ -884,6 +898,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.valueMinLocation, this.lutMin);
     gl.uniform1f(bindings.valueMaxLocation, this.lutMax);
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
+    gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
     const elapsed = performance.now() - this.transitionStartedAt;
     const mixAmount = this.hasPreviousTexture
       ? Math.max(0, Math.min(1, elapsed / Math.max(1, this.transitionDurationMs)))
