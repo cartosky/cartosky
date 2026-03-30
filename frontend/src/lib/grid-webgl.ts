@@ -9,6 +9,7 @@ const GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
+const GRID_TEXTURE_WARM_LIMIT = 8;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 
 export type GridFrameVisiblePayload = {
@@ -287,7 +288,6 @@ export class GridWebglLayerController {
   private invalidFrameUrls = new Set<string>();
   private textureCache = new Map<string, CachedTexture>();
   private textureCacheBytes = 0;
-  private prefetchInFlight = new Set<string>();
   private frameFetches = new Map<string, Promise<Uint8Array<ArrayBufferLike> | null>>();
   private textureWarmQueue: string[] = [];
   private textureWarmQueued = new Set<string>();
@@ -380,16 +380,19 @@ export class GridWebglLayerController {
       return;
     }
 
+    const prioritizedPrefetchUrls = this.prefetchUrls.slice(0, GRID_TEXTURE_WARM_LIMIT);
+    this.pruneTextureWarmQueue(new Set([this.frameUrl, ...prioritizedPrefetchUrls]));
+
     if (nextSignature !== this.currentFrameSignature) {
       this.currentFrameSignature = nextSignature;
       this.visibleNotifiedSignature = null;
       void this.ensureFrameLoaded(this.frameUrl, nextSignature);
     }
 
-    this.scheduleTextureWarm(this.frameUrl);
-    for (const prefetchUrl of this.prefetchUrls) {
-      void this.prefetchFrame(prefetchUrl);
-      this.scheduleTextureWarm(prefetchUrl);
+    this.scheduleTextureWarm(this.frameUrl, "high");
+    for (let index = 0; index < prioritizedPrefetchUrls.length; index += 1) {
+      const prefetchUrl = prioritizedPrefetchUrls[index];
+      this.scheduleTextureWarm(prefetchUrl, index < 2 ? "high" : "normal");
     }
     this.map?.triggerRepaint();
   }
@@ -658,20 +661,6 @@ export class GridWebglLayerController {
     }
   }
 
-  private async prefetchFrame(frameUrl: string) {
-    if (!frameUrl || this.invalidFrameUrls.has(frameUrl) || this.frameCache.has(frameUrl) || this.prefetchInFlight.has(frameUrl)) {
-      return;
-    }
-    this.prefetchInFlight.add(frameUrl);
-    try {
-      await this.fetchFrameBytes(frameUrl);
-    } catch {
-      // Best-effort warm path only.
-    } finally {
-      this.prefetchInFlight.delete(frameUrl);
-    }
-  }
-
   private async fetchFrameBytes(frameUrl: string): Promise<Uint8Array<ArrayBufferLike> | null> {
     if (this.invalidFrameUrls.has(frameUrl)) {
       return null;
@@ -763,13 +752,33 @@ export class GridWebglLayerController {
     }
   }
 
-  private scheduleTextureWarm(frameUrl: string | null) {
+  private pruneTextureWarmQueue(desiredUrls: Set<string>) {
+    this.textureWarmQueue = this.textureWarmQueue.filter((candidate) => desiredUrls.has(candidate));
+    this.textureWarmQueued = new Set(this.textureWarmQueue);
+  }
+
+  private scheduleTextureWarm(frameUrl: string | null, priority: "high" | "normal" = "normal") {
     const normalized = String(frameUrl ?? "").trim();
-    if (!normalized || this.invalidFrameUrls.has(normalized) || this.textureCache.has(normalized) || this.textureWarmQueued.has(normalized)) {
+    if (!normalized || this.invalidFrameUrls.has(normalized) || this.textureCache.has(normalized)) {
       return;
     }
-    this.textureWarmQueued.add(normalized);
-    this.textureWarmQueue.push(normalized);
+    if (this.textureWarmQueued.has(normalized)) {
+      if (priority === "high") {
+        this.textureWarmQueue = [normalized, ...this.textureWarmQueue.filter((candidate) => candidate !== normalized)];
+      }
+    } else {
+      this.textureWarmQueued.add(normalized);
+      if (priority === "high") {
+        this.textureWarmQueue.unshift(normalized);
+      } else {
+        this.textureWarmQueue.push(normalized);
+      }
+    }
+    if (this.textureWarmQueue.length > GRID_TEXTURE_WARM_LIMIT) {
+      const trimmed = this.textureWarmQueue.slice(0, GRID_TEXTURE_WARM_LIMIT);
+      this.textureWarmQueue = trimmed;
+      this.textureWarmQueued = new Set(trimmed);
+    }
     if (this.textureWarmRafId !== null || typeof window === "undefined") {
       return;
     }

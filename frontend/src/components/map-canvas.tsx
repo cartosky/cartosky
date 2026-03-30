@@ -943,15 +943,15 @@ export function MapCanvas({
     const remainingAhead = Math.max(0, frameHours.length - 1 - pivot);
     const remainingBehind = Math.max(0, pivot);
     const aheadTarget = mode === "autoplay"
-      ? Math.min(remainingAhead, frameHours.length <= 60 ? remainingAhead : 24)
+      ? Math.min(remainingAhead, 8)
       : mode === "variable-switch"
-        ? Math.min(remainingAhead, 14)
-        : Math.min(remainingAhead, 10);
+        ? Math.min(remainingAhead, 6)
+        : Math.min(remainingAhead, 4);
     const behindTarget = mode === "autoplay"
-      ? Math.min(remainingBehind, 8)
+      ? Math.min(remainingBehind, 2)
       : mode === "variable-switch"
-        ? Math.min(remainingBehind, 6)
-        : Math.min(remainingBehind, 5);
+        ? Math.min(remainingBehind, 2)
+        : Math.min(remainingBehind, 1);
     const normalizeGridUrl = (rawUrl: string): string => {
       if (!rawUrl) {
         return "";
