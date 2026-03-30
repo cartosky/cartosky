@@ -2021,6 +2021,9 @@ export default function App() {
       && activeGridFrameUrl
     );
   }, [activeGridFrameUrl, gridLod0, gridManifest, isHighDetailZoom, resolvedWeatherSubstrate]);
+  const isGridPlayable = useMemo(() => {
+    return resolvedWeatherSubstrate === "grid_webgl_v1" && canUseGridPlayback && !isHighDetailZoom;
+  }, [canUseGridPlayback, isHighDetailZoom, resolvedWeatherSubstrate]);
 
   useEffect(() => {
     forecastHourRef.current = forecastHour;
@@ -4234,6 +4237,11 @@ export default function App() {
         setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
+        if (isGridPlayable) {
+          const nextGridHour = gridFrameHours.length > 0 ? nearestFrame(gridFrameHours, requestedHour) : requestedHour;
+          setTargetForecastHour(nextGridHour);
+          return;
+        }
         const snappedHour = frameHours.length > 0 ? nearestFrame(frameHours, requestedHour) : requestedHour;
         const nextLoopHour = loopFrameHours.length > 0 ? nearestFrame(loopFrameHours, requestedHour) : snappedHour;
         startPendingFrameMetric({
@@ -4264,6 +4272,19 @@ export default function App() {
         setScrubRequestedHour(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
+
+        if (isGridPlayable) {
+          const nextGridHour = gridFrameHours.length > 0
+            ? nearestFrame(gridFrameHours, requestedHour)
+            : requestedHour;
+          setScrubCommitIntent({
+            hour: nextGridHour,
+            direction: inferDirection(nextGridHour),
+            startedAt: Date.now(),
+          });
+          setTargetForecastHour(nextGridHour);
+          return;
+        }
 
         if (!isLoopDisplayActive) {
           if (frameHours.length === 0) {
@@ -4341,7 +4362,13 @@ export default function App() {
           return;
         }
         const requested = latestRequestedHour as number;
-        const useExactScrubSelection = model === "gfs";
+        if (isGridPlayable) {
+          const nextGridHour = gridFrameHours.length > 0
+            ? nearestFrame(gridFrameHours, requested)
+            : requested;
+          setTargetForecastHour(nextGridHour);
+          return;
+        }
         if (!isLoopDisplayActive) {
           // Tile mode is static-only. Live scrub updates are disabled so the
           // overlay only changes on scrub commit.
@@ -4369,6 +4396,8 @@ export default function App() {
     },
     [
       isLoopDisplayActive,
+      isGridPlayable,
+      gridFrameHours,
       loopFrameHours,
       frameHours,
       model,
@@ -5127,7 +5156,7 @@ export default function App() {
   }, [model, run, isPageVisible]);
 
   useEffect(() => {
-    if (!isPlaying || renderMode !== "tiles" || frameHours.length === 0) return;
+    if (!isPlaying || renderMode !== "tiles" || frameHours.length === 0 || isGridPlayable) return;
 
     const interval = window.setInterval(() => {
       const currentIndex = frameHours.indexOf(forecastHour);
@@ -5205,7 +5234,35 @@ export default function App() {
     bufferSnapshot.bufferedAheadCount,
     playbackPolicy.minAheadWhilePlaying,
     renderMode,
+    isGridPlayable,
   ]);
+
+  useEffect(() => {
+    if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const currentHour = Number.isFinite(targetForecastHour) ? targetForecastHour : forecastHour;
+      const currentIndex = gridFrameHours.indexOf(currentHour);
+      if (currentIndex < 0) {
+        const firstHour = gridFrameHours[0];
+        if (Number.isFinite(firstHour)) {
+          setTargetForecastHour(firstHour);
+        }
+        return;
+      }
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= gridFrameHours.length) {
+        setIsPlaying(false);
+        return;
+      }
+      const nextHour = gridFrameHours[nextIndex];
+      setTargetForecastHour(nextHour);
+    }, AUTOPLAY_TICK_MS);
+
+    return () => window.clearInterval(interval);
+  }, [forecastHour, gridFrameHours, isGridPlayable, isPlaying, targetForecastHour]);
 
   useEffect(() => {
     if (!isPreloadingForPlay) {
@@ -5291,6 +5348,15 @@ export default function App() {
     }
 
     if (renderMode === "tiles") {
+      if (canUseGridPlayback && isHighDetailZoom) {
+        pendingLoopStartMetricRef.current = null;
+        setIsPlaying(false);
+        setIsLoopAutoplayBuffering(false);
+        setIsLoopPreloading(false);
+        setIsPreloadingForPlay(false);
+        showTransientFrameStatus("High detail mode — zoom out for animation playback");
+        return;
+      }
       if (canUseLoopPlayback && isHighDetailZoom) {
         pendingLoopStartMetricRef.current = null;
         setIsPlaying(false);
@@ -5729,6 +5795,22 @@ export default function App() {
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
   const controlsIsPlaying = isPlaying || isPreloadingForPlay || isLoopPreloading;
+  const substrateDebugLabel = useMemo(() => {
+    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
+      return isHighDetailZoom ? "grid_webgl_v1 (tile fallback)" : "grid_webgl_v1";
+    }
+    if (prefersGridSubstrate && !gridManifest) {
+      return "legacy (grid fallback)";
+    }
+    return "legacy";
+  }, [gridManifest, isHighDetailZoom, prefersGridSubstrate, resolvedWeatherSubstrate]);
+  const substrateDebugDetail = useMemo(() => {
+    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
+      const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
+      return `${frameLabel} · z ${mapZoom.toFixed(1)}`;
+    }
+    return `z ${mapZoom.toFixed(1)}`;
+  }, [mapZoom, resolvedGridDisplayHour, resolvedWeatherSubstrate]);
   const preloadBufferedCount = isLoopPreloading
     ? Math.max(0, Math.min(loopProgress.ready + loopProgress.failed, loopProgress.total))
     : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
@@ -6195,6 +6277,12 @@ export default function App() {
               "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.28) 100%)",
           }}
         />
+
+        <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-full border border-white/12 bg-black/45 px-3 py-1.5 text-[11px] font-medium text-white/88 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-sm">
+          <span className="uppercase tracking-[0.16em] text-white/58">Substrate</span>
+          <span className="ml-2">{substrateDebugLabel}</span>
+          <span className="ml-2 text-white/56">{substrateDebugDetail}</span>
+        </div>
 
         {showBufferStatus && (
           <div className="glass fixed bottom-28 left-1/2 z-40 flex w-[min(92vw,420px)] -translate-x-1/2 flex-col gap-1.5 rounded-xl px-3 py-2 text-xs">
