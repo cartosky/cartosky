@@ -19,7 +19,7 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
     ("gfs", "snowfall_total"): GridDisplayPrepConfig(
         id="gfs_snowfall_total_display_v1",
         upscale_factor=3,
-        smooth_sigma=0.85,
+        smooth_sigma=None,
         preserve_zero_support=True,
     ),
 }
