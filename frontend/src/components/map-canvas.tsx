@@ -5,7 +5,7 @@ import type { GeoJSON } from "geojson";
 import type { LegendPayload } from "@/components/map-legend";
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import type { GridManifestResponse } from "@/lib/api";
-import { MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
+import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
@@ -924,6 +924,7 @@ export function MapCanvas({
     () => loopCoordinatesFromBbox(loopImageBbox),
     [loopImageBbox]
   );
+  const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const gridPrefetchUrls = useMemo(() => {
     if (!gridManifest?.lods?.length || !gridFrameUrl || !Number.isFinite(gridFrameHour)) {
       return [] as string[];
@@ -951,9 +952,18 @@ export function MapCanvas({
       : mode === "variable-switch"
         ? Math.min(remainingBehind, 6)
         : Math.min(remainingBehind, 5);
+    const normalizeGridUrl = (rawUrl: string): string => {
+      if (!rawUrl) {
+        return "";
+      }
+      if (/^https?:\/\//i.test(rawUrl)) {
+        return rawUrl;
+      }
+      return `${apiRoot}${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+    };
     const pushFrameUrl = (hour: number) => {
       const frame = frames.find((entry) => Number(entry?.fh) === hour);
-      const url = String(frame?.url ?? "").trim();
+      const url = normalizeGridUrl(String(frame?.url ?? "").trim());
       if (url && url !== gridFrameUrl && !urls.includes(url)) {
         urls.push(url);
       }
@@ -969,7 +979,7 @@ export function MapCanvas({
       }
     }
     return urls;
-  }, [gridFrameHour, gridFrameUrl, gridManifest, mode]);
+  }, [apiRoot, gridFrameHour, gridFrameUrl, gridManifest, mode]);
   const hasBitmapCanvasLoopFrame = Boolean(loopFrameBitmap);
   const hasReadyLoopCanvasFrame = Boolean(
     readyLoopCanvasFrame &&
