@@ -12,17 +12,6 @@ const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
-// Mipmap filtering on the data texture is disabled because the texture stores
-// uint16-encoded values split across two bytes (R=low, G=high).  GPU mipmap
-// generation averages the channels independently, which produces incorrect
-// decoded values whenever the low byte wraps around a 256-boundary.  Those
-// incorrect values then map to wrong LUT colours, creating visible
-// contour-line artefacts at specific temperature/value thresholds.
-//
-// Smoothness is provided instead by LINEAR filtering on the LUT texture and
-// by LINEAR min/mag filtering on the data texture (which only affects
-// immediately adjacent pixels, keeping byte-boundary artefacts negligible).
-const MIPMAP_FILTER_COLOR_MAP_IDS = new Set<string>([]);
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
   ["precip_total", 0.01],
   ["snowfall_total", 0.1],
@@ -192,11 +181,6 @@ function resolveTextureCacheBudgetBytes(): number {
 
 function expectedPackedFrameByteLength(width: number, height: number): number {
   return Math.max(0, Math.floor(width) * Math.floor(height) * 2);
-}
-
-function shouldUseMipmapFiltering(manifest: GridManifestResponse | null): boolean {
-  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
-  return MIPMAP_FILTER_COLOR_MAP_IDS.has(colorMapId);
 }
 
 function transparentBelowMinForManifest(manifest: GridManifestResponse | null): number {
@@ -623,16 +607,18 @@ export class GridWebglLayerController {
       });
       return null;
     }
-    const useMipmaps = this.isWebGL2 && shouldUseMipmapFiltering(this.manifest);
 
+    // NEAREST filtering is required for the data texture because encoded
+    // uint16 values are split across two bytes (R=low, G=high).  LINEAR
+    // filtering interpolates each channel independently, which produces
+    // incorrect decoded values at 256-boundaries (where the low byte wraps
+    // from 255→0 while the high byte increments).  Those incorrect values
+    // map to wrong LUT colours, creating subtle contour-line artefacts.
+    // Visual smoothness comes from LINEAR filtering on the LUT texture.
     gl.bindTexture(gl.TEXTURE_2D, targetTexture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texParameteri(
-      gl.TEXTURE_2D,
-      gl.TEXTURE_MIN_FILTER,
-      useMipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
@@ -642,10 +628,6 @@ export class GridWebglLayerController {
     } else {
       const rgba = expandUint16BytesToRgba(bytes);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-    }
-
-    if (useMipmaps) {
-      gl.generateMipmap(gl.TEXTURE_2D);
     }
 
     this.textureCache.set(frameUrl, {
