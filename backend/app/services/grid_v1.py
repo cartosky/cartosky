@@ -10,7 +10,6 @@ import numpy as np
 import rasterio
 
 from ..config import grid_v1_allowlist
-from .publish_utils import write_json_atomic
 from .render_resampling import variable_color_map_id
 
 logger = logging.getLogger(__name__)
@@ -44,6 +43,13 @@ def grid_v1_dir(data_root: Path, model: str, run: str, var: str) -> Path:
 
 def grid_v1_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
     return grid_v1_dir(data_root, model, run, var) / "manifest.json"
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
+    tmp_path.replace(path)
 
 
 def grid_v1_frame_filename(fh: int, *, level: int = GRID_V1_LEVEL) -> str:
