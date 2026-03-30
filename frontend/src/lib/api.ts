@@ -1,4 +1,4 @@
-import { API_ORIGIN, API_V4_BASE } from "@/lib/config";
+import { API_ORIGIN, API_V4_BASE, normalizeWeatherSubstrate, type WeatherSubstrate } from "@/lib/config";
 import {
   type AnchorBatchPoint,
   type AnchorBatchResponse,
@@ -18,6 +18,7 @@ export type AvailabilityFreshnessState = "live" | "delayed" | "stale" | "unavail
 export type CapabilityModelDefaults = Record<string, unknown> & {
   default_var_key?: string;
   default_run?: string;
+  default_render_substrate?: WeatherSubstrate | null;
   default_frame_selection?: ModelDefaultFrameSelection | null;
 };
 
@@ -36,6 +37,7 @@ export type CapabilityVariable = {
   units?: string | null;
   order?: number | null;
   group?: string | null;
+  render_substrates?: WeatherSubstrate[] | null;
   default_fh?: number | null;
   buildable?: boolean;
   color_map_id?: string | null;
@@ -221,6 +223,30 @@ export function readCapabilityDefaultFrameSelection(
 
 export function readCapabilityLatestOnly(model: CapabilityModel | null | undefined): boolean {
   return model?.constraints?.latest_only === true;
+}
+
+export function readCapabilityDefaultRenderSubstrate(
+  model: CapabilityModel | null | undefined
+): WeatherSubstrate {
+  return normalizeWeatherSubstrate(model?.defaults?.default_render_substrate) ?? "legacy";
+}
+
+export function readCapabilityRenderSubstrates(
+  variable: CapabilityVariable | null | undefined
+): WeatherSubstrate[] {
+  const normalized: WeatherSubstrate[] = [];
+  const raw = Array.isArray(variable?.render_substrates) ? variable.render_substrates : [];
+  for (const entry of raw) {
+    const substrate = normalizeWeatherSubstrate(entry);
+    if (!substrate || normalized.includes(substrate)) {
+      continue;
+    }
+    normalized.push(substrate);
+  }
+  if (!normalized.includes("legacy")) {
+    normalized.unshift("legacy");
+  }
+  return normalized;
 }
 
 export function readCapabilitySupportsSampling(model: CapabilityModel | null | undefined): boolean {

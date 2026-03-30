@@ -26,8 +26,10 @@ import {
   fetchRegionPresets,
   fetchRuns,
   fetchSampleBatch,
+  readCapabilityDefaultRenderSubstrate,
   readCapabilityDefaultFrameSelection,
   readCapabilityLatestOnly,
+  readCapabilityRenderSubstrates,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
 import {
@@ -43,6 +45,8 @@ import {
   getCanonicalSingleWebpTierMode,
   getLoopPlaybackPolicy,
   getPlaybackBufferPolicy,
+  isGridV1DefaultEnabled,
+  isGridV1Enabled,
   isDeferredNonCriticalBootstrapEnabled,
   isDeferredPrefetchUntilFirstPaintEnabled,
   isTileFirstInitialPaintEnabled,
@@ -51,6 +55,7 @@ import {
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
   WEBP_RENDER_MODE_THRESHOLDS,
+  type WeatherSubstrate,
 } from "@/lib/config";
 import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
 import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
@@ -217,6 +222,7 @@ type VariableEntry = {
   kind?: string | null;
   displayResamplingOverride?: string | null;
   group?: string | null;
+  renderSubstrates?: WeatherSubstrate[];
 };
 
 type ModelEntry = {
@@ -484,6 +490,7 @@ function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | un
       displayResamplingOverride:
         typeof entry.display_resampling_override === "string" ? entry.display_resampling_override : null,
       group: typeof entry.group === "string" ? entry.group : null,
+      renderSubstrates: readCapabilityRenderSubstrates(entry),
     }))
     .filter((entry) => Boolean(entry.id) && entry.buildable);
 
@@ -906,6 +913,8 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 
 export default function App() {
   const webpDefaultEnabled = isWebpDefaultRenderEnabled();
+  const gridV1Enabled = isGridV1Enabled();
+  const gridV1DefaultEnabled = isGridV1DefaultEnabled();
   const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const deferPrefetchUntilFirstPaintEnabled = isDeferredPrefetchUntilFirstPaintEnabled();
@@ -954,6 +963,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
   const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
+  const [weatherSubstrateOverride] = useState<WeatherSubstrate | null>(initialPermalink.weatherSubstrate ?? null);
   const [loopDisplayHour, setLoopDisplayHour] = useState<number | null>(null);
   const [loopDisplayBitmap, setLoopDisplayBitmap] = useState<ImageBitmap | null>(null);
   const [isLoopPreloading, setIsLoopPreloading] = useState(false);
@@ -1220,7 +1230,34 @@ export default function App() {
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
+  const selectedModelDefaultRenderSubstrate = readCapabilityDefaultRenderSubstrate(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
+  const selectedVariableRenderSubstrates = selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"];
+  const selectionSupportsGridV1 = gridV1Enabled && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
+  // Phase 0 only wires substrate selection state and permalink/query-param support.
+  // The actual grid manifest fetch and WebGL render path are added in later phases,
+  // so legacy remains the active renderer regardless of this resolved preference.
+  const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
+    if (weatherSubstrateOverride === "legacy") {
+      return "legacy";
+    }
+    if (weatherSubstrateOverride === "grid_webgl_v1") {
+      return selectionSupportsGridV1 ? "grid_webgl_v1" : "legacy";
+    }
+    if (gridV1DefaultEnabled && selectionSupportsGridV1) {
+      return "grid_webgl_v1";
+    }
+    if (selectedModelDefaultRenderSubstrate === "grid_webgl_v1" && selectionSupportsGridV1) {
+      return "grid_webgl_v1";
+    }
+    return "legacy";
+  }, [
+    gridV1DefaultEnabled,
+    selectedModelDefaultRenderSubstrate,
+    selectionSupportsGridV1,
+    weatherSubstrateOverride,
+  ]);
+  void selectedWeatherSubstrate;
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -5877,6 +5914,7 @@ export default function App() {
           lon: mapView.lon,
           z: mapView.z,
           loop: resolvedLoopPermalink,
+          weatherSubstrate: weatherSubstrateOverride ?? undefined,
         });
         if (search === lastSyncedPermalinkSearchRef.current || search === window.location.search) {
           lastSyncedPermalinkSearchRef.current = search;
@@ -5899,6 +5937,7 @@ export default function App() {
     resolvedForecastHourPermalink,
     region,
     resolvedLoopPermalink,
+    weatherSubstrateOverride,
     mapViewTick,
   ]);
 

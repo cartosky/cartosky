@@ -1,3 +1,4 @@
+import { weatherSubstrateQueryValue } from "@/lib/config";
 import type { PermalinkState } from "@/lib/permalink-read";
 
 export type { PermalinkState } from "@/lib/permalink-read";
@@ -32,6 +33,9 @@ export function buildPermalinkSearch(state: PermalinkState): string {
   }
   if (typeof state.loop === "boolean") {
     params.set("loop", state.loop ? "1" : "0");
+  }
+  if (state.weatherSubstrate) {
+    params.set("weather_substrate", weatherSubstrateQueryValue(state.weatherSubstrate));
   }
 
   const encoded = params.toString();

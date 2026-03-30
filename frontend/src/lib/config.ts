@@ -22,10 +22,30 @@ export const WEBP_RENDER_MODE_THRESHOLDS = {
   dwellMs: 200,
 };
 
+export type WeatherSubstrate = "legacy" | "grid_webgl_v1";
+
 export type CanonicalSingleWebpTierMode = "webp_tier0";
 
 export function getCanonicalSingleWebpTierMode(): CanonicalSingleWebpTierMode {
   return "webp_tier0";
+}
+
+export function normalizeWeatherSubstrate(value: unknown): WeatherSubstrate | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "legacy") {
+    return "legacy";
+  }
+  if (normalized === "grid" || normalized === "grid_webgl_v1") {
+    return "grid_webgl_v1";
+  }
+  return null;
+}
+
+export function weatherSubstrateQueryValue(substrate: WeatherSubstrate): string {
+  return substrate === "grid_webgl_v1" ? "grid" : "legacy";
 }
 
 export const MAP_VIEW_DEFAULTS = {
@@ -151,6 +171,14 @@ export function isWebpDefaultRenderEnabled(): boolean {
     import.meta.env.VITE_CARTOSKY_WEBP_DEFAULT_ENABLED ?? import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED,
     true,
   );
+}
+
+export function isGridV1Enabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_GRID_V1_ENABLED, false);
+}
+
+export function isGridV1DefaultEnabled(): boolean {
+  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_GRID_V1_DEFAULT_ENABLED, false);
 }
 
 function readBooleanEnv(value: unknown, fallback: boolean): boolean {
