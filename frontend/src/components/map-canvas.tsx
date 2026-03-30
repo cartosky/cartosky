@@ -2047,7 +2047,7 @@ export function MapCanvas({
 
       const activeBuffer = activeBufferRef.current;
       const inactiveBuffer = otherBuffer(activeBuffer);
-      if (loopActive) {
+      if (loopActive || gridActive) {
         setLayerVisibility(map, layerId(activeBuffer), false);
         setLayerVisibility(map, layerId(inactiveBuffer), false);
         setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
@@ -2126,6 +2126,7 @@ export function MapCanvas({
     queueLoopImageUpdate,
     setLayerOpacity,
     setLayerRasterPaint,
+    gridActive,
     variable,
     variableKind,
   ]);
@@ -2644,6 +2645,25 @@ export function MapCanvas({
       cancelCrossfade();
     }
 
+    if (gridActive) {
+      isLoopToTileTransitioningRef.current = false;
+      cancelLoopToTileTransition();
+      setLayerVisibility(map, layerId(activeBuffer), false);
+      setLayerVisibility(map, layerId(inactiveBuffer), false);
+      setLayerOpacity(map, layerId(activeBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+      setLayerOpacity(map, layerId(inactiveBuffer), HIDDEN_SWAP_BUFFER_OPACITY);
+      setLayerVisibility(map, LOOP_LAYER_ID, false);
+      setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
+      setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
+      setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
+      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+      for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
+        setLayerOpacity(map, prefetchLayerId(idx), HIDDEN_PREFETCH_OPACITY);
+        setLayerVisibility(map, prefetchLayerId(idx), false);
+      }
+      return;
+    }
+
     // If a loop→tile crossfade is already in progress and we're not going
     // back into loop mode, let it finish rather than canceling it.  Canceling
     // here would snap tiles to full opacity before they've actually loaded,
@@ -2793,6 +2813,7 @@ export function MapCanvas({
     crossfade,
     cancelCrossfade,
     cancelLoopToTileTransition,
+    gridActive,
     setLayerOpacity,
     loopActive,
     hasCanvasLoopFrame,
