@@ -284,6 +284,7 @@ export class GridWebglLayerController {
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private frameCache = new Map<string, CachedFrame>();
   private frameCacheBytes = 0;
+  private invalidFrameUrls = new Set<string>();
   private textureCache = new Map<string, CachedTexture>();
   private textureCacheBytes = 0;
   private prefetchInFlight = new Set<string>();
@@ -351,6 +352,11 @@ export class GridWebglLayerController {
   }
 
   update(config: GridWebglLayerConfig) {
+    if (config.selectionKey !== this.selectionKey) {
+      this.invalidFrameUrls.clear();
+      this.textureWarmQueue = [];
+      this.textureWarmQueued.clear();
+    }
     this.active = config.active;
     this.manifest = config.manifest;
     this.frameUrl = config.frameUrl;
@@ -561,6 +567,7 @@ export class GridWebglLayerController {
     const height = Math.max(1, Math.floor(Number(grid.height) || 1));
     const expectedBytes = expectedPackedFrameByteLength(width, height);
     if (bytes.byteLength < expectedBytes) {
+      this.invalidFrameUrls.add(frameUrl);
       console.warn("[grid-webgl] skipping undersized frame texture upload", {
         frameUrl,
         actualBytes: bytes.byteLength,
@@ -621,6 +628,9 @@ export class GridWebglLayerController {
     if (!signature) {
       return;
     }
+    if (this.invalidFrameUrls.has(frameUrl)) {
+      return;
+    }
     const warmTexture = this.textureCache.get(frameUrl);
     if (warmTexture) {
       warmTexture.lastUsedAt = Date.now();
@@ -649,7 +659,7 @@ export class GridWebglLayerController {
   }
 
   private async prefetchFrame(frameUrl: string) {
-    if (!frameUrl || this.frameCache.has(frameUrl) || this.prefetchInFlight.has(frameUrl)) {
+    if (!frameUrl || this.invalidFrameUrls.has(frameUrl) || this.frameCache.has(frameUrl) || this.prefetchInFlight.has(frameUrl)) {
       return;
     }
     this.prefetchInFlight.add(frameUrl);
@@ -663,6 +673,9 @@ export class GridWebglLayerController {
   }
 
   private async fetchFrameBytes(frameUrl: string): Promise<Uint8Array<ArrayBufferLike> | null> {
+    if (this.invalidFrameUrls.has(frameUrl)) {
+      return null;
+    }
     const cached = this.frameCache.get(frameUrl);
     if (cached) {
       cached.lastUsedAt = Date.now();
@@ -752,7 +765,7 @@ export class GridWebglLayerController {
 
   private scheduleTextureWarm(frameUrl: string | null) {
     const normalized = String(frameUrl ?? "").trim();
-    if (!normalized || this.textureCache.has(normalized) || this.textureWarmQueued.has(normalized)) {
+    if (!normalized || this.invalidFrameUrls.has(normalized) || this.textureCache.has(normalized) || this.textureWarmQueued.has(normalized)) {
       return;
     }
     this.textureWarmQueued.add(normalized);
@@ -770,7 +783,7 @@ export class GridWebglLayerController {
     while (this.textureWarmQueue.length > 0) {
       const nextUrl = this.textureWarmQueue.shift() ?? "";
       this.textureWarmQueued.delete(nextUrl);
-      if (!nextUrl || this.textureCache.has(nextUrl)) {
+      if (!nextUrl || this.invalidFrameUrls.has(nextUrl) || this.textureCache.has(nextUrl)) {
         continue;
       }
       const bytes = await this.fetchFrameBytes(nextUrl);
@@ -908,6 +921,7 @@ export class GridWebglLayerController {
     this.lutTexture = null;
     this.textureCache.clear();
     this.textureCacheBytes = 0;
+    this.invalidFrameUrls.clear();
     this.textureWarmQueue = [];
     this.textureWarmQueued.clear();
     this.textureWarmRafId = null;

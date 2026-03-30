@@ -46,6 +46,7 @@ from .models.serialization import (
 from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
 from .services.builder.colorize import float_to_rgba
 from .services.grid_v1 import (
+    expected_grid_v1_frame_size_bytes,
     grid_v1_frame_path,
     grid_v1_manifest_path,
     grid_v1_supported,
@@ -3586,6 +3587,15 @@ def get_grid_v1_file(model: str, run: str, var: str, filename: str):
     candidate = grid_v1_frame_path(DATA_ROOT, model, resolved, var, 0).parent / safe_filename
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Grid artifact not found")
+    manifest = _load_grid_manifest(model, resolved, var)
+    grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
+    width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
+    height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
+    if width > 0 and height > 0:
+        expected_size_bytes = expected_grid_v1_frame_size_bytes(width=width, height=height)
+        actual_size_bytes = candidate.stat().st_size
+        if actual_size_bytes != expected_size_bytes:
+            raise HTTPException(status_code=404, detail="Grid artifact invalid")
     return FileResponse(
         candidate,
         media_type="application/octet-stream",

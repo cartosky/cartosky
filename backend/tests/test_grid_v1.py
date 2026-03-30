@@ -175,3 +175,70 @@ async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClie
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     encoded = np.frombuffer(response.content, dtype="<u2")
     assert encoded.size == 4
+
+
+async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_root = tmp_path / "data"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+    model = "hrrr"
+    run_id = "20260330_12z"
+    var = "tmp2m"
+    var_dir = published_root / model / run_id / var
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+    grid_dir = var_dir / "grid_v1"
+    grid_dir.mkdir(parents=True, exist_ok=True)
+    (grid_dir / "fh000.l0.u16.bin").write_bytes(b'{"bad":"frame"}')
+    (grid_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "subtype": "grid_webgl_v1",
+                "model": model,
+                "run": run_id,
+                "var": var,
+                "projection": "EPSG:3857",
+                "bbox": [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+                "grid": {
+                    "width": 2,
+                    "height": 2,
+                    "dtype": "uint16",
+                    "endianness": "little",
+                    "scale": 0.1,
+                    "offset": -100.0,
+                    "nodata": 65535,
+                    "units": "F",
+                },
+                "palette": {"color_map_id": "temperature"},
+                "lods": [{"level": 0, "width": 2, "height": 2, "frames": [{"fh": 0, "file": "fh000.l0.u16.bin"}]}],
+            }
+        )
+    )
+    write_manifest = manifests_root / model
+    write_manifest.mkdir(parents=True, exist_ok=True)
+    (write_manifest / f"{run_id}.json").write_text(
+        json.dumps({"variables": {var: {"expected_frames": 1, "available_frames": 1, "frames": [{"fh": 0}]}}})
+    )
+    (published_root / model / "LATEST.json").parent.mkdir(parents=True, exist_ok=True)
+    (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
+
+    monkeypatch.setenv("CARTOSKY_GRID_V1_ENABLED", "1")
+    monkeypatch.setenv("CARTOSKY_GRID_V1_ALLOWLIST", "hrrr:tmp2m")
+    config_module.grid_v1_enabled.cache_clear()
+    config_module.grid_v1_allowlist.cache_clear()
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    main_module._manifest_cache.clear()
+    main_module._sidecar_cache.clear()
+    main_module._grid_manifest_cache.clear()
+
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        response = await test_client.get("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+        assert response.status_code == 404

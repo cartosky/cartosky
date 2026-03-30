@@ -60,6 +60,10 @@ def grid_v1_frame_path(data_root: Path, model: str, run: str, var: str, fh: int,
     return grid_v1_dir(data_root, model, run, var) / grid_v1_frame_filename(fh, level=level)
 
 
+def expected_grid_v1_frame_size_bytes(*, width: int, height: int) -> int:
+    return max(0, int(width) * int(height) * 2)
+
+
 def _packing_config(model: str, var: str) -> dict[str, Any] | None:
     return _PACKING_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
 
@@ -157,6 +161,19 @@ def _build_manifest_for_var(
         if not units:
             units = str(sidecar.get("units") or units or "")
         with rasterio.open(value_cog_path) as ds:
+            expected_size_bytes = expected_grid_v1_frame_size_bytes(width=int(ds.width), height=int(ds.height))
+            actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
+            if actual_size_bytes != expected_size_bytes:
+                logger.warning(
+                    "Skipping invalid grid_v1 frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
+                    model,
+                    run,
+                    var,
+                    fh,
+                    actual_size_bytes,
+                    expected_size_bytes,
+                )
+                continue
             if width is None:
                 width = int(ds.width)
                 height = int(ds.height)
