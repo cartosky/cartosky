@@ -192,6 +192,31 @@ This guarantees:
 - same frame count
 - same run/version alignment
 
+This is a hard requirement, not a preference.
+
+The prototype must not introduce a second independent reprojection path for `tmp2m`.
+
+Instead, `grid_v1` packing must reuse the same post-transform, projection-aligned field or the same exact reprojection rules already used by the current published weather artifacts. The goal is to evaluate the new runtime substrate, not to accidentally compare two different spatial transforms.
+
+### Reprojection And Spatial Fidelity Rules
+
+Although arbitrary in-browser reprojection is a non-goal for phase 1, spatial fidelity still needs to be specified explicitly because the experimental grid artifacts must line up with the current map.
+
+Phase 1 rules:
+
+1. The packed grid must represent the same projected map space as the existing published `tmp2m` outputs.
+2. The projection for the packed grid remains `EPSG:3857`.
+3. The packed grid extent and alignment must match the current published tmp2m extent for the same run/region.
+4. The interpolation/resampling policy used when deriving the packed grid must match the current visual intent for `tmp2m` rather than inventing a new variable-specific path.
+5. Edge handling and nodata behavior must be parity-tested against the current tmp2m outputs.
+
+Required validation:
+
+- parity test against current bbox alignment
+- parity test against current projected grid dimensions
+- visual alignment comparison against current tmp2m imagery at representative zooms
+- no upside-down, transposed, shifted, or edge-fringing regressions
+
 ### Data Type Choice
 
 For `tmp2m`, use `uint16`.
@@ -227,6 +252,27 @@ Recommended approach:
 - revisit custom compression only after telemetry justifies it
 
 Do not introduce a novel binary compression scheme in phase 1.
+
+### Frame Size And Delivery Budget
+
+Per-frame packed grids for `tmp2m` will be materially larger than tiny loop thumbnails, so the prototype must be evaluated using realistic playback-window economics rather than total-run size in the abstract.
+
+The important question is not "can we fetch the entire run at once?".
+
+The important questions are:
+
+- how many frames can be kept warm within the defined memory budget
+- how quickly the next playable window can be fetched and uploaded
+- whether scrub and autoplay remain stable under bounded prefetch
+
+Phase 1 policy:
+
+- do not fetch all frames eagerly
+- preload only a bounded short-ahead window
+- rely on LRU eviction for older inactive frames
+- treat autoplay stability and scrub latency as the primary delivery health measures
+
+Success should be judged on sustained interactive behavior, not on whole-run eager transfer.
 
 ### Binary Frame File Layout
 
@@ -480,6 +526,31 @@ Recommended phase 1 thresholds:
 - use existing zoom threshold concepts to decide when the weather layer should fall back to tiles
 - do not attempt full all-zoom replacement initially
 
+### Zoom Handoff Validation
+
+The low/mid-zoom WebGL to high-zoom tile handoff is a critical perception point and must be treated as an explicit prototype workstream, not a later polish item.
+
+Risks at the handoff:
+
+- visible sharpness discontinuity
+- color drift between substrates
+- positional jump
+- distracting mode pop during zoom gestures
+
+Phase 1 requirements:
+
+1. Prototype the handoff early, before broad frontend rollout.
+2. Use stable thresholds with hysteresis, not jittery zoom-boundary switching.
+3. Validate the handoff visually at representative zooms before treating the substrate as production-testable.
+4. If the handoff is visibly poor, the phase is not complete even if the renderer works technically.
+
+Acceptance should include:
+
+- no positional jump
+- no obvious palette change
+- acceptable sharpness transition
+- no zoom-boundary oscillation during interaction
+
 ## Backend Build Plan
 
 ### New Builder Module
@@ -528,6 +599,24 @@ Recommended initial policy:
 - skip oldest backlog if a larger queue forms
 
 This is enough to make the test viable without distorting normal operations.
+
+### Shadow Throughput As A Phase Gate
+
+Because HRRR updates hourly, shadow build throughput must be treated as a rollout gate, not merely something to observe after the fact.
+
+Questions the shadow pipeline must answer:
+
+- can it stay caught up across consecutive hourly cycles
+- can it produce artifacts quickly enough that testers usually encounter ready runs
+- can it do so without materially harming the legacy publish path
+
+Phase 1 throughput rule:
+
+- start with conservative worker settings
+- measure real build lag over multiple hourly cycles
+- if lag consistently accumulates, tune worker count or queue policy before wider validation
+
+The prototype should not be considered representative if shadow builds are routinely late enough that testers are mostly exercising fallback behavior instead of the intended substrate.
 
 ### Retention
 
@@ -721,6 +810,7 @@ Validate:
 - no obvious palette drift
 - no upside-down or transposed frames
 - no nodata leakage
+- acceptable zoom handoff appearance between WebGL and tile fallback
 
 ### Sampling Parity Tests
 
@@ -743,6 +833,18 @@ Add a dedicated grid test block for:
 - scrub
 - autoplay stability
 - substrate fallback under error
+- zoom handoff quality and stability at the WebGL/tile boundary
+
+### Shadow Throughput QA
+
+Add a dedicated operational validation block for:
+
+- multiple consecutive hourly HRRR cycles
+- grid shadow build lag per run
+- artifact readiness rate before tester interaction
+- whether fallback usage is caused by policy choice or by missing experimental artifacts
+
+The experiment is not representative if the substrate is technically sound but usually unavailable when new hourly runs appear.
 
 ## Rollout Plan
 
@@ -775,6 +877,7 @@ Acceptance criteria:
 - grid artifacts appear for supported runs
 - grid artifact failures do not break legacy publish
 - metrics show shadow build health and lag
+- multiple consecutive hourly HRRR cycles can be serviced without sustained shadow backlog growth
 
 ### Phase 2: Hidden Frontend Integration
 
@@ -791,6 +894,7 @@ Acceptance criteria:
 - `?weather_substrate=grid` works for supported selections
 - unsupported selections fall back cleanly
 - no app-breaking errors when artifacts are absent
+- zoom-boundary handoff is visually acceptable in controlled QA
 
 ### Phase 3: Prod Shadow Validation
 
@@ -919,6 +1023,8 @@ These should be resolved during implementation, but they do not block phase 0 pl
 - whether the shader should use a 1D LUT texture or a small uniform-driven ramp for tmp2m
 - whether the grid path should eventually consume the full-resolution or a specifically tuned display grid for all variables
 - exact low/mid/high zoom handoff thresholds for the grid substrate
+
+These decisions should be settled before broad phase 2 frontend work begins to avoid unnecessary renderer rework.
 
 ## Recommended File Touchpoints
 
