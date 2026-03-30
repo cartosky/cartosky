@@ -13,7 +13,6 @@ class GridDisplayPrepConfig:
     upscale_factor: int = 1
     smooth_sigma: float | None = None
     preserve_zero_support: bool = False
-    shader_sampling: str | None = None
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
@@ -22,7 +21,6 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         upscale_factor=3,
         smooth_sigma=None,
         preserve_zero_support=True,
-        shader_sampling="nearest",
     ),
 }
 
@@ -108,6 +106,4 @@ def prepare_grid_display_values(
         "upscale_factor": factor,
         "smooth_sigma": sigma,
     }
-    if config.shader_sampling:
-        prep_meta["shader_sampling"] = str(config.shader_sampling)
     return prepared, prep_meta

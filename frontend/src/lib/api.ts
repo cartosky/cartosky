@@ -205,13 +205,6 @@ export type GridManifestPalette = {
   power_norm_gamma?: number | null;
 };
 
-export type GridManifestDisplayPrep = {
-  id?: string | null;
-  upscale_factor?: number | null;
-  smooth_sigma?: number | null;
-  shader_sampling?: string | null;
-};
-
 export type GridManifestResponse = {
   manifest_version: number;
   subtype: WeatherSubstrate | string;
@@ -222,7 +215,6 @@ export type GridManifestResponse = {
   bbox?: [number, number, number, number];
   grid: GridManifestGrid;
   palette?: GridManifestPalette;
-  display_prep?: GridManifestDisplayPrep | null;
   lods: GridManifestLod[];
 };
 
