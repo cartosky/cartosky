@@ -281,6 +281,7 @@ type ProgramBindings = {
   mixLocation: WebGLUniformLocation | null;
   hasPrevLocation: WebGLUniformLocation | null;
   powerNormGammaLocation: WebGLUniformLocation | null;
+  texSizeLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -470,28 +471,91 @@ export class GridWebglLayerController {
       uniform float u_mixAmount;
       uniform float u_hasPrevious;
       uniform float u_powerNormGamma;
-      vec4 colorizeSample(vec4 sample) {
+      uniform vec2 u_texSize;
+
+      // Decode a single texel from raw R/G bytes to a physical value.
+      // Returns the decoded value, or -1e30 if nodata / below-min.
+      float decodeSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
         float high = floor(sample.g * 255.0 + 0.5);
         float encoded = low + high * 256.0;
         if (abs(encoded - u_nodata) < 0.5) {
-          return vec4(0.0, 0.0, 0.0, 0.0);
+          return -1e30;
         }
         float decoded = encoded * u_scale + u_offset;
         if (decoded <= u_transparentBelowMin) {
+          return -1e30;
+        }
+        return decoded;
+      }
+
+      // Bilinear interpolation in decoded value space, then LUT lookup.
+      // The data texture uses NEAREST filtering so the GPU does not
+      // interpolate the raw encoded bytes (which would corrupt uint16
+      // values at byte-wrap boundaries).  Instead we fetch four
+      // neighbouring texels, decode each independently, bilinearly
+      // interpolate the physical values, and then map through the LUT.
+      vec4 sampleBilinear(sampler2D tex, vec2 uv) {
+        vec2 texel = uv * u_texSize - 0.5;
+        vec2 f = fract(texel);
+        vec2 base = (floor(texel) + 0.5) / u_texSize;
+        vec2 step = 1.0 / u_texSize;
+
+        float v00 = decodeSample(texture2D(tex, base));
+        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
+        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
+        float v11 = decodeSample(texture2D(tex, base + step));
+
+        // Count valid (non-nodata) neighbours.
+        float w00 = v00 > -1e29 ? 1.0 : 0.0;
+        float w10 = v10 > -1e29 ? 1.0 : 0.0;
+        float w01 = v01 > -1e29 ? 1.0 : 0.0;
+        float w11 = v11 > -1e29 ? 1.0 : 0.0;
+        float totalWeight = w00 + w10 + w01 + w11;
+
+        if (totalWeight <= 0.0) {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
+
+        // Replace nodata texels with 0 contribution for the lerp.
+        float s00 = v00 > -1e29 ? v00 : 0.0;
+        float s10 = v10 > -1e29 ? v10 : 0.0;
+        float s01 = v01 > -1e29 ? v01 : 0.0;
+        float s11 = v11 > -1e29 ? v11 : 0.0;
+
+        // Standard bilinear weights.
+        float bw00 = (1.0 - f.x) * (1.0 - f.y);
+        float bw10 = f.x * (1.0 - f.y);
+        float bw01 = (1.0 - f.x) * f.y;
+        float bw11 = f.x * f.y;
+
+        // Zero out weights for nodata texels and re-normalise.
+        bw00 *= w00; bw10 *= w10; bw01 *= w01; bw11 *= w11;
+        float wSum = bw00 + bw10 + bw01 + bw11;
+        if (wSum <= 0.0) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        float decoded = (s00 * bw00 + s10 * bw10 + s01 * bw01 + s11 * bw11) / wSum;
+
+        // Normalise to [0,1] and apply power-norm gamma.
         float denom = max(0.000001, u_valueMax - u_valueMin);
         float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
         if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
           t = pow(t, u_powerNormGamma);
         }
-        return texture2D(u_lut, vec2(t, 0.5));
+
+        // Alpha: blend toward transparent near data edges.
+        float alphaWeight = (bw00 + bw10 + bw01 + bw11) /
+                            max(0.000001, (1.0 - f.x) * (1.0 - f.y) + f.x * (1.0 - f.y) + (1.0 - f.x) * f.y + f.x * f.y);
+
+        vec4 color = texture2D(u_lut, vec2(t, 0.5));
+        return vec4(color.rgb, color.a * alphaWeight);
       }
+
       void main() {
-        vec4 current = colorizeSample(texture2D(u_data, v_texCoord));
+        vec4 current = sampleBilinear(u_data, v_texCoord);
         vec4 previous = u_hasPrevious > 0.5
-          ? colorizeSample(texture2D(u_prevData, v_texCoord))
+          ? sampleBilinear(u_prevData, v_texCoord)
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
         if (mixed.a <= 0.0) {
@@ -527,6 +591,7 @@ export class GridWebglLayerController {
       mixLocation: gl.getUniformLocation(this.program, "u_mixAmount"),
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
       powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
+      texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -897,6 +962,11 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
+    gl.uniform2f(
+      bindings.texSizeLocation,
+      Math.max(1, Math.floor(Number(grid.width) || 1)),
+      Math.max(1, Math.floor(Number(grid.height) || 1)),
+    );
     const elapsed = performance.now() - this.transitionStartedAt;
     const mixAmount = this.hasPreviousTexture
       ? Math.max(0, Math.min(1, elapsed / Math.max(1, this.transitionDurationMs)))
