@@ -122,7 +122,7 @@ export function BottomForecastControls({
   transientStatus,
   layoutMode = "desktop",
 }: BottomForecastControlsProps) {
-  const DRAG_UPDATE_MS = 80;
+  const DRAG_UPDATE_MS = 32;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const lastDragEmitAtRef = useRef(0);

@@ -89,6 +89,8 @@ const MapLegend = lazy(() =>
 const AUTOPLAY_TICK_MS = 250;
 const AUTOPLAY_READY_AHEAD = 2;
 const AUTOPLAY_SKIP_WINDOW = 3;
+const GRID_PLAY_START_AHEAD_FRAMES = 2;
+const GRID_PLAY_STALL_MS = 1500;
 const FRAME_STATUS_BADGE_MS = 900;
 const READY_URL_TTL_MS = 30_000;
 const READY_URL_LIMIT = 160;
@@ -973,6 +975,7 @@ export default function App() {
   const [isLoopAutoplayBuffering, setIsLoopAutoplayBuffering] = useState(false);
   const [loopProgress, setLoopProgress] = useState({ total: 0, ready: 0, failed: 0 });
   const [isPreloadingForPlay, setIsPreloadingForPlay] = useState(false);
+  const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
   const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
@@ -1001,6 +1004,7 @@ export default function App() {
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
+  const [gridReadyVersion, setGridReadyVersion] = useState(0);
 
   const isVariableSwitching = useMemo(() => {
     if (!variableSwitchState) {
@@ -1607,6 +1611,8 @@ export default function App() {
   useEffect(() => {
     gridReadyFrameUrlsRef.current = new Set();
     gridPlaybackHourRef.current = null;
+    setGridReadyVersion(0);
+    setIsGridPreloadingForPlay(false);
   }, [selectionKey]);
 
   useEffect(() => {
@@ -1711,12 +1717,14 @@ export default function App() {
     return gridFrameHours.every((fh) => Boolean(gridFrameByHour.get(fh)?.url));
   }, [gridFrameByHour, gridFrameHours, resolvedWeatherSubstrate]);
   const requestedGridDisplayHour = useMemo(() => {
-    const requested = (isPlaying || isScrubbing || isVariableSwitching) ? targetForecastHour : forecastHour;
+    const requested = (isPlaying || isGridPreloadingForPlay || isScrubbing || isVariableSwitching)
+      ? targetForecastHour
+      : forecastHour;
     if (Number.isFinite(requested)) {
       return Number(requested);
     }
     return gridFrameHours[0] ?? null;
-  }, [forecastHour, gridFrameHours, isPlaying, isScrubbing, isVariableSwitching, targetForecastHour]);
+  }, [forecastHour, gridFrameHours, isGridPreloadingForPlay, isPlaying, isScrubbing, isVariableSwitching, targetForecastHour]);
   const resolvedGridDisplayHour = useMemo(() => {
     if (gridFrameHours.length === 0) {
       return null;
@@ -1739,13 +1747,88 @@ export default function App() {
       ? frameUrl
       : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
   }, [activeGridFrame, apiRoot]);
-  const isGridFrameReady = useCallback((frameUrl: string | null | undefined): boolean => {
+  const normalizeGridFrameUrl = useCallback((frameUrl: string | null | undefined): string => {
     const normalized = String(frameUrl ?? "").trim();
+    if (!normalized) {
+      return "";
+    }
+    return /^https?:\/\//i.test(normalized)
+      ? normalized
+      : `${apiRoot}${normalized.startsWith("/") ? "" : "/"}${normalized}`;
+  }, [apiRoot]);
+  const isGridFrameReady = useCallback((frameUrl: string | null | undefined): boolean => {
+    const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
       return false;
     }
     return gridReadyFrameUrlsRef.current.has(normalized);
-  }, []);
+  }, [normalizeGridFrameUrl]);
+  const countGridAheadReadyFrames = useCallback((currentHour: number, maxAhead: number): number => {
+    if (gridFrameHours.length === 0 || maxAhead <= 0) {
+      return 0;
+    }
+    const currentIndex = gridFrameHours.indexOf(currentHour);
+    if (currentIndex < 0) {
+      return 0;
+    }
+
+    let ready = 0;
+    const endIndex = Math.min(gridFrameHours.length - 1, currentIndex + maxAhead);
+    for (let index = currentIndex + 1; index <= endIndex; index += 1) {
+      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(gridFrameHours[index])?.url);
+      if (!isGridFrameReady(frameUrl)) {
+        break;
+      }
+      ready += 1;
+    }
+    return ready;
+  }, [gridFrameByHour, gridFrameHours, isGridFrameReady, normalizeGridFrameUrl]);
+  const gridReadyCount = useMemo(() => {
+    return gridFrameHours.reduce((count, fh) => {
+      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(fh)?.url);
+      return count + (isGridFrameReady(frameUrl) ? 1 : 0);
+    }, 0);
+  }, [gridFrameByHour, gridFrameHours, gridReadyVersion, isGridFrameReady, normalizeGridFrameUrl]);
+  const gridPlaybackStartHour = useMemo(() => {
+    if (gridFrameHours.length === 0) {
+      return null;
+    }
+    const requested = Number.isFinite(targetForecastHour)
+      ? Number(targetForecastHour)
+      : (Number.isFinite(forecastHour) ? Number(forecastHour) : gridFrameHours[0]);
+    return nearestFrame(gridFrameHours, requested);
+  }, [forecastHour, gridFrameHours, targetForecastHour]);
+  const gridPlaybackAheadReadyCount = useMemo(() => {
+    if (!Number.isFinite(gridPlaybackStartHour)) {
+      return 0;
+    }
+    return countGridAheadReadyFrames(Number(gridPlaybackStartHour), GRID_PLAY_START_AHEAD_FRAMES);
+  }, [countGridAheadReadyFrames, gridPlaybackStartHour, gridReadyVersion]);
+  const isGridPlaybackStartReady = useMemo(() => {
+    if (!Number.isFinite(gridPlaybackStartHour)) {
+      return false;
+    }
+    const currentHour = Number(gridPlaybackStartHour);
+    const currentUrl = normalizeGridFrameUrl(gridFrameByHour.get(currentHour)?.url);
+    if (!isGridFrameReady(currentUrl)) {
+      return false;
+    }
+    const currentIndex = gridFrameHours.indexOf(currentHour);
+    if (currentIndex < 0) {
+      return false;
+    }
+    const remainingAhead = Math.max(0, gridFrameHours.length - currentIndex - 1);
+    const requiredAhead = Math.min(GRID_PLAY_START_AHEAD_FRAMES, remainingAhead);
+    return gridPlaybackAheadReadyCount >= requiredAhead;
+  }, [
+    gridFrameByHour,
+    gridFrameHours,
+    gridPlaybackAheadReadyCount,
+    gridPlaybackStartHour,
+    gridReadyVersion,
+    isGridFrameReady,
+    normalizeGridFrameUrl,
+  ]);
   const webpDecodeCacheBudgetBytes = useMemo(() => {
     if (typeof navigator === "undefined") {
       return WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES;
@@ -5315,6 +5398,50 @@ export default function App() {
   }, [gridFrameByHour, gridFrameHours, isGridFrameReady, isGridPlayable, isPlaying]);
 
   useEffect(() => {
+    if (!isGridPreloadingForPlay) {
+      return;
+    }
+    if (!isGridPlayable || gridFrameHours.length === 0 || !Number.isFinite(gridPlaybackStartHour)) {
+      setIsGridPreloadingForPlay(false);
+      return;
+    }
+
+    const currentHour = Number(gridPlaybackStartHour);
+    const currentUrl = normalizeGridFrameUrl(gridFrameByHour.get(currentHour)?.url);
+    if (!currentUrl) {
+      return;
+    }
+
+    const currentReady = isGridFrameReady(currentUrl);
+    const stalledMs = pendingLoopStartMetricRef.current
+      ? Math.max(0, performance.now() - pendingLoopStartMetricRef.current.startedAt)
+      : 0;
+    const allowStallStart = currentReady && stalledMs >= GRID_PLAY_STALL_MS;
+
+    if (!isGridPlaybackStartReady && !allowStallStart) {
+      return;
+    }
+
+    setIsGridPreloadingForPlay(false);
+    gridPlaybackHourRef.current = currentHour;
+    if (allowStallStart && !isGridPlaybackStartReady) {
+      showTransientFrameStatus("Starting grid playback");
+    }
+    setIsPlaying(true);
+  }, [
+    gridFrameByHour,
+    gridFrameHours,
+    gridPlaybackStartHour,
+    gridReadyVersion,
+    isGridFrameReady,
+    isGridPlayable,
+    isGridPlaybackStartReady,
+    isGridPreloadingForPlay,
+    normalizeGridFrameUrl,
+    showTransientFrameStatus,
+  ]);
+
+  useEffect(() => {
     if (!isPreloadingForPlay) {
       return;
     }
@@ -5391,6 +5518,7 @@ export default function App() {
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
+      setIsGridPreloadingForPlay(false);
       return;
     }
     if (loading || frameHours.length === 0) {
@@ -5405,6 +5533,7 @@ export default function App() {
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
         setIsPreloadingForPlay(false);
+        setIsGridPreloadingForPlay(false);
         showTransientFrameStatus("High detail mode — zoom out for animation playback");
         return;
       }
@@ -5414,6 +5543,7 @@ export default function App() {
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
         setIsPreloadingForPlay(false);
+        setIsGridPreloadingForPlay(false);
         showTransientFrameStatus("High detail mode — zoom out for animation playback");
         return;
       }
@@ -5423,6 +5553,7 @@ export default function App() {
         setIsLoopAutoplayBuffering(false);
         setIsLoopPreloading(false);
         setIsPreloadingForPlay(false);
+        setIsGridPreloadingForPlay(false);
         showTransientFrameStatus("Loop unavailable for this variable/run — showing tiles");
         return;
       }
@@ -5447,14 +5578,24 @@ export default function App() {
     });
 
     if (canUseGridPlayback) {
-      gridPlaybackHourRef.current = Number.isFinite(targetForecastHour)
-        ? targetForecastHour
-        : (Number.isFinite(forecastHour) ? forecastHour : null);
+      const startHour = Number.isFinite(gridPlaybackStartHour)
+        ? Number(gridPlaybackStartHour)
+        : (Number.isFinite(targetForecastHour)
+          ? targetForecastHour
+          : (Number.isFinite(forecastHour) ? forecastHour : null));
+      gridPlaybackHourRef.current = startHour;
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
-      setIsPlaying(true);
-      showTransientFrameStatus("Starting grid playback");
+      if (Number.isFinite(startHour) && isGridPlaybackStartReady) {
+        setIsGridPreloadingForPlay(false);
+        setIsPlaying(true);
+        showTransientFrameStatus("Starting grid playback");
+        return;
+      }
+      setIsPlaying(false);
+      setIsGridPreloadingForPlay(true);
+      showTransientFrameStatus("Buffering grid frames");
       return;
     }
 
@@ -5464,20 +5605,24 @@ export default function App() {
       setIsLoopAutoplayBuffering(false);
       setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
+      setIsGridPreloadingForPlay(false);
       showTransientFrameStatus("Animation unavailable for this selection");
       return;
     }
 
     setIsPlaying(false);
     setIsPreloadingForPlay(false);
+    setIsGridPreloadingForPlay(false);
     setIsLoopPreloading(true);
     showTransientFrameStatus("Loading loop frames");
   }, [
     loading,
     frameHours.length,
     canUseGridPlayback,
+    gridPlaybackStartHour,
     canUseLoopPlayback,
     isHighDetailZoom,
+    isGridPlaybackStartReady,
     webpDefaultEnabled,
     renderMode,
     showTransientFrameStatus,
@@ -5495,6 +5640,7 @@ export default function App() {
     if (isPlaying && renderMode === "tiles" && !canUseGridPlayback) {
       setIsPlaying(false);
       setIsLoopAutoplayBuffering(false);
+      setIsGridPreloadingForPlay(false);
       showTransientFrameStatus("High detail mode — zoom out for animation playback");
     }
   }, [canUseGridPlayback, isPlaying, renderMode, showTransientFrameStatus]);
@@ -5643,12 +5789,16 @@ export default function App() {
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
   }, [forecastHour, selectionKey, trackFirstViewerFrame]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
-    const normalized = String(frameUrl ?? "").trim();
+    const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
       return;
     }
+    if (gridReadyFrameUrlsRef.current.has(normalized)) {
+      return;
+    }
     gridReadyFrameUrlsRef.current.add(normalized);
-  }, []);
+    setGridReadyVersion((current) => current + 1);
+  }, [normalizeGridFrameUrl]);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
     setRegion(nextRegion);
@@ -5857,7 +6007,7 @@ export default function App() {
     setForecastHour(nextTarget);
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
-  const controlsIsPlaying = isPlaying || isPreloadingForPlay || isLoopPreloading;
+  const controlsIsPlaying = isPlaying || isPreloadingForPlay || isGridPreloadingForPlay || isLoopPreloading;
   const substrateDebugLabel = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       return isHighDetailZoom ? "grid_webgl_v1 (tile fallback)" : "grid_webgl_v1";
@@ -5876,18 +6026,27 @@ export default function App() {
   }, [mapZoom, resolvedGridDisplayHour, resolvedWeatherSubstrate]);
   const preloadBufferedCount = isLoopPreloading
     ? Math.max(0, Math.min(loopProgress.ready + loopProgress.failed, loopProgress.total))
-    : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
-  const preloadTotal = isLoopPreloading ? loopProgress.total : bufferSnapshot.totalFrames;
+    : isGridPreloadingForPlay
+      ? Math.max(0, Math.min(gridReadyCount, gridFrameHours.length))
+      : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
+  const preloadTotal = isLoopPreloading
+    ? loopProgress.total
+    : isGridPreloadingForPlay
+      ? gridFrameHours.length
+      : bufferSnapshot.totalFrames;
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;
   const showBufferStatus =
     isScrubLoading
+    || (isGridPreloadingForPlay && gridFrameHours.length > 0)
     || (isPreloadingForPlay && bufferSnapshot.totalFrames > 0)
     || (isLoopPreloading && loopProgress.total > 0);
   const bufferStatusText = isScrubLoading
     ? "Loading frame"
-    : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
+    : isGridPreloadingForPlay
+      ? `Buffering grid ${preloadBufferedCount}/${preloadTotal}`
+      : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
   const activeLoopHour = visibleLoopOverlayHour;
   const committedLoopHour = Number.isFinite(loopDisplayHour) ? (loopDisplayHour as number) : null;
   // Loop presentation is bitmap-backed. During a variable switch, fall back to
@@ -6303,7 +6462,7 @@ export default function App() {
           region={region}
           regionViews={regionViews}
           opacity={opacity}
-          mode={isPlaying ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
+          mode={(isPlaying || isGridPreloadingForPlay) ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
           variable={displayedOverlayVariable}
           variableKind={displayedOverlayVariableKind}
           displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
