@@ -4928,7 +4928,12 @@ export default function App() {
             visualState: "warming_new",
           };
         });
-        setFrameRows(rows);
+        setFrameRows((prevRows) => {
+          if (prevRows.length === rows.length && prevRows.every((r, i) => r.fh === rows[i].fh && r.tile_url_template === rows[i].tile_url_template)) {
+            return prevRows;
+          }
+          return rows;
+        });
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
         const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
         setForecastHour((prev) =>
@@ -5144,7 +5149,12 @@ export default function App() {
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
-            setRunManifest(manifestData);
+            setRunManifest((prev) => {
+              if (prev && JSON.stringify(prev) === JSON.stringify(manifestData)) {
+                return prev;
+              }
+              return manifestData;
+            });
             const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars);
             if (capabilityVars.length > 0) {
               const variableOptions = makeVariableOptions(capabilityVars);
