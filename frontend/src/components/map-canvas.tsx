@@ -2007,10 +2007,10 @@ export function MapCanvas({
     map.setLayoutProperty(
       CONTOUR_LAYER_ID,
       "visibility",
-      variable === "tmp2m" ? "visible" : "none"
+      "none"
     );
     enforceLayerOrder(map);
-  }, [isLoaded, variable, enforceLayerOrder]);
+  }, [isLoaded, enforceLayerOrder]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2087,7 +2087,7 @@ export function MapCanvas({
       setLayerVisibility(
         map,
         CONTOUR_LAYER_ID,
-        variable === "tmp2m" && !loopActive && !isLoopToTileTransitioningRef.current
+        false
       );
 
       setLayerRasterPaint(map, layerId("a"), variable, variableKind, displayResamplingOverride, basemapMode);
@@ -2608,7 +2608,7 @@ export function MapCanvas({
     setLayerVisibility(
       map,
       CONTOUR_LAYER_ID,
-      variable === "tmp2m" && !loopActive && !isLoopToTileTransitioningRef.current
+      false
     );
     enforceLayerOrder(map);
   }, [
@@ -2724,7 +2724,7 @@ export function MapCanvas({
           setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
           setLayerVisibility(map, LOOP_LAYER_ID, false);
           setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
-          setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
+          setLayerVisibility(map, CONTOUR_LAYER_ID, false);
           isLoopToTileTransitioningRef.current = false;
           loopToTileRafRef.current = null;
           if (loopToTileForceTimerRef.current !== null) {
@@ -2781,7 +2781,7 @@ export function MapCanvas({
       setLayerVisibility(map, LOOP_CANVAS_LAYER_ID, false);
       setLayerOpacity(map, LOOP_LAYER_ID, targetOpacity);
       setLayerOpacity(map, LOOP_CANVAS_LAYER_ID, targetOpacity);
-      setLayerVisibility(map, CONTOUR_LAYER_ID, variable === "tmp2m");
+      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
     }
     for (let idx = 1; idx <= PREFETCH_BUFFER_COUNT; idx += 1) {
       setLayerOpacity(map, prefetchLayerId(idx), HIDDEN_PREFETCH_OPACITY);
