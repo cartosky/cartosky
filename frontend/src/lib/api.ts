@@ -286,8 +286,8 @@ export function readCapabilityRenderSubstrates(
     }
     normalized.push(substrate);
   }
-  if (!normalized.includes("legacy")) {
-    normalized.unshift("legacy");
+  if (normalized.length === 0) {
+    return ["legacy"];
   }
   return normalized;
 }

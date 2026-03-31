@@ -73,12 +73,11 @@ def grid_v1_allowlist() -> set[tuple[str, str]]:
 def grid_v1_render_substrates(model_id: str, var_key: str) -> tuple[str, ...]:
     normalized_model = str(model_id or "").strip().lower()
     normalized_var = str(var_key or "").strip().lower()
-    substrates: list[str] = ["legacy"]
     if (
         grid_v1_enabled()
         and normalized_model
         and normalized_var
         and (normalized_model, normalized_var) in grid_v1_allowlist()
     ):
-        substrates.append("grid_webgl_v1")
-    return tuple(substrates)
+        return ("grid_webgl_v1",)
+    return ("legacy",)

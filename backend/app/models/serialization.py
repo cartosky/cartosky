@@ -47,7 +47,12 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
     constraints = getattr(capability, "ui_constraints", None)
     run_discovery = getattr(capability, "run_discovery", None)
     defaults_payload = dict(defaults) if isinstance(defaults, dict) else {}
-    defaults_payload.setdefault("default_render_substrate", "legacy")
+    default_render_substrate = (
+        "grid_webgl_v1"
+        if any("grid_webgl_v1" in item.get("render_substrates", []) for item in variables_payload.values())
+        else "legacy"
+    )
+    defaults_payload.setdefault("default_render_substrate", default_render_substrate)
     return {
         "model_id": model_id,
         "name": str(getattr(capability, "name", model_id.upper())),

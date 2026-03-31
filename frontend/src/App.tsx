@@ -1243,13 +1243,17 @@ export default function App() {
   const selectedModelDefaultRenderSubstrate = readCapabilityDefaultRenderSubstrate(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectedVariableRenderSubstrates = selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"];
+  const selectionSupportsLegacy = selectedVariableRenderSubstrates.includes("legacy");
   const selectionSupportsGridV1 = gridV1Enabled && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
   const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
     if (weatherSubstrateOverride === "legacy") {
-      return "legacy";
+      return selectionSupportsLegacy ? "legacy" : (selectionSupportsGridV1 ? "grid_webgl_v1" : "legacy");
     }
     if (weatherSubstrateOverride === "grid_webgl_v1") {
-      return selectionSupportsGridV1 ? "grid_webgl_v1" : "legacy";
+      return selectionSupportsGridV1 ? "grid_webgl_v1" : (selectionSupportsLegacy ? "legacy" : "legacy");
+    }
+    if (!selectionSupportsLegacy && selectionSupportsGridV1) {
+      return "grid_webgl_v1";
     }
     if (gridV1DefaultEnabled && selectionSupportsGridV1) {
       return "grid_webgl_v1";
@@ -1261,6 +1265,7 @@ export default function App() {
   }, [
     gridV1DefaultEnabled,
     selectedModelDefaultRenderSubstrate,
+    selectionSupportsLegacy,
     selectionSupportsGridV1,
     weatherSubstrateOverride,
   ]);
