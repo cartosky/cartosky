@@ -111,7 +111,7 @@ function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { p
     ? legend.entries
       .map((entry) => ({ value: Number(entry.value), rgba: hexToRgba(entry.color) }))
       .filter((entry) => Number.isFinite(entry.value))
-      .sort((left, right) => left.value - right.value)
+      .sort((left, right) => (isCategorical ? 0 : left.value - right.value))
     : [];
 
   const pixels = new Uint8Array(size * 4);

@@ -87,5 +87,5 @@ def test_mrms_capability_advertises_grid_substrate_when_enabled(monkeypatch: pyt
     payload = serialize_model_capability("mrms", capabilities)
 
     reflectivity = payload["variables"]["reflectivity"]
-    assert reflectivity["render_substrates"] == ["grid_webgl_v1"]
+    assert reflectivity["render_substrates"] == ["legacy", "grid_webgl_v1"]
     assert payload["defaults"]["default_render_substrate"] == "grid_webgl_v1"
