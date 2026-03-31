@@ -26,6 +26,25 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return default
 
 
+def _parse_model_var_pairs(raw: str, *, env_name: str) -> set[tuple[str, str]]:
+    allowed: set[tuple[str, str]] = set()
+    for chunk in raw.split(","):
+        normalized = chunk.strip().lower()
+        if not normalized:
+            continue
+        if ":" not in normalized:
+            logger.warning("Ignoring invalid %s entry %r", env_name, chunk)
+            continue
+        model_id, var_key = normalized.split(":", 1)
+        model_id = model_id.strip()
+        var_key = var_key.strip()
+        if not model_id or not var_key:
+            logger.warning("Ignoring invalid %s entry %r", env_name, chunk)
+            continue
+        allowed.add((model_id, var_key))
+    return allowed
+
+
 @lru_cache(maxsize=1)
 def grid_v1_enabled() -> bool:
     return _env_bool("CARTOSKY_GRID_V1_ENABLED", default=False)
@@ -50,37 +69,43 @@ def grid_v1_workers() -> int:
 
 
 @lru_cache(maxsize=1)
-def grid_v1_allowlist() -> set[tuple[str, str]]:
-    raw = _env_value(
-        "CARTOSKY_GRID_V1_ALLOWLIST",
-        default="hrrr:tmp2m,hrrr:dp2m,hrrr:tmp850,gfs:tmp2m,gfs:dp2m,gfs:tmp850,gfs:snowfall_total",
-    )
-    allowed: set[tuple[str, str]] = set()
-    for chunk in raw.split(","):
-        normalized = chunk.strip().lower()
-        if not normalized:
-            continue
-        if ":" not in normalized:
-            logger.warning("Ignoring invalid CARTOSKY_GRID_V1_ALLOWLIST entry %r", chunk)
-            continue
-        model_id, var_key = normalized.split(":", 1)
-        model_id = model_id.strip()
-        var_key = var_key.strip()
-        if not model_id or not var_key:
-            logger.warning("Ignoring invalid CARTOSKY_GRID_V1_ALLOWLIST entry %r", chunk)
-            continue
-        allowed.add((model_id, var_key))
-    return allowed
+def grid_v1_allowlist_override() -> set[tuple[str, str]]:
+    raw = _env_value("CARTOSKY_GRID_V1_ALLOWLIST", default="").strip()
+    if not raw:
+        return set()
+    return _parse_model_var_pairs(raw, env_name="CARTOSKY_GRID_V1_ALLOWLIST")
+
+
+@lru_cache(maxsize=1)
+def grid_v1_denylist() -> set[tuple[str, str]]:
+    raw = _env_value("CARTOSKY_GRID_V1_DENYLIST", default="").strip()
+    if not raw:
+        return set()
+    return _parse_model_var_pairs(raw, env_name="CARTOSKY_GRID_V1_DENYLIST")
+
+
+def grid_v1_pair_enabled(model_id: str, var_key: str) -> bool:
+    normalized_model = str(model_id or "").strip().lower()
+    normalized_var = str(var_key or "").strip().lower()
+    if not normalized_model or not normalized_var:
+        return False
+
+    from ..services.grid_v1 import grid_v1_code_supported
+
+    if not grid_v1_code_supported(normalized_model, normalized_var):
+        return False
+
+    if (normalized_model, normalized_var) in grid_v1_denylist():
+        return False
+
+    allowlist = grid_v1_allowlist_override()
+    if allowlist:
+        return (normalized_model, normalized_var) in allowlist
+
+    return True
 
 
 def grid_v1_render_substrates(model_id: str, var_key: str) -> tuple[str, ...]:
-    normalized_model = str(model_id or "").strip().lower()
-    normalized_var = str(var_key or "").strip().lower()
-    if (
-        grid_v1_enabled()
-        and normalized_model
-        and normalized_var
-        and (normalized_model, normalized_var) in grid_v1_allowlist()
-    ):
+    if grid_v1_enabled() and grid_v1_pair_enabled(model_id, var_key):
         return ("grid_webgl_v1",)
     return ("legacy",)

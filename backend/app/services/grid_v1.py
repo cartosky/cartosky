@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from ..config import grid_v1_allowlist
+from ..config import grid_v1_pair_enabled
 from .colormaps import get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import variable_color_map_id
@@ -42,6 +42,18 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("hrrr", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("hrrr", "wgst10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
     ("gfs", "tmp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -60,19 +72,77 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("gfs", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("gfs", "wgst10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
     ("gfs", "snowfall_total"): {
         "scale": 0.1,
         "offset": 0.0,
         "nodata": 65535,
         "units": "in",
     },
+    ("nam", "tmp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("nam", "dp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("nam", "tmp850"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("nam", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("nam", "wgst10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("nbm", "tmp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("nbm", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
 }
 
 
-def grid_v1_supported(model_id: str, var_key: str) -> bool:
+def grid_v1_code_supported(model_id: str, var_key: str) -> bool:
     normalized_model = str(model_id or "").strip().lower()
     normalized_var = str(var_key or "").strip().lower()
-    return (normalized_model, normalized_var) in grid_v1_allowlist()
+    return _packing_config(normalized_model, normalized_var) is not None
+
+
+def grid_v1_supported(model_id: str, var_key: str) -> bool:
+    return grid_v1_pair_enabled(model_id, var_key)
 
 
 def grid_v1_dir(data_root: Path, model: str, run: str, var: str) -> Path:
