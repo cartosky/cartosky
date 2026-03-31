@@ -974,6 +974,12 @@ export function MapCanvas({
         urls.push(url);
       }
     };
+    if (isObservedGrid) {
+      for (const hour of frameHours) {
+        pushFrameUrl(hour);
+      }
+      return urls;
+    }
     for (let step = 1; step <= aheadTarget; step += 1) {
       if (pivot + step < frameHours.length) {
         pushFrameUrl(frameHours[pivot + step]);

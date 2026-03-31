@@ -12,7 +12,7 @@ const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 2;
 const OBSERVED_GRID_TEXTURE_WARM_LIMIT = 24;
-const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE = 4;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE = 6;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
@@ -523,7 +523,10 @@ export class GridWebglLayerController {
   }
 
   private textureWarmLimit(): number {
-    return isObservedGridManifest(this.manifest) ? OBSERVED_GRID_TEXTURE_WARM_LIMIT : GRID_TEXTURE_WARM_LIMIT;
+    if (isObservedGridManifest(this.manifest)) {
+      return Math.max(OBSERVED_GRID_TEXTURE_WARM_LIMIT, this.prefetchUrls.length + 1);
+    }
+    return GRID_TEXTURE_WARM_LIMIT;
   }
 
   private textureWarmBatchSize(): number {
