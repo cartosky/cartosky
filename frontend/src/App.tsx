@@ -948,6 +948,7 @@ export default function App() {
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [loopManifest, setLoopManifest] = useState<LoopManifestResponse | null>(null);
   const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
+  const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
   const [regionPresets, setRegionPresets] = useState<Record<string, RegionPreset>>({});
   const [anchorBaseGeoJson, setAnchorBaseGeoJson] = useState<AnchorFeatureCollection | null>(null);
   const [anchorDisplayGeoJson, setAnchorDisplayGeoJson] = useState<AnchorFeatureCollection | null>(null);
@@ -1245,6 +1246,7 @@ export default function App() {
   const selectedVariableRenderSubstrates = selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"];
   const selectionSupportsLegacy = selectedVariableRenderSubstrates.includes("legacy");
   const selectionSupportsGridV1 = gridV1Enabled && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
+  const gridOnlySelection = selectionSupportsGridV1 && !selectionSupportsLegacy;
   const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
     if (weatherSubstrateOverride === "legacy") {
       return selectionSupportsLegacy ? "legacy" : (selectionSupportsGridV1 ? "grid_webgl_v1" : "legacy");
@@ -1491,10 +1493,32 @@ export default function App() {
     const candidates = [manifestLatest, runsLatest, availabilityLatest, fallbackRun].filter((value): value is string => Boolean(value));
     return candidates[0] ?? null;
   }, [run, runManifest, model, capabilities, runs, currentFrame, frameRows]);
-  const resolvedRunForRequests = run === "latest" ? (latestRunId ?? "latest") : run;
-  const selectionKey = `${model}:${resolvedRunForRequests}:${variable}`;
-  const telemetryRunId = resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null);
+  const latestGridRunCandidates = useMemo(() => {
+    if (!gridOnlySelection || run !== "latest") {
+      return [] as string[];
+    }
+    return Array.from(new Set([latestRunId, ...runs].filter((value): value is string => Boolean(value))));
+  }, [gridOnlySelection, latestRunId, run, runs]);
+  const resolvedRunForRequests = useMemo(() => {
+    if (gridOnlySelection && run === "latest") {
+      return resolvedGridLatestRunId ?? (latestRunId ?? "latest");
+    }
+    return run === "latest" ? (latestRunId ?? "latest") : run;
+  }, [gridOnlySelection, latestRunId, resolvedGridLatestRunId, run]);
+  const selectionRunKey = gridOnlySelection && run === "latest"
+    ? (resolvedGridLatestRunId ?? "pending-grid")
+    : resolvedRunForRequests;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}`;
+  const telemetryRunId = gridOnlySelection && run === "latest"
+    ? (resolvedGridLatestRunId ?? latestRunId ?? null)
+    : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+
+  useEffect(() => {
+    if (!gridOnlySelection || run !== "latest") {
+      setResolvedGridLatestRunId(null);
+    }
+  }, [gridOnlySelection, model, run, variable]);
 
   useEffect(() => {
     if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGridV1) {
@@ -1504,43 +1528,80 @@ export default function App() {
 
     const controller = new AbortController();
     const startedAt = performance.now();
-    setGridManifest(null);
-
-    fetchGridManifest(model, resolvedRunForRequests, variable, { signal: controller.signal })
-      .then((manifest) => {
-        if (controller.signal.aborted) {
+    const resolveManifest = async () => {
+      if (gridOnlySelection && run === "latest") {
+        for (const candidateRun of latestGridRunCandidates) {
+          const manifest = await fetchGridManifest(model, candidateRun, variable, { signal: controller.signal });
+          if (controller.signal.aborted) {
+            return;
+          }
+          if (!manifest) {
+            continue;
+          }
+          setResolvedGridLatestRunId(candidateRun);
+          setGridManifest(manifest);
+          trackPerfEvent({
+            event_name: "grid_manifest_resolve",
+            duration_ms: Math.max(0, performance.now() - startedAt),
+            model_id: model || null,
+            variable_id: variable || null,
+            run_id: candidateRun,
+            region_id: region || null,
+            meta: {
+              substrate: "grid_webgl_v1",
+              success: true,
+              latest_alias: true,
+            },
+          });
           return;
         }
-        setGridManifest(manifest);
-        trackPerfEvent({
-          event_name: "grid_manifest_resolve",
-          duration_ms: Math.max(0, performance.now() - startedAt),
-          model_id: model || null,
-          variable_id: variable || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          meta: {
-            substrate: "grid_webgl_v1",
-            success: Boolean(manifest),
-          },
-        });
-      })
-      .catch(() => {
-        if (controller.signal.aborted) {
-          return;
-        }
+        setResolvedGridLatestRunId(null);
         setGridManifest(null);
+        return;
+      }
+
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      setGridManifest(manifest);
+      trackPerfEvent({
+        event_name: "grid_manifest_resolve",
+        duration_ms: Math.max(0, performance.now() - startedAt),
+        model_id: model || null,
+        variable_id: variable || null,
+        run_id: telemetryRunId,
+        region_id: region || null,
+        meta: {
+          substrate: "grid_webgl_v1",
+          success: Boolean(manifest),
+          latest_alias: run === "latest",
+        },
       });
+    };
+
+    void resolveManifest().catch(() => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (gridOnlySelection && run === "latest") {
+        setResolvedGridLatestRunId(null);
+      }
+      setGridManifest(null);
+    });
 
     return () => {
       controller.abort();
     };
   }, [
     hasRenderableSelection,
+    latestGridRunCandidates,
     model,
     prefersGridSubstrate,
     region,
     resolvedRunForRequests,
+    run,
+    gridOnlySelection,
     selectionSupportsGridV1,
     telemetryRunId,
     variable,
@@ -1630,6 +1691,9 @@ export default function App() {
   }, [runs, latestRunId, selectedTimeAxisMode]);
 
   const loopFrameTier0FallbackByHour = useMemo(() => {
+    if (!selectionSupportsLegacy) {
+      return new Map<number, string>();
+    }
     const map = new Map<number, string>();
     for (const row of frameRows) {
       const fh = Number(row?.fh);
@@ -1643,9 +1707,12 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, frameRows]);
+  }, [apiRoot, frameRows, selectionSupportsLegacy]);
 
   const loopTier0UrlByHour = useMemo(() => {
+    if (!selectionSupportsLegacy) {
+      return new Map<number, string>();
+    }
     const map = new Map<number, string>(loopFrameTier0FallbackByHour);
     const tier0 = loopManifest?.loop_tiers.find((entry) => Number(entry?.tier) === 0);
     const frames = Array.isArray(tier0?.frames) ? tier0.frames : [];
@@ -1661,7 +1728,7 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest]);
+  }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest, selectionSupportsLegacy]);
 
   const loopUrlByHour = useMemo(() => new Map(loopTier0UrlByHour), [loopTier0UrlByHour]);
 
@@ -2439,7 +2506,7 @@ export default function App() {
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
-      if (!hasRenderableSelection) {
+      if (!hasRenderableSelection || !selectionSupportsLegacy) {
         return EMPTY_TILE_DATA_URL;
       }
       const fallbackFh = frameHours[0] ?? 0;
@@ -2452,7 +2519,7 @@ export default function App() {
         frameRow: frameByHour.get(resolvedFh) ?? frameRows[0] ?? null,
       });
     },
-    [hasRenderableSelection, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows]
+    [hasRenderableSelection, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows, selectionSupportsLegacy]
   );
 
   const tileUrl = useMemo(() => {
@@ -2460,12 +2527,15 @@ export default function App() {
   }, [tileUrlForHour, mapForecastHour]);
 
   const tileUrlToHour = useMemo(() => {
+    if (!selectionSupportsLegacy) {
+      return new Map<string, number>();
+    }
     const map = new Map<string, number>();
     for (const fh of frameHours) {
       map.set(tileUrlForHour(fh), fh);
     }
     return map;
-  }, [frameHours, tileUrlForHour]);
+  }, [frameHours, tileUrlForHour, selectionSupportsLegacy]);
 
   const playbackPolicy = useMemo(
     () =>
@@ -2671,7 +2741,7 @@ export default function App() {
   }, [opacity, rawLegend, selectedTimeAxisMode, stableObservedLegend]);
 
   const prefetchHours = useMemo(() => {
-    if (!hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
+    if (!selectionSupportsLegacy || !hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
       return [] as number[];
     }
 
@@ -2719,13 +2789,14 @@ export default function App() {
     scrubCommitIntent,
     isLoopDisplayActive,
     hasRenderableSelection,
+    selectionSupportsLegacy,
   ]);
 
   const prefetchTileUrls = useMemo(() => {
     return prefetchHours.map((fh) => tileUrlForHour(fh));
   }, [prefetchHours, tileUrlForHour]);
 
-  const effectiveRunId = currentFrame?.run ?? (run !== "latest" ? run : latestRunId);
+  const effectiveRunId = currentFrame?.run ?? resolvedRunForRequests;
   const runDateTimeISO = runIdToIso(effectiveRunId);
 
   // ── Hover-for-data tooltip ──────────────────────────────────────────
@@ -4753,9 +4824,12 @@ export default function App() {
         const runDataPromise = shouldFetchRuns
           ? fetchRuns(model, { signal: controller.signal })
           : Promise.resolve(runs);
+        const manifestRunKey = run === "latest"
+          ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : run)
+          : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
-          fetchManifest(model, run, { signal: controller.signal }).catch(() => null),
+          fetchManifest(model, manifestRunKey, { signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
@@ -4764,8 +4838,11 @@ export default function App() {
         const runData = sortRunIdsDescending(runDataRaw);
         const nextRun = run !== "latest" && runData.includes(run) ? run : "latest";
         let manifestData = requestedManifest;
-        if (!manifestData && nextRun !== run) {
-          manifestData = await fetchManifest(model, nextRun, { signal: controller.signal }).catch(() => null);
+        const nextManifestRunKey = nextRun === "latest"
+          ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : nextRun)
+          : nextRun;
+        if (!manifestData && nextManifestRunKey !== manifestRunKey) {
+          manifestData = await fetchManifest(model, nextManifestRunKey, { signal: controller.signal }).catch(() => null);
           if (controller.signal.aborted || generation !== requestGenerationRef.current) {
             return;
           }
@@ -4806,7 +4883,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability]);
+  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId]);
 
   useEffect(() => {
     setFrameRows([]);
@@ -4832,7 +4909,11 @@ export default function App() {
   }, [selectionKey]);
 
   useEffect(() => {
-    if (!model || !variable || !hasRenderableSelection) {
+    setGridManifest(null);
+  }, [model, run, variable]);
+
+  useEffect(() => {
+    if (!selectionSupportsLegacy || !model || !variable || !hasRenderableSelection) {
       setLoopManifest(null);
       return;
     }
@@ -4886,12 +4967,18 @@ export default function App() {
     variable,
     resolvedRunForRequests,
     hasRenderableSelection,
+    selectionSupportsLegacy,
     telemetryRunId,
     region,
   ]);
 
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) return;
+    if (gridOnlySelection && run === "latest" && !resolvedGridLatestRunId) {
+      setFrameRows([]);
+      setLoadedFramesKey("");
+      return;
+    }
     const controller = new AbortController();
     const generation = requestGenerationRef.current;
 
@@ -4932,7 +5019,12 @@ export default function App() {
       }
 
       try {
-        const framesRunKey = run === "latest" ? "latest" : resolvedRunForRequests;
+        const framesRunKey = gridOnlySelection && run === "latest"
+          ? resolvedGridLatestRunId
+          : (run === "latest" ? "latest" : resolvedRunForRequests);
+        if (!framesRunKey) {
+          return;
+        }
         const rows = await fetchFrames(model, framesRunKey, variable, { signal: controller.signal });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         const pendingVarSwitch = pendingVariableSwitchRef.current;
@@ -4981,7 +5073,9 @@ export default function App() {
     selectedVariableDefaultFh,
     selectedModelDefaultFrameSelection,
     hasRenderableSelection,
+    gridOnlySelection,
     loadedFramesKey,
+    resolvedGridLatestRunId,
     selectionKey,
   ]);
 
@@ -5141,6 +5235,7 @@ export default function App() {
           const currentlyViewedRun = resolvedRunForRequests;
           if (
             !selectedModelLatestOnly
+            && !gridOnlySelection
             && currentlyViewedRun
             && nextLatestRunId
             && nextLatestRunId !== currentlyViewedRun
@@ -5160,7 +5255,10 @@ export default function App() {
             (runManifest?.run === "latest" || runManifest?.run === currentlyViewedRun || runManifest?.run === nextLatestRunId);
 
           if (manifestMatchesSelection) {
-            const manifestData = await fetchManifest(model, run, { signal: tickController.signal });
+            const manifestRunKey = gridOnlySelection && run === "latest"
+              ? (resolvedGridLatestRunId ?? run)
+              : run;
+            const manifestData = await fetchManifest(model, manifestRunKey, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -5198,7 +5296,13 @@ export default function App() {
             return;
           }
 
-          const rows = await fetchFrames(model, run, variable, { signal: tickController.signal });
+          const framesRunKey = gridOnlySelection && run === "latest"
+            ? resolvedGridLatestRunId
+            : run;
+          if (!framesRunKey) {
+            return;
+          }
+          const rows = await fetchFrames(model, framesRunKey, variable, { signal: tickController.signal });
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
@@ -5224,7 +5328,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly]);
+  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -6023,10 +6127,13 @@ export default function App() {
       return "grid_webgl_v1";
     }
     if (prefersGridSubstrate && !gridManifest) {
+      if (gridOnlySelection) {
+        return "grid_webgl_v1 (resolving)";
+      }
       return "legacy (grid fallback)";
     }
     return "legacy";
-  }, [gridManifest, prefersGridSubstrate, resolvedWeatherSubstrate]);
+  }, [gridManifest, gridOnlySelection, prefersGridSubstrate, resolvedWeatherSubstrate]);
   const substrateDebugDetail = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
@@ -6117,6 +6224,15 @@ export default function App() {
     return fromOptions ?? model;
   }, [models, model]);
   const selectedRunLabel = useMemo(() => {
+    if (
+      run === "latest"
+      && gridOnlySelection
+      && resolvedGridLatestRunId
+      && latestRunId
+      && resolvedGridLatestRunId !== latestRunId
+    ) {
+      return `Latest grid-ready (${formatRunLabel(resolvedGridLatestRunId, selectedTimeAxisMode)})`;
+    }
     const fromOptions = runOptions.find((entry) => entry.value === run)?.label;
     if (fromOptions) {
       return fromOptions;
@@ -6125,7 +6241,7 @@ export default function App() {
       return latestRunId ? `Latest (${formatRunLabel(latestRunId, selectedTimeAxisMode)})` : "Latest";
     }
     return formatRunLabel(run, selectedTimeAxisMode);
-  }, [runOptions, run, latestRunId, selectedTimeAxisMode]);
+  }, [runOptions, run, latestRunId, selectedTimeAxisMode, gridOnlySelection, resolvedGridLatestRunId]);
   const latestAvailableRunLabel = useMemo(() => {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);
@@ -6283,7 +6399,9 @@ export default function App() {
 
   const handleOpenShareModal = useCallback(() => {
     const permalink = typeof window !== "undefined" ? window.location.href : "";
-    const runForSummary = run === "latest" ? (latestRunId ?? "latest") : run;
+    const runForSummary = gridOnlySelection && run === "latest"
+      ? resolvedRunForRequests
+      : (run === "latest" ? (latestRunId ?? "latest") : run);
     const mapView = mapViewRef.current;
     const capabilityVariableLabel = selectedCapabilityVarMap.get(variable)?.displayName ?? null;
     const manifestVariable = runManifest?.variables?.[variable];
@@ -6337,10 +6455,12 @@ export default function App() {
       });
   }, [
     forecastHour,
+    gridOnlySelection,
     latestRunId,
     model,
     region,
     regionPresets,
+    resolvedRunForRequests,
     resolvedLoopPermalink,
     run,
     runManifest,
