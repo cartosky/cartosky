@@ -11,6 +11,8 @@ const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 2;
+const OBSERVED_GRID_TEXTURE_WARM_LIMIT = 24;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE = 4;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
@@ -255,6 +257,10 @@ function categoricalPaletteForManifest(manifest: GridManifestResponse | null): b
   return kind === "indexed" || kind === "categorical";
 }
 
+function isObservedGridManifest(manifest: GridManifestResponse | null): boolean {
+  return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
+}
+
 function transparentZeroForManifest(manifest: GridManifestResponse | null): boolean {
   return Boolean(manifest?.palette?.transparent_zero);
 }
@@ -484,7 +490,7 @@ export class GridWebglLayerController {
       return;
     }
 
-    const prioritizedPrefetchUrls = this.prefetchUrls.slice(0, GRID_TEXTURE_WARM_LIMIT);
+    const prioritizedPrefetchUrls = this.prefetchUrls.slice(0, this.textureWarmLimit());
     this.pruneTextureWarmQueue(new Set([this.frameUrl, ...prioritizedPrefetchUrls]));
 
     if (nextSignature !== this.currentFrameSignature) {
@@ -514,6 +520,14 @@ export class GridWebglLayerController {
       return null;
     }
     return `${this.selectionEpoch}:${this.selectionKey}:${this.frameHour ?? "na"}:${frameUrl}`;
+  }
+
+  private textureWarmLimit(): number {
+    return isObservedGridManifest(this.manifest) ? OBSERVED_GRID_TEXTURE_WARM_LIMIT : GRID_TEXTURE_WARM_LIMIT;
+  }
+
+  private textureWarmBatchSize(): number {
+    return isObservedGridManifest(this.manifest) ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE : GRID_TEXTURE_WARM_BATCH_SIZE;
   }
 
   private rebuildLegendTexture() {
@@ -1041,8 +1055,9 @@ export class GridWebglLayerController {
         this.textureWarmQueue.push(normalized);
       }
     }
-    if (this.textureWarmQueue.length > GRID_TEXTURE_WARM_LIMIT) {
-      const trimmed = this.textureWarmQueue.slice(0, GRID_TEXTURE_WARM_LIMIT);
+    const warmLimit = this.textureWarmLimit();
+    if (this.textureWarmQueue.length > warmLimit) {
+      const trimmed = this.textureWarmQueue.slice(0, warmLimit);
       this.textureWarmQueue = trimmed;
       this.textureWarmQueued = new Set(trimmed);
     }
@@ -1057,7 +1072,8 @@ export class GridWebglLayerController {
 
   private async pumpTextureWarmQueue() {
     const batch: string[] = [];
-    while (this.textureWarmQueue.length > 0 && batch.length < GRID_TEXTURE_WARM_BATCH_SIZE) {
+    const batchSize = this.textureWarmBatchSize();
+    while (this.textureWarmQueue.length > 0 && batch.length < batchSize) {
       const nextUrl = this.textureWarmQueue.shift() ?? "";
       this.textureWarmQueued.delete(nextUrl);
       if (!nextUrl || this.invalidFrameUrls.has(nextUrl) || this.textureCache.has(nextUrl)) {
