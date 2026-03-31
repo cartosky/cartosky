@@ -23,6 +23,13 @@ export type GridFrameVisiblePayload = {
   selectionKey?: string;
 };
 
+export type GridRasterPaint = {
+  contrast: number;
+  saturation: number;
+  brightnessMin: number;
+  brightnessMax: number;
+};
+
 export type GridWebglLayerConfig = {
   active: boolean;
   manifest: GridManifestResponse | null;
@@ -34,6 +41,7 @@ export type GridWebglLayerConfig = {
   selectionEpoch: number;
   selectionKey: string;
   prefetchUrls?: string[];
+  rasterPaint?: GridRasterPaint | null;
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
   onFrameReady?: ((frameUrl: string) => void) | null;
 };
@@ -193,6 +201,18 @@ function powerNormGammaForManifest(manifest: GridManifestResponse | null): numbe
   return Number.isFinite(gamma) && gamma > 0 ? gamma : 1;
 }
 
+/** Convert user-facing raster-contrast (−1 … 1) to the shader factor.
+ *  Matches MapLibre's internal `contrastFactor()`. */
+function contrastFactor(contrast: number): number {
+  return contrast > 0 ? 1 / (1 - contrast) : 1 + contrast;
+}
+
+/** Convert user-facing raster-saturation (−1 … 1) to the shader factor.
+ *  Matches MapLibre's internal `saturationFactor()`. */
+function saturationFactor(saturation: number): number {
+  return saturation > 0 ? 1 - 1 / (1.001 - saturation) : -saturation;
+}
+
 function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) {
@@ -282,6 +302,10 @@ type ProgramBindings = {
   hasPrevLocation: WebGLUniformLocation | null;
   powerNormGammaLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
+  contrastFactorLocation: WebGLUniformLocation | null;
+  saturationFactorLocation: WebGLUniformLocation | null;
+  brightnessLowLocation: WebGLUniformLocation | null;
+  brightnessHighLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -296,6 +320,7 @@ export class GridWebglLayerController {
   private legend: LegendPayload | null = null;
   private opacity = 1;
   private overlayFadeOutZoom: { start: number; end: number } | null = null;
+  private rasterPaint: GridRasterPaint = { contrast: 0, saturation: 0, brightnessMin: 0, brightnessMax: 1 };
   private selectionEpoch = 0;
   private selectionKey = "";
   private prefetchUrls: string[] = [];
@@ -381,6 +406,7 @@ export class GridWebglLayerController {
     this.frameHour = Number.isFinite(config.frameHour) ? Number(config.frameHour) : null;
     this.opacity = config.opacity;
     this.overlayFadeOutZoom = config.overlayFadeOutZoom ?? null;
+    this.rasterPaint = config.rasterPaint ?? { contrast: 0, saturation: 0, brightnessMin: 0, brightnessMax: 1 };
     this.selectionEpoch = config.selectionEpoch;
     this.selectionKey = config.selectionKey;
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
@@ -472,6 +498,10 @@ export class GridWebglLayerController {
       uniform float u_hasPrevious;
       uniform float u_powerNormGamma;
       uniform vec2 u_texSize;
+      uniform float u_contrastFactor;
+      uniform float u_saturationFactor;
+      uniform float u_brightnessLow;
+      uniform float u_brightnessHigh;
 
       // Decode a single texel from raw R/G bytes to a physical value.
       // Returns the decoded value, or -1e30 if nodata.
@@ -557,8 +587,19 @@ export class GridWebglLayerController {
         if (mixed.a <= 0.0) {
           discard;
         }
+        vec3 rgb = mixed.rgb;
+
+        // Raster paint adjustments (matches MapLibre raster shader).
+        // saturation
+        float average = (rgb.r + rgb.g + rgb.b) / 3.0;
+        rgb += (average - rgb) * u_saturationFactor;
+        // contrast
+        rgb = (rgb - 0.5) * u_contrastFactor + 0.5;
+        // brightness
+        rgb = mix(vec3(u_brightnessLow), vec3(u_brightnessHigh), rgb);
+
         float finalAlpha = mixed.a * u_opacity;
-        gl_FragColor = vec4(mixed.rgb * finalAlpha, finalAlpha);
+        gl_FragColor = vec4(rgb * finalAlpha, finalAlpha);
       }
     `;
 
@@ -589,6 +630,10 @@ export class GridWebglLayerController {
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
       powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
+      contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
+      saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
+      brightnessLowLocation: gl.getUniformLocation(this.program, "u_brightnessLow"),
+      brightnessHighLocation: gl.getUniformLocation(this.program, "u_brightnessHigh"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -970,6 +1015,10 @@ export class GridWebglLayerController {
       : 1;
     gl.uniform1f(bindings.mixLocation, mixAmount);
     gl.uniform1f(bindings.hasPrevLocation, this.hasPreviousTexture ? 1 : 0);
+    gl.uniform1f(bindings.contrastFactorLocation, contrastFactor(this.rasterPaint.contrast));
+    gl.uniform1f(bindings.saturationFactorLocation, saturationFactor(this.rasterPaint.saturation));
+    gl.uniform1f(bindings.brightnessLowLocation, this.rasterPaint.brightnessMin);
+    gl.uniform1f(bindings.brightnessHighLocation, this.rasterPaint.brightnessMax);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.currentTexture);

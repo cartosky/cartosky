@@ -2139,6 +2139,7 @@ export function MapCanvas({
     }
 
     controller.ensureAttached(map, COASTLINE_LAYER_ID);
+    const gridPaintSettings = getOverlayPaintSettings(variable, basemapMode);
     controller.update({
       active: Boolean(gridActive && gridManifest && gridFrameUrl),
       manifest: gridManifest,
@@ -2150,6 +2151,7 @@ export function MapCanvas({
       selectionEpoch,
       selectionKey,
       prefetchUrls: gridPrefetchUrls,
+      rasterPaint: gridPaintSettings,
       onFrameVisible: onGridFrameVisible,
       onFrameReady: onGridFrameReady,
     });
@@ -2185,6 +2187,7 @@ export function MapCanvas({
 
     enforceLayerOrder(map);
   }, [
+    basemapMode,
     enforceLayerOrder,
     gridActive,
     gridFrameHour,
@@ -2203,6 +2206,7 @@ export function MapCanvas({
     selectionEpoch,
     selectionKey,
     setLayerOpacity,
+    variable,
   ]);
 
   useEffect(() => {
