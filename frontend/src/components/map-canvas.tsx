@@ -2342,10 +2342,14 @@ export function MapCanvas({
     }
     const selectionScope = { selectionEpoch, selectionKey };
 
-    // Foreground tile swap work is disabled while loop mode is active.
-    // A separate warm-path effect keeps the active tile buffer up to date
-    // at tiny opacity to avoid flashes during WebP -> tile handoff.
-    if (loopActive) {
+    // Foreground tile swap work is disabled while loop or grid mode is
+    // active.  A separate warm-path effect keeps the active tile buffer up
+    // to date at tiny opacity to avoid flashes during WebP -> tile handoff.
+    // When the grid WebGL layer is the active renderer, legacy tile fetches
+    // would only compete for bandwidth and HTTP connections with grid binary
+    // frame fetches, causing scrubbing lag and animation stalls (especially
+    // noticeable for observed data such as MRMS which prefetches many frames).
+    if (loopActive || gridActive) {
       onFrameLoadingChange?.(tileUrl, false, selectionScope);
       return;
     }
@@ -2478,6 +2482,7 @@ export function MapCanvas({
     tileUrl,
     isLoaded,
     loopActive,
+    gridActive,
     mode,
     opacity,
     crossfade,
@@ -2841,7 +2846,7 @@ export function MapCanvas({
     }
     const selectionScope = { selectionEpoch, selectionKey };
 
-    if (loopActive) {
+    if (loopActive || gridActive) {
       window.requestAnimationFrame(() => {
         onTileViewportReady?.(tileUrl, selectionScope);
       });
@@ -2871,7 +2876,7 @@ export function MapCanvas({
     return () => {
       map.off("idle", maybeNotify);
     };
-  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey, loopActive]);
+  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey, loopActive, gridActive]);
 
   useEffect(() => {
     const map = mapRef.current;
