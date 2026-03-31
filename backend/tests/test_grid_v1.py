@@ -536,36 +536,24 @@ def test_build_grid_v1_for_run_supports_nbm_accumulation_targets(
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
 
-    if var == "precip_total":
-        assert frame_meta_path.is_file()
-        frame_meta = json.loads(frame_meta_path.read_text())
-        assert frame_meta["width"] == values.shape[1] * 3
-        assert frame_meta["height"] == values.shape[0] * 3
-        assert frame_meta["display_prep"]["id"] == "nbm_precip_total_display_v1"
-        assert manifest["grid"]["width"] == values.shape[1] * 3
-        assert manifest["grid"]["height"] == values.shape[0] * 3
-        assert manifest["display_prep"]["id"] == "nbm_precip_total_display_v1"
-        encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
-            manifest["grid"]["height"],
-            manifest["grid"]["width"],
-        )
-        assert encoded.shape == (values.shape[0] * 3, values.shape[1] * 3)
-        assert encoded.dtype == np.dtype("<u2")
-        assert np.count_nonzero(encoded == 65535) > 0
-        assert int(encoded.max()) >= 486
-        assert int(encoded.min()) == 0
-    else:
-        assert frame_meta_path.is_file()
-        frame_meta = json.loads(frame_meta_path.read_text())
-        assert "display_prep" not in frame_meta
-        assert manifest["grid"]["width"] == values.shape[1]
-        assert manifest["grid"]["height"] == values.shape[0]
-        assert "display_prep" not in manifest
-        encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
-        assert encoded[0, 0] == 0
-        assert encoded[0, 1] == 123
-        assert encoded[1, 0] == 65535
-        assert encoded[1, 1] == 486
+    expected_prep_id = "nbm_precip_total_display_v1" if var == "precip_total" else "nbm_snowfall_total_display_v1"
+    assert frame_meta_path.is_file()
+    frame_meta = json.loads(frame_meta_path.read_text())
+    assert frame_meta["width"] == values.shape[1] * 3
+    assert frame_meta["height"] == values.shape[0] * 3
+    assert frame_meta["display_prep"]["id"] == expected_prep_id
+    assert manifest["grid"]["width"] == values.shape[1] * 3
+    assert manifest["grid"]["height"] == values.shape[0] * 3
+    assert manifest["display_prep"]["id"] == expected_prep_id
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+        manifest["grid"]["height"],
+        manifest["grid"]["width"],
+    )
+    assert encoded.shape == (values.shape[0] * 3, values.shape[1] * 3)
+    assert encoded.dtype == np.dtype("<u2")
+    assert np.count_nonzero(encoded == 65535) > 0
+    assert int(encoded.max()) >= 486
+    assert int(encoded.min()) == 0
 
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
