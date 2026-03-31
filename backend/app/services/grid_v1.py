@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import rasterio
+from rasterio.errors import RasterioIOError
 
 from ..config import grid_v1_pair_enabled
 from .colormaps import get_color_map_spec
@@ -221,19 +222,24 @@ def _write_frame_from_value_cog(
     packing = _packing_config(model, var)
     if packing is None:
         raise ValueError(f"Unsupported grid_v1 pack target: {model}/{var}")
+    if not value_cog_path.is_file():
+        raise FileNotFoundError(f"Missing grid_v1 source value COG: {value_cog_path}")
 
-    with rasterio.open(value_cog_path) as ds:
-        values = ds.read(1).astype(np.float32, copy=False)
-        display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
-        encoded = _encode_values(
-            display_values,
-            scale=float(packing["scale"]),
-            offset=float(packing["offset"]),
-            nodata=int(packing["nodata"]),
-        )
-        height, width = encoded.shape
-        bounds = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-        crs_text = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
+    try:
+        with rasterio.open(value_cog_path) as ds:
+            values = ds.read(1).astype(np.float32, copy=False)
+            display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
+            encoded = _encode_values(
+                display_values,
+                scale=float(packing["scale"]),
+                offset=float(packing["offset"]),
+                nodata=int(packing["nodata"]),
+            )
+            height, width = encoded.shape
+            bounds = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
+            crs_text = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
+    except RasterioIOError as exc:
+        raise FileNotFoundError(f"Unreadable grid_v1 source value COG: {value_cog_path}") from exc
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -439,6 +445,15 @@ def build_grid_v1_for_run(
             continue
         manifest_vars.add(var)
         for value_cog_path in sorted(var_dir.glob("fh*.val.cog.tif")):
+            if not value_cog_path.is_file():
+                logger.warning(
+                    "Skipping missing grid_v1 source value COG: model=%s run=%s var=%s path=%s",
+                    model,
+                    run,
+                    var,
+                    value_cog_path,
+                )
+                continue
             fh_token = value_cog_path.name.split(".")[0]
             try:
                 fh = int(fh_token.removeprefix("fh"))
