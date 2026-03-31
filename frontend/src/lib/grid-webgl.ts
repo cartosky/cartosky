@@ -104,11 +104,13 @@ function lerpColor(left: [number, number, number, number], right: [number, numbe
 }
 
 function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { pixels: Uint8Array; min: number; max: number } {
+  const normalizedKind = String(legend?.kind ?? "").trim().toLowerCase();
+  const isCategorical = normalizedKind === "indexed" || normalizedKind === "discrete" || normalizedKind === "categorical";
   const entries = Array.isArray(legend?.entries)
     ? legend.entries
       .map((entry) => ({ value: Number(entry.value), rgba: hexToRgba(entry.color) }))
       .filter((entry) => Number.isFinite(entry.value))
-      .sort((left, right) => left.value - right.value)
+      .sort((left, right) => (isCategorical ? 0 : left.value - right.value))
     : [];
 
   const pixels = new Uint8Array(size * 4);
@@ -121,6 +123,21 @@ function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { p
       pixels[offset + 3] = 0;
     }
     return { pixels, min: 0, max: 1 };
+  }
+
+  if (isCategorical) {
+    const maxIndex = Math.max(0, entries.length - 1);
+    const denom = Math.max(1, size - 1);
+    for (let index = 0; index < size; index += 1) {
+      const paletteIndex = Math.min(maxIndex, Math.round((maxIndex * index) / denom));
+      const rgba = entries[paletteIndex]?.rgba ?? [0, 0, 0, 0];
+      const offset = index * 4;
+      pixels[offset] = rgba[0];
+      pixels[offset + 1] = rgba[1];
+      pixels[offset + 2] = rgba[2];
+      pixels[offset + 3] = rgba[3];
+    }
+    return { pixels, min: 0, max: maxIndex };
   }
 
   const min = entries[0].value;
@@ -199,6 +216,15 @@ function transparentBelowMinForManifest(manifest: GridManifestResponse | null): 
 function powerNormGammaForManifest(manifest: GridManifestResponse | null): number {
   const gamma = Number(manifest?.palette?.power_norm_gamma ?? 1);
   return Number.isFinite(gamma) && gamma > 0 ? gamma : 1;
+}
+
+function categoricalPaletteForManifest(manifest: GridManifestResponse | null): boolean {
+  const kind = String(manifest?.palette?.kind ?? "").trim().toLowerCase();
+  return kind === "indexed" || kind === "discrete" || kind === "categorical";
+}
+
+function transparentZeroForManifest(manifest: GridManifestResponse | null): boolean {
+  return Boolean(manifest?.palette?.transparent_zero);
 }
 
 /** Convert user-facing raster-contrast (−1 … 1) to the shader factor.
@@ -302,6 +328,8 @@ type ProgramBindings = {
   hasPrevLocation: WebGLUniformLocation | null;
   powerNormGammaLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
+  categoricalLocation: WebGLUniformLocation | null;
+  transparentZeroLocation: WebGLUniformLocation | null;
   contrastFactorLocation: WebGLUniformLocation | null;
   saturationFactorLocation: WebGLUniformLocation | null;
   brightnessLowLocation: WebGLUniformLocation | null;
@@ -498,6 +526,8 @@ export class GridWebglLayerController {
       uniform float u_hasPrevious;
       uniform float u_powerNormGamma;
       uniform vec2 u_texSize;
+      uniform float u_categorical;
+      uniform float u_transparentZero;
       uniform float u_contrastFactor;
       uniform float u_saturationFactor;
       uniform float u_brightnessLow;
@@ -578,10 +608,27 @@ export class GridWebglLayerController {
         return vec4(color.rgb, color.a * alphaWeight);
       }
 
+      vec4 sampleCategorical(sampler2D tex, vec2 uv) {
+        float decoded = decodeSample(texture2D(tex, uv));
+        if (decoded <= -1e29) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        if (u_transparentZero > 0.5 && decoded < 0.5) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        float denom = max(1.0, u_valueMax - u_valueMin + 1.0);
+        float t = clamp((floor(decoded + 0.5) - u_valueMin + 0.5) / denom, 0.0, 1.0);
+        return texture2D(u_lut, vec2(t, 0.5));
+      }
+
       void main() {
-        vec4 current = sampleBilinear(u_data, v_texCoord);
+        vec4 current = u_categorical > 0.5
+          ? sampleCategorical(u_data, v_texCoord)
+          : sampleBilinear(u_data, v_texCoord);
         vec4 previous = u_hasPrevious > 0.5
-          ? sampleBilinear(u_prevData, v_texCoord)
+          ? (u_categorical > 0.5
+            ? sampleCategorical(u_prevData, v_texCoord)
+            : sampleBilinear(u_prevData, v_texCoord))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
         if (mixed.a <= 0.0) {
@@ -630,6 +677,8 @@ export class GridWebglLayerController {
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
       powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
+      categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
+      transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
       contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
       brightnessLowLocation: gl.getUniformLocation(this.program, "u_brightnessLow"),
@@ -1004,6 +1053,8 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
+    gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
+    gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
       Math.max(1, Math.floor(Number(grid.width) || 1)),

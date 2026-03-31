@@ -54,6 +54,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "mph",
     },
+    ("hrrr", "radar_ptype"): {
+        "scale": 1.0,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "dBZ",
+    },
     ("gfs", "tmp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -250,9 +256,15 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
             spec = get_color_map_spec(color_map_id)
         except KeyError:
             spec = {}
+        spec_type = str(spec.get("type") or "").strip()
+        if spec_type:
+            palette["kind"] = spec_type
         gamma = spec.get("power_norm_gamma")
         if gamma is not None:
             palette["power_norm_gamma"] = float(gamma)
+        transparent_zero = spec.get("transparent_zero")
+        if isinstance(transparent_zero, bool):
+            palette["transparent_zero"] = transparent_zero
     return palette
 
 
