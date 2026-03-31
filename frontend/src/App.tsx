@@ -2433,6 +2433,14 @@ export default function App() {
       }
     };
 
+    if (selectedTimeAxisMode === "observed" && resolvedWeatherSubstrate === "grid_webgl_v1") {
+      clearDwellTimer();
+      if (renderMode !== SINGLE_TIER_WEBP_MODE) {
+        setRenderMode(SINGLE_TIER_WEBP_MODE);
+      }
+      return clearDwellTimer;
+    }
+
     if (!selectionSupportsLegacy || !webpDefaultEnabled || !canUseLoopPlayback) {
       clearDwellTimer();
       if (renderMode !== "tiles") {
@@ -2464,10 +2472,28 @@ export default function App() {
     }, WEBP_RENDER_MODE_THRESHOLDS.dwellMs);
 
     return clearDwellTimer;
-  }, [renderMode, selectionSupportsLegacy, webpDefaultEnabled, canUseLoopPlayback, mapZoom, zoomGestureActive]);
+  }, [
+    canUseLoopPlayback,
+    mapZoom,
+    renderMode,
+    resolvedWeatherSubstrate,
+    selectedTimeAxisMode,
+    selectionSupportsLegacy,
+    webpDefaultEnabled,
+    zoomGestureActive,
+  ]);
 
   useEffect(() => {
     transitionTokenRef.current += 1;
+
+    if (selectedTimeAxisMode === "observed" && resolvedWeatherSubstrate === "grid_webgl_v1") {
+      if (visibleRenderMode !== SINGLE_TIER_WEBP_MODE) {
+        setVisibleRenderMode(SINGLE_TIER_WEBP_MODE);
+      }
+      setLoopDisplayHour(null);
+      setLoopDisplayBitmap(null);
+      return;
+    }
 
     if (!canUseLoopPlayback || !loopSelectionReady) {
       setVisibleRenderMode("tiles");
@@ -2515,6 +2541,7 @@ export default function App() {
     visibleRenderMode,
     canUseLoopPlayback,
     loopSelectionReady,
+    resolvedWeatherSubstrate,
     targetForecastHour,
     resolvedLoopTargetForecastHour,
     resolveLoopUrlForHour,
@@ -2523,6 +2550,7 @@ export default function App() {
     isLoopPreloading,
     isLoopAutoplayBuffering,
     isScrubbing,
+    selectedTimeAxisMode,
   ]);
 
   const loopPlaybackRenderMode: RenderModeState =
