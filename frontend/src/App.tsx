@@ -1829,6 +1829,16 @@ export default function App() {
       ? normalized
       : `${apiRoot}${normalized.startsWith("/") ? "" : "/"}${normalized}`;
   }, [apiRoot]);
+  const gridFrameUrlForHour = useCallback((hour: number | null | undefined): string | null => {
+    if (!Number.isFinite(hour)) {
+      return null;
+    }
+    const frameUrl = gridFrameByHour.get(Number(hour))?.url;
+    if (!frameUrl) {
+      return null;
+    }
+    return normalizeGridFrameUrl(frameUrl);
+  }, [gridFrameByHour, normalizeGridFrameUrl]);
   const isGridFrameReady = useCallback((frameUrl: string | null | undefined): boolean => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -1836,6 +1846,47 @@ export default function App() {
     }
     return gridReadyFrameUrlsRef.current.has(normalized);
   }, [normalizeGridFrameUrl]);
+  const presentedGridDisplayHour = useMemo(() => {
+    if (gridFrameHours.length === 0) {
+      return null;
+    }
+    const requestedHourCandidate = Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null;
+    if (!Number.isFinite(requestedHourCandidate)) {
+      return Number.isFinite(visibleGridFrameHour) ? Number(visibleGridFrameHour) : null;
+    }
+    const requestedHour = Number(requestedHourCandidate);
+    if (isGridFrameReady(gridFrameUrlForHour(requestedHour))) {
+      return requestedHour;
+    }
+    if (Number.isFinite(visibleGridFrameHour) && gridFrameByHour.has(Number(visibleGridFrameHour))) {
+      return Number(visibleGridFrameHour);
+    }
+
+    let nearestReadyHour: number | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const hour of gridFrameHours) {
+      if (!isGridFrameReady(gridFrameUrlForHour(hour))) {
+        continue;
+      }
+      const distance = Math.abs(hour - requestedHour);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestReadyHour = hour;
+      }
+    }
+    return nearestReadyHour ?? requestedHour;
+  }, [
+    gridFrameByHour,
+    gridFrameHours,
+    gridFrameUrlForHour,
+    gridReadyVersion,
+    isGridFrameReady,
+    resolvedGridDisplayHour,
+    visibleGridFrameHour,
+  ]);
+  const presentedGridFrameUrl = useMemo(() => {
+    return gridFrameUrlForHour(presentedGridDisplayHour);
+  }, [gridFrameUrlForHour, presentedGridDisplayHour]);
   const countGridAheadReadyFrames = useCallback((currentHour: number, maxAhead: number): number => {
     if (gridFrameHours.length === 0 || maxAhead <= 0) {
       return 0;
@@ -2191,9 +2242,9 @@ export default function App() {
       && gridLod0
       && Array.isArray(gridManifest.bbox)
       && gridManifest.bbox.length === 4
-      && activeGridFrameUrl
+      && presentedGridFrameUrl
     );
-  }, [activeGridFrameUrl, gridLod0, gridManifest, resolvedWeatherSubstrate]);
+  }, [gridLod0, gridManifest, presentedGridFrameUrl, resolvedWeatherSubstrate]);
   const isGridPlayable = useMemo(() => {
     return resolvedWeatherSubstrate === "grid_webgl_v1" && canUseGridPlayback;
   }, [canUseGridPlayback, resolvedWeatherSubstrate]);
@@ -6582,8 +6633,8 @@ export default function App() {
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
-          gridFrameUrl={isGridLowMidActive ? activeGridFrameUrl : null}
-          gridFrameHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
+          gridFrameUrl={isGridLowMidActive ? presentedGridFrameUrl : null}
+          gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
           contourGeoJsonUrl={contourGeoJsonUrl}
