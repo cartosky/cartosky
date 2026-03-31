@@ -40,6 +40,12 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         smooth_sigma=None,
         preserve_zero_support=True,
     ),
+    ("mrms", "reflectivity"): GridDisplayPrepConfig(
+        id="mrms_reflectivity_display_v1",
+        upscale_factor=1,
+        smooth_sigma=0.45,
+        preserve_zero_support=False,
+    ),
 }
 
 

@@ -105,12 +105,13 @@ function lerpColor(left: [number, number, number, number], right: [number, numbe
 
 function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { pixels: Uint8Array; min: number; max: number } {
   const normalizedKind = String(legend?.kind ?? "").trim().toLowerCase();
-  const isCategorical = normalizedKind === "indexed" || normalizedKind === "discrete" || normalizedKind === "categorical";
+  const isCategorical = normalizedKind === "indexed" || normalizedKind === "categorical";
+  const isDiscrete = normalizedKind === "discrete";
   const entries = Array.isArray(legend?.entries)
     ? legend.entries
       .map((entry) => ({ value: Number(entry.value), rgba: hexToRgba(entry.color) }))
       .filter((entry) => Number.isFinite(entry.value))
-      .sort((left, right) => (isCategorical ? 0 : left.value - right.value))
+      .sort((left, right) => left.value - right.value)
     : [];
 
   const pixels = new Uint8Array(size * 4);
@@ -138,6 +139,32 @@ function buildLegendLut(legend: LegendPayload | null, size = GRID_LUT_SIZE): { p
       pixels[offset + 3] = rgba[3];
     }
     return { pixels, min: 0, max: maxIndex };
+  }
+
+  if (isDiscrete) {
+    const min = entries[0].value;
+    const max = entries[entries.length - 1].value;
+    const denom = Math.max(1e-6, max - min);
+
+    for (let index = 0; index < size; index += 1) {
+      const value = min + (denom * index) / Math.max(1, size - 1);
+      let selected = entries[0];
+      for (let cursor = 0; cursor < entries.length; cursor += 1) {
+        const current = entries[cursor];
+        const next = entries[cursor + 1];
+        selected = current;
+        if (!next || value < next.value) {
+          break;
+        }
+      }
+      const offset = index * 4;
+      pixels[offset] = selected.rgba[0];
+      pixels[offset + 1] = selected.rgba[1];
+      pixels[offset + 2] = selected.rgba[2];
+      pixels[offset + 3] = selected.rgba[3];
+    }
+
+    return { pixels, min, max };
   }
 
   const min = entries[0].value;
@@ -209,6 +236,10 @@ function expectedPackedFrameByteLength(width: number, height: number): number {
 }
 
 function transparentBelowMinForManifest(manifest: GridManifestResponse | null): number {
+  const paletteThreshold = Number(manifest?.palette?.transparent_below_min);
+  if (Number.isFinite(paletteThreshold)) {
+    return paletteThreshold;
+  }
   const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
   return TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID.get(colorMapId) ?? Number.NEGATIVE_INFINITY;
 }
@@ -220,7 +251,7 @@ function powerNormGammaForManifest(manifest: GridManifestResponse | null): numbe
 
 function categoricalPaletteForManifest(manifest: GridManifestResponse | null): boolean {
   const kind = String(manifest?.palette?.kind ?? "").trim().toLowerCase();
-  return kind === "indexed" || kind === "discrete" || kind === "categorical";
+  return kind === "indexed" || kind === "categorical";
 }
 
 function transparentZeroForManifest(manifest: GridManifestResponse | null): boolean {

@@ -279,3 +279,40 @@ def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
 
     new_sidecar = json.loads((second.published_run_dir / "reflectivity" / "fh002.json").read_text())
     assert new_sidecar["valid_time"] == "2026-03-27T12:15:00Z"
+
+
+def test_publish_mrms_bundle_triggers_grid_v1_shadow_build_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(mrms_publish, "grid_v1_build_enabled", lambda: True)
+    monkeypatch.setattr(mrms_publish, "grid_v1_workers", lambda: 3)
+
+    def _build_grid_v1_for_run(**kwargs):
+        captured.update(kwargs)
+        return 1, 0, 1
+
+    monkeypatch.setattr(mrms_publish, "build_grid_v1_for_run", _build_grid_v1_for_run)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    assert result.run_id == "20260327_1206z"
+    assert captured == {
+        "data_root": tmp_path,
+        "model": "mrms",
+        "run": "20260327_1206z",
+        "workers": 3,
+        "variables": ("reflectivity",),
+    }

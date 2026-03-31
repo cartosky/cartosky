@@ -3,12 +3,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.models.mrms import MRMS_MODEL
 from app.models.serialization import serialize_model_capability
+from app import config as config_module
 
 
 def test_mrms_buildable_var_set_and_defaults_invariants() -> None:
@@ -68,3 +71,21 @@ def test_mrms_aliases_normalize() -> None:
     assert MRMS_MODEL.normalize_var_id("merged_base_reflectivity_qc") == "reflectivity"
     assert MRMS_MODEL.normalize_var_id("mrms_reflectivity") == "reflectivity"
     assert MRMS_MODEL.normalize_var_id("dbz") == "reflectivity"
+
+
+def test_mrms_capability_advertises_grid_substrate_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    capabilities = MRMS_MODEL.capabilities
+    assert capabilities is not None
+
+    monkeypatch.setenv("CARTOSKY_GRID_V1_ENABLED", "1")
+    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
+    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
+    config_module.grid_v1_enabled.cache_clear()
+    config_module.grid_v1_allowlist_override.cache_clear()
+    config_module.grid_v1_denylist.cache_clear()
+
+    payload = serialize_model_capability("mrms", capabilities)
+
+    reflectivity = payload["variables"]["reflectivity"]
+    assert reflectivity["render_substrates"] == ["grid_webgl_v1"]
+    assert payload["defaults"]["default_render_substrate"] == "grid_webgl_v1"

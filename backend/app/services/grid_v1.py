@@ -193,6 +193,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "in",
     },
+    ("mrms", "reflectivity"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "dBZ",
+    },
 }
 
 
@@ -322,6 +328,15 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
         gamma = spec.get("power_norm_gamma")
         if gamma is not None:
             palette["power_norm_gamma"] = float(gamma)
+        transparent_below_min = spec.get("transparent_below_min")
+        if isinstance(transparent_below_min, (int, float)) and not isinstance(transparent_below_min, bool):
+            palette["transparent_below_min"] = float(transparent_below_min)
+        elif transparent_below_min is True and spec_type == "discrete":
+            levels = spec.get("levels")
+            if isinstance(levels, list) and levels:
+                first_level = levels[0]
+                if isinstance(first_level, (int, float)) and not isinstance(first_level, bool):
+                    palette["transparent_below_min"] = float(first_level)
         transparent_zero = spec.get("transparent_zero")
         if isinstance(transparent_zero, bool):
             palette["transparent_zero"] = transparent_zero

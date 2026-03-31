@@ -610,6 +610,71 @@ def test_build_grid_v1_for_run_supports_hrrr_radar_ptype(
     assert manifest["grid"]["units"] == "dBZ"
 
 
+def test_build_grid_v1_for_run_supports_mrms_reflectivity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "mrms"
+    run_id = "20260330_1205z"
+    var = "reflectivity"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[10.0, 20.0], [np.nan, 60.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:05:00Z"})
+    )
+
+    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
+    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
+    config_module.grid_v1_allowlist_override.cache_clear()
+    config_module.grid_v1_denylist.cache_clear()
+
+    ok, fail, manifest_ok = build_grid_v1_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
+    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
+    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    assert frame_path.is_file()
+    assert frame_meta_path.is_file()
+    assert manifest_path.is_file()
+
+    frame_meta = json.loads(frame_meta_path.read_text())
+    assert frame_meta["width"] == values.shape[1]
+    assert frame_meta["height"] == values.shape[0]
+    assert frame_meta["display_prep"]["id"] == "mrms_reflectivity_display_v1"
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "mrms_reflectivity"
+    assert manifest["palette"]["kind"] == "discrete"
+    assert manifest["palette"]["transparent_below_min"] == 10.0
+    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "dBZ"
+    assert manifest["grid"]["width"] == values.shape[1]
+    assert manifest["grid"]["height"] == values.shape[0]
+    assert manifest["display_prep"]["id"] == "mrms_reflectivity_display_v1"
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded.dtype == np.dtype("<u2")
+    assert encoded[0, 0] >= 100
+    assert encoded[0, 1] >= 200
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] > encoded[0, 1]
+    assert encoded[1, 1] >= 500
+    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+
+
 def test_build_grid_v1_for_run_supports_nam_radar_ptype(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
