@@ -328,24 +328,36 @@ def test_build_grid_v1_for_run_supports_gfs_precip_total(
     assert manifest_ok == 1
 
     frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
+    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
     manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
     assert frame_path.is_file()
+    assert frame_meta_path.is_file()
     assert manifest_path.is_file()
 
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
-    assert encoded[0, 0] == 0
-    assert encoded[0, 1] == 123
-    assert encoded[1, 0] == 65535
-    assert encoded[1, 1] == 486
+    frame_meta = json.loads(frame_meta_path.read_text())
+    assert frame_meta["width"] == values.shape[1] * 3
+    assert frame_meta["height"] == values.shape[0] * 3
+    assert frame_meta["display_prep"]["id"] == "gfs_precip_total_display_v1"
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "precip_total"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
-    assert manifest["grid"]["width"] == values.shape[1]
-    assert manifest["grid"]["height"] == values.shape[0]
-    assert "display_prep" not in manifest
+    assert manifest["grid"]["width"] == values.shape[1] * 3
+    assert manifest["grid"]["height"] == values.shape[0] * 3
+    assert manifest["display_prep"]["id"] == "gfs_precip_total_display_v1"
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+        manifest["grid"]["height"],
+        manifest["grid"]["width"],
+    )
+    assert encoded.shape == (values.shape[0] * 3, values.shape[1] * 3)
+    assert encoded.dtype == np.dtype("<u2")
+    assert np.count_nonzero(encoded == 65535) > 0
+    assert int(encoded.max()) >= 486
+    assert int(encoded.min()) == 0
+
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
