@@ -51,7 +51,10 @@ def grid_v1_workers() -> int:
 
 @lru_cache(maxsize=1)
 def grid_v1_allowlist() -> set[tuple[str, str]]:
-    raw = _env_value("CARTOSKY_GRID_V1_ALLOWLIST", default="hrrr:tmp2m")
+    raw = _env_value(
+        "CARTOSKY_GRID_V1_ALLOWLIST",
+        default="hrrr:tmp2m,hrrr:dp2m,hrrr:tmp850,gfs:tmp2m,gfs:dp2m,gfs:tmp850,gfs:snowfall_total",
+    )
     allowed: set[tuple[str, str]] = set()
     for chunk in raw.split(","):
         normalized = chunk.strip().lower()

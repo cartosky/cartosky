@@ -95,6 +95,67 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
+@pytest.mark.parametrize(
+    ("model", "var"),
+    [
+        ("hrrr", "dp2m"),
+        ("hrrr", "tmp850"),
+        ("gfs", "tmp2m"),
+        ("gfs", "dp2m"),
+        ("gfs", "tmp850"),
+    ],
+)
+def test_build_grid_v1_for_run_supports_temperature_family_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    var: str,
+) -> None:
+    data_root = tmp_path / "data"
+    run_id = "20260330_12z"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    monkeypatch.setenv("CARTOSKY_GRID_V1_ALLOWLIST", f"{model}:{var}")
+    config_module.grid_v1_allowlist.cache_clear()
+
+    ok, fail, manifest_ok = build_grid_v1_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
+    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    assert frame_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 1320
+    assert encoded[0, 1] == 1405
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 877
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == var
+    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["offset"] == -100.0
+    assert manifest["grid"]["units"] == "F"
+    assert manifest["grid"]["width"] == values.shape[1]
+    assert manifest["grid"]["height"] == values.shape[0]
+    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+
+
 def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
