@@ -618,29 +618,6 @@ export class GridWebglLayerController {
         return 1.0;
       }
 
-      float categoricalCoverage(sampler2D tex, vec2 uv) {
-        vec2 texel = uv * u_texSize - 0.5;
-        vec2 f = fract(texel);
-        vec2 base = (floor(texel) + 0.5) / u_texSize;
-        vec2 step = 1.0 / u_texSize;
-
-        float v00 = decodeSample(texture2D(tex, base));
-        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
-        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
-        float v11 = decodeSample(texture2D(tex, base + step));
-
-        float w00 = categoricalVisibleWeight(v00);
-        float w10 = categoricalVisibleWeight(v10);
-        float w01 = categoricalVisibleWeight(v01);
-        float w11 = categoricalVisibleWeight(v11);
-
-        float bw00 = (1.0 - f.x) * (1.0 - f.y);
-        float bw10 = f.x * (1.0 - f.y);
-        float bw01 = (1.0 - f.x) * f.y;
-        float bw11 = f.x * f.y;
-        return bw00 * w00 + bw10 * w10 + bw01 * w01 + bw11 * w11;
-      }
-
       float categoricalDominantValue(sampler2D tex, vec2 uv) {
         vec2 texel = uv * u_texSize - 0.5;
         vec2 f = fract(texel);
@@ -680,14 +657,12 @@ export class GridWebglLayerController {
 
       vec4 sampleCategorical(sampler2D tex, vec2 uv) {
         float decoded = categoricalDominantValue(tex, uv);
-        float coverage = categoricalCoverage(tex, uv);
-        if (decoded <= -1e29 || coverage <= 0.0) {
+        if (decoded <= -1e29) {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
         float denom = max(1.0, u_valueMax - u_valueMin + 1.0);
         float t = clamp((floor(decoded + 0.5) - u_valueMin + 0.5) / denom, 0.0, 1.0);
-        vec4 color = texture2D(u_lut, vec2(t, 0.5));
-        return vec4(color.rgb, color.a * coverage);
+        return texture2D(u_lut, vec2(t, 0.5));
       }
 
       void main() {
