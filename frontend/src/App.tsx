@@ -2120,17 +2120,16 @@ export default function App() {
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
       resolvedWeatherSubstrate === "grid_webgl_v1"
-      && !isHighDetailZoom
       && gridManifest
       && gridLod0
       && Array.isArray(gridManifest.bbox)
       && gridManifest.bbox.length === 4
       && activeGridFrameUrl
     );
-  }, [activeGridFrameUrl, gridLod0, gridManifest, isHighDetailZoom, resolvedWeatherSubstrate]);
+  }, [activeGridFrameUrl, gridLod0, gridManifest, resolvedWeatherSubstrate]);
   const isGridPlayable = useMemo(() => {
-    return resolvedWeatherSubstrate === "grid_webgl_v1" && canUseGridPlayback && !isHighDetailZoom;
-  }, [canUseGridPlayback, isHighDetailZoom, resolvedWeatherSubstrate]);
+    return resolvedWeatherSubstrate === "grid_webgl_v1" && canUseGridPlayback;
+  }, [canUseGridPlayback, resolvedWeatherSubstrate]);
 
   useEffect(() => {
     forecastHourRef.current = forecastHour;
@@ -5545,16 +5544,6 @@ export default function App() {
     }
 
     if (renderMode === "tiles") {
-      if (canUseGridPlayback && isHighDetailZoom) {
-        pendingLoopStartMetricRef.current = null;
-        setIsPlaying(false);
-        setIsLoopAutoplayBuffering(false);
-        setIsLoopPreloading(false);
-        setIsPreloadingForPlay(false);
-        setIsGridPreloadingForPlay(false);
-        showTransientFrameStatus("High detail mode — zoom out for animation playback");
-        return;
-      }
       if (canUseLoopPlayback && isHighDetailZoom) {
         pendingLoopStartMetricRef.current = null;
         setIsPlaying(false);
@@ -6031,13 +6020,13 @@ export default function App() {
   const controlsIsPlaying = isPlaying || isPreloadingForPlay || isGridPreloadingForPlay || isLoopPreloading;
   const substrateDebugLabel = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
-      return isHighDetailZoom ? "grid_webgl_v1 (tile fallback)" : "grid_webgl_v1";
+      return "grid_webgl_v1";
     }
     if (prefersGridSubstrate && !gridManifest) {
       return "legacy (grid fallback)";
     }
     return "legacy";
-  }, [gridManifest, isHighDetailZoom, prefersGridSubstrate, resolvedWeatherSubstrate]);
+  }, [gridManifest, prefersGridSubstrate, resolvedWeatherSubstrate]);
   const substrateDebugDetail = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
