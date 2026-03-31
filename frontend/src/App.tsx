@@ -3121,8 +3121,14 @@ export default function App() {
     ) {
       return;
     }
-    markTileReady(loadedTileUrl);
-    markFrameReady(loadedTileUrl);
+    // Skip legacy tile buffer bookkeeping when the grid WebGL layer is the
+    // active renderer — the preceding handleTileReady call already tagged the
+    // URL as "grid-warm" in tileReadySourceRef.
+    const isGridWarm = tileReadySourceRef.current.get(loadedTileUrl) === "grid-warm";
+    if (!isGridWarm) {
+      markTileReady(loadedTileUrl);
+      markFrameReady(loadedTileUrl);
+    }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === loadedTileUrl) {
       if (!Number.isFinite(pending.firstTileReadyAt)) {
@@ -3157,8 +3163,14 @@ export default function App() {
     if (meta?.source) {
       tileReadySourceRef.current.set(loadedTileUrl, meta.source);
     }
-    markTileReady(loadedTileUrl);
-    markFrameReady(loadedTileUrl);
+    // When the grid WebGL layer is the active renderer, synthetic tile-ready
+    // signals keep the settled/loading state fed but the legacy tile buffer
+    // snapshot tracking (markTileReady / markFrameReady) is unnecessary work
+    // that triggers React re-renders via updateBufferSnapshot.
+    if (meta?.source !== "grid-warm") {
+      markTileReady(loadedTileUrl);
+      markFrameReady(loadedTileUrl);
+    }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === loadedTileUrl) {
       if (!Number.isFinite(pending.firstTileReadyAt)) {
@@ -4987,9 +4999,12 @@ export default function App() {
     failedRumCountRef.current = 0;
   }, [selectionKey]);
 
-  useEffect(() => {
-    setGridManifest(null);
-  }, [model, run, variable]);
+  // NOTE: gridManifest is NOT eagerly nullified on [model, run, variable]
+  // changes. The fetch effect (above, at the useEffect that depends on
+  // variable/model/run) will atomically swap the manifest once the new one
+  // arrives, keeping the grid WebGL layer visible with the previous
+  // variable's data during the fetch. This eliminates the blank-map flash
+  // that occurred when the manifest was cleared before the new one loaded.
 
   useEffect(() => {
     if (!selectionSupportsLegacy || !model || !variable || !hasRenderableSelection) {
@@ -5548,6 +5563,10 @@ export default function App() {
     let rafId: number | null = null;
     let previousTs = performance.now();
     let accumulatedMs = 0;
+    /** Tracks continuous stall time (ms) on a single unready frame. */
+    let stallMs = 0;
+    /** Index of the frame we're stalled on, to reset the counter on advance. */
+    let stalledOnIndex = -1;
 
     const tick = (now: number) => {
       const currentHour = gridPlaybackHourRef.current
@@ -5576,12 +5595,39 @@ export default function App() {
         }
         const nextHour = gridFrameHours[nextIndex];
         const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
-        if (!isGridFrameReady(nextUrl)) {
+        if (isGridFrameReady(nextUrl)) {
+          accumulatedMs -= AUTOPLAY_TICK_MS;
+          gridPlaybackHourRef.current = nextHour;
+          setTargetForecastHour(nextHour);
+          // Reset stall tracker on successful advance.
+          stallMs = 0;
+          stalledOnIndex = -1;
           break;
         }
-        accumulatedMs -= AUTOPLAY_TICK_MS;
-        gridPlaybackHourRef.current = nextHour;
-        setTargetForecastHour(nextHour);
+
+        // Next frame isn't ready — accumulate stall time and attempt skip.
+        if (stalledOnIndex !== nextIndex) {
+          stalledOnIndex = nextIndex;
+          stallMs = 0;
+        }
+        stallMs += deltaMs;
+
+        // After stalling long enough, try skipping ahead within a window.
+        if (stallMs >= AUTOPLAY_TICK_MS * 3) {
+          const maxStep = Math.min(AUTOPLAY_SKIP_WINDOW, gridFrameHours.length - 1 - currentIndex);
+          for (let step = 2; step <= maxStep; step += 1) {
+            const candidateHour = gridFrameHours[currentIndex + step];
+            const candidateUrl = String(gridFrameByHour.get(candidateHour)?.url ?? "").trim();
+            if (isGridFrameReady(candidateUrl)) {
+              accumulatedMs -= AUTOPLAY_TICK_MS;
+              gridPlaybackHourRef.current = candidateHour;
+              setTargetForecastHour(candidateHour);
+              stallMs = 0;
+              stalledOnIndex = -1;
+              break;
+            }
+          }
+        }
         break;
       }
 

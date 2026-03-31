@@ -51,7 +51,7 @@ type RegionView = {
 };
 
 export type BasemapMode = "light" | "dark";
-export type TileReadySource = "active" | "swap" | "prefetch" | "loop-warm";
+export type TileReadySource = "active" | "swap" | "prefetch" | "loop-warm" | "grid-warm";
 export type TileReadyMeta = {
   source: TileReadySource;
   selectionEpoch?: number;
@@ -2350,7 +2350,13 @@ export function MapCanvas({
     // frame fetches, causing scrubbing lag and animation stalls (especially
     // noticeable for observed data such as MRMS which prefetches many frames).
     if (loopActive || gridActive) {
+      // Grid WebGL and loop playback are fully canvas-backed renderers.
+      // Skip the legacy tile swap but fire synthetic readiness signals so
+      // App.tsx's scrub flow-control (bufferSnapshot / markFrameReady) stays
+      // fed — mirroring the loop-warm reporting effect above.
       onFrameLoadingChange?.(tileUrl, false, selectionScope);
+      onTileReady?.(tileUrl, { source: "grid-warm", ...selectionScope });
+      onFrameSettled?.(tileUrl, selectionScope);
       return;
     }
     let settledCleanup: (() => void) | undefined;
