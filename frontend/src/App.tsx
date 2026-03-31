@@ -2099,6 +2099,9 @@ export default function App() {
   );
 
   const canUseLoopPlayback = useMemo(() => {
+    if (!selectionSupportsLegacy) {
+      return false;
+    }
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       return false;
     }
@@ -2106,7 +2109,7 @@ export default function App() {
       return false;
     }
     return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
-  }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour, resolvedWeatherSubstrate]);
+  }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour, resolvedWeatherSubstrate, selectionSupportsLegacy]);
 
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
@@ -2293,6 +2296,19 @@ export default function App() {
   }, [renderMode, visibleRenderMode]);
 
   useEffect(() => {
+    if (selectionSupportsLegacy) {
+      return;
+    }
+    setRenderMode("tiles");
+    setVisibleRenderMode("tiles");
+    setLoopDisplayHour(null);
+    setLoopDisplayBitmap(null);
+    setIsLoopPreloading(false);
+    setIsLoopAutoplayBuffering(false);
+    setLoopProgress({ total: 0, ready: 0, failed: 0 });
+  }, [selectionKey, selectionSupportsLegacy]);
+
+  useEffect(() => {
     const clearDwellTimer = () => {
       if (renderModeDwellTimerRef.current !== null) {
         window.clearTimeout(renderModeDwellTimerRef.current);
@@ -2300,7 +2316,7 @@ export default function App() {
       }
     };
 
-    if (!webpDefaultEnabled || !canUseLoopPlayback) {
+    if (!selectionSupportsLegacy || !webpDefaultEnabled || !canUseLoopPlayback) {
       clearDwellTimer();
       if (renderMode !== "tiles") {
         setRenderMode("tiles");
@@ -2331,7 +2347,7 @@ export default function App() {
     }, WEBP_RENDER_MODE_THRESHOLDS.dwellMs);
 
     return clearDwellTimer;
-  }, [renderMode, webpDefaultEnabled, canUseLoopPlayback, mapZoom, zoomGestureActive]);
+  }, [renderMode, selectionSupportsLegacy, webpDefaultEnabled, canUseLoopPlayback, mapZoom, zoomGestureActive]);
 
   useEffect(() => {
     transitionTokenRef.current += 1;
