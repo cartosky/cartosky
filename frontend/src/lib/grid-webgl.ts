@@ -10,6 +10,7 @@ const GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 128 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 64 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 8;
+const GRID_TEXTURE_WARM_BATCH_SIZE = 2;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
@@ -1055,19 +1056,30 @@ export class GridWebglLayerController {
   }
 
   private async pumpTextureWarmQueue() {
-    while (this.textureWarmQueue.length > 0) {
+    const batch: string[] = [];
+    while (this.textureWarmQueue.length > 0 && batch.length < GRID_TEXTURE_WARM_BATCH_SIZE) {
       const nextUrl = this.textureWarmQueue.shift() ?? "";
       this.textureWarmQueued.delete(nextUrl);
       if (!nextUrl || this.invalidFrameUrls.has(nextUrl) || this.textureCache.has(nextUrl)) {
         continue;
       }
-      const bytes = await this.fetchFrameBytes(nextUrl);
-      if (!bytes || !this.gl) {
-        continue;
+      batch.push(nextUrl);
+    }
+
+    if (batch.length > 0) {
+      const warmed = await Promise.all(
+        batch.map(async (nextUrl) => {
+          const bytes = await this.fetchFrameBytes(nextUrl);
+          if (!bytes || !this.gl) {
+            return false;
+          }
+          this.createTextureFromBytes(nextUrl, bytes);
+          return true;
+        })
+      );
+      if (warmed.some(Boolean)) {
+        this.map?.triggerRepaint();
       }
-      this.createTextureFromBytes(nextUrl, bytes);
-      this.map?.triggerRepaint();
-      break;
     }
 
     if (this.textureWarmQueue.length > 0 && this.textureWarmRafId === null && typeof window !== "undefined") {

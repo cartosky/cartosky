@@ -70,6 +70,8 @@ const SETTLE_TIMEOUT_MS = 1200;
 const CONTINUOUS_CROSSFADE_MS = 120;
 const MICRO_CROSSFADE_MS = 140;
 const PREFETCH_BUFFER_COUNT = 8;
+const OBSERVED_GRID_SCRUB_AHEAD_PREFETCH = 10;
+const OBSERVED_GRID_SCRUB_BEHIND_PREFETCH = 3;
 const OVERLAY_RASTER_CONTRAST = 0.11;
 const OVERLAY_RASTER_SATURATION = 0.11;
 const OVERLAY_RASTER_BRIGHTNESS_MIN = 0.02;
@@ -932,6 +934,7 @@ export function MapCanvas({
     if (!gridManifest?.lods?.length || !gridFrameUrl || !Number.isFinite(gridFrameHour)) {
       return [] as string[];
     }
+    const isObservedGrid = String(gridManifest?.model ?? "").trim().toLowerCase() === "mrms";
     const lod = gridManifest.lods.find((entry) => Number(entry?.level) === 0) ?? gridManifest.lods[0] ?? null;
     const frames = Array.isArray(lod?.frames) ? lod.frames : [];
     const frameHours = frames
@@ -949,12 +952,12 @@ export function MapCanvas({
       ? Math.min(remainingAhead, 8)
       : mode === "variable-switch"
         ? Math.min(remainingAhead, 6)
-        : Math.min(remainingAhead, 4);
+        : Math.min(remainingAhead, isObservedGrid ? OBSERVED_GRID_SCRUB_AHEAD_PREFETCH : 4);
     const behindTarget = mode === "autoplay"
       ? Math.min(remainingBehind, 2)
       : mode === "variable-switch"
         ? Math.min(remainingBehind, 2)
-        : Math.min(remainingBehind, 1);
+        : Math.min(remainingBehind, isObservedGrid ? OBSERVED_GRID_SCRUB_BEHIND_PREFETCH : 1);
     const normalizeGridUrl = (rawUrl: string): string => {
       if (!rawUrl) {
         return "";
