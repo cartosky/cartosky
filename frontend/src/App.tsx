@@ -1272,6 +1272,7 @@ export default function App() {
     weatherSubstrateOverride,
   ]);
   const prefersGridSubstrate = selectedWeatherSubstrate === "grid_webgl_v1";
+  const legacyRuntimeEnabled = selectionSupportsLegacy && selectedWeatherSubstrate === "legacy";
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1691,7 +1692,7 @@ export default function App() {
   }, [runs, latestRunId, selectedTimeAxisMode]);
 
   const loopFrameTier0FallbackByHour = useMemo(() => {
-    if (!selectionSupportsLegacy) {
+    if (!legacyRuntimeEnabled) {
       return new Map<number, string>();
     }
     const map = new Map<number, string>();
@@ -1707,10 +1708,10 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, frameRows, selectionSupportsLegacy]);
+  }, [apiRoot, frameRows, legacyRuntimeEnabled]);
 
   const loopTier0UrlByHour = useMemo(() => {
-    if (!selectionSupportsLegacy) {
+    if (!legacyRuntimeEnabled) {
       return new Map<number, string>();
     }
     const map = new Map<number, string>(loopFrameTier0FallbackByHour);
@@ -1728,7 +1729,7 @@ export default function App() {
       map.set(fh, absolute);
     }
     return map;
-  }, [apiRoot, loopFrameTier0FallbackByHour, loopManifest, selectionSupportsLegacy]);
+  }, [apiRoot, legacyRuntimeEnabled, loopFrameTier0FallbackByHour, loopManifest]);
 
   const loopUrlByHour = useMemo(() => new Map(loopTier0UrlByHour), [loopTier0UrlByHour]);
 
@@ -2217,17 +2218,14 @@ export default function App() {
   );
 
   const canUseLoopPlayback = useMemo(() => {
-    if (!selectionSupportsLegacy) {
-      return false;
-    }
-    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
+    if (!legacyRuntimeEnabled) {
       return false;
     }
     if (loopFrameHours.length <= 1) {
       return false;
     }
     return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
-  }, [loopFrameHours, loopTier0UrlByHour, loopUrlByHour, resolvedWeatherSubstrate, selectionSupportsLegacy]);
+  }, [legacyRuntimeEnabled, loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
 
   const isHighDetailZoom = useMemo(() => {
     const effectiveZoom = getEffectiveZoom(mapZoom);
@@ -2413,7 +2411,7 @@ export default function App() {
   }, [renderMode, visibleRenderMode]);
 
   useEffect(() => {
-    if (selectionSupportsLegacy) {
+    if (legacyRuntimeEnabled) {
       return;
     }
     setRenderMode("tiles");
@@ -2423,7 +2421,7 @@ export default function App() {
     setIsLoopPreloading(false);
     setIsLoopAutoplayBuffering(false);
     setLoopProgress({ total: 0, ready: 0, failed: 0 });
-  }, [selectionKey, selectionSupportsLegacy]);
+  }, [legacyRuntimeEnabled, selectionKey]);
 
   useEffect(() => {
     const clearDwellTimer = () => {
@@ -2441,7 +2439,7 @@ export default function App() {
       return clearDwellTimer;
     }
 
-    if (!selectionSupportsLegacy || !webpDefaultEnabled || !canUseLoopPlayback) {
+    if (!legacyRuntimeEnabled || !webpDefaultEnabled || !canUseLoopPlayback) {
       clearDwellTimer();
       if (renderMode !== "tiles") {
         setRenderMode("tiles");
@@ -2478,7 +2476,7 @@ export default function App() {
     renderMode,
     resolvedWeatherSubstrate,
     selectedTimeAxisMode,
-    selectionSupportsLegacy,
+    legacyRuntimeEnabled,
     webpDefaultEnabled,
     zoomGestureActive,
   ]);
@@ -2585,7 +2583,7 @@ export default function App() {
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
-      if (!hasRenderableSelection || !selectionSupportsLegacy) {
+      if (!hasRenderableSelection || !legacyRuntimeEnabled) {
         return EMPTY_TILE_DATA_URL;
       }
       const fallbackFh = frameHours[0] ?? 0;
@@ -2598,7 +2596,7 @@ export default function App() {
         frameRow: frameByHour.get(resolvedFh) ?? frameRows[0] ?? null,
       });
     },
-    [hasRenderableSelection, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows, selectionSupportsLegacy]
+    [hasRenderableSelection, legacyRuntimeEnabled, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows]
   );
 
   const tileUrl = useMemo(() => {
@@ -2606,7 +2604,7 @@ export default function App() {
   }, [tileUrlForHour, mapForecastHour]);
 
   const tileUrlToHour = useMemo(() => {
-    if (!selectionSupportsLegacy) {
+    if (!legacyRuntimeEnabled) {
       return new Map<string, number>();
     }
     const map = new Map<string, number>();
@@ -2614,7 +2612,7 @@ export default function App() {
       map.set(tileUrlForHour(fh), fh);
     }
     return map;
-  }, [frameHours, tileUrlForHour, selectionSupportsLegacy]);
+  }, [frameHours, legacyRuntimeEnabled, tileUrlForHour]);
 
   const playbackPolicy = useMemo(
     () =>
@@ -2820,7 +2818,7 @@ export default function App() {
   }, [opacity, rawLegend, selectedTimeAxisMode, stableObservedLegend]);
 
   const prefetchHours = useMemo(() => {
-    if (!selectionSupportsLegacy || !hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
+    if (!legacyRuntimeEnabled || !hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
       return [] as number[];
     }
 
@@ -2868,7 +2866,7 @@ export default function App() {
     scrubCommitIntent,
     isLoopDisplayActive,
     hasRenderableSelection,
-    selectionSupportsLegacy,
+    legacyRuntimeEnabled,
   ]);
 
   const prefetchTileUrls = useMemo(() => {
@@ -5007,7 +5005,7 @@ export default function App() {
   // that occurred when the manifest was cleared before the new one loaded.
 
   useEffect(() => {
-    if (!selectionSupportsLegacy || !model || !variable || !hasRenderableSelection) {
+    if (!legacyRuntimeEnabled || !model || !variable || !hasRenderableSelection) {
       setLoopManifest(null);
       return;
     }
@@ -5061,7 +5059,7 @@ export default function App() {
     variable,
     resolvedRunForRequests,
     hasRenderableSelection,
-    selectionSupportsLegacy,
+    legacyRuntimeEnabled,
     telemetryRunId,
     region,
   ]);
