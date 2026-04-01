@@ -1883,10 +1883,6 @@ def _static_loop_webp_url(model: str, run: str, var: str, fh: int, *, tier: int,
     return f"{base}/{model}/{run}/{var}/tier{tier}/fh{fh:03d}.loop.webp?v={version_token}"
 
 
-def _legacy_loop_webp_url(model: str, run: str, var: str, fh: int, *, version_token: str) -> str:
-    return _loop_webp_url(model, run, var, fh, tier=0, version_token=version_token)
-
-
 def _resolve_existing_loop_urls(
     model: str,
     run: str,
@@ -1901,10 +1897,6 @@ def _resolve_existing_loop_urls(
     tier0_path = _loop_webp_path(model, run, var, fh, tier=0)
     if tier0_path is not None and tier0_path.is_file():
         tier0_url = _loop_webp_url(model, run, var, fh, tier=0, version_token=version_token)
-    else:
-        legacy_path = _legacy_loop_webp_path(model, run, var, fh, tier=0)
-        if legacy_path is not None and legacy_path.is_file():
-            tier0_url = _legacy_loop_webp_url(model, run, var, fh, version_token=version_token)
 
     tier1_path = _loop_webp_path(model, run, var, fh, tier=1)
     if tier1_path is not None and tier1_path.is_file():
@@ -2448,18 +2440,6 @@ def _loop_webp_path(model: str, run: str, var: str, fh: int, *, tier: int) -> Pa
     if resolved is None:
         return None
     return LOOP_CACHE_ROOT / model / resolved / var / f"tier{tier}" / f"fh{fh:03d}.loop.webp"
-
-
-def _legacy_loop_webp_path(model: str, run: str, var: str, fh: int, *, tier: int) -> Path | None:
-    if tier != 0:
-        return None
-    resolved = _resolve_run(model, run)
-    if resolved is None:
-        return None
-    candidate = _published_var_dir(model, resolved, var) / f"fh{fh:03d}.loop.webp"
-    if candidate.is_file():
-        return candidate
-    return None
 
 
 def _maybe_blur_loop_values(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
@@ -3629,16 +3609,6 @@ def get_loop_webp(
         return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
     value_cog_path = _resolve_val_cog(model, resolved, var, fh)
 
-    legacy_path = _legacy_loop_webp_path(model, resolved, var, fh, tier=tier)
-    if legacy_path is not None:
-        _record_loop_request_source("cache", model=model, var=var, tier=tier)
-        cache_control = CACHE_HIT if run != "latest" else CACHE_MISS
-        return FileResponse(
-            path=str(legacy_path),
-            media_type="image/webp",
-            headers={"Cache-Control": cache_control},
-        )
-
     out_path = _loop_webp_path(model, resolved, var, fh, tier=tier)
     if out_path is None:
         return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
@@ -3657,15 +3627,6 @@ def get_loop_webp(
         # Graceful degradation path: avoid surfacing hard 500s to clients when
         # cache writes fail (permissions/disk), and allow tier-1 to fall back.
         if tier == 1:
-            tier0_legacy = _legacy_loop_webp_path(model, resolved, var, fh, tier=0)
-            if tier0_legacy is not None:
-                _record_loop_request_source("cache", model=model, var=var, tier=0)
-                return FileResponse(
-                    path=str(tier0_legacy),
-                    media_type="image/webp",
-                    headers={"Cache-Control": CACHE_MISS},
-                )
-
             tier0_out = _loop_webp_path(model, resolved, var, fh, tier=0)
             if tier0_out is not None:
                 tier0_out_preexisting = tier0_out.is_file()

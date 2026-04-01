@@ -277,6 +277,25 @@ async def test_loop_manifest_includes_tier0_runtime_fallback_without_pregenerate
     assert "/loop.webp?tier=0" in tier0_frames[0]["url"]
 
 
+async def test_existing_loop_urls_ignore_removed_published_loop_fallback(
+    client: httpx.AsyncClient,
+) -> None:
+    published_legacy_path = main_module.PUBLISHED_ROOT / "hrrr" / "20260224_15z" / "radar_ptype" / "fh000.loop.webp"
+    published_legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    published_legacy_path.write_bytes(b"legacy-loop-webp")
+
+    tier0_url, tier1_url = main_module._resolve_existing_loop_urls(
+        "hrrr",
+        "20260224_15z",
+        "radar_ptype",
+        0,
+        version_token="test-token",
+    )
+
+    assert tier0_url is None
+    assert tier1_url is None
+
+
 async def test_legacy_runtime_routes_are_retired(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/legacy/hrrr/latest/radar_ptype/frames")
     assert response.status_code == 404
