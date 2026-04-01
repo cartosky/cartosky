@@ -1243,9 +1243,15 @@ export default function App() {
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedModelDefaultRenderSubstrate = readCapabilityDefaultRenderSubstrate(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
-  const selectedVariableRenderSubstrates = selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"];
-  const selectionSupportsLegacy = selectedVariableRenderSubstrates.includes("legacy");
-  const selectionSupportsGridV1 = gridV1Enabled && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
+  const selectionCapabilitiesResolved = Boolean(variable) && selectedCapabilityVarMap.has(variable);
+  const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
+    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"])
+    : [];
+  const selectionSupportsLegacy = selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("legacy");
+  const selectionSupportsGridV1 = selectionCapabilitiesResolved
+    && gridV1Enabled
+    && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
   const gridOnlySelection = selectionSupportsGridV1 && !selectionSupportsLegacy;
   const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
     if (weatherSubstrateOverride === "legacy") {
@@ -1267,6 +1273,7 @@ export default function App() {
   }, [
     gridV1DefaultEnabled,
     selectedModelDefaultRenderSubstrate,
+    selectionCapabilitiesResolved,
     selectionSupportsLegacy,
     selectionSupportsGridV1,
     weatherSubstrateOverride,

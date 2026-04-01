@@ -221,6 +221,9 @@ test.describe('Grid-only smoke', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regionPayload()) });
     });
     await page.route('**/api/v4/capabilities', async (route) => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 250);
+      });
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
     });
     await page.route(`**/api/v4/hrrr/runs`, async (route) => {
