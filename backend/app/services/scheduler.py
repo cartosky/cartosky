@@ -1564,6 +1564,7 @@ def _process_run(
     rebuild_max_attempts = 2
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
+        del pregenerate_loops
         _promote_run(data_root, model_id, run_id)
         _write_run_manifest(
             data_root=data_root,
@@ -1573,38 +1574,6 @@ def _process_run(
             plugin=plugin,
         )
         _write_latest_pointer(data_root, model_id, run_id)
-        if loop_pregenerate_enabled:
-            if pregenerate_loops:
-                _pregenerate_loop_webp_for_run(
-                    data_root=data_root,
-                    model=model_id,
-                    run_id=run_id,
-                    loop_cache_root=loop_cache_root,
-                    workers=loop_workers,
-                    tier0_quality=loop_tier0_quality,
-                    tier0_max_dim=loop_tier0_max_dim,
-                    tier0_fixed_w=loop_tier0_fixed_w,
-                    tier1_quality=loop_tier1_quality,
-                    tier1_max_dim=loop_tier1_max_dim,
-                    tier1_fixed_w=loop_tier1_fixed_w,
-                )
-            elif loop_prewarm_var and loop_prewarm_fhs:
-                _pregenerate_loop_webp_for_run(
-                    data_root=data_root,
-                    model=model_id,
-                    run_id=run_id,
-                    loop_cache_root=loop_cache_root,
-                    workers=loop_workers,
-                    tier0_quality=loop_tier0_quality,
-                    tier0_max_dim=loop_tier0_max_dim,
-                    tier0_fixed_w=loop_tier0_fixed_w,
-                    tier1_quality=loop_tier1_quality,
-                    tier1_max_dim=loop_tier1_max_dim,
-                    tier1_fixed_w=loop_tier1_fixed_w,
-                    variables=(loop_prewarm_var,),
-                    forecast_hours=loop_prewarm_fhs,
-                    tiers=(0,),
-                )
         if grid_v1_build_enabled():
             try:
                 grid_ok, grid_fail, manifest_ok = build_grid_v1_for_run(
@@ -1844,7 +1813,6 @@ def _process_run(
 
     _enforce_run_retention(data_root / "staging" / model_id, keep_runs)
     _enforce_run_retention(data_root / "published" / model_id, keep_runs)
-    _enforce_run_retention(loop_cache_root / model_id, keep_runs)
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), model_id, keep_runs)

@@ -21,7 +21,6 @@ from app.services.mrms_fetch import (
 )
 from app.services.mrms_publish import (
     MRMSBundleFrame,
-    MRMSLoopPublishSettings,
     MRMSPublishResult,
     load_latest_published_mrms_frames,
     publish_mrms_bundle,
@@ -198,19 +197,17 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         )
 
     logger.info(
-        "MRMS publish starting new=%d reused=%d available=%d failed=%d latest_scan=%s loop_pregen=%s",
+        "MRMS publish starting new=%d reused=%d available=%d failed=%d latest_scan=%s",
         len(frames),
         max(0, available_for_window - len(frames)),
         available_for_window,
         len(failed_scans),
         _format_iso(newest_scan_valid_time),
-        config.loop_pregenerate_enabled,
     )
     publish_result = publish_mrms_bundle(
         data_root=config.data_root,
         frames=frames,
         publish_time=datetime.now(timezone.utc),
-        loop_settings=_loop_settings(config) if config.loop_pregenerate_enabled else None,
         frame_write_workers=config.frame_write_workers,
         previous_frames=previous_frames,
         target_frame_count=len(frozen),
@@ -238,7 +235,7 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
 
 def run_poller(config: MRMSPollerConfig, *, once: bool) -> int:
     logger.info(
-        "MRMS poller starting listing=%s data_root=%s poll=%ss keep_runs=%d window=%dm cadence=%dm decoder=%s/%s loop_pregen=%s",
+        "MRMS poller starting listing=%s data_root=%s poll=%ss keep_runs=%d window=%dm cadence=%dm decoder=%s/%s",
         config.listing_url,
         config.data_root,
         config.poll_seconds,
@@ -247,7 +244,6 @@ def run_poller(config: MRMSPollerConfig, *, once: bool) -> int:
         config.frame_cadence_minutes,
         config.preferred_decoder,
         config.fallback_decoder,
-        config.loop_pregenerate_enabled,
     )
 
     while True:
@@ -366,18 +362,7 @@ def _latest_published_bundle_state(data_root: Path) -> tuple[datetime | None, bo
 def _enforce_retention(config: MRMSPollerConfig) -> None:
     enforce_run_artifact_retention(config.data_root / "staging" / "mrms", config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "published" / "mrms", config.keep_runs)
-    enforce_run_artifact_retention(config.loop_cache_root / "mrms", config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "manifests" / "mrms", config.keep_runs)
-
-
-def _loop_settings(config: MRMSPollerConfig) -> MRMSLoopPublishSettings:
-    return MRMSLoopPublishSettings(
-        loop_cache_root=config.loop_cache_root,
-        workers=config.loop_workers,
-        tier0_quality=config.loop_tier0_quality,
-        tier0_max_dim=config.loop_tier0_max_dim,
-        tier0_fixed_w=config.loop_tier0_fixed_w,
-    )
 
 
 def _env_value(*names: str, default: str = "") -> str:

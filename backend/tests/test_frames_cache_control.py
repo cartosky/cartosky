@@ -30,7 +30,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     data_root = tmp_path / "data"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
-    loop_cache_root = tmp_path / "loop-cache"
 
     run_id = "20260224_14z"
     incomplete_run_id = "20260224_15z"
@@ -148,23 +147,9 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     # still resolves latest to a valid 6-hour cycle.
     (gfs_published_dir / "LATEST.json").write_text(json.dumps({"run_id": gfs_invalid_run_id}))
 
-    # Seed loop cache artifacts so frame payloads include loop URLs.
-    for fh in (0, 1):
-        tier0_path = loop_cache_root / model / run_id / var / "tier0" / f"fh{fh:03d}.loop.webp"
-        tier0_path.parent.mkdir(parents=True, exist_ok=True)
-        tier0_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
-        temp_tier0_path = loop_cache_root / model / run_id / temp_var / "tier0" / f"fh{fh:03d}.loop.webp"
-        temp_tier0_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_tier0_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
-    for fh in (0, 1):
-        nam_tier0_path = loop_cache_root / nam_model / nam_run_id / var / "tier0" / f"fh{fh:03d}.loop.webp"
-        nam_tier0_path.parent.mkdir(parents=True, exist_ok=True)
-        nam_tier0_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
-
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
-    monkeypatch.setattr(main_module, "LOOP_CACHE_ROOT", loop_cache_root)
 
     main_module._manifest_cache.clear()
     main_module._sidecar_cache.clear()
@@ -204,20 +189,18 @@ async def test_frames_incomplete_historical_cache_control_is_short(client: httpx
     assert response.headers.get("etag")
 
 
-async def test_radar_ptype_frame_loop_urls_use_runtime_paths_when_pregenerated(client: httpx.AsyncClient) -> None:
+async def test_frame_payload_omits_legacy_loop_urls_for_radar_ptype(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/hrrr/latest/radar_ptype/frames")
 
     assert response.status_code == 200
     rows = response.json()
     assert isinstance(rows, list) and rows
     first = rows[0]
-    assert first["loop_webp_url"].startswith("/api/v4/hrrr/20260224_14z/radar_ptype/0/loop.webp")
-    assert "/loop.webp?tier=0" in first["loop_webp_url"]
-    assert first["loop_webp_tier0_url"].startswith("/api/v4/hrrr/20260224_14z/radar_ptype/0/loop.webp")
-    assert all("loop_webp_tier1_url" not in row for row in rows)
+    assert "loop_webp_url" not in first
+    assert "loop_webp_tier0_url" not in first
 
 
-async def test_nam_radar_ptype_runtime_loop_urls_are_emitted_when_pregenerated(
+async def test_frame_payload_omits_legacy_loop_urls_for_nam_radar_ptype(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get("/api/v4/nam/20260224_12z/radar_ptype/frames")
@@ -226,24 +209,22 @@ async def test_nam_radar_ptype_runtime_loop_urls_are_emitted_when_pregenerated(
     rows = response.json()
     assert isinstance(rows, list) and rows
     first = rows[0]
-    assert first["loop_webp_url"].startswith("/api/v4/nam/20260224_12z/radar_ptype/0/loop.webp")
-    assert "/loop.webp?tier=0" in first["loop_webp_url"]
-    assert first["loop_webp_tier0_url"] == first["loop_webp_url"]
+    assert "loop_webp_url" not in first
+    assert "loop_webp_tier0_url" not in first
 
 
-async def test_tmp2m_frame_loop_urls_use_runtime_paths_when_pregenerated(client: httpx.AsyncClient) -> None:
+async def test_frame_payload_omits_legacy_loop_urls_for_tmp2m(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/hrrr/latest/tmp2m/frames")
 
     assert response.status_code == 200
     rows = response.json()
     assert isinstance(rows, list) and rows
     first = rows[0]
-    assert first["loop_webp_url"].startswith("/api/v4/hrrr/20260224_14z/tmp2m/0/loop.webp")
-    assert "/loop.webp?tier=0" in first["loop_webp_url"]
-    assert first["loop_webp_tier0_url"] == first["loop_webp_url"]
+    assert "loop_webp_url" not in first
+    assert "loop_webp_tier0_url" not in first
 
 
-async def test_frame_loop_urls_include_tier0_runtime_fallback_without_pregenerated_cache(
+async def test_frame_payload_omits_legacy_loop_urls_for_incomplete_run(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get("/api/v4/hrrr/20260224_15z/radar_ptype/frames")
@@ -253,47 +234,20 @@ async def test_frame_loop_urls_include_tier0_runtime_fallback_without_pregenerat
     assert isinstance(rows, list) and rows
     first = rows[0]
     assert first["fh"] == 0
-    assert first["loop_webp_tier0_url"].startswith("/api/v4/hrrr/20260224_15z/radar_ptype/0/loop.webp")
-    assert "/loop.webp?tier=0" in first["loop_webp_tier0_url"]
-    assert first["loop_webp_url"] == first["loop_webp_tier0_url"]
+    assert "loop_webp_url" not in first
+    assert "loop_webp_tier0_url" not in first
 
 
-async def test_loop_manifest_includes_tier0_runtime_fallback_without_pregenerated_cache(
+async def test_loop_manifest_endpoint_is_retired(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get("/api/v4/hrrr/20260224_15z/radar_ptype/loop-manifest")
-
-    assert response.status_code == 200
-    payload = response.json()
-    loop_tiers = payload.get("loop_tiers", [])
-    assert isinstance(loop_tiers, list) and len(loop_tiers) == 1
-
-    tier0 = next((entry for entry in loop_tiers if entry.get("tier") == 0), None)
-    assert tier0 is not None
-    tier0_frames = tier0.get("frames", [])
-    assert isinstance(tier0_frames, list) and tier0_frames
-    assert tier0_frames[0]["fh"] == 0
-    assert tier0_frames[0]["url"].startswith("/api/v4/hrrr/20260224_15z/radar_ptype/0/loop.webp")
-    assert "/loop.webp?tier=0" in tier0_frames[0]["url"]
+    assert response.status_code == 404
 
 
-async def test_existing_loop_urls_ignore_removed_published_loop_fallback(
-    client: httpx.AsyncClient,
-) -> None:
-    published_legacy_path = main_module.PUBLISHED_ROOT / "hrrr" / "20260224_15z" / "radar_ptype" / "fh000.loop.webp"
-    published_legacy_path.parent.mkdir(parents=True, exist_ok=True)
-    published_legacy_path.write_bytes(b"legacy-loop-webp")
-
-    tier0_url, tier1_url = main_module._resolve_existing_loop_urls(
-        "hrrr",
-        "20260224_15z",
-        "radar_ptype",
-        0,
-        version_token="test-token",
-    )
-
-    assert tier0_url is None
-    assert tier1_url is None
+async def test_loop_webp_endpoint_is_retired(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v4/hrrr/20260224_14z/radar_ptype/0/loop.webp?tier=0")
+    assert response.status_code == 404
 
 
 async def test_legacy_runtime_routes_are_retired(client: httpx.AsyncClient) -> None:
@@ -377,7 +331,7 @@ async def test_bootstrap_endpoint_includes_selection_and_frames(client: httpx.As
     assert "bootstrap_total;dur=" in server_timing
 
 
-async def test_manifest_frames_and_loop_manifest_include_server_timing(client: httpx.AsyncClient) -> None:
+async def test_manifest_and_frames_include_server_timing(client: httpx.AsyncClient) -> None:
     manifest_response = await client.get("/api/v4/hrrr/latest/manifest")
     assert manifest_response.status_code == 200
     assert "manifest_total;dur=" in manifest_response.headers.get("server-timing", "")
@@ -385,7 +339,3 @@ async def test_manifest_frames_and_loop_manifest_include_server_timing(client: h
     frames_response = await client.get("/api/v4/hrrr/latest/radar_ptype/frames")
     assert frames_response.status_code == 200
     assert "frames_total;dur=" in frames_response.headers.get("server-timing", "")
-
-    loop_manifest_response = await client.get("/api/v4/hrrr/latest/radar_ptype/loop-manifest")
-    assert loop_manifest_response.status_code == 200
-    assert "loop_manifest_total;dur=" in loop_manifest_response.headers.get("server-timing", "")

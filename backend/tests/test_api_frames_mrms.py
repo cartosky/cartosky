@@ -81,7 +81,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     data_root = tmp_path / "data" / "v3"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
-    loop_cache_root = tmp_path / "loop-cache"
 
     model = "mrms"
     run_id = "20260327_1206z"
@@ -119,14 +118,10 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         (var_dir / f"fh{fh:03d}.json").write_text(
             json.dumps({"units": "dBZ", "valid_time": valid_time, "kind": "discrete"})
         )
-        tier0_path = loop_cache_root / model / run_id / variable / "tier0" / f"fh{fh:03d}.loop.webp"
-        tier0_path.parent.mkdir(parents=True, exist_ok=True)
-        tier0_path.write_bytes(b"RIFFxxxxWEBPVP8 ")
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
-    monkeypatch.setattr(main_module, "LOOP_CACHE_ROOT", loop_cache_root)
 
     _reset_main_caches()
 
@@ -149,16 +144,13 @@ async def test_mrms_latest_manifest_and_frames_resolve(client: httpx.AsyncClient
     assert frames[0]["run"] == "20260327_1206z"
     assert frames[0]["meta"]["meta"]["valid_time"] == "2026-03-27T12:00:00Z"
     assert frames[1]["meta"]["meta"]["valid_time"] == "2026-03-27T12:02:00Z"
-    assert "/api/v4/mrms/20260327_1206z/reflectivity/0/loop.webp" in frames[0]["loop_webp_url"]
+    assert "loop_webp_url" not in frames[0]
+    assert "loop_webp_tier0_url" not in frames[0]
 
 
-async def test_mrms_loop_manifest_and_sampling_use_minute_run_ids(client: httpx.AsyncClient) -> None:
+async def test_mrms_sampling_uses_minute_run_ids_after_loop_cutover(client: httpx.AsyncClient) -> None:
     loop_response = await client.get("/api/v4/mrms/latest/reflectivity/loop-manifest")
-    assert loop_response.status_code == 200
-    payload = loop_response.json()
-    tier0 = next(entry for entry in payload["loop_tiers"] if entry["tier"] == 0)
-    assert [frame["fh"] for frame in tier0["frames"]] == [0, 1]
-    assert tier0["frames"][0]["url"].startswith("/api/v4/mrms/20260327_1206z/reflectivity/0/loop.webp")
+    assert loop_response.status_code == 404
 
     sample_response = await client.get(
         "/api/v4/sample",

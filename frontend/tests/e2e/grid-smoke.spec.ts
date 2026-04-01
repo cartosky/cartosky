@@ -39,7 +39,7 @@ function capabilityPayload() {
             default_fh: 0,
             buildable: true,
             color_map_id: 'tmp2m',
-            render_substrates: ['legacy', 'grid_webgl_v1'],
+            render_substrates: ['grid_webgl_v1'],
             constraints: {},
             derived: false,
             derive_strategy_id: null,
@@ -54,7 +54,7 @@ function capabilityPayload() {
             default_fh: 0,
             buildable: true,
             color_map_id: 'dp2m',
-            render_substrates: ['legacy', 'grid_webgl_v1'],
+            render_substrates: ['grid_webgl_v1'],
             constraints: {},
             derived: false,
             derive_strategy_id: null,
@@ -117,8 +117,6 @@ function framesPayload(varKey: string) {
       has_cog: true,
       run: GRID_RUN_ID,
       valid_time: '2026-03-30T12:00:00Z',
-      loop_webp_url: `/api/v4/hrrr/${GRID_RUN_ID}/${varKey}/0/loop.webp?tier=0&v=${GRID_RUN_ID}-${varKey}-0`,
-      loop_webp_tier0_url: `/api/v4/hrrr/${GRID_RUN_ID}/${varKey}/0/loop.webp?tier=0&v=${GRID_RUN_ID}-${varKey}-0`,
       meta: {
         meta: {
           valid_time: '2026-03-30T12:00:00Z',
@@ -133,8 +131,6 @@ function framesPayload(varKey: string) {
       has_cog: true,
       run: GRID_RUN_ID,
       valid_time: '2026-03-30T13:00:00Z',
-      loop_webp_url: `/api/v4/hrrr/${GRID_RUN_ID}/${varKey}/1/loop.webp?tier=0&v=${GRID_RUN_ID}-${varKey}-1`,
-      loop_webp_tier0_url: `/api/v4/hrrr/${GRID_RUN_ID}/${varKey}/1/loop.webp?tier=0&v=${GRID_RUN_ID}-${varKey}-1`,
       meta: {
         meta: {
           valid_time: '2026-03-30T13:00:00Z',
@@ -197,7 +193,7 @@ function gridManifestPayload(varKey: string) {
 }
 
 test.describe('Grid-only smoke', () => {
-  test('grid-default viewer path avoids legacy requests even when legacy is still advertised', async ({ page }) => {
+  test('grid-default viewer path avoids retired legacy requests', async ({ page }) => {
     const loopRequests: string[] = [];
     const tileRequests: string[] = [];
     const gridManifestRequests: string[] = [];

@@ -29,7 +29,6 @@ from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
     DEFAULT_LOOP_WEBP_MAX_DIM,
     DEFAULT_LOOP_WEBP_QUALITY,
-    pregenerate_loop_webp_for_run,
     promote_run,
     write_json_atomic,
     write_latest_pointer,
@@ -275,20 +274,6 @@ def publish_mrms_bundle(
         ),
     )
     write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
-
-    if loop_settings is not None:
-        pregenerate_loop_webp_for_run(
-            data_root=data_root,
-            model=MRMS_MODEL_ID,
-            run_id=run_id,
-            loop_cache_root=loop_settings.loop_cache_root,
-            workers=loop_settings.workers,
-            tier0_quality=loop_settings.tier0_quality,
-            tier0_max_dim=loop_settings.tier0_max_dim,
-            tier0_fixed_w=loop_settings.tier0_fixed_w,
-            variables=(MRMS_VARIABLE_ID,),
-            forecast_hours=range(len(ordered_valid_times)),
-        )
 
     if grid_v1_build_enabled():
         try:

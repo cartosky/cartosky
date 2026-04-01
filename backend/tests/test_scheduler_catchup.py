@@ -510,8 +510,6 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
 
     built: set[tuple[str, int]] = set()
     available_up_to = {"tmp2m": 2}
-    loop_pregen_calls: list[dict[str, object]] = []
-
     def fake_frame_artifacts_exist(
         data_root: Path,
         model: str,
@@ -541,17 +539,12 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         del args, kwargs
         return ("tmp2m", 2) in built
 
-    def fake_loop_pregen(*args: object, **kwargs: object) -> None:
-        del args
-        loop_pregen_calls.append(dict(kwargs))
-
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
     monkeypatch.setattr(scheduler_module, "_should_promote", fake_should_promote)
     monkeypatch.setattr(scheduler_module, "_promote_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(scheduler_module, "_write_run_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(scheduler_module, "_write_latest_pointer", lambda *args, **kwargs: None)
-    monkeypatch.setattr(scheduler_module, "_pregenerate_loop_webp_for_run", fake_loop_pregen)
     monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
 
     scheduler_module._process_run(
@@ -574,13 +567,10 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         loop_tier1_fixed_w=2400,
     )
 
-    assert len(loop_pregen_calls) == 1
-    assert loop_pregen_calls[0]["variables"] == ("tmp2m",)
-    assert loop_pregen_calls[0]["tiers"] == (0,)
-    assert loop_pregen_calls[0]["forecast_hours"] == (0, 1, 2, 3, 4)
+    assert built == {("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2)}
 
 
-def test_process_run_pregenerates_loop_cache_when_run_is_complete(
+def test_process_run_does_not_pregenerate_loop_cache_when_run_is_complete(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -589,8 +579,6 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
 
     built: set[tuple[str, int]] = set()
     available_up_to = {"tmp2m": 4}
-    loop_pregen_calls: list[dict[str, object]] = []
-
     def fake_frame_artifacts_exist(
         data_root: Path,
         model: str,
@@ -620,17 +608,12 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
         del args, kwargs
         return ("tmp2m", 2) in built
 
-    def fake_loop_pregen(*args: object, **kwargs: object) -> None:
-        del args
-        loop_pregen_calls.append(dict(kwargs))
-
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
     monkeypatch.setattr(scheduler_module, "_should_promote", fake_should_promote)
     monkeypatch.setattr(scheduler_module, "_promote_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(scheduler_module, "_write_run_manifest", lambda *args, **kwargs: None)
     monkeypatch.setattr(scheduler_module, "_write_latest_pointer", lambda *args, **kwargs: None)
-    monkeypatch.setattr(scheduler_module, "_pregenerate_loop_webp_for_run", fake_loop_pregen)
     monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
 
     scheduler_module._process_run(
@@ -653,12 +636,7 @@ def test_process_run_pregenerates_loop_cache_when_run_is_complete(
         loop_tier1_fixed_w=2400,
     )
 
-    assert len(loop_pregen_calls) == 2
-    assert loop_pregen_calls[0]["variables"] == ("tmp2m",)
-    assert loop_pregen_calls[0]["tiers"] == (0,)
-    assert loop_pregen_calls[0]["forecast_hours"] == (0, 1, 2, 3, 4)
-    assert "variables" not in loop_pregen_calls[1]
-    assert "tiers" not in loop_pregen_calls[1]
+    assert built == {("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)}
 
 
 def _write_sidecar(tmp_path: Path, run_id: str, var_id: str, fh: int, *, quality: str, quality_flags: list[str]) -> None:

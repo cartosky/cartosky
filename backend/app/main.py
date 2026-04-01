@@ -3059,28 +3059,17 @@ def get_bootstrap_v4(
                 frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
                 if not isinstance(frame_entries, list):
                     frame_entries = []
-                version_token = _run_version_token(selected_model, selected_run)
                 for item in frame_entries:
                     if not isinstance(item, dict):
                         continue
                     fh = item.get("fh")
                     if not isinstance(fh, int):
                         continue
-                    tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
-                        selected_model,
-                        selected_run,
-                        selected_var,
-                        fh,
-                        version_token=version_token,
-                        include_tier0_runtime_fallback=True,
-                    )
                     frames_payload.append(
                         {
                             "fh": fh,
                             "has_cog": True,
                             "run": selected_run,
-                            "loop_webp_url": tier0_url,
-                            "loop_webp_tier0_url": tier0_url,
                             "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
                         }
                     )
@@ -3301,8 +3290,6 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
     run_complete = _manifest_run_complete(manifest)
 
-    version_token = _grid_v1_version_token(model, resolved, var)
-
     frames_build_started_at = time.perf_counter()
     frames: list[dict] = []
     with otel_tracing.start_as_current_span(
@@ -3316,23 +3303,12 @@ def list_frames(request: Request, model: str, run: str, var: str):
             if not isinstance(fh, int):
                 continue
 
-            tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
-                model,
-                resolved,
-                var,
-                fh,
-                version_token=version_token,
-                include_tier0_runtime_fallback=True,
-            )
-
             meta = _resolve_sidecar(model, resolved, var, fh)
             frames.append(
                 {
                     "fh": fh,
                     "has_cog": True,
                     "run": resolved,
-                    "loop_webp_url": tier0_url,
-                    "loop_webp_tier0_url": tier0_url,
                     "meta": {"meta": meta},
                 }
             )
@@ -3357,125 +3333,6 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
     return JSONResponse(
         content=frames,
-        headers={
-            "Cache-Control": cache_control,
-            "ETag": etag,
-            "Server-Timing": timing_header,
-        },
-    )
-
-
-@app.get("/api/v4/{model}/{run}/{var}/loop-manifest")
-def get_loop_manifest(request: Request, model: str, run: str, var: str):
-    started_at = time.perf_counter()
-    resolve_started_at = time.perf_counter()
-    with otel_tracing.start_as_current_span(
-        "loop_manifest.resolve",
-        attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
-    ):
-        resolved = _resolve_run(model, run)
-        if resolved:
-            otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
-    resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
-    if resolved is None:
-        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
-
-    manifest_started_at = time.perf_counter()
-    with otel_tracing.start_as_current_span(
-        "loop_manifest.manifest",
-        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
-    ):
-        manifest = _load_manifest(model, resolved)
-    manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
-    if manifest is None:
-        return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
-
-    variables = manifest.get("variables")
-    if not isinstance(variables, dict):
-        return []
-    var_entry = variables.get(var)
-    if not isinstance(var_entry, dict):
-        return []
-
-    frame_entries = var_entry.get("frames")
-    if not isinstance(frame_entries, list):
-        frame_entries = []
-
-    loop_bbox = _resolve_loop_manifest_bbox(
-        model,
-        resolved,
-        var,
-        [item for item in frame_entries if isinstance(item, dict)],
-    )
-
-    version_token = _grid_v1_version_token(model, resolved, var)
-
-    build_started_at = time.perf_counter()
-    tier_frames: dict[int, list[dict[str, Any]]] = {0: []}
-    with otel_tracing.start_as_current_span(
-        "loop_manifest.build",
-        attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
-    ):
-        for item in frame_entries:
-            if not isinstance(item, dict):
-                continue
-            fh = item.get("fh")
-            if not isinstance(fh, int):
-                continue
-
-            tier0_url, _tier1_url = _resolve_loop_urls_for_frame(
-                model,
-                resolved,
-                var,
-                fh,
-                version_token=version_token,
-                include_tier0_runtime_fallback=True,
-            )
-            if tier0_url:
-                tier_frames[0].append({"fh": fh, "url": tier0_url})
-        otel_tracing.set_current_attributes(
-            {
-                "cartosky.loop_tier0_frames": len(tier_frames[0]),
-            }
-        )
-
-    tier_frames[0].sort(key=lambda row: int(row["fh"]))
-
-    tier0_dim = LOOP_TIER_CONFIG.get(0, {}).get("max_dim", LOOP_WEBP_MAX_DIM)
-    payload = {
-        "manifest_version": LOOP_MANIFEST_VERSION,
-        "run": resolved,
-        "model": model,
-        "var": var,
-        "bbox": loop_bbox,
-        "projection": LOOP_MANIFEST_PROJECTION,
-        "loop_tiers": [
-            {
-                "tier": 0,
-                "max_dim": int(tier0_dim),
-                "frames": tier_frames[0],
-            },
-        ],
-    }
-    build_ms = (time.perf_counter() - build_started_at) * 1000.0
-
-    cache_control = "public, max-age=60"
-    etag = _make_etag(payload)
-    timing_header = _format_server_timing(
-        [
-            ("loop_manifest_resolve", resolve_ms),
-            ("loop_manifest_manifest", manifest_ms),
-            ("loop_manifest_build", build_ms),
-            ("loop_manifest_total", (time.perf_counter() - started_at) * 1000.0),
-        ]
-    )
-    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
-    if r304 is not None:
-        r304.headers["Server-Timing"] = timing_header
-        return r304
-
-    return JSONResponse(
-        content=payload,
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
@@ -3589,100 +3446,6 @@ def get_grid_v1_file(model: str, run: str, var: str, filename: str):
         candidate,
         media_type="application/octet-stream",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
-
-
-@app.get("/api/v4/{model}/{run}/{var}/{fh:int}/loop.webp")
-def get_loop_webp(
-    model: str,
-    run: str,
-    var: str,
-    fh: int,
-    tier: int = Query(0, ge=0, le=1, description="Loop tier (0=default, 1=high-res)"),
-):
-    resolved = _resolve_run(model, run)
-    if resolved is None:
-        return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
-
-    cog_path = _resolve_rgba_cog(model, resolved, var, fh)
-    if cog_path is None:
-        return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
-    value_cog_path = _resolve_val_cog(model, resolved, var, fh)
-
-    out_path = _loop_webp_path(model, resolved, var, fh, tier=tier)
-    if out_path is None:
-        return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
-
-    out_path_preexisting = out_path.is_file()
-
-    if not _ensure_loop_webp(
-        cog_path,
-        out_path,
-        model_id=model,
-        var_key=var,
-        tier=tier,
-        value_cog_path=value_cog_path,
-        run_id=resolved,
-    ):
-        # Graceful degradation path: avoid surfacing hard 500s to clients when
-        # cache writes fail (permissions/disk), and allow tier-1 to fall back.
-        if tier == 1:
-            tier0_out = _loop_webp_path(model, resolved, var, fh, tier=0)
-            if tier0_out is not None:
-                tier0_out_preexisting = tier0_out.is_file()
-                if _ensure_loop_webp(
-                    cog_path,
-                    tier0_out,
-                    model_id=model,
-                    var_key=var,
-                    tier=0,
-                    value_cog_path=value_cog_path,
-                    run_id=resolved,
-                ):
-                    _record_loop_request_source(
-                        "cache" if tier0_out_preexisting else "generated",
-                        model=model,
-                        var=var,
-                        tier=0,
-                    )
-                    return FileResponse(
-                        path=str(tier0_out),
-                        media_type="image/webp",
-                        headers={"Cache-Control": CACHE_MISS},
-                    )
-
-            tier0_bytes = _render_loop_webp_bytes(
-                cog_path,
-                model_id=model,
-                var_key=var,
-                tier=0,
-                value_cog_path=value_cog_path,
-                run_id=resolved,
-            )
-            if tier0_bytes is not None:
-                _record_loop_request_source("rendered", model=model, var=var, tier=0)
-                return Response(content=tier0_bytes, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})
-
-        content = _render_loop_webp_bytes(
-            cog_path,
-            model_id=model,
-            var_key=var,
-            tier=tier,
-            value_cog_path=value_cog_path,
-            run_id=resolved,
-        )
-        if content is not None:
-            _record_loop_request_source("rendered", model=model, var=var, tier=tier)
-            return Response(content=content, media_type="image/webp", headers={"Cache-Control": CACHE_MISS})
-
-        return Response(status_code=404, headers={"Cache-Control": CACHE_MISS})
-
-    _record_loop_request_source("cache" if out_path_preexisting else "generated", model=model, var=var, tier=tier)
-    cache_control = CACHE_HIT if run != "latest" else CACHE_MISS
-    return FileResponse(
-        path=str(out_path),
-        media_type="image/webp",
-        headers={"Cache-Control": cache_control},
     )
 
 

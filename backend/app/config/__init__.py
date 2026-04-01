@@ -107,5 +107,5 @@ def grid_v1_pair_enabled(model_id: str, var_key: str) -> bool:
 
 def grid_v1_render_substrates(model_id: str, var_key: str) -> tuple[str, ...]:
     if grid_v1_enabled() and grid_v1_pair_enabled(model_id, var_key):
-        return ("legacy", "grid_webgl_v1")
+        return ("grid_webgl_v1",)
     return ("legacy",)

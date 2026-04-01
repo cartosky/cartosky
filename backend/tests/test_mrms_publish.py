@@ -52,11 +52,6 @@ def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda values, output_path, **_: _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32))
         or Path(output_path),
     )
-    monkeypatch.setattr(
-        mrms_publish,
-        "pregenerate_loop_webp_for_run",
-        lambda **_: (0, 0),
-    )
 
 
 def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(

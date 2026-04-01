@@ -87,12 +87,10 @@ def _configure_main_paths(
     data_root: Path,
     manifests_root: Path,
     published_root: Path,
-    loop_cache_root: Path,
 ) -> None:
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
-    monkeypatch.setattr(main_module, "LOOP_CACHE_ROOT", loop_cache_root)
     _reset_main_caches()
 
 
@@ -121,7 +119,6 @@ async def forecast_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
     data_root = tmp_path / "data"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
-    loop_cache_root = tmp_path / "loop-cache"
     model = "hrrr"
     run_id = "20260330_12z"
     variable = "tmp2m"
@@ -151,7 +148,6 @@ async def forecast_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         data_root=data_root,
         manifests_root=manifests_root,
         published_root=published_root,
-        loop_cache_root=loop_cache_root,
     )
 
     transport = httpx.ASGITransport(app=main_module.app)
@@ -166,7 +162,6 @@ async def observed_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
     data_root = tmp_path / "data"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
-    loop_cache_root = tmp_path / "loop-cache"
     model = "mrms"
     run_id = "20260330_1206z"
     variable = "reflectivity"
@@ -196,7 +191,6 @@ async def observed_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         data_root=data_root,
         manifests_root=manifests_root,
         published_root=published_root,
-        loop_cache_root=loop_cache_root,
     )
 
     transport = httpx.ASGITransport(app=main_module.app)
@@ -213,7 +207,7 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
     assert capabilities_response.status_code == 200
     capabilities_payload = capabilities_response.json()
     tmp2m = capabilities_payload["model_catalog"]["hrrr"]["variables"]["tmp2m"]
-    assert tmp2m["render_substrates"] == ["legacy", "grid_webgl_v1"]
+    assert tmp2m["render_substrates"] == ["grid_webgl_v1"]
     assert capabilities_payload["model_catalog"]["hrrr"]["defaults"]["default_render_substrate"] == "grid_webgl_v1"
 
     bootstrap_response = await forecast_client.get(
@@ -235,6 +229,8 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
     frames_payload = frames_response.json()
     assert [row["fh"] for row in frames_payload] == [0]
     assert frames_payload[0]["meta"]["meta"]["valid_time"] == "2026-03-30T12:00:00Z"
+    assert "loop_webp_url" not in frames_payload[0]
+    assert "loop_webp_tier0_url" not in frames_payload[0]
 
     grid_manifest_response = await forecast_client.get("/api/v4/hrrr/20260330_12z/tmp2m/grid-manifest")
     assert grid_manifest_response.status_code == 200
@@ -242,8 +238,8 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
     assert grid_manifest["subtype"] == "grid_webgl_v1"
     assert [frame["fh"] for frame in grid_manifest["lods"][0]["frames"]] == [0]
 
-    loop_cache_root = Path(main_module.LOOP_CACHE_ROOT)
-    assert not loop_cache_root.exists() or not any(loop_cache_root.rglob("*.loop.webp"))
+    loop_manifest_response = await forecast_client.get("/api/v4/hrrr/20260330_12z/tmp2m/loop-manifest")
+    assert loop_manifest_response.status_code == 404
 
 
 async def test_observed_grid_supported_selection_bootstraps_without_loop_artifacts(
@@ -253,7 +249,7 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
     assert capabilities_response.status_code == 200
     capabilities_payload = capabilities_response.json()
     reflectivity = capabilities_payload["model_catalog"]["mrms"]["variables"]["reflectivity"]
-    assert reflectivity["render_substrates"] == ["legacy", "grid_webgl_v1"]
+    assert reflectivity["render_substrates"] == ["grid_webgl_v1"]
     assert capabilities_payload["model_catalog"]["mrms"]["defaults"]["default_render_substrate"] == "grid_webgl_v1"
 
     bootstrap_response = await observed_client.get(
@@ -275,6 +271,8 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
     frames_payload = frames_response.json()
     assert [row["fh"] for row in frames_payload] == [0]
     assert frames_payload[0]["meta"]["meta"]["valid_time"] == "2026-03-30T12:06:00Z"
+    assert "loop_webp_url" not in frames_payload[0]
+    assert "loop_webp_tier0_url" not in frames_payload[0]
 
     grid_manifest_response = await observed_client.get("/api/v4/mrms/20260330_1206z/reflectivity/grid-manifest")
     assert grid_manifest_response.status_code == 200
@@ -282,5 +280,5 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
     assert grid_manifest["subtype"] == "grid_webgl_v1"
     assert [frame["fh"] for frame in grid_manifest["lods"][0]["frames"]] == [0]
 
-    loop_cache_root = Path(main_module.LOOP_CACHE_ROOT)
-    assert not loop_cache_root.exists() or not any(loop_cache_root.rglob("*.loop.webp"))
+    loop_manifest_response = await observed_client.get("/api/v4/mrms/20260330_1206z/reflectivity/loop-manifest")
+    assert loop_manifest_response.status_code == 404
