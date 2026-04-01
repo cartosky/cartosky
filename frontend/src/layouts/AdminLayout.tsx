@@ -1,7 +1,6 @@
 import type { ComponentType } from "react";
-import { Activity, BarChart3, ChevronRight, ClipboardCheck, Gauge, Radar, Waypoints } from "lucide-react";
+import { Activity, BarChart3, ChevronRight, ClipboardCheck, Gauge, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
-import { isLegacyPerfTelemetryEnabled } from "@/lib/config";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
   const { to, label, icon: Icon } = props;
@@ -27,7 +26,6 @@ function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ 
 }
 
 export default function AdminLayout() {
-  const legacyPerfEnabled = isLegacyPerfTelemetryEnabled();
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#05070c] text-white">
       <div
@@ -54,7 +52,7 @@ export default function AdminLayout() {
             </div>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Command Center</h1>
             <p className="mt-2 text-sm leading-6 text-white/62">
-              Unified admin shell for pipeline health, analytics, observability, and legacy telemetry during migration.
+              Unified admin shell for pipeline health, analytics, observability, and rollout diagnostics.
             </p>
           </div>
 
@@ -65,17 +63,6 @@ export default function AdminLayout() {
             <AdminNavItem to="/admin/traces" label="Traces" icon={Waypoints} />
             <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
           </nav>
-
-          {legacyPerfEnabled ? (
-            <div className="mt-5 border-t border-white/10 pt-4">
-              <div className="px-2 pb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">
-                Migration
-              </div>
-              <nav className="space-y-2">
-                <AdminNavItem to="/admin/legacy-performance" label="Legacy Perf" icon={Radar} />
-              </nav>
-            </div>
-          ) : null}
         </aside>
 
         <main className="min-w-0">

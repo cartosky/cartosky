@@ -1,4 +1,4 @@
-import { API_ORIGIN, isLegacyPerfTelemetryEnabled, isLegacyUsageTelemetryEnabled } from "@/lib/config";
+import { API_ORIGIN } from "@/lib/config";
 
 const TELEMETRY_SESSION_STORAGE_KEY = "twm.telemetry.session_id";
 
@@ -12,31 +12,6 @@ type TelemetryBase = {
   meta?: Record<string, unknown> | null;
 };
 
-type PerfEventInput = TelemetryBase & {
-  event_name:
-    | "viewer_first_frame"
-    | "frame_change"
-    | "loop_start"
-    | "scrub_latency"
-    | "variable_switch"
-    | "tile_fetch"
-    | "animation_stall"
-    | "loop_manifest_resolve"
-    | "grid_manifest_resolve"
-    | "loop_decode_ready"
-    | "loop_decode_to_commit"
-    | "loop_commit_to_visible"
-    | "loop_queue_to_visible"
-    | "loop_first_visible_paint"
-    | "long_task_blocking"
-    | "loop_frame_drop_gap";
-  duration_ms: number;
-};
-
-type UsageEventInput = TelemetryBase & {
-  event_name: "model_selected" | "variable_selected" | "region_selected" | "animation_play";
-};
-
 type RumMetricInput = TelemetryBase & {
   metric_name:
     | "lcp"
@@ -45,7 +20,6 @@ type RumMetricInput = TelemetryBase & {
     | "manifest_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
-    | "tile_request_failure_count"
     | "animation_stall_count"
     | "frame_drop_bucket";
   metric_value: number;
@@ -160,25 +134,6 @@ function postTelemetry(url: string, payload: Record<string, unknown>) {
   }).catch(() => {
     // Best-effort telemetry.
   });
-}
-
-export function trackPerfEvent(payload: PerfEventInput): void {
-  if (!isLegacyPerfTelemetryEnabled()) {
-    return;
-  }
-  const enriched = enrichPayload(payload);
-  if (!Number.isFinite(enriched.duration_ms) || enriched.duration_ms < 0) {
-    return;
-  }
-  postTelemetry(`${API_ORIGIN}/api/v4/telemetry/perf`, enriched);
-}
-
-export function trackUsageEvent(payload: UsageEventInput): void {
-  if (!isLegacyUsageTelemetryEnabled()) {
-    return;
-  }
-  const enriched = enrichPayload(payload);
-  postTelemetry(`${API_ORIGIN}/api/v4/telemetry/usage`, enriched);
 }
 
 export function trackRumMetric(payload: RumMetricInput): void {

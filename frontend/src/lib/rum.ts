@@ -172,7 +172,6 @@ export function trackRumDiagnosticMetric(params: {
     | "manifest_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
-    | "tile_request_failure_count"
     | "animation_stall_count"
     | "frame_drop_bucket";
   metric_value: number;

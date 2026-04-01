@@ -60,7 +60,6 @@ import {
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
-import { trackPerfEvent, trackUsageEvent } from "@/lib/telemetry";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 
 import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
@@ -88,8 +87,6 @@ const FRAME_HARD_DEADLINE_MS = 30_000;
 const FRAME_RETRY_BASE_MS = 1200;
 const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
 const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
-const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
-const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
 const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 
 function viewportSignatureFromState(view: { lat: number; lon: number; z: number }): string {
@@ -189,26 +186,11 @@ type ModelEntry = {
 
 type PendingLoopStartMetric = {
   startedAt: number;
-  modelId: string | null;
-  variableId: string | null;
-  runId: string | null;
-  regionId: string | null;
-  forecastHour: number | null;
 };
 
 type PendingVariableSwitchMetric = {
-  startedAt: number;
-  fromVariableId: string | null;
   toVariableId: string;
   expectedSelectionKey: string;
-  modelId: string | null;
-  runId: string | null;
-  regionId: string | null;
-  manifestResolvedAt: number | null;
-  framesResolvedAt: number | null;
-  firstTargetRequestAt: number | null;
-  firstTargetReadyAt: number | null;
-  firstVisibleAt: number | null;
 };
 
 type VariableSwitchState = {
@@ -237,29 +219,6 @@ function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
     liveEventCount: 0,
     supersededCount: 0,
     lastRequestedHour: null,
-  };
-}
-
-function buildVariableSwitchPhase0aMeta(
-  pending: PendingVariableSwitchMetric
-): Record<string, unknown> {
-  const offsetMs = (at: number | null): number | null => {
-    if (!Number.isFinite(at)) {
-      return null;
-    }
-    return Math.max(0, Math.round((at as number) - pending.startedAt));
-  };
-
-  return {
-    from_variable: pending.fromVariableId,
-    render_target: "grid_webgl_v1",
-    phase0a_trace_version: 1,
-    expected_selection_key: pending.expectedSelectionKey,
-    stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
-    stage_frames_resolved_ms: offsetMs(pending.framesResolvedAt),
-    stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
-    stage_first_target_ready_ms: offsetMs(pending.firstTargetReadyAt),
-    stage_first_visible_ms: offsetMs(pending.firstVisibleAt),
   };
 }
 
@@ -840,7 +799,6 @@ export default function App() {
   const frameStatusTimerRef = useRef<number | null>(null);
   const forecastHourRef = useRef(forecastHour);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
-  const longTaskSampleCounterRef = useRef(0);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const mapViewRef = useRef({
@@ -1187,7 +1145,6 @@ export default function App() {
     }
 
     const controller = new AbortController();
-    const startedAt = performance.now();
     const resolveManifest = async () => {
       if (gridOnlySelection && run === "latest") {
         for (const candidateRun of latestGridRunCandidates) {
@@ -1200,19 +1157,6 @@ export default function App() {
           }
           setResolvedGridLatestRunId(candidateRun);
           setGridManifest(manifest);
-          trackPerfEvent({
-            event_name: "grid_manifest_resolve",
-            duration_ms: Math.max(0, performance.now() - startedAt),
-            model_id: model || null,
-            variable_id: variable || null,
-            run_id: candidateRun,
-            region_id: region || null,
-            meta: {
-              substrate: "grid_webgl_v1",
-              success: true,
-              latest_alias: true,
-            },
-          });
           return;
         }
         setResolvedGridLatestRunId(null);
@@ -1225,19 +1169,6 @@ export default function App() {
         return;
       }
       setGridManifest(manifest);
-      trackPerfEvent({
-        event_name: "grid_manifest_resolve",
-        duration_ms: Math.max(0, performance.now() - startedAt),
-        model_id: model || null,
-        variable_id: variable || null,
-        run_id: telemetryRunId,
-        region_id: region || null,
-        meta: {
-          substrate: "grid_webgl_v1",
-          success: Boolean(manifest),
-          latest_alias: run === "latest",
-        },
-      });
     };
 
     void resolveManifest().catch(() => {
@@ -1289,47 +1220,6 @@ export default function App() {
       availableFrameCount: frameRows.length,
     });
   }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length]);
-  const buildObservedTelemetryMeta = useCallback(
-    (frameHour?: number | null, extraMeta?: Record<string, unknown> | null): Record<string, unknown> | undefined => {
-      const base = extraMeta ? { ...extraMeta } : {};
-      if (selectedTimeAxisMode !== "observed") {
-        return Object.keys(base).length > 0 ? base : undefined;
-      }
-      const availability = model ? capabilities?.availability?.[model] : null;
-      const hour = Number.isFinite(frameHour) ? Number(frameHour) : forecastHour;
-      const frameValidTimeISO = Number.isFinite(hour)
-        ? (frameValidTimesByHour[hour] ?? currentFrameValidTimeISO ?? null)
-        : (currentFrameValidTimeISO ?? null);
-      const parsedValidTime = frameValidTimeISO ? new Date(frameValidTimeISO) : null;
-      const observationAgeMs = parsedValidTime && Number.isFinite(parsedValidTime.getTime())
-        ? Math.max(0, Date.now() - parsedValidTime.getTime())
-        : null;
-      return {
-        ...base,
-        time_axis_mode: "observed",
-        source_status: observedSourceStatus?.tone ?? null,
-        source_status_label: observedSourceStatus?.label ?? null,
-        latest_scan_valid_time:
-          (typeof availability?.latest_scan_valid_time === "string" && availability.latest_scan_valid_time)
-          || newestFrameValidTimeISO
-          || null,
-        latest_scan_age_minutes: observedSourceStatus?.ageMinutes ?? null,
-        frame_valid_time: frameValidTimeISO,
-        observation_age_ms: observationAgeMs,
-      };
-    },
-    [
-      capabilities,
-      currentFrameValidTimeISO,
-      forecastHour,
-      frameValidTimesByHour,
-      model,
-      newestFrameValidTimeISO,
-      observedSourceStatus,
-      selectedTimeAxisMode,
-    ]
-  );
-
   useEffect(() => {
     selectionEpochRef.current = selectionEpoch;
   }, [selectionEpoch]);
@@ -1371,7 +1261,6 @@ export default function App() {
   const gridFrameHours = useMemo(() => {
     return Array.from(gridFrameByHour.keys()).sort((a, b) => a - b);
   }, [gridFrameByHour]);
-  const resolvedWeatherSubstrate: WeatherSubstrate = "grid_webgl_v1";
   const canUseGridPlayback = useMemo(() => {
     if (gridFrameHours.length <= 1) {
       return false;
@@ -1544,17 +1433,16 @@ export default function App() {
   ]);
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
-      resolvedWeatherSubstrate === "grid_webgl_v1"
-      && gridManifest
+      gridManifest
       && gridLod0
       && Array.isArray(gridManifest.bbox)
       && gridManifest.bbox.length === 4
       && presentedGridFrameUrl
     );
-  }, [gridLod0, gridManifest, presentedGridFrameUrl, resolvedWeatherSubstrate]);
+  }, [gridLod0, gridManifest, presentedGridFrameUrl]);
   const isGridPlayable = useMemo(() => {
-    return resolvedWeatherSubstrate === "grid_webgl_v1" && canUseGridPlayback;
-  }, [canUseGridPlayback, resolvedWeatherSubstrate]);
+    return canUseGridPlayback;
+  }, [canUseGridPlayback]);
 
   useEffect(() => {
     forecastHourRef.current = forecastHour;
@@ -1572,49 +1460,6 @@ export default function App() {
   useEffect(() => {
     mapZoomRef.current = mapZoom;
   }, [mapZoom]);
-
-  // Observe long tasks to capture main-thread blocking that can delay frame
-  // presentation even when network requests are already warm.
-  useEffect(() => {
-    if (typeof PerformanceObserver === "undefined") {
-      return;
-    }
-
-    let observer: PerformanceObserver;
-    try {
-      observer = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const durationMs = Number(entry.duration);
-          if (!Number.isFinite(durationMs) || durationMs <= 0) {
-            continue;
-          }
-          if (durationMs < 50) {
-            continue;
-          }
-          longTaskSampleCounterRef.current += 1;
-          if (longTaskSampleCounterRef.current % 4 !== 0) {
-            continue;
-          }
-          trackPerfEvent({
-            event_name: "long_task_blocking",
-            duration_ms: durationMs,
-            model_id: modelRef.current || null,
-            variable_id: variableRef.current || null,
-            meta: {
-              entry_name: entry.name || "longtask",
-            },
-          });
-        }
-      });
-      observer.observe({ type: "longtask", buffered: false } as PerformanceObserverInit);
-    } catch {
-      return;
-    }
-
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
 
   useEffect(() => {
     const targetView = pendingMapViewRef.current;
@@ -1743,9 +1588,6 @@ export default function App() {
     ) {
       return;
     }
-    if (!Number.isFinite(pendingVarSwitch.firstTargetRequestAt)) {
-      pendingVarSwitch.firstTargetRequestAt = performance.now();
-    }
     setVariableSwitchState((current) => {
       if (!current || current.toVariable !== variable) {
         return current;
@@ -1800,24 +1642,6 @@ export default function App() {
       };
     });
     setVisualVariable(variable);
-
-    if (!Number.isFinite(pendingVarSwitch.firstTargetReadyAt)) {
-      pendingVarSwitch.firstTargetReadyAt = visibleAt;
-    }
-    pendingVarSwitch.firstVisibleAt = visibleAt;
-
-    const durationMs = visibleAt - pendingVarSwitch.startedAt;
-    if (Number.isFinite(durationMs) && durationMs >= 0) {
-      trackPerfEvent({
-        event_name: "variable_switch",
-        duration_ms: durationMs,
-        model_id: pendingVarSwitch.modelId,
-        variable_id: pendingVarSwitch.toVariableId,
-        run_id: pendingVarSwitch.runId,
-        region_id: pendingVarSwitch.regionId,
-        meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch),
-      });
-    }
 
     setVariableSwitchState(null);
     return true;
@@ -1887,13 +1711,8 @@ export default function App() {
   const startPendingLoopStartMetric = useCallback(() => {
     pendingLoopStartMetricRef.current = {
       startedAt: performance.now(),
-      modelId: model || null,
-      variableId: variable || null,
-      runId: telemetryRunId,
-      regionId: region || null,
-      forecastHour: Number.isFinite(forecastHour) ? forecastHour : null,
     };
-  }, [model, variable, telemetryRunId, region, forecastHour]);
+  }, []);
 
   useEffect(() => {
     datasetGenerationRef.current += 1;
@@ -1942,16 +1761,6 @@ export default function App() {
     if (!Number.isFinite(durationMs) || durationMs < 0) {
       return;
     }
-    trackPerfEvent({
-      event_name: "viewer_first_frame",
-      duration_ms: durationMs,
-      model_id: modelRef.current || null,
-      variable_id: variableRef.current || null,
-      run_id: telemetryRunId,
-      region_id: region || null,
-      forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
-      meta: buildObservedTelemetryMeta(frameHour),
-    });
     trackRumDiagnosticMetric({
       metric_name: "first_overlay_visible_duration",
       metric_value: durationMs,
@@ -1962,7 +1771,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(frameHour) ? frameHour : null,
     });
-  }, [buildObservedTelemetryMeta, telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
+  }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
   useEffect(() => {
     if (firstViewerFrameTrackedRef.current) {
@@ -2243,10 +2052,6 @@ export default function App() {
         setRun(nextRun);
 
         setRunManifest(manifestData);
-        const pendingVarSwitch = pendingVariableSwitchRef.current;
-        if (pendingVarSwitch && !Number.isFinite(pendingVarSwitch.manifestResolvedAt)) {
-          pendingVarSwitch.manifestResolvedAt = performance.now();
-        }
         const baseCapabilityVars = selectedCapabilityVars;
         const resolvedVars = manifestData
           ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars)
@@ -2313,10 +2118,6 @@ export default function App() {
       if (manifestMatchesSelection) {
         const { rows, hasFrameList } = resolveManifestFrames(runManifest, variable);
         if (hasFrameList) {
-          const pendingVarSwitch = pendingVariableSwitchRef.current;
-          if (pendingVarSwitch && !Number.isFinite(pendingVarSwitch.framesResolvedAt)) {
-            pendingVarSwitch.framesResolvedAt = performance.now();
-          }
           setVariableSwitchState((current) => {
             if (!current || current.toVariable !== variable) {
               return current;
@@ -2348,10 +2149,6 @@ export default function App() {
         }
         const rows = await fetchFrames(model, framesRunKey, variable, { signal: controller.signal });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
-        const pendingVarSwitch = pendingVariableSwitchRef.current;
-        if (pendingVarSwitch && !Number.isFinite(pendingVarSwitch.framesResolvedAt)) {
-          pendingVarSwitch.framesResolvedAt = performance.now();
-        }
         setVariableSwitchState((current) => {
           if (!current || current.toVariable !== variable) {
             return current;
@@ -2865,15 +2662,6 @@ export default function App() {
     }
 
     startPendingLoopStartMetric();
-    trackUsageEvent({
-      event_name: "animation_play",
-      model_id: model || null,
-      variable_id: variable || null,
-      run_id: telemetryRunId,
-      region_id: region || null,
-      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-      meta: buildObservedTelemetryMeta(forecastHour),
-    });
     captureProductAnalyticsEvent("animation_started", {
       model_id: model || null,
       variable_id: variable || null,
@@ -2911,7 +2699,6 @@ export default function App() {
     variable,
     telemetryRunId,
     region,
-    buildObservedTelemetryMeta,
     targetForecastHour,
     forecastHour,
   ]);
@@ -3002,15 +2789,6 @@ export default function App() {
 
   const handleRegionChange = useCallback((nextRegion: string) => {
     setRegion(nextRegion);
-    trackUsageEvent({
-      event_name: "region_selected",
-      model_id: model || null,
-      variable_id: variable || null,
-      run_id: telemetryRunId,
-      region_id: nextRegion,
-      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-      meta: buildObservedTelemetryMeta(forecastHour),
-    });
     captureProductAnalyticsEvent("region_selected", {
       model_id: model || null,
       variable_id: variable || null,
@@ -3018,7 +2796,7 @@ export default function App() {
       region_id: nextRegion,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, telemetryRunId, forecastHour, buildObservedTelemetryMeta]);
+  }, [model, variable, telemetryRunId, forecastHour]);
 
   const handleModelChange = useCallback((nextModel: string) => {
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
@@ -3027,15 +2805,6 @@ export default function App() {
     setRunManifest(null);
     setFrameRows([]);
     setModel(nextModel);
-    trackUsageEvent({
-      event_name: "model_selected",
-      model_id: nextModel,
-      variable_id: variable || null,
-      run_id: telemetryRunId,
-      region_id: region || null,
-      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-      meta: buildObservedTelemetryMeta(forecastHour),
-    });
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
       variable_id: variable || null,
@@ -3043,7 +2812,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [variable, telemetryRunId, region, forecastHour, buildObservedTelemetryMeta]);
+  }, [variable, telemetryRunId, region, forecastHour]);
 
   const handleRunChange = useCallback((nextRun: string) => {
     setRun(nextRun);
@@ -3069,18 +2838,8 @@ export default function App() {
     }
     const fromVariable = visualVariable || variable;
     pendingVariableSwitchRef.current = {
-      startedAt: performance.now(),
-      fromVariableId: fromVariable || null,
       toVariableId: nextVariable,
       expectedSelectionKey: `${model}:${resolvedRunForRequests}:${nextVariable}`,
-      modelId: model || null,
-      runId: telemetryRunId,
-      regionId: region || null,
-      manifestResolvedAt: null,
-      framesResolvedAt: null,
-      firstTargetRequestAt: null,
-      firstTargetReadyAt: null,
-      firstVisibleAt: null,
     };
     setVariableSwitchState({
       fromVariable,
@@ -3089,15 +2848,6 @@ export default function App() {
       visualState: "holding_old",
     });
     setVariable(nextVariable);
-    trackUsageEvent({
-      event_name: "variable_selected",
-      model_id: model || null,
-      variable_id: nextVariable,
-      run_id: telemetryRunId,
-      region_id: region || null,
-      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-      meta: buildObservedTelemetryMeta(forecastHour),
-    });
     captureProductAnalyticsEvent("variable_selected", {
       model_id: model || null,
       variable_id: nextVariable,
@@ -3105,7 +2855,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, buildObservedTelemetryMeta]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (
@@ -3175,25 +2925,11 @@ export default function App() {
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
-  const substrateDebugLabel = useMemo(() => {
-    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
-      return "grid_webgl_v1";
-    }
-    if (prefersGridSubstrate && !gridManifest) {
-      if (gridOnlySelection) {
-        return "grid_webgl_v1 (resolving)";
-      }
-      return "legacy (grid fallback)";
-    }
-    return "legacy";
-  }, [gridManifest, gridOnlySelection, prefersGridSubstrate, resolvedWeatherSubstrate]);
+  const substrateDebugLabel = "grid_webgl_v1";
   const substrateDebugDetail = useMemo(() => {
-    if (resolvedWeatherSubstrate === "grid_webgl_v1") {
-      const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
-      return `${frameLabel} · z ${mapZoom.toFixed(1)}`;
-    }
-    return `z ${mapZoom.toFixed(1)}`;
-  }, [mapZoom, resolvedGridDisplayHour, resolvedWeatherSubstrate]);
+    const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
+    return `${frameLabel} · z ${mapZoom.toFixed(1)}`;
+  }, [mapZoom, resolvedGridDisplayHour]);
   const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
   const preloadTotal = gridFrameHours.length;
   const preloadPercent = preloadTotal > 0
@@ -3335,7 +3071,7 @@ export default function App() {
         id: region || "region",
         label: selectedRegionLabel || region || "Region",
       },
-      loopEnabled: false,
+      animationEnabled: false,
       capturedMapDataUrl,
       anchors,
     };
@@ -3404,7 +3140,7 @@ export default function App() {
           centerLat: Number.isFinite(mapView.lat) ? mapView.lat : null,
           centerLon: Number.isFinite(mapView.lon) ? mapView.lon : null,
           zoom: Number.isFinite(mapView.z) ? mapView.z : null,
-          loopEnabled: controlsIsPlaying,
+          animationEnabled: controlsIsPlaying,
         });
         setSharePayload({
           permalink,

@@ -16,30 +16,7 @@ const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED
 const GRAFANA_TRACES_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_TRACES_URL ?? "").trim();
 const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
-export const WEBP_RENDER_MODE_THRESHOLDS = {
-  tier0Max: 5.8,
-  hysteresis: 0.2,
-  dwellMs: 200,
-};
-
 export type WeatherSubstrate = "grid_webgl_v1";
-
-export type CanonicalSingleWebpTierMode = "webp_tier0";
-
-export function getCanonicalSingleWebpTierMode(): CanonicalSingleWebpTierMode {
-  return "webp_tier0";
-}
-
-export function normalizeWeatherSubstrate(value: unknown): WeatherSubstrate | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized === "grid" || normalized === "grid_webgl_v1") {
-    return "grid_webgl_v1";
-  }
-  return null;
-}
 
 export const MAP_VIEW_DEFAULTS = {
   region: "conus",
@@ -48,13 +25,6 @@ export const MAP_VIEW_DEFAULTS = {
 };
 
 export const OVERLAY_DEFAULT_OPACITY = 0.9;
-
-export function isWebpDefaultRenderEnabled(): boolean {
-  return readBooleanEnv(
-    import.meta.env.VITE_CARTOSKY_WEBP_DEFAULT_ENABLED ?? import.meta.env.VITE_TWF_V3_WEBP_DEFAULT_ENABLED,
-    true,
-  );
-}
 
 export function isGridV1Enabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_GRID_V1_ENABLED, false);
@@ -75,20 +45,8 @@ function readBooleanEnv(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-export function isTileFirstInitialPaintEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_TILE_FIRST_INITIAL_PAINT, true);
-}
-
 export function isDeferredNonCriticalBootstrapEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_NON_CRITICAL_BOOTSTRAP, true);
-}
-
-export function isDeferredPrefetchUntilFirstPaintEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_PREFETCH_UNTIL_FIRST_PAINT, true);
-}
-
-export function isViewportAwareTileReadinessEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_VIEWPORT_AWARE_TILE_READINESS, false);
 }
 
 export function isAdminEmbedsEnabled(): boolean {
@@ -101,14 +59,6 @@ export function isWebVitalsEnabled(): boolean {
 
 export function isRumEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_RUM_ENABLED, false);
-}
-
-export function isLegacyPerfTelemetryEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_LEGACY_PERF_TELEMETRY_ENABLED, true);
-}
-
-export function isLegacyUsageTelemetryEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_LEGACY_USAGE_TELEMETRY_ENABLED, true);
 }
 
 export function isPostHogEnabled(): boolean {

@@ -1,4 +1,4 @@
-import { API_ORIGIN, API_V4_BASE, normalizeWeatherSubstrate, type WeatherSubstrate } from "@/lib/config";
+import { API_ORIGIN, API_V4_BASE, type WeatherSubstrate } from "@/lib/config";
 import {
   type AnchorBatchPoint,
   type AnchorBatchResponse,
@@ -232,6 +232,14 @@ type FetchOptions = {
   signal?: AbortSignal;
 };
 
+function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "grid" || normalized === "grid_webgl_v1") {
+    return "grid_webgl_v1";
+  }
+  return null;
+}
+
 export function readCapabilityTimeAxisMode(model: CapabilityModel | null | undefined): ModelTimeAxisMode {
   const raw = String(model?.constraints?.time_axis_mode ?? "").trim().toLowerCase();
   return raw === "observed" ? "observed" : "forecast";
@@ -254,7 +262,7 @@ export function readCapabilityRenderSubstrates(
   const normalized: WeatherSubstrate[] = [];
   const raw = Array.isArray(variable?.render_substrates) ? variable.render_substrates : [];
   for (const entry of raw) {
-    const substrate = normalizeWeatherSubstrate(entry);
+    const substrate = normalizeGridWeatherSubstrate(entry);
     if (!substrate || normalized.includes(substrate)) {
       continue;
     }

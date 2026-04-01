@@ -13,7 +13,7 @@ type BuildShareSummaryInput = {
   centerLat: number | null;
   centerLon: number | null;
   zoom: number | null;
-  loopEnabled: boolean;
+  animationEnabled: boolean;
 };
 
 type ShareSummary = {
@@ -122,7 +122,7 @@ export function buildShareSummary(input: BuildShareSummaryInput): ShareSummary {
   const detailsSummary = [
     formatCenter(input.centerLat, input.centerLon),
     formatZoom(input.zoom),
-    `Loop ${input.loopEnabled ? "on" : "off"}`,
+    `Animation ${input.animationEnabled ? "on" : "off"}`,
   ].join(" • ");
 
   return { shortSummary, detailsSummary };

@@ -20,7 +20,7 @@ export type ScreenshotExportState = {
   validTimeISO?: string | null;
   sourceStatusLabel?: string | null;
   region?: { id: string; label: string };
-  loopEnabled: boolean;
+  animationEnabled: boolean;
   capturedMapDataUrl?: string;
   anchors?: Array<{ x: number; y: number; label: string; cityName: string }>;
 };
