@@ -274,7 +274,7 @@ export function readCapabilityLatestOnly(model: CapabilityModel | null | undefin
 export function readCapabilityDefaultRenderSubstrate(
   model: CapabilityModel | null | undefined
 ): WeatherSubstrate {
-  return normalizeWeatherSubstrate(model?.defaults?.default_render_substrate) ?? "legacy";
+  return normalizeWeatherSubstrate(model?.defaults?.default_render_substrate) ?? "grid_webgl_v1";
 }
 
 export function readCapabilityRenderSubstrates(
@@ -290,7 +290,7 @@ export function readCapabilityRenderSubstrates(
     normalized.push(substrate);
   }
   if (normalized.length === 0) {
-    return ["legacy"];
+    return ["grid_webgl_v1"];
   }
   return normalized;
 }

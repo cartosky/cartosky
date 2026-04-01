@@ -1,6 +1,3 @@
-import type { WeatherSubstrate } from "@/lib/config";
-import { normalizeWeatherSubstrate } from "@/lib/config";
-
 export type PermalinkState = {
   model?: string;
   run?: string;
@@ -11,7 +8,6 @@ export type PermalinkState = {
   lon?: number;
   z?: number;
   loop?: boolean;
-  weatherSubstrate?: WeatherSubstrate;
 };
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
@@ -85,11 +81,6 @@ export function readPermalink(): PermalinkState {
     state.loop = true;
   } else if (loop === "0") {
     state.loop = false;
-  }
-
-  const weatherSubstrate = normalizeWeatherSubstrate(params.get("weather_substrate"));
-  if (weatherSubstrate) {
-    state.weatherSubstrate = weatherSubstrate;
   }
 
   return state;

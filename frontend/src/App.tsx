@@ -23,11 +23,9 @@ import {
   fetchCapabilities,
   fetchFrames,
   fetchGridManifest,
-  fetchLoopManifest,
   fetchRegionPresets,
   fetchRuns,
   fetchSampleBatch,
-  readCapabilityDefaultRenderSubstrate,
   readCapabilityDefaultFrameSelection,
   readCapabilityLatestOnly,
   readCapabilityRenderSubstrates,
@@ -968,7 +966,6 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
   const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
-  const [weatherSubstrateOverride] = useState<WeatherSubstrate | null>(initialPermalink.weatherSubstrate ?? null);
   const [loopDisplayHour, setLoopDisplayHour] = useState<number | null>(null);
   const [loopDisplayBitmap, setLoopDisplayBitmap] = useState<ImageBitmap | null>(null);
   const [isLoopPreloading, setIsLoopPreloading] = useState(false);
@@ -1241,45 +1238,17 @@ export default function App() {
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
-  const selectedModelDefaultRenderSubstrate = readCapabilityDefaultRenderSubstrate(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectionCapabilitiesResolved = Boolean(variable) && selectedCapabilityVarMap.has(variable);
   const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
-    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["legacy"])
+    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid_webgl_v1"])
     : [];
-  const selectionSupportsLegacy = selectionCapabilitiesResolved
-    && selectedVariableRenderSubstrates.includes("legacy");
   const selectionSupportsGridV1 = selectionCapabilitiesResolved
     && gridV1Enabled
     && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
-  const gridOnlySelection = selectionSupportsGridV1 && !selectionSupportsLegacy;
-  const selectedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
-    if (weatherSubstrateOverride === "legacy") {
-      return selectionSupportsLegacy ? "legacy" : (selectionSupportsGridV1 ? "grid_webgl_v1" : "legacy");
-    }
-    if (weatherSubstrateOverride === "grid_webgl_v1") {
-      return selectionSupportsGridV1 ? "grid_webgl_v1" : (selectionSupportsLegacy ? "legacy" : "legacy");
-    }
-    if (!selectionSupportsLegacy && selectionSupportsGridV1) {
-      return "grid_webgl_v1";
-    }
-    if (gridV1DefaultEnabled && selectionSupportsGridV1) {
-      return "grid_webgl_v1";
-    }
-    if (selectedModelDefaultRenderSubstrate === "grid_webgl_v1" && selectionSupportsGridV1) {
-      return "grid_webgl_v1";
-    }
-    return "legacy";
-  }, [
-    gridV1DefaultEnabled,
-    selectedModelDefaultRenderSubstrate,
-    selectionCapabilitiesResolved,
-    selectionSupportsLegacy,
-    selectionSupportsGridV1,
-    weatherSubstrateOverride,
-  ]);
-  const prefersGridSubstrate = selectedWeatherSubstrate === "grid_webgl_v1";
-  const legacyRuntimeEnabled = selectionSupportsLegacy && selectedWeatherSubstrate === "legacy";
+  const gridOnlySelection = selectionSupportsGridV1;
+  const prefersGridSubstrate = selectionSupportsGridV1;
+  const legacyRuntimeEnabled = false;
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1780,23 +1749,13 @@ export default function App() {
   const gridFrameHours = useMemo(() => {
     return Array.from(gridFrameByHour.keys()).sort((a, b) => a - b);
   }, [gridFrameByHour]);
-  const resolvedWeatherSubstrate = useMemo<WeatherSubstrate>(() => {
-    if (
-      prefersGridSubstrate
-      && gridManifest
-      && gridLod0
-      && gridFrameHours.length > 0
-    ) {
-      return "grid_webgl_v1";
-    }
-    return "legacy";
-  }, [gridFrameHours.length, gridLod0, gridManifest, prefersGridSubstrate]);
+  const resolvedWeatherSubstrate: WeatherSubstrate = "grid_webgl_v1";
   const canUseGridPlayback = useMemo(() => {
-    if (resolvedWeatherSubstrate !== "grid_webgl_v1" || gridFrameHours.length <= 1) {
+    if (gridFrameHours.length <= 1) {
       return false;
     }
     return gridFrameHours.every((fh) => Boolean(gridFrameByHour.get(fh)?.url));
-  }, [gridFrameByHour, gridFrameHours, resolvedWeatherSubstrate]);
+  }, [gridFrameByHour, gridFrameHours]);
   const requestedGridDisplayHour = useMemo(() => {
     const requested = (isPlaying || isGridPreloadingForPlay || isScrubbing || isVariableSwitching)
       ? targetForecastHour
@@ -5012,66 +4971,6 @@ export default function App() {
   // that occurred when the manifest was cleared before the new one loaded.
 
   useEffect(() => {
-    if (!legacyRuntimeEnabled || !model || !variable || !hasRenderableSelection) {
-      setLoopManifest(null);
-      return;
-    }
-    const controller = new AbortController();
-    const generation = requestGenerationRef.current;
-
-    async function loadLoopManifest() {
-      const startedAt = performance.now();
-      const manifest = await fetchLoopManifest(model, resolvedRunForRequests, variable, { signal: controller.signal });
-      if (controller.signal.aborted || generation !== requestGenerationRef.current) {
-        return;
-      }
-      const durationMs = performance.now() - startedAt;
-      if (Number.isFinite(durationMs) && durationMs >= 0) {
-        trackPerfEvent({
-          event_name: "loop_manifest_resolve",
-          duration_ms: durationMs,
-          model_id: model || null,
-          variable_id: variable || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          meta: {
-            resolved: Boolean(manifest),
-          },
-        });
-        trackRumDiagnosticMetric({
-          metric_name: "manifest_fetch_duration",
-          metric_value: durationMs,
-          metric_unit: "ms",
-          model_id: model || null,
-          variable_id: variable || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-        });
-      }
-      setLoopManifest(manifest);
-    }
-
-    loadLoopManifest().catch(() => {
-      if (controller.signal.aborted || generation !== requestGenerationRef.current) {
-        return;
-      }
-      setLoopManifest(null);
-    });
-
-    return () => {
-      controller.abort();
-    };
-  }, [
-    model,
-    variable,
-    resolvedRunForRequests,
-    hasRenderableSelection,
-    legacyRuntimeEnabled,
-    telemetryRunId,
-    region,
-  ]);
-
-  useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) return;
     if (gridOnlySelection && run === "latest" && !resolvedGridLatestRunId) {
       setFrameRows([]);
@@ -6632,7 +6531,6 @@ export default function App() {
           lon: mapView.lon,
           z: mapView.z,
           loop: resolvedLoopPermalink,
-          weatherSubstrate: weatherSubstrateOverride ?? undefined,
         });
         if (search === lastSyncedPermalinkSearchRef.current || search === window.location.search) {
           lastSyncedPermalinkSearchRef.current = search;
@@ -6655,7 +6553,6 @@ export default function App() {
     resolvedForecastHourPermalink,
     region,
     resolvedLoopPermalink,
-    weatherSubstrateOverride,
     mapViewTick,
   ]);
 
