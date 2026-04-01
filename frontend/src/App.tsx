@@ -15,7 +15,6 @@ import {
   type FrameRow,
   type GridManifestResponse,
   type LegendMeta,
-  type LoopManifestResponse,
   type ModelDefaultFrameSelection,
   type RegionPreset,
   type RunManifestResponse,
@@ -41,8 +40,6 @@ import {
 } from "@/lib/anchor-labels";
 import {
   API_ORIGIN,
-  getCanonicalSingleWebpTierMode,
-  getLoopPlaybackPolicy,
   getPlaybackBufferPolicy,
   isGridV1DefaultEnabled,
   isGridV1Enabled,
@@ -50,10 +47,8 @@ import {
   isDeferredPrefetchUntilFirstPaintEnabled,
   isTileFirstInitialPaintEnabled,
   isViewportAwareTileReadinessEnabled,
-  isWebpDefaultRenderEnabled,
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
-  WEBP_RENDER_MODE_THRESHOLDS,
   type WeatherSubstrate,
 } from "@/lib/config";
 import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
@@ -128,8 +123,7 @@ function recentMedianSample(samples: readonly number[], maxSamples = 12): number
   return (recent[middle - 1] + recent[middle]) / 2;
 }
 
-type RenderModeState = "webp_tier0" | "tiles";
-const SINGLE_TIER_WEBP_MODE: RenderModeState = getCanonicalSingleWebpTierMode();
+type RenderModeState = "tiles";
 
 type BufferSnapshot = {
   totalFrames: number;
@@ -235,9 +229,8 @@ type ModelEntry = {
 type PendingViewerPerfMetric = {
   eventName: "frame_change" | "scrub_latency";
   startedAt: number;
-  renderTarget: "tiles" | "loop";
+  renderTarget: "tiles";
   expectedTileUrl: string | null;
-  expectedLoopHour: number | null;
   modelId: string | null;
   variableId: string | null;
   runId: string | null;
@@ -261,15 +254,6 @@ type PendingLoopStartMetric = {
   forecastHour: number | null;
 };
 
-type LoopDisplayCommitMetric = {
-  token: number;
-  displayHour: number;
-  renderMode: RenderModeState;
-  committedAt: number;
-  decodedAt: number | null;
-  presentationPath: "canvas" | "image-url";
-};
-
 type PendingVariableSwitchMetric = {
   startedAt: number;
   fromVariableId: string | null;
@@ -283,7 +267,6 @@ type PendingVariableSwitchMetric = {
   firstTargetRequestAt: number | null;
   firstTargetReadyAt: number | null;
   firstVisibleAt: number | null;
-  loopDecodeRequestedAt: number | null;
   expectedTileUrl: string | null;
   warmAtVisible: boolean | null;
   warmSourceAtVisible: TileReadySource | null;
@@ -319,8 +302,7 @@ function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
 }
 
 function buildVariableSwitchPhase0aMeta(
-  pending: PendingVariableSwitchMetric,
-  renderTarget: "tiles" | "loop"
+  pending: PendingVariableSwitchMetric
 ): Record<string, unknown> {
   const offsetMs = (at: number | null): number | null => {
     if (!Number.isFinite(at)) {
@@ -331,7 +313,7 @@ function buildVariableSwitchPhase0aMeta(
 
   return {
     from_variable: pending.fromVariableId,
-    render_target: renderTarget,
+    render_target: "tiles",
     phase0a_trace_version: 1,
     expected_selection_key: pending.expectedSelectionKey,
     stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
@@ -339,7 +321,6 @@ function buildVariableSwitchPhase0aMeta(
     stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
     stage_first_target_ready_ms: offsetMs(pending.firstTargetReadyAt),
     stage_first_visible_ms: offsetMs(pending.firstVisibleAt),
-    stage_loop_decode_requested_ms: offsetMs(pending.loopDecodeRequestedAt),
     expected_tile_url: pending.expectedTileUrl,
     warm_at_visible: pending.warmAtVisible,
     warm_source_at_visible: pending.warmSourceAtVisible,
@@ -608,8 +589,6 @@ function mergeManifestRowsWithPrevious(
       ...row,
       meta: row.meta ?? previous.meta,
       tile_url_template: row.tile_url_template ?? previous.tile_url_template,
-      loop_webp_url: row.loop_webp_url ?? previous.loop_webp_url,
-      loop_webp_tier0_url: row.loop_webp_tier0_url ?? previous.loop_webp_tier0_url,
     };
   });
 }
@@ -676,91 +655,6 @@ function resolveForecastHour(
 function getEffectiveZoom(zoom: number): number {
   const dpr = typeof window === "undefined" ? 1 : Math.max(1, window.devicePixelRatio || 1);
   return zoom + Math.log2(dpr);
-}
-
-function isLikelyMobileLoopDevice(): boolean {
-  if (typeof window === "undefined" || typeof navigator === "undefined") {
-    return false;
-  }
-  const coarsePointer = typeof window.matchMedia === "function"
-    ? window.matchMedia("(pointer: coarse)").matches
-    : false;
-  return coarsePointer || /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-}
-
-function getRenderModeThresholds() {
-  return WEBP_RENDER_MODE_THRESHOLDS;
-}
-
-function nextRenderModeByHysteresis(current: RenderModeState, effectiveZoom: number): RenderModeState {
-  const { tier0Max, hysteresis } = getRenderModeThresholds();
-
-  if (current === "tiles") {
-    return effectiveZoom <= tier0Max - hysteresis ? SINGLE_TIER_WEBP_MODE : "tiles";
-  }
-
-  return effectiveZoom > tier0Max + hysteresis ? "tiles" : SINGLE_TIER_WEBP_MODE;
-}
-
-async function preloadLoopFrame(
-  url: string,
-  signal?: AbortSignal
-): Promise<{ ok: boolean; bitmap: ImageBitmap | null; bytes: number; readyMs: number; fetchMs: number; decodeMs: number }> {
-  const startedAt = performance.now();
-  try {
-    const fetchStart = performance.now();
-    const response = await fetch(url, {
-      credentials: "omit",
-      signal,
-      cache: "force-cache",
-    });
-    const fetchEnd = performance.now();
-    if (!response.ok) {
-      return { ok: false, bitmap: null, bytes: 0, readyMs: 0, fetchMs: 0, decodeMs: 0 };
-    }
-    const blob = await response.blob();
-    if (typeof createImageBitmap !== "function") {
-      const readyEnd = performance.now();
-      return {
-        ok: true,
-        bitmap: null,
-        bytes: 0,
-        readyMs: Math.max(0, Math.round(readyEnd - startedAt)),
-        fetchMs: Math.max(0, Math.round(fetchEnd - fetchStart)),
-        decodeMs: 0,
-      };
-    }
-    const decodeStart = performance.now();
-    const bitmap = await createImageBitmap(blob);
-    const decodeEnd = performance.now();
-    return {
-      ok: true,
-      bitmap,
-      bytes: bitmap.width * bitmap.height * 4,
-      readyMs: Math.max(0, Math.round(decodeEnd - startedAt)),
-      fetchMs: Math.max(0, Math.round(fetchEnd - fetchStart)),
-      decodeMs: Math.max(0, Math.round(decodeEnd - decodeStart)),
-    };
-  } catch {
-    return { ok: false, bitmap: null, bytes: 0, readyMs: 0, fetchMs: 0, decodeMs: 0 };
-  }
-}
-
-async function warmLoopImageUrl(url: string, signal?: AbortSignal): Promise<boolean> {
-  try {
-    const response = await fetch(url, {
-      credentials: "omit",
-      signal,
-      cache: "force-cache",
-    });
-    if (!response.ok) {
-      return false;
-    }
-    await response.blob();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function isPrecipPtypeLegendMeta(
@@ -913,7 +807,6 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 }
 
 export default function App() {
-  const webpDefaultEnabled = isWebpDefaultRenderEnabled();
   const gridV1Enabled = isGridV1Enabled();
   const gridV1DefaultEnabled = isGridV1DefaultEnabled();
   const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
@@ -944,7 +837,6 @@ export default function App() {
   const [variables, setVariables] = useState<VariableOption[]>([]);
   const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
-  const [loopManifest, setLoopManifest] = useState<LoopManifestResponse | null>(null);
   const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
   const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
   const [regionPresets, setRegionPresets] = useState<Record<string, RegionPreset>>({});
@@ -964,13 +856,8 @@ export default function App() {
   const [mapZoom, setMapZoom] = useState(MAP_VIEW_DEFAULTS.zoom);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [renderMode, setRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
-  const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>(webpDefaultEnabled ? SINGLE_TIER_WEBP_MODE : "tiles");
-  const [loopDisplayHour, setLoopDisplayHour] = useState<number | null>(null);
-  const [loopDisplayBitmap, setLoopDisplayBitmap] = useState<ImageBitmap | null>(null);
-  const [isLoopPreloading, setIsLoopPreloading] = useState(false);
-  const [isLoopAutoplayBuffering, setIsLoopAutoplayBuffering] = useState(false);
-  const [loopProgress, setLoopProgress] = useState({ total: 0, ready: 0, failed: 0 });
+  const [renderMode, setRenderMode] = useState<RenderModeState>("tiles");
+  const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>("tiles");
   const [isPreloadingForPlay, setIsPreloadingForPlay] = useState(false);
   const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -1058,49 +945,10 @@ export default function App() {
     lastBufferedCount: 0,
     lastProgressAt: 0,
   });
-  const loopPreloadTokenRef = useRef(0);
-  const loopUrlWarmTokenRef = useRef(0);
-  const warmedLoopSelectionKeyRef = useRef("");
-  const loopReadyHoursRef = useRef<Set<number>>(new Set());
-  const loopFailedHoursRef = useRef<Set<number>>(new Set());
   const forecastHourRef = useRef(forecastHour);
-  const loopFrameHoursRef = useRef<number[]>([]);
-  const visibleRenderModeRef = useRef<RenderModeState>("tiles");
-  const countAheadReadyLoopFramesRef = useRef<
-    (currentHour: number, mode: RenderModeState, maxAhead: number, presentationPath: "image-url" | "canvas") => number
-  >(() => 0);
-  const isLoopFrameReadyForPresentationRef = useRef<
-    (fh: number, mode: RenderModeState, presentationPath: "image-url" | "canvas") => boolean
-  >(() => false);
-  const loopMinAheadWhilePlayingRef = useRef(0);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
-  const renderModeDwellTimerRef = useRef<number | null>(null);
-  const transitionTokenRef = useRef(0);
   const lastTileViewportCommitUrlRef = useRef<string | null>(null);
-  const loopDisplayDecodeTokenRef = useRef(0);
-  const loopDisplayDecodeAbortRef = useRef<AbortController | null>(null);
-  // The forecast hour currently being decoded by startForegroundLoopFrameDecode.
-  // Used to avoid aborting and re-issuing an identical in-flight fetch when the
-  // effect-based scrub path fires for the same hour the RAF path already started.
-  const foregroundDecodeHourRef = useRef<number | null>(null);
-  const loopDecodedCacheRef = useRef<Map<string, { bitmap: ImageBitmap; bytes: number; lastUsedAt: number }>>(new Map());
-  const loopDecodedCacheBytesRef = useRef(0);
-  const loopDecodedCacheHighWaterRef = useRef(0);
-  const loopDecodeReadySamplesRef = useRef<number[]>([]);
-  const loopDecodeFetchSamplesRef = useRef<number[]>([]);
-  const loopDecodeOnlySamplesRef = useRef<number[]>([]);
-  const loopDecodeCompletedAtRef = useRef<Map<string, number>>(new Map());
-  const loopDisplayCommitRef = useRef<LoopDisplayCommitMetric | null>(null);
-  const loopDisplayCommitTokenRef = useRef(0);
-  const loopDisplayPaintedTokenRef = useRef(0);
   const longTaskSampleCounterRef = useRef(0);
-  const loopVisiblePaintTokenRef = useRef(0);
-  // Holdover refs: snapshot of loop visuals from the outgoing variable so the
-  // map keeps showing the old frame during a variable switch instead of
-  // flashing stale tile data while the new variable's imagery loads.
-  const holdoverLoopBitmapRef = useRef<ImageBitmap | null>(null);
-  const holdoverLoopUrlRef = useRef<string | null>(null);
-  const holdoverLoopBboxRef = useRef<[number, number, number, number] | null>(null);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const mapViewRef = useRef({
@@ -1114,7 +962,6 @@ export default function App() {
   const pendingInitialForecastHourRef = useRef(
     Number.isFinite(initialPermalink.fh) ? Number(initialPermalink.fh) : null
   );
-  const pendingInitialLoopRef = useRef<boolean | undefined>(initialPermalink.loop);
   const viewerMountedAtRef = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const firstViewerFrameTrackedRef = useRef(false);
   const firstMapRenderTrackedRef = useRef(false);
@@ -1128,16 +975,6 @@ export default function App() {
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
   const targetForecastHourRef = useRef(targetForecastHour);
-  const lastLoopAdvanceRef = useRef<number | null>(null);
-  const loopFrameDropSampleCounterRef = useRef(0);
-  // -- Imperative playback fast-path refs --
-  // Stable handle to MapCanvas's drawToLoopCanvas; set via onDrawLoopFrameRef callback.
-  const drawLoopFrameImperativeRef = useRef<((bitmap: ImageBitmap) => boolean) | null>(null);
-  // Pre-built contiguous sequence of { hour, bitmap } for the current playback session.
-  // Built when playback starts, refreshed as new frames decode during playback.
-  const playbackBitmapMapRef = useRef<Map<number, ImageBitmap> | null>(null);
-  // The forecast hour that was last imperatively drawn (not yet synced to React state).
-  const imperativePlaybackHourRef = useRef<number | null>(null);
   const tileFetchSampleCounterRef = useRef(0);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
@@ -1157,24 +994,6 @@ export default function App() {
   // updateBufferSnapshot reads from this ref instead of constructing a new Set
   // on every tile event (which fired 20-40×/sec during animation).
   const frameSetRef = useRef<Set<number>>(new Set());
-
-  const resetLoopPresentationToTiles = useCallback(() => {
-    transitionTokenRef.current += 1;
-    loopDisplayDecodeTokenRef.current += 1;
-    loopDisplayCommitTokenRef.current += 1;
-    loopVisiblePaintTokenRef.current += 1;
-    loopDisplayCommitRef.current = null;
-    setLoopDisplayHour(null);
-    setLoopDisplayBitmap(null);
-    setVisibleRenderMode("tiles");
-    lastTileViewportCommitUrlRef.current = null;
-  }, []);
-
-  const clearLoopHoldover = useCallback(() => {
-    holdoverLoopBitmapRef.current = null;
-    holdoverLoopUrlRef.current = null;
-    holdoverLoopBboxRef.current = null;
-  }, []);
 
   useEffect(() => {
     writeBasemapModePreference(basemapMode);
@@ -1248,7 +1067,6 @@ export default function App() {
     && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
   const gridOnlySelection = selectionSupportsGridV1;
   const prefersGridSubstrate = selectionSupportsGridV1;
-  const legacyRuntimeEnabled = false;
   const overlayFadeOutZoom = useMemo(() => {
     // When the render mode is "tiles" (high-zoom detail), disable the overlay
     // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
@@ -1667,67 +1485,6 @@ export default function App() {
     return buildRunOptions(runs, latestRunId, selectedTimeAxisMode);
   }, [runs, latestRunId, selectedTimeAxisMode]);
 
-  const loopFrameTier0FallbackByHour = useMemo(() => {
-    if (!legacyRuntimeEnabled) {
-      return new Map<number, string>();
-    }
-    const map = new Map<number, string>();
-    for (const row of frameRows) {
-      const fh = Number(row?.fh);
-      const loopUrl = row?.loop_webp_tier0_url ?? row?.loop_webp_url;
-      if (!Number.isFinite(fh) || !loopUrl) {
-        continue;
-      }
-      const absolute = /^https?:\/\//i.test(loopUrl)
-        ? loopUrl
-        : `${apiRoot}${loopUrl.startsWith("/") ? "" : "/"}${loopUrl}`;
-      map.set(fh, absolute);
-    }
-    return map;
-  }, [apiRoot, frameRows, legacyRuntimeEnabled]);
-
-  const loopTier0UrlByHour = useMemo(() => {
-    if (!legacyRuntimeEnabled) {
-      return new Map<number, string>();
-    }
-    const map = new Map<number, string>(loopFrameTier0FallbackByHour);
-    const tier0 = loopManifest?.loop_tiers.find((entry) => Number(entry?.tier) === 0);
-    const frames = Array.isArray(tier0?.frames) ? tier0.frames : [];
-    for (const frame of frames) {
-      const fh = Number(frame?.fh);
-      const loopUrl = frame?.url;
-      if (!Number.isFinite(fh) || !loopUrl) {
-        continue;
-      }
-      const absolute = /^https?:\/\//i.test(loopUrl)
-        ? loopUrl
-        : `${apiRoot}${loopUrl.startsWith("/") ? "" : "/"}${loopUrl}`;
-      map.set(fh, absolute);
-    }
-    return map;
-  }, [apiRoot, legacyRuntimeEnabled, loopFrameTier0FallbackByHour, loopManifest]);
-
-  const loopUrlByHour = useMemo(() => new Map(loopTier0UrlByHour), [loopTier0UrlByHour]);
-
-  const loopFrameHours = useMemo(() => {
-    return Array.from(loopTier0UrlByHour.keys()).sort((a, b) => a - b);
-  }, [loopTier0UrlByHour]);
-
-  const resolvedLoopTargetForecastHour = useMemo(() => {
-    if (loopFrameHours.length === 0) {
-      return targetForecastHour;
-    }
-    return nearestFrame(loopFrameHours, targetForecastHour);
-  }, [loopFrameHours, targetForecastHour]);
-
-  const resolveLoopUrlForHour = useCallback(
-    (fh: number, _preferredMode: RenderModeState): string | null => {
-      return loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh) ?? null;
-    },
-    [loopTier0UrlByHour, loopUrlByHour]
-  );
-  const isCurrentSelectionLoaded = loadedFramesKey === selectionKey;
-  const loopSelectionReady = isCurrentSelectionLoaded && loopFrameHours.length > 0;
   const gridLod0 = useMemo(() => {
     if (!gridManifest?.lods?.length) {
       return null;
@@ -1920,285 +1677,6 @@ export default function App() {
     isGridFrameReady,
     normalizeGridFrameUrl,
   ]);
-  const webpDecodeCacheBudgetBytes = useMemo(() => {
-    if (typeof navigator === "undefined") {
-      return WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES;
-    }
-    const isMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-    return isMobile ? WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES : WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES;
-  }, []);
-
-  const loopCacheKey = useCallback(
-    (fh: number, mode: RenderModeState) => {
-      return `${model}:${resolvedRunForRequests}:${variable}:${mode}:${fh}`;
-    },
-    [model, resolvedRunForRequests, variable]
-  );
-
-  const upsertLoopDecodedCache = useCallback(
-    (key: string, bitmap: ImageBitmap, bytes: number) => {
-      const now = Date.now();
-      const cache = loopDecodedCacheRef.current;
-      const previous = cache.get(key);
-      if (previous) {
-        loopDecodedCacheBytesRef.current -= previous.bytes;
-        previous.bitmap.close();
-      }
-      cache.set(key, { bitmap, bytes, lastUsedAt: now });
-      loopDecodedCacheBytesRef.current += bytes;
-      if (loopDecodedCacheBytesRef.current > loopDecodedCacheHighWaterRef.current) {
-        loopDecodedCacheHighWaterRef.current = loopDecodedCacheBytesRef.current;
-      }
-
-      while (loopDecodedCacheBytesRef.current > webpDecodeCacheBudgetBytes && cache.size > 1) {
-        let lruKey: string | null = null;
-        let oldest = Number.POSITIVE_INFINITY;
-        for (const [candidateKey, candidate] of cache.entries()) {
-          if (candidate.lastUsedAt < oldest) {
-            oldest = candidate.lastUsedAt;
-            lruKey = candidateKey;
-          }
-        }
-        if (!lruKey || lruKey === key) {
-          break;
-        }
-        const evicted = cache.get(lruKey);
-        if (!evicted) {
-          break;
-        }
-        evicted.bitmap.close();
-        loopDecodedCacheBytesRef.current -= evicted.bytes;
-        cache.delete(lruKey);
-      }
-    },
-    [webpDecodeCacheBudgetBytes]
-  );
-
-  const ensureLoopFrameDecoded = useCallback(
-    async (fh: number, mode: RenderModeState, signal?: AbortSignal): Promise<boolean> => {
-      if (mode === "tiles") {
-        return false;
-      }
-      const key = loopCacheKey(fh, mode);
-      const cached = loopDecodedCacheRef.current.get(key);
-      if (cached) {
-        cached.lastUsedAt = Date.now();
-        loopDecodeCompletedAtRef.current.set(key, performance.now());
-        trackPerfEvent({
-          event_name: "loop_decode_ready",
-          duration_ms: 0,
-          model_id: model || null,
-          variable_id: variable || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          forecast_hour: Number.isFinite(fh) ? fh : null,
-          meta: buildObservedTelemetryMeta(fh, {
-            render_mode: mode,
-            cache_hit: true,
-          }),
-        });
-        loopReadyHoursRef.current.add(fh);
-        return true;
-      }
-
-      const url = resolveLoopUrlForHour(fh, mode);
-      if (!url) {
-        return false;
-      }
-
-      const decodeStartedAt = performance.now();
-      const decoded = await preloadLoopFrame(url, signal);
-      if (!decoded.ok) {
-        return false;
-      }
-      if (decoded.readyMs > 0) {
-        const readySamples = loopDecodeReadySamplesRef.current;
-        readySamples.push(decoded.readyMs);
-        if (readySamples.length > 256) {
-          readySamples.splice(0, readySamples.length - 256);
-        }
-      }
-      if (decoded.fetchMs > 0) {
-        const fetchSamples = loopDecodeFetchSamplesRef.current;
-        fetchSamples.push(decoded.fetchMs);
-        if (fetchSamples.length > 256) {
-          fetchSamples.splice(0, fetchSamples.length - 256);
-        }
-      }
-      if (decoded.decodeMs > 0) {
-        const decodeSamples = loopDecodeOnlySamplesRef.current;
-        decodeSamples.push(decoded.decodeMs);
-        if (decodeSamples.length > 256) {
-          decodeSamples.splice(0, decodeSamples.length - 256);
-        }
-      }
-      if (decoded.bitmap) {
-        upsertLoopDecodedCache(key, decoded.bitmap, decoded.bytes);
-      }
-      loopDecodeCompletedAtRef.current.set(key, performance.now());
-      trackPerfEvent({
-        event_name: "loop_decode_ready",
-        duration_ms: decoded.readyMs > 0 ? decoded.readyMs : Math.max(0, performance.now() - decodeStartedAt),
-        model_id: model || null,
-        variable_id: variable || null,
-        run_id: telemetryRunId,
-        region_id: region || null,
-        forecast_hour: Number.isFinite(fh) ? fh : null,
-        meta: buildObservedTelemetryMeta(fh, {
-          render_mode: mode,
-          cache_hit: false,
-          fetch_ms: decoded.fetchMs,
-          decode_ms: decoded.decodeMs,
-        }),
-      });
-      loopReadyHoursRef.current.add(fh);
-      return true;
-    },
-    [buildObservedTelemetryMeta, loopCacheKey, resolveLoopUrlForHour, upsertLoopDecodedCache, model, variable, telemetryRunId, region]
-  );
-
-  const hasDecodedLoopFrame = useCallback(
-    (fh: number, mode: RenderModeState): boolean => {
-      if (mode === "tiles") {
-        return false;
-      }
-      return loopDecodedCacheRef.current.has(loopCacheKey(fh, mode));
-    },
-    [loopCacheKey]
-  );
-
-  const isLoopFrameReadyForPresentation = useCallback(
-    (fh: number, mode: RenderModeState, presentationPath: "image-url" | "canvas"): boolean => {
-      if (mode === "tiles") {
-        return false;
-      }
-      if (presentationPath === "image-url") {
-        return Boolean(resolveLoopUrlForHour(fh, mode));
-      }
-      return hasDecodedLoopFrame(fh, mode);
-    },
-    [resolveLoopUrlForHour, hasDecodedLoopFrame]
-  );
-
-  const getDecodedLoopBitmap = useCallback(
-    (fh: number, mode: RenderModeState): ImageBitmap | null => {
-      if (mode === "tiles") {
-        return null;
-      }
-      const cached = loopDecodedCacheRef.current.get(loopCacheKey(fh, mode));
-      if (!cached) {
-        return null;
-      }
-      // Guard against detached bitmaps whose backing store was freed.
-      if (cached.bitmap.width === 0) {
-        return null;
-      }
-      cached.lastUsedAt = Date.now();
-      return cached.bitmap;
-    },
-    [loopCacheKey]
-  );
-
-  /** Build / refresh the bitmap map used by the imperative playback fast-path.
-   *  Only includes frames that are already decoded.  Returns a Map<hour, bitmap>
-   *  for O(1) lookups in the RAF tick. */
-  const buildPlaybackBitmapMap = useCallback(
-    (frameHours: number[], mode: RenderModeState): Map<number, ImageBitmap> => {
-      const map = new Map<number, ImageBitmap>();
-      for (const fh of frameHours) {
-        const key = loopCacheKey(fh, mode);
-        const cached = loopDecodedCacheRef.current.get(key);
-        // Skip detached bitmaps — their backing store was freed by
-        // LRU eviction or dataset-change cache clears.
-        if (cached && cached.bitmap.width > 0) {
-          map.set(fh, cached.bitmap);
-        }
-      }
-      return map;
-    },
-    [loopCacheKey]
-  );
-
-  const startForegroundLoopFrameDecode = useCallback(
-    (fh: number, mode: RenderModeState, onReady?: () => void) => {
-      if (mode === "tiles") {
-        return;
-      }
-      // If a decode for the exact same hour is already in-flight, skip the
-      // abort-and-refetch cycle.  This prevents the RAF-initiated scrub decode
-      // from being cancelled and re-issued identically by the effect-based path.
-      if (foregroundDecodeHourRef.current === fh && loopDisplayDecodeAbortRef.current) {
-        return;
-      }
-      loopDisplayDecodeAbortRef.current?.abort();
-      const controller = new AbortController();
-      loopDisplayDecodeAbortRef.current = controller;
-      foregroundDecodeHourRef.current = fh;
-      ensureLoopFrameDecoded(fh, mode, controller.signal)
-        .then((ready) => {
-          // Only promote if this decode hasn't been superseded by a newer scrub.
-          if (ready && loopDisplayDecodeAbortRef.current === controller) {
-            onReady?.();
-          }
-        })
-        .catch(() => {
-          // Foreground interaction decode is best-effort warming for the exact frame.
-        })
-        .finally(() => {
-          if (loopDisplayDecodeAbortRef.current === controller) {
-            loopDisplayDecodeAbortRef.current = null;
-            foregroundDecodeHourRef.current = null;
-          }
-        });
-    },
-    [ensureLoopFrameDecoded]
-  );
-
-  const countAheadReadyLoopFrames = useCallback(
-    (
-      currentHour: number,
-      mode: RenderModeState,
-      maxAhead: number,
-      presentationPath: "image-url" | "canvas" = "canvas"
-    ): number => {
-      if (mode === "tiles" || loopFrameHours.length === 0 || maxAhead <= 0) {
-        return 0;
-      }
-      const currentIndex = loopFrameHours.indexOf(currentHour);
-      if (currentIndex < 0) {
-        return 0;
-      }
-
-      let ready = 0;
-      const endIndex = Math.min(loopFrameHours.length - 1, currentIndex + maxAhead);
-      for (let index = currentIndex + 1; index <= endIndex; index += 1) {
-        const fh = loopFrameHours[index];
-        if (!isLoopFrameReadyForPresentation(fh, mode, presentationPath)) {
-          break;
-        }
-        ready += 1;
-      }
-      return ready;
-    },
-    [loopFrameHours, isLoopFrameReadyForPresentation]
-  );
-
-  const canUseLoopPlayback = useMemo(() => {
-    if (!legacyRuntimeEnabled) {
-      return false;
-    }
-    if (loopFrameHours.length <= 1) {
-      return false;
-    }
-    return loopFrameHours.every((fh) => Boolean(loopTier0UrlByHour.get(fh) ?? loopUrlByHour.get(fh)));
-  }, [legacyRuntimeEnabled, loopFrameHours, loopTier0UrlByHour, loopUrlByHour]);
-
-  const isHighDetailZoom = useMemo(() => {
-    const effectiveZoom = getEffectiveZoom(mapZoom);
-    const thresholds = getRenderModeThresholds();
-    const highDetailCutoff = thresholds.tier0Max + thresholds.hysteresis;
-    return effectiveZoom > highDetailCutoff;
-  }, [mapZoom]);
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
       resolvedWeatherSubstrate === "grid_webgl_v1"
@@ -2368,163 +1846,15 @@ export default function App() {
   }, [bootstrapHydrated, mapViewTick]);
 
   useEffect(() => {
-    if (renderMode !== "tiles" && renderMode !== SINGLE_TIER_WEBP_MODE) {
-      setRenderMode(SINGLE_TIER_WEBP_MODE);
-    }
-    if (visibleRenderMode !== "tiles" && visibleRenderMode !== SINGLE_TIER_WEBP_MODE) {
-      setVisibleRenderMode(SINGLE_TIER_WEBP_MODE);
-    }
-  }, [renderMode, visibleRenderMode]);
-
-  useEffect(() => {
-    if (legacyRuntimeEnabled) {
+    if (renderMode !== "tiles") {
+      setRenderMode("tiles");
       return;
     }
-    setRenderMode("tiles");
-    setVisibleRenderMode("tiles");
-    setLoopDisplayHour(null);
-    setLoopDisplayBitmap(null);
-    setIsLoopPreloading(false);
-    setIsLoopAutoplayBuffering(false);
-    setLoopProgress({ total: 0, ready: 0, failed: 0 });
-  }, [legacyRuntimeEnabled, selectionKey]);
-
-  useEffect(() => {
-    const clearDwellTimer = () => {
-      if (renderModeDwellTimerRef.current !== null) {
-        window.clearTimeout(renderModeDwellTimerRef.current);
-        renderModeDwellTimerRef.current = null;
-      }
-    };
-
-    if (selectedTimeAxisMode === "observed" && resolvedWeatherSubstrate === "grid_webgl_v1") {
-      clearDwellTimer();
-      if (renderMode !== SINGLE_TIER_WEBP_MODE) {
-        setRenderMode(SINGLE_TIER_WEBP_MODE);
-      }
-      return clearDwellTimer;
-    }
-
-    if (!legacyRuntimeEnabled || !webpDefaultEnabled || !canUseLoopPlayback) {
-      clearDwellTimer();
-      if (renderMode !== "tiles") {
-        setRenderMode("tiles");
-      }
-      return clearDwellTimer;
-    }
-
-    // At high zoom levels, switch to tiles for detail.  At lower zooms, use
-    // the canonical WebP loop mode for smooth playback/scrubbing.
-    if (zoomGestureActive) {
-      // While the user is still pinching/scrolling, don't switch modes — wait
-      // for the gesture to settle to avoid flicker.
-      return clearDwellTimer;
-    }
-
-    const desired = nextRenderModeByHysteresis(renderMode, getEffectiveZoom(mapZoom));
-    if (desired === renderMode) {
-      clearDwellTimer();
-      return clearDwellTimer;
-    }
-
-    // Use the dwell timer to avoid jitter when the zoom is right at the
-    // threshold boundary.
-    clearDwellTimer();
-    renderModeDwellTimerRef.current = window.setTimeout(() => {
-      renderModeDwellTimerRef.current = null;
-      setRenderMode(desired);
-    }, WEBP_RENDER_MODE_THRESHOLDS.dwellMs);
-
-    return clearDwellTimer;
-  }, [
-    canUseLoopPlayback,
-    mapZoom,
-    renderMode,
-    resolvedWeatherSubstrate,
-    selectedTimeAxisMode,
-    legacyRuntimeEnabled,
-    webpDefaultEnabled,
-    zoomGestureActive,
-  ]);
-
-  useEffect(() => {
-    transitionTokenRef.current += 1;
-
-    if (selectedTimeAxisMode === "observed" && resolvedWeatherSubstrate === "grid_webgl_v1") {
-      if (visibleRenderMode !== SINGLE_TIER_WEBP_MODE) {
-        setVisibleRenderMode(SINGLE_TIER_WEBP_MODE);
-      }
-      setLoopDisplayHour(null);
-      setLoopDisplayBitmap(null);
-      return;
-    }
-
-    if (!canUseLoopPlayback || !loopSelectionReady) {
-      setVisibleRenderMode("tiles");
-      setLoopDisplayHour(null);
-      return;
-    }
-
-    if (renderMode === visibleRenderMode) {
-      return;
-    }
-
-    if (renderMode === "tiles") {
-      setVisibleRenderMode("tiles");
-      setLoopDisplayHour(null);
-      setLoopDisplayBitmap(null);
-      return;
-    }
-
     if (visibleRenderMode !== renderMode) {
       setVisibleRenderMode(renderMode);
     }
+  }, [renderMode, visibleRenderMode, selectionKey]);
 
-    const commitLoopHour = resolvedLoopTargetForecastHour;
-
-    // No signal passed to ensureLoopFrameDecoded: the decode always runs to
-    // completion so its result is stored in the LRU cache for immediate reuse.
-    // The token gates whether we actually commit the visible mode change,
-    // preventing stale results from being applied.
-    const token = transitionTokenRef.current;
-    ensureLoopFrameDecoded(commitLoopHour, renderMode)
-      .then((ready) => {
-        if (token !== transitionTokenRef.current) {
-          return;
-        }
-        if (ready) {
-          setLoopDisplayHour(commitLoopHour);
-        }
-      })
-      .catch(() => {
-        // Decode failed for this attempt; keep current visible mode and allow
-        // subsequent scheduler/interaction passes to retry.
-      });
-  }, [
-    renderMode,
-    visibleRenderMode,
-    canUseLoopPlayback,
-    loopSelectionReady,
-    resolvedWeatherSubstrate,
-    targetForecastHour,
-    resolvedLoopTargetForecastHour,
-    resolveLoopUrlForHour,
-    ensureLoopFrameDecoded,
-    isPlaying,
-    isLoopPreloading,
-    isLoopAutoplayBuffering,
-    isScrubbing,
-    selectedTimeAxisMode,
-  ]);
-
-  const loopPlaybackRenderMode: RenderModeState =
-    visibleRenderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : visibleRenderMode;
-  const isLoopDisplayActive =
-    renderMode !== "tiles"
-    && canUseLoopPlayback
-    && loopSelectionReady;
-  const stagedLoopWarmupMode: RenderModeState = renderMode === "tiles" ? SINGLE_TIER_WEBP_MODE : renderMode;
-  const shouldEagerlyDecodeLoopFrames = isPlaying || isLoopPreloading || isLoopAutoplayBuffering;
   const visibleGridOverlayHour = useMemo(() => {
     if (!isGridLowMidActive) {
       return null;
@@ -2537,19 +1867,12 @@ export default function App() {
     }
     return Number.isFinite(forecastHour) ? forecastHour : null;
   }, [forecastHour, isGridLowMidActive, resolvedGridDisplayHour, visibleGridFrameHour]);
-  const mapForecastHour = isLoopDisplayActive
-    ? targetForecastHour
-    : (Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour);
-  const visibleLoopOverlayHour = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
-    ? resolvedLoopTargetForecastHour
-    : (loopDisplayHour ?? resolvedLoopTargetForecastHour);
-  const visibleOverlayHour = isLoopDisplayActive
-    ? visibleLoopOverlayHour
-    : (Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour);
+  const mapForecastHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
+  const visibleOverlayHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
 
   const tileUrlForHour = useCallback(
     (fh: number): string => {
-      if (!hasRenderableSelection || !legacyRuntimeEnabled) {
+      if (!hasRenderableSelection) {
         return EMPTY_TILE_DATA_URL;
       }
       const fallbackFh = frameHours[0] ?? 0;
@@ -2562,7 +1885,7 @@ export default function App() {
         frameRow: frameByHour.get(resolvedFh) ?? frameRows[0] ?? null,
       });
     },
-    [hasRenderableSelection, legacyRuntimeEnabled, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows]
+    [hasRenderableSelection, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows]
   );
 
   const tileUrl = useMemo(() => {
@@ -2570,15 +1893,12 @@ export default function App() {
   }, [tileUrlForHour, mapForecastHour]);
 
   const tileUrlToHour = useMemo(() => {
-    if (!legacyRuntimeEnabled) {
-      return new Map<string, number>();
-    }
     const map = new Map<string, number>();
     for (const fh of frameHours) {
       map.set(tileUrlForHour(fh), fh);
     }
     return map;
-  }, [frameHours, legacyRuntimeEnabled, tileUrlForHour]);
+  }, [frameHours, tileUrlForHour]);
 
   const playbackPolicy = useMemo(
     () =>
@@ -2588,28 +1908,6 @@ export default function App() {
       }),
     [frameHours.length]
   );
-  const loopPlaybackPolicy = useMemo(
-    () =>
-      getLoopPlaybackPolicy({
-        totalFrames: loopFrameHours.length,
-        autoplayTickMs: AUTOPLAY_TICK_MS,
-      }),
-    [loopFrameHours.length]
-  );
-
-  useEffect(() => {
-    loopFrameHoursRef.current = loopFrameHours;
-    visibleRenderModeRef.current = loopPlaybackRenderMode;
-    countAheadReadyLoopFramesRef.current = countAheadReadyLoopFrames;
-    isLoopFrameReadyForPresentationRef.current = isLoopFrameReadyForPresentation;
-    loopMinAheadWhilePlayingRef.current = loopPlaybackPolicy.minAheadWhilePlaying;
-  }, [
-    loopFrameHours,
-    loopPlaybackRenderMode,
-    countAheadReadyLoopFrames,
-    isLoopFrameReadyForPresentation,
-    loopPlaybackPolicy.minAheadWhilePlaying,
-  ]);
 
   const updateBufferSnapshot = useCallback(() => {
     const totalFrames = frameHours.length;
@@ -2738,10 +2036,10 @@ export default function App() {
 
   // During a variable switch the old variable's imagery is still on screen;
   // keep its paint settings in effect until the new variable is promoting.
-  const displayedOverlayVariable = (isLoopDisplayActive || isVariableSwitching) ? (visualVariable || variable) : variable;
-  const displayedOverlayVariableKind = (isLoopDisplayActive || isVariableSwitching) ? visualVariableKind : selectedVariableKind;
+  const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
+  const displayedOverlayVariableKind = isVariableSwitching ? visualVariableKind : selectedVariableKind;
   const displayedOverlayVariableDisplayResamplingOverride =
-    (isLoopDisplayActive || isVariableSwitching)
+    isVariableSwitching
       ? visualVariableDisplayResamplingOverride
       : selectedVariableDisplayResamplingOverride;
 
@@ -2784,7 +2082,7 @@ export default function App() {
   }, [opacity, rawLegend, selectedTimeAxisMode, stableObservedLegend]);
 
   const prefetchHours = useMemo(() => {
-    if (!legacyRuntimeEnabled || !hasRenderableSelection || isLoopDisplayActive || frameHours.length === 0) {
+    if (!hasRenderableSelection || frameHours.length === 0) {
       return [] as number[];
     }
 
@@ -2830,9 +2128,7 @@ export default function App() {
     isScrubbing,
     scrubRequestedHour,
     scrubCommitIntent,
-    isLoopDisplayActive,
     hasRenderableSelection,
-    legacyRuntimeEnabled,
   ]);
 
   const prefetchTileUrls = useMemo(() => {
@@ -3036,45 +2332,6 @@ export default function App() {
     [frameHours, forecastHour, isTileReady, tileUrlForHour]
   );
 
-  const findNearestDecodedLoopScrubHour = useCallback(
-    (requestedHour: number, mode: RenderModeState): number | null => {
-      if (mode === "tiles" || loopFrameHours.length === 0) {
-        return null;
-      }
-      const snappedHour = nearestFrame(loopFrameHours, requestedHour);
-      if (hasDecodedLoopFrame(snappedHour, mode)) {
-        return snappedHour;
-      }
-
-      const pivotIndex = loopFrameHours.indexOf(snappedHour);
-      if (pivotIndex < 0) {
-        return null;
-      }
-
-      const movingForward = snappedHour >= forecastHour;
-      for (let step = 1; step < loopFrameHours.length; step += 1) {
-        const primaryIndex = movingForward ? pivotIndex + step : pivotIndex - step;
-        if (primaryIndex >= 0 && primaryIndex < loopFrameHours.length) {
-          const primaryHour = loopFrameHours[primaryIndex];
-          if (hasDecodedLoopFrame(primaryHour, mode)) {
-            return primaryHour;
-          }
-        }
-
-        const secondaryIndex = movingForward ? pivotIndex - step : pivotIndex + step;
-        if (secondaryIndex >= 0 && secondaryIndex < loopFrameHours.length) {
-          const secondaryHour = loopFrameHours[secondaryIndex];
-          if (hasDecodedLoopFrame(secondaryHour, mode)) {
-            return secondaryHour;
-          }
-        }
-      }
-
-      return null;
-    },
-    [loopFrameHours, hasDecodedLoopFrame, forecastHour]
-  );
-
   const handleFrameSettled = useCallback((
     loadedTileUrl: string,
     meta?: { selectionEpoch?: number; selectionKey?: string }
@@ -3215,27 +2472,25 @@ export default function App() {
     reason: "selection-mismatch" | "timeout",
     options?: { forceTiles?: boolean }
   ): boolean => {
+    void reason;
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (!pendingVarSwitch) {
       return false;
     }
     pendingVariableSwitchRef.current = null;
-    clearLoopHoldover();
     if (options?.forceTiles) {
-      resetLoopPresentationToTiles();
+      setVisibleRenderMode("tiles");
+      lastTileViewportCommitUrlRef.current = null;
     }
     setVariableSwitchState(null);
     setVisualVariable(variable);
     return true;
-  }, [clearLoopHoldover, loadedFramesKey, resetLoopPresentationToTiles, selectionKey, variable]);
+  }, [variable]);
 
   const finalizePendingVariableSwitch = useCallback((
-    renderTarget: "tiles" | "loop",
     visibleAt: number,
     options?: {
       readyTileUrl?: string | null;
-      loopHour?: number | null;
-      loopRenderMode?: RenderModeState;
     }
   ): boolean => {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
@@ -3248,10 +2503,8 @@ export default function App() {
     }
 
     pendingVariableSwitchRef.current = null;
-    clearLoopHoldover();
-    if (renderTarget === "tiles") {
-      resetLoopPresentationToTiles();
-    }
+    setVisibleRenderMode("tiles");
+    lastTileViewportCommitUrlRef.current = null;
     setVariableSwitchState((current) => {
       if (!current || current.toVariable !== variable) {
         return null;
@@ -3268,23 +2521,14 @@ export default function App() {
     }
     pendingVarSwitch.firstVisibleAt = visibleAt;
 
-    if (renderTarget === "tiles") {
-      const readyTileUrl = options?.readyTileUrl ?? null;
-      const readyTs = readyTileUrl ? (readyTileUrlsRef.current.get(readyTileUrl) ?? null) : null;
-      pendingVarSwitch.warmAtVisible = Number.isFinite(readyTs)
-        ? Date.now() - (readyTs as number) <= READY_URL_TTL_MS
-        : false;
-      pendingVarSwitch.warmSourceAtVisible = readyTileUrl
-        ? (tileReadySourceRef.current.get(readyTileUrl) ?? null)
-        : null;
-    } else {
-      const loopHour = options?.loopHour ?? null;
-      const loopRenderMode = options?.loopRenderMode ?? loopPlaybackRenderMode;
-      pendingVarSwitch.warmAtVisible = Number.isFinite(loopHour)
-        ? hasDecodedLoopFrame(loopHour as number, loopRenderMode)
-        : null;
-      pendingVarSwitch.warmSourceAtVisible = null;
-    }
+    const readyTileUrl = options?.readyTileUrl ?? null;
+    const readyTs = readyTileUrl ? (readyTileUrlsRef.current.get(readyTileUrl) ?? null) : null;
+    pendingVarSwitch.warmAtVisible = Number.isFinite(readyTs)
+      ? Date.now() - (readyTs as number) <= READY_URL_TTL_MS
+      : false;
+    pendingVarSwitch.warmSourceAtVisible = readyTileUrl
+      ? (tileReadySourceRef.current.get(readyTileUrl) ?? null)
+      : null;
 
     const durationMs = visibleAt - pendingVarSwitch.startedAt;
     if (Number.isFinite(durationMs) && durationMs >= 0) {
@@ -3295,20 +2539,13 @@ export default function App() {
         variable_id: pendingVarSwitch.toVariableId,
         run_id: pendingVarSwitch.runId,
         region_id: pendingVarSwitch.regionId,
-        meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch, renderTarget),
+        meta: buildVariableSwitchPhase0aMeta(pendingVarSwitch),
       });
     }
 
     setVariableSwitchState(null);
     return true;
-  }, [
-    clearLoopHoldover,
-    hasDecodedLoopFrame,
-    loadedFramesKey,
-    resetLoopPresentationToTiles,
-    variable,
-    loopPlaybackRenderMode,
-  ]);
+  }, [loadedFramesKey, variable]);
 
   const clearFrameStatusTimer = useCallback(() => {
     if (frameStatusTimerRef.current !== null) {
@@ -3371,7 +2608,7 @@ export default function App() {
     };
   }, [cancelPendingVariableSwitch, variable, variableSwitchState]);
 
-  const finalizePendingFrameMetric = useCallback((reason: "tile" | "loop") => {
+  const finalizePendingFrameMetric = useCallback((reason: "tile") => {
     const pending = pendingFrameMetricRef.current;
     if (!pending) {
       return;
@@ -3416,9 +2653,8 @@ export default function App() {
   const startPendingFrameMetric = useCallback(
     (args: {
       eventName: "frame_change" | "scrub_latency";
-      renderTarget: "tiles" | "loop";
+      renderTarget: "tiles";
       expectedTileUrl?: string | null;
-      expectedLoopHour?: number | null;
       forecastHour?: number | null;
       traceMeta?: Record<string, unknown> | null;
     }) => {
@@ -3436,7 +2672,6 @@ export default function App() {
         startedAt: performance.now(),
         renderTarget: args.renderTarget,
         expectedTileUrl,
-        expectedLoopHour: args.expectedLoopHour ?? null,
         modelId: model || null,
         variableId: variable || null,
         runId: telemetryRunId,
@@ -3480,9 +2715,6 @@ export default function App() {
     inFlightStartedAtRef.current.clear();
     readyLatencyStatsRef.current = { totalMs: 0, count: 0 };
     autoplayPrimedRef.current = false;
-    loopDisplayDecodeAbortRef.current?.abort();
-    loopDisplayDecodeAbortRef.current = null;
-    foregroundDecodeHourRef.current = null;
     // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
     // the first update after reset is never incorrectly skipped.
     if (bufferSnapshotRafRef.current !== null) {
@@ -3490,23 +2722,6 @@ export default function App() {
       bufferSnapshotRafRef.current = null;
     }
     lastSnapshotStatsRef.current = { bufferedCount: -1, failedCount: -1, inFlightCount: -1, queueDepth: -1 };
-    setIsLoopPreloading(false);
-    setIsLoopAutoplayBuffering(false);
-    setLoopProgress({ total: loopFrameHours.length, ready: 0, failed: 0 });
-    setLoopDisplayHour(null);
-    loopPreloadTokenRef.current += 1;
-    loopReadyHoursRef.current.clear();
-    loopFailedHoursRef.current.clear();
-    for (const cached of loopDecodedCacheRef.current.values()) {
-      cached.bitmap.close();
-    }
-    loopDecodedCacheRef.current.clear();
-    loopDecodeCompletedAtRef.current.clear();
-    loopDecodedCacheBytesRef.current = 0;
-    // Invalidate the imperative playback bitmap map — the bitmaps it
-    // referenced were just closed above and are now detached.
-    playbackBitmapMapRef.current = null;
-    imperativePlaybackHourRef.current = null;
     setIsPreloadingForPlay(false);
     lastTileViewportCommitUrlRef.current = null;
     preloadProgressRef.current = {
@@ -3514,7 +2729,6 @@ export default function App() {
       lastProgressAt: Date.now(),
     };
     setScrubRequestedHour(null);
-    setLoopDisplayBitmap(null);
     const version = ++bufferVersionRef.current;
     setBufferSnapshot({
       totalFrames: frameHours.length,
@@ -3530,9 +2744,8 @@ export default function App() {
     });
   }, [
     // Only the three selector values that uniquely identify a dataset change.
-    // frameHours.length and loopFrameHours.length are derived state — including
-    // them caused a second reset firing when frames were cleared then re-populated,
-    // which wiped newly-decoded bitmaps and reset the whole buffer mid-load.
+    // frameHours.length is derived state, and including it would cause a second
+    // reset firing when frames were cleared then re-populated.
     model,
     resolvedRunForRequests,
     variable,
@@ -3546,218 +2759,6 @@ export default function App() {
     setVariableSwitchState(null);
     setVisualVariable(variable);
   }, [model, resolvedRunForRequests]);
-
-  useEffect(() => {
-    if (!isLoopPreloading) {
-      return;
-    }
-    if (!canUseLoopPlayback || loopFrameHours.length === 0) {
-      setIsLoopPreloading(false);
-      setRenderMode("tiles");
-      return;
-    }
-
-    const token = ++loopPreloadTokenRef.current;
-    const readySet = new Set<number>();
-    const failedSet = new Set<number>();
-    loopReadyHoursRef.current = readySet;
-    loopFailedHoursRef.current = failedSet;
-    setLoopProgress({ total: loopFrameHours.length, ready: 0, failed: 0 });
-
-    // Reorder frames so decoding starts at the nearest frame to the current
-    // forecast hour, proceeds forward to the end, then wraps to the beginning.
-    // This prioritises frames the user will see first, enabling early start and
-    // smooth playback well before all frames are decoded.
-    let nearestIdx = 0;
-    let nearestDist = Infinity;
-    for (let i = 0; i < loopFrameHours.length; i++) {
-      const dist = Math.abs(loopFrameHours[i] - forecastHour);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestIdx = i;
-      }
-    }
-    const orderedFrames: number[] = [
-      ...loopFrameHours.slice(nearestIdx),
-      ...loopFrameHours.slice(0, nearestIdx),
-    ];
-
-    // RAF-coalesced progress updates: with PRELOAD_CONCURRENCY=4, multiple decodes
-    // can complete within the same 16ms frame. Batching them into a single setState
-    // call eliminates N intermediate re-renders while frames are loading.
-    let progressRafId: number | null = null;
-    const flushProgress = () => {
-      if (token !== loopPreloadTokenRef.current) return;
-      setLoopProgress({ total: loopFrameHours.length, ready: readySet.size, failed: failedSet.size });
-    };
-    const scheduleProgress = () => {
-      if (progressRafId !== null) return;
-      progressRafId = window.requestAnimationFrame(() => {
-        progressRafId = null;
-        flushProgress();
-      });
-    };
-
-    // Attempt to start playback early once the loop playback policy's minimum
-    // decoded frames exist ahead of the current position. Starting autoplay on
-    // URL presence alone puts the UI into a "playing" state while frame advance
-    // is still blocked on decode, which reads as broken animation.
-    let earlyStarted = false;
-    const tryEarlyStart = (): boolean => {
-      if (earlyStarted) return false;
-      const currentIdx = loopFrameHours.indexOf(forecastHour);
-      if (currentIdx < 0) return false;
-      const remainingAhead = loopFrameHours.length - 1 - currentIdx;
-      const neededAhead = Math.min(loopPlaybackPolicy.minStartBuffer, remainingAhead);
-      if (neededAhead <= 0) return false;
-      let consecutiveAhead = 0;
-      for (let i = currentIdx + 1; i < loopFrameHours.length && consecutiveAhead < neededAhead; i++) {
-        if (isLoopFrameReadyForPresentation(loopFrameHours[i], renderMode, "canvas")) {
-          consecutiveAhead++;
-        } else {
-          break;
-        }
-      }
-      if (consecutiveAhead < neededAhead) return false;
-      earlyStarted = true;
-      if (progressRafId !== null) {
-        window.cancelAnimationFrame(progressRafId);
-        progressRafId = null;
-      }
-      flushProgress();
-      setIsLoopPreloading(false);
-      if (renderMode !== "tiles") {
-        setVisibleRenderMode(renderMode);
-      }
-      setLoopDisplayHour(forecastHour);
-      setIsPlaying(true);
-      return true;
-    };
-
-    if (tryEarlyStart()) {
-      return () => {
-        loopPreloadTokenRef.current += 1;
-        if (progressRafId !== null) {
-          window.cancelAnimationFrame(progressRafId);
-          progressRafId = null;
-        }
-      };
-    }
-
-    const mark = (fh: number, ok: boolean) => {
-      if (token !== loopPreloadTokenRef.current) {
-        return;
-      }
-      if (ok) {
-        readySet.add(fh);
-      } else {
-        failedSet.add(fh);
-      }
-
-      if (readySet.size + failedSet.size < loopFrameHours.length) {
-        // Not all frames accounted for yet. Attempt an early start if enough
-        // consecutive frames are ready ahead of the current position — remaining
-        // decodes continue in background via processNext() to warm the LRU cache.
-        if (ok && tryEarlyStart()) return;
-        scheduleProgress();
-        return;
-      }
-
-      // All frames accounted for — flush progress synchronously then transition.
-      if (progressRafId !== null) {
-        window.cancelAnimationFrame(progressRafId);
-        progressRafId = null;
-      }
-      flushProgress();
-      if (earlyStarted) return;
-      setIsLoopPreloading(false);
-      const minReady = Math.min(loopPlaybackPolicy.minStartBuffer, loopFrameHours.length);
-      if (readySet.size >= minReady) {
-        if (renderMode !== "tiles") {
-          setVisibleRenderMode(renderMode);
-        }
-        setLoopDisplayHour(forecastHour);
-        setIsPlaying(true);
-        return;
-      }
-      setRenderMode("tiles");
-      setIsPlaying(false);
-      showTransientFrameStatus("Loop preload failed");
-    };
-
-    // Process frames in priority order (starting at current forecast hour) with
-    // bounded concurrency to stay within the browser's HTTP/2 stream budget.
-    let inFlight = 0;
-    let nextIndex = 0;
-    let stopped = false;
-
-    const processNext = () => {
-      // Stop launching new decodes once the effect is cleaned up (early start
-      // or unmount). Already-in-flight fetches complete but won't chain further,
-      // preventing runaway cache filling that evicts the frames playback needs.
-      if (stopped) return;
-      while (inFlight < loopPlaybackPolicy.maxCriticalInFlight && nextIndex < orderedFrames.length) {
-        const fh = orderedFrames[nextIndex];
-        nextIndex += 1;
-        if (!resolveLoopUrlForHour(fh, renderMode)) {
-          mark(fh, false);
-          continue;
-        }
-        inFlight += 1;
-        ensureLoopFrameDecoded(fh, renderMode)
-          .then((ready) => mark(fh, ready))
-          .catch(() => mark(fh, false))
-          .finally(() => {
-            inFlight -= 1;
-            processNext();
-          });
-      }
-    };
-    processNext();
-
-    return () => {
-      stopped = true;
-      loopPreloadTokenRef.current += 1;
-      if (progressRafId !== null) {
-        window.cancelAnimationFrame(progressRafId);
-        progressRafId = null;
-      }
-    };
-  }, [
-    isLoopPreloading,
-    canUseLoopPlayback,
-    loopFrameHours,
-    resolveLoopUrlForHour,
-    showTransientFrameStatus,
-    renderMode,
-    forecastHour,
-    ensureLoopFrameDecoded,
-    isLoopFrameReadyForPresentation,
-    loopPlaybackPolicy.maxCriticalInFlight,
-    loopPlaybackPolicy.minStartBuffer,
-  ]);
-
-  useEffect(() => {
-    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
-      loopDisplayCommitRef.current = null;
-      return;
-    }
-    const displayHour = loopDisplayHour as number;
-    const cacheKey = loopCacheKey(displayHour, loopPlaybackRenderMode);
-    const decodedAt = loopDecodeCompletedAtRef.current.get(cacheKey) ?? null;
-    loopDisplayCommitRef.current = {
-      token: ++loopDisplayCommitTokenRef.current,
-      displayHour,
-      renderMode: loopPlaybackRenderMode,
-      committedAt: performance.now(),
-      decodedAt: Number.isFinite(decodedAt) ? (decodedAt as number) : null,
-      presentationPath: "canvas",
-    };
-  }, [isLoopDisplayActive, loopDisplayHour, loopPlaybackRenderMode, loopCacheKey, getDecodedLoopBitmap]);
-
-  // loopDisplayBitmap is cleared at selection/reset boundaries below;
-  // per-frame sync is handled directly by activeLoopBitmap reading the LRU
-  // cache, so no separate effect is needed here.
 
   const trackFirstViewerFrame = useCallback((frameHour: number | null) => {
     if (firstViewerFrameTrackedRef.current) {
@@ -3807,123 +2808,6 @@ export default function App() {
   }, [buildObservedTelemetryMeta, telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
   useEffect(() => {
-    if (!isLoopDisplayActive || !Number.isFinite(loopDisplayHour)) {
-      return;
-    }
-    const commit = loopDisplayCommitRef.current;
-    if (!commit || commit.displayHour !== loopDisplayHour || commit.renderMode !== loopPlaybackRenderMode) {
-      return;
-    }
-    if (loopDisplayPaintedTokenRef.current === commit.token) {
-      return;
-    }
-
-    if (Number.isFinite(commit.decodedAt)) {
-      const decodedToCommitMs = commit.committedAt - (commit.decodedAt as number);
-      if (Number.isFinite(decodedToCommitMs) && decodedToCommitMs >= 0) {
-        trackPerfEvent({
-          event_name: "loop_decode_to_commit",
-          duration_ms: decodedToCommitMs,
-          model_id: modelRef.current || null,
-          variable_id: variableRef.current || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          forecast_hour: commit.displayHour,
-          meta: buildObservedTelemetryMeta(commit.displayHour, {
-            render_mode: commit.renderMode,
-            presentation_path: commit.presentationPath,
-          }),
-        });
-      }
-    }
-
-    const paintToken = ++loopVisiblePaintTokenRef.current;
-    let rafBId: number | null = null;
-    const rafA = window.requestAnimationFrame(() => {
-      rafBId = window.requestAnimationFrame(() => {
-        if (paintToken !== loopVisiblePaintTokenRef.current) {
-          return;
-        }
-        if (loopDisplayCommitRef.current?.token !== commit.token) {
-          return;
-        }
-        loopDisplayPaintedTokenRef.current = commit.token;
-        const visibleAt = performance.now();
-        const durationMs = visibleAt - commit.committedAt;
-        if (!Number.isFinite(durationMs) || durationMs < 0) {
-          return;
-        }
-        trackPerfEvent({
-          event_name: "loop_commit_to_visible",
-          duration_ms: durationMs,
-          model_id: modelRef.current || null,
-          variable_id: variableRef.current || null,
-          run_id: telemetryRunId,
-          region_id: region || null,
-          forecast_hour: commit.displayHour,
-          meta: buildObservedTelemetryMeta(commit.displayHour, {
-            render_mode: commit.renderMode,
-            presentation_path: commit.presentationPath,
-          }),
-        });
-
-        const pending = pendingFrameMetricRef.current;
-        if (pending && pending.renderTarget === "loop" && pending.expectedLoopHour === commit.displayHour) {
-          if (!Number.isFinite(pending.firstVisibleAt)) {
-            pending.firstVisibleAt = visibleAt;
-          }
-          finalizePendingFrameMetric("loop");
-        }
-
-        finalizePendingVariableSwitch("loop", visibleAt, {
-          loopHour: commit.displayHour,
-          loopRenderMode: commit.renderMode,
-        });
-
-        const pendingLoopStart = pendingLoopStartMetricRef.current;
-        if (isPlaying && pendingLoopStart && commit.displayHour !== pendingLoopStart.forecastHour) {
-          pendingLoopStartMetricRef.current = null;
-          const loopStartMs = visibleAt - pendingLoopStart.startedAt;
-          if (Number.isFinite(loopStartMs) && loopStartMs >= 0) {
-            trackPerfEvent({
-              event_name: "loop_start",
-              duration_ms: loopStartMs,
-              model_id: pendingLoopStart.modelId,
-              variable_id: pendingLoopStart.variableId,
-              run_id: pendingLoopStart.runId,
-              region_id: pendingLoopStart.regionId,
-              forecast_hour: commit.displayHour,
-              meta: buildObservedTelemetryMeta(commit.displayHour),
-            });
-          }
-        }
-
-        trackFirstViewerFrame(commit.displayHour);
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(rafA);
-      if (rafBId !== null) {
-        window.cancelAnimationFrame(rafBId);
-      }
-    };
-  }, [
-    isLoopDisplayActive,
-    loopDisplayHour,
-    loopPlaybackRenderMode,
-    loadedFramesKey,
-    telemetryRunId,
-    region,
-    buildObservedTelemetryMeta,
-    finalizePendingFrameMetric,
-    finalizePendingVariableSwitch,
-    isPlaying,
-    trackFirstViewerFrame,
-    variable,
-  ]);
-
-  useEffect(() => {
     if (firstViewerFrameTrackedRef.current) {
       return;
     }
@@ -3935,478 +2819,6 @@ export default function App() {
     }
     trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
-
-  useEffect(() => {
-    if (!loopSelectionReady || !canUseLoopPlayback || loopFrameHours.length === 0) {
-      return;
-    }
-
-    const warmSelectionKey = `${selectionKey}:${stagedLoopWarmupMode}`;
-    if (warmedLoopSelectionKeyRef.current === warmSelectionKey) {
-      return;
-    }
-    warmedLoopSelectionKeyRef.current = warmSelectionKey;
-
-    const token = ++loopUrlWarmTokenRef.current;
-    const controller = new AbortController();
-    const urls = Array.from(
-      new Set(
-        loopFrameHours
-          .map((fh) => resolveLoopUrlForHour(fh, stagedLoopWarmupMode))
-          .filter((url): url is string => Boolean(url))
-      )
-    );
-
-    let nextIndex = 0;
-    let inFlight = 0;
-    const maxConcurrency = 4;
-
-    const launchNext = () => {
-      if (controller.signal.aborted || token !== loopUrlWarmTokenRef.current) {
-        return;
-      }
-      while (inFlight < maxConcurrency && nextIndex < urls.length) {
-        const url = urls[nextIndex];
-        nextIndex += 1;
-        inFlight += 1;
-        warmLoopImageUrl(url, controller.signal)
-          .catch(() => false)
-          .finally(() => {
-            inFlight -= 1;
-            launchNext();
-          });
-      }
-    };
-
-    launchNext();
-
-    return () => {
-      controller.abort();
-    };
-  }, [
-    loopSelectionReady,
-    canUseLoopPlayback,
-    stagedLoopWarmupMode,
-    loopFrameHours,
-    resolveLoopUrlForHour,
-    selectionKey,
-  ]);
-
-  useEffect(() => {
-    const decodeMode = isLoopDisplayActive ? loopPlaybackRenderMode : stagedLoopWarmupMode;
-    const shouldWarmLoopFrames =
-      loopSelectionReady
-      && canUseLoopPlayback
-      && loopFrameHours.length > 0;
-    if (!shouldWarmLoopFrames) {
-      return;
-    }
-
-    let cancelled = false;
-    let scheduleTimer: number | null = null;
-    const inFlight = new Set<number>();
-    const inFlightLane = new Map<number, "critical" | "idle">();
-    const controllers = new Map<number, AbortController>();
-
-    const countInFlightForLane = (lane: "critical" | "idle"): number => {
-      let count = 0;
-      for (const activeLane of inFlightLane.values()) {
-        if (activeLane === lane) {
-          count += 1;
-        }
-      }
-      return count;
-    };
-
-    const abortIdleDecodes = () => {
-      for (const [fh, lane] of inFlightLane.entries()) {
-        if (lane !== "idle") {
-          continue;
-        }
-        controllers.get(fh)?.abort();
-      }
-    };
-
-    const queueSchedulePrefetch = (delayMs: number) => {
-      if (cancelled || scheduleTimer !== null) {
-        return;
-      }
-      scheduleTimer = window.setTimeout(() => {
-        scheduleTimer = null;
-        schedulePrefetch();
-      }, delayMs);
-    };
-
-    const launchDecode = (fh: number, lane: "critical" | "idle") => {
-      if (cancelled || inFlight.has(fh)) {
-        return;
-      }
-      const controller = new AbortController();
-      inFlight.add(fh);
-      inFlightLane.set(fh, lane);
-      controllers.set(fh, controller);
-      ensureLoopFrameDecoded(fh, decodeMode, controller.signal)
-        .catch(() => {
-          // best-effort prefetch; decode failures are handled by fallback path.
-        })
-        .finally(() => {
-          inFlight.delete(fh);
-          inFlightLane.delete(fh);
-          controllers.delete(fh);
-          queueSchedulePrefetch(0);
-        });
-    };
-
-    const schedulePrefetch = () => {
-      if (cancelled) {
-        return;
-      }
-      // Read from ref so this closure always sees the latest playback position
-      // without causing the effect to restart (which would abort in-flight decodes).
-      const currentHour = forecastHourRef.current;
-      const currentIndex = loopFrameHours.indexOf(currentHour);
-      if (currentIndex < 0) {
-        return;
-      }
-
-      const remainingAhead = Math.max(0, loopFrameHours.length - 1 - currentIndex);
-      const targetAhead = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
-        ? Math.min(loopPlaybackPolicy.targetWarmAhead, remainingAhead)
-        : remainingAhead;
-      if (targetAhead <= 0) {
-        return;
-      }
-
-      const recentReadyMs = recentMedianSample(loopDecodeReadySamplesRef.current);
-      const recentDecodeMs = recentMedianSample(loopDecodeOnlySamplesRef.current);
-      const cachePressure = webpDecodeCacheBudgetBytes > 0
-        ? loopDecodedCacheBytesRef.current / webpDecodeCacheBudgetBytes
-        : 0;
-      const highCachePressure = cachePressure >= 0.82;
-      const slowCriticalDecode =
-        (Number.isFinite(recentReadyMs) && (recentReadyMs as number) >= AUTOPLAY_TICK_MS * 0.8)
-        || (Number.isFinite(recentDecodeMs) && (recentDecodeMs as number) >= AUTOPLAY_TICK_MS * 0.45);
-      const criticalConcurrencyCap = Math.max(
-        2,
-        Math.min(
-          6,
-          loopPlaybackPolicy.maxCriticalInFlight + (!highCachePressure && (isLoopAutoplayBuffering || slowCriticalDecode) ? 1 : 0),
-        ),
-      );
-      const idleConcurrencyCap = highCachePressure
-        ? 0
-        : Math.min(loopPlaybackPolicy.maxIdleInFlight, Math.max(1, criticalConcurrencyCap - 3));
-
-      const shortAheadTarget = (isPlaying || isLoopPreloading || isLoopAutoplayBuffering)
-        ? Math.min(loopPlaybackPolicy.shortAheadTarget, targetAhead)
-        : Math.min(Math.max(loopPlaybackPolicy.shortAheadTarget, 4), targetAhead);
-      const criticalCandidates: number[] = [];
-      const idleCandidates: number[] = [];
-      const criticalEndIndex = Math.min(loopFrameHours.length - 1, currentIndex + shortAheadTarget);
-      const idleEndIndex = Math.min(loopFrameHours.length - 1, currentIndex + targetAhead);
-
-      for (let index = currentIndex + 1; index <= criticalEndIndex; index += 1) {
-        const fh = loopFrameHours[index];
-        if (hasDecodedLoopFrame(fh, decodeMode)) {
-          continue;
-        }
-        if (inFlight.has(fh)) {
-          continue;
-        }
-        criticalCandidates.push(fh);
-      }
-
-      for (let index = criticalEndIndex + 1; index <= idleEndIndex; index += 1) {
-        const fh = loopFrameHours[index];
-        if (hasDecodedLoopFrame(fh, decodeMode)) {
-          continue;
-        }
-        if (inFlight.has(fh)) {
-          continue;
-        }
-        idleCandidates.push(fh);
-      }
-
-      const suspendIdleLane = isLoopAutoplayBuffering
-        || isScrubbing
-        || highCachePressure
-        || Boolean(
-          variableSwitchState
-          && variableSwitchState.toVariable === variable
-          && variableSwitchState.visualState !== "promoting_new"
-        );
-
-      if (suspendIdleLane || criticalCandidates.length > 0) {
-        abortIdleDecodes();
-      }
-
-      const availableCriticalSlots = Math.max(
-        0,
-        criticalConcurrencyCap - countInFlightForLane("critical"),
-      );
-      if (availableCriticalSlots > 0) {
-        for (const fh of criticalCandidates.slice(0, availableCriticalSlots)) {
-          launchDecode(fh, "critical");
-        }
-      }
-
-      if (suspendIdleLane || criticalCandidates.length > 0) {
-        return;
-      }
-
-      const availableIdleSlots = Math.max(
-        0,
-        idleConcurrencyCap - countInFlightForLane("idle"),
-      );
-      if (availableIdleSlots <= 0) {
-        return;
-      }
-
-      for (const fh of idleCandidates.slice(0, availableIdleSlots)) {
-        launchDecode(fh, "idle");
-      }
-    };
-
-    schedulePrefetch();
-    const interval = window.setInterval(
-      schedulePrefetch,
-      isPlaying || isLoopAutoplayBuffering ? 180 : 450,
-    );
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      if (scheduleTimer !== null) {
-        window.clearTimeout(scheduleTimer);
-        scheduleTimer = null;
-      }
-      for (const controller of controllers.values()) {
-        controller.abort();
-      }
-      controllers.clear();
-      inFlight.clear();
-    };
-  }, [
-    isLoopDisplayActive,
-    loopSelectionReady,
-    canUseLoopPlayback,
-    stagedLoopWarmupMode,
-    isPlaying,
-    loopPlaybackRenderMode,
-    loopFrameHours,
-    ensureLoopFrameDecoded,
-    hasDecodedLoopFrame,
-    isLoopAutoplayBuffering,
-    loopPlaybackPolicy.maxCriticalInFlight,
-    loopPlaybackPolicy.maxIdleInFlight,
-    loopPlaybackPolicy.shortAheadTarget,
-    loopPlaybackPolicy.targetWarmAhead,
-    isScrubbing,
-    variableSwitchState,
-    variable,
-    webpDecodeCacheBudgetBytes,
-  ]);
-
-  // Playback ticker. Uses requestAnimationFrame plus an accumulator so cadence
-  // tracks elapsed time without interval drift or teardown/rebuild churn.
-  // Canvas-backed playback advances only when the next decoded bitmap is ready.
-  //
-  // FAST PATH: When the imperative draw handle is available, the ticker draws
-  // decoded bitmaps directly to the MapLibre canvas source without triggering
-  // React re-renders.  React state (forecastHour, targetForecastHour) is synced
-  // at a lower cadence (~100 ms) so the timeline slider still tracks the
-  // playhead.  This eliminates 4-16 ms of per-frame React reconciliation from
-  // the hot path.
-  useEffect(() => {
-    if (!isPlaying || renderMode === "tiles" || loopFrameHours.length === 0) {
-      return;
-    }
-
-    // Build the initial bitmap map for the fast path.
-    const mode = visibleRenderModeRef.current;
-    playbackBitmapMapRef.current = buildPlaybackBitmapMap(loopFrameHoursRef.current, mode);
-    imperativePlaybackHourRef.current = null;
-
-    // Interval (ms) at which we flush the imperative playhead position back
-    // into React state so the timeline slider, valid-time label, etc. update.
-    const STATE_SYNC_INTERVAL_MS = 100;
-    let lastStateSyncTs = performance.now();
-
-    lastLoopAdvanceRef.current = Date.now();
-    let rafId: number | null = null;
-    let previousTs = performance.now();
-    let accumulatedMs = 0;
-
-    /** Flush the imperatively-tracked playhead into React state. */
-    const syncStateNow = () => {
-      const hour = imperativePlaybackHourRef.current;
-      if (hour !== null) {
-        setTargetForecastHour(hour);
-        setForecastHour(hour);
-        imperativePlaybackHourRef.current = null;
-      }
-    };
-
-    const tick = (now: number) => {
-      const frameHours = loopFrameHoursRef.current;
-      const tickMode = visibleRenderModeRef.current;
-      const currentHour = imperativePlaybackHourRef.current ?? forecastHourRef.current;
-      const currentIndex = frameHours.indexOf(currentHour);
-      if (currentIndex < 0) {
-        previousTs = now;
-        rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-
-      const deltaMs = Math.max(0, now - previousTs);
-      previousTs = now;
-      accumulatedMs = Math.min(accumulatedMs + deltaMs, AUTOPLAY_TICK_MS * 4);
-
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= frameHours.length) {
-        // End of sequence — sync final state before stopping.
-        syncStateNow();
-        lastLoopAdvanceRef.current = null;
-        setIsPlaying(false);
-        setIsLoopAutoplayBuffering(false);
-        return;
-      }
-
-      const nextHour = frameHours[nextIndex];
-      const remainingAhead = Math.max(0, frameHours.length - 1 - currentIndex);
-      const minAheadRequired = Math.min(loopMinAheadWhilePlayingRef.current, remainingAhead);
-      const readyAhead = countAheadReadyLoopFramesRef.current(currentHour, tickMode, minAheadRequired, "canvas");
-      const shouldBuffer = minAheadRequired > 0 && readyAhead < minAheadRequired;
-      setIsLoopAutoplayBuffering((current) => (current === shouldBuffer ? current : shouldBuffer));
-
-      if (accumulatedMs >= AUTOPLAY_TICK_MS) {
-        if (isLoopFrameReadyForPresentationRef.current(nextHour, tickMode, "canvas")) {
-          accumulatedMs -= AUTOPLAY_TICK_MS;
-          lastLoopAdvanceRef.current = Date.now();
-
-          // --- FAST PATH: imperative draw bypassing React ---
-          const drawFn = drawLoopFrameImperativeRef.current;
-          const bitmapMap = playbackBitmapMapRef.current;
-          const bitmap = bitmapMap?.get(nextHour);
-          // Guard against detached bitmaps — LRU eviction or dataset-change
-          // cache clears call `.close()` which zeros width/height.
-          const bitmapValid = bitmap && bitmap.width > 0;
-          if (drawFn && bitmapValid) {
-            const drawn = drawFn(bitmap);
-            if (drawn) {
-              forecastHourRef.current = nextHour;
-              imperativePlaybackHourRef.current = nextHour;
-
-              // Throttled React state sync.
-              if (now - lastStateSyncTs >= STATE_SYNC_INTERVAL_MS) {
-                lastStateSyncTs = now;
-                syncStateNow();
-              }
-            } else {
-              // Draw failed (e.g. bitmap detached mid-draw) — refresh map.
-              playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
-              forecastHourRef.current = nextHour;
-              imperativePlaybackHourRef.current = nextHour;
-              setTargetForecastHour(nextHour);
-            }
-          } else {
-            // --- FALLBACK: go through React state (e.g. frame decoded after
-            //     map was built, or draw handle not yet available). ---
-            // Refresh the bitmap map so the next tick can use the fast path.
-            playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
-            // Advance the imperative playhead so subsequent ticks don't re-try
-            // the same hour and stall — the frame will be drawn via React's
-            // prop-based path (or the next tick will pick up the new bitmap).
-            forecastHourRef.current = nextHour;
-            imperativePlaybackHourRef.current = nextHour;
-            setTargetForecastHour(nextHour);
-          }
-        } else {
-          // Frame not ready — refresh map in case new decodes completed.
-          playbackBitmapMapRef.current = buildPlaybackBitmapMap(frameHours, tickMode);
-
-          const wallClockNow = Date.now();
-          const lastAdvance = lastLoopAdvanceRef.current;
-          if (lastAdvance !== null) {
-            const gapMs = wallClockNow - lastAdvance;
-            if (gapMs > AUTOPLAY_TICK_MS) {
-              loopFrameDropSampleCounterRef.current += 1;
-              if (loopFrameDropSampleCounterRef.current % 4 === 0) {
-                trackPerfEvent({
-                  event_name: "loop_frame_drop_gap",
-                  duration_ms: gapMs,
-                  model_id: modelRef.current || null,
-                  variable_id: variableRef.current || null,
-                  forecast_hour: nextHour,
-                  meta: {
-                    render_mode: tickMode,
-                  },
-                });
-                trackRumDiagnosticMetric({
-                  metric_name: "frame_drop_bucket",
-                  metric_value: 1,
-                  metric_unit: "count",
-                  model_id: modelRef.current || null,
-                  variable_id: variableRef.current || null,
-                  forecast_hour: nextHour,
-                  meta: {
-                    render_mode: tickMode,
-                    bucket:
-                      gapMs >= 1000
-                        ? "1000ms_plus"
-                        : gapMs >= 500
-                          ? "500ms_to_999ms"
-                          : "250ms_to_499ms",
-                  },
-                });
-              }
-            }
-            if (gapMs > AUTOPLAY_TICK_MS * 2) {
-              lastLoopAdvanceRef.current = wallClockNow;
-              trackPerfEvent({
-                event_name: "animation_stall",
-                duration_ms: gapMs,
-                model_id: modelRef.current || null,
-                variable_id: variableRef.current || null,
-              });
-              trackRumDiagnosticMetric({
-                metric_name: "animation_stall_count",
-                metric_value: 1,
-                metric_unit: "count",
-                model_id: modelRef.current || null,
-                variable_id: variableRef.current || null,
-                forecast_hour: nextHour,
-                meta: {
-                  render_mode: tickMode,
-                  stall_ms: gapMs,
-                },
-              });
-            }
-          }
-        }
-      }
-
-      rafId = window.requestAnimationFrame(tick);
-    };
-
-    rafId = window.requestAnimationFrame(tick);
-
-    return () => {
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-      }
-      // Flush any outstanding imperative playhead position into React state
-      // so the UI is consistent after the effect tears down.
-      syncStateNow();
-      playbackBitmapMapRef.current = null;
-      lastLoopAdvanceRef.current = null;
-    };
-  }, [
-    isPlaying,
-    renderMode,
-    loopFrameHours,
-    buildPlaybackBitmapMap,
-  ]);
 
   useEffect(() => {
     updateBufferSnapshot();
@@ -4481,13 +2893,11 @@ export default function App() {
           return;
         }
         const snappedHour = frameHours.length > 0 ? nearestFrame(frameHours, requestedHour) : requestedHour;
-        const nextLoopHour = loopFrameHours.length > 0 ? nearestFrame(loopFrameHours, requestedHour) : snappedHour;
         startPendingFrameMetric({
           eventName: "frame_change",
-          renderTarget: isLoopDisplayActive ? "loop" : "tiles",
-          expectedTileUrl: isLoopDisplayActive ? null : tileUrlForHour(snappedHour),
-          expectedLoopHour: isLoopDisplayActive ? nextLoopHour : null,
-          forecastHour: isLoopDisplayActive ? nextLoopHour : snappedHour,
+          renderTarget: "tiles",
+          expectedTileUrl: tileUrlForHour(snappedHour),
+          forecastHour: snappedHour,
         });
         setTargetForecastHour(requestedHour);
         return;
@@ -4524,53 +2934,23 @@ export default function App() {
           return;
         }
 
-        if (!isLoopDisplayActive) {
-          if (frameHours.length === 0) {
-            return;
-          }
-          const snappedTileHour = nearestFrame(frameHours, requestedHour);
-          setScrubCommitIntent({
-            hour: snappedTileHour,
-            direction: inferDirection(snappedTileHour),
-            startedAt: Date.now(),
-          });
-          startPendingFrameMetric({
-            eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
-            renderTarget: "tiles",
-            expectedTileUrl: tileUrlForHour(snappedTileHour),
-            expectedLoopHour: null,
-            forecastHour: snappedTileHour,
-            traceMeta: scrubTraceMeta,
-          });
-          setTargetForecastHour(snappedTileHour);
+        if (frameHours.length === 0) {
           return;
         }
-
-        const nextHour = loopFrameHours.length > 0
-          ? nearestFrame(loopFrameHours, requestedHour)
-          : requestedHour;
+        const snappedTileHour = nearestFrame(frameHours, requestedHour);
         setScrubCommitIntent({
-          hour: nextHour,
-          direction: inferDirection(nextHour),
+          hour: snappedTileHour,
+          direction: inferDirection(snappedTileHour),
           startedAt: Date.now(),
         });
         startPendingFrameMetric({
           eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
-          renderTarget: "loop",
-          expectedTileUrl: null,
-          expectedLoopHour: nextHour,
-          forecastHour: nextHour,
+          renderTarget: "tiles",
+          expectedTileUrl: tileUrlForHour(snappedTileHour),
+          forecastHour: snappedTileHour,
           traceMeta: scrubTraceMeta,
         });
-
-        setTargetForecastHour(nextHour);
-        if (hasDecodedLoopFrame(nextHour, loopPlaybackRenderMode)) {
-          setLoopDisplayHour(nextHour);
-        } else {
-          startForegroundLoopFrameDecode(nextHour, loopPlaybackRenderMode, () => {
-            setLoopDisplayHour(nextHour);
-          });
-        }
+        setTargetForecastHour(snappedTileHour);
         return;
       }
 
@@ -4607,135 +2987,18 @@ export default function App() {
           setTargetForecastHour(nextGridHour);
           return;
         }
-        if (!isLoopDisplayActive) {
-          // Tile mode is static-only. Live scrub updates are disabled so the
-          // overlay only changes on scrub commit.
-          return;
-        }
-
-        const nextHour = loopFrameHours.length > 0
-          ? nearestFrame(loopFrameHours, requested)
-          : requested;
-        setTargetForecastHour(nextHour);
-        if (hasDecodedLoopFrame(nextHour, loopPlaybackRenderMode)) {
-          setLoopDisplayHour(nextHour);
-        } else {
-          // Show the nearest already-decoded frame immediately so the user sees
-          // something while the exact frame decodes in the background.
-          const nearbyReady = findNearestDecodedLoopScrubHour(nextHour, loopPlaybackRenderMode);
-          if (Number.isFinite(nearbyReady)) {
-            setLoopDisplayHour(nearbyReady as number);
-          }
-          startForegroundLoopFrameDecode(nextHour, loopPlaybackRenderMode, () => {
-            setLoopDisplayHour(nextHour);
-          });
-        }
+        // Tile mode is static-only. Live scrub updates are disabled so the
+        // overlay only changes on scrub commit.
       });
     },
     [
-      isLoopDisplayActive,
       isGridPlayable,
       gridFrameHours,
-      loopFrameHours,
       frameHours,
-      model,
       tileUrlForHour,
-      ensureLoopFrameDecoded,
-      loopPlaybackRenderMode,
-      hasDecodedLoopFrame,
-      resolveLoopUrlForHour,
-      findNearestReadyTileScrubHour,
-      findNearestDecodedLoopScrubHour,
-      startForegroundLoopFrameDecode,
       startPendingFrameMetric,
-      shouldEagerlyDecodeLoopFrames,
     ]
   );
-
-  useEffect(() => {
-    if (!isLoopDisplayActive || !loopSelectionReady) {
-      setLoopDisplayHour(null);
-      return;
-    }
-
-    const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (
-      pendingVarSwitch
-      && pendingVarSwitch.toVariableId === variable
-      && !Number.isFinite(pendingVarSwitch.loopDecodeRequestedAt)
-    ) {
-      pendingVarSwitch.loopDecodeRequestedAt = performance.now();
-    }
-
-    const commitLoopHour = resolvedLoopTargetForecastHour;
-
-    if (
-      pendingVarSwitch
-      && pendingVarSwitch.toVariableId === variable
-      && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
-    ) {
-      pendingVarSwitch.firstTargetRequestAt = performance.now();
-    }
-
-    if (isScrubbing) {
-      if (hasDecodedLoopFrame(commitLoopHour, loopPlaybackRenderMode)) {
-        loopDisplayDecodeTokenRef.current += 1;
-        setLoopDisplayHour(commitLoopHour);
-      } else {
-        // Pass the commit callback so that when the foreground decode finishes
-        // the displayed hour advances. Without this, the effect's call to
-        // startForegroundLoopFrameDecode (which aborts any prior RAF-initiated
-        // decode) would leave loopDisplayHour stuck at the previous value.
-        const hourToCommit = commitLoopHour;
-        startForegroundLoopFrameDecode(commitLoopHour, loopPlaybackRenderMode, () => {
-          setLoopDisplayHour(hourToCommit);
-        });
-      }
-      return;
-    }
-
-    if (hasDecodedLoopFrame(commitLoopHour, loopPlaybackRenderMode)) {
-      loopDisplayDecodeTokenRef.current += 1;
-      setLoopDisplayHour(commitLoopHour);
-      return;
-    }
-
-    loopDisplayDecodeTokenRef.current += 1;
-    const decodeToken = loopDisplayDecodeTokenRef.current;
-
-    // No signal: the decode always completes and its result is stored in the LRU
-    // cache. The token guards the commit; scrubbing to a new frame only invalidates
-    // the commit, not the inflight fetch — keeping every touched frame warm.
-    ensureLoopFrameDecoded(commitLoopHour, loopPlaybackRenderMode)
-      .then((ready) => {
-        if (!ready) {
-          return;
-        }
-        if (decodeToken !== loopDisplayDecodeTokenRef.current) {
-          return;
-        }
-        setLoopDisplayHour(commitLoopHour);
-      })
-      .catch(() => {
-        // keep previous display hour when decode fails.
-      });
-  }, [
-    isLoopDisplayActive,
-    loopSelectionReady,
-    targetForecastHour,
-    resolvedLoopTargetForecastHour,
-    loopPlaybackRenderMode,
-    ensureLoopFrameDecoded,
-    variable,
-    shouldEagerlyDecodeLoopFrames,
-    isPlaying,
-    isLoopPreloading,
-    isLoopAutoplayBuffering,
-    isScrubbing,
-    resolveLoopUrlForHour,
-    startForegroundLoopFrameDecode,
-    resetLoopPresentationToTiles,
-  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -4815,7 +3078,6 @@ export default function App() {
         setRuns([]);
         setRunManifest(null);
         setFrameRows([]);
-        setLoopManifest(null);
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
@@ -4942,10 +3204,8 @@ export default function App() {
 
   useEffect(() => {
     setFrameRows([]);
-    setLoopManifest(null);
     setForecastHour(Number.POSITIVE_INFINITY);
     setTargetForecastHour(Number.POSITIVE_INFINITY);
-    setLoopDisplayHour(null);
     setLoadedFramesKey("");
     setVariableSwitchState(null);
     setVisualVariable(variable);
@@ -4953,10 +3213,7 @@ export default function App() {
 
   useEffect(() => {
     setFrameRows([]);
-    setLoopManifest(null);
     setVisibleRenderMode("tiles");
-    setLoopDisplayHour(null);
-    setLoopDisplayBitmap(null);
     setLoadedFramesKey("");
     setSettledTileUrl(null);
     setMapLoadingTileUrl(null);
@@ -5665,8 +3922,6 @@ export default function App() {
       pendingLoopStartMetricRef.current = null;
       gridPlaybackHourRef.current = null;
       setIsPlaying(false);
-      setIsLoopAutoplayBuffering(false);
-      setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
       setIsGridPreloadingForPlay(false);
       return;
@@ -5675,28 +3930,13 @@ export default function App() {
       pendingLoopStartMetricRef.current = null;
       return;
     }
-
-    if (renderMode === "tiles") {
-      if (canUseLoopPlayback && isHighDetailZoom) {
-        pendingLoopStartMetricRef.current = null;
-        setIsPlaying(false);
-        setIsLoopAutoplayBuffering(false);
-        setIsLoopPreloading(false);
-        setIsPreloadingForPlay(false);
-        setIsGridPreloadingForPlay(false);
-        showTransientFrameStatus("High detail mode — zoom out for animation playback");
-        return;
-      }
-      if (!canUseLoopPlayback && !canUseGridPlayback) {
-        pendingLoopStartMetricRef.current = null;
-        setIsPlaying(false);
-        setIsLoopAutoplayBuffering(false);
-        setIsLoopPreloading(false);
-        setIsPreloadingForPlay(false);
-        setIsGridPreloadingForPlay(false);
-        showTransientFrameStatus("Loop unavailable for this variable/run — showing tiles");
-        return;
-      }
+    if (!canUseGridPlayback) {
+      pendingLoopStartMetricRef.current = null;
+      setIsPlaying(false);
+      setIsPreloadingForPlay(false);
+      setIsGridPreloadingForPlay(false);
+      showTransientFrameStatus("Animation unavailable for this selection");
+      return;
     }
 
     startPendingLoopStartMetric();
@@ -5724,8 +3964,6 @@ export default function App() {
           ? targetForecastHour
           : (Number.isFinite(forecastHour) ? forecastHour : null));
       gridPlaybackHourRef.current = startHour;
-      setIsLoopAutoplayBuffering(false);
-      setIsLoopPreloading(false);
       setIsPreloadingForPlay(false);
       if (Number.isFinite(startHour) && isGridPlaybackStartReady) {
         setIsGridPreloadingForPlay(false);
@@ -5738,33 +3976,12 @@ export default function App() {
       showTransientFrameStatus("Buffering grid frames");
       return;
     }
-
-    if (!canUseLoopPlayback || !webpDefaultEnabled) {
-      pendingLoopStartMetricRef.current = null;
-      setIsPlaying(false);
-      setIsLoopAutoplayBuffering(false);
-      setIsLoopPreloading(false);
-      setIsPreloadingForPlay(false);
-      setIsGridPreloadingForPlay(false);
-      showTransientFrameStatus("Animation unavailable for this selection");
-      return;
-    }
-
-    setIsPlaying(false);
-    setIsPreloadingForPlay(false);
-    setIsGridPreloadingForPlay(false);
-    setIsLoopPreloading(true);
-    showTransientFrameStatus("Loading loop frames");
   }, [
     loading,
     frameHours.length,
     canUseGridPlayback,
     gridPlaybackStartHour,
-    canUseLoopPlayback,
-    isHighDetailZoom,
     isGridPlaybackStartReady,
-    webpDefaultEnabled,
-    renderMode,
     showTransientFrameStatus,
     startPendingLoopStartMetric,
     model,
@@ -5777,47 +3994,17 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isPlaying && renderMode === "tiles" && !canUseGridPlayback) {
+    if (isPlaying && !canUseGridPlayback) {
       setIsPlaying(false);
-      setIsLoopAutoplayBuffering(false);
       setIsGridPreloadingForPlay(false);
-      showTransientFrameStatus("High detail mode — zoom out for animation playback");
+      showTransientFrameStatus("Animation unavailable for this selection");
     }
-  }, [canUseGridPlayback, isPlaying, renderMode, showTransientFrameStatus]);
-
-  useEffect(() => {
-    const pendingLoop = pendingInitialLoopRef.current;
-    if (typeof pendingLoop === "undefined") {
-      return;
-    }
-
-    if (!pendingLoop) {
-      handleSetIsPlaying(false);
-      pendingInitialLoopRef.current = undefined;
-      return;
-    }
-
-    if (!bootstrapHydrated || loading || selectableFrameHours.length === 0) {
-      return;
-    }
-
-    handleSetIsPlaying(true);
-    pendingInitialLoopRef.current = undefined;
-  }, [bootstrapHydrated, loading, selectableFrameHours.length, handleSetIsPlaying]);
+  }, [canUseGridPlayback, isPlaying, showTransientFrameStatus]);
 
   const handleZoomRoutingSignal = useCallback((payload: { zoom: number; gestureActive: boolean }) => {
     setMapZoom(payload.zoom);
     setZoomGestureActive(payload.gestureActive);
   }, []);
-
-  // Receives the imperative draw handle from MapCanvas. Stored in a ref so the
-  // RAF playback ticker can call it without going through React props/state.
-  const handleDrawLoopFrameRef = useCallback(
-    (draw: ((bitmap: ImageBitmap) => boolean) | null) => {
-      drawLoopFrameImperativeRef.current = draw;
-    },
-    []
-  );
 
   const handleMapReady = useCallback((map: MapLibreMap) => {
     mapInstanceRef.current = map;
@@ -5881,7 +4068,7 @@ export default function App() {
     }
     // Finalize variable_switch: fires once the first tile for the new variable is viewport-ready.
     if (readyTileUrl === tileUrl) {
-      finalizePendingVariableSwitch("tiles", performance.now(), { readyTileUrl });
+      finalizePendingVariableSwitch(performance.now(), { readyTileUrl });
     }
     const pending = pendingFrameMetricRef.current;
     if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
@@ -5907,7 +4094,6 @@ export default function App() {
     visualVariable,
     region,
     forecastHour,
-    loopDisplayHour,
     finalizePendingFrameMetric,
     finalizePendingVariableSwitch,
     telemetryRunId,
@@ -5969,7 +4155,6 @@ export default function App() {
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
-    setLoopManifest(null);
     setModel(nextModel);
     trackUsageEvent({
       event_name: "model_selected",
@@ -6025,7 +4210,6 @@ export default function App() {
       firstTargetRequestAt: null,
       firstTargetReadyAt: null,
       firstVisibleAt: null,
-      loopDecodeRequestedAt: null,
       expectedTileUrl: null,
       warmAtVisible: null,
       warmSourceAtVisible: null,
@@ -6036,20 +4220,8 @@ export default function App() {
       startedAt: performance.now(),
       visualState: "holding_old",
     });
-    // Snapshot the current loop visuals before tearing down loop presentation.
-    // This lets the map hold the old frame during the transition instead of
-    // flashing stale tile imagery while the new variable loads.
-    if (isLoopDisplayActive && Number.isFinite(loopDisplayHour)) {
-      const snapshotHour = loopDisplayHour as number;
-      holdoverLoopBitmapRef.current = getDecodedLoopBitmap(snapshotHour, loopPlaybackRenderMode);
-      holdoverLoopUrlRef.current = resolveLoopUrlForHour(snapshotHour, loopPlaybackRenderMode);
-      holdoverLoopBboxRef.current = loopManifest?.bbox ?? null;
-    } else {
-      holdoverLoopBitmapRef.current = null;
-      holdoverLoopUrlRef.current = null;
-      holdoverLoopBboxRef.current = null;
-    }
-    resetLoopPresentationToTiles();
+    setVisibleRenderMode("tiles");
+    lastTileViewportCommitUrlRef.current = null;
     setVariable(nextVariable);
     trackUsageEvent({
       event_name: "variable_selected",
@@ -6067,7 +4239,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, resolvedRunForRequests, targetForecastHour, renderMode, visibleRenderMode, loopDisplayHour, isLoopDisplayActive, loopPlaybackRenderMode, loopManifest, getDecodedLoopBitmap, resolveLoopUrlForHour, resetLoopPresentationToTiles, buildObservedTelemetryMeta]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, buildObservedTelemetryMeta]);
 
   useEffect(() => {
     if (
@@ -6108,12 +4280,9 @@ export default function App() {
   // When the user starts scrubbing, cancel any pending buffering-recovery auto-restart
   // so it cannot preempt the in-progress scrub and re-lock the slider.
   useEffect(() => {
-    if (isScrubbing) {
-      setIsLoopAutoplayBuffering(false);
-      setIsLoopPreloading(false);
-      return;
+    if (!isScrubbing) {
+      setScrubRequestedHour(null);
     }
-    setScrubRequestedHour(null);
   }, [isScrubbing]);
 
   useEffect(() => {
@@ -6127,14 +4296,6 @@ export default function App() {
       if (bufferSnapshotRafRef.current !== null) {
         window.cancelAnimationFrame(bufferSnapshotRafRef.current);
       }
-      loopDisplayDecodeAbortRef.current?.abort();
-      foregroundDecodeHourRef.current = null;
-      for (const cached of loopDecodedCacheRef.current.values()) {
-        cached.bitmap.close();
-      }
-      loopDecodedCacheRef.current.clear();
-      loopDecodeCompletedAtRef.current.clear();
-      loopDecodedCacheBytesRef.current = 0;
     };
   }, [clearFrameStatusTimer, resetAnchorBatchQueue]);
 
@@ -6150,7 +4311,7 @@ export default function App() {
     setForecastHour(nextTarget);
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
-  const controlsIsPlaying = isPlaying || isPreloadingForPlay || isGridPreloadingForPlay || isLoopPreloading;
+  const controlsIsPlaying = isPlaying || isPreloadingForPlay || isGridPreloadingForPlay;
   const substrateDebugLabel = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       return "grid_webgl_v1";
@@ -6170,81 +4331,29 @@ export default function App() {
     }
     return `z ${mapZoom.toFixed(1)}`;
   }, [mapZoom, resolvedGridDisplayHour, resolvedWeatherSubstrate]);
-  const preloadBufferedCount = isLoopPreloading
-    ? Math.max(0, Math.min(loopProgress.ready + loopProgress.failed, loopProgress.total))
-    : isGridPreloadingForPlay
-      ? Math.max(0, Math.min(gridReadyCount, gridFrameHours.length))
-      : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
-  const preloadTotal = isLoopPreloading
-    ? loopProgress.total
-    : isGridPreloadingForPlay
-      ? gridFrameHours.length
-      : bufferSnapshot.totalFrames;
+  const preloadBufferedCount = isGridPreloadingForPlay
+    ? Math.max(0, Math.min(gridReadyCount, gridFrameHours.length))
+    : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
+  const preloadTotal = isGridPreloadingForPlay
+    ? gridFrameHours.length
+    : bufferSnapshot.totalFrames;
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;
   const showBufferStatus =
     isScrubLoading
     || (isGridPreloadingForPlay && gridFrameHours.length > 0)
-    || (isPreloadingForPlay && bufferSnapshot.totalFrames > 0)
-    || (isLoopPreloading && loopProgress.total > 0);
+    || (isPreloadingForPlay && bufferSnapshot.totalFrames > 0);
   const bufferStatusText = isScrubLoading
     ? "Loading frame"
     : isGridPreloadingForPlay
       ? `Buffering grid ${preloadBufferedCount}/${preloadTotal}`
       : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
-  const activeLoopHour = visibleLoopOverlayHour;
-  const committedLoopHour = Number.isFinite(loopDisplayHour) ? (loopDisplayHour as number) : null;
-  // Loop presentation is bitmap-backed. During a variable switch, fall back to
-  // the holdover bitmap from the outgoing selection until the new selection's
-  // first frame is ready.  When the render mode has switched to tiles (high-zoom
-  // detail), suppress all loop bitmaps so the tile layers can take over.
-  const targetLoopBitmap = renderMode !== "tiles" && hasDecodedLoopFrame(activeLoopHour, loopPlaybackRenderMode)
-    ? getDecodedLoopBitmap(activeLoopHour, loopPlaybackRenderMode)
-    : null;
-  const committedLoopBitmap = renderMode !== "tiles" && committedLoopHour !== null && hasDecodedLoopFrame(committedLoopHour, loopPlaybackRenderMode)
-    ? getDecodedLoopBitmap(committedLoopHour, loopPlaybackRenderMode)
-    : null;
-  const newLoopBitmap = targetLoopBitmap ?? committedLoopBitmap;
-  // Guard against detached holdover bitmaps — the cache-clear on dataset
-  // change calls `.close()` on every cached bitmap, which invalidates any
-  // holdover ref that was snapshotted before the switch.
-  const holdoverBitmap = holdoverLoopBitmapRef.current;
-  const safeHoldover = isVariableSwitching && holdoverBitmap && holdoverBitmap.width > 0
-    ? holdoverBitmap
-    : null;
-  const activeLoopBitmap = newLoopBitmap
-    ?? loopDisplayBitmap
-    ?? safeHoldover;
-  // Canvas/bitmap-only loop presentation: avoid MapLibre image-source path,
-  // which is currently causing decode instability and stale loop visuals.
-  const activeLoopUrl = null;
-  const activeLoopBbox = loopManifest?.bbox
-    ?? (isVariableSwitching ? holdoverLoopBboxRef.current : null);
-  // Keep tiles fully disabled for the entire loop playback session.
-  // Even if a specific decoded frame is briefly unavailable, stay in loop mode
-  // rather than falling back to tile-layer swaps.  However, when the render
-  // mode has explicitly switched to tiles (e.g. high-zoom detail), respect
-  // that and allow the tile layers to take over even if a cached bitmap exists.
-  const effectiveLoopActive =
-    renderMode !== "tiles"
-    && (Boolean(activeLoopBitmap)
-      || (isLoopDisplayActive && Number.isFinite(loopDisplayHour)));
+  const activeLoopBitmap: ImageBitmap | null = null;
+  const activeLoopUrl: string | null = null;
+  const activeLoopBbox: [number, number, number, number] | null = null;
+  const effectiveLoopActive = false;
 
-  useEffect(() => {
-    if (!newLoopBitmap) {
-      return;
-    }
-    if (loopDisplayBitmap === newLoopBitmap) {
-      return;
-    }
-    setLoopDisplayBitmap(newLoopBitmap);
-  }, [newLoopBitmap, loopDisplayBitmap]);
-
-  const permalinkLoopActive = controlsIsPlaying || isLoopAutoplayBuffering;
-  const resolvedLoopPermalink = typeof pendingInitialLoopRef.current === "boolean"
-    ? pendingInitialLoopRef.current
-    : permalinkLoopActive;
   const resolvedForecastHourPermalink = Number.isFinite(forecastHour)
     ? forecastHour
     : pendingInitialForecastHourRef.current;
@@ -6354,14 +4463,6 @@ export default function App() {
       })
       .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
-    const loopCoordinates = loopManifest?.bbox
-      ? ([
-          [loopManifest.bbox[0], loopManifest.bbox[3]],
-          [loopManifest.bbox[2], loopManifest.bbox[3]],
-          [loopManifest.bbox[2], loopManifest.bbox[1]],
-          [loopManifest.bbox[0], loopManifest.bbox[1]],
-        ] as [[number, number], [number, number], [number, number], [number, number]])
-      : undefined;
     const style = buildMapStyle(
       tileUrl,
       opacity,
@@ -6370,7 +4471,7 @@ export default function App() {
       displayedOverlayVariableDisplayResamplingOverride,
       overlayFadeOutZoom,
       contourGeoJsonUrl,
-      loopCoordinates,
+      undefined,
       basemapMode,
       { includeRuntimeLoopCanvas: false }
     );
@@ -6397,7 +4498,7 @@ export default function App() {
         id: region || "region",
         label: selectedRegionLabel || region || "Region",
       },
-      loopEnabled: isLoopDisplayActive,
+      loopEnabled: false,
       capturedMapDataUrl,
       anchors,
     };
@@ -6413,7 +4514,6 @@ export default function App() {
       displayedOverlayVariableDisplayResamplingOverride,
     overlayFadeOutZoom,
     contourGeoJsonUrl,
-    loopManifest,
     basemapMode,
     anchorDisplayGeoJson,
     selectedVariableLabel,
@@ -6423,7 +4523,6 @@ export default function App() {
     observedSourceStatus,
     region,
     selectedRegionLabel,
-    isLoopDisplayActive,
   ]);
 
   const handleOpenShareModal = useCallback(() => {
@@ -6471,7 +4570,7 @@ export default function App() {
           centerLat: Number.isFinite(mapView.lat) ? mapView.lat : null,
           centerLon: Number.isFinite(mapView.lon) ? mapView.lon : null,
           zoom: Number.isFinite(mapView.z) ? mapView.z : null,
-          loopEnabled: resolvedLoopPermalink,
+          loopEnabled: controlsIsPlaying,
         });
         setSharePayload({
           permalink,
@@ -6490,7 +4589,6 @@ export default function App() {
     region,
     regionPresets,
     resolvedRunForRequests,
-    resolvedLoopPermalink,
     run,
     runManifest,
     selectedCapabilityVarMap,
@@ -6500,6 +4598,7 @@ export default function App() {
     selectedVariableLabel,
     variable,
     currentFrameValidTimeISO,
+    controlsIsPlaying,
   ]);
 
   useEffect(() => {
@@ -6530,7 +4629,6 @@ export default function App() {
           lat: mapView.lat,
           lon: mapView.lon,
           z: mapView.z,
-          loop: resolvedLoopPermalink,
         });
         if (search === lastSyncedPermalinkSearchRef.current || search === window.location.search) {
           lastSyncedPermalinkSearchRef.current = search;
@@ -6552,7 +4650,6 @@ export default function App() {
     variable,
     resolvedForecastHourPermalink,
     region,
-    resolvedLoopPermalink,
     mapViewTick,
   ]);
 
@@ -6625,12 +4722,8 @@ export default function App() {
           displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
-          prefetchTileUrls={isLoopDisplayActive || isGridLowMidActive ? [] : prefetchTileUrls}
+          prefetchTileUrls={isGridLowMidActive ? [] : prefetchTileUrls}
           crossfade={isVariableSwitching}
-          loopImageUrl={activeLoopUrl}
-          loopFrameBitmap={activeLoopBitmap}
-          loopImageBbox={activeLoopBbox}
-          loopActive={effectiveLoopActive}
           onFrameSettled={handleFrameSettled}
           onTileReady={handleTileReady}
           onFrameLoadingChange={handleFrameLoadingChange}
@@ -6643,8 +4736,6 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={onHover}
           onMapHoverEnd={onHoverEnd}
-          onDrawLoopFrameRef={handleDrawLoopFrameRef}
-          loopImperativePlaybackActive={isPlaying && renderMode !== "tiles"}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
 
@@ -6700,13 +4791,6 @@ export default function App() {
           <div className="absolute left-4 top-4 z-40 flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-lg backdrop-blur-md">
             <AlertCircle className="h-3.5 w-3.5" />
             {error}
-          </div>
-        )}
-
-        {renderMode === "tiles" && canUseLoopPlayback && isHighDetailZoom && (
-          <div className="glass fixed bottom-[6.5rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs">
-            <AlertCircle className="h-3.5 w-3.5" />
-            High detail mode — zoom out for animation playback
           </div>
         )}
 

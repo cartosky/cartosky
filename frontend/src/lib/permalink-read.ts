@@ -7,7 +7,6 @@ export type PermalinkState = {
   lat?: number;
   lon?: number;
   z?: number;
-  loop?: boolean;
 };
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
@@ -74,13 +73,6 @@ export function readPermalink(): PermalinkState {
   const z = readFiniteNumberParam(params, "z");
   if (Number.isFinite(z) && Number(z) >= 0 && Number(z) <= 24) {
     state.z = Number(z);
-  }
-
-  const loop = params.get("loop");
-  if (loop === "1") {
-    state.loop = true;
-  } else if (loop === "0") {
-    state.loop = false;
   }
 
   return state;

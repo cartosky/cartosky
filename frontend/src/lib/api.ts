@@ -147,32 +147,9 @@ export type FrameRow = {
   run?: string;
   valid_time?: string;
   tile_url_template?: string;
-  loop_webp_url?: string;
-  loop_webp_tier0_url?: string;
   meta?: {
     meta?: LegendMeta | null;
   } | null;
-};
-
-export type LoopManifestFrame = {
-  fh: number;
-  url: string;
-};
-
-export type LoopManifestTier = {
-  tier: number;
-  max_dim?: number;
-  frames: LoopManifestFrame[];
-};
-
-export type LoopManifestResponse = {
-  manifest_version: number;
-  run: string;
-  model: string;
-  var: string;
-  bbox?: [number, number, number, number];
-  projection?: string;
-  loop_tiers: LoopManifestTier[];
 };
 
 export type GridManifestFrame = {
@@ -269,12 +246,6 @@ export function readCapabilityDefaultFrameSelection(
 
 export function readCapabilityLatestOnly(model: CapabilityModel | null | undefined): boolean {
   return model?.constraints?.latest_only === true;
-}
-
-export function readCapabilityDefaultRenderSubstrate(
-  model: CapabilityModel | null | undefined
-): WeatherSubstrate {
-  return normalizeWeatherSubstrate(model?.defaults?.default_render_substrate) ?? "grid_webgl_v1";
 }
 
 export function readCapabilityRenderSubstrates(
@@ -493,27 +464,6 @@ export async function fetchFrames(
       };
     })
     .sort((a, b) => Number(a.fh) - Number(b.fh));
-}
-
-export async function fetchLoopManifest(
-  model: string,
-  run: string,
-  varKey: string,
-  options?: FetchOptions
-): Promise<LoopManifestResponse | null> {
-  const runKey = run || "latest";
-  try {
-    const response = await fetchJson<LoopManifestResponse>(
-      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/loop-manifest`,
-      options
-    );
-    if (!response || !Array.isArray(response.loop_tiers)) {
-      return null;
-    }
-    return response;
-  } catch {
-    return null;
-  }
 }
 
 export async function fetchGridManifest(

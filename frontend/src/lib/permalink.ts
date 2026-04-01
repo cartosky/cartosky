@@ -30,9 +30,6 @@ export function buildPermalinkSearch(state: PermalinkState): string {
   if (Number.isFinite(state.z) && Number(state.z) >= 0 && Number(state.z) <= 24) {
     params.set("z", Number(state.z).toFixed(2));
   }
-  if (typeof state.loop === "boolean") {
-    params.set("loop", state.loop ? "1" : "0");
-  }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";
 }
