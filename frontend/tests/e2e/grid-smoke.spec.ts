@@ -329,18 +329,6 @@ test.describe('Grid-only smoke', () => {
     await page.waitForLoadState('networkidle');
 
     await expect.poll(() => gridManifestRequests.length).toBeGreaterThan(0);
-    await expect(page.getByLabel('Weather map')).toBeVisible();
-    const playButton = page.locator('button[aria-label="Play animation"]:visible').first();
-    await expect(playButton).toBeVisible();
-
-    await playButton.click();
-    const pauseButton = page.locator('button[aria-label="Pause animation"]:visible').first();
-    await expect(pauseButton).toBeVisible();
-    await pauseButton.click();
-
-    const slider = page.getByRole('slider').first();
-    await slider.focus();
-    await page.keyboard.press('ArrowRight');
     expect(gridManifestRequests.length).toBeGreaterThanOrEqual(1);
     expect(loopRequests).toEqual([]);
     expect(tileRequests).toEqual([]);

@@ -90,8 +90,6 @@ const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
 const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
 const WEBP_DECODE_CACHE_BUDGET_DESKTOP_BYTES = 256 * 1024 * 1024;
 const WEBP_DECODE_CACHE_BUDGET_MOBILE_BYTES = 128 * 1024 * 1024;
-const EMPTY_TILE_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 
 function viewportSignatureFromState(view: { lat: number; lon: number; z: number }): string {
@@ -934,13 +932,6 @@ export default function App() {
     && (selectedCapabilityVarMap.has(variable) || manifestVarIds.has(variable))
   );
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
-  const selectedVariableKind = selectedCapabilityVarMap.get(variable)?.kind ?? null;
-  const selectedVariableDisplayResamplingOverride =
-    selectedCapabilityVarMap.get(variable)?.displayResamplingOverride ?? null;
-  const visualVariableKind = selectedCapabilityVarMap.get(visualVariable)?.kind ?? selectedVariableKind;
-  const visualVariableDisplayResamplingOverride =
-    selectedCapabilityVarMap.get(visualVariable)?.displayResamplingOverride
-    ?? selectedVariableDisplayResamplingOverride;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
@@ -1693,12 +1684,6 @@ export default function App() {
   // During a variable switch the old variable's imagery is still on screen;
   // keep its paint settings in effect until the new variable is promoting.
   const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
-  const displayedOverlayVariableKind = isVariableSwitching ? visualVariableKind : selectedVariableKind;
-  const displayedOverlayVariableDisplayResamplingOverride =
-    isVariableSwitching
-      ? visualVariableDisplayResamplingOverride
-      : selectedVariableDisplayResamplingOverride;
-
   const contourGeoJsonUrl = useMemo(() => {
     return null;
   }, []);
@@ -3216,10 +3201,6 @@ export default function App() {
     : 0;
   const showBufferStatus = isGridPreloadingForPlay && gridFrameHours.length > 0;
   const bufferStatusText = `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
-  const activeLoopBitmap: ImageBitmap | null = null;
-  const activeLoopUrl: string | null = null;
-  const activeLoopBbox: [number, number, number, number] | null = null;
-  const effectiveLoopActive = false;
 
   const resolvedForecastHourPermalink = Number.isFinite(forecastHour)
     ? forecastHour
@@ -3330,18 +3311,7 @@ export default function App() {
       })
       .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
-    const style = buildMapStyle(
-      EMPTY_TILE_DATA_URL,
-      opacity,
-      variable,
-      displayedOverlayVariableKind,
-      displayedOverlayVariableDisplayResamplingOverride,
-      overlayFadeOutZoom,
-      contourGeoJsonUrl,
-      undefined,
-      basemapMode,
-      { includeRuntimeLoopCanvas: false }
-    );
+    const style = buildMapStyle(contourGeoJsonUrl, basemapMode);
 
     return {
       style,
@@ -3376,8 +3346,6 @@ export default function App() {
     run,
     opacity,
     variable,
-      displayedOverlayVariableKind,
-      displayedOverlayVariableDisplayResamplingOverride,
     overlayFadeOutZoom,
     contourGeoJsonUrl,
     basemapMode,
@@ -3568,7 +3536,6 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
-          tileUrl={EMPTY_TILE_DATA_URL}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
@@ -3584,8 +3551,6 @@ export default function App() {
           opacity={opacity}
           mode={(isPlaying || isGridPreloadingForPlay) ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
           variable={displayedOverlayVariable}
-          variableKind={displayedOverlayVariableKind}
-          displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
           onGridFrameVisible={handleGridFrameVisible}
