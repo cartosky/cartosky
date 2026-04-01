@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle, Eye, MapPin, Moon, Send, SlidersHorizontal, Sun } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, buildMapStyle, type BasemapMode, type TileReadyMeta, type TileReadySource } from "@/components/map-canvas";
+import { MapCanvas, buildMapStyle, type BasemapMode } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import { WeatherToolbar } from "@/components/weather-toolbar";
@@ -40,18 +40,13 @@ import {
 } from "@/lib/anchor-labels";
 import {
   API_ORIGIN,
-  getPlaybackBufferPolicy,
   isGridV1DefaultEnabled,
   isGridV1Enabled,
   isDeferredNonCriticalBootstrapEnabled,
-  isDeferredPrefetchUntilFirstPaintEnabled,
-  isTileFirstInitialPaintEnabled,
-  isViewportAwareTileReadinessEnabled,
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
   type WeatherSubstrate,
 } from "@/lib/config";
-import { selectPrefetchFrameHours } from "@/lib/render-scheduler";
 import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import {
@@ -62,7 +57,6 @@ import {
   runIdToIso,
   type TimeAxisMode,
 } from "@/lib/time-axis";
-import { buildTileUrlFromFrame } from "@/lib/tiles";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
@@ -106,37 +100,6 @@ function viewportSignatureFromState(view: { lat: number; lon: number; z: number 
   const lonBucket = Math.round(view.lon * 4) / 4;
   return `${zoomBucket}|${latBucket}|${lonBucket}`;
 }
-
-function recentMedianSample(samples: readonly number[], maxSamples = 12): number | null {
-  if (samples.length === 0 || maxSamples <= 0) {
-    return null;
-  }
-  const recent = samples.slice(-Math.min(maxSamples, samples.length)).filter((value) => Number.isFinite(value) && value > 0);
-  if (recent.length === 0) {
-    return null;
-  }
-  recent.sort((left, right) => left - right);
-  const middle = Math.floor(recent.length / 2);
-  if (recent.length % 2 === 1) {
-    return recent[middle];
-  }
-  return (recent[middle - 1] + recent[middle]) / 2;
-}
-
-type RenderModeState = "tiles";
-
-type BufferSnapshot = {
-  totalFrames: number;
-  bufferedCount: number;
-  bufferedAheadCount: number;
-  terminalCount: number;
-  terminalAheadCount: number;
-  failedCount: number;
-  inFlightCount: number;
-  queueDepth: number;
-  statusText: string;
-  version: number;
-};
 
 type NewRunNoticeState = {
   model: string;
@@ -226,25 +189,6 @@ type ModelEntry = {
   order?: number | null;
 };
 
-type PendingViewerPerfMetric = {
-  eventName: "frame_change" | "scrub_latency";
-  startedAt: number;
-  renderTarget: "tiles";
-  expectedTileUrl: string | null;
-  modelId: string | null;
-  variableId: string | null;
-  runId: string | null;
-  regionId: string | null;
-  forecastHour: number | null;
-  traceMeta: Record<string, unknown> | null;
-  requestStartedAt: number | null;
-  firstTileReadyAt: number | null;
-  firstVisibleAt: number | null;
-  readySource: TileReadySource | null;
-  warmAtStart: boolean | null;
-  warmSourceAtStart: TileReadySource | null;
-};
-
 type PendingLoopStartMetric = {
   startedAt: number;
   modelId: string | null;
@@ -267,9 +211,6 @@ type PendingVariableSwitchMetric = {
   firstTargetRequestAt: number | null;
   firstTargetReadyAt: number | null;
   firstVisibleAt: number | null;
-  expectedTileUrl: string | null;
-  warmAtVisible: boolean | null;
-  warmSourceAtVisible: TileReadySource | null;
 };
 
 type VariableSwitchState = {
@@ -313,7 +254,7 @@ function buildVariableSwitchPhase0aMeta(
 
   return {
     from_variable: pending.fromVariableId,
-    render_target: "tiles",
+    render_target: "grid_webgl_v1",
     phase0a_trace_version: 1,
     expected_selection_key: pending.expectedSelectionKey,
     stage_manifest_resolved_ms: offsetMs(pending.manifestResolvedAt),
@@ -321,9 +262,6 @@ function buildVariableSwitchPhase0aMeta(
     stage_first_target_request_ms: offsetMs(pending.firstTargetRequestAt),
     stage_first_target_ready_ms: offsetMs(pending.firstTargetReadyAt),
     stage_first_visible_ms: offsetMs(pending.firstVisibleAt),
-    expected_tile_url: pending.expectedTileUrl,
-    warm_at_visible: pending.warmAtVisible,
-    warm_source_at_visible: pending.warmSourceAtVisible,
   };
 }
 
@@ -588,7 +526,6 @@ function mergeManifestRowsWithPrevious(
     return {
       ...row,
       meta: row.meta ?? previous.meta,
-      tile_url_template: row.tile_url_template ?? previous.tile_url_template,
     };
   });
 }
@@ -809,10 +746,7 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 export default function App() {
   const gridV1Enabled = isGridV1Enabled();
   const gridV1DefaultEnabled = isGridV1DefaultEnabled();
-  const tileFirstInitialPaintEnabled = isTileFirstInitialPaintEnabled();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
-  const deferPrefetchUntilFirstPaintEnabled = isDeferredPrefetchUntilFirstPaintEnabled();
-  const viewportAwareTileReadinessEnabled = isViewportAwareTileReadinessEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
   const initialPermalink = useMemo(() => readPermalink(), []);
@@ -856,9 +790,6 @@ export default function App() {
   const [mapZoom, setMapZoom] = useState(MAP_VIEW_DEFAULTS.zoom);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [renderMode, setRenderMode] = useState<RenderModeState>("tiles");
-  const [visibleRenderMode, setVisibleRenderMode] = useState<RenderModeState>("tiles");
-  const [isPreloadingForPlay, setIsPreloadingForPlay] = useState(false);
   const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
@@ -882,8 +813,6 @@ export default function App() {
     summary: "CartoSky viewer share",
     detailsSummary: "",
   });
-  const [settledTileUrl, setSettledTileUrl] = useState<string | null>(null);
-  const [mapLoadingTileUrl, setMapLoadingTileUrl] = useState<string | null>(null);
   const [frameStatusMessage, setFrameStatusMessage] = useState<string | null>(null);
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
@@ -903,51 +832,16 @@ export default function App() {
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
-  const [bufferSnapshot, setBufferSnapshot] = useState<BufferSnapshot>({
-    totalFrames: 0,
-    bufferedCount: 0,
-    bufferedAheadCount: 0,
-    terminalCount: 0,
-    terminalAheadCount: 0,
-    failedCount: 0,
-    inFlightCount: 0,
-    queueDepth: 0,
-    statusText: "Buffered 0/0",
-    version: 0,
-  });
-  const latestTileUrlRef = useRef<string>("");
   const selectionEpochRef = useRef(selectionEpoch);
-  const readyTileUrlsRef = useRef<Map<string, number>>(new Map());
-  const tileReadySourceRef = useRef<Map<string, TileReadySource>>(new Map());
-  const tileReadyViewportSignatureRef = useRef<Map<string, string>>(new Map());
-  const readyFramesRef = useRef<Set<number>>(new Set());
-  const inFlightFramesRef = useRef<Set<number>>(new Set());
-  const failedFramesRef = useRef<Set<number>>(new Set());
-  const frameRetryCountRef = useRef<Map<number, number>>(new Map());
-  const frameCycleStartedAtRef = useRef<Map<number, number>>(new Map());
-  const frameNextRetryAtRef = useRef<Map<number, number>>(new Map());
-  const inFlightStartedAtRef = useRef<Map<number, number>>(new Map());
-  const readyLatencyStatsRef = useRef({ totalMs: 0, count: 0 });
-  const bufferVersionRef = useRef(0);
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
-  // Tracks a pending RAF for coalescing bufferSnapshot updates (see markFrameReady).
-  const bufferSnapshotRafRef = useRef<number | null>(null);
-  // Stores the last committed snapshot stats so unchanged updates are skipped entirely.
-  const lastSnapshotStatsRef = useRef({ bufferedCount: -1, failedCount: -1, inFlightCount: -1, queueDepth: -1 });
   const datasetGenerationRef = useRef(0);
   const requestGenerationRef = useRef(0);
   const scrubRafRef = useRef<number | null>(null);
   const pendingScrubHourRef = useRef<number | null>(null);
   const scrubPhase0aRef = useRef<ScrubPhase0aSnapshot>(emptyScrubPhase0aSnapshot());
-  const autoplayPrimedRef = useRef(false);
   const frameStatusTimerRef = useRef<number | null>(null);
-  const preloadProgressRef = useRef({
-    lastBufferedCount: 0,
-    lastProgressAt: 0,
-  });
   const forecastHourRef = useRef(forecastHour);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
-  const lastTileViewportCommitUrlRef = useRef<string | null>(null);
   const longTaskSampleCounterRef = useRef(0);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
@@ -968,14 +862,11 @@ export default function App() {
   const viewerOpenedTrackedRef = useRef(false);
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
-  const pendingFrameMetricRef = useRef<PendingViewerPerfMetric | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
-  const failedRumCountRef = useRef(0);
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
   const targetForecastHourRef = useRef(targetForecastHour);
-  const tileFetchSampleCounterRef = useRef(0);
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
   const suppressNextUrlSyncRef = useRef(true);
@@ -990,10 +881,6 @@ export default function App() {
   const anchorBatchLastAppliedSelectionKeyRef = useRef("");
   const anchorBatchContextRef = useRef<AnchorBatchRequestContext | null>(null);
   const wasCompactViewportRef = useRef<boolean>(viewerLayoutMode !== "desktop");
-  // Pre-built Set of valid forecast hours, kept in sync with frameHours.
-  // updateBufferSnapshot reads from this ref instead of constructing a new Set
-  // on every tile event (which fired 20-40×/sec during animation).
-  const frameSetRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     writeBasemapModePreference(basemapMode);
@@ -1068,21 +955,13 @@ export default function App() {
   const gridOnlySelection = selectionSupportsGridV1;
   const prefersGridSubstrate = selectionSupportsGridV1;
   const overlayFadeOutZoom = useMemo(() => {
-    // When the render mode is "tiles" (high-zoom detail), disable the overlay
-    // fade-out zoom expression.  GFS defines overlay_fade_out_zoom_start: 6
-    // and overlay_fade_out_zoom_end: 7, which fades overlay opacity to 0 at
-    // exactly the zoom levels where tiles activate.  Suppressing the fade-out
-    // prevents a transparent tile layer at high zoom.
-    if (renderMode === "tiles") {
-      return null;
-    }
     const start = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_start);
     const end = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_end);
     if (start === null || end === null || end <= start) {
       return null;
     }
     return { start, end };
-  }, [selectedModelConstraints.overlay_fade_out_zoom_start, selectedModelConstraints.overlay_fade_out_zoom_end, renderMode]);
+  }, [selectedModelConstraints.overlay_fade_out_zoom_start, selectedModelConstraints.overlay_fade_out_zoom_end]);
 
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
@@ -1109,11 +988,6 @@ export default function App() {
     setTargetForecastHour(resolved);
     pendingInitialForecastHourRef.current = null;
   }, [frameHours, selectedVariableDefaultFh, selectedModelDefaultFrameSelection]);
-
-  // Keep frameSetRef in sync so updateBufferSnapshot never allocates a one-off Set.
-  useEffect(() => {
-    frameSetRef.current = new Set(frameHours);
-  }, [frameHours]);
 
   const frameByHour = useMemo(() => {
     return new Map(frameRows.map((row) => [Number(row.fh), row]));
@@ -1708,50 +1582,6 @@ export default function App() {
     mapZoomRef.current = mapZoom;
   }, [mapZoom]);
 
-  // Observe individual weather tile fetch durations via the Performance resource
-  // timing API. Sampled at 1:8 to avoid flooding the telemetry pipeline.
-  useEffect(() => {
-    if (typeof PerformanceObserver === "undefined") {
-      return;
-    }
-    const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        if (!(entry instanceof PerformanceResourceTiming)) continue;
-        const url = entry.name;
-        // Only track our own weather tile PNG requests.
-        if (!url.includes("/tiles/v3/") || !url.endsWith(".png")) continue;
-        tileFetchSampleCounterRef.current += 1;
-        if (tileFetchSampleCounterRef.current % 8 !== 0) continue;
-        const durationMs = entry.duration;
-        if (!Number.isFinite(durationMs) || durationMs <= 0) continue;
-        // Extract model and variable from the path: /tiles/v3/{model}/{run}/{varKey}/{fh}/...
-        let modelId: string | null = modelRef.current || null;
-        let variableId: string | null = variableRef.current || null;
-        try {
-          const pathMatch = url.match(/\/tiles\/v3\/([^/]+)\/[^/]+\/([^/]+)\//);
-          if (pathMatch) {
-            modelId = decodeURIComponent(pathMatch[1]);
-            variableId = decodeURIComponent(pathMatch[2]);
-          }
-        } catch {
-          // best-effort URL parse; fall through to use ref values
-        }
-        trackPerfEvent({
-          event_name: "tile_fetch",
-          duration_ms: durationMs,
-          model_id: modelId,
-          variable_id: variableId,
-        });
-      }
-    });
-    try {
-      observer.observe({ type: "resource", buffered: false });
-    } catch {
-      return;
-    }
-    return () => observer.disconnect();
-  }, []);
-
   // Observe long tasks to capture main-thread blocking that can delay frame
   // presentation even when network requests are already warm.
   useEffect(() => {
@@ -1845,16 +1675,6 @@ export default function App() {
     }
   }, [bootstrapHydrated, mapViewTick]);
 
-  useEffect(() => {
-    if (renderMode !== "tiles") {
-      setRenderMode("tiles");
-      return;
-    }
-    if (visibleRenderMode !== renderMode) {
-      setVisibleRenderMode(renderMode);
-    }
-  }, [renderMode, visibleRenderMode, selectionKey]);
-
   const visibleGridOverlayHour = useMemo(() => {
     if (!isGridLowMidActive) {
       return null;
@@ -1869,170 +1689,6 @@ export default function App() {
   }, [forecastHour, isGridLowMidActive, resolvedGridDisplayHour, visibleGridFrameHour]);
   const mapForecastHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
   const visibleOverlayHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
-
-  const tileUrlForHour = useCallback(
-    (fh: number): string => {
-      if (!hasRenderableSelection) {
-        return EMPTY_TILE_DATA_URL;
-      }
-      const fallbackFh = frameHours[0] ?? 0;
-      const resolvedFh = Number.isFinite(fh) ? fh : fallbackFh;
-      return buildTileUrlFromFrame({
-        model,
-        run: resolvedRunForRequests,
-        varKey: variable,
-        fh: resolvedFh,
-        frameRow: frameByHour.get(resolvedFh) ?? frameRows[0] ?? null,
-      });
-    },
-    [hasRenderableSelection, model, resolvedRunForRequests, variable, frameHours, frameByHour, frameRows]
-  );
-
-  const tileUrl = useMemo(() => {
-    return tileUrlForHour(mapForecastHour);
-  }, [tileUrlForHour, mapForecastHour]);
-
-  const tileUrlToHour = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const fh of frameHours) {
-      map.set(tileUrlForHour(fh), fh);
-    }
-    return map;
-  }, [frameHours, tileUrlForHour]);
-
-  const playbackPolicy = useMemo(
-    () =>
-      getPlaybackBufferPolicy({
-        totalFrames: frameHours.length,
-        autoplayTickMs: AUTOPLAY_TICK_MS,
-      }),
-    [frameHours.length]
-  );
-
-  const updateBufferSnapshot = useCallback(() => {
-    const totalFrames = frameHours.length;
-    const ready = readyFramesRef.current;
-    const inFlight = inFlightFramesRef.current;
-    const failed = failedFramesRef.current;
-    const now = Date.now();
-
-    if (totalFrames === 0) {
-      const version = ++bufferVersionRef.current;
-      setBufferSnapshot({
-        totalFrames: 0,
-        bufferedCount: 0,
-        bufferedAheadCount: 0,
-        terminalCount: 0,
-        terminalAheadCount: 0,
-        failedCount: 0,
-        inFlightCount: 0,
-        queueDepth: 0,
-        statusText: "Buffered 0/0",
-        version,
-      });
-      return;
-    }
-
-    const frameSet = frameSetRef.current;
-    for (const fh of ready) {
-      if (!frameSet.has(fh)) {
-        ready.delete(fh);
-      }
-    }
-    for (const fh of failed) {
-      if (!frameSet.has(fh)) {
-        failed.delete(fh);
-      }
-    }
-    for (const fh of inFlight) {
-      if (!frameSet.has(fh) || ready.has(fh)) {
-        inFlight.delete(fh);
-        inFlightStartedAtRef.current.delete(fh);
-        continue;
-      }
-      const startedAt = inFlightStartedAtRef.current.get(fh);
-      if (Number.isFinite(startedAt) && now - (startedAt as number) > INFLIGHT_FRAME_TTL_MS) {
-        const nextRetry = (frameRetryCountRef.current.get(fh) ?? 0) + 1;
-        frameRetryCountRef.current.set(fh, nextRetry);
-        const cycleStartedAt = frameCycleStartedAtRef.current.get(fh) ?? now;
-        frameCycleStartedAtRef.current.set(fh, cycleStartedAt);
-        const ageMs = now - cycleStartedAt;
-
-        inFlight.delete(fh);
-        inFlightStartedAtRef.current.delete(fh);
-        if (nextRetry >= FRAME_MAX_RETRIES || ageMs >= FRAME_HARD_DEADLINE_MS) {
-          failed.add(fh);
-          frameNextRetryAtRef.current.delete(fh);
-        } else {
-          const retryDelayMs = FRAME_RETRY_BASE_MS * 2 ** (nextRetry - 1);
-          frameNextRetryAtRef.current.set(fh, now + retryDelayMs);
-          void retryDelayMs;
-        }
-      }
-    }
-
-    const currentIndex = frameHours.indexOf(forecastHour);
-    let bufferedAheadCount = 0;
-    let terminalAheadCount = 0;
-    if (currentIndex >= 0) {
-      for (let i = currentIndex + 1; i < frameHours.length; i += 1) {
-        const hour = frameHours[i];
-        if (ready.has(hour)) {
-          bufferedAheadCount += 1;
-        }
-        if (ready.has(hour) || failed.has(hour)) {
-          terminalAheadCount += 1;
-        }
-      }
-    }
-
-    const bufferedCount = ready.size;
-    const failedCount = failed.size;
-    if (failedCount > failedRumCountRef.current) {
-      trackRumDiagnosticMetric({
-        metric_name: "tile_request_failure_count",
-        metric_value: failedCount - failedRumCountRef.current,
-        metric_unit: "count",
-        model_id: modelRef.current || null,
-        variable_id: variableRef.current || null,
-        run_id: telemetryRunId,
-        region_id: region || null,
-        forecast_hour: forecastHour,
-      });
-    }
-    failedRumCountRef.current = failedCount;
-    const terminalCount = Math.min(totalFrames, bufferedCount + failedCount);
-    const queueDepth = Math.max(0, totalFrames - terminalCount - inFlight.size);
-
-    // Skip the React state update when the counts that drive UI and prefetchHours
-    // are identical to the last committed snapshot. Tile events from prefetch sources
-    // can fire 20-40×/sec during animation even when nothing meaningful has changed.
-    const prev = lastSnapshotStatsRef.current;
-    if (
-      prev.bufferedCount === bufferedCount &&
-      prev.failedCount === failedCount &&
-      prev.inFlightCount === inFlight.size &&
-      prev.queueDepth === queueDepth
-    ) {
-      return;
-    }
-    lastSnapshotStatsRef.current = { bufferedCount, failedCount, inFlightCount: inFlight.size, queueDepth };
-
-    const version = ++bufferVersionRef.current;
-    const snapshot = {
-      totalFrames,
-      bufferedCount,
-      bufferedAheadCount,
-      terminalCount,
-      terminalAheadCount,
-      failedCount,
-      inFlightCount: inFlight.size,
-      queueDepth,
-      statusText: `Loaded ${terminalCount}/${totalFrames} (${bufferedCount} ready)`,
-      version,
-    };
-    setBufferSnapshot(snapshot);
-  }, [frameHours, forecastHour, telemetryRunId, region]);
 
   // During a variable switch the old variable's imagery is still on screen;
   // keep its paint settings in effect until the new variable is promoting.
@@ -2081,60 +1737,6 @@ export default function App() {
     return null;
   }, [opacity, rawLegend, selectedTimeAxisMode, stableObservedLegend]);
 
-  const prefetchHours = useMemo(() => {
-    if (!hasRenderableSelection || frameHours.length === 0) {
-      return [] as number[];
-    }
-
-    const ready = readyFramesRef.current;
-    const failed = failedFramesRef.current;
-    const inFlight = inFlightFramesRef.current;
-    const bootstrapPrefetchBudget = deferPrefetchUntilFirstPaintEnabled && !firstWeatherFramePainted;
-    const maxRequests = isPreloadingForPlay
-      ? (bootstrapPrefetchBudget ? 4 : 8)
-      : (bootstrapPrefetchBudget ? 2 : 4);
-    const targetReady = isPreloadingForPlay
-      ? frameHours.length
-      : Math.min(frameHours.length, bootstrapPrefetchBudget ? 2 : playbackPolicy.bufferTarget);
-    const activeInFlight = frameHours.filter((fh) => inFlight.has(fh)).slice(0, maxRequests);
-    if (ready.size + inFlight.size >= targetReady) {
-      return activeInFlight;
-    }
-
-    return selectPrefetchFrameHours({
-      frameHours,
-      forecastHour,
-      maxRequests,
-      targetReady,
-      readyHours: ready,
-      failedHours: failed,
-      inFlightHours: inFlight,
-      isPreloadingForPlay,
-      isScrubbing,
-      scrubCommitIntent,
-      commitIntentTtlMs: INFLIGHT_FRAME_TTL_MS,
-      neighborWindow: SCRUB_COMMIT_NEIGHBOR_WINDOW,
-      nowMs: Date.now(),
-      retryAtByHour: frameNextRetryAtRef.current,
-    });
-  }, [
-    frameHours,
-    forecastHour,
-    bufferSnapshot.version,
-    playbackPolicy.bufferTarget,
-    isPreloadingForPlay,
-    firstWeatherFramePainted,
-    deferPrefetchUntilFirstPaintEnabled,
-    isScrubbing,
-    scrubRequestedHour,
-    scrubCommitIntent,
-    hasRenderableSelection,
-  ]);
-
-  const prefetchTileUrls = useMemo(() => {
-    return prefetchHours.map((fh) => tileUrlForHour(fh));
-  }, [prefetchHours, tileUrlForHour]);
-
   const effectiveRunId = currentFrame?.run ?? resolvedRunForRequests;
   const runDateTimeISO = runIdToIso(effectiveRunId);
 
@@ -2146,120 +1748,16 @@ export default function App() {
     fh: forecastHour,
   });
 
-  const markTileReady = useCallback((readyUrl: string) => {
-    const now = Date.now();
-    const ready = readyTileUrlsRef.current;
-    ready.set(readyUrl, now);
-    tileReadyViewportSignatureRef.current.set(readyUrl, viewportSignatureRef.current);
-
-    // Only pay the eviction cost when the map is actually over budget.
-    // The previous code iterated all 160 entries + spread them into an array on
-    // every tile event regardless of map size.
-    if (ready.size > READY_URL_LIMIT) {
-      // First pass: evict TTL-expired entries.
-      for (const [url, ts] of ready) {
-        if (now - ts > READY_URL_TTL_MS) {
-          ready.delete(url);
-          tileReadySourceRef.current.delete(url);
-          tileReadyViewportSignatureRef.current.delete(url);
-        }
-      }
-      // If still over limit, find and remove the single oldest entry per iteration.
-      // Excess is typically 1-2 entries, so a linear-scan minimum is cheaper than
-      // spreading the whole map into a temporary array and sorting it.
-      while (ready.size > READY_URL_LIMIT) {
-        let oldestUrl: string | null = null;
-        let oldestTs = Number.POSITIVE_INFINITY;
-        for (const [url, ts] of ready) {
-          if (ts < oldestTs) {
-            oldestTs = ts;
-            oldestUrl = url;
-          }
-        }
-        if (oldestUrl !== null) {
-          ready.delete(oldestUrl);
-          tileReadySourceRef.current.delete(oldestUrl);
-          tileReadyViewportSignatureRef.current.delete(oldestUrl);
-        } else {
-          break;
-        }
-      }
-    }
-  }, []);
-
-  const markFrameReady = useCallback((readyUrl: string) => {
-    const frameHour = tileUrlToHour.get(readyUrl);
-    if (!Number.isFinite(frameHour)) {
-      return;
-    }
-    readyFramesRef.current.add(frameHour as number);
-    inFlightFramesRef.current.delete(frameHour as number);
-    failedFramesRef.current.delete(frameHour as number);
-    frameRetryCountRef.current.delete(frameHour as number);
-    frameCycleStartedAtRef.current.delete(frameHour as number);
-    frameNextRetryAtRef.current.delete(frameHour as number);
-
-    const startedAt = inFlightStartedAtRef.current.get(frameHour as number);
-    if (Number.isFinite(startedAt)) {
-      const deltaMs = Date.now() - (startedAt as number);
-      if (deltaMs >= 0) {
-        readyLatencyStatsRef.current.totalMs += deltaMs;
-        readyLatencyStatsRef.current.count += 1;
-      }
-      inFlightStartedAtRef.current.delete(frameHour as number);
-    }
-    // Coalesce snapshot updates to at most once per animation frame. Tile events
-    // from 8 prefetch sources flood this path during animation — scheduling via
-    // RAF prevents each tile from triggering a full React re-render cascade.
-    if (bufferSnapshotRafRef.current === null) {
-      bufferSnapshotRafRef.current = window.requestAnimationFrame(() => {
-        bufferSnapshotRafRef.current = null;
-        updateBufferSnapshot();
-      });
-    }
-  }, [tileUrlToHour, updateBufferSnapshot]);
-
-  const isTileReady = useCallback((url: string): boolean => {
-    const ts = readyTileUrlsRef.current.get(url);
-    if (!ts) return false;
-    if (Date.now() - ts > READY_URL_TTL_MS) {
-      readyTileUrlsRef.current.delete(url);
-      tileReadySourceRef.current.delete(url);
-      tileReadyViewportSignatureRef.current.delete(url);
-      return false;
-    }
-    if (viewportAwareTileReadinessEnabled) {
-      const readyViewport = tileReadyViewportSignatureRef.current.get(url);
-      if (readyViewport && readyViewport !== viewportSignatureRef.current) {
-        return false;
-      }
-    }
-    return true;
-  }, [viewportAwareTileReadinessEnabled]);
-
-  useEffect(() => {
-    latestTileUrlRef.current = tileUrl;
-    setSettledTileUrl(isTileReady(tileUrl) ? tileUrl : null);
-  }, [tileUrl, isTileReady]);
-
   useEffect(() => {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (!pendingVarSwitch) {
+    if (
+      !pendingVarSwitch
+      || pendingVarSwitch.toVariableId !== variable
+      || pendingVarSwitch.expectedSelectionKey !== loadedFramesKey
+      || !activeGridFrameUrl
+    ) {
       return;
     }
-    if (pendingVarSwitch.toVariableId !== variable) {
-      return;
-    }
-    if (pendingVarSwitch.expectedSelectionKey !== loadedFramesKey) {
-      return;
-    }
-    if (!tileUrl || tileUrl === EMPTY_TILE_DATA_URL) {
-      return;
-    }
-    if (pendingVarSwitch.expectedTileUrl === tileUrl) {
-      return;
-    }
-    pendingVarSwitch.expectedTileUrl = tileUrl;
     if (!Number.isFinite(pendingVarSwitch.firstTargetRequestAt)) {
       pendingVarSwitch.firstTargetRequestAt = performance.now();
     }
@@ -2272,216 +1770,21 @@ export default function App() {
         visualState: "warming_new",
       };
     });
-  }, [loadedFramesKey, tileUrl, variable]);
+  }, [activeGridFrameUrl, loadedFramesKey, variable]);
 
-  const isScrubLoading = useMemo(() => {
-    if (isPlaying || isScrubbing) {
-      return false;
-    }
-    return Boolean(mapLoadingTileUrl && mapLoadingTileUrl === tileUrl && settledTileUrl !== tileUrl);
-  }, [isPlaying, isScrubbing, mapLoadingTileUrl, tileUrl, settledTileUrl]);
-
-  const findNearestReadyTileScrubHour = useCallback(
-    (requestedHour: number): number | null => {
-      if (frameHours.length === 0) {
-        return null;
-      }
-      const snappedHour = nearestFrame(frameHours, requestedHour);
-      if (isTileReady(tileUrlForHour(snappedHour))) {
-        return snappedHour;
-      }
-
-      const requestedIndex = frameHours.indexOf(snappedHour);
-      if (requestedIndex < 0) {
-        return null;
-      }
-
-      const movingForward = snappedHour >= forecastHour;
-      const checkIndex = (index: number): number | null => {
-        if (index < 0 || index >= frameHours.length) {
-          return null;
-        }
-        const candidateHour = frameHours[index];
-        if (!isTileReady(tileUrlForHour(candidateHour))) {
-          return null;
-        }
-        return candidateHour;
-      };
-
-      for (let step = 1; step <= AUTOPLAY_SKIP_WINDOW; step += 1) {
-        const primaryIndex = movingForward ? requestedIndex + step : requestedIndex - step;
-        const primaryCandidate = checkIndex(primaryIndex);
-        if (Number.isFinite(primaryCandidate)) {
-          return primaryCandidate as number;
-        }
-
-        const secondaryIndex = movingForward ? requestedIndex - step : requestedIndex + step;
-        const secondaryCandidate = checkIndex(secondaryIndex);
-        if (Number.isFinite(secondaryCandidate)) {
-          return secondaryCandidate as number;
-        }
-      }
-
-      const currentCandidate = checkIndex(frameHours.indexOf(forecastHour));
-      if (Number.isFinite(currentCandidate)) {
-        return currentCandidate as number;
-      }
-
-      return null;
-    },
-    [frameHours, forecastHour, isTileReady, tileUrlForHour]
-  );
-
-  const handleFrameSettled = useCallback((
-    loadedTileUrl: string,
-    meta?: { selectionEpoch?: number; selectionKey?: string }
-  ) => {
-    if (
-      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
-      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
-    ) {
-      return;
-    }
-    // Skip legacy tile buffer bookkeeping when the grid WebGL layer is the
-    // active renderer — the preceding handleTileReady call already tagged the
-    // URL as "grid-warm" in tileReadySourceRef.
-    const isGridWarm = tileReadySourceRef.current.get(loadedTileUrl) === "grid-warm";
-    if (!isGridWarm) {
-      markTileReady(loadedTileUrl);
-      markFrameReady(loadedTileUrl);
-    }
-    const pending = pendingFrameMetricRef.current;
-    if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === loadedTileUrl) {
-      if (!Number.isFinite(pending.firstTileReadyAt)) {
-        pending.firstTileReadyAt = performance.now();
-      }
-    }
-
-    const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (
-      pendingVarSwitch
-      && pendingVarSwitch.toVariableId === variable
-      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-      && loadedTileUrl === tileUrl
-      && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
-    ) {
-      pendingVarSwitch.expectedTileUrl = loadedTileUrl;
-      pendingVarSwitch.firstTargetReadyAt = performance.now();
-    }
-
-    if (loadedTileUrl === latestTileUrlRef.current) {
-      setSettledTileUrl(loadedTileUrl);
-    }
-  }, [loadedFramesKey, markTileReady, markFrameReady, selectionKey]);
-
-  const handleTileReady = useCallback((loadedTileUrl: string, meta?: TileReadyMeta) => {
-    if (
-      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
-      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
-    ) {
-      return;
-    }
-    if (meta?.source) {
-      tileReadySourceRef.current.set(loadedTileUrl, meta.source);
-    }
-    // When the grid WebGL layer is the active renderer, synthetic tile-ready
-    // signals keep the settled/loading state fed but the legacy tile buffer
-    // snapshot tracking (markTileReady / markFrameReady) is unnecessary work
-    // that triggers React re-renders via updateBufferSnapshot.
-    if (meta?.source !== "grid-warm") {
-      markTileReady(loadedTileUrl);
-      markFrameReady(loadedTileUrl);
-    }
-    const pending = pendingFrameMetricRef.current;
-    if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === loadedTileUrl) {
-      if (!Number.isFinite(pending.firstTileReadyAt)) {
-        pending.firstTileReadyAt = performance.now();
-      }
-      if (meta?.source) {
-        pending.readySource = meta.source;
-      }
-    }
-
-    const pendingVarSwitch = pendingVariableSwitchRef.current;
-    if (
-      pendingVarSwitch
-      && pendingVarSwitch.toVariableId === variable
-      && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-      && loadedTileUrl === tileUrl
-      && !Number.isFinite(pendingVarSwitch.firstTargetReadyAt)
-    ) {
-      pendingVarSwitch.expectedTileUrl = loadedTileUrl;
-      pendingVarSwitch.firstTargetReadyAt = performance.now();
-    }
-
-    if (loadedTileUrl === latestTileUrlRef.current) {
-      setSettledTileUrl(loadedTileUrl);
-    }
-  }, [loadedFramesKey, markTileReady, markFrameReady, selectionKey]);
-
-  const handleFrameLoadingChange = useCallback((
-    loadingTileUrl: string,
-    isLoadingValue: boolean,
-    meta?: { selectionEpoch?: number; selectionKey?: string }
-  ) => {
-    if (
-      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
-      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
-    ) {
-      return;
-    }
-    if (isLoadingValue) {
-      const pending = pendingFrameMetricRef.current;
-      if (
-        pending
-        && pending.renderTarget === "tiles"
-        && pending.expectedTileUrl === loadingTileUrl
-        && !Number.isFinite(pending.requestStartedAt)
-      ) {
-        pending.requestStartedAt = performance.now();
-      }
-
-      const pendingVarSwitch = pendingVariableSwitchRef.current;
-      if (
-        pendingVarSwitch
-        && pendingVarSwitch.toVariableId === variable
-        && pendingVarSwitch.expectedSelectionKey === loadedFramesKey
-        && loadingTileUrl === tileUrl
-        && !Number.isFinite(pendingVarSwitch.firstTargetRequestAt)
-      ) {
-        pendingVarSwitch.firstTargetRequestAt = performance.now();
-        pendingVarSwitch.expectedTileUrl = loadingTileUrl;
-        setVariableSwitchState((current) => {
-          if (!current || current.toVariable !== variable) {
-            return current;
-          }
-          return {
-            ...current,
-            visualState: "warming_new",
-          };
-        });
-      }
-
-      setMapLoadingTileUrl(loadingTileUrl);
-      return;
-    }
-    setMapLoadingTileUrl((current) => (current === loadingTileUrl ? null : current));
-  }, [loadedFramesKey, tileUrl, variable, selectionKey]);
+  const isScrubLoading = false;
 
   const cancelPendingVariableSwitch = useCallback((
     reason: "selection-mismatch" | "timeout",
     options?: { forceTiles?: boolean }
   ): boolean => {
     void reason;
+    void options;
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (!pendingVarSwitch) {
       return false;
     }
     pendingVariableSwitchRef.current = null;
-    if (options?.forceTiles) {
-      setVisibleRenderMode("tiles");
-      lastTileViewportCommitUrlRef.current = null;
-    }
     setVariableSwitchState(null);
     setVisualVariable(variable);
     return true;
@@ -2489,10 +1792,9 @@ export default function App() {
 
   const finalizePendingVariableSwitch = useCallback((
     visibleAt: number,
-    options?: {
-      readyTileUrl?: string | null;
-    }
+    options?: Record<string, never>
   ): boolean => {
+    void options;
     const pendingVarSwitch = pendingVariableSwitchRef.current;
     if (
       !pendingVarSwitch
@@ -2503,8 +1805,6 @@ export default function App() {
     }
 
     pendingVariableSwitchRef.current = null;
-    setVisibleRenderMode("tiles");
-    lastTileViewportCommitUrlRef.current = null;
     setVariableSwitchState((current) => {
       if (!current || current.toVariable !== variable) {
         return null;
@@ -2520,15 +1820,6 @@ export default function App() {
       pendingVarSwitch.firstTargetReadyAt = visibleAt;
     }
     pendingVarSwitch.firstVisibleAt = visibleAt;
-
-    const readyTileUrl = options?.readyTileUrl ?? null;
-    const readyTs = readyTileUrl ? (readyTileUrlsRef.current.get(readyTileUrl) ?? null) : null;
-    pendingVarSwitch.warmAtVisible = Number.isFinite(readyTs)
-      ? Date.now() - (readyTs as number) <= READY_URL_TTL_MS
-      : false;
-    pendingVarSwitch.warmSourceAtVisible = readyTileUrl
-      ? (tileReadySourceRef.current.get(readyTileUrl) ?? null)
-      : null;
 
     const durationMs = visibleAt - pendingVarSwitch.startedAt;
     if (Number.isFinite(durationMs) && durationMs >= 0) {
@@ -2608,89 +1899,6 @@ export default function App() {
     };
   }, [cancelPendingVariableSwitch, variable, variableSwitchState]);
 
-  const finalizePendingFrameMetric = useCallback((reason: "tile") => {
-    const pending = pendingFrameMetricRef.current;
-    if (!pending) {
-      return;
-    }
-    const durationMs = performance.now() - pending.startedAt;
-    pendingFrameMetricRef.current = null;
-    if (!Number.isFinite(durationMs) || durationMs < 0) {
-      return;
-    }
-    const stageOffsetMs = (at: number | null): number | null => {
-      if (!Number.isFinite(at)) {
-        return null;
-      }
-      return Math.max(0, Math.round((at as number) - pending.startedAt));
-    };
-    const phase0aMeta: Record<string, unknown> = {
-      phase0a_trace_version: 1,
-      stage_request_start_ms: stageOffsetMs(pending.requestStartedAt),
-      stage_tile_ready_ms: stageOffsetMs(pending.firstTileReadyAt),
-      stage_first_visible_ms: stageOffsetMs(pending.firstVisibleAt),
-      warm_at_start: pending.warmAtStart,
-      warm_source_at_start: pending.warmSourceAtStart,
-      ready_source: pending.readySource,
-    };
-    trackPerfEvent({
-      event_name: pending.eventName,
-      duration_ms: durationMs,
-      model_id: pending.modelId,
-      variable_id: pending.variableId,
-      run_id: pending.runId,
-      region_id: pending.regionId,
-      forecast_hour: pending.forecastHour,
-      meta: buildObservedTelemetryMeta(pending.forecastHour, {
-        render_target: pending.renderTarget,
-        completion: reason,
-        ...(pending.traceMeta ?? {}),
-        ...phase0aMeta,
-      }),
-    });
-  }, [buildObservedTelemetryMeta]);
-
-  const startPendingFrameMetric = useCallback(
-    (args: {
-      eventName: "frame_change" | "scrub_latency";
-      renderTarget: "tiles";
-      expectedTileUrl?: string | null;
-      forecastHour?: number | null;
-      traceMeta?: Record<string, unknown> | null;
-    }) => {
-      const expectedTileUrl = args.expectedTileUrl ?? null;
-      const now = Date.now();
-      const readyTs = expectedTileUrl ? readyTileUrlsRef.current.get(expectedTileUrl) ?? null : null;
-      const warmAtStart = Number.isFinite(readyTs) && now - (readyTs as number) <= READY_URL_TTL_MS;
-      if (expectedTileUrl && Number.isFinite(readyTs) && !warmAtStart) {
-        readyTileUrlsRef.current.delete(expectedTileUrl);
-        tileReadySourceRef.current.delete(expectedTileUrl);
-        tileReadyViewportSignatureRef.current.delete(expectedTileUrl);
-      }
-      pendingFrameMetricRef.current = {
-        eventName: args.eventName,
-        startedAt: performance.now(),
-        renderTarget: args.renderTarget,
-        expectedTileUrl,
-        modelId: model || null,
-        variableId: variable || null,
-        runId: telemetryRunId,
-        regionId: region || null,
-        forecastHour: Number.isFinite(args.forecastHour) ? Number(args.forecastHour) : null,
-        traceMeta: args.traceMeta ?? null,
-        requestStartedAt: null,
-        firstTileReadyAt: null,
-        firstVisibleAt: null,
-        readySource: null,
-        warmAtStart: expectedTileUrl ? warmAtStart : null,
-        warmSourceAtStart: expectedTileUrl
-          ? (tileReadySourceRef.current.get(expectedTileUrl) ?? null)
-          : null,
-      };
-    },
-    [model, variable, telemetryRunId, region]
-  );
-
   const startPendingLoopStartMetric = useCallback(() => {
     pendingLoopStartMetricRef.current = {
       startedAt: performance.now(),
@@ -2704,44 +1912,8 @@ export default function App() {
 
   useEffect(() => {
     datasetGenerationRef.current += 1;
-    pendingFrameMetricRef.current = null;
     pendingLoopStartMetricRef.current = null;
-    readyFramesRef.current.clear();
-    inFlightFramesRef.current.clear();
-    failedFramesRef.current.clear();
-    frameRetryCountRef.current.clear();
-    frameCycleStartedAtRef.current.clear();
-    frameNextRetryAtRef.current.clear();
-    inFlightStartedAtRef.current.clear();
-    readyLatencyStatsRef.current = { totalMs: 0, count: 0 };
-    autoplayPrimedRef.current = false;
-    // Cancel any pending coalesced snapshot RAF and reset the equality baseline so
-    // the first update after reset is never incorrectly skipped.
-    if (bufferSnapshotRafRef.current !== null) {
-      window.cancelAnimationFrame(bufferSnapshotRafRef.current);
-      bufferSnapshotRafRef.current = null;
-    }
-    lastSnapshotStatsRef.current = { bufferedCount: -1, failedCount: -1, inFlightCount: -1, queueDepth: -1 };
-    setIsPreloadingForPlay(false);
-    lastTileViewportCommitUrlRef.current = null;
-    preloadProgressRef.current = {
-      lastBufferedCount: 0,
-      lastProgressAt: Date.now(),
-    };
     setScrubRequestedHour(null);
-    const version = ++bufferVersionRef.current;
-    setBufferSnapshot({
-      totalFrames: frameHours.length,
-      bufferedCount: 0,
-      bufferedAheadCount: 0,
-      terminalCount: 0,
-      terminalAheadCount: 0,
-      failedCount: 0,
-      inFlightCount: 0,
-      queueDepth: frameHours.length,
-      statusText: `Buffered 0/${frameHours.length}`,
-      version,
-    });
   }, [
     // Only the three selector values that uniquely identify a dataset change.
     // frameHours.length is derived state, and including it would cause a second
@@ -2820,52 +1992,6 @@ export default function App() {
     trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
 
-  useEffect(() => {
-    updateBufferSnapshot();
-  }, [updateBufferSnapshot]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      updateBufferSnapshot();
-    }, 1000);
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [updateBufferSnapshot]);
-
-  useEffect(() => {
-    const inFlight = inFlightFramesRef.current;
-    const ready = readyFramesRef.current;
-    const failed = failedFramesRef.current;
-    const requested = new Set(prefetchHours);
-    let changed = false;
-
-    for (const fh of inFlight) {
-      if (!requested.has(fh) || ready.has(fh)) {
-        inFlight.delete(fh);
-        inFlightStartedAtRef.current.delete(fh);
-        changed = true;
-      }
-    }
-
-    for (const fh of prefetchHours) {
-      if (!ready.has(fh) && !inFlight.has(fh)) {
-        if (failed.has(fh)) {
-          failed.delete(fh);
-        }
-        inFlight.add(fh);
-        if (!frameCycleStartedAtRef.current.has(fh)) {
-          frameCycleStartedAtRef.current.set(fh, Date.now());
-        }
-        inFlightStartedAtRef.current.set(fh, Date.now());
-        changed = true;
-      }
-    }
-    if (changed) {
-      updateBufferSnapshot();
-    }
-  }, [prefetchHours, updateBufferSnapshot]);
-
   const requestForecastHour = useCallback(
     (requestedHour: number, reason: ForecastHourChangeReason = "standard") => {
       const inferDirection = (nextHour: number): 1 | -1 | 0 => {
@@ -2887,19 +2013,8 @@ export default function App() {
         setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
-        if (isGridPlayable) {
-          const nextGridHour = gridFrameHours.length > 0 ? nearestFrame(gridFrameHours, requestedHour) : requestedHour;
-          setTargetForecastHour(nextGridHour);
-          return;
-        }
-        const snappedHour = frameHours.length > 0 ? nearestFrame(frameHours, requestedHour) : requestedHour;
-        startPendingFrameMetric({
-          eventName: "frame_change",
-          renderTarget: "tiles",
-          expectedTileUrl: tileUrlForHour(snappedHour),
-          forecastHour: snappedHour,
-        });
-        setTargetForecastHour(requestedHour);
+        const nextGridHour = gridFrameHours.length > 0 ? nearestFrame(gridFrameHours, requestedHour) : requestedHour;
+        setTargetForecastHour(nextGridHour);
         return;
       }
 
@@ -2921,36 +2036,17 @@ export default function App() {
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
 
-        if (isGridPlayable) {
-          const nextGridHour = gridFrameHours.length > 0
-            ? nearestFrame(gridFrameHours, requestedHour)
-            : requestedHour;
-          setScrubCommitIntent({
-            hour: nextGridHour,
-            direction: inferDirection(nextGridHour),
-            startedAt: Date.now(),
-          });
-          setTargetForecastHour(nextGridHour);
-          return;
-        }
-
-        if (frameHours.length === 0) {
-          return;
-        }
-        const snappedTileHour = nearestFrame(frameHours, requestedHour);
+        const snappedGridHour = gridFrameHours.length > 0
+          ? nearestFrame(gridFrameHours, requestedHour)
+          : requestedHour;
         setScrubCommitIntent({
-          hour: snappedTileHour,
-          direction: inferDirection(snappedTileHour),
+          hour: snappedGridHour,
+          direction: inferDirection(snappedGridHour),
           startedAt: Date.now(),
         });
-        startPendingFrameMetric({
-          eventName: treatCommitAsFrameChange ? "frame_change" : "scrub_latency",
-          renderTarget: "tiles",
-          expectedTileUrl: tileUrlForHour(snappedTileHour),
-          forecastHour: snappedTileHour,
-          traceMeta: scrubTraceMeta,
-        });
-        setTargetForecastHour(snappedTileHour);
+        void scrubTraceMeta;
+        void treatCommitAsFrameChange;
+        setTargetForecastHour(snappedGridHour);
         return;
       }
 
@@ -2980,24 +2076,13 @@ export default function App() {
           return;
         }
         const requested = latestRequestedHour as number;
-        if (isGridPlayable) {
-          const nextGridHour = gridFrameHours.length > 0
-            ? nearestFrame(gridFrameHours, requested)
-            : requested;
-          setTargetForecastHour(nextGridHour);
-          return;
-        }
-        // Tile mode is static-only. Live scrub updates are disabled so the
-        // overlay only changes on scrub commit.
+        const nextGridHour = gridFrameHours.length > 0
+          ? nearestFrame(gridFrameHours, requested)
+          : requested;
+        setTargetForecastHour(nextGridHour);
       });
     },
-    [
-      isGridPlayable,
-      gridFrameHours,
-      frameHours,
-      tileUrlForHour,
-      startPendingFrameMetric,
-    ]
+    [gridFrameHours]
   );
 
   useEffect(() => {
@@ -3213,11 +2298,7 @@ export default function App() {
 
   useEffect(() => {
     setFrameRows([]);
-    setVisibleRenderMode("tiles");
     setLoadedFramesKey("");
-    setSettledTileUrl(null);
-    setMapLoadingTileUrl(null);
-    failedRumCountRef.current = 0;
   }, [selectionKey]);
 
   // NOTE: gridManifest is NOT eagerly nullified on [model, run, variable]
@@ -3634,88 +2715,6 @@ export default function App() {
   }, [model, run, isPageVisible]);
 
   useEffect(() => {
-    if (!isPlaying || renderMode !== "tiles" || frameHours.length === 0 || isGridPlayable) return;
-
-    const interval = window.setInterval(() => {
-      const currentIndex = frameHours.indexOf(forecastHour);
-      if (currentIndex < 0) return;
-
-      const remainingAheadFrames = Math.max(0, frameHours.length - currentIndex - 1);
-      const minAheadRequired = Math.min(playbackPolicy.minAheadWhilePlaying, remainingAheadFrames);
-      if (bufferSnapshot.bufferedAheadCount < minAheadRequired) {
-        setIsPlaying(false);
-        showTransientFrameStatus("Buffering frames");
-        autoplayPrimedRef.current = false;
-        return;
-      }
-
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= frameHours.length) {
-        setIsPlaying(false);
-        return;
-      }
-
-      if (!autoplayPrimedRef.current) {
-        let primed = true;
-        const readyAheadEnd = Math.min(frameHours.length - 1, currentIndex + AUTOPLAY_READY_AHEAD);
-        for (let idx = currentIndex + 1; idx <= readyAheadEnd; idx += 1) {
-          const aheadHour = frameHours[idx];
-          if (!isTileReady(tileUrlForHour(aheadHour))) {
-            primed = false;
-            break;
-          }
-        }
-        if (!primed) {
-          return;
-        }
-        autoplayPrimedRef.current = true;
-      }
-
-      let chosenHour: number | null = null;
-      let chosenStep = 0;
-      const maxStep = Math.min(AUTOPLAY_SKIP_WINDOW, frameHours.length - 1 - currentIndex);
-      for (let step = 1; step <= maxStep; step += 1) {
-        const candidateHour = frameHours[currentIndex + step];
-        const candidateUrl = tileUrlForHour(candidateHour);
-        if (isTileReady(candidateUrl)) {
-          chosenHour = candidateHour;
-          chosenStep = step;
-          break;
-        }
-      }
-
-      if (chosenHour !== null) {
-        if (chosenStep > 1) {
-          const skippedHour = frameHours[nextIndex];
-          const skippedLabel = selectedTimeAxisMode === "observed"
-            ? (formatObservedCompactTime(frameValidTimesByHour[skippedHour]) ?? "observed frame")
-            : `FH ${skippedHour}`;
-          showTransientFrameStatus(`Frame unavailable (${skippedLabel})`);
-        }
-        setTargetForecastHour(chosenHour);
-        return;
-      }
-
-      autoplayPrimedRef.current = false;
-    }, AUTOPLAY_TICK_MS);
-
-    return () => window.clearInterval(interval);
-  }, [
-    isPlaying,
-    frameHours,
-    forecastHour,
-    isTileReady,
-    tileUrlForHour,
-    showTransientFrameStatus,
-    selectedTimeAxisMode,
-    frameValidTimesByHour,
-    bufferSnapshot.bufferedAheadCount,
-    playbackPolicy.minAheadWhilePlaying,
-    renderMode,
-    isGridPlayable,
-  ]);
-
-  useEffect(() => {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
       gridPlaybackHourRef.current = null;
       return;
@@ -3849,70 +2848,13 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!isPreloadingForPlay) {
-      return;
-    }
-    if (frameHours.length === 0) {
-      setIsPreloadingForPlay(false);
-      return;
-    }
-
-    const bufferedCount = Math.max(0, Math.min(bufferSnapshot.bufferedCount, frameHours.length));
-    const progress = preloadProgressRef.current;
-    const now = Date.now();
-
-    if (progress.lastProgressAt <= 0) {
-      progress.lastProgressAt = now;
-    }
-    if (bufferedCount > progress.lastBufferedCount) {
-      progress.lastBufferedCount = bufferedCount;
-      progress.lastProgressAt = now;
-    }
-
-    const remainingAheadFrames = Math.max(0, frameHours.length - forecastHour - 1);
-    const minAheadReady = Math.min(playbackPolicy.minAheadWhilePlaying, remainingAheadFrames);
-    const canStartByAheadReady = bufferSnapshot.bufferedAheadCount >= minAheadReady;
-    const preloadStartThreshold = Math.min(
-      frameHours.length,
-      Math.max(playbackPolicy.minStartBuffer, Math.ceil(frameHours.length * PRELOAD_START_RATIO))
-    );
-    const stalledMs = now - progress.lastProgressAt;
-    const canStartByThreshold = bufferedCount >= preloadStartThreshold && canStartByAheadReady;
-    const canStartByStall =
-      bufferedCount >= playbackPolicy.minStartBuffer &&
-      canStartByAheadReady &&
-      stalledMs >= PRELOAD_STALL_MS;
-
-    if (!canStartByThreshold && !canStartByStall) {
-      return;
-    }
-
-    setIsPreloadingForPlay(false);
-    autoplayPrimedRef.current = false;
-    if (canStartByStall && !canStartByThreshold) {
-      showTransientFrameStatus("Starting with partial buffer");
-    }
-    setIsPlaying(true);
-  }, [
-    isPreloadingForPlay,
-    bufferSnapshot.bufferedCount,
-    bufferSnapshot.bufferedAheadCount,
-    frameHours.length,
-    forecastHour,
-    playbackPolicy.minAheadWhilePlaying,
-    playbackPolicy.minStartBuffer,
-    showTransientFrameStatus,
-  ]);
-
-  useEffect(() => {
-    if (frameHours.length === 0 && isPlaying) {
+    if (gridFrameHours.length === 0 && isPlaying) {
       setIsPlaying(false);
     }
-  }, [frameHours, isPlaying]);
+  }, [gridFrameHours, isPlaying]);
 
   useEffect(() => {
     if (!isPlaying) {
-      autoplayPrimedRef.current = false;
       clearFrameStatusTimer();
     }
   }, [isPlaying, clearFrameStatusTimer]);
@@ -3922,18 +2864,16 @@ export default function App() {
       pendingLoopStartMetricRef.current = null;
       gridPlaybackHourRef.current = null;
       setIsPlaying(false);
-      setIsPreloadingForPlay(false);
       setIsGridPreloadingForPlay(false);
       return;
     }
-    if (loading || frameHours.length === 0) {
+    if (loading || gridFrameHours.length === 0) {
       pendingLoopStartMetricRef.current = null;
       return;
     }
     if (!canUseGridPlayback) {
       pendingLoopStartMetricRef.current = null;
       setIsPlaying(false);
-      setIsPreloadingForPlay(false);
       setIsGridPreloadingForPlay(false);
       showTransientFrameStatus("Animation unavailable for this selection");
       return;
@@ -3964,7 +2904,6 @@ export default function App() {
           ? targetForecastHour
           : (Number.isFinite(forecastHour) ? forecastHour : null));
       gridPlaybackHourRef.current = startHour;
-      setIsPreloadingForPlay(false);
       if (Number.isFinite(startHour) && isGridPlaybackStartReady) {
         setIsGridPreloadingForPlay(false);
         setIsPlaying(true);
@@ -3974,11 +2913,10 @@ export default function App() {
       setIsPlaying(false);
       setIsGridPreloadingForPlay(true);
       showTransientFrameStatus("Buffering grid frames");
-      return;
     }
   }, [
     loading,
-    frameHours.length,
+    gridFrameHours.length,
     canUseGridPlayback,
     gridPlaybackStartHour,
     isGridPlaybackStartReady,
@@ -4048,59 +2986,6 @@ export default function App() {
     setMapViewTick((current) => current + 1);
   }, []);
 
-  const handleTileViewportReady = useCallback((
-    readyTileUrl: string,
-    meta?: { selectionEpoch?: number; selectionKey?: string }
-  ) => {
-    if (
-      (meta?.selectionEpoch !== undefined && meta.selectionEpoch !== selectionEpochRef.current)
-      || (meta?.selectionKey !== undefined && meta.selectionKey !== selectionKey)
-    ) {
-      return;
-    }
-    if (renderMode !== "tiles") {
-      // Loop/canvas playback can emit synthetic tile-ready events to warm caches.
-      // Never treat those as visible tile presentation commits.
-      return;
-    }
-    if (readyTileUrl === tileUrl) {
-      trackFirstViewerFrame(forecastHour);
-    }
-    // Finalize variable_switch: fires once the first tile for the new variable is viewport-ready.
-    if (readyTileUrl === tileUrl) {
-      finalizePendingVariableSwitch(performance.now(), { readyTileUrl });
-    }
-    const pending = pendingFrameMetricRef.current;
-    if (pending?.renderTarget === "tiles" && pending.expectedTileUrl === readyTileUrl) {
-      if (!Number.isFinite(pending.firstVisibleAt)) {
-        pending.firstVisibleAt = performance.now();
-      }
-      finalizePendingFrameMetric("tile");
-    }
-    if (readyTileUrl !== tileUrl) {
-      return;
-    }
-    if (visibleRenderMode === "tiles" && lastTileViewportCommitUrlRef.current === readyTileUrl) {
-      return;
-    }
-    lastTileViewportCommitUrlRef.current = readyTileUrl;
-    setVisibleRenderMode("tiles");
-  }, [
-    renderMode,
-    tileUrl,
-    visibleRenderMode,
-    variable,
-    loadedFramesKey,
-    visualVariable,
-    region,
-    forecastHour,
-    finalizePendingFrameMetric,
-    finalizePendingVariableSwitch,
-    telemetryRunId,
-    trackFirstViewerFrame,
-    selectionKey,
-  ]);
-
   const handleGridFrameVisible = useCallback((payload: {
     frameHour: number;
     selectionEpoch?: number;
@@ -4115,8 +3000,9 @@ export default function App() {
     if (Number.isFinite(payload.frameHour)) {
       setVisibleGridFrameHour(payload.frameHour);
     }
+    finalizePendingVariableSwitch(performance.now());
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
-  }, [forecastHour, selectionKey, trackFirstViewerFrame]);
+  }, [finalizePendingVariableSwitch, forecastHour, selectionKey, trackFirstViewerFrame]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4210,9 +3096,6 @@ export default function App() {
       firstTargetRequestAt: null,
       firstTargetReadyAt: null,
       firstVisibleAt: null,
-      expectedTileUrl: null,
-      warmAtVisible: null,
-      warmSourceAtVisible: null,
     };
     setVariableSwitchState({
       fromVariable,
@@ -4220,8 +3103,6 @@ export default function App() {
       startedAt: performance.now(),
       visualState: "holding_old",
     });
-    setVisibleRenderMode("tiles");
-    lastTileViewportCommitUrlRef.current = null;
     setVariable(nextVariable);
     trackUsageEvent({
       event_name: "variable_selected",
@@ -4293,9 +3174,6 @@ export default function App() {
         window.cancelAnimationFrame(scrubRafRef.current);
       }
       resetAnchorBatchQueue(true);
-      if (bufferSnapshotRafRef.current !== null) {
-        window.cancelAnimationFrame(bufferSnapshotRafRef.current);
-      }
     };
   }, [clearFrameStatusTimer, resetAnchorBatchQueue]);
 
@@ -4311,7 +3189,7 @@ export default function App() {
     setForecastHour(nextTarget);
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
-  const controlsIsPlaying = isPlaying || isPreloadingForPlay || isGridPreloadingForPlay;
+  const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
   const substrateDebugLabel = useMemo(() => {
     if (resolvedWeatherSubstrate === "grid_webgl_v1") {
       return "grid_webgl_v1";
@@ -4331,24 +3209,13 @@ export default function App() {
     }
     return `z ${mapZoom.toFixed(1)}`;
   }, [mapZoom, resolvedGridDisplayHour, resolvedWeatherSubstrate]);
-  const preloadBufferedCount = isGridPreloadingForPlay
-    ? Math.max(0, Math.min(gridReadyCount, gridFrameHours.length))
-    : Math.max(0, Math.min(bufferSnapshot.terminalCount, bufferSnapshot.totalFrames));
-  const preloadTotal = isGridPreloadingForPlay
-    ? gridFrameHours.length
-    : bufferSnapshot.totalFrames;
+  const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
+  const preloadTotal = gridFrameHours.length;
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;
-  const showBufferStatus =
-    isScrubLoading
-    || (isGridPreloadingForPlay && gridFrameHours.length > 0)
-    || (isPreloadingForPlay && bufferSnapshot.totalFrames > 0);
-  const bufferStatusText = isScrubLoading
-    ? "Loading frame"
-    : isGridPreloadingForPlay
-      ? `Buffering grid ${preloadBufferedCount}/${preloadTotal}`
-      : `Loading frames ${preloadBufferedCount}/${preloadTotal}`;
+  const showBufferStatus = isGridPreloadingForPlay && gridFrameHours.length > 0;
+  const bufferStatusText = `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
   const activeLoopBitmap: ImageBitmap | null = null;
   const activeLoopUrl: string | null = null;
   const activeLoopBbox: [number, number, number, number] | null = null;
@@ -4464,7 +3331,7 @@ export default function App() {
       .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
     const style = buildMapStyle(
-      tileUrl,
+      EMPTY_TILE_DATA_URL,
       opacity,
       variable,
       displayedOverlayVariableKind,
@@ -4507,7 +3374,6 @@ export default function App() {
     model,
     selectedRunLabel,
     run,
-    tileUrl,
     opacity,
     variable,
       displayedOverlayVariableKind,
@@ -4702,7 +3568,7 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
-          tileUrl={tileUrl}
+          tileUrl={EMPTY_TILE_DATA_URL}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
@@ -4722,12 +3588,6 @@ export default function App() {
           displayResamplingOverride={displayedOverlayVariableDisplayResamplingOverride}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
-          prefetchTileUrls={isGridLowMidActive ? [] : prefetchTileUrls}
-          crossfade={isVariableSwitching}
-          onFrameSettled={handleFrameSettled}
-          onTileReady={handleTileReady}
-          onFrameLoadingChange={handleFrameLoadingChange}
-          onTileViewportReady={handleTileViewportReady}
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onZoomBucketChange={setZoomBucket}

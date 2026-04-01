@@ -51,12 +51,6 @@ type RegionView = {
 };
 
 export type BasemapMode = "light" | "dark";
-export type TileReadySource = "active" | "swap" | "prefetch" | "loop-warm" | "grid-warm";
-export type TileReadyMeta = {
-  source: TileReadySource;
-  selectionEpoch?: number;
-  selectionKey?: string;
-};
 
 type SelectionScopedMeta = {
   selectionEpoch: number;
@@ -66,7 +60,6 @@ type SelectionScopedMeta = {
 const SCRUB_SWAP_TIMEOUT_MS = 650;
 const AUTOPLAY_SWAP_TIMEOUT_MS = 1500;
 const VARIABLE_SWITCH_SWAP_TIMEOUT_MS = 1100;
-const SETTLE_TIMEOUT_MS = 1200;
 const CONTINUOUS_CROSSFADE_MS = 120;
 const MICRO_CROSSFADE_MS = 140;
 const PREFETCH_BUFFER_COUNT = 8;
@@ -90,9 +83,6 @@ const HIDDEN_SWAP_BUFFER_OPACITY = 0.001;
 // Keep prefetch layers fully hidden by default to reduce overdraw/compositing cost.
 // Prefetch layers are only warmed while an active prefetch URL is being requested.
 const HIDDEN_PREFETCH_OPACITY = 0;
-const WARM_PREFETCH_OPACITY = 0.001;
-const PREFETCH_TILE_EVENT_BUDGET = 1;
-const PREFETCH_READY_TIMEOUT_MS = 8000;
 const WEBP_TO_TILE_STABLE_MS = 150;
 const WEBP_TO_TILE_CROSSFADE_MS = 200;
 const WEBP_TO_TILE_FORCE_CROSSFADE_MS = 900;
@@ -793,16 +783,11 @@ type MapCanvasProps = {
   displayResamplingOverride?: string | null;
   overlayFadeOutZoom?: { start: number; end: number } | null;
   basemapMode: BasemapMode;
-  prefetchTileUrls?: string[];
   crossfade?: boolean;
   loopImageUrl?: string | null;
   loopFrameBitmap?: ImageBitmap | null;
   loopImageBbox?: [number, number, number, number] | null;
   loopActive?: boolean;
-  onFrameSettled?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
-  onTileReady?: (tileUrl: string, meta?: TileReadyMeta) => void;
-  onTileViewportReady?: (tileUrl: string, meta?: SelectionScopedMeta) => void;
-  onFrameLoadingChange?: (tileUrl: string, isLoading: boolean, meta?: SelectionScopedMeta) => void;
   onZoomBucketChange?: (bucket: number) => void;
   onZoomRoutingSignal?: (payload: { zoom: number; gestureActive: boolean }) => void;
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
@@ -841,16 +826,11 @@ export function MapCanvas({
   displayResamplingOverride = null,
   overlayFadeOutZoom = null,
   basemapMode,
-  prefetchTileUrls = [],
   crossfade = false,
   loopImageUrl,
   loopFrameBitmap = null,
   loopImageBbox = null,
   loopActive = false,
-  onFrameSettled,
-  onTileReady,
-  onTileViewportReady,
-  onFrameLoadingChange,
   onZoomBucketChange,
   onZoomRoutingSignal,
   onViewportChange,
@@ -885,14 +865,11 @@ export function MapCanvas({
   const activeBufferRef = useRef<OverlayBuffer>(PRIMARY_OVERLAY_BUFFER);
   const activeTileUrlRef = useRef(tileUrl);
   const swapTokenRef = useRef(0);
-  const prefetchTokenRef = useRef(0);
-  const prefetchUrlsRef = useRef<string[]>(Array.from({ length: PREFETCH_BUFFER_COUNT }, () => ""));
   const sourceRequestedUrlRef = useRef<Map<string, string>>(new Map());
   const sourceRequestTokenRef = useRef<Map<string, number>>(new Map());
   const sourceEventCountRef = useRef<Map<string, number>>(new Map());
   const fadeTokenRef = useRef(0);
   const fadeRafRef = useRef<number | null>(null);
-  const tileViewportReadyTokenRef = useRef(0);
   const basemapStyleSwapTokenRef = useRef(0);
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
   const loopToTileRafRef = useRef<number | null>(null);
@@ -1494,69 +1471,6 @@ export function MapCanvas({
     };
   }, [isLoaded]);
 
-  const notifySettled = useCallback(
-    (
-      map: maplibregl.Map,
-      source: string,
-      url: string,
-      readySource: TileReadySource,
-      selectionScope: SelectionScopedMeta
-    ) => {
-      let done = false;
-      let timeoutId: number | null = null;
-
-      const cleanup = () => {
-        map.off("sourcedata", onSourceData);
-        if (timeoutId !== null) {
-          window.clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-      };
-
-      const fire = () => {
-        if (done) return;
-        done = true;
-        cleanup();
-        onTileReady?.(url, {
-          source: readySource,
-          selectionEpoch: selectionScope.selectionEpoch,
-          selectionKey: selectionScope.selectionKey,
-        });
-        onFrameSettled?.(url, selectionScope);
-      };
-
-      const onSourceData = (event: maplibregl.MapSourceDataEvent) => {
-        if (event.sourceId !== source) {
-          return;
-        }
-        sourceEventCountRef.current.set(source, (sourceEventCountRef.current.get(source) ?? 0) + 1);
-        if (map.isSourceLoaded(source)) {
-          window.requestAnimationFrame(() => fire());
-        }
-      };
-
-      if (map.isSourceLoaded(source)) {
-        window.requestAnimationFrame(() => fire());
-        return () => {
-          done = true;
-          cleanup();
-        };
-      }
-
-      map.on("sourcedata", onSourceData);
-      timeoutId = window.setTimeout(() => {
-        console.warn("[map] settle fallback timeout", { sourceId: source, tileUrl: url });
-        // Never mark settled from timeout; wait for real source readiness.
-      }, SETTLE_TIMEOUT_MS);
-
-      return () => {
-        done = true;
-        cleanup();
-      };
-    },
-    [onTileReady, onFrameSettled]
-  );
-
   const cancelCrossfade = useCallback(() => {
     fadeTokenRef.current += 1;
     if (fadeRafRef.current !== null) {
@@ -1588,8 +1502,6 @@ export function MapCanvas({
 
   useEffect(() => {
     swapTokenRef.current += 1;
-    prefetchTokenRef.current += 1;
-    tileViewportReadyTokenRef.current += 1;
     basemapStyleSwapTokenRef.current += 1;
     cancelCrossfade();
     cancelLoopToTileTransition();
@@ -2312,35 +2224,9 @@ export function MapCanvas({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isLoaded || !loopActive) {
-      return;
-    }
-    const selectionScope = { selectionEpoch, selectionKey };
-
-    // Loop playback is fully canvas-backed. Report frame readiness for the
-    // current selection without mutating tile sources.
-    onFrameLoadingChange?.(tileUrl, false, selectionScope);
-    onTileReady?.(tileUrl, { source: "loop-warm", ...selectionScope });
-    onFrameSettled?.(tileUrl, selectionScope);
-    onTileViewportReady?.(tileUrl, selectionScope);
-  }, [
-    isLoaded,
-    loopActive,
-    tileUrl,
-    onTileReady,
-    onFrameSettled,
-    onTileViewportReady,
-    onFrameLoadingChange,
-    selectionEpoch,
-    selectionKey,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
     if (!map || !isLoaded) {
       return;
     }
-    const selectionScope = { selectionEpoch, selectionKey };
 
     // Foreground tile swap work is disabled while loop or grid mode is
     // active.  A separate warm-path effect keeps the active tile buffer up
@@ -2350,16 +2236,8 @@ export function MapCanvas({
     // frame fetches, causing scrubbing lag and animation stalls (especially
     // noticeable for observed data such as MRMS which prefetches many frames).
     if (loopActive || gridActive) {
-      // Grid WebGL and loop playback are fully canvas-backed renderers.
-      // Skip the legacy tile swap but fire synthetic readiness signals so
-      // App.tsx's scrub flow-control (bufferSnapshot / markFrameReady) stays
-      // fed — mirroring the loop-warm reporting effect above.
-      onFrameLoadingChange?.(tileUrl, false, selectionScope);
-      onTileReady?.(tileUrl, { source: "grid-warm", ...selectionScope });
-      onFrameSettled?.(tileUrl, selectionScope);
       return;
     }
-    let settledCleanup: (() => void) | undefined;
 
     if (tileUrl === activeTileUrlRef.current) {
       const source = sourceId(activeBufferRef.current);
@@ -2368,7 +2246,6 @@ export function MapCanvas({
       if (inactive !== activeBufferRef.current) {
         setLayerVisibility(map, layerId(inactive), false);
       }
-      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       const readyCleanup = waitForSourceReady(
         map,
         source,
@@ -2376,17 +2253,13 @@ export function MapCanvas({
         sourceRequestTokenRef.current.get(source) ?? 0,
         -1,
         mode,
+        () => {},
         () => {
-          settledCleanup = notifySettled(map, source, tileUrl, "active", selectionScope);
-        },
-        () => {
-          onFrameLoadingChange?.(tileUrl, true, selectionScope);
           console.warn("[map] ready timeout", { sourceId: source, tileUrl, mode });
         }
       );
       return () => {
         readyCleanup?.();
-        settledCleanup?.();
       };
     }
 
@@ -2400,7 +2273,6 @@ export function MapCanvas({
     }
 
     const inactiveSourceId = sourceId(inactiveBuffer);
-    onFrameLoadingChange?.(tileUrl, true, selectionScope);
     if (
       !setTilesSafe(inactiveSource, [tileUrl], {
         sourceId: inactiveSourceId,
@@ -2408,7 +2280,6 @@ export function MapCanvas({
         mode: mode,
       })
     ) {
-      onFrameLoadingChange?.(tileUrl, false, selectionScope);
       return;
     }
     sourceRequestedUrlRef.current.set(inactiveSourceId, tileUrl);
@@ -2417,7 +2288,7 @@ export function MapCanvas({
     const swapSourceEventBaseline = sourceEventCountRef.current.get(inactiveSourceId) ?? 0;
     const token = ++swapTokenRef.current;
 
-    const finishSwap = (skipSettleNotify = false) => {
+    const finishSwap = () => {
       if (token !== swapTokenRef.current) {
         return;
       }
@@ -2452,10 +2323,6 @@ export function MapCanvas({
         // Use micro-crossfade for smooth transition without noticeable flash
         runMicroCrossfade(map, previousActive, inactiveBuffer, opacity, token);
       }
-      onFrameLoadingChange?.(tileUrl, false, selectionScope);
-      if (!skipSettleNotify) {
-        settledCleanup = notifySettled(map, sourceId(inactiveBuffer), tileUrl, "swap", selectionScope);
-      }
 
       // After promotion, keep only the active buffer visible so MapLibre stops
       // maintaining/reloading stale tiles on the inactive source.
@@ -2476,13 +2343,11 @@ export function MapCanvas({
       if (token !== swapTokenRef.current) {
         return;
       }
-      onFrameLoadingChange?.(tileUrl, true, selectionScope);
       console.warn("[map] swap timeout", { sourceId: inactiveSourceId, tileUrl, token, mode });
     });
 
     return () => {
       readyCleanup?.();
-      settledCleanup?.();
     };
   }, [
     tileUrl,
@@ -2497,115 +2362,7 @@ export function MapCanvas({
     runCrossfade,
     cancelCrossfade,
     setLayerOpacity,
-    notifySettled,
-    onTileReady,
-    onFrameSettled,
-    onFrameLoadingChange,
-    selectionEpoch,
-    selectionKey,
   ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
-    }
-    const selectionScope = { selectionEpoch, selectionKey };
-
-    const token = ++prefetchTokenRef.current;
-    const urls = Array.from({ length: PREFETCH_BUFFER_COUNT }, (_, idx) => prefetchTileUrls[idx] ?? "");
-    const cleanups: Array<() => void> = [];
-
-    urls.forEach((url, idx) => {
-      const source = map.getSource(prefetchSourceId(idx + 1)) as maplibregl.RasterTileSource | undefined;
-      if (!source || typeof source.setTiles !== "function") {
-        return;
-      }
-
-      if (!url) {
-        prefetchUrlsRef.current[idx] = "";
-        setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
-        setLayerVisibility(map, prefetchLayerId(idx + 1), false);
-        return;
-      }
-
-      if (prefetchUrlsRef.current[idx] === url) {
-        return;
-      }
-
-      prefetchUrlsRef.current[idx] = url;
-      // Show the layer so MapLibre actually requests the tiles (visibility:none skips them).
-      setLayerVisibility(map, prefetchLayerId(idx + 1), true);
-      setLayerOpacity(map, prefetchLayerId(idx + 1), WARM_PREFETCH_OPACITY);
-      if (
-        !setTilesSafe(source, [url], {
-          sourceId: prefetchSourceId(idx + 1),
-          tileUrl: url,
-          mode: "prefetch",
-        })
-      ) {
-        setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
-        setLayerVisibility(map, prefetchLayerId(idx + 1), false);
-        return;
-      }
-      const prefetchSource = prefetchSourceId(idx + 1);
-      sourceRequestedUrlRef.current.set(prefetchSource, url);
-      const nextPrefetchRequestToken = (sourceRequestTokenRef.current.get(prefetchSource) ?? 0) + 1;
-      sourceRequestTokenRef.current.set(prefetchSource, nextPrefetchRequestToken);
-      const prefetchEventBaseline = sourceEventCountRef.current.get(prefetchSource) ?? 0;
-      const prefetchEventBudgetThreshold = prefetchEventBaseline + PREFETCH_TILE_EVENT_BUDGET - 1;
-
-      const cleanup = waitForSourceReady(
-        map,
-        prefetchSource,
-        url,
-        nextPrefetchRequestToken,
-        prefetchEventBudgetThreshold,
-        "autoplay",
-        () => {
-          if (token !== prefetchTokenRef.current) {
-            return;
-          }
-          if (prefetchUrlsRef.current[idx] !== url) {
-            return;
-          }
-          // Important: App.tsx autoplay waits on URLs being marked ready.
-          // Prefetch sources should contribute to that readiness cache.
-          onTileReady?.(url, { source: "prefetch", ...selectionScope });
-          // Tiles are now in the browser cache — hide the layer so MapLibre stops
-          // issuing new requests when the viewport changes.
-          setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
-          setLayerVisibility(map, prefetchLayerId(idx + 1), false);
-        },
-        () => {
-          if (token !== prefetchTokenRef.current) {
-            return;
-          }
-          if (prefetchUrlsRef.current[idx] !== url) {
-            return;
-          }
-          // Best-effort: don't let autoplay deadlock if MapLibre never reports
-          // the prefetch source as fully loaded within the timeout window.
-          console.warn("[map] prefetch ready fallback timeout", {
-            sourceId: prefetchSourceId(idx + 1),
-            tileUrl: url,
-            token,
-          });
-          setLayerOpacity(map, prefetchLayerId(idx + 1), HIDDEN_PREFETCH_OPACITY);
-          setLayerVisibility(map, prefetchLayerId(idx + 1), false);
-        },
-        PREFETCH_READY_TIMEOUT_MS
-      );
-
-      if (cleanup) {
-        cleanups.push(cleanup);
-      }
-    });
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [prefetchTileUrls, isLoaded, waitForSourceReady, setTilesSafe, onTileReady, selectionEpoch, selectionKey]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2844,45 +2601,6 @@ export function MapCanvas({
     hasLoopVisual,
     loopImageUrl,
   ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
-    }
-    const selectionScope = { selectionEpoch, selectionKey };
-
-    if (loopActive || gridActive) {
-      window.requestAnimationFrame(() => {
-        onTileViewportReady?.(tileUrl, selectionScope);
-      });
-      return;
-    }
-
-    const token = ++tileViewportReadyTokenRef.current;
-    const activeSource = sourceId(activeBufferRef.current);
-    const expectedTileUrl = tileUrl;
-
-    const maybeNotify = () => {
-      if (token !== tileViewportReadyTokenRef.current) {
-        return;
-      }
-      if (activeTileUrlRef.current !== expectedTileUrl) {
-        return;
-      }
-      if (!map.isSourceLoaded(activeSource)) {
-        return;
-      }
-      onTileViewportReady?.(expectedTileUrl, selectionScope);
-    };
-
-    map.on("idle", maybeNotify);
-    window.requestAnimationFrame(() => maybeNotify());
-
-    return () => {
-      map.off("idle", maybeNotify);
-    };
-  }, [isLoaded, tileUrl, onTileViewportReady, selectionEpoch, selectionKey, loopActive, gridActive]);
 
   useEffect(() => {
     const map = mapRef.current;
