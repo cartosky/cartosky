@@ -22,6 +22,12 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/playwright/.cache/
 frontend/playwright.config.ts
+!frontend/tests/
+frontend/tests/*
+!frontend/tests/e2e/
+frontend/tests/e2e/*
+!frontend/tests/e2e/grid-smoke.spec.ts
+!frontend/playwright.config.ts
 
 # Dependencies
 node_modules/

@@ -92,6 +92,8 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     (manifest_dir / f"{run_id}.json").write_text(
         json.dumps(
             {
+                "model": model,
+                "run": run_id,
                 "variables": {
                     variable: {
                         "expected_frames": 2,
