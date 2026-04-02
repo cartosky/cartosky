@@ -316,6 +316,18 @@ def write_grid_frame_for_run_root(
         raise ValueError(f"Unsupported grid pack target: {model}/{var}")
 
     values_array = np.asarray(values, dtype=np.float32)
+
+    # Compute bbox from original (pre-display-prep) dimensions so that
+    # upscaling in prepare_grid_display_values does not inflate the extent.
+    if bbox is None:
+        if transform is None:
+            raise ValueError(f"Missing transform/bbox for grid frame: {model}/{var}/fh{int(fh):03d}")
+        orig_h, orig_w = values_array.shape[:2]
+        left, bottom, right, top = array_bounds(orig_h, orig_w, transform)
+        bounds = [float(left), float(bottom), float(right), float(top)]
+    else:
+        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+
     display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values_array)
     encoded = _encode_values(
         display_values,
@@ -324,13 +336,6 @@ def write_grid_frame_for_run_root(
         nodata=int(packing["nodata"]),
     )
     height, width = encoded.shape
-    if bbox is None:
-        if transform is None:
-            raise ValueError(f"Missing transform/bbox for grid frame: {model}/{var}/fh{int(fh):03d}")
-        left, bottom, right, top = array_bounds(height, width, transform)
-        bounds = [float(left), float(bottom), float(right), float(top)]
-    else:
-        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
     crs_text = str(projection or GRID_PROJECTION)
 
     out_path = grid_frame_path_for_run_root(run_root, var, fh)
