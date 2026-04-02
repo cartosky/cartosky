@@ -2920,11 +2920,6 @@ export default function App() {
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
-  const substrateDebugLabel = "grid";
-  const substrateDebugDetail = useMemo(() => {
-    const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
-    return `${frameLabel} · z ${mapZoom.toFixed(1)}`;
-  }, [mapZoom, resolvedGridDisplayHour]);
   const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
   const preloadTotal = gridFrameHours.length;
   const preloadPercent = preloadTotal > 0
@@ -3304,12 +3299,6 @@ export default function App() {
               "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.28) 100%)",
           }}
         />
-
-        <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-full border border-white/12 bg-black/45 px-3 py-1.5 text-[11px] font-medium text-white/88 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-sm">
-          <span className="uppercase tracking-[0.16em] text-white/58">Substrate</span>
-          <span className="ml-2">{substrateDebugLabel}</span>
-          <span className="ml-2 text-white/56">{substrateDebugDetail}</span>
-        </div>
 
         {showBufferStatus && (
           <div className="glass fixed bottom-28 left-1/2 z-40 flex w-[min(92vw,420px)] -translate-x-1/2 flex-col gap-1.5 rounded-xl px-3 py-2 text-xs">
