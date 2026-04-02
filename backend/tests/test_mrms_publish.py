@@ -552,3 +552,75 @@ def test_publish_mrms_bundle_omits_mrms_radar_ptype_when_no_precip_flag(
     manifest = json.loads(result.manifest_path.read_text())
     assert "reflectivity" in manifest["variables"]
     assert "mrms_radar_ptype" not in manifest["variables"]
+
+
+def test_publish_mrms_bundle_reuse_only_cycle_preserves_mrms_radar_ptype(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduce the bug: when all frames are reused (no new scans decoded),
+    mrms_radar_ptype must still appear in the new bundle's manifest."""
+    _configure_small_grid(monkeypatch)
+
+    base_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+
+    # First publish: fresh frame with precip_flag_values → both variables written
+    first_frames = [
+        mrms_publish.MRMSBundleFrame(
+            valid_time=base_time,
+            values=np.array([[30.0, 40.0, 50.0], [60.0, 20.0, 15.0]], dtype=np.float32),
+            source_filename="scan0.grib2.gz",
+            precip_flag_values=np.array([[1.0, 3.0, 7.0], [6.0, 10.0, 0.0]], dtype=np.float32),
+        ),
+        mrms_publish.MRMSBundleFrame(
+            valid_time=base_time + timedelta(minutes=5),
+            values=np.array([[25.0, 35.0, 45.0], [55.0, 15.0, 10.0]], dtype=np.float32),
+            source_filename="scan1.grib2.gz",
+            precip_flag_values=np.array([[3.0, 1.0, 7.0], [10.0, 6.0, 0.0]], dtype=np.float32),
+        ),
+    ]
+
+    first_result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=first_frames,
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+        target_frame_count=2,
+        expected_frame_count=2,
+    )
+
+    # Verify first publish has both variables
+    first_manifest = json.loads(first_result.manifest_path.read_text())
+    assert "mrms_radar_ptype" in first_manifest["variables"]
+    assert first_manifest["variables"]["mrms_radar_ptype"]["available_frames"] == 2
+
+    # Load previous frames (simulates what the poller does)
+    previous_run_id, previous_frames = mrms_publish.load_latest_published_mrms_frames(tmp_path)
+    assert previous_run_id == first_result.run_id
+    assert len(previous_frames) == 2
+    # Verify ptype paths were loaded
+    assert all(f.ptype_value_path is not None for f in previous_frames)
+    assert all(f.ptype_sidecar is not None for f in previous_frames)
+
+    # Second publish: ALL frames reused (no new MRMSBundleFrame), zero fresh decodes
+    second_result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[],  # No new frames!
+        previous_frames=previous_frames,
+        publish_time=datetime(2026, 3, 27, 12, 8, tzinfo=timezone.utc),
+        target_frame_count=2,
+        expected_frame_count=2,
+    )
+
+    # THE BUG: mrms_radar_ptype must still be in the new manifest
+    second_manifest = json.loads(second_result.manifest_path.read_text())
+    assert "reflectivity" in second_manifest["variables"]
+    assert "mrms_radar_ptype" in second_manifest["variables"], (
+        "mrms_radar_ptype disappeared from manifest on reuse-only cycle"
+    )
+    assert second_manifest["variables"]["mrms_radar_ptype"]["available_frames"] == 2
+
+    # Verify the actual artifacts exist
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh000.val.cog.tif").is_file()
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.val.cog.tif").is_file()
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh000.json").is_file()
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.json").is_file()

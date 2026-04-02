@@ -42,7 +42,7 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     payload = serialize_model_capability("mrms", capabilities)
 
     assert payload["model_id"] == "mrms"
-    assert payload["name"] == "MRMS Radar"
+    assert payload["name"] == "Radar"
     assert payload["product"] == "obs"
     assert payload["canonical_region"] == "conus"
     assert payload["defaults"]["default_var_key"] == "reflectivity"
@@ -58,7 +58,7 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert reflectivity["derived"] is False
     assert reflectivity["kind"] == "discrete"
     assert reflectivity["units"] == "dBZ"
-    assert reflectivity["display_name"] == "Merged Base Reflectivity QC"
+    assert reflectivity["display_name"] == "Base Reflectivity"
     assert reflectivity["order"] == 0
     assert reflectivity["group"] == "Radar"
     assert reflectivity["color_map_id"] == "mrms_reflectivity"

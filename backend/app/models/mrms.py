@@ -54,7 +54,7 @@ MRMS_REGIONS: dict[str, RegionSpec] = {
 MRMS_VARS: dict[str, VarSpec] = {
     "reflectivity": VarSpec(
         id="reflectivity",
-        name="Merged Base Reflectivity QC",
+        name="Base Reflectivity",
         selectors=VarSelectors(
             hints={
                 "upstream_product": "MRMS Merged Base Reflectivity QC",
@@ -122,7 +122,7 @@ MRMS_VARIABLE_CATALOG: dict[str, VariableCapability] = {
 
 MRMS_CAPABILITIES = ModelCapabilities(
     model_id="mrms",
-    name="MRMS Radar",
+    name="Radar",
     product="obs",
     canonical_region="conus",
     grid_meters_by_region={
@@ -146,7 +146,7 @@ MRMS_CAPABILITIES = ModelCapabilities(
 
 MRMS_MODEL = MRMSPlugin(
     id="mrms",
-    name="MRMS Radar",
+    name="Radar",
     regions=MRMS_REGIONS,
     vars=MRMS_VARS,
     product="obs",

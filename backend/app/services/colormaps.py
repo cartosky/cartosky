@@ -496,7 +496,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         # metadata so we can tune the observed product independently later.
         "levels": MRMS_REFLECTIVITY_LEVELS,
         "colors": MRMS_REFLECTIVITY_COLORS,
-        "display_name": "Merged Base Reflectivity QC",
+        "display_name": "Base Reflectivity",
         "legend_title": "MRMS Reflectivity (dBZ)",
         "transparent_below_min": True,
         # MRMS is displayed as a smoothed visual field even though sampling

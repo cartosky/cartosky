@@ -94,6 +94,8 @@ class MRMSPublishedFrame:
     source_valid_time: datetime | None
     value_path: Path
     sidecar: dict[str, Any]
+    ptype_value_path: Path | None = None
+    ptype_sidecar: dict[str, Any] | None = None
 
 
 def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list[MRMSPublishedFrame]]:
@@ -124,7 +126,22 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
     if not isinstance(manifest_frames, list):
         return run_id, []
 
-    published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
+    # Build a set of fh values that have published mrms_radar_ptype frames
+    ptype_fh_set: set[int] = set()
+    ptype_var_entry = manifest.get("variables", {}).get(MRMS_RADAR_PTYPE_VARIABLE_ID)
+    if isinstance(ptype_var_entry, dict):
+        ptype_manifest_frames = ptype_var_entry.get("frames")
+        if isinstance(ptype_manifest_frames, list):
+            for pf in ptype_manifest_frames:
+                if isinstance(pf, dict):
+                    try:
+                        ptype_fh_set.add(int(pf["fh"]))
+                    except (KeyError, TypeError, ValueError):
+                        pass
+
+    published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id
+    refl_dir = published_run_dir / MRMS_VARIABLE_ID
+    ptype_dir = published_run_dir / MRMS_RADAR_PTYPE_VARIABLE_ID
     frames: list[MRMSPublishedFrame] = []
     for frame in manifest_frames:
         if not isinstance(frame, dict):
@@ -134,8 +151,8 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             fh_int = int(fh)
         except (TypeError, ValueError):
             continue
-        sidecar_path = published_run_dir / f"fh{fh_int:03d}.json"
-        value_path = published_run_dir / f"fh{fh_int:03d}.val.cog.tif"
+        sidecar_path = refl_dir / f"fh{fh_int:03d}.json"
+        value_path = refl_dir / f"fh{fh_int:03d}.val.cog.tif"
         if not sidecar_path.is_file() or not value_path.is_file():
             continue
         try:
@@ -149,12 +166,28 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             valid_time = datetime.strptime(valid_time_raw.strip(), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         except ValueError:
             continue
+
+        # Check for paired mrms_radar_ptype artifacts
+        ptype_value_path: Path | None = None
+        ptype_sidecar_data: dict[str, Any] | None = None
+        if fh_int in ptype_fh_set:
+            ptype_val = ptype_dir / f"fh{fh_int:03d}.val.cog.tif"
+            ptype_sc = ptype_dir / f"fh{fh_int:03d}.json"
+            if ptype_val.is_file() and ptype_sc.is_file():
+                try:
+                    ptype_sidecar_data = json.loads(ptype_sc.read_text())
+                    ptype_value_path = ptype_val
+                except (OSError, json.JSONDecodeError):
+                    pass
+
         frames.append(
             MRMSPublishedFrame(
                 valid_time=valid_time,
                 source_valid_time=_source_valid_time_from_sidecar(sidecar, fallback=valid_time),
                 value_path=value_path,
                 sidecar=sidecar,
+                ptype_value_path=ptype_value_path,
+                ptype_sidecar=ptype_sidecar_data,
             )
         )
 
@@ -201,13 +234,15 @@ def publish_mrms_bundle(
     fresh_jobs: list[tuple[int, MRMSBundleFrame]] = []
     for fh, frame in enumerate(ordered_frame_inputs):
         if isinstance(frame, MRMSPublishedFrame):
-            reuse_mrms_frame(
+            reused_ptype = reuse_mrms_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
             )
             targets.append((MRMS_VARIABLE_ID, fh))
+            if reused_ptype:
+                ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh))
         else:
             fresh_jobs.append((fh, frame))
 
@@ -418,7 +453,11 @@ def reuse_mrms_frame(
     run_id: str,
     forecast_hour: int,
     frame: MRMSPublishedFrame,
-) -> None:
+) -> bool:
+    """Reuse a previously published reflectivity frame (and its ptype frame if available).
+
+    Returns True if a paired mrms_radar_ptype frame was also reused.
+    """
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -445,6 +484,44 @@ def reuse_mrms_frame(
             fh=int(forecast_hour),
             value_cog_path=value_path,
         )
+
+    # Reuse paired mrms_radar_ptype artifacts if they exist
+    has_ptype = False
+    if frame.ptype_value_path is not None and frame.ptype_sidecar is not None:
+        try:
+            ptype_staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
+            ptype_staging_dir.mkdir(parents=True, exist_ok=True)
+
+            ptype_value_path = ptype_staging_dir / f"{fh_str}.val.cog.tif"
+            ptype_sidecar_path = ptype_staging_dir / f"{fh_str}.json"
+
+            _link_or_copy(frame.ptype_value_path, ptype_value_path)
+
+            ptype_sc = dict(frame.ptype_sidecar)
+            ptype_sc["run"] = run_id
+            ptype_sc["fh"] = int(forecast_hour)
+            ptype_sc["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if frame.source_valid_time is not None:
+                ptype_source_metadata = dict(ptype_sc.get("source_metadata") or {})
+                ptype_source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                ptype_sc["source_metadata"] = ptype_source_metadata
+            write_json_atomic(ptype_sidecar_path, ptype_sc)
+            if grid_build_enabled():
+                write_grid_frame_from_value_cog_for_run_root(
+                    run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                    model=MRMS_MODEL_ID,
+                    var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                    fh=int(forecast_hour),
+                    value_cog_path=ptype_value_path,
+                )
+            has_ptype = True
+        except Exception:
+            logger.warning(
+                "MRMS radar_ptype reuse failed fh=%d; reflectivity-only reuse",
+                forecast_hour,
+                exc_info=True,
+            )
+    return has_ptype
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:
