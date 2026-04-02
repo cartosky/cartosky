@@ -290,7 +290,7 @@ def test_publish_mrms_bundle_publishes_grid_artifacts_from_staging(
     )
 
     assert result.run_id == "20260327_1206z"
-    grid_dir = result.published_run_dir / "reflectivity" / "grid_v1"
+    grid_dir = result.published_run_dir / "reflectivity" / "grid"
     assert (grid_dir / "fh000.l0.u16.bin").is_file()
     assert (grid_dir / "fh000.l0.meta.json").is_file()
     manifest = json.loads((grid_dir / "manifest.json").read_text())

@@ -6,7 +6,7 @@ enabled, packed grid frames in the staging directory:
 
     fh{NNN}.val.cog.tif    — 1-band float32 value COG
     fh{NNN}.json           — sidecar metadata (per artifact contract)
-    grid_v1/fh{NNN}.l0.*   — packed grid frame + metadata
+    grid/fh{NNN}.l0.*      — packed grid frame + metadata
 
 Published value outputs pass structural and sanity validation before being accepted.
 

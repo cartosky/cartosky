@@ -50,9 +50,9 @@ Each published run contains per-forecast-hour files in `$CARTOSKY_DATA_ROOT/publ
 |---|---|---|
 | `fhNNN.val.cog.tif` | 1-band float32 COG | Raw values for hover sampling and backend analysis |
 | `fhNNN.json` | JSON sidecar | `contract_version`, `model`, `region`, `run`, `var`, `fh`, `valid_time`, `units`, `kind` |
-| `grid_v1/fhNNN.l0.u16.bin` | Packed uint16 binary frame | Primary weather rendering artifact |
-| `grid_v1/fhNNN.l0.meta.json` | JSON frame metadata | Grid packing metadata |
-| `grid_v1/manifest.json` | JSON grid manifest | Grid frame index and display contract |
+| `grid/fhNNN.l0.u16.bin` | Packed uint16 binary frame | Primary weather rendering artifact |
+| `grid/fhNNN.l0.meta.json` | JSON frame metadata | Grid packing metadata |
+| `grid/manifest.json` | JSON grid manifest | Grid frame index and display contract |
 
 Run manifests live at `$CARTOSKY_DATA_ROOT/manifests/{model}/{region}/{run_id}.json`.
 

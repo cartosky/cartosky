@@ -34,6 +34,7 @@ from app.services.grid import (
     build_grid_manifests_for_run_root,
     grid_dir,
     grid_manifest_path_for_run_root,
+    resolved_grid_dir_for_run_root,
     write_grid_frame_for_run_root,
 )
 
@@ -132,6 +133,29 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     assert manifest["grid"]["dtype"] == "uint16"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+
+
+def test_grid_dir_resolves_legacy_grid_v1_for_published_runs(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    legacy_dir = data_root / "published" / "hrrr" / "20260330_12z" / "tmp2m" / "grid_v1"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "manifest.json").write_text("{}")
+
+    resolved = grid_dir(data_root, "hrrr", "20260330_12z", "tmp2m")
+
+    assert resolved == legacy_dir
+
+
+def test_resolved_grid_dir_prefers_new_grid_over_legacy(tmp_path: Path) -> None:
+    run_root = tmp_path / "published" / "hrrr" / "20260330_12z"
+    legacy_dir = run_root / "tmp2m" / "grid_v1"
+    new_dir = run_root / "tmp2m" / "grid"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    new_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolved_grid_dir_for_run_root(run_root, "tmp2m")
+
+    assert resolved == new_dir
 
 
 @pytest.mark.parametrize(
@@ -799,6 +823,71 @@ async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClie
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     encoded = np.frombuffer(response.content, dtype="<u2")
     assert encoded.size == 4
+
+
+async def test_grid_frame_endpoint_serves_legacy_grid_v1_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_root = tmp_path / "data"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+    model = "hrrr"
+    run_id = "20260330_12z"
+    var = "tmp2m"
+    var_dir = published_root / model / run_id / var
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+    legacy_grid_dir = published_root / model / run_id / var / "grid_v1"
+    legacy_grid_dir.mkdir(parents=True, exist_ok=True)
+    encoded = np.array([[1320, 1405], [65535, 877]], dtype="<u2")
+    (legacy_grid_dir / "fh000.l0.u16.bin").write_bytes(encoded.tobytes(order="C"))
+    (legacy_grid_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "subtype": "grid",
+                "model": model,
+                "run": run_id,
+                "var": var,
+                "projection": "EPSG:3857",
+                "bbox": [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+                "grid": {
+                    "width": 2,
+                    "height": 2,
+                    "dtype": "uint16",
+                    "endianness": "little",
+                    "scale": 0.1,
+                    "offset": -100.0,
+                    "nodata": 65535,
+                    "units": "F",
+                },
+                "palette": {"color_map_id": "tmp2m"},
+                "lods": [{"level": 0, "width": 2, "height": 2, "frames": [{"fh": 0, "file": "fh000.l0.u16.bin"}]}],
+            }
+        )
+    )
+    write_manifest = manifests_root / model
+    write_manifest.mkdir(parents=True, exist_ok=True)
+    (write_manifest / f"{run_id}.json").write_text(
+        json.dumps({"variables": {var: {"expected_frames": 1, "available_frames": 1, "frames": [{"fh": 0}]}}})
+    )
+    (published_root / model / "LATEST.json").parent.mkdir(parents=True, exist_ok=True)
+    (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    main_module._manifest_cache.clear()
+    main_module._sidecar_cache.clear()
+    main_module._grid_manifest_cache.clear()
+
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        response = await test_client.get("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+
+    assert response.status_code == 200
+    assert np.frombuffer(response.content, dtype="<u2").size == 4
 
 
 async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

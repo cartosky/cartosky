@@ -24,6 +24,8 @@ GRID_PROJECTION = "EPSG:3857"
 GRID_DTYPE = "uint16"
 GRID_ENDIANNESS = "little"
 GRID_LEVEL = 0
+GRID_DIRNAME = "grid"
+LEGACY_GRID_DIRNAME = "grid_v1"
 
 _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     ("hrrr", "tmp2m"): {
@@ -214,11 +216,21 @@ def grid_supported(model_id: str, var_key: str) -> bool:
 
 
 def grid_dir_for_run_root(run_root: Path, var: str) -> Path:
-    return Path(run_root) / var / "grid_v1"
+    return Path(run_root) / var / GRID_DIRNAME
+
+
+def resolved_grid_dir_for_run_root(run_root: Path, var: str) -> Path:
+    preferred = grid_dir_for_run_root(run_root, var)
+    if preferred.is_dir():
+        return preferred
+    legacy = Path(run_root) / var / LEGACY_GRID_DIRNAME
+    if legacy.is_dir():
+        return legacy
+    return preferred
 
 
 def grid_dir(data_root: Path, model: str, run: str, var: str) -> Path:
-    return grid_dir_for_run_root(data_root / "published" / model / run, var)
+    return resolved_grid_dir_for_run_root(data_root / "published" / model / run, var)
 
 
 def grid_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
@@ -258,6 +270,14 @@ def grid_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: in
 
 def grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
     return grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
+
+
+def resolved_grid_frame_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return resolved_grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level)
+
+
+def resolved_grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return resolved_grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
 
 
 def expected_grid_frame_size_bytes(*, width: int, height: int) -> int:
@@ -418,8 +438,8 @@ def _build_manifest_for_var_from_run_root(
             fh = int(fh_token.removeprefix("fh"))
         except ValueError:
             continue
-        frame_path = grid_frame_path_for_run_root(run_root, var, fh)
-        frame_meta_path = grid_frame_meta_path_for_run_root(run_root, var, fh)
+        frame_path = resolved_grid_frame_path_for_run_root(run_root, var, fh)
+        frame_meta_path = resolved_grid_frame_meta_path_for_run_root(run_root, var, fh)
         value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
         if not frame_path.is_file():
             continue
