@@ -35,6 +35,7 @@ import numpy as np
 import rasterio
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
+from app.config import grid_build_enabled
 from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
@@ -53,6 +54,11 @@ from app.services.builder.fetch import (
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
+from app.services.grid import (
+    grid_frame_meta_path_for_run_root,
+    grid_frame_path_for_run_root,
+    write_grid_frame_for_run_root,
+)
 from app.services.render_resampling import resampling_name_for_kind
 
 logger = logging.getLogger(__name__)
@@ -878,6 +884,8 @@ def build_frame(
     val_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     contour_geojson_path: Path | None = None
+    grid_frame_path: Path | None = None
+    grid_frame_meta_path: Path | None = None
     contour_sidecar: dict[str, Any] | None = None
     frame_quality = "full"
     frame_quality_flags: list[str] = []
@@ -1089,7 +1097,7 @@ def build_frame(
             grid_meters=grid_m,
         ):
             logger.error("Gate 1 FAILED for RGBA COG — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
+            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
         if not validate_cog(
@@ -1100,7 +1108,7 @@ def build_frame(
             grid_meters=grid_m * VALUE_HOVER_DOWNSAMPLE_FACTOR,
         ):
             logger.error("Gate 1 FAILED for value COG — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
+            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
         # Gate 2: pixel sanity
@@ -1111,7 +1119,7 @@ def build_frame(
             var_spec_model=var_spec_model,
         ):
             logger.error("Gate 2 FAILED — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
+            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
         # --- Write sidecar JSON ---
@@ -1131,13 +1139,27 @@ def build_frame(
         )
         _write_json_atomic(sidecar_path, sidecar)
 
+        if grid_build_enabled():
+            run_root = data_root / "staging" / model / run_id
+            grid_frame_path = grid_frame_path_for_run_root(run_root, var_key, fh)
+            grid_frame_meta_path = grid_frame_meta_path_for_run_root(run_root, var_key, fh)
+            write_grid_frame_for_run_root(
+                run_root=run_root,
+                model=model,
+                var=var_key,
+                fh=fh,
+                values=warped_data,
+                transform=dst_transform,
+            )
+
         logger.info(
             "Frame complete: %s/%s/%s/%s/%s "
-            "(RGBA: %s, Val: %s, JSON: %s)",
+            "(RGBA: %s, Val: %s, JSON: %s%s)",
             model, region, run_id, var_key, fh_str,
             _file_size_str(rgba_path),
             _file_size_str(val_path),
             _file_size_str(sidecar_path),
+            f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
         )
         return staging_dir
 
@@ -1151,7 +1173,7 @@ def build_frame(
             fh_str,
             exc,
         )
-        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
+        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
         return None
 
     except Exception:
@@ -1159,7 +1181,7 @@ def build_frame(
             "Build failed for %s/%s/%s/%s/%s",
             model, region, run_id, var_key, fh_str,
         )
-        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path)
+        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
         return None
     finally:
         _log_fetch_cache_stats_once()

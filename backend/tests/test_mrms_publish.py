@@ -276,21 +276,12 @@ def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
     assert new_sidecar["valid_time"] == "2026-03-27T12:15:00Z"
 
 
-def test_publish_mrms_bundle_triggers_grid_build(
+def test_publish_mrms_bundle_publishes_grid_artifacts_from_staging(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_small_grid(monkeypatch)
-    captured: dict[str, object] = {}
-
     monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
-    monkeypatch.setattr(mrms_publish, "grid_workers", lambda: 3)
-
-    def _build_grid_for_run(**kwargs):
-        captured.update(kwargs)
-        return 1, 0, 1
-
-    monkeypatch.setattr(mrms_publish, "build_grid_for_run", _build_grid_for_run)
 
     frame = mrms_publish.MRMSBundleFrame(
         valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
@@ -304,10 +295,11 @@ def test_publish_mrms_bundle_triggers_grid_build(
     )
 
     assert result.run_id == "20260327_1206z"
-    assert captured == {
-        "data_root": tmp_path,
-        "model": "mrms",
-        "run": "20260327_1206z",
-        "workers": 3,
-        "variables": ("reflectivity",),
-    }
+    grid_dir = result.published_run_dir / "reflectivity" / "grid_v1"
+    assert (grid_dir / "fh000.l0.u16.bin").is_file()
+    assert (grid_dir / "fh000.l0.meta.json").is_file()
+    manifest = json.loads((grid_dir / "manifest.json").read_text())
+    assert manifest["subtype"] == "grid"
+    assert manifest["lods"][0]["frames"] == [
+        {"fh": 0, "file": "fh000.l0.u16.bin", "valid_time": "2026-03-27T12:00:00Z"}
+    ]

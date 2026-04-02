@@ -29,7 +29,13 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_grid_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
-from app.services.grid import build_grid_for_run, grid_dir
+from app.services.grid import (
+    build_grid_for_run,
+    build_grid_manifests_for_run_root,
+    grid_dir,
+    grid_manifest_path_for_run_root,
+    write_grid_frame_for_run_root,
+)
 
 
 def _write_value_cog(path: Path, values: np.ndarray) -> None:
@@ -51,6 +57,38 @@ def _write_value_cog(path: Path, values: np.ndarray) -> None:
 
 def _grid_artifact_dir(data_root: Path, model: str, run_id: str, var: str) -> Path:
     return grid_dir(data_root, model, run_id, var)
+
+
+def test_write_grid_frame_for_run_root_writes_manifest_without_value_cog(tmp_path: Path) -> None:
+    run_root = tmp_path / "staging" / "hrrr" / "20260330_12z"
+    var_dir = run_root / "tmp2m"
+    var_dir.mkdir(parents=True, exist_ok=True)
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+
+    write_grid_frame_for_run_root(
+        run_root=run_root,
+        model="hrrr",
+        var="tmp2m",
+        fh=0,
+        values=values,
+        transform=from_origin(-14920000.0, 7362000.0, 3000.0, 3000.0),
+    )
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=run_root,
+        model="hrrr",
+        run="20260330_12z",
+        variables=("tmp2m",),
+    )
+
+    assert manifest_ok == 1
+    manifest = json.loads(grid_manifest_path_for_run_root(run_root, "tmp2m").read_text())
+    assert manifest["subtype"] == "grid"
+    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+    assert manifest["lods"][0]["frames"][0]["valid_time"] == "2026-03-30T12:00:00Z"
 
 
 def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

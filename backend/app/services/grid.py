@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import rasterio
 from rasterio.errors import RasterioIOError
+from rasterio.transform import Affine, array_bounds
 
 from ..config import grid_supported_pair
 from .colormaps import get_color_map_spec
@@ -212,12 +213,20 @@ def grid_supported(model_id: str, var_key: str) -> bool:
     return grid_supported_pair(model_id, var_key)
 
 
+def grid_dir_for_run_root(run_root: Path, var: str) -> Path:
+    return Path(run_root) / var / "grid_v1"
+
+
 def grid_dir(data_root: Path, model: str, run: str, var: str) -> Path:
-    return data_root / "published" / model / run / var / "grid_v1"
+    return grid_dir_for_run_root(data_root / "published" / model / run, var)
 
 
 def grid_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
     return grid_dir(data_root, model, run, var) / "manifest.json"
+
+
+def grid_manifest_path_for_run_root(run_root: Path, var: str) -> Path:
+    return grid_dir_for_run_root(run_root, var) / "manifest.json"
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -235,12 +244,20 @@ def grid_frame_path(data_root: Path, model: str, run: str, var: str, fh: int, *,
     return grid_dir(data_root, model, run, var) / grid_frame_filename(fh, level=level)
 
 
+def grid_frame_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level)
+
+
 def grid_frame_meta_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
     return f"fh{int(fh):03d}.l{int(level)}.meta.json"
 
 
 def grid_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
     return grid_dir(data_root, model, run, var) / grid_frame_meta_filename(fh, level=level)
+
+
+def grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
 
 
 def expected_grid_frame_size_bytes(*, width: int, height: int) -> int:
@@ -263,38 +280,40 @@ def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: i
     return encoded
 
 
-def _write_frame_from_value_cog(
+def write_grid_frame_for_run_root(
     *,
-    data_root: Path,
+    run_root: Path,
     model: str,
-    run: str,
     var: str,
     fh: int,
-    value_cog_path: Path,
-    out_path: Path,
+    values: np.ndarray,
+    transform: Affine | None = None,
+    bbox: list[float] | tuple[float, float, float, float] | None = None,
+    projection: str = GRID_PROJECTION,
 ) -> dict[str, Any]:
     packing = _packing_config(model, var)
     if packing is None:
         raise ValueError(f"Unsupported grid pack target: {model}/{var}")
-    if not value_cog_path.is_file():
-        raise FileNotFoundError(f"Missing grid source value COG: {value_cog_path}")
 
-    try:
-        with rasterio.open(value_cog_path) as ds:
-            values = ds.read(1).astype(np.float32, copy=False)
-            display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
-            encoded = _encode_values(
-                display_values,
-                scale=float(packing["scale"]),
-                offset=float(packing["offset"]),
-                nodata=int(packing["nodata"]),
-            )
-            height, width = encoded.shape
-            bounds = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-            crs_text = ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION
-    except RasterioIOError as exc:
-        raise FileNotFoundError(f"Unreadable grid source value COG: {value_cog_path}") from exc
+    values_array = np.asarray(values, dtype=np.float32)
+    display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values_array)
+    encoded = _encode_values(
+        display_values,
+        scale=float(packing["scale"]),
+        offset=float(packing["offset"]),
+        nodata=int(packing["nodata"]),
+    )
+    height, width = encoded.shape
+    if bbox is None:
+        if transform is None:
+            raise ValueError(f"Missing transform/bbox for grid frame: {model}/{var}/fh{int(fh):03d}")
+        left, bottom, right, top = array_bounds(height, width, transform)
+        bounds = [float(left), float(bottom), float(right), float(top)]
+    else:
+        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+    crs_text = str(projection or GRID_PROJECTION)
 
+    out_path = grid_frame_path_for_run_root(run_root, var, fh)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp_path.write_bytes(encoded.astype("<u2", copy=False).tobytes(order="C"))
@@ -310,8 +329,33 @@ def _write_frame_from_value_cog(
     }
     if prep_meta:
         frame_meta["display_prep"] = prep_meta
-    write_json_atomic(grid_frame_meta_path(data_root, model, run, var, fh), frame_meta)
+    write_json_atomic(grid_frame_meta_path_for_run_root(run_root, var, fh), frame_meta)
     return frame_meta
+
+
+def write_grid_frame_from_value_cog_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    var: str,
+    fh: int,
+    value_cog_path: Path,
+) -> dict[str, Any]:
+    if not value_cog_path.is_file():
+        raise FileNotFoundError(f"Missing grid source value COG: {value_cog_path}")
+    try:
+        with rasterio.open(value_cog_path) as ds:
+            return write_grid_frame_for_run_root(
+                run_root=run_root,
+                model=model,
+                var=var,
+                fh=fh,
+                values=ds.read(1).astype(np.float32, copy=False),
+                transform=ds.transform,
+                projection=ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION,
+            )
+    except RasterioIOError as exc:
+        raise FileNotFoundError(f"Unreadable grid source value COG: {value_cog_path}") from exc
 
 
 def _build_palette_block(model: str, var: str) -> dict[str, Any]:
@@ -343,9 +387,9 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
     return palette
 
 
-def _build_manifest_for_var(
+def _build_manifest_for_var_from_run_root(
     *,
-    data_root: Path,
+    run_root: Path,
     model: str,
     run: str,
     var: str,
@@ -354,7 +398,7 @@ def _build_manifest_for_var(
     if packing is None:
         return False
 
-    var_dir = data_root / "published" / model / run / var
+    var_dir = Path(run_root) / var
     if not var_dir.is_dir():
         return False
 
@@ -374,10 +418,10 @@ def _build_manifest_for_var(
             fh = int(fh_token.removeprefix("fh"))
         except ValueError:
             continue
-        frame_path = grid_frame_path(data_root, model, run, var, fh)
-        frame_meta_path = grid_frame_meta_path(data_root, model, run, var, fh)
+        frame_path = grid_frame_path_for_run_root(run_root, var, fh)
+        frame_meta_path = grid_frame_meta_path_for_run_root(run_root, var, fh)
         value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
-        if not frame_path.is_file() or not value_cog_path.is_file():
+        if not frame_path.is_file():
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -418,6 +462,8 @@ def _build_manifest_for_var(
             if display_prep is None and isinstance(frame_meta.get("display_prep"), dict):
                 display_prep = dict(frame_meta["display_prep"])
         else:
+            if not value_cog_path.is_file():
+                continue
             with rasterio.open(value_cog_path) as ds:
                 expected_size_bytes = expected_grid_frame_size_bytes(width=int(ds.width), height=int(ds.height))
                 actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
@@ -480,8 +526,35 @@ def _build_manifest_for_var(
     }
     if display_prep:
         manifest["display_prep"] = display_prep
-    write_json_atomic(grid_manifest_path(data_root, model, run, var), manifest)
+    write_json_atomic(grid_manifest_path_for_run_root(run_root, var), manifest)
     return True
+
+
+def build_grid_manifests_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    run: str,
+    variables: tuple[str, ...] | None = None,
+) -> int:
+    run_root_path = Path(run_root)
+    if not run_root_path.is_dir():
+        return 0
+
+    requested_vars = {str(item).strip().lower() for item in (variables or ()) if str(item).strip()}
+    manifest_ok = 0
+    for var_dir in sorted(path for path in run_root_path.iterdir() if path.is_dir()):
+        var = var_dir.name.strip().lower()
+        if requested_vars and var not in requested_vars:
+            continue
+        if not grid_supported(model, var):
+            continue
+        try:
+            if _build_manifest_for_var_from_run_root(run_root=run_root_path, model=model, run=run, var=var):
+                manifest_ok += 1
+        except Exception:
+            logger.exception("grid manifest build failed: model=%s run=%s var=%s", model, run, var)
+    return manifest_ok
 
 
 def build_grid_for_run(
@@ -497,7 +570,7 @@ def build_grid_for_run(
         return 0, 0, 0
 
     requested_vars = {str(item).strip().lower() for item in (variables or ()) if str(item).strip()}
-    jobs: list[tuple[str, int, Path, Path]] = []
+    jobs: list[tuple[str, int, Path]] = []
     manifest_vars: set[str] = set()
 
     for var_dir in sorted(path for path in published_run.iterdir() if path.is_dir()):
@@ -525,8 +598,7 @@ def build_grid_for_run(
             sidecar_path = var_dir / f"{fh_token}.json"
             if not sidecar_path.is_file():
                 continue
-            out_path = grid_frame_path(data_root, model, run, var, fh)
-            jobs.append((var, fh, value_cog_path, out_path))
+            jobs.append((var, fh, value_cog_path))
 
     if not jobs:
         return 0, 0, 0
@@ -537,16 +609,14 @@ def build_grid_for_run(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(
-                _write_frame_from_value_cog,
-                data_root=data_root,
+                write_grid_frame_from_value_cog_for_run_root,
+                run_root=published_run,
                 model=model,
-                run=run,
                 var=var,
                 fh=fh,
                 value_cog_path=value_cog_path,
-                out_path=out_path,
             )
-            for var, fh, value_cog_path, out_path in jobs
+            for var, fh, value_cog_path in jobs
         ]
         for future in concurrent.futures.as_completed(futures):
             try:
@@ -557,12 +627,11 @@ def build_grid_for_run(
                 continue
             ok += 1
 
-    manifest_ok = 0
-    for var in sorted(manifest_vars):
-        try:
-            if _build_manifest_for_var(data_root=data_root, model=model, run=run, var=var):
-                manifest_ok += 1
-        except Exception:
-            logger.exception("grid manifest build failed for model=%s run=%s var=%s", model, run, var)
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=published_run,
+        model=model,
+        run=run,
+        variables=tuple(sorted(manifest_vars)),
+    )
 
     return ok, fail, manifest_ok

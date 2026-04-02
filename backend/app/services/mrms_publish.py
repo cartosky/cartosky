@@ -14,7 +14,7 @@ import numpy as np
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from app.config import grid_build_enabled, grid_workers
+from app.config import grid_build_enabled
 from app.models.mrms import MRMS_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import (
@@ -34,7 +34,11 @@ from app.services.publish_utils import (
     write_latest_pointer,
     write_run_manifest,
 )
-from app.services.grid import build_grid_for_run
+from app.services.grid import (
+    build_grid_manifests_for_run_root,
+    write_grid_frame_for_run_root,
+    write_grid_frame_from_value_cog_for_run_root,
+)
 from app.services.run_ids import format_run_id
 
 logger = logging.getLogger(__name__)
@@ -244,6 +248,18 @@ def publish_mrms_bundle(
         else len(ordered_valid_times)
     )
 
+    if grid_build_enabled():
+        try:
+            manifest_ok = build_grid_manifests_for_run_root(
+                run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                model=MRMS_MODEL_ID,
+                run=run_id,
+                variables=(MRMS_VARIABLE_ID,),
+            )
+            logger.info("MRMS grid manifest build: run=%s manifests=%d", run_id, manifest_ok)
+        except Exception:
+            logger.exception("MRMS grid manifest build failed: run=%s", run_id)
+
     promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
     write_run_manifest(
         data_root=data_root,
@@ -274,25 +290,6 @@ def publish_mrms_bundle(
         ),
     )
     write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
-
-    if grid_build_enabled():
-        try:
-            grid_ok, grid_fail, manifest_ok = build_grid_for_run(
-                data_root=data_root,
-                model=MRMS_MODEL_ID,
-                run=run_id,
-                workers=grid_workers(),
-                variables=(MRMS_VARIABLE_ID,),
-            )
-            logger.info(
-                "MRMS grid build: run=%s frame_success=%d frame_failed=%d manifests=%d",
-                run_id,
-                grid_ok,
-                grid_fail,
-                manifest_ok,
-            )
-        except Exception:
-            logger.exception("MRMS grid build failed: run=%s", run_id)
 
     manifest_path = data_root / "manifests" / MRMS_MODEL_ID / f"{run_id}.json"
     published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id
@@ -365,6 +362,15 @@ def write_mrms_frame(
     if source_metadata:
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
+    if grid_build_enabled():
+        write_grid_frame_for_run_root(
+            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+            model=MRMS_MODEL_ID,
+            var=MRMS_VARIABLE_ID,
+            fh=int(forecast_hour),
+            values=values,
+            transform=_target_grid_transform(),
+        )
 
 
 def reuse_mrms_frame(
@@ -394,6 +400,14 @@ def reuse_mrms_frame(
         source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
+    if grid_build_enabled():
+        write_grid_frame_from_value_cog_for_run_root(
+            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+            model=MRMS_MODEL_ID,
+            var=MRMS_VARIABLE_ID,
+            fh=int(forecast_hour),
+            value_cog_path=value_path,
+        )
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:
@@ -429,6 +443,12 @@ def _expected_target_shape() -> tuple[int, int]:
     bbox, grid_m = get_grid_params(MRMS_MODEL_ID, MRMS_REGION_ID)
     _, height, width = compute_transform_and_shape(bbox, grid_m)
     return int(height), int(width)
+
+
+def _target_grid_transform() -> Affine:
+    bbox, grid_m = get_grid_params(MRMS_MODEL_ID, MRMS_REGION_ID)
+    transform, _, _ = compute_transform_and_shape(bbox, grid_m)
+    return transform
 
 
 def _warp_frame_to_target_grid(values: np.ndarray, *, frame: MRMSBundleFrame) -> np.ndarray:
