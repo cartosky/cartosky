@@ -71,7 +71,9 @@ const MapLegend = lazy(() =>
 
 const AUTOPLAY_TICK_MS = 250;
 const AUTOPLAY_READY_AHEAD = 2;
-const AUTOPLAY_SKIP_WINDOW = 3;
+const AUTOPLAY_SKIP_WINDOW = 8;
+/** Stall time before the loop attempts to skip ahead to a ready frame. */
+const AUTOPLAY_STALL_SKIP_MS = 500;
 const GRID_PLAY_START_AHEAD_FRAMES = 2;
 const GRID_PLAY_STALL_MS = 1500;
 const FRAME_STATUS_BADGE_MS = 900;
@@ -2533,12 +2535,33 @@ export default function App() {
         const nextHour = gridFrameHours[nextIndex];
         const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
         if (isGridFrameReady(nextUrl)) {
-          accumulatedMs -= AUTOPLAY_TICK_MS;
-          gridPlaybackHourRef.current = nextHour;
-          setTargetForecastHour(nextHour);
-          // Reset stall tracker on successful advance.
-          stallMs = 0;
-          stalledOnIndex = -1;
+          // Look-ahead: only advance if the next AUTOPLAY_READY_AHEAD frames
+          // beyond this one are also ready (or we're near the end).  This
+          // prevents advancing into a gap that will immediately stall.
+          let aheadReady = true;
+          const lookAheadEnd = Math.min(nextIndex + AUTOPLAY_READY_AHEAD, gridFrameHours.length - 1);
+          for (let li = nextIndex + 1; li <= lookAheadEnd; li++) {
+            const laHour = gridFrameHours[li];
+            const laUrl = String(gridFrameByHour.get(laHour)?.url ?? "").trim();
+            if (!isGridFrameReady(laUrl)) {
+              aheadReady = false;
+              break;
+            }
+          }
+
+          if (aheadReady || stallMs > 0) {
+            // Advance: either the look-ahead is satisfied, or we've already
+            // stalled on this frame and should take what we can get.
+            accumulatedMs -= AUTOPLAY_TICK_MS;
+            gridPlaybackHourRef.current = nextHour;
+            setTargetForecastHour(nextHour);
+            // Reset stall tracker on successful advance.
+            stallMs = 0;
+            stalledOnIndex = -1;
+            break;
+          }
+          // Look-ahead not satisfied and not yet stalled — wait for
+          // prefetch to catch up before advancing.
           break;
         }
 
@@ -2550,7 +2573,7 @@ export default function App() {
         stallMs += deltaMs;
 
         // After stalling long enough, try skipping ahead within a window.
-        if (stallMs >= AUTOPLAY_TICK_MS * 3) {
+        if (stallMs >= AUTOPLAY_STALL_SKIP_MS) {
           const maxStep = Math.min(AUTOPLAY_SKIP_WINDOW, gridFrameHours.length - 1 - currentIndex);
           for (let step = 2; step <= maxStep; step += 1) {
             const candidateHour = gridFrameHours[currentIndex + step];
@@ -2779,6 +2802,17 @@ export default function App() {
       return;
     }
     gridReadyFrameUrlsRef.current.add(normalized);
+    setGridReadyVersion((current) => current + 1);
+  }, [normalizeGridFrameUrl]);
+  const handleGridFrameEvicted = useCallback((frameUrl: string) => {
+    const normalized = normalizeGridFrameUrl(frameUrl);
+    if (!normalized) {
+      return;
+    }
+    if (!gridReadyFrameUrlsRef.current.has(normalized)) {
+      return;
+    }
+    gridReadyFrameUrlsRef.current.delete(normalized);
     setGridReadyVersion((current) => current + 1);
   }, [normalizeGridFrameUrl]);
 
@@ -3281,6 +3315,7 @@ export default function App() {
           basemapMode={basemapMode}
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
+          onGridFrameEvicted={handleGridFrameEvicted}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}

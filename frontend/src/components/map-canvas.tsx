@@ -56,6 +56,12 @@ type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 
 const OBSERVED_GRID_SCRUB_AHEAD_PREFETCH = 24;
 const OBSERVED_GRID_SCRUB_BEHIND_PREFETCH = 6;
+/** Total prefetch budget for forecast scrub (ahead + behind). */
+const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
+/** Minimum behind-direction slots during forecast scrub. */
+const FORECAST_SCRUB_MIN_BEHIND = 1;
+/** Minimum ahead-direction slots during forecast scrub. */
+const FORECAST_SCRUB_MIN_AHEAD = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
 const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
@@ -538,6 +544,7 @@ type MapCanvasProps = {
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
+  onGridFrameEvicted?: (frameUrl: string) => void;
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
@@ -567,6 +574,7 @@ export function MapCanvas({
   onViewportChange,
   onGridFrameVisible,
   onGridFrameReady,
+  onGridFrameEvicted,
   onMapReady,
   onMapHover,
   onMapHoverEnd,
@@ -584,6 +592,9 @@ export function MapCanvas({
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
   const anchorHoverLeaveTimeoutRef = useRef<number | null>(null);
+  const prevGridFrameHourRef = useRef<number | null>(null);
+  /** Detected scrub direction: 1 = forward, -1 = backward, 0 = unknown. */
+  const scrubDirectionRef = useRef<1 | -1 | 0>(0);
   const onMapReadyRef = useRef(onMapReady);
   onMapReadyRef.current = onMapReady;
   const onViewportChangeRef = useRef(onViewportChange);
@@ -618,19 +629,51 @@ export function MapCanvas({
       return [] as string[];
     }
 
+    // Track scrub direction from frame-to-frame movement.
+    const prevHour = prevGridFrameHourRef.current;
+    const currentHour = Number(gridFrameHour);
+    if (prevHour !== null && Number.isFinite(prevHour) && prevHour !== currentHour) {
+      scrubDirectionRef.current = currentHour > prevHour ? 1 : -1;
+    }
+    prevGridFrameHourRef.current = currentHour;
+
     const urls: string[] = [];
     const remainingAhead = Math.max(0, frameHours.length - 1 - pivot);
     const remainingBehind = Math.max(0, pivot);
-    const aheadTarget = mode === "autoplay"
-      ? Math.min(remainingAhead, 8)
-      : mode === "variable-switch"
-        ? Math.min(remainingAhead, 6)
-        : Math.min(remainingAhead, isObservedGrid ? OBSERVED_GRID_SCRUB_AHEAD_PREFETCH : 4);
-    const behindTarget = mode === "autoplay"
-      ? Math.min(remainingBehind, 2)
-      : mode === "variable-switch"
-        ? Math.min(remainingBehind, 2)
-        : Math.min(remainingBehind, isObservedGrid ? OBSERVED_GRID_SCRUB_BEHIND_PREFETCH : 1);
+
+    let aheadTarget: number;
+    let behindTarget: number;
+
+    if (mode === "autoplay") {
+      aheadTarget = Math.min(remainingAhead, 8);
+      behindTarget = Math.min(remainingBehind, 2);
+    } else if (mode === "variable-switch") {
+      aheadTarget = Math.min(remainingAhead, 6);
+      behindTarget = Math.min(remainingBehind, 2);
+    } else if (isObservedGrid) {
+      aheadTarget = Math.min(remainingAhead, OBSERVED_GRID_SCRUB_AHEAD_PREFETCH);
+      behindTarget = Math.min(remainingBehind, OBSERVED_GRID_SCRUB_BEHIND_PREFETCH);
+    } else {
+      // Adaptive forecast scrub prefetch: direction-aware window within a
+      // fixed total budget.  When the user is scrubbing forward, bias ahead;
+      // when scrubbing backward, bias behind; when idle/unknown, split evenly.
+      const budget = FORECAST_SCRUB_PREFETCH_BUDGET;
+      const direction = scrubDirectionRef.current;
+      if (direction > 0) {
+        // Forward: most of the budget goes ahead.
+        behindTarget = Math.min(remainingBehind, FORECAST_SCRUB_MIN_BEHIND);
+        aheadTarget = Math.min(remainingAhead, budget - behindTarget);
+      } else if (direction < 0) {
+        // Backward: most of the budget goes behind.
+        aheadTarget = Math.min(remainingAhead, FORECAST_SCRUB_MIN_AHEAD);
+        behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+      } else {
+        // Unknown: split the budget evenly, slight forward bias.
+        const halfBudget = Math.floor(budget / 2);
+        aheadTarget = Math.min(remainingAhead, halfBudget + 1);
+        behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+      }
+    }
 
     const normalizeGridUrl = (rawUrl: string): string => {
       if (!rawUrl) {
@@ -1081,6 +1124,7 @@ export function MapCanvas({
       rasterPaint: getGridPaintSettings(variable, basemapMode),
       onFrameVisible: onGridFrameVisible,
       onFrameReady: onGridFrameReady,
+      onFrameEvicted: onGridFrameEvicted,
     });
     enforceLayerOrder(map);
   }, [
@@ -1093,6 +1137,7 @@ export function MapCanvas({
     gridManifest,
     gridPrefetchUrls,
     isLoaded,
+    onGridFrameEvicted,
     onGridFrameReady,
     onGridFrameVisible,
     opacity,

@@ -47,6 +47,7 @@ export type GridWebglLayerConfig = {
   rasterPaint?: GridRasterPaint | null;
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
   onFrameReady?: ((frameUrl: string) => void) | null;
+  onFrameEvicted?: ((frameUrl: string) => void) | null;
 };
 
 function mercatorXFromMeters(x: number): number {
@@ -392,12 +393,14 @@ export class GridWebglLayerController {
   private prefetchUrls: string[] = [];
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
+  private onFrameEvicted: ((frameUrl: string) => void) | null = null;
   private frameCache = new Map<string, CachedFrame>();
   private frameCacheBytes = 0;
   private invalidFrameUrls = new Set<string>();
   private textureCache = new Map<string, CachedTexture>();
   private textureCacheBytes = 0;
   private frameFetches = new Map<string, Promise<Uint8Array<ArrayBufferLike> | null>>();
+  private frameFetchAbortControllers = new Map<string, AbortController>();
   private textureWarmQueue: string[] = [];
   private textureWarmQueued = new Set<string>();
   private textureWarmRafId: number | null = null;
@@ -460,11 +463,35 @@ export class GridWebglLayerController {
     map.addLayer(this.createLayer(), resolvedBeforeId);
   }
 
+  /**
+   * Query live cache state for a frame URL.
+   * Returns "texture" if the GPU texture is hot, "bytes" if only the raw
+   * frame bytes are cached (texture upload still needed), or "none" if
+   * the frame must be fetched from the network.
+   */
+  isFrameAvailable(frameUrl: string | null | undefined): "texture" | "bytes" | "none" {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized || this.invalidFrameUrls.has(normalized)) {
+      return "none";
+    }
+    if (this.textureCache.has(normalized)) {
+      return "texture";
+    }
+    if (this.frameCache.has(normalized)) {
+      return "bytes";
+    }
+    return "none";
+  }
+
   update(config: GridWebglLayerConfig) {
     if (config.selectionKey !== this.selectionKey) {
       this.invalidFrameUrls.clear();
       this.textureWarmQueue = [];
       this.textureWarmQueued.clear();
+      // Abort all in-flight fetches for the previous selection.
+      for (const controller of this.frameFetchAbortControllers.values()) {
+        controller.abort();
+      }
     }
     this.active = config.active;
     this.manifest = config.manifest;
@@ -478,6 +505,7 @@ export class GridWebglLayerController {
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
+    this.onFrameEvicted = config.onFrameEvicted ?? null;
     if (this.legend !== config.legend) {
       this.legend = config.legend;
       this.rebuildLegendTexture();
@@ -958,7 +986,9 @@ export class GridWebglLayerController {
     if (inFlight) {
       return inFlight;
     }
-    const request = fetch(frameUrl, { credentials: "omit" })
+    const abortController = new AbortController();
+    this.frameFetchAbortControllers.set(frameUrl, abortController);
+    const request = fetch(frameUrl, { credentials: "omit", signal: abortController.signal })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Grid frame request failed: ${response.status}`);
@@ -968,9 +998,15 @@ export class GridWebglLayerController {
         this.onFrameReady?.(frameUrl);
         return bytes;
       })
-      .catch(() => null)
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return null;
+        }
+        return null;
+      })
       .finally(() => {
         this.frameFetches.delete(frameUrl);
+        this.frameFetchAbortControllers.delete(frameUrl);
       });
     this.frameFetches.set(frameUrl, request);
     return request;
@@ -1002,6 +1038,10 @@ export class GridWebglLayerController {
       }
       this.frameCache.delete(lruKey);
       this.frameCacheBytes -= evicted.bytes.byteLength;
+      // Notify that this frame is no longer available in any cache.
+      if (!this.textureCache.has(lruKey)) {
+        this.onFrameEvicted?.(lruKey);
+      }
     }
   }
 
@@ -1033,10 +1073,20 @@ export class GridWebglLayerController {
       this.textureCache.delete(lruKey);
       this.textureCacheBytes -= evicted.bytes;
       this.gl?.deleteTexture(evicted.texture);
+      // If both caches have lost this URL, notify that it is no longer available.
+      if (!this.frameCache.has(lruKey)) {
+        this.onFrameEvicted?.(lruKey);
+      }
     }
   }
 
   private pruneTextureWarmQueue(desiredUrls: Set<string>) {
+    // Abort in-flight fetches for URLs that are no longer in the desired set.
+    for (const [fetchUrl, controller] of this.frameFetchAbortControllers) {
+      if (!desiredUrls.has(fetchUrl) && !this.textureCache.has(fetchUrl) && !this.frameCache.has(fetchUrl)) {
+        controller.abort();
+      }
+    }
     this.textureWarmQueue = this.textureWarmQueue.filter((candidate) => desiredUrls.has(candidate));
     this.textureWarmQueued = new Set(this.textureWarmQueue);
   }
@@ -1233,6 +1283,11 @@ export class GridWebglLayerController {
     if (this.textureWarmRafId !== null && typeof window !== "undefined") {
       window.cancelAnimationFrame(this.textureWarmRafId);
     }
+    // Abort all in-flight frame fetches.
+    for (const controller of this.frameFetchAbortControllers.values()) {
+      controller.abort();
+    }
+    this.frameFetchAbortControllers.clear();
     this.program = null;
     this.bindings = null;
     this.vertexBuffer = null;
