@@ -27,6 +27,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from opentelemetry.trace import SpanKind
 from PIL import Image, ImageFilter
@@ -411,6 +412,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=cors_allow_headers,
 )
+# GZip-compress responses >= 1 KB.  Critical for grid binary frames (.u16.bin)
+# which are ~72 MB raw but highly compressible (mostly nodata sentinels).
+# Starlette automatically skips responses that already carry Content-Encoding
+# (e.g. pre-compressed boundary MVT tiles), so no interference with existing
+# endpoints.  Added *after* CORSMiddleware so it wraps the outermost layer.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 
 def _prometheus_route_label(request: Request) -> str:
