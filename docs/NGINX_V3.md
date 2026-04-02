@@ -4,7 +4,7 @@
 
 - `cartosky.com`: primary frontend
 - `www.cartosky.com`: redirect or alias to primary frontend
-- `api.cartosky.com`: API edge, OAuth callback, tiles
+- `api.cartosky.com`: API edge, OAuth callback, boundary tiles
 - `api.theweathermodels.com`: optional legacy redirect or temporary compatibility edge
 
 ## Route split
@@ -28,7 +28,7 @@
 - `/api/v4/*` → API upstream `http://127.0.0.1:8200`
 - `/api/regions` → API upstream `http://127.0.0.1:8200`
 - `/loop/*` → static loop cache alias `/opt/cartosky/data/loop_cache/`
-- `/tiles/v3/*` → tile server upstream `http://127.0.0.1:8201`
+- `/tiles/v3/*` → API upstream `http://127.0.0.1:8200`
 
 ## Recommended CartoSky layout
 
@@ -36,9 +36,7 @@ Use these runtime paths for CartoSky:
 
 - `/opt/cartosky/`
 - `/etc/cartosky/api.env`
-- `/etc/cartosky/tile-server.env`
 - `csky-api.service`
-- `csky-tile-server.service`
 
 ### Recommended filesystem layout
 
@@ -185,7 +183,7 @@ server {
   }
 
   location ^~ /tiles/v3/ {
-    proxy_pass http://127.0.0.1:8201;
+    proxy_pass http://127.0.0.1:8200;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -294,7 +292,7 @@ These must also be updated or the new hostnames will not work correctly.
   - `FRONTEND_RETURN=https://cartosky.com`
   - `CORS_ORIGINS=https://cartosky.com,https://www.cartosky.com`
   - `R2_PUBLIC_BASE=https://cdn.cartosky.com`
-- `/etc/cartosky/tile-server.env`
+  - `CARTOSKY_BOUNDARIES_MBTILES=/opt/cartosky/data/boundaries/v1/cartosky_boundaries.mbtiles`
   - `CARTOSKY_TILES_PUBLIC_BASE_URL=https://api.cartosky.com`
 
 ### Scheduler env files
@@ -314,6 +312,12 @@ Leave them alone unless you are intentionally changing:
 - data root paths
 - worker counts
 - model build settings
+
+After this boundary migration cutover, the standalone `csky-tile-server.service` is no longer needed. Once nginx is pointing `/tiles/v3/*` at port `8200` and boundary TileJSON is verified, disable the old service:
+
+```bash
+sudo systemctl disable --now csky-tile-server
+```
 
 ## Deploy commands
 

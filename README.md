@@ -1,28 +1,24 @@
 # The Weather Models (TWM)
 
-A weather model tile pipeline and interactive map viewer. The system ingests GRIB2 output from NWP models (HRRR, optionally GFS/NAM), produces Cloud Optimized GeoTIFF (COG) artifacts, and serves them through a tile API and an animated loop frontend.
+A weather model pipeline and interactive map viewer. The system ingests GRIB2 output from NWP models (HRRR, optionally GFS/NAM), produces Cloud Optimized GeoTIFF (COG) artifacts plus packed grid frames, and serves them through the main API and a grid-rendered frontend.
 
 ## Architecture
 
 ```
-Scheduler ──► Builder pipeline ──► Published COGs
+Scheduler ──► Builder pipeline ──► Published artifacts
                                         │
                               ┌─────────┴─────────┐
-                         Tile Server           API Server
-                       (PNG tiles,           (discovery,
-                        boundaries)           sampling)
-                              └─────────┬─────────┘
-                                    Frontend
-                                 (MapLibre GL,
-                                  WebP loop / live tiles)
+                              API Server      Frontend
+                         (discovery, grid,   (MapLibre GL,
+                          sampling,            WebGL weather,
+                          boundaries)          boundary vectors)
 ```
 
-Four deployable components:
+Three deployable components:
 
 | Component | Entry point | Default port |
 |-----------|-------------|--------------|
 | API server | `backend.app.main:app` | 8200 |
-| Tile server | `backend.app.services.tile_server:app` | 8201 |
 | Scheduler | `python -m app.services.scheduler` | — |
 | Frontend | Vite dev server / static build | 5173 |
 
@@ -63,7 +59,7 @@ Run manifests live at `$CARTOSKY_DATA_ROOT/manifests/{model}/{region}/{run_id}.j
 - Python ≥ 3.11
 - GDAL (system-level, required by `rasterio`)
 - Node.js ≥ 20 (frontend only)
-- An MBTiles file for vector boundary tiles (tile server)
+- An MBTiles file for vector boundary tiles
 
 ## Backend Setup
 
@@ -82,18 +78,12 @@ pip install -r backend/requirements-dev.txt
 ## Running the Services
 
 > [!NOTE]
-> All three processes read from the same `CARTOSKY_DATA_ROOT`. Point them at the same data directory.
+> The API and scheduler read from the same `CARTOSKY_DATA_ROOT`. Point them at the same data directory.
 
 **API server:**
 
 ```bash
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8200
-```
-
-**Tile server:**
-
-```bash
-uvicorn backend.app.services.tile_server:app --host 127.0.0.1 --port 8201 --workers 3
 ```
 
 **Scheduler** (polls for new HRRR runs, builds COGs, pre-generates loop WebP):
@@ -134,11 +124,10 @@ Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on
 | `CARTOSKY_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
 | `CARTOSKY_SAMPLE_RATE_LIMIT_MAX_REQUESTS` | `240` | Max sampling requests per window |
 
-### Tile server (`/etc/cartosky/tile-server.env`)
+### Boundary tiles (`/etc/cartosky/api.env`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
 | `CARTOSKY_BOUNDARIES_MBTILES` | — | Path to boundaries MBTiles file |
 | `CARTOSKY_BOUNDARIES_TILESET_ID` | `cartosky-boundaries-v1` | TileJSON id |
 | `CARTOSKY_BOUNDARIES_TILESET_NAME` | `CartoSky Boundaries v1` | TileJSON name |
@@ -226,12 +215,6 @@ Example: the health endpoint is `GET /api/v4/health`.
 3. `GET /api/v4/{model}/{run}/vars` is manifest-driven and only returns published vars for that run.
 4. `GET /api/v4/{model}/{run}/{var}/frames` returns `[]` when the var is not published for that run.
 
-**Tile URL pattern** (tile server at port 8201):
-
-```
-/tiles/v3/{model}/{run}/{var}/{fh}/{z}/{x}/{y}.png
-```
-
 **Vector boundary MVT tiles:**
 
 ```
@@ -259,15 +242,14 @@ cp deployment/systemd/scheduler.env.example     /etc/cartosky/scheduler.env
 cp deployment/systemd/scheduler-gfs.env.example /etc/cartosky/scheduler-gfs.env
 cp deployment/systemd/scheduler-nam.env.example /etc/cartosky/scheduler-nam.env
 cp deployment/systemd/scheduler-nbm.env.example /etc/cartosky/scheduler-nbm.env
-cp deployment/systemd/tile-server.env.example   /etc/cartosky/tile-server.env
 ```
 
-Services expect the virtualenv at `/opt/cartosky/.venv` and the project at `/opt/cartosky/`. The tile server should sit behind an nginx reverse proxy; see `docs/NGINX_V3.md` for a recommended configuration.
+Services expect the virtualenv at `/opt/cartosky/.venv` and the project at `/opt/cartosky/`. Boundary vector tiles are now served directly by the main API under `/tiles/v3/boundaries/v1/*`; see `docs/NGINX_V3.md` for the recommended nginx routing.
 
 For model schedulers, deploy both units and keep env files isolated per model:
 
 ```bash
-sudo systemctl enable csky-hrrr-scheduler csky-gfs-scheduler csky-nam-scheduler csky-nbm-scheduler csky-api csky-tile-server
+sudo systemctl enable csky-hrrr-scheduler csky-gfs-scheduler csky-nam-scheduler csky-nbm-scheduler csky-api
 ```
 
 ## Adding a New Model

@@ -8,8 +8,11 @@ import httpx
 import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 os.environ.setdefault("TWF_BASE", "https://example.com")
 os.environ.setdefault("TWF_CLIENT_ID", "client-id")

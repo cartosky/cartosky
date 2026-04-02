@@ -4,7 +4,7 @@ This repo now supports a canonical vector tileset for border linework and Great 
 
 ## Runtime endpoints
 
-Served by `backend/app/services/tile_server.py`:
+Served by `backend/app/main.py`:
 
 - `GET /tiles/v3/boundaries/v1/tilejson.json`
 - `GET /tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt`
@@ -62,17 +62,16 @@ The build pipeline applies:
 
 ## Deployment
 
-Set tile server env vars in:
+Set boundary env vars in:
 
-- `deployment/systemd/tile-server.env.example`
+- `deployment/systemd/api.env.example`
 
 Important for browsers: set `CARTOSKY_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
 
-Then restart tile server unit:
+Then restart the main API unit:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart csky-tile-server
+sudo systemctl restart csky-api
 ```
 
 ## Notes

@@ -44,6 +44,14 @@ from .models.serialization import (
     serialize_variable_capability,
 )
 from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
+from .services.boundary_tiles import (
+    BOUNDARIES_MBTILES,
+    BOUNDARY_CACHE_HIT,
+    BOUNDARY_CACHE_MISS,
+    build_boundaries_tilejson,
+    empty_mvt_response,
+    lookup_mbtiles_tile,
+)
 from .services.builder.colorize import float_to_rgba
 from .services.grid_v1 import (
     expected_grid_v1_frame_size_bytes,
@@ -2911,6 +2919,52 @@ def _sample_payload(
 @app.get("/api/v4/health")
 def health_v4():
     return {"ok": True, "data_root": str(DATA_ROOT)}
+
+
+@app.get("/tiles/v3/health")
+def health_tiles_v3():
+    return {
+        "ok": True,
+        "data_root": str(DATA_ROOT),
+        "boundaries_mbtiles": str(BOUNDARIES_MBTILES),
+        "boundaries_mbtiles_exists": BOUNDARIES_MBTILES.is_file(),
+    }
+
+
+@app.get("/tiles/v3/boundaries/v1/tilejson.json")
+def boundaries_tilejson_v3():
+    if not BOUNDARIES_MBTILES.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "boundaries tileset not found",
+                "path": str(BOUNDARIES_MBTILES),
+            },
+        )
+
+    return Response(
+        content=json.dumps(build_boundaries_tilejson()),
+        media_type="application/json",
+        headers={"Cache-Control": BOUNDARY_CACHE_MISS},
+    )
+
+
+@app.get("/tiles/v3/boundaries/v1/{z:int}/{x:int}/{y:int}.mvt")
+def boundaries_tile_v3(z: int, x: int, y: int):
+    tile = lookup_mbtiles_tile(BOUNDARIES_MBTILES, z=z, x=x, y=y)
+    if tile is None:
+        # Expected-empty vector tiles should still be a normal 200 for map clients.
+        return empty_mvt_response(cache_control=BOUNDARY_CACHE_MISS)
+
+    headers = {"Cache-Control": BOUNDARY_CACHE_HIT}
+    if len(tile) >= 2 and tile[0] == 0x1F and tile[1] == 0x8B:
+        headers["Content-Encoding"] = "gzip"
+
+    return Response(
+        content=tile,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers=headers,
+    )
 
 
 @app.get("/api/v4")
