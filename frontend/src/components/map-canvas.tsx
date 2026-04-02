@@ -54,8 +54,6 @@ export type BasemapMode = "light" | "dark";
 
 type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 
-const OBSERVED_GRID_SCRUB_AHEAD_PREFETCH = 24;
-const OBSERVED_GRID_SCRUB_BEHIND_PREFETCH = 6;
 /** Total prefetch budget for forecast scrub (ahead + behind). */
 const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
 /** Minimum behind-direction slots during forecast scrub. */
@@ -645,15 +643,23 @@ export function MapCanvas({
     let aheadTarget: number;
     let behindTarget: number;
 
-    if (mode === "autoplay") {
+    if (isObservedGrid) {
+      // Observed grids (MRMS): prefetch the *entire* timeline, ordered
+      // outward from the current frame so the nearest neighbors arrive
+      // first (progressive prefetch).  During autoplay bias forward.
+      if (mode === "autoplay") {
+        aheadTarget = remainingAhead;
+        behindTarget = Math.min(remainingBehind, 2);
+      } else {
+        aheadTarget = remainingAhead;
+        behindTarget = remainingBehind;
+      }
+    } else if (mode === "autoplay") {
       aheadTarget = Math.min(remainingAhead, 8);
       behindTarget = Math.min(remainingBehind, 2);
     } else if (mode === "variable-switch") {
       aheadTarget = Math.min(remainingAhead, 6);
       behindTarget = Math.min(remainingBehind, 2);
-    } else if (isObservedGrid) {
-      aheadTarget = Math.min(remainingAhead, OBSERVED_GRID_SCRUB_AHEAD_PREFETCH);
-      behindTarget = Math.min(remainingBehind, OBSERVED_GRID_SCRUB_BEHIND_PREFETCH);
     } else {
       // Adaptive forecast scrub prefetch: direction-aware window within a
       // fixed total budget.  When the user is scrubbing forward, bias ahead;
@@ -692,13 +698,6 @@ export function MapCanvas({
         urls.push(url);
       }
     };
-
-    if (isObservedGrid) {
-      for (const hour of frameHours) {
-        pushFrameUrl(hour);
-      }
-      return urls;
-    }
 
     // Push direction-of-travel frames first so they receive higher priority
     // in the downstream texture warm queue.  During backward scrub the
