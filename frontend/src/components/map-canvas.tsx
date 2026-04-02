@@ -543,6 +543,7 @@ type MapCanvasProps = {
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
+  isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
@@ -573,6 +574,7 @@ export function MapCanvas({
   onGridFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
+  isAnimating = false,
   onMapReady,
   onMapHover,
   onMapHoverEnd,
@@ -1143,6 +1145,7 @@ export function MapCanvas({
       onFrameVisible: onGridFrameVisible,
       onFrameReady: onGridFrameReady,
       onFrameEvicted: onGridFrameEvicted,
+      isAnimating,
     });
   }, [
     basemapMode,
@@ -1152,6 +1155,7 @@ export function MapCanvas({
     gridLegend,
     gridManifest,
     gridPrefetchUrls,
+    isAnimating,
     isLoaded,
     onGridFrameEvicted,
     onGridFrameReady,

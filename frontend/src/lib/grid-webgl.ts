@@ -45,6 +45,9 @@ export type GridWebglLayerConfig = {
   selectionKey: string;
   prefetchUrls?: string[];
   rasterPaint?: GridRasterPaint | null;
+  /** When true, the controller deprioritizes background texture warming to
+   *  avoid competing with the animation/scrub for main-thread and GPU time. */
+  isAnimating?: boolean;
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
   onFrameReady?: ((frameUrl: string) => void) | null;
   onFrameEvicted?: ((frameUrl: string) => void) | null;
@@ -391,6 +394,7 @@ export class GridWebglLayerController {
   private selectionEpoch = 0;
   private selectionKey = "";
   private prefetchUrls: string[] = [];
+  private animating = false;
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private onFrameEvicted: ((frameUrl: string) => void) | null = null;
@@ -503,6 +507,7 @@ export class GridWebglLayerController {
     this.selectionEpoch = config.selectionEpoch;
     this.selectionKey = config.selectionKey;
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
+    this.animating = config.isAnimating ?? false;
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
     this.onFrameEvicted = config.onFrameEvicted ?? null;
@@ -1124,9 +1129,12 @@ export class GridWebglLayerController {
   }
 
   private async pumpTextureWarmQueue() {
+    // During animation/scrub, limit to a single texture upload per tick to
+    // keep the main thread and GPU free for the frame the user actually sees.
+    const effectiveBatchSize = this.animating ? 1 : this.textureWarmBatchSize();
+
     const batch: string[] = [];
-    const batchSize = this.textureWarmBatchSize();
-    while (this.textureWarmQueue.length > 0 && batch.length < batchSize) {
+    while (this.textureWarmQueue.length > 0 && batch.length < effectiveBatchSize) {
       const nextUrl = this.textureWarmQueue.shift() ?? "";
       this.textureWarmQueued.delete(nextUrl);
       if (!nextUrl || this.invalidFrameUrls.has(nextUrl) || this.textureCache.has(nextUrl)) {

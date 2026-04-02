@@ -1905,20 +1905,11 @@ export default function App() {
 
       setScrubRequestedHour(requestedHour);
       pendingScrubHourRef.current = requestedHour;
-      if (scrubRafRef.current !== null) {
-        return;
-      }
 
-      scrubRafRef.current = window.requestAnimationFrame(() => {
-        scrubRafRef.current = null;
-        const latestRequestedHour = pendingScrubHourRef.current;
-        if (!Number.isFinite(latestRequestedHour)) {
-          return;
-        }
-        const requested = latestRequestedHour as number;
-        const nextGridHour = snapHour(requested);
-        setTargetForecastHour(nextGridHour);
-      });
+      // Apply the scrub immediately — the slider already throttles at ~48ms,
+      // so an additional rAF coalesce just adds latency.
+      const nextGridHour = snapHour(requestedHour);
+      setTargetForecastHour(nextGridHour);
     },
     [gridFrameHours, selectableFrameHours]
   );
@@ -2643,6 +2634,10 @@ export default function App() {
     let stallMs = 0;
     /** Index of the frame we're stalled on, to reset the counter on advance. */
     let stalledOnIndex = -1;
+    /** Tracks time spent waiting for look-ahead frames when the next frame IS ready. */
+    let lookAheadWaitMs = 0;
+    /** Maximum time (ms) to wait for look-ahead frames before advancing anyway. */
+    const LOOKAHEAD_GRACE_MS = 200;
 
     const tick = (now: number) => {
       const currentHour = gridPlaybackHourRef.current
@@ -2686,23 +2681,26 @@ export default function App() {
             }
           }
 
-          if (aheadReady || stallMs > 0) {
-            // Advance: either the look-ahead is satisfied, or we've already
-            // stalled on this frame and should take what we can get.
+          if (aheadReady || stallMs > 0 || lookAheadWaitMs >= LOOKAHEAD_GRACE_MS) {
+            // Advance: the look-ahead is satisfied, we already stalled on an
+            // unready frame, or we've waited long enough for look-ahead.
             accumulatedMs -= AUTOPLAY_TICK_MS;
             gridPlaybackHourRef.current = nextHour;
             setTargetForecastHour(nextHour);
-            // Reset stall tracker on successful advance.
+            // Reset stall trackers on successful advance.
             stallMs = 0;
             stalledOnIndex = -1;
+            lookAheadWaitMs = 0;
             break;
           }
-          // Look-ahead not satisfied and not yet stalled — wait for
-          // prefetch to catch up before advancing.
+          // Look-ahead not satisfied — accumulate wait time but don't block
+          // indefinitely.  After LOOKAHEAD_GRACE_MS the next tick will advance.
+          lookAheadWaitMs += deltaMs;
           break;
         }
 
-        // Next frame isn't ready — accumulate stall time and attempt skip.
+        // Next frame isn't ready — reset look-ahead wait and accumulate stall time.
+        lookAheadWaitMs = 0;
         if (stalledOnIndex !== nextIndex) {
           stalledOnIndex = nextIndex;
           stallMs = 0;
@@ -3453,6 +3451,7 @@ export default function App() {
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
+          isAnimating={isPlaying || isScrubbing}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}
