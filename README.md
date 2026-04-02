@@ -48,9 +48,11 @@ Each published run contains per-forecast-hour files in `$CARTOSKY_DATA_ROOT/publ
 
 | File | Format | Description |
 |---|---|---|
-| `fhNNN.rgba.cog.tif` | 4-band uint8 COG, EPSG:3857 | Pre-rendered RGBA tile source |
-| `fhNNN.val.cog.tif` | 1-band float32 COG, 4× downsampled | Raw values for hover sampling |
+| `fhNNN.val.cog.tif` | 1-band float32 COG | Raw values for hover sampling and backend analysis |
 | `fhNNN.json` | JSON sidecar | `contract_version`, `model`, `region`, `run`, `var`, `fh`, `valid_time`, `units`, `kind` |
+| `grid_v1/fhNNN.l0.u16.bin` | Packed uint16 binary frame | Primary weather rendering artifact |
+| `grid_v1/fhNNN.l0.meta.json` | JSON frame metadata | Grid packing metadata |
+| `grid_v1/manifest.json` | JSON grid manifest | Grid frame index and display contract |
 
 Run manifests live at `$CARTOSKY_DATA_ROOT/manifests/{model}/{region}/{run_id}.json`.
 
@@ -86,7 +88,7 @@ pip install -r backend/requirements-dev.txt
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8200
 ```
 
-**Scheduler** (polls for new HRRR runs, builds COGs, pre-generates loop WebP):
+**Scheduler** (polls for new runs and builds value/grid artifacts):
 
 ```bash
 cd backend
@@ -102,8 +104,6 @@ npm run dev        # dev server on :5173
 npm run build      # production build → frontend/dist/
 ```
 
-Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on by default).
-
 ## Environment Variables
 
 ### API server (`/etc/cartosky/api.env`)
@@ -111,14 +111,6 @@ Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on
 | Variable | Default | Description |
 |---|---|---|
 | `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
-| `CARTOSKY_LOOP_CACHE_ROOT` | `./data/loop_cache` | Loop WebP cache directory |
-| `CARTOSKY_LOOP_URL_PREFIX` | `/loop/` | URL prefix emitted for pre-generated loop assets |
-| `CARTOSKY_LOOP_WEBP_QUALITY` | `82` | Tier 0 WebP quality (0–100) |
-| `CARTOSKY_LOOP_WEBP_MAX_DIM` | `2300` | Tier 0 max dimension (px) |
-| `CARTOSKY_LOOP_WEBP_TIER0_FIXED_W` | `2300` | Tier 0 fixed output width (px) for continuous loop frames |
-| `CARTOSKY_LOOP_WEBP_TIER1_QUALITY` | `86` | Legacy tier 1 compatibility setting; active pre-generation is tier 0 only |
-| `CARTOSKY_LOOP_WEBP_TIER1_MAX_DIM` | `2400` | Legacy tier 1 compatibility setting |
-| `CARTOSKY_LOOP_WEBP_TIER1_FIXED_W` | `2400` | Legacy tier 1 compatibility setting |
 | `CARTOSKY_JSON_CACHE_RECHECK_SECONDS` | `1.0` | Filesystem recheck interval for cached JSON |
 | `CARTOSKY_SAMPLE_CACHE_TTL_SECONDS` | `2.0` | Point-sample result cache TTL |
 | `CARTOSKY_SAMPLE_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Sampling rate-limit window (seconds) |
@@ -143,9 +135,6 @@ Set `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED=1` to enable adaptive WebP rendering (on
 | `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
 | `CARTOSKY_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
 | `CARTOSKY_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
-| `CARTOSKY_LOOP_PREGENERATE_ENABLED` | `0` | Enable post-publish loop WebP generation |
-| `CARTOSKY_LOOP_CACHE_ROOT` | — | Loop WebP output dir (keep in sync with API) |
-| `CARTOSKY_LOOP_PREGENERATE_WORKERS` | — | Parallel WebP encoding workers |
 | `CARTOSKY_HERBIE_PRIORITY` | `aws,nomads,…` | Herbie data source priority order |
 | `CARTOSKY_HERBIE_SUBSET_RETRIES` | `4` | GRIB subset download retries |
 | `HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
@@ -184,7 +173,7 @@ Use a dedicated env file for NBM so rollout scope stays isolated:
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_CARTOSKY_WEBP_DEFAULT_ENABLED` | `true` | Enable adaptive WebP render mode |
+| `VITE_API_BASE` | — | Override the API origin used by the frontend |
 
 ## API Reference
 
@@ -201,9 +190,9 @@ Example: the health endpoint is `GET /api/v4/health`.
 | GET | `/{model}/runs` | Available published runs |
 | GET | `/{model}/{run}/manifest` | Run manifest |
 | GET | `/{model}/{run}/vars` | Variables available for a run |
-| GET | `/{model}/{run}/{var}/frames` | Frame list with tile URL templates and loop URLs |
-| GET | `/{model}/{run}/{var}/loop-manifest` | Tiered loop WebP manifest |
-| GET | `/{model}/{run}/{var}/{fh}/loop.webp` | On-demand loop WebP strip |
+| GET | `/{model}/{run}/{var}/frames` | Frame list with sidecar-backed metadata |
+| GET | `/{model}/{run}/{var}/grid-manifest` | Grid manifest for packed binary frame playback |
+| GET | `/grid/{model}/{run}/{var}/{filename}` | Grid frame binary or metadata file |
 | GET | `/sample` | Point-sample a raw value from a val COG |
 | GET | `/{model}/{run}/{var}/{fh}/contours/{key}` | GeoJSON contour layer |
 | GET | `/api/regions` | Region presets (bbox, center, zoom) |
@@ -221,16 +210,9 @@ Example: the health endpoint is `GET /api/v4/health`.
 /tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt
 ```
 
-## Render Modes
+## Rendering
 
-The frontend selects a render mode per session based on network and display conditions:
-
-| Mode | Description |
-|---|---|
-| `webp_tier0` | Pre-rendered animated WebP, ≤ 2300 px |
-| `tiles` | Live COG → PNG tile fetching via tile server |
-
-Mode switching uses configurable score thresholds with hysteresis to avoid flapping (`WEBP_RENDER_MODE_THRESHOLDS` in `frontend/src/lib/config.ts`).
+The frontend renders weather overlays from packed grid manifests and binary frames. Boundary vectors are served from `/tiles/v3/boundaries/v1/*` through the main API.
 
 ## Deployment
 
@@ -406,20 +388,3 @@ bash scripts/build_boundaries_tileset.sh
 ```
 
 Produces the MBTiles file referenced by `CARTOSKY_BOUNDARIES_MBTILES`.
-
-## Pre-generate Loop WebP Frames
-
-The scheduler pre-generates loop frames automatically when `CARTOSKY_LOOP_PREGENERATE_ENABLED=1`. To generate manually:
-
-```bash
-PYTHONPATH=backend .venv/bin/python backend/scripts/generate_loop_webp.py \
-  --model hrrr \
-  --run 20260223_14z \
-    --data-root ./data \
-    --output-root ./data/loop_cache \
-  --workers 6
-```
-
-Optional flags: `--var tmp2m` (single variable), `--overwrite`, `--quality`, `--max-dim`.
-
-By default files are written to `CARTOSKY_LOOP_CACHE_ROOT` so `published/` can remain read-only.

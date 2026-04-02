@@ -27,9 +27,6 @@ from app.services.mrms_publish import (
 )
 from app.services.observed_bundle_health import parse_iso_datetime
 from app.services.publish_utils import (
-    DEFAULT_LOOP_WEBP_MAX_DIM,
-    DEFAULT_LOOP_WEBP_QUALITY,
-    DEFAULT_LOOP_WEBP_TIER0_FIXED_W,
     enforce_run_artifact_retention,
 )
 
@@ -45,9 +42,6 @@ DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 DEFAULT_PREFERRED_DECODER = "wgrib2"
 DEFAULT_FALLBACK_DECODER = "pygrib"
 DEFAULT_FRAME_WRITE_WORKERS = 2
-DEFAULT_LOOP_PREGENERATE_ENABLED = True
-DEFAULT_LOOP_CACHE_ROOT = Path("/opt/cartosky/data/loop_cache")
-DEFAULT_LOOP_PREGENERATE_WORKERS = 2
 
 
 @dataclass(frozen=True)
@@ -63,12 +57,6 @@ class MRMSPollerConfig:
     preferred_decoder: str
     fallback_decoder: str
     frame_write_workers: int
-    loop_pregenerate_enabled: bool
-    loop_cache_root: Path
-    loop_workers: int
-    loop_tier0_quality: int
-    loop_tier0_max_dim: int
-    loop_tier0_fixed_w: int
 
 
 @dataclass(frozen=True)
@@ -458,17 +446,6 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
             DEFAULT_FRAME_WRITE_WORKERS,
             minimum=1,
         ),
-        loop_pregenerate_enabled=_bool_env(
-            "CARTOSKY_MRMS_LOOP_PREGENERATE_ENABLED",
-            DEFAULT_LOOP_PREGENERATE_ENABLED,
-        ),
-        loop_cache_root=Path(
-            _env_value("CARTOSKY_LOOP_CACHE_ROOT", default=str(DEFAULT_LOOP_CACHE_ROOT))
-        ).resolve(),
-        loop_workers=_int_env("CARTOSKY_LOOP_PREGENERATE_WORKERS", DEFAULT_LOOP_PREGENERATE_WORKERS, minimum=1),
-        loop_tier0_quality=_int_env("CARTOSKY_LOOP_WEBP_QUALITY", DEFAULT_LOOP_WEBP_QUALITY, minimum=1),
-        loop_tier0_max_dim=_int_env("CARTOSKY_LOOP_WEBP_MAX_DIM", DEFAULT_LOOP_WEBP_MAX_DIM, minimum=64),
-        loop_tier0_fixed_w=_int_env("CARTOSKY_LOOP_WEBP_TIER0_FIXED_W", DEFAULT_LOOP_WEBP_TIER0_FIXED_W, minimum=64),
     )
 
 

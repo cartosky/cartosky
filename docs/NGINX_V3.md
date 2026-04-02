@@ -374,5 +374,5 @@ If Certbot already inserted CartoSky TLS directives into `/etc/nginx/sites-enabl
 
 - `nslookup` returning Cloudflare IPs is normal when proxying is enabled.
 - systemd units must still use absolute venv paths.
-- Loop WebP runtime URLs are emitted as `/api/v4/{model}/{run}/{var}/{fh}/loop.webp?tier=...`.
+- Weather overlays are now grid-only; active runtime traffic should use `/api/v4/{model}/{run}/{var}/grid-manifest` plus `/api/v4/grid/...` frame files.
 - Previous-version runtime endpoints should remain retired.

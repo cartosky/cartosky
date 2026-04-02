@@ -13,7 +13,20 @@ The goal is not a one-shot deletion. The goal is to remove the old system in pha
 
 ## Current State
 
-The repo currently contains two weather rendering substrates:
+Status as of April 2, 2026:
+
+- Completed:
+  - weather loop endpoints retired
+  - weather PNG tile runtime retired
+  - standalone weather tile server retired
+  - frontend runtime simplified to grid-only weather rendering
+  - grid publication now writes directly from in-memory warped values
+- Intentionally retained:
+  - `val.cog` for hover sampling and backend analysis/debug flows
+- Next refinement:
+  - audit whether `rgba.cog` still needs to exist anywhere in the publish path
+
+The repo previously contained two weather rendering substrates:
 
 - `legacy`
   - server-produced RGBA/value COGs
@@ -25,6 +38,8 @@ The repo currently contains two weather rendering substrates:
   - grid manifest and binary frame serving from `backend/app/main.py`
   - WebGL rendering in `frontend/src/lib/grid-webgl.ts`
 
+The active product is now grid-only for weather rendering/runtime.
+
 Important constraints:
 
 - The shared publish/build pipeline stays for now.
@@ -34,7 +49,7 @@ Important constraints:
   - sidecars
 - the grid artifact build currently depends on published value COGs and sidecars.
 - Boundary vector tiles are independent of the legacy weather pipeline and must survive.
-- RGBA COG output should be kept for now unless and until admin/share/screenshot and other consumers are audited.
+- RGBA COG output may be removable once any lingering non-runtime dependencies are audited.
 - The frontend is still interleaved enough that removing backend contracts before decoupling the UI is risky.
 
 ## Design Principles

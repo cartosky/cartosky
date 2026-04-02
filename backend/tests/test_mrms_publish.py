@@ -43,11 +43,6 @@ def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         mrms_publish,
-        "write_rgba_cog",
-        lambda rgba, output_path, **_: Path(output_path).write_bytes(b"rgba") or Path(output_path),
-    )
-    monkeypatch.setattr(
-        mrms_publish,
         "write_value_cog",
         lambda values, output_path, **_: _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32))
         or Path(output_path),
@@ -200,10 +195,10 @@ def test_failed_publish_preserves_previous_latest_pointer(
     )
     assert first.run_id == "20260327_1206z"
 
-    def _fail_rgba(*args, **kwargs):
+    def _fail_colorize(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(mrms_publish, "write_rgba_cog", _fail_rgba)
+    monkeypatch.setattr(mrms_publish, "float_to_rgba", _fail_colorize)
 
     with pytest.raises(RuntimeError, match="boom"):
         mrms_publish.publish_mrms_bundle(
@@ -303,3 +298,23 @@ def test_publish_mrms_bundle_publishes_grid_artifacts_from_staging(
     assert manifest["lods"][0]["frames"] == [
         {"fh": 0, "file": "fh000.l0.u16.bin", "valid_time": "2026-03-27T12:00:00Z"}
     ]
+
+
+def test_publish_mrms_bundle_does_not_write_rgba_cogs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    assert not any(result.published_run_dir.rglob("*.rgba.cog.tif"))

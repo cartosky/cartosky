@@ -114,7 +114,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     var_dir.mkdir(parents=True, exist_ok=True)
     for fh, valid_time in ((0, "2026-03-27T12:00:00Z"), (1, "2026-03-27T12:02:00Z")):
         _write_value_raster(var_dir / f"fh{fh:03d}.val.cog.tif")
-        (var_dir / f"fh{fh:03d}.rgba.cog.tif").write_bytes(b"not-a-real-cog")
         (var_dir / f"fh{fh:03d}.json").write_text(
             json.dumps({"units": "dBZ", "valid_time": valid_time, "kind": "discrete"})
         )

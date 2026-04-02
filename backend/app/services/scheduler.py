@@ -469,10 +469,6 @@ def _frame_sidecar_path(data_root: Path, model: str, run_id: str, var_id: str, f
     return data_root / "staging" / model / run_id / var_id / f"fh{fh:03d}.json"
 
 
-def _frame_rgba_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
-    return data_root / "staging" / model / run_id / var_id / f"fh{fh:03d}.rgba.cog.tif"
-
-
 def _frame_value_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
     return data_root / "staging" / model / run_id / var_id / f"fh{fh:03d}.val.cog.tif"
 
@@ -484,7 +480,6 @@ def _frame_artifacts_exist(
     var_id: str,
     fh: int,
 ) -> bool:
-    rgba = _frame_rgba_path(data_root, model, run_id, var_id, fh)
     val = _frame_value_path(data_root, model, run_id, var_id, fh)
     side = _frame_sidecar_path(data_root, model, run_id, var_id, fh)
 
@@ -495,7 +490,7 @@ def _frame_artifacts_exist(
             logger.warning("Permission denied while checking artifact path: %s", path)
             return False
 
-    return _safe_exists(rgba) and _safe_exists(val) and _safe_exists(side)
+    return _safe_exists(val) and _safe_exists(side)
 
 
 def _sidecar_quality(
@@ -840,10 +835,9 @@ def _should_promote(
 ) -> bool:
     for var_id in primary_vars:
         for fh in promotion_fhs:
-            rgba = _frame_rgba_path(data_root, model, run_id, var_id, int(fh))
             val = _frame_value_path(data_root, model, run_id, var_id, int(fh))
             side = _frame_sidecar_path(data_root, model, run_id, var_id, int(fh))
-            if rgba.exists() and val.exists() and side.exists():
+            if val.exists() and side.exists():
                 return True
     return False
 
@@ -1191,318 +1185,6 @@ def _enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -
             except OSError:
                 logger.warning("Failed removing old Herbie cache file: %s", path)
     _prune_empty_dirs(model_root)
-
-
-def _convert_rgba_cog_to_loop_webp(
-    *,
-    model_id: str,
-    run_id: str | None,
-    var_key: str,
-    cog_path: Path,
-    value_cog_path: Path | None,
-    out_path: Path,
-    quality: int,
-    max_dim: int,
-    fixed_width: int,
-    tier: int,
-) -> tuple[bool, str]:
-    mode_used = "rgba"
-
-    def _should_sharpen_loop(model: str, kind: str | None) -> bool:
-        model_norm = str(model or "").strip().lower()
-        kind_norm = str(kind or "").strip().lower()
-        return model_norm == "gfs" and kind_norm == "continuous"
-
-    def _maybe_unsharp_rgba(
-        rgba: np.ndarray,
-        *,
-        enable: bool,
-        radius: float = 1.2,
-        percent: int = 35,
-        threshold: int = 3,
-    ) -> np.ndarray:
-        if not enable:
-            return rgba
-        rgba_u8 = np.asarray(rgba, dtype=np.uint8)
-        im = Image.fromarray(rgba_u8, mode="RGBA")
-        r, g, b, a = im.split()
-        rgb = Image.merge("RGB", (r, g, b))
-        rgb_sharp = rgb.filter(
-            ImageFilter.UnsharpMask(
-                radius=float(radius),
-                percent=int(percent),
-                threshold=int(threshold),
-            )
-        )
-        out = Image.merge("RGBA", (*rgb_sharp.split(), a))
-        return np.asarray(out, dtype=np.uint8)
-
-    def _maybe_blur_value_frame(values: np.ndarray, *, sigma: float | None = None) -> np.ndarray:
-        # Reserved optional hook for value-render loop frames.
-        # Disabled by default (sigma=None everywhere in this change).
-        if sigma is None:
-            return values
-        try:
-            if float(sigma) <= 0.0:
-                return values
-        except (TypeError, ValueError):
-            return values
-        return values
-
-    try:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        sharpen_enable_cfg, sharpen_radius, sharpen_percent, sharpen_threshold = _loop_sharpen_config()
-        kind = variable_kind(model_id, var_key)
-        sharpen_enable = sharpen_enable_cfg and _should_sharpen_loop(model_id, kind)
-        resolved_max_dim = loop_max_dim_for_tier(
-            model_id=model_id,
-            var_key=var_key,
-            tier=tier,
-            default_max_dim=max_dim,
-        )
-        resolved_quality = loop_quality_for_tier(
-            model_id=model_id,
-            var_key=var_key,
-            tier=tier,
-            default_quality=quality,
-        )
-        with rasterio.open(cog_path) as ds:
-            src_h = int(ds.height)
-            src_w = int(ds.width)
-            resolved_fixed_width = loop_fixed_width_for_tier(
-                model_id=model_id,
-                var_key=var_key,
-                tier=tier,
-                default_width=fixed_width,
-            )
-            out_h, out_w, fixed_applied = compute_loop_output_shape(
-                model_id=model_id,
-                var_key=var_key,
-                src_h=src_h,
-                src_w=src_w,
-                max_dim=resolved_max_dim,
-                fixed_width=resolved_fixed_width,
-            )
-            if out_h <= 0 or out_w <= 0:
-                return False, mode_used
-                if fixed_applied:
-                    log_fixed_loop_size_once(
-                        model_id=model_id,
-                        run_id=run_id,
-                        var_key=var_key,
-                    tier=tier,
-                    src_h=src_h,
-                    src_w=src_w,
-                        out_h=out_h,
-                        out_w=out_w,
-                    )
-
-            base_resampling = rasterio_resampling_for_loop(model_id=model_id, var_key=var_key)
-            value_render_active = use_value_render_for_variable(model_id=model_id, var_key=var_key)
-            prefer_high_quality_resize = fixed_applied or (
-                value_render_active and (out_h < src_h or out_w < src_w)
-            )
-            if prefer_high_quality_resize and base_resampling != Resampling.nearest:
-                render_resampling = high_quality_loop_resampling()
-            else:
-                render_resampling = base_resampling
-
-            if value_render_active and value_cog_path is not None and value_cog_path.is_file():
-                color_map_id = variable_color_map_id(model_id, var_key)
-                if color_map_id:
-                    try:
-                        with rasterio.open(value_cog_path) as value_ds:
-                            sampled_values = value_ds.read(
-                                1,
-                                out_shape=(out_h, out_w),
-                                resampling=render_resampling,
-                            ).astype(np.float32, copy=False)
-                        sampled_values = _maybe_blur_value_frame(sampled_values, sigma=None)
-                        rgba, _ = float_to_rgba(
-                            sampled_values,
-                            color_map_id,
-                            meta_var_key=var_key,
-                        )
-                        rgba_hwc = np.moveaxis(rgba, 0, -1)
-                        rgba_hwc = _maybe_unsharp_rgba(
-                            rgba_hwc,
-                            enable=sharpen_enable,
-                            radius=sharpen_radius,
-                            percent=sharpen_percent,
-                            threshold=sharpen_threshold,
-                        )
-                        image = Image.fromarray(rgba_hwc, mode="RGBA")
-                        image.save(out_path, format="WEBP", quality=resolved_quality, method=6)
-                        return True, "value"
-                    except PermissionError:
-                        raise
-                    except Exception:
-                        logger.exception(
-                            "Loop value-render failed; falling back to RGBA path: model=%s var=%s src=%s val=%s out=%s",
-                            model_id,
-                            var_key,
-                            cog_path,
-                            value_cog_path,
-                            out_path,
-                        )
-                else:
-                    logger.warning(
-                        "Loop value-render color_map_id missing; falling back to RGBA path: model=%s var=%s",
-                        model_id,
-                        var_key,
-                    )
-
-            if render_resampling == Resampling.nearest:
-                data = ds.read(
-                    indexes=(1, 2, 3, 4),
-                    out_shape=(4, out_h, out_w),
-                    resampling=render_resampling,
-                )
-            else:
-                rgb = ds.read(
-                    indexes=(1, 2, 3),
-                    out_shape=(3, out_h, out_w),
-                    resampling=render_resampling,
-                )
-                alpha = ds.read(
-                    indexes=4,
-                    out_shape=(out_h, out_w),
-                    resampling=Resampling.nearest,
-                )
-                data = np.concatenate((rgb, alpha[np.newaxis, :, :]), axis=0)
-
-        rgba = np.moveaxis(data, 0, -1)
-        rgba = _maybe_unsharp_rgba(
-            rgba,
-            enable=sharpen_enable,
-            radius=sharpen_radius,
-            percent=sharpen_percent,
-            threshold=sharpen_threshold,
-        )
-        image = Image.fromarray(rgba, mode="RGBA")
-        image.save(out_path, format="WEBP", quality=resolved_quality, method=6)
-        return True, mode_used
-    except PermissionError as exc:
-        logger.error(
-            "Loop WebP permission denied: src=%s out=%s parent=%s parent_stat=%s out_stat=%s err=%s",
-            cog_path,
-            out_path,
-            out_path.parent,
-            _path_permission_debug(out_path.parent),
-            _path_permission_debug(out_path),
-            exc,
-        )
-        return False, mode_used
-    except Exception:
-        logger.exception("Loop WebP conversion failed: %s -> %s", cog_path, out_path)
-        return False, mode_used
-
-
-def _pregenerate_loop_webp_for_run(
-    *,
-    data_root: Path,
-    model: str,
-    run_id: str,
-    loop_cache_root: Path,
-    workers: int,
-    tier0_quality: int,
-    tier0_max_dim: int,
-    tier0_fixed_w: int,
-    tier1_quality: int,
-    tier1_max_dim: int,
-    tier1_fixed_w: int,
-    variables: Iterable[str] | None = None,
-    forecast_hours: Iterable[int] | None = None,
-    tiers: Iterable[int] | None = None,
-) -> tuple[int, int]:
-    published_run = data_root / "published" / model / run_id
-    if not published_run.is_dir():
-        return 0, 0
-
-    allowed_variables = {str(item).strip().lower() for item in (variables or []) if str(item).strip()}
-    allowed_fhs = {int(item) for item in (forecast_hours or [])}
-    allowed_tiers = {int(item) for item in (tiers or [])}
-
-    # Tier 1 remains legacy-only. Active pre-generation now writes tier 0 only.
-    tier_specs = ((0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),)
-
-    jobs: list[tuple[str, Path, Path | None, Path, int, int, int, int]] = []
-    for var_dir in sorted([p for p in published_run.iterdir() if p.is_dir()]):
-        variable = var_dir.name.strip().lower()
-        if allowed_variables and variable not in allowed_variables:
-            continue
-        for cog_path in sorted(var_dir.glob("fh*.rgba.cog.tif")):
-            fh = cog_path.name.split(".")[0]
-            fh_int = int(fh.removeprefix("fh"))
-            if allowed_fhs and fh_int not in allowed_fhs:
-                continue
-            value_cog_path = var_dir / f"{fh}.val.cog.tif"
-            for tier, quality, max_dim, fixed_w in tier_specs:
-                if allowed_tiers and tier not in allowed_tiers:
-                    continue
-                out_path = loop_cache_root / model / run_id / variable / f"tier{tier}" / f"{fh}.loop.webp"
-                if out_path.is_file():
-                    continue
-                jobs.append((variable, cog_path, value_cog_path, out_path, quality, max_dim, fixed_w, tier))
-
-    if not jobs:
-        return 0, 0
-
-    logger.info(
-        "Loop pre-generate start: model=%s run=%s jobs=%d workers=%d tier0=(q=%d,max=%d) vars=%s fhs=%s tiers=%s root=%s",
-        model,
-        run_id,
-        len(jobs),
-        workers,
-        tier0_quality,
-        tier0_max_dim,
-        sorted(allowed_variables) if allowed_variables else None,
-        sorted(allowed_fhs) if allowed_fhs else None,
-        sorted(allowed_tiers) if allowed_tiers else None,
-        loop_cache_root,
-    )
-
-    ok = 0
-    fail = 0
-    mode_counts: dict[tuple[str, str], int] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        future_to_var: dict[concurrent.futures.Future[tuple[bool, str]], str] = {}
-        for variable, cog_path, value_cog_path, out_path, quality, max_dim, fixed_w, tier in jobs:
-            future = pool.submit(
-                _convert_rgba_cog_to_loop_webp,
-                model_id=model,
-                run_id=run_id,
-                var_key=variable,
-                cog_path=cog_path,
-                value_cog_path=value_cog_path,
-                out_path=out_path,
-                quality=quality,
-                max_dim=max_dim,
-                fixed_width=fixed_w,
-                tier=tier,
-            )
-            future_to_var[future] = variable
-
-        for future in concurrent.futures.as_completed(future_to_var):
-            variable = future_to_var[future]
-            success, mode_used = future.result()
-            if success:
-                ok += 1
-                key = (mode_used, variable)
-                mode_counts[key] = mode_counts.get(key, 0) + 1
-            else:
-                fail += 1
-
-    logger.info(
-        "Loop pre-generate done: model=%s run=%s success=%d failed=%d mode_counts=%s",
-        model,
-        run_id,
-        ok,
-        fail,
-        mode_counts,
-    )
-    return ok, fail
-
 
 def _process_run(
     *,

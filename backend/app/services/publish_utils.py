@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import logging
 import shutil
@@ -9,18 +8,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .builder.loop_webp import convert_rgba_cog_to_loop_webp
 from .run_ids import parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_LOOP_WEBP_QUALITY = 82
-DEFAULT_LOOP_WEBP_MAX_DIM = 2300
-DEFAULT_LOOP_WEBP_TIER1_QUALITY = 86
-DEFAULT_LOOP_WEBP_TIER1_MAX_DIM = 2400
-DEFAULT_LOOP_WEBP_TIER0_FIXED_W = 2300
-DEFAULT_LOOP_WEBP_TIER1_FIXED_W = 2400
-
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,86 +140,6 @@ def write_run_manifest(
 
     manifest_path = data_root / "manifests" / model / f"{run_id}.json"
     write_json_atomic(manifest_path, payload)
-
-
-def pregenerate_loop_webp_for_run(
-    *,
-    data_root: Path,
-    model: str,
-    run_id: str,
-    loop_cache_root: Path,
-    workers: int,
-    tier0_quality: int,
-    tier0_max_dim: int,
-    tier0_fixed_w: int,
-    tier1_quality: int | None = None,
-    tier1_max_dim: int | None = None,
-    tier1_fixed_w: int | None = None,
-    variables: Iterable[str] | None = None,
-    forecast_hours: Iterable[int] | None = None,
-    tiers: Iterable[int] | None = None,
-) -> tuple[int, int]:
-    published_run = data_root / "published" / model / run_id
-    if not published_run.is_dir():
-        return 0, 0
-
-    allowed_variables = {str(item).strip().lower() for item in (variables or []) if str(item).strip()}
-    allowed_fhs = {int(item) for item in (forecast_hours or [])}
-    allowed_tiers = {int(item) for item in (tiers or [])}
-    # Tier 1 remains legacy-only. Active pre-generation now writes tier 0 only.
-    tier_specs = ((0, int(tier0_quality), int(tier0_max_dim), int(tier0_fixed_w)),)
-
-    jobs: list[tuple[str, Path, Path | None, Path, int, int, int, int]] = []
-    for var_dir in sorted([path for path in published_run.iterdir() if path.is_dir()]):
-        variable = var_dir.name.strip().lower()
-        if allowed_variables and variable not in allowed_variables:
-            continue
-        for cog_path in sorted(var_dir.glob("fh*.rgba.cog.tif")):
-            fh_token = cog_path.name.split(".")[0]
-            fh = int(fh_token.removeprefix("fh"))
-            if allowed_fhs and fh not in allowed_fhs:
-                continue
-            value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
-            for tier, quality, max_dim, fixed_w in tier_specs:
-                if allowed_tiers and tier not in allowed_tiers:
-                    continue
-                out_path = loop_cache_root / model / run_id / variable / f"tier{tier}" / f"{fh_token}.loop.webp"
-                if out_path.is_file():
-                    continue
-                jobs.append((variable, cog_path, value_cog_path, out_path, quality, max_dim, fixed_w, tier))
-
-    if not jobs:
-        return 0, 0
-
-    ok = 0
-    fail = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [
-            pool.submit(
-                convert_rgba_cog_to_loop_webp,
-                model_id=model,
-                run_id=run_id,
-                var_key=variable,
-                cog_path=cog_path,
-                value_cog_path=value_cog_path,
-                out_path=out_path,
-                quality=quality,
-                max_dim=max_dim,
-                fixed_width=fixed_w,
-                tier=tier,
-            )
-            for variable, cog_path, value_cog_path, out_path, quality, max_dim, fixed_w, tier in jobs
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                converted, _ = future.result()
-            except Exception:
-                converted = False
-            if converted:
-                ok += 1
-            else:
-                fail += 1
-    return ok, fail
 
 
 def enforce_run_artifact_retention(root: Path, keep_runs: int) -> None:

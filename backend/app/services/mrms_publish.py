@@ -21,14 +21,11 @@ from app.services.builder.cog_writer import (
     compute_transform_and_shape,
     get_grid_params,
     warp_to_target_grid,
-    write_rgba_cog,
     write_value_cog,
 )
 from app.services.builder.pipeline import build_sidecar_json
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
-    DEFAULT_LOOP_WEBP_MAX_DIM,
-    DEFAULT_LOOP_WEBP_QUALITY,
     promote_run,
     write_json_atomic,
     write_latest_pointer,
@@ -65,15 +62,6 @@ class MRMSBundleFrame:
 
 
 @dataclass(frozen=True)
-class MRMSLoopPublishSettings:
-    loop_cache_root: Path
-    workers: int = 2
-    tier0_quality: int = DEFAULT_LOOP_WEBP_QUALITY
-    tier0_max_dim: int = DEFAULT_LOOP_WEBP_MAX_DIM
-    tier0_fixed_w: int = 0
-
-
-@dataclass(frozen=True)
 class MRMSPublishResult:
     run_id: str
     published_run_dir: Path
@@ -85,7 +73,6 @@ class MRMSPublishResult:
 class MRMSPublishedFrame:
     valid_time: datetime
     source_valid_time: datetime | None
-    rgba_path: Path
     value_path: Path
     sidecar: dict[str, Any]
 
@@ -129,9 +116,8 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
         except (TypeError, ValueError):
             continue
         sidecar_path = published_run_dir / f"fh{fh_int:03d}.json"
-        rgba_path = published_run_dir / f"fh{fh_int:03d}.rgba.cog.tif"
         value_path = published_run_dir / f"fh{fh_int:03d}.val.cog.tif"
-        if not sidecar_path.is_file() or not rgba_path.is_file() or not value_path.is_file():
+        if not sidecar_path.is_file() or not value_path.is_file():
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -148,7 +134,6 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             MRMSPublishedFrame(
                 valid_time=valid_time,
                 source_valid_time=_source_valid_time_from_sidecar(sidecar, fallback=valid_time),
-                rgba_path=rgba_path,
                 value_path=value_path,
                 sidecar=sidecar,
             )
@@ -163,7 +148,6 @@ def publish_mrms_bundle(
     data_root: Path,
     frames: list[MRMSBundleFrame],
     publish_time: datetime | None = None,
-    loop_settings: MRMSLoopPublishSettings | None = None,
     frame_write_workers: int = 1,
     previous_frames: list[MRMSPublishedFrame] | None = None,
     target_frame_count: int | None = None,
@@ -316,19 +300,10 @@ def write_mrms_frame(
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    rgba_path = staging_dir / f"{fh_str}.rgba.cog.tif"
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    rgba, colorize_meta = float_to_rgba(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
-    write_rgba_cog(
-        rgba,
-        rgba_path,
-        model=MRMS_MODEL_ID,
-        region=MRMS_REGION_ID,
-        kind="discrete",
-        color_map_id=MRMS_COLOR_MAP_ID,
-    )
+    _, colorize_meta = float_to_rgba(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
     write_value_cog(
         values,
         value_path,
@@ -384,11 +359,9 @@ def reuse_mrms_frame(
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    rgba_path = staging_dir / f"{fh_str}.rgba.cog.tif"
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    _link_or_copy(frame.rgba_path, rgba_path)
     _link_or_copy(frame.value_path, value_path)
 
     sidecar = dict(frame.sidecar)

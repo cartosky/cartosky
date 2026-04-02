@@ -1,15 +1,14 @@
-"""Build pipeline: orchestrates fetch → warp → colorize → write → validate.
+"""Build pipeline: orchestrates fetch → warp → write → validate.
 
-This is the single entry-point for producing V3 artifacts.  For a given
-model/region/var/fh it produces three files in the staging directory:
+This is the single entry-point for producing V3 artifacts. For a given
+model/region/var/fh it produces the published numeric/value metadata and, when
+enabled, packed grid frames in the staging directory:
 
-    fh{NNN}.rgba.cog.tif   — 4-band uint8 RGBA Cloud Optimized GeoTIFF
     fh{NNN}.val.cog.tif    — 1-band float32 value COG
     fh{NNN}.json           — sidecar metadata (per artifact contract)
+    grid_v1/fh{NNN}.l0.*   — packed grid frame + metadata
 
-All outputs pass two validation gates before being accepted:
-    Gate 1 — gdalinfo structural validation (band count, CRS, tiling, overviews)
-    Gate 2 — pixel statistics sanity check (alpha coverage, value range, nodata)
+Published value outputs pass structural and sanity validation before being accepted.
 
 Phase 1 scope: "simple" derivation path only (tmp2m, refc — single GRIB fetch).
 Phase 2 adds wspd (vector magnitude) and radar_ptype (categorical combo).
@@ -40,7 +39,6 @@ from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
     get_grid_params,
-    write_rgba_cog,
     write_value_cog,
     warp_to_target_grid,
 )
@@ -229,24 +227,16 @@ def validate_cog(
 
 
 # ---------------------------------------------------------------------------
-# Gate 2: pixel statistics sanity check
+# Gate 2: value sanity check
 # ---------------------------------------------------------------------------
 
 
-def check_pixel_sanity(
-    rgba_path: Path,
+def check_value_sanity(
     val_path: Path,
     var_spec: dict[str, Any],
     var_spec_model: Any | None = None,
 ) -> bool:
-    """Sanity-check pixel statistics of the produced artifacts.
-
-    Catches catastrophic failures: all-transparent, solid-color,
-    flat value fields, grid misalignment.  Thresholds are intentionally
-    loose per the roadmap — the goal is to catch obviously broken artifacts.
-
-    Returns True if all checks pass.
-    """
+    """Sanity-check pixel statistics of the produced value artifact."""
     ok = True
     spec_type = str(var_spec.get("type", "")).lower()
     model_kind = str(getattr(var_spec_model, "kind", "") or "").lower()
@@ -262,17 +252,12 @@ def check_pixel_sanity(
     skip_physical_range_checks = is_non_physical_kind or is_non_physical_units or is_non_physical_flag
     is_categorical_ptype = spec_type in {"discrete", "indexed"} and bool(var_spec.get("ptype_breaks"))
 
-    # Default catastrophic-failure thresholds.
-    min_alpha_coverage = 0.05
     max_nodata_ratio = 0.95
 
     # Categorical ptype products can legitimately be very sparse (near-dry scenes).
     # Keep guardrails, but relax thresholds enough to avoid rejecting valid frames.
     if is_categorical_ptype:
-        min_alpha_coverage = 0.002  # 0.2%
         max_nodata_ratio = 0.998    # 99.8%
-    elif allow_dry_frame:
-        min_alpha_coverage = 0.0
 
     min_discrete_level = None
     levels = var_spec.get("levels")
@@ -281,58 +266,6 @@ def check_pixel_sanity(
             min_discrete_level = float(levels[0])
         except (TypeError, ValueError):
             min_discrete_level = None
-
-    # --- RGBA checks ---
-    with rasterio.open(rgba_path) as src:
-        alpha = src.read(4)
-        total_pixels = alpha.size
-
-        # Alpha coverage sanity threshold
-        valid_count = int(np.count_nonzero(alpha == 255))
-        coverage = valid_count / total_pixels
-        if coverage < min_alpha_coverage:
-            if is_categorical_ptype and valid_count == 0:
-                logger.warning(
-                    "Dry categorical ptype frame allowed: alpha coverage %.1f%% (%s)",
-                    coverage * 100,
-                    rgba_path,
-                )
-            elif allow_dry_frame and valid_count == 0:
-                logger.warning(
-                    "Dry frame allowed: alpha coverage %.1f%% (%s)",
-                    coverage * 100,
-                    rgba_path,
-                )
-            else:
-                logger.error(
-                    "Alpha coverage too low: %.1f%% (<%.1f%%) — likely all-transparent (%s)",
-                    coverage * 100,
-                    min_alpha_coverage * 100,
-                    rgba_path,
-                )
-                ok = False
-
-        # RGB not constant (at least 2 distinct values per band)
-        for band_idx in range(1, 4):
-            band_data = src.read(band_idx)
-            # Only check where alpha is valid
-            valid_pixels = band_data[alpha == 255]
-            if valid_pixels.size > 0:
-                unique_count = len(np.unique(valid_pixels))
-                if unique_count < 2:
-                    if allow_dry_frame:
-                        logger.warning(
-                            "Dry frame allowed: band %d is constant (value=%d) (%s)",
-                            band_idx,
-                            valid_pixels[0],
-                            rgba_path,
-                        )
-                    else:
-                        logger.error(
-                            "Band %d is constant (value=%d) — likely colormap bug (%s)",
-                            band_idx, valid_pixels[0], rgba_path,
-                        )
-                        ok = False
 
     # --- Value COG checks ---
     with rasterio.open(val_path) as src:
@@ -394,7 +327,7 @@ def check_pixel_sanity(
                     # Warning only, not a hard fail
 
     if ok:
-        logger.info("Gate 2 PASS: %s", rgba_path.name)
+        logger.info("Value sanity PASS: %s", val_path.name)
     return ok
 
 
@@ -880,7 +813,6 @@ def build_frame(
     staging_dir = data_root / "staging" / model / run_id / var_key
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    rgba_path = staging_dir / f"{fh_str}.rgba.cog.tif"
     val_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     contour_geojson_path: Path | None = None
@@ -1019,18 +951,14 @@ def build_frame(
             model_id=model,
             var_key=var_key,
         )
-        rgba, colorize_meta = float_to_rgba(
+        _, colorize_meta = float_to_rgba(
             display_data,
             color_map_id,
             meta_var_key=var_key,
         )
 
-        # --- Step 5: Write COGs ---
-        logger.info("Step 5/6: Writing COGs")
-        write_rgba_cog(
-            rgba, rgba_path,
-            model=model, region=region, kind=kind_normalized, color_map_id=color_map_id,
-        )
+        # --- Step 5: Write artifacts ---
+        logger.info("Step 5/6: Writing artifacts")
         write_value_cog(
             warped_data, val_path,
             model=model, region=region,
@@ -1090,36 +1018,23 @@ def build_frame(
 
         # Gate 1: structural validation
         if not validate_cog(
-            rgba_path,
-            expected_bands=4,
-            expected_dtype="Byte",
-            region=region,
-            grid_meters=grid_m,
-        ):
-            logger.error("Gate 1 FAILED for RGBA COG — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-            return None
-
-        if not validate_cog(
             val_path,
             expected_bands=1,
             expected_dtype="Float32",
             region=region,
             grid_meters=grid_m * VALUE_HOVER_DOWNSAMPLE_FACTOR,
         ):
-            logger.error("Gate 1 FAILED for value COG — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+            logger.error("Value COG validation failed — rejecting frame")
+            _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
-        # Gate 2: pixel sanity
-        if not check_pixel_sanity(
-            rgba_path,
+        if not check_value_sanity(
             val_path,
             var_spec_colormap,
             var_spec_model=var_spec_model,
         ):
-            logger.error("Gate 2 FAILED — rejecting frame")
-            _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+            logger.error("Value sanity failed — rejecting frame")
+            _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
         # --- Write sidecar JSON ---
@@ -1154,9 +1069,8 @@ def build_frame(
 
         logger.info(
             "Frame complete: %s/%s/%s/%s/%s "
-            "(RGBA: %s, Val: %s, JSON: %s%s)",
+            "(Val: %s, JSON: %s%s)",
             model, region, run_id, var_key, fh_str,
-            _file_size_str(rgba_path),
             _file_size_str(val_path),
             _file_size_str(sidecar_path),
             f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
@@ -1173,7 +1087,7 @@ def build_frame(
             fh_str,
             exc,
         )
-        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+        _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
         return None
 
     except Exception:
@@ -1181,7 +1095,7 @@ def build_frame(
             "Build failed for %s/%s/%s/%s/%s",
             model, region, run_id, var_key, fh_str,
         )
-        _cleanup_artifacts(rgba_path, val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+        _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
         return None
     finally:
         _log_fetch_cache_stats_once()
