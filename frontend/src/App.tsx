@@ -2189,8 +2189,13 @@ export default function App() {
         // expected forecast hours, while fetchFrames only returns hours that
         // have COGs ready.  A hard replace would contract the slider, causing
         // it to snap to a high hour on still-populating runs.
+        //
+        // We use a functional updater so we can access the previous rows AND
+        // capture the merged result for resolveForecastHour below.
+        let mergedRows: FrameRow[] = rows;
         setFrameRows((prevRows) => {
           if (prevRows.length === 0) {
+            mergedRows = rows;
             return rows;
           }
           // Build a map from the new rows for quick lookup.
@@ -2217,10 +2222,15 @@ export default function App() {
           const result = Array.from(merged.values()).sort(
             (a, b) => Number(a.fh) - Number(b.fh),
           );
+          mergedRows = result;
           return result;
         });
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
-        const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
+        // Use the merged frame set so resolveForecastHour sees ALL expected
+        // hours (including manifest-only rows), not just COG-ready ones.
+        // Note: React processes functional updaters synchronously within the
+        // same synchronous block, so `mergedRows` is populated by this point.
+        const frames = mergedRows.map((row) => Number(row.fh)).filter(Number.isFinite);
         setForecastHour((prev) =>
           resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
         );

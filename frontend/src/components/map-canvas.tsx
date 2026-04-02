@@ -640,6 +640,7 @@ export function MapCanvas({
     const urls: string[] = [];
     const remainingAhead = Math.max(0, frameHours.length - 1 - pivot);
     const remainingBehind = Math.max(0, pivot);
+    const direction = scrubDirectionRef.current;
 
     let aheadTarget: number;
     let behindTarget: number;
@@ -658,7 +659,6 @@ export function MapCanvas({
       // fixed total budget.  When the user is scrubbing forward, bias ahead;
       // when scrubbing backward, bias behind; when idle/unknown, split evenly.
       const budget = FORECAST_SCRUB_PREFETCH_BUDGET;
-      const direction = scrubDirectionRef.current;
       if (direction > 0) {
         // Forward: most of the budget goes ahead.
         behindTarget = Math.min(remainingBehind, FORECAST_SCRUB_MIN_BEHIND);
