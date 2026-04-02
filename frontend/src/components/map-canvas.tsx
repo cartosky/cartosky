@@ -1102,6 +1102,7 @@ export function MapCanvas({
     };
   }, [isLoaded]);
 
+  // --- Grid controller update (runs on every frame / config change) ---
   useEffect(() => {
     const map = mapRef.current;
     const controller = gridWebglControllerRef.current;
@@ -1126,10 +1127,8 @@ export function MapCanvas({
       onFrameReady: onGridFrameReady,
       onFrameEvicted: onGridFrameEvicted,
     });
-    enforceLayerOrder(map);
   }, [
     basemapMode,
-    enforceLayerOrder,
     gridActive,
     gridFrameHour,
     gridFrameUrl,
@@ -1146,6 +1145,15 @@ export function MapCanvas({
     selectionKey,
     variable,
   ]);
+
+  // --- Enforce layer order only on structural changes (not every frame) ---
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    enforceLayerOrder(map);
+  }, [enforceLayerOrder, gridActive, isLoaded, selectionKey]);
 
   useEffect(() => {
     const map = mapRef.current;

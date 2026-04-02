@@ -122,11 +122,13 @@ export function BottomForecastControls({
   transientStatus,
   layoutMode = "desktop",
 }: BottomForecastControlsProps) {
-  const DRAG_UPDATE_MS = 32;
+  const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const lastDragEmitAtRef = useRef(0);
   const lastSentHourRef = useRef<number | null>(null);
+  const trailingRafRef = useRef<number | null>(null);
+  const pendingEmitRef = useRef<number | null>(null);
 
   const validTime = useMemo(
     () => formatTimelineDisplay({
@@ -165,17 +167,49 @@ export function BottomForecastControls({
     lastSentHourRef.current = forecastHour;
   }, [forecastHour]);
 
+  // Clean up any pending trailing rAF on unmount.
+  useEffect(() => {
+    return () => {
+      if (trailingRafRef.current !== null) {
+        cancelAnimationFrame(trailingRafRef.current);
+      }
+    };
+  }, []);
+
   const emitForecastHour = (next: number, force: boolean) => {
     const now = Date.now();
     const shouldEmit =
       force ||
       (lastSentHourRef.current !== next && now - lastDragEmitAtRef.current >= DRAG_UPDATE_MS);
-    if (!shouldEmit) {
+    if (shouldEmit) {
+      // Cancel any pending trailing emission since we're emitting now.
+      if (trailingRafRef.current !== null) {
+        cancelAnimationFrame(trailingRafRef.current);
+        trailingRafRef.current = null;
+      }
+      pendingEmitRef.current = null;
+      lastDragEmitAtRef.current = now;
+      lastSentHourRef.current = next;
+      onForecastHourChange(next, force ? "scrub-commit" : "scrub-live");
       return;
     }
-    lastDragEmitAtRef.current = now;
-    lastSentHourRef.current = next;
-    onForecastHourChange(next, force ? "scrub-commit" : "scrub-live");
+    // Schedule a trailing emission so the final scrub position is always
+    // delivered, even if the throttle window hasn't elapsed yet.
+    if (lastSentHourRef.current !== next) {
+      pendingEmitRef.current = next;
+      if (trailingRafRef.current === null) {
+        trailingRafRef.current = requestAnimationFrame(() => {
+          trailingRafRef.current = null;
+          const pending = pendingEmitRef.current;
+          if (pending !== null && lastSentHourRef.current !== pending) {
+            pendingEmitRef.current = null;
+            lastDragEmitAtRef.current = Date.now();
+            lastSentHourRef.current = pending;
+            onForecastHourChange(pending, "scrub-live");
+          }
+        });
+      }
+    }
   };
 
   return (

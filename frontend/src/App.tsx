@@ -728,6 +728,13 @@ export default function App() {
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
   const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
+  // Keep the last non-null resolved grid run so that selectionKey stays stable
+  // while the next manifest probe is in-flight ("pending-grid" → real-id
+  // transitions used to cause a double cache wipe).
+  const lastResolvedGridRunRef = useRef<string | null>(null);
+  if (resolvedGridLatestRunId) {
+    lastResolvedGridRunRef.current = resolvedGridLatestRunId;
+  }
   const [regionPresets, setRegionPresets] = useState<Record<string, RegionPreset>>({});
   const [anchorBaseGeoJson, setAnchorBaseGeoJson] = useState<AnchorFeatureCollection | null>(null);
   const [anchorDisplayGeoJson, setAnchorDisplayGeoJson] = useState<AnchorFeatureCollection | null>(null);
@@ -773,6 +780,20 @@ export default function App() {
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
+  // Coalesce rapid gridReadyVersion bumps into a single state update per
+  // microtask.  This prevents O(n) recomputations when many frames become
+  // ready (or are evicted) within the same event-loop tick.
+  const gridReadyVersionPendingRef = useRef(false);
+  const bumpGridReadyVersion = useCallback(() => {
+    if (gridReadyVersionPendingRef.current) {
+      return;
+    }
+    gridReadyVersionPendingRef.current = true;
+    queueMicrotask(() => {
+      gridReadyVersionPendingRef.current = false;
+      setGridReadyVersion((c) => c + 1);
+    });
+  }, []);
   const [visibleGridFrameHour, setVisibleGridFrameHour] = useState<number | null>(null);
 
   const isVariableSwitching = useMemo(() => {
@@ -1121,7 +1142,7 @@ export default function App() {
     return run === "latest" ? (latestRunId ?? "latest") : run;
   }, [gridOnlySelection, latestRunId, resolvedGridLatestRunId, run]);
   const selectionRunKey = gridOnlySelection && run === "latest"
-    ? (resolvedGridLatestRunId ?? "pending-grid")
+    ? (resolvedGridLatestRunId ?? lastResolvedGridRunRef.current ?? "pending-grid")
     : resolvedRunForRequests;
   const selectionKey = `${model}:${selectionRunKey}:${variable}`;
   const telemetryRunId = gridOnlySelection && run === "latest"
@@ -1132,6 +1153,7 @@ export default function App() {
   useEffect(() => {
     if (!gridOnlySelection || run !== "latest") {
       setResolvedGridLatestRunId(null);
+      lastResolvedGridRunRef.current = null;
     }
   }, [gridOnlySelection, model, run, variable]);
 
@@ -1144,17 +1166,24 @@ export default function App() {
     const controller = new AbortController();
     const resolveManifest = async () => {
       if (gridOnlySelection && run === "latest") {
-        for (const candidateRun of latestGridRunCandidates) {
-          const manifest = await fetchGridManifest(model, candidateRun, variable, { signal: controller.signal });
-          if (controller.signal.aborted) {
+        // Probe all candidate runs in parallel; pick the first (by priority
+        // order) that returns a valid manifest.
+        const results = await Promise.allSettled(
+          latestGridRunCandidates.map((candidateRun) =>
+            fetchGridManifest(model, candidateRun, variable, { signal: controller.signal })
+              .then((manifest) => ({ candidateRun, manifest })),
+          ),
+        );
+        if (controller.signal.aborted) {
+          return;
+        }
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (result.status === "fulfilled" && result.value.manifest) {
+            setResolvedGridLatestRunId(result.value.candidateRun);
+            setGridManifest(result.value.manifest);
             return;
           }
-          if (!manifest) {
-            continue;
-          }
-          setResolvedGridLatestRunId(candidateRun);
-          setGridManifest(manifest);
-          return;
         }
         setResolvedGridLatestRunId(null);
         setGridManifest(null);
@@ -2408,6 +2437,29 @@ export default function App() {
                 resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
               );
             }
+
+            // Also refresh the grid manifest so newly-available forecast
+            // hours are visible to the grid rendering path (not just the
+            // slider).  Without this, gridFrameHours stays stale and the
+            // user can scrub to hours the slider shows but the grid
+            // cannot render.
+            if (prefersGridSubstrate && selectionSupportsGrid) {
+              const gridRunKey = gridOnlySelection && run === "latest"
+                ? (resolvedGridLatestRunId ?? manifestRunKey)
+                : resolvedRunForRequests;
+              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, { signal: tickController.signal });
+              if (cancelled || tickController?.signal.aborted) {
+                return;
+              }
+              if (nextGridManifest) {
+                setGridManifest((prev) => {
+                  if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
+                    return prev;
+                  }
+                  return nextGridManifest;
+                });
+              }
+            }
             return;
           }
 
@@ -2802,8 +2854,8 @@ export default function App() {
       return;
     }
     gridReadyFrameUrlsRef.current.add(normalized);
-    setGridReadyVersion((current) => current + 1);
-  }, [normalizeGridFrameUrl]);
+    bumpGridReadyVersion();
+  }, [bumpGridReadyVersion, normalizeGridFrameUrl]);
   const handleGridFrameEvicted = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -2813,8 +2865,8 @@ export default function App() {
       return;
     }
     gridReadyFrameUrlsRef.current.delete(normalized);
-    setGridReadyVersion((current) => current + 1);
-  }, [normalizeGridFrameUrl]);
+    bumpGridReadyVersion();
+  }, [bumpGridReadyVersion, normalizeGridFrameUrl]);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
     setRegion(nextRegion);
