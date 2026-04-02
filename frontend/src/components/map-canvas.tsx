@@ -700,14 +700,32 @@ export function MapCanvas({
       return urls;
     }
 
-    for (let step = 1; step <= aheadTarget; step += 1) {
-      if (pivot + step < frameHours.length) {
-        pushFrameUrl(frameHours[pivot + step]);
+    // Push direction-of-travel frames first so they receive higher priority
+    // in the downstream texture warm queue.  During backward scrub the
+    // behind-frames are the ones the user will need next.
+    if (direction < 0) {
+      // Backward: behind first, then ahead.
+      for (let step = 1; step <= behindTarget; step += 1) {
+        if (pivot - step >= 0) {
+          pushFrameUrl(frameHours[pivot - step]);
+        }
       }
-    }
-    for (let step = 1; step <= behindTarget; step += 1) {
-      if (pivot - step >= 0) {
-        pushFrameUrl(frameHours[pivot - step]);
+      for (let step = 1; step <= aheadTarget; step += 1) {
+        if (pivot + step < frameHours.length) {
+          pushFrameUrl(frameHours[pivot + step]);
+        }
+      }
+    } else {
+      // Forward or neutral: ahead first, then behind.
+      for (let step = 1; step <= aheadTarget; step += 1) {
+        if (pivot + step < frameHours.length) {
+          pushFrameUrl(frameHours[pivot + step]);
+        }
+      }
+      for (let step = 1; step <= behindTarget; step += 1) {
+        if (pivot - step >= 0) {
+          pushFrameUrl(frameHours[pivot - step]);
+        }
       }
     }
     return urls;
