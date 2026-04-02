@@ -1828,12 +1828,34 @@ export default function App() {
         return 0;
       };
 
+      // Snap the requested hour to the nearest grid frame hour.  If the
+      // requested hour is visible on the slider (in selectableFrameHours)
+      // but the grid manifest hasn't caught up yet (not in gridFrameHours),
+      // honour the slider value so the user isn't bounced back to an older
+      // hour while the grid manifest refreshes.
+      const snapHour = (hour: number): number => {
+        if (gridFrameHours.length > 0) {
+          const nearest = nearestFrame(gridFrameHours, hour);
+          if (nearest === hour) {
+            return hour;
+          }
+          // The grid manifest doesn't have this exact hour.  If the slider
+          // does, trust the slider — the grid manifest will catch up on the
+          // next refresh cycle and the texture will load shortly.
+          if (selectableFrameHours.includes(hour)) {
+            return hour;
+          }
+          return nearest;
+        }
+        return hour;
+      };
+
       if (reason === "standard") {
         setScrubRequestedHour(null);
         setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
-        const nextGridHour = gridFrameHours.length > 0 ? nearestFrame(gridFrameHours, requestedHour) : requestedHour;
+        const nextGridHour = snapHour(requestedHour);
         setTargetForecastHour(nextGridHour);
         return;
       }
@@ -1856,9 +1878,7 @@ export default function App() {
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
 
-        const snappedGridHour = gridFrameHours.length > 0
-          ? nearestFrame(gridFrameHours, requestedHour)
-          : requestedHour;
+        const snappedGridHour = snapHour(requestedHour);
         setScrubCommitIntent({
           hour: snappedGridHour,
           direction: inferDirection(snappedGridHour),
@@ -1896,13 +1916,11 @@ export default function App() {
           return;
         }
         const requested = latestRequestedHour as number;
-        const nextGridHour = gridFrameHours.length > 0
-          ? nearestFrame(gridFrameHours, requested)
-          : requested;
+        const nextGridHour = snapHour(requested);
         setTargetForecastHour(nextGridHour);
       });
     },
-    [gridFrameHours]
+    [gridFrameHours, selectableFrameHours]
   );
 
   useEffect(() => {
@@ -2468,25 +2486,13 @@ export default function App() {
               setVariable((prev) => (variableIds.includes(prev) ? prev : nextVar));
             }
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
-            if (hasFrameList) {
-              setFrameRows((prevRows) => {
-                const merged = mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey);
-                return merged.length === prevRows.length ? prevRows : merged;
-              });
-              const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
-              setForecastHour((prev) =>
-                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
-              );
-              setTargetForecastHour((prev) =>
-                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
-              );
-            }
 
-            // Also refresh the grid manifest so newly-available forecast
-            // hours are visible to the grid rendering path (not just the
-            // slider).  Without this, gridFrameHours stays stale and the
-            // user can scrub to hours the slider shows but the grid
-            // cannot render.
+            // Refresh the grid manifest BEFORE extending frameRows / the
+            // slider.  gridFrameHours (derived from gridManifest) is used by
+            // the scrub handler to snap the requested hour.  If we update the
+            // slider first, the user can see new hours and try to scrub to
+            // them while gridFrameHours still lacks them, causing a snap-back
+            // to the nearest old hour.
             if (prefersGridSubstrate && selectionSupportsGrid) {
               const gridRunKey = gridOnlySelection && run === "latest"
                 ? (resolvedGridLatestRunId ?? manifestRunKey)
@@ -2504,6 +2510,20 @@ export default function App() {
                 });
               }
             }
+
+            if (hasFrameList) {
+              setFrameRows((prevRows) => {
+                const merged = mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey);
+                return merged.length === prevRows.length ? prevRows : merged;
+              });
+              const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
+              setForecastHour((prev) =>
+                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+              );
+              setTargetForecastHour((prev) =>
+                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+              );
+            }
             return;
           }
 
@@ -2517,6 +2537,27 @@ export default function App() {
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
+
+          // Refresh the grid manifest before updating frameRows so that
+          // gridFrameHours is in sync with the slider when the user scrubs.
+          if (prefersGridSubstrate && selectionSupportsGrid) {
+            const gridRunKey = gridOnlySelection && run === "latest"
+              ? (resolvedGridLatestRunId ?? framesRunKey)
+              : resolvedRunForRequests;
+            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, { signal: tickController.signal });
+            if (cancelled || tickController?.signal.aborted) {
+              return;
+            }
+            if (nextGridManifest) {
+              setGridManifest((prev) => {
+                if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
+                  return prev;
+                }
+                return nextGridManifest;
+              });
+            }
+          }
+
           setFrameRows((prevRows) => (rows.length === prevRows.length ? prevRows : rows));
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) =>
