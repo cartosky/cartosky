@@ -653,6 +653,11 @@ export function MapCanvas({
         aheadTarget = remainingAhead;
         behindTarget = Math.min(remainingBehind, 2);
       } else {
+        // Scrub/idle: interleave ahead and behind from the pivot so
+        // the nearest frames in *both* directions are always warm.
+        // Direction bias puts the travel-direction frames at odd
+        // positions (first) and the opposite direction at even
+        // positions, but both are interleaved rather than sequential.
         aheadTarget = remainingAhead;
         behindTarget = remainingBehind;
       }
@@ -704,7 +709,31 @@ export function MapCanvas({
     // Push direction-of-travel frames first so they receive higher priority
     // in the downstream texture warm queue.  During backward scrub the
     // behind-frames are the ones the user will need next.
-    if (direction < 0) {
+    if (isObservedGrid && mode !== "autoplay") {
+      // MRMS scrub/idle: interleave ahead and behind, nearest-first, so both
+      // directions stay warm in the limited texture queue.  Direction bias
+      // determines which side goes first at each interleave step.
+      const maxStep = Math.max(aheadTarget, behindTarget);
+      for (let step = 1; step <= maxStep; step += 1) {
+        if (direction < 0) {
+          // Backward: behind frame first at this distance, then ahead.
+          if (step <= behindTarget && pivot - step >= 0) {
+            pushFrameUrl(frameHours[pivot - step]);
+          }
+          if (step <= aheadTarget && pivot + step < frameHours.length) {
+            pushFrameUrl(frameHours[pivot + step]);
+          }
+        } else {
+          // Forward or neutral: ahead first at this distance, then behind.
+          if (step <= aheadTarget && pivot + step < frameHours.length) {
+            pushFrameUrl(frameHours[pivot + step]);
+          }
+          if (step <= behindTarget && pivot - step >= 0) {
+            pushFrameUrl(frameHours[pivot - step]);
+          }
+        }
+      }
+    } else if (direction < 0) {
       // Backward: behind first, then ahead.
       for (let step = 1; step <= behindTarget; step += 1) {
         if (pivot - step >= 0) {

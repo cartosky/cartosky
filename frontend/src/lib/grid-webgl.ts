@@ -535,7 +535,7 @@ export class GridWebglLayerController {
     this.scheduleTextureWarm(this.frameUrl, "high");
     for (let index = 0; index < prioritizedPrefetchUrls.length; index += 1) {
       const prefetchUrl = prioritizedPrefetchUrls[index];
-      this.scheduleTextureWarm(prefetchUrl, index < 2 ? "high" : "normal");
+      this.scheduleTextureWarm(prefetchUrl, index < 4 ? "high" : "normal");
     }
     this.map?.triggerRepaint();
   }

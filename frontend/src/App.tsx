@@ -2637,7 +2637,7 @@ export default function App() {
     /** Tracks time spent waiting for look-ahead frames when the next frame IS ready. */
     let lookAheadWaitMs = 0;
     /** Maximum time (ms) to wait for look-ahead frames before advancing anyway. */
-    const LOOKAHEAD_GRACE_MS = 200;
+    const LOOKAHEAD_GRACE_MS = 80;
 
     const tick = (now: number) => {
       const currentHour = gridPlaybackHourRef.current
