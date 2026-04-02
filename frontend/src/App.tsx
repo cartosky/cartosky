@@ -2184,7 +2184,41 @@ export default function App() {
             visualState: "warming_new",
           };
         });
-        setFrameRows(rows);
+        // Merge with existing frame rows rather than hard-replacing.  The
+        // manifest hydration path may have already populated a full set of
+        // expected forecast hours, while fetchFrames only returns hours that
+        // have COGs ready.  A hard replace would contract the slider, causing
+        // it to snap to a high hour on still-populating runs.
+        setFrameRows((prevRows) => {
+          if (prevRows.length === 0) {
+            return rows;
+          }
+          // Build a map from the new rows for quick lookup.
+          const newByHour = new Map<number, FrameRow>();
+          for (const row of rows) {
+            const fh = Number(row.fh);
+            if (Number.isFinite(fh)) {
+              newByHour.set(fh, row);
+            }
+          }
+          // Keep any previous rows that aren't in the fetch response (they
+          // came from the manifest and represent expected-but-not-yet-ready
+          // hours).  Prefer the fetched version when both exist.
+          const merged = new Map<number, FrameRow>();
+          for (const row of prevRows) {
+            const fh = Number(row.fh);
+            if (Number.isFinite(fh)) {
+              merged.set(fh, row);
+            }
+          }
+          for (const [fh, row] of newByHour) {
+            merged.set(fh, row);
+          }
+          const result = Array.from(merged.values()).sort(
+            (a, b) => Number(a.fh) - Number(b.fh),
+          );
+          return result;
+        });
         setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
         const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
         setForecastHour((prev) =>
