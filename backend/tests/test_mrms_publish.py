@@ -354,16 +354,16 @@ def test_compose_mrms_radar_ptype_snow_produces_correct_indices() -> None:
     assert indexed[0, 1] == 31.0
 
 
-def test_compose_mrms_radar_ptype_frzr_produces_correct_indices() -> None:
-    """Freezing rain (flag=7) maps to frzr palette offsets."""
+def test_compose_mrms_radar_ptype_rain_mixed_hail_maps_to_rain() -> None:
+    """Rain mixed with hail (flag=7) maps to rain palette offsets."""
     refl = np.array([[20.0]], dtype=np.float32)
     flags = np.array([[7.0]], dtype=np.float32)
 
     indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
 
-    # frzr: offset=52, count=16
-    # 20/70 * 15 ≈ 4.29 → round = 4 → 52 + 4 = 56
-    assert indexed[0, 0] == 56.0
+    # rain: offset=0, count=20
+    # 20/70 * 19 ≈ 5.43 → round = 5 → 0 + 5 = 5
+    assert indexed[0, 0] == 5.0
 
 
 def test_compose_mrms_radar_ptype_convective_rain_maps_to_rain() -> None:
@@ -379,16 +379,16 @@ def test_compose_mrms_radar_ptype_convective_rain_maps_to_rain() -> None:
     assert indexed_warm[0, 0] == indexed_conv[0, 0]
 
 
-def test_compose_mrms_radar_ptype_dry_snow_maps_to_snow() -> None:
-    """Dry/cold snow (flag=10) maps to snow palette like regular snow."""
+def test_compose_mrms_radar_ptype_cold_stratiform_rain_maps_to_rain() -> None:
+    """Cold stratiform rain (flag=10) maps to rain palette, same as warm stratiform."""
     refl = np.array([[25.0]], dtype=np.float32)
-    flags_snow = np.array([[3.0]], dtype=np.float32)
-    flags_dry = np.array([[10.0]], dtype=np.float32)
+    flags_warm = np.array([[1.0]], dtype=np.float32)
+    flags_cold = np.array([[10.0]], dtype=np.float32)
 
-    indexed_snow = mrms_publish.compose_mrms_radar_ptype(refl, flags_snow)
-    indexed_dry = mrms_publish.compose_mrms_radar_ptype(refl, flags_dry)
+    indexed_warm = mrms_publish.compose_mrms_radar_ptype(refl, flags_warm)
+    indexed_cold = mrms_publish.compose_mrms_radar_ptype(refl, flags_cold)
 
-    assert indexed_snow[0, 0] == indexed_dry[0, 0]
+    assert indexed_warm[0, 0] == indexed_cold[0, 0]
 
 
 def test_compose_mrms_radar_ptype_no_precip_is_nan() -> None:
@@ -452,10 +452,24 @@ def test_compose_mrms_radar_ptype_unknown_flag_is_nan() -> None:
     assert np.isnan(indexed[0, 0])
 
 
+def test_compose_mrms_radar_ptype_tropical_flags_map_to_rain() -> None:
+    """Tropical rain mix flags (91, 96) map to rain palette offsets."""
+    refl = np.array([[35.0, 35.0]], dtype=np.float32)
+    flags_91 = np.array([[91.0, 96.0]], dtype=np.float32)
+    flags_warm = np.array([[1.0, 1.0]], dtype=np.float32)
+
+    indexed_tropical = mrms_publish.compose_mrms_radar_ptype(refl, flags_91)
+    indexed_warm = mrms_publish.compose_mrms_radar_ptype(refl, flags_warm)
+
+    # Both tropical flags should produce same rain indices as warm stratiform
+    assert indexed_tropical[0, 0] == indexed_warm[0, 0]
+    assert indexed_tropical[0, 1] == indexed_warm[0, 1]
+
+
 def test_compose_mrms_radar_ptype_mixed_ptypes() -> None:
     """Mixed ptype flags in one grid produce correct per-cell indices."""
     refl = np.array([[30.0, 30.0, 30.0, 30.0]], dtype=np.float32)
-    flags = np.array([[1.0, 3.0, 7.0, 0.0]], dtype=np.float32)  # rain, snow, frzr, no-precip
+    flags = np.array([[1.0, 3.0, 7.0, 0.0]], dtype=np.float32)  # rain, snow, rain(hail), no-precip
 
     indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
 
@@ -463,8 +477,8 @@ def test_compose_mrms_radar_ptype_mixed_ptypes() -> None:
     assert indexed[0, 0] == 8.0
     # snow offset=20: 30/70*15 ≈ 6.43 → 6 → 20+6 = 26
     assert indexed[0, 1] == 26.0
-    # frzr offset=52: 30/70*15 ≈ 6.43 → 6 → 52+6 = 58
-    assert indexed[0, 2] == 58.0
+    # rain (flag=7, rain mixed with hail) offset=0: 30/70*19 ≈ 8.14 → 8 → 0+8 = 8
+    assert indexed[0, 2] == 8.0
     # no-precip → NaN
     assert np.isnan(indexed[0, 3])
 

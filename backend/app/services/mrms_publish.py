@@ -58,9 +58,11 @@ MRMS_PRECIP_FLAG_TO_PTYPE: dict[int, str | None] = {
      0: None,      # no precipitation
      1: "rain",    # warm stratiform rain
      3: "snow",    # snow
-     6: "rain",    # convective rain (above freezing)
-     7: "frzr",    # near/below-freezing liquid precip (freezing rain)
-    10: "snow",    # dry/cold snow
+     6: "rain",    # convective rain
+     7: "rain",    # rain mixed with hail
+    10: "rain",    # cold stratiform rain
+    91: "rain",    # tropical/stratiform rain mix
+    96: "rain",    # tropical/convective rain mix
 }
 # Any unknown flag values → None (transparent)
 
