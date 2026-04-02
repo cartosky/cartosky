@@ -16,7 +16,7 @@ const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED
 const GRAFANA_TRACES_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_TRACES_URL ?? "").trim();
 const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
-export type WeatherSubstrate = "grid_webgl_v1";
+export type WeatherSubstrate = "grid";
 
 export const MAP_VIEW_DEFAULTS = {
   region: "conus",
@@ -25,14 +25,6 @@ export const MAP_VIEW_DEFAULTS = {
 };
 
 export const OVERLAY_DEFAULT_OPACITY = 0.9;
-
-export function isGridV1Enabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_GRID_V1_ENABLED, false);
-}
-
-export function isGridV1DefaultEnabled(): boolean {
-  return readBooleanEnv(import.meta.env.VITE_CARTOSKY_GRID_V1_DEFAULT_ENABLED, false);
-}
 
 function readBooleanEnv(value: unknown, fallback: boolean): boolean {
   const envValue = String(value ?? "").trim().toLowerCase();

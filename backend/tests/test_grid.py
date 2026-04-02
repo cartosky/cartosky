@@ -25,12 +25,11 @@ os.environ.setdefault("TWF_CLIENT_SECRET", "test-secret")
 os.environ.setdefault("TWF_REDIRECT_URI", "https://example.com/callback")
 os.environ.setdefault("TWF_SCOPES", "profile forums_posts")
 os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
-os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_grid_v1_tokens.sqlite3")
+os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_grid_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
-from app import config as config_module
-from app.services.grid_v1 import build_grid_v1_for_run
+from app.services.grid import build_grid_for_run, grid_dir
 
 
 def _write_value_cog(path: Path, values: np.ndarray) -> None:
@@ -50,7 +49,11 @@ def _write_value_cog(path: Path, values: np.ndarray) -> None:
         ds.write(values.astype(np.float32), 1)
 
 
-def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _grid_artifact_dir(data_root: Path, model: str, run_id: str, var: str) -> Path:
+    return grid_dir(data_root, model, run_id, var)
+
+
+def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_root = tmp_path / "data"
     model = "hrrr"
     run_id = "20260330_12z"
@@ -62,12 +65,7 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -79,8 +77,9 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -91,7 +90,7 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
     assert encoded[1, 1] == 877
 
     manifest = json.loads(manifest_path.read_text())
-    assert manifest["subtype"] == "grid_webgl_v1"
+    assert manifest["subtype"] == "grid"
     assert manifest["grid"]["dtype"] == "uint16"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
@@ -111,7 +110,7 @@ def test_build_grid_v1_for_run_writes_manifest_and_frame(tmp_path: Path, monkeyp
         ("nbm", "tmp2m"),
     ],
 )
-def test_build_grid_v1_for_run_supports_temperature_family_targets(
+def test_build_grid_for_run_supports_temperature_family_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -126,12 +125,7 @@ def test_build_grid_v1_for_run_supports_temperature_family_targets(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -143,8 +137,9 @@ def test_build_grid_v1_for_run_supports_temperature_family_targets(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -176,7 +171,7 @@ def test_build_grid_v1_for_run_supports_temperature_family_targets(
         ("nbm", "wspd10m"),
     ],
 )
-def test_build_grid_v1_for_run_supports_wind_family_targets(
+def test_build_grid_for_run_supports_wind_family_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -191,12 +186,7 @@ def test_build_grid_v1_for_run_supports_wind_family_targets(
         json.dumps({"fh": 0, "units": "mph", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -208,8 +198,9 @@ def test_build_grid_v1_for_run_supports_wind_family_targets(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -229,7 +220,7 @@ def test_build_grid_v1_for_run_supports_wind_family_targets(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
+def test_build_grid_for_run_supports_gfs_snowfall_total(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -244,12 +235,7 @@ def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -261,9 +247,10 @@ def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert frame_meta_path.is_file()
     assert manifest_path.is_file()
@@ -295,7 +282,7 @@ def test_build_grid_v1_for_run_supports_gfs_snowfall_total(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_v1_for_run_supports_gfs_precip_total(
+def test_build_grid_for_run_supports_gfs_precip_total(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -310,12 +297,7 @@ def test_build_grid_v1_for_run_supports_gfs_precip_total(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -327,9 +309,10 @@ def test_build_grid_v1_for_run_supports_gfs_precip_total(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert frame_meta_path.is_file()
     assert manifest_path.is_file()
@@ -369,7 +352,7 @@ def test_build_grid_v1_for_run_supports_gfs_precip_total(
         ("snowfall_kuchera_total", "snowfall_total"),
     ],
 )
-def test_build_grid_v1_for_run_supports_hrrr_accumulation_targets(
+def test_build_grid_for_run_supports_hrrr_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -385,12 +368,7 @@ def test_build_grid_v1_for_run_supports_hrrr_accumulation_targets(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -402,8 +380,9 @@ def test_build_grid_v1_for_run_supports_hrrr_accumulation_targets(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -430,7 +409,7 @@ def test_build_grid_v1_for_run_supports_hrrr_accumulation_targets(
         ("snowfall_total", "snowfall_total"),
     ],
 )
-def test_build_grid_v1_for_run_supports_nam_accumulation_targets(
+def test_build_grid_for_run_supports_nam_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -446,12 +425,7 @@ def test_build_grid_v1_for_run_supports_nam_accumulation_targets(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -463,8 +437,9 @@ def test_build_grid_v1_for_run_supports_nam_accumulation_targets(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -491,7 +466,7 @@ def test_build_grid_v1_for_run_supports_nam_accumulation_targets(
         ("snowfall_total", "snowfall_total"),
     ],
 )
-def test_build_grid_v1_for_run_supports_nbm_accumulation_targets(
+def test_build_grid_for_run_supports_nbm_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -507,12 +482,7 @@ def test_build_grid_v1_for_run_supports_nbm_accumulation_targets(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -524,9 +494,10 @@ def test_build_grid_v1_for_run_supports_nbm_accumulation_targets(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -558,7 +529,7 @@ def test_build_grid_v1_for_run_supports_nbm_accumulation_targets(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_v1_for_run_supports_hrrr_radar_ptype(
+def test_build_grid_for_run_supports_hrrr_radar_ptype(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -573,12 +544,7 @@ def test_build_grid_v1_for_run_supports_hrrr_radar_ptype(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -590,8 +556,9 @@ def test_build_grid_v1_for_run_supports_hrrr_radar_ptype(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -610,7 +577,7 @@ def test_build_grid_v1_for_run_supports_hrrr_radar_ptype(
     assert manifest["grid"]["units"] == "dBZ"
 
 
-def test_build_grid_v1_for_run_supports_mrms_reflectivity(
+def test_build_grid_for_run_supports_mrms_reflectivity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -625,12 +592,7 @@ def test_build_grid_v1_for_run_supports_mrms_reflectivity(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:05:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -642,9 +604,10 @@ def test_build_grid_v1_for_run_supports_mrms_reflectivity(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    frame_meta_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.meta.json"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert frame_meta_path.is_file()
     assert manifest_path.is_file()
@@ -675,7 +638,7 @@ def test_build_grid_v1_for_run_supports_mrms_reflectivity(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_v1_for_run_supports_nam_radar_ptype(
+def test_build_grid_for_run_supports_nam_radar_ptype(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -690,12 +653,7 @@ def test_build_grid_v1_for_run_supports_nam_radar_ptype(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    ok, fail, manifest_ok = build_grid_v1_for_run(
+    ok, fail, manifest_ok = build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -707,8 +665,9 @@ def test_build_grid_v1_for_run_supports_nam_radar_ptype(
     assert fail == 0
     assert manifest_ok == 1
 
-    frame_path = data_root / "published" / model / run_id / var / "grid_v1" / "fh000.l0.u16.bin"
-    manifest_path = data_root / "published" / model / run_id / var / "grid_v1" / "manifest.json"
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
@@ -763,14 +722,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
-    monkeypatch.setenv("CARTOSKY_GRID_V1_ENABLED", "1")
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_enabled.cache_clear()
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    build_grid_v1_for_run(
+    build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
@@ -796,14 +748,14 @@ async def test_grid_manifest_endpoint_returns_urls_and_server_timing(client: htt
     assert response.status_code == 200
     assert "grid_manifest_total;dur=" in response.headers.get("server-timing", "")
     payload = response.json()
-    assert payload["subtype"] == "grid_webgl_v1"
+    assert payload["subtype"] == "grid"
     frame = payload["lods"][0]["frames"][0]
     assert frame["fh"] == 0
-    assert frame["url"].startswith("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin?v=20260330_12z-tmp2m-")
+    assert frame["url"].startswith("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin?v=20260330_12z-tmp2m-")
 
 
 async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClient) -> None:
-    response = await client.get("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+    response = await client.get("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
@@ -824,14 +776,14 @@ async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monk
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
-    grid_dir = var_dir / "grid_v1"
-    grid_dir.mkdir(parents=True, exist_ok=True)
-    (grid_dir / "fh000.l0.u16.bin").write_bytes(b'{"bad":"frame"}')
-    (grid_dir / "manifest.json").write_text(
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "fh000.l0.u16.bin").write_bytes(b'{"bad":"frame"}')
+    (artifacts_dir / "manifest.json").write_text(
         json.dumps(
             {
                 "manifest_version": 1,
-                "subtype": "grid_webgl_v1",
+                "subtype": "grid",
                 "model": model,
                 "run": run_id,
                 "var": var,
@@ -860,13 +812,6 @@ async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monk
     (published_root / model / "LATEST.json").parent.mkdir(parents=True, exist_ok=True)
     (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
 
-    monkeypatch.setenv("CARTOSKY_GRID_V1_ENABLED", "1")
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_enabled.cache_clear()
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
@@ -876,29 +821,5 @@ async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monk
 
     transport = httpx.ASGITransport(app=main_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
-        response = await test_client.get("/api/v4/grid/v1/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+        response = await test_client.get("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
         assert response.status_code == 404
-
-
-def test_grid_v1_allowlist_override_can_narrow_supported_pairs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CARTOSKY_GRID_V1_ALLOWLIST", "hrrr:tmp2m")
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    assert config_module.grid_v1_pair_enabled("hrrr", "tmp2m") is True
-    assert config_module.grid_v1_pair_enabled("hrrr", "dp2m") is False
-
-
-def test_grid_v1_denylist_can_disable_supported_pair(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.setenv("CARTOSKY_GRID_V1_DENYLIST", "gfs:snowfall_total")
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
-
-    assert config_module.grid_v1_pair_enabled("gfs", "tmp2m") is True
-    assert config_module.grid_v1_pair_enabled("gfs", "snowfall_total") is False

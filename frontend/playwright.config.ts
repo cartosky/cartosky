@@ -68,7 +68,7 @@ export default defineConfig({
   /* Run your local dev server before starting the tests */
   webServer: shouldUseManagedWebServer
     ? {
-        command: 'VITE_CARTOSKY_GRID_V1_ENABLED=1 VITE_CARTOSKY_GRID_V1_DEFAULT_ENABLED=1 npm run dev -- --host 127.0.0.1 --port 4173',
+        command: 'npm run dev -- --host 127.0.0.1 --port 4173',
         url: 'http://127.0.0.1:4173',
         reuseExistingServer: !process.env.CI,
       }

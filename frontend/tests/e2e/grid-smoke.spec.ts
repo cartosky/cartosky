@@ -19,7 +19,7 @@ function capabilityPayload() {
           default_var_key: 'tmp2m',
           default_run: 'latest',
           default_frame_selection: 'first',
-          default_render_substrate: 'grid_webgl_v1',
+          default_render_substrate: 'grid',
         },
         constraints: {
           canonical_region: 'conus',
@@ -39,7 +39,7 @@ function capabilityPayload() {
             default_fh: 0,
             buildable: true,
             color_map_id: 'tmp2m',
-            render_substrates: ['grid_webgl_v1'],
+            render_substrates: ['grid'],
             constraints: {},
             derived: false,
             derive_strategy_id: null,
@@ -54,7 +54,7 @@ function capabilityPayload() {
             default_fh: 0,
             buildable: true,
             color_map_id: 'dp2m',
-            render_substrates: ['grid_webgl_v1'],
+            render_substrates: ['grid'],
             constraints: {},
             derived: false,
             derive_strategy_id: null,
@@ -146,7 +146,7 @@ function framesPayload(varKey: string) {
 function gridManifestPayload(varKey: string) {
   return {
     manifest_version: 1,
-    subtype: 'grid_webgl_v1',
+    subtype: 'grid',
     model: 'hrrr',
     run: GRID_RUN_ID,
     var: varKey,
@@ -178,13 +178,13 @@ function gridManifestPayload(varKey: string) {
             fh: 0,
             file: 'fh000.l0.u16.bin',
             valid_time: '2026-03-30T12:00:00Z',
-            url: `/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/${varKey}/fh000.l0.u16.bin?v=${GRID_RUN_ID}-${varKey}-0`,
+            url: `/api/v4/grid/hrrr/${GRID_RUN_ID}/${varKey}/fh000.l0.u16.bin?v=${GRID_RUN_ID}-${varKey}-0`,
           },
           {
             fh: 1,
             file: 'fh001.l0.u16.bin',
             valid_time: '2026-03-30T13:00:00Z',
-            url: `/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/${varKey}/fh001.l0.u16.bin?v=${GRID_RUN_ID}-${varKey}-1`,
+            url: `/api/v4/grid/hrrr/${GRID_RUN_ID}/${varKey}/fh001.l0.u16.bin?v=${GRID_RUN_ID}-${varKey}-1`,
           },
         ],
       },
@@ -279,16 +279,16 @@ test.describe('Grid-only smoke', () => {
     await page.route(`**/api/v4/hrrr/latest/dp2m/grid-manifest`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
     });
-    await page.route(`**/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
+    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
     });
-    await page.route(`**/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
+    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
     });
-    await page.route(`**/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
+    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_DP.buffer) });
     });
-    await page.route(`**/api/v4/grid/v1/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
+    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
     });
     await page.route('**/api/v4/sample/batch', async (route) => {

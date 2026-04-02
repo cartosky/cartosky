@@ -20,8 +20,8 @@ The repo currently contains two weather rendering substrates:
   - weather tile serving from `backend/app/services/tile_server.py`
   - loop WebP generation and serving
   - frontend loop/tile playback logic in `frontend/src/App.tsx` and `frontend/src/components/map-canvas.tsx`
-- `grid_webgl_v1`
-  - packed `uint16` frame generation in `backend/app/services/grid_v1.py`
+- `grid`
+  - packed `uint16` frame generation in `backend/app/services/grid.py`
   - grid manifest and binary frame serving from `backend/app/main.py`
   - WebGL rendering in `frontend/src/lib/grid-webgl.ts`
 
@@ -32,7 +32,7 @@ Important constraints:
   - `backend/app/services/builder/cog_writer.py`
   - value COGs
   - sidecars
-- `grid_v1` currently depends on published value COGs and sidecars.
+- the grid artifact build currently depends on published value COGs and sidecars.
 - Boundary vector tiles are independent of the legacy weather pipeline and must survive.
 - RGBA COG output should be kept for now unless and until admin/share/screenshot and other consumers are audited.
 - The frontend is still interleaved enough that removing backend contracts before decoupling the UI is risky.
@@ -101,7 +101,7 @@ Exit criteria:
 
 Concrete test plan:
 
-- Extend `backend/tests/test_grid_v1.py` to cover:
+- Extend `backend/tests/test_grid.py` to cover:
   - capabilities exposure for grid-supported pairs
   - bootstrap success for grid-supported pairs
   - frames endpoint success even if loop artifacts are absent
@@ -380,9 +380,7 @@ Objective:
 Work:
 
 - Simplify `backend/app/config/__init__.py`:
-  - `grid_v1_enabled`
-  - `grid_v1_build_enabled`
-  - allowlist/denylist handling
+  - grid build toggles
   - substrate helpers
 - Simplify capability serialization in `backend/app/models/serialization.py`.
 - Simplify tests that currently assert legacy-plus-grid pair behavior.
@@ -392,8 +390,7 @@ Examples:
 
 - `render_substrates`
 - `default_render_substrate`
-- `CARTOSKY_GRID_V1_ENABLED`
-- `CARTOSKY_GRID_V1_BUILD_ENABLED`
+- `CARTOSKY_GRID_WORKERS`
 - allowlist/denylist env vars if no longer needed
 
 Exit criteria:

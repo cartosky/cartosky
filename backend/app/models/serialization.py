@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..config import grid_v1_render_substrates
+from ..config import grid_render_substrates
 from ..services.render_resampling import display_resampling_override
 
 
@@ -21,7 +21,7 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         "buildable": bool(getattr(capability, "buildable", False)),
         "color_map_id": getattr(capability, "color_map_id", None),
         "display_resampling_override": display_resampling_override(model_id, var_key),
-        "render_substrates": list(grid_v1_render_substrates(model_id, var_key)),
+        "render_substrates": list(grid_render_substrates(model_id, var_key)),
         "constraints": constraints_payload,
         "derived": bool(getattr(capability, "derived", False)),
         "derive_strategy_id": getattr(capability, "derive_strategy_id", None),
@@ -47,12 +47,7 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
     constraints = getattr(capability, "ui_constraints", None)
     run_discovery = getattr(capability, "run_discovery", None)
     defaults_payload = dict(defaults) if isinstance(defaults, dict) else {}
-    default_render_substrate = (
-        "grid_webgl_v1"
-        if any("grid_webgl_v1" in item.get("render_substrates", []) for item in variables_payload.values())
-        else "legacy"
-    )
-    defaults_payload.setdefault("default_render_substrate", default_render_substrate)
+    defaults_payload["default_render_substrate"] = "grid"
     return {
         "model_id": model_id,
         "name": str(getattr(capability, "name", model_id.upper())),

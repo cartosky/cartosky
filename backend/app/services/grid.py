@@ -10,19 +10,19 @@ import numpy as np
 import rasterio
 from rasterio.errors import RasterioIOError
 
-from ..config import grid_v1_pair_enabled
+from ..config import grid_supported_pair
 from .colormaps import get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import variable_color_map_id
 
 logger = logging.getLogger(__name__)
 
-GRID_V1_MANIFEST_VERSION = 1
-GRID_V1_SUBTYPE = "grid_webgl_v1"
-GRID_V1_PROJECTION = "EPSG:3857"
-GRID_V1_DTYPE = "uint16"
-GRID_V1_ENDIANNESS = "little"
-GRID_V1_LEVEL = 0
+GRID_MANIFEST_VERSION = 1
+GRID_SUBTYPE = "grid"
+GRID_PROJECTION = "EPSG:3857"
+GRID_DTYPE = "uint16"
+GRID_ENDIANNESS = "little"
+GRID_LEVEL = 0
 
 _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     ("hrrr", "tmp2m"): {
@@ -202,22 +202,22 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
 }
 
 
-def grid_v1_code_supported(model_id: str, var_key: str) -> bool:
+def grid_code_supported(model_id: str, var_key: str) -> bool:
     normalized_model = str(model_id or "").strip().lower()
     normalized_var = str(var_key or "").strip().lower()
     return _packing_config(normalized_model, normalized_var) is not None
 
 
-def grid_v1_supported(model_id: str, var_key: str) -> bool:
-    return grid_v1_pair_enabled(model_id, var_key)
+def grid_supported(model_id: str, var_key: str) -> bool:
+    return grid_supported_pair(model_id, var_key)
 
 
-def grid_v1_dir(data_root: Path, model: str, run: str, var: str) -> Path:
+def grid_dir(data_root: Path, model: str, run: str, var: str) -> Path:
     return data_root / "published" / model / run / var / "grid_v1"
 
 
-def grid_v1_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
-    return grid_v1_dir(data_root, model, run, var) / "manifest.json"
+def grid_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
+    return grid_dir(data_root, model, run, var) / "manifest.json"
 
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -227,23 +227,23 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
-def grid_v1_frame_filename(fh: int, *, level: int = GRID_V1_LEVEL) -> str:
+def grid_frame_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
     return f"fh{int(fh):03d}.l{int(level)}.u16.bin"
 
 
-def grid_v1_frame_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_V1_LEVEL) -> Path:
-    return grid_v1_dir(data_root, model, run, var) / grid_v1_frame_filename(fh, level=level)
+def grid_frame_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return grid_dir(data_root, model, run, var) / grid_frame_filename(fh, level=level)
 
 
-def grid_v1_frame_meta_filename(fh: int, *, level: int = GRID_V1_LEVEL) -> str:
+def grid_frame_meta_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
     return f"fh{int(fh):03d}.l{int(level)}.meta.json"
 
 
-def grid_v1_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_V1_LEVEL) -> Path:
-    return grid_v1_dir(data_root, model, run, var) / grid_v1_frame_meta_filename(fh, level=level)
+def grid_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
+    return grid_dir(data_root, model, run, var) / grid_frame_meta_filename(fh, level=level)
 
 
-def expected_grid_v1_frame_size_bytes(*, width: int, height: int) -> int:
+def expected_grid_frame_size_bytes(*, width: int, height: int) -> int:
     return max(0, int(width) * int(height) * 2)
 
 
@@ -275,9 +275,9 @@ def _write_frame_from_value_cog(
 ) -> dict[str, Any]:
     packing = _packing_config(model, var)
     if packing is None:
-        raise ValueError(f"Unsupported grid_v1 pack target: {model}/{var}")
+        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
     if not value_cog_path.is_file():
-        raise FileNotFoundError(f"Missing grid_v1 source value COG: {value_cog_path}")
+        raise FileNotFoundError(f"Missing grid source value COG: {value_cog_path}")
 
     try:
         with rasterio.open(value_cog_path) as ds:
@@ -291,9 +291,9 @@ def _write_frame_from_value_cog(
             )
             height, width = encoded.shape
             bounds = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-            crs_text = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
+            crs_text = ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION
     except RasterioIOError as exc:
-        raise FileNotFoundError(f"Unreadable grid_v1 source value COG: {value_cog_path}") from exc
+        raise FileNotFoundError(f"Unreadable grid source value COG: {value_cog_path}") from exc
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -310,7 +310,7 @@ def _write_frame_from_value_cog(
     }
     if prep_meta:
         frame_meta["display_prep"] = prep_meta
-    write_json_atomic(grid_v1_frame_meta_path(data_root, model, run, var, fh), frame_meta)
+    write_json_atomic(grid_frame_meta_path(data_root, model, run, var, fh), frame_meta)
     return frame_meta
 
 
@@ -362,7 +362,7 @@ def _build_manifest_for_var(
     width: int | None = None
     height: int | None = None
     bbox: list[float] | None = None
-    projection = GRID_V1_PROJECTION
+    projection = GRID_PROJECTION
     units = str(packing.get("units") or "")
     display_prep: dict[str, Any] | None = None
 
@@ -374,8 +374,8 @@ def _build_manifest_for_var(
             fh = int(fh_token.removeprefix("fh"))
         except ValueError:
             continue
-        frame_path = grid_v1_frame_path(data_root, model, run, var, fh)
-        frame_meta_path = grid_v1_frame_meta_path(data_root, model, run, var, fh)
+        frame_path = grid_frame_path(data_root, model, run, var, fh)
+        frame_meta_path = grid_frame_meta_path(data_root, model, run, var, fh)
         value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
         if not frame_path.is_file() or not value_cog_path.is_file():
             continue
@@ -395,12 +395,12 @@ def _build_manifest_for_var(
             frame_width = int(frame_meta.get("width") or 0)
             frame_height = int(frame_meta.get("height") or 0)
             frame_bbox = frame_meta.get("bbox")
-            frame_projection = str(frame_meta.get("projection") or GRID_V1_PROJECTION)
+            frame_projection = str(frame_meta.get("projection") or GRID_PROJECTION)
             actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
-            expected_size_bytes = expected_grid_v1_frame_size_bytes(width=frame_width, height=frame_height)
+            expected_size_bytes = expected_grid_frame_size_bytes(width=frame_width, height=frame_height)
             if actual_size_bytes != expected_size_bytes:
                 logger.warning(
-                    "Skipping invalid grid_v1 frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
+                    "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
                     model,
                     run,
                     var,
@@ -419,11 +419,11 @@ def _build_manifest_for_var(
                 display_prep = dict(frame_meta["display_prep"])
         else:
             with rasterio.open(value_cog_path) as ds:
-                expected_size_bytes = expected_grid_v1_frame_size_bytes(width=int(ds.width), height=int(ds.height))
+                expected_size_bytes = expected_grid_frame_size_bytes(width=int(ds.width), height=int(ds.height))
                 actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
                 if actual_size_bytes != expected_size_bytes:
                     logger.warning(
-                        "Skipping invalid grid_v1 frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
+                        "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
                         model,
                         run,
                         var,
@@ -436,7 +436,7 @@ def _build_manifest_for_var(
                     width = int(ds.width)
                     height = int(ds.height)
                     bbox = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-                    projection = ds.crs.to_string() if ds.crs is not None else GRID_V1_PROJECTION
+                    projection = ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION
         frame_entry: dict[str, Any] = {
             "fh": fh,
             "file": frame_path.name,
@@ -451,8 +451,8 @@ def _build_manifest_for_var(
 
     frame_entries.sort(key=lambda item: int(item["fh"]))
     manifest = {
-        "manifest_version": GRID_V1_MANIFEST_VERSION,
-        "subtype": GRID_V1_SUBTYPE,
+        "manifest_version": GRID_MANIFEST_VERSION,
+        "subtype": GRID_SUBTYPE,
         "model": model,
         "run": run,
         "var": var,
@@ -461,8 +461,8 @@ def _build_manifest_for_var(
         "grid": {
             "width": int(width),
             "height": int(height),
-            "dtype": GRID_V1_DTYPE,
-            "endianness": GRID_V1_ENDIANNESS,
+            "dtype": GRID_DTYPE,
+            "endianness": GRID_ENDIANNESS,
             "scale": float(packing["scale"]),
             "offset": float(packing["offset"]),
             "nodata": int(packing["nodata"]),
@@ -471,7 +471,7 @@ def _build_manifest_for_var(
         "palette": _build_palette_block(model, var),
         "lods": [
             {
-                "level": GRID_V1_LEVEL,
+                "level": GRID_LEVEL,
                 "width": int(width),
                 "height": int(height),
                 "frames": frame_entries,
@@ -480,11 +480,11 @@ def _build_manifest_for_var(
     }
     if display_prep:
         manifest["display_prep"] = display_prep
-    write_json_atomic(grid_v1_manifest_path(data_root, model, run, var), manifest)
+    write_json_atomic(grid_manifest_path(data_root, model, run, var), manifest)
     return True
 
 
-def build_grid_v1_for_run(
+def build_grid_for_run(
     *,
     data_root: Path,
     model: str,
@@ -504,13 +504,13 @@ def build_grid_v1_for_run(
         var = var_dir.name.strip().lower()
         if requested_vars and var not in requested_vars:
             continue
-        if not grid_v1_supported(model, var):
+        if not grid_supported(model, var):
             continue
         manifest_vars.add(var)
         for value_cog_path in sorted(var_dir.glob("fh*.val.cog.tif")):
             if not value_cog_path.is_file():
                 logger.warning(
-                    "Skipping missing grid_v1 source value COG: model=%s run=%s var=%s path=%s",
+                    "Skipping missing grid source value COG: model=%s run=%s var=%s path=%s",
                     model,
                     run,
                     var,
@@ -525,7 +525,7 @@ def build_grid_v1_for_run(
             sidecar_path = var_dir / f"{fh_token}.json"
             if not sidecar_path.is_file():
                 continue
-            out_path = grid_v1_frame_path(data_root, model, run, var, fh)
+            out_path = grid_frame_path(data_root, model, run, var, fh)
             jobs.append((var, fh, value_cog_path, out_path))
 
     if not jobs:
@@ -552,7 +552,7 @@ def build_grid_v1_for_run(
             try:
                 future.result()
             except Exception:
-                logger.exception("grid_v1 frame build failed for model=%s run=%s", model, run)
+                logger.exception("grid frame build failed for model=%s run=%s", model, run)
                 fail += 1
                 continue
             ok += 1
@@ -563,6 +563,6 @@ def build_grid_v1_for_run(
             if _build_manifest_for_var(data_root=data_root, model=model, run=run, var=var):
                 manifest_ok += 1
         except Exception:
-            logger.exception("grid_v1 manifest build failed for model=%s run=%s var=%s", model, run, var)
+            logger.exception("grid manifest build failed for model=%s run=%s var=%s", model, run, var)
 
     return ok, fail, manifest_ok

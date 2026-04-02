@@ -37,7 +37,6 @@ from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
-from .config import grid_v1_enabled
 from .models.registry import list_model_capabilities
 from .models.serialization import (
     serialize_model_capability,
@@ -53,11 +52,11 @@ from .services.boundary_tiles import (
     lookup_mbtiles_tile,
 )
 from .services.builder.colorize import float_to_rgba
-from .services.grid_v1 import (
-    expected_grid_v1_frame_size_bytes,
-    grid_v1_frame_path,
-    grid_v1_manifest_path,
-    grid_v1_supported,
+from .services.grid import (
+    expected_grid_frame_size_bytes,
+    grid_frame_path,
+    grid_manifest_path,
+    grid_supported,
 )
 from .services.render_resampling import (
     allow_high_quality_loop_resampling,
@@ -2374,8 +2373,8 @@ def _run_version_token(model: str, run: str) -> str:
     return f"{run}-{mtime_ns}"
 
 
-def _grid_v1_version_token(model: str, run: str, var: str) -> str:
-    path = grid_v1_manifest_path(DATA_ROOT, model, run, var)
+def _grid_version_token(model: str, run: str, var: str) -> str:
+    path = grid_manifest_path(DATA_ROOT, model, run, var)
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
@@ -2404,7 +2403,7 @@ def _resolve_sidecar(model: str, run: str, var: str, fh: int) -> dict | None:
 
 
 def _load_grid_manifest(model: str, run: str, var: str) -> dict[str, Any] | None:
-    path = grid_v1_manifest_path(DATA_ROOT, model, run, var)
+    path = grid_manifest_path(DATA_ROOT, model, run, var)
     if not path.is_file():
         return None
     loaded = _load_json_cached(path, _grid_manifest_cache)
@@ -2413,10 +2412,10 @@ def _load_grid_manifest(model: str, run: str, var: str) -> dict[str, Any] | None
     return None
 
 
-def _grid_v1_file_url(model: str, run: str, var: str, filename: str, *, version_token: str) -> str:
+def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str) -> str:
     safe_filename = Path(filename).name
     return (
-        f"/api/v4/grid/v1/{model}/{run}/{var}/{safe_filename}"
+        f"/api/v4/grid/{model}/{run}/{var}/{safe_filename}"
         f"?v={version_token}"
     )
 
@@ -3409,7 +3408,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
-    if not grid_v1_enabled() or not grid_v1_supported(model, var):
+    if not grid_supported(model, var):
         return Response(status_code=404, content='{"error": "grid manifest not enabled"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
@@ -3422,7 +3421,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
     if manifest is None:
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
-    version_token = _grid_v1_version_token(model, resolved, var)
+    version_token = _grid_version_token(model, resolved, var)
     build_started_at = time.perf_counter()
     payload = dict(manifest)
     lods = payload.get("lods")
@@ -3443,7 +3442,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
                     if not filename or not isinstance(fh, int):
                         continue
                     next_frame = dict(frame)
-                    next_frame["url"] = _grid_v1_file_url(model, resolved, var, filename, version_token=version_token)
+                    next_frame["url"] = _grid_file_url(model, resolved, var, filename, version_token=version_token)
                     next_frames.append(next_frame)
             next_frames.sort(key=lambda item: int(item.get("fh", 0)))
             next_lod["frames"] = next_frames
@@ -3476,15 +3475,14 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
     )
 
 
-@app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
-def get_grid_v1_file(model: str, run: str, var: str, filename: str):
+def _get_grid_file(model: str, run: str, var: str, filename: str):
     resolved = _resolve_run(model, run)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    if not grid_v1_enabled() or not grid_v1_supported(model, var):
+    if not grid_supported(model, var):
         raise HTTPException(status_code=404, detail="Grid artifact not enabled")
     safe_filename = Path(filename).name
-    candidate = grid_v1_frame_path(DATA_ROOT, model, resolved, var, 0).parent / safe_filename
+    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0).parent / safe_filename
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Grid artifact not found")
     manifest = _load_grid_manifest(model, resolved, var)
@@ -3492,7 +3490,7 @@ def get_grid_v1_file(model: str, run: str, var: str, filename: str):
     width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
     if width > 0 and height > 0:
-        expected_size_bytes = expected_grid_v1_frame_size_bytes(width=width, height=height)
+        expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height)
         actual_size_bytes = candidate.stat().st_size
         if actual_size_bytes != expected_size_bytes:
             raise HTTPException(status_code=404, detail="Grid artifact invalid")
@@ -3501,6 +3499,16 @@ def get_grid_v1_file(model: str, run: str, var: str, filename: str):
         media_type="application/octet-stream",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.get("/api/v4/grid/{model}/{run}/{var}/{filename}")
+def get_grid_file(model: str, run: str, var: str, filename: str):
+    return _get_grid_file(model, run, var, filename)
+
+
+@app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
+def get_grid_file_compat(model: str, run: str, var: str, filename: str):
+    return _get_grid_file(model, run, var, filename)
 
 
 @app.get("/api/v4/sample")

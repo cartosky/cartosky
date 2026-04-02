@@ -234,8 +234,8 @@ type FetchOptions = {
 
 function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "grid" || normalized === "grid_webgl_v1") {
-    return "grid_webgl_v1";
+  if (normalized === "grid") {
+    return "grid";
   }
   return null;
 }
@@ -269,7 +269,7 @@ export function readCapabilityRenderSubstrates(
     normalized.push(substrate);
   }
   if (normalized.length === 0) {
-    return ["grid_webgl_v1"];
+    return ["grid"];
   }
   return normalized;
 }

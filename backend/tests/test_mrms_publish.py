@@ -276,21 +276,21 @@ def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
     assert new_sidecar["valid_time"] == "2026-03-27T12:15:00Z"
 
 
-def test_publish_mrms_bundle_triggers_grid_v1_shadow_build_when_enabled(
+def test_publish_mrms_bundle_triggers_grid_build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_small_grid(monkeypatch)
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(mrms_publish, "grid_v1_build_enabled", lambda: True)
-    monkeypatch.setattr(mrms_publish, "grid_v1_workers", lambda: 3)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(mrms_publish, "grid_workers", lambda: 3)
 
-    def _build_grid_v1_for_run(**kwargs):
+    def _build_grid_for_run(**kwargs):
         captured.update(kwargs)
         return 1, 0, 1
 
-    monkeypatch.setattr(mrms_publish, "build_grid_v1_for_run", _build_grid_v1_for_run)
+    monkeypatch.setattr(mrms_publish, "build_grid_for_run", _build_grid_for_run)
 
     frame = mrms_publish.MRMSBundleFrame(
         valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),

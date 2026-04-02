@@ -40,8 +40,6 @@ import {
 } from "@/lib/anchor-labels";
 import {
   API_ORIGIN,
-  isGridV1DefaultEnabled,
-  isGridV1Enabled,
   isDeferredNonCriticalBootstrapEnabled,
   MAP_VIEW_DEFAULTS,
   OVERLAY_DEFAULT_OPACITY,
@@ -701,8 +699,6 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
 }
 
 export default function App() {
-  const gridV1Enabled = isGridV1Enabled();
-  const gridV1DefaultEnabled = isGridV1DefaultEnabled();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
@@ -896,13 +892,12 @@ export default function App() {
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectionCapabilitiesResolved = Boolean(variable) && selectedCapabilityVarMap.has(variable);
   const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
-    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid_webgl_v1"])
+    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid"])
     : [];
-  const selectionSupportsGridV1 = selectionCapabilitiesResolved
-    && gridV1Enabled
-    && selectedVariableRenderSubstrates.includes("grid_webgl_v1");
-  const gridOnlySelection = selectionSupportsGridV1;
-  const prefersGridSubstrate = selectionSupportsGridV1;
+  const selectionSupportsGrid = selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("grid");
+  const gridOnlySelection = selectionSupportsGrid;
+  const prefersGridSubstrate = selectionSupportsGrid;
   const overlayFadeOutZoom = useMemo(() => {
     const start = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_start);
     const end = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_end);
@@ -1139,7 +1134,7 @@ export default function App() {
   }, [gridOnlySelection, model, run, variable]);
 
   useEffect(() => {
-    if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGridV1) {
+    if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGrid) {
       setGridManifest(null);
       return;
     }
@@ -1193,7 +1188,7 @@ export default function App() {
     resolvedRunForRequests,
     run,
     gridOnlySelection,
-    selectionSupportsGridV1,
+    selectionSupportsGrid,
     telemetryRunId,
     variable,
   ]);
@@ -2925,7 +2920,7 @@ export default function App() {
   }, [targetForecastHour, forecastHour, selectableFrameHours]);
 
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
-  const substrateDebugLabel = "grid_webgl_v1";
+  const substrateDebugLabel = "grid";
   const substrateDebugDetail = useMemo(() => {
     const frameLabel = Number.isFinite(resolvedGridDisplayHour) ? `FH ${resolvedGridDisplayHour}` : "no frame";
     return `${frameLabel} · z ${mapZoom.toFixed(1)}`;

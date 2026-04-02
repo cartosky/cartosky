@@ -14,7 +14,7 @@ import numpy as np
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from app.config import grid_v1_build_enabled, grid_v1_workers
+from app.config import grid_build_enabled, grid_workers
 from app.models.mrms import MRMS_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import (
@@ -34,7 +34,7 @@ from app.services.publish_utils import (
     write_latest_pointer,
     write_run_manifest,
 )
-from app.services.grid_v1 import build_grid_v1_for_run
+from app.services.grid import build_grid_for_run
 from app.services.run_ids import format_run_id
 
 logger = logging.getLogger(__name__)
@@ -275,24 +275,24 @@ def publish_mrms_bundle(
     )
     write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
 
-    if grid_v1_build_enabled():
+    if grid_build_enabled():
         try:
-            grid_ok, grid_fail, manifest_ok = build_grid_v1_for_run(
+            grid_ok, grid_fail, manifest_ok = build_grid_for_run(
                 data_root=data_root,
                 model=MRMS_MODEL_ID,
                 run=run_id,
-                workers=grid_v1_workers(),
+                workers=grid_workers(),
                 variables=(MRMS_VARIABLE_ID,),
             )
             logger.info(
-                "MRMS grid_v1 shadow build: run=%s frame_success=%d frame_failed=%d manifests=%d",
+                "MRMS grid build: run=%s frame_success=%d frame_failed=%d manifests=%d",
                 run_id,
                 grid_ok,
                 grid_fail,
                 manifest_ok,
             )
         except Exception:
-            logger.exception("MRMS grid_v1 shadow build failed: run=%s", run_id)
+            logger.exception("MRMS grid build failed: run=%s", run_id)
 
     manifest_path = data_root / "manifests" / MRMS_MODEL_ID / f"{run_id}.json"
     published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id

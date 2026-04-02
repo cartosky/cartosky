@@ -28,9 +28,8 @@ os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
 os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_grid_only_contracts.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
-from app import config as config_module
 from app import main as main_module
-from app.services.grid_v1 import build_grid_v1_for_run
+from app.services.grid import build_grid_for_run
 
 pytestmark = pytest.mark.anyio
 
@@ -70,15 +69,6 @@ def _reset_main_caches() -> None:
     main_module._sidecar_cache.clear()
     main_module._grid_manifest_cache.clear()
     main_module._sample_transformer.cache_clear()
-
-
-def _enable_grid_v1(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CARTOSKY_GRID_V1_ENABLED", "1")
-    monkeypatch.delenv("CARTOSKY_GRID_V1_ALLOWLIST", raising=False)
-    monkeypatch.delenv("CARTOSKY_GRID_V1_DENYLIST", raising=False)
-    config_module.grid_v1_enabled.cache_clear()
-    config_module.grid_v1_allowlist_override.cache_clear()
-    config_module.grid_v1_denylist.cache_clear()
 
 
 def _configure_main_paths(
@@ -141,8 +131,7 @@ async def forecast_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         frames=[{"fh": 0, "valid_time": "2026-03-30T12:00:00Z"}],
     )
 
-    _enable_grid_v1(monkeypatch)
-    build_grid_v1_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
+    build_grid_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
     _configure_main_paths(
         monkeypatch,
         data_root=data_root,
@@ -184,8 +173,7 @@ async def observed_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         frames=[{"fh": 0, "valid_time": "2026-03-30T12:06:00Z"}],
     )
 
-    _enable_grid_v1(monkeypatch)
-    build_grid_v1_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
+    build_grid_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
     _configure_main_paths(
         monkeypatch,
         data_root=data_root,
@@ -207,8 +195,8 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
     assert capabilities_response.status_code == 200
     capabilities_payload = capabilities_response.json()
     tmp2m = capabilities_payload["model_catalog"]["hrrr"]["variables"]["tmp2m"]
-    assert tmp2m["render_substrates"] == ["grid_webgl_v1"]
-    assert capabilities_payload["model_catalog"]["hrrr"]["defaults"]["default_render_substrate"] == "grid_webgl_v1"
+    assert tmp2m["render_substrates"] == ["grid"]
+    assert capabilities_payload["model_catalog"]["hrrr"]["defaults"]["default_render_substrate"] == "grid"
 
     bootstrap_response = await forecast_client.get(
         "/api/v4/bootstrap",
@@ -235,7 +223,7 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
     grid_manifest_response = await forecast_client.get("/api/v4/hrrr/20260330_12z/tmp2m/grid-manifest")
     assert grid_manifest_response.status_code == 200
     grid_manifest = grid_manifest_response.json()
-    assert grid_manifest["subtype"] == "grid_webgl_v1"
+    assert grid_manifest["subtype"] == "grid"
     assert [frame["fh"] for frame in grid_manifest["lods"][0]["frames"]] == [0]
 
     loop_manifest_response = await forecast_client.get("/api/v4/hrrr/20260330_12z/tmp2m/loop-manifest")
@@ -249,8 +237,8 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
     assert capabilities_response.status_code == 200
     capabilities_payload = capabilities_response.json()
     reflectivity = capabilities_payload["model_catalog"]["mrms"]["variables"]["reflectivity"]
-    assert reflectivity["render_substrates"] == ["grid_webgl_v1"]
-    assert capabilities_payload["model_catalog"]["mrms"]["defaults"]["default_render_substrate"] == "grid_webgl_v1"
+    assert reflectivity["render_substrates"] == ["grid"]
+    assert capabilities_payload["model_catalog"]["mrms"]["defaults"]["default_render_substrate"] == "grid"
 
     bootstrap_response = await observed_client.get(
         "/api/v4/bootstrap",
@@ -277,7 +265,7 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
     grid_manifest_response = await observed_client.get("/api/v4/mrms/20260330_1206z/reflectivity/grid-manifest")
     assert grid_manifest_response.status_code == 200
     grid_manifest = grid_manifest_response.json()
-    assert grid_manifest["subtype"] == "grid_webgl_v1"
+    assert grid_manifest["subtype"] == "grid"
     assert [frame["fh"] for frame in grid_manifest["lods"][0]["frames"]] == [0]
 
     loop_manifest_response = await observed_client.get("/api/v4/mrms/20260330_1206z/reflectivity/loop-manifest")
