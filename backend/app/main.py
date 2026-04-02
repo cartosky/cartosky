@@ -2016,22 +2016,35 @@ def _manifest_var_available_frames(var_entry: dict[str, Any]) -> int:
     return 0
 
 
-def _latest_run_readiness(
+def _var_has_grid_runtime_ready(model_id: str, run_id: str, var_key: str) -> bool:
+    manifest = _load_grid_manifest(model_id, run_id, var_key)
+    if not isinstance(manifest, dict):
+        return False
+    lods = manifest.get("lods")
+    if not isinstance(lods, list):
+        return False
+    for lod in lods:
+        if not isinstance(lod, dict):
+            continue
+        frames = lod.get("frames")
+        if isinstance(frames, list) and len(frames) > 0:
+            return True
+    return False
+
+
+def _ready_runtime_state_for_run(
     model_id: str,
-    latest_run: str | None,
+    run_id: str,
     *,
     model_capability: Any | None,
-) -> tuple[bool, list[str], int]:
-    if latest_run is None:
-        return False, [], 0
-
-    manifest = _load_manifest(model_id, latest_run)
+) -> tuple[list[str], int]:
+    manifest = _load_manifest(model_id, run_id)
     if not isinstance(manifest, dict):
-        return False, [], 0
+        return [], 0
 
     variables = manifest.get("variables")
     if not isinstance(variables, dict):
-        return False, [], 0
+        return [], 0
 
     variable_catalog = getattr(model_capability, "variable_catalog", {}) if model_capability is not None else {}
     catalog_present = isinstance(variable_catalog, dict) and bool(variable_catalog)
@@ -2053,10 +2066,28 @@ def _latest_run_readiness(
         available_frames = _manifest_var_available_frames(var_entry)
         if available_frames <= 0:
             continue
+        if grid_supported(model_id, var_key) and not _var_has_grid_runtime_ready(model_id, run_id, var_key):
+            continue
         ready_vars.append(var_key)
         ready_frame_count += available_frames
 
     ready_vars.sort()
+    return ready_vars, ready_frame_count
+
+
+def _latest_run_readiness(
+    model_id: str,
+    latest_run: str | None,
+    *,
+    model_capability: Any | None,
+) -> tuple[bool, list[str], int]:
+    if latest_run is None:
+        return False, [], 0
+    ready_vars, ready_frame_count = _ready_runtime_state_for_run(
+        model_id,
+        latest_run,
+        model_capability=model_capability,
+    )
     return bool(ready_vars), ready_vars, ready_frame_count
 
 
@@ -2200,10 +2231,25 @@ def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> lis
 
 
 def _resolve_latest_run(model: str) -> str | None:
+    model_capability = list_model_capabilities().get(model)
     pointed = _latest_run_from_pointer(model)
     if pointed is not None:
-        return pointed
+        ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
+            model,
+            pointed,
+            model_capability=model_capability,
+        )
+        if ready_vars:
+            return pointed
     runs = _scan_manifest_runs(model)
+    for run_id in runs:
+        ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
+            model,
+            run_id,
+            model_capability=model_capability,
+        )
+        if ready_vars:
+            return run_id
     return runs[0] if runs else None
 
 

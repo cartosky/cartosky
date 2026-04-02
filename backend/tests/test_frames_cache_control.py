@@ -6,6 +6,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+import numpy as np
+import rasterio
+from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -24,8 +27,26 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 os.environ.setdefault("TWM_ADMIN_MEMBER_IDS", "42")
 
 from app import main as main_module
+from app.services.grid import build_grid_for_run
 
 pytestmark = pytest.mark.anyio
+
+
+def _write_value_cog(path: Path, values: np.ndarray, *, pixel_size: float = 3000.0) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=values.shape[0],
+        width=values.shape[1],
+        count=1,
+        dtype="float32",
+        crs="EPSG:3857",
+        transform=from_origin(-14920000.0, 7362000.0, pixel_size, pixel_size),
+        nodata=np.nan,
+    ) as ds:
+        ds.write(values.astype(np.float32), 1)
 
 
 @pytest.fixture
@@ -113,8 +134,8 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                 "variables": {
                     gfs_var: {
                         "expected_frames": 1,
-                        "available_frames": 0,
-                        "frames": [],
+                        "available_frames": 1,
+                        "frames": [{"fh": 0, "valid_time": "2026-02-24T12:00:00Z"}],
                     }
                 }
             }
@@ -135,20 +156,70 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
             }
         )
     )
+    gfs_newer_run_id = "20260224_18z"
+    (gfs_manifest_dir / f"{gfs_newer_run_id}.json").write_text(
+        json.dumps(
+            {
+                "variables": {
+                    gfs_var: {
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-02-24T18:00:00Z"},
+                        ],
+                    }
+                }
+            }
+        )
+    )
 
     model_published_dir = published_root / model
     (model_published_dir / run_id).mkdir(parents=True, exist_ok=True)
     (model_published_dir / incomplete_run_id).mkdir(parents=True, exist_ok=True)
     (model_published_dir / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
+    ready_tmp2m_dir = model_published_dir / run_id / temp_var
+    ready_radar_dir = model_published_dir / run_id / var
+    ready_values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    radar_values = np.array([[0.0, 1.0], [2.0, np.nan]], dtype=np.float32)
+    _write_value_cog(ready_tmp2m_dir / "fh000.val.cog.tif", ready_values)
+    _write_value_cog(ready_tmp2m_dir / "fh001.val.cog.tif", ready_values)
+    (ready_tmp2m_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-02-24T14:00:00Z"})
+    )
+    (ready_tmp2m_dir / "fh001.json").write_text(
+        json.dumps({"fh": 1, "units": "F", "valid_time": "2026-02-24T15:00:00Z"})
+    )
+    _write_value_cog(ready_radar_dir / "fh000.val.cog.tif", radar_values)
+    _write_value_cog(ready_radar_dir / "fh001.val.cog.tif", radar_values)
+    (ready_radar_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-02-24T14:00:00Z"})
+    )
+    (ready_radar_dir / "fh001.json").write_text(
+        json.dumps({"fh": 1, "units": "dBZ", "valid_time": "2026-02-24T15:00:00Z"})
+    )
+    build_grid_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(var, temp_var))
     nam_published_dir = published_root / nam_model
     (nam_published_dir / nam_run_id).mkdir(parents=True, exist_ok=True)
     (nam_published_dir / "LATEST.json").write_text(json.dumps({"run_id": nam_run_id}))
     gfs_published_dir = published_root / gfs_model
     (gfs_published_dir / gfs_run_id).mkdir(parents=True, exist_ok=True)
     (gfs_published_dir / gfs_invalid_run_id).mkdir(parents=True, exist_ok=True)
+    gfs_newer_var_dir = gfs_published_dir / gfs_newer_run_id / gfs_var
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    _write_value_cog(gfs_newer_var_dir / "fh000.val.cog.tif", values)
+    (gfs_newer_var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-02-24T18:00:00Z"})
+    )
     # Intentionally point at an invalid GFS cycle hour to ensure API-side filtering
     # still resolves latest to a valid 6-hour cycle.
     (gfs_published_dir / "LATEST.json").write_text(json.dumps({"run_id": gfs_invalid_run_id}))
+
+    gfs_ready_var_dir = gfs_published_dir / gfs_run_id / gfs_var
+    _write_value_cog(gfs_ready_var_dir / "fh000.val.cog.tif", values)
+    (gfs_ready_var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-02-24T12:00:00Z"})
+    )
+    build_grid_for_run(data_root=data_root, model=gfs_model, run=gfs_run_id, workers=1, variables=(gfs_var,))
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
@@ -301,15 +372,23 @@ async def test_capabilities_availability_readiness_fields(client: httpx.AsyncCli
 
     gfs = availability["gfs"]
     assert gfs["latest_run"] == "20260224_12z"
-    assert gfs["latest_run_ready"] is False
-    assert gfs["latest_run_ready_vars"] == []
-    assert gfs["latest_run_ready_frame_count"] == 0
+    assert gfs["latest_run_ready"] is True
+    assert gfs["latest_run_ready_vars"] == ["tmp2m"]
+    assert gfs["latest_run_ready_frame_count"] == 1
+
+
+async def test_latest_run_skips_newer_grid_unsupported_published_run(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v4/gfs/latest/tmp2m/grid-manifest")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run"] == "20260224_12z"
 
 
 async def test_runs_and_manifest_reject_out_of_cycle_gfs_run(client: httpx.AsyncClient) -> None:
     runs_resp = await client.get("/api/v4/gfs/runs")
     assert runs_resp.status_code == 200
-    assert runs_resp.json() == ["20260224_12z"]
+    assert runs_resp.json() == ["20260224_18z", "20260224_12z"]
 
     invalid_manifest_resp = await client.get("/api/v4/gfs/20260224_20z/manifest")
     assert invalid_manifest_resp.status_code == 404
