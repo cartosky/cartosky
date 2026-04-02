@@ -1103,8 +1103,8 @@ export default function App() {
         ? (capabilities.availability[model].latest_run ?? null)
         : null;
     const fallbackRun = currentFrame?.run ?? frameRows[0]?.run ?? null;
-    const candidates = [manifestLatest, runsLatest, availabilityLatest, fallbackRun].filter((value): value is string => Boolean(value));
-    return candidates[0] ?? null;
+    const candidates = [runsLatest, availabilityLatest, manifestLatest, fallbackRun].filter((value): value is string => Boolean(value));
+    return pickLatestRunId(candidates);
   }, [run, runManifest, model, capabilities, runs, currentFrame, frameRows]);
   const latestGridRunCandidates = useMemo(() => {
     if (!gridOnlySelection || run !== "latest") {
