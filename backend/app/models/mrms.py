@@ -26,6 +26,9 @@ class MRMSPlugin(BaseModelPlugin):
             "merged_base_reflectivity_qc": "reflectivity",
             "mrms_reflectivity": "reflectivity",
             "dbz": "reflectivity",
+            "mrms_radar_ptype": "mrms_radar_ptype",
+            "radar_ptype": "mrms_radar_ptype",
+            "reflectivity_ptype": "mrms_radar_ptype",
         }
         return aliases.get(normalized, normalized)
 
@@ -64,6 +67,31 @@ MRMS_VARS: dict[str, VarSpec] = {
         kind="discrete",
         units="dBZ",
     ),
+    "mrms_radar_ptype": VarSpec(
+        id="mrms_radar_ptype",
+        name="Reflectivity + Precip Type",
+        selectors=VarSelectors(
+            hints={
+                "display_kind": "radar_ptype",
+                "upstream_product": "MRMS MergedBaseReflectivityQC + PrecipFlag",
+                "upstream_transport": "noaa_ncep_http_grib2",
+            }
+        ),
+        primary=True,
+        kind="discrete",
+        units="dBZ",
+    ),
+}
+
+
+_MRMS_VAR_COLOR_MAPS: dict[str, str] = {
+    "reflectivity": "mrms_reflectivity",
+    "mrms_radar_ptype": "mrms_radar_ptype",
+}
+
+_MRMS_VAR_ORDER: dict[str, int] = {
+    "reflectivity": 0,
+    "mrms_radar_ptype": 1,
 }
 
 
@@ -79,10 +107,10 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         units=var_spec.units,
         normalize_units=var_spec.normalize_units,
         scale=var_spec.scale,
-        color_map_id="mrms_reflectivity" if var_key == "reflectivity" else None,
+        color_map_id=_MRMS_VAR_COLOR_MAPS.get(var_key),
         buildable=bool(var_spec.primary or var_spec.derived),
-        order=0 if var_key == "reflectivity" else None,
-        group="Radar" if var_key == "reflectivity" else None,
+        order=_MRMS_VAR_ORDER.get(var_key),
+        group="Radar",
     )
 
 

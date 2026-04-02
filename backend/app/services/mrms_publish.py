@@ -24,6 +24,7 @@ from app.services.builder.cog_writer import (
     write_value_cog,
 )
 from app.services.builder.pipeline import build_sidecar_json
+from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
     promote_run,
@@ -46,6 +47,23 @@ MRMS_VARIABLE_ID = "reflectivity"
 MRMS_COLOR_MAP_ID = "mrms_reflectivity"
 MRMS_DISPLAY_SMOOTHING_SIGMA = 0.45
 
+MRMS_RADAR_PTYPE_VARIABLE_ID = "mrms_radar_ptype"
+MRMS_RADAR_PTYPE_COLOR_MAP_ID = "mrms_radar_ptype"
+
+# ---------------------------------------------------------------------------
+# PrecipFlag → ptype mapping
+# ---------------------------------------------------------------------------
+MRMS_PRECIP_FLAG_TO_PTYPE: dict[int, str | None] = {
+    -3: None,      # no coverage
+     0: None,      # no precipitation
+     1: "rain",    # warm stratiform rain
+     3: "snow",    # snow
+     6: "rain",    # convective rain (above freezing)
+     7: "frzr",    # near/below-freezing liquid precip (freezing rain)
+    10: "snow",    # dry/cold snow
+}
+# Any unknown flag values → None (transparent)
+
 
 @dataclass(frozen=True)
 class MRMSBundleFrame:
@@ -59,6 +77,7 @@ class MRMSBundleFrame:
     source_url: str | None = None
     source_filename: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    precip_flag_values: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +196,7 @@ def publish_mrms_bundle(
     _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
 
     targets: list[tuple[str, int]] = []
+    ptype_targets: list[tuple[str, int]] = []
     max_workers = max(1, int(frame_write_workers))
     fresh_jobs: list[tuple[int, MRMSBundleFrame]] = []
     for fh, frame in enumerate(ordered_frame_inputs):
@@ -191,32 +211,56 @@ def publish_mrms_bundle(
         else:
             fresh_jobs.append((fh, frame))
 
-    if max_workers <= 1 or len(fresh_jobs) <= 1:
-        for fh, frame in fresh_jobs:
-            write_mrms_frame(
-                data_root=data_root,
-                run_id=run_id,
-                forecast_hour=fh,
-                frame=frame,
-            )
-            targets.append((MRMS_VARIABLE_ID, fh))
-    elif fresh_jobs:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(fresh_jobs))) as pool:
-            future_map = {
-                pool.submit(
-                    write_mrms_frame,
+    def _write_fresh_frame(fh: int, frame: MRMSBundleFrame) -> tuple[int, bool]:
+        """Write reflectivity frame, and radar_ptype frame if precip_flag available.
+
+        Returns (fh, has_ptype).
+        """
+        write_mrms_frame(
+            data_root=data_root,
+            run_id=run_id,
+            forecast_hour=fh,
+            frame=frame,
+        )
+        has_ptype = frame.precip_flag_values is not None
+        if has_ptype:
+            try:
+                write_mrms_radar_ptype_frame(
                     data_root=data_root,
                     run_id=run_id,
                     forecast_hour=fh,
                     frame=frame,
-                ): fh
+                )
+            except Exception:
+                logger.warning(
+                    "MRMS radar_ptype frame write failed fh=%d; reflectivity-only",
+                    fh,
+                    exc_info=True,
+                )
+                has_ptype = False
+        return fh, has_ptype
+
+    if max_workers <= 1 or len(fresh_jobs) <= 1:
+        for fh, frame in fresh_jobs:
+            fh_result, has_ptype = _write_fresh_frame(fh, frame)
+            targets.append((MRMS_VARIABLE_ID, fh_result))
+            if has_ptype:
+                ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh_result))
+    elif fresh_jobs:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(fresh_jobs))) as pool:
+            future_map = {
+                pool.submit(_write_fresh_frame, fh, frame): fh
                 for fh, frame in fresh_jobs
             }
             for future in concurrent.futures.as_completed(future_map):
                 fh = future_map[future]
-                future.result()
-                targets.append((MRMS_VARIABLE_ID, fh))
+                fh_result, has_ptype = future.result()
+                targets.append((MRMS_VARIABLE_ID, fh_result))
+                if has_ptype:
+                    ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh_result))
     targets.sort(key=lambda item: item[1])
+    ptype_targets.sort(key=lambda item: item[1])
+    all_targets = targets + ptype_targets
 
     ordered_valid_times = [
         item.valid_time.astimezone(timezone.utc)
@@ -233,41 +277,61 @@ def publish_mrms_bundle(
     )
 
     if grid_build_enabled():
+        grid_variables = [MRMS_VARIABLE_ID]
+        if ptype_targets:
+            grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
         try:
             manifest_ok = build_grid_manifests_for_run_root(
                 run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
                 model=MRMS_MODEL_ID,
                 run=run_id,
-                variables=(MRMS_VARIABLE_ID,),
+                variables=tuple(grid_variables),
             )
             logger.info("MRMS grid manifest build: run=%s manifests=%d", run_id, manifest_ok)
         except Exception:
             logger.exception("MRMS grid manifest build failed: run=%s", run_id)
 
     promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
+
+    manifest_variables: dict[str, Any] = {
+        MRMS_VARIABLE_ID: {
+            "expected_frames": manifest_target_frame_count,
+            "available_frames": len(ordered_valid_times),
+            "frames": [
+                {
+                    "fh": fh,
+                    "valid_time": source_valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                for fh, source_valid_time in enumerate(ordered_source_valid_times)
+            ],
+        },
+    }
+    if ptype_targets:
+        ptype_fhs = sorted(fh for _, fh in ptype_targets)
+        manifest_variables[MRMS_RADAR_PTYPE_VARIABLE_ID] = {
+            "expected_frames": manifest_target_frame_count,
+            "available_frames": len(ptype_fhs),
+            "frames": [
+                {
+                    "fh": fh,
+                    "valid_time": ordered_source_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                for fh in ptype_fhs
+                if fh < len(ordered_source_valid_times)
+            ],
+        }
+
     write_run_manifest(
         data_root=data_root,
         model=MRMS_MODEL_ID,
         run_id=run_id,
-        targets=targets,
+        targets=all_targets,
         plugin=MRMS_MODEL,
         metadata=build_observed_bundle_health(
             latest_run=run_id,
             manifest={
                 "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "variables": {
-                    MRMS_VARIABLE_ID: {
-                        "expected_frames": manifest_target_frame_count,
-                        "available_frames": len(ordered_valid_times),
-                        "frames": [
-                            {
-                                "fh": fh,
-                                "valid_time": source_valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            }
-                            for fh, source_valid_time in enumerate(ordered_source_valid_times)
-                        ],
-                    }
-                },
+                "variables": manifest_variables,
             },
             source=MRMS_MODEL_ID,
             now_utc=publish_dt,
@@ -463,3 +527,136 @@ def _display_values_for_colorize(values: np.ndarray, *, sigma: float = MRMS_DISP
     np.divide(num, den, out=smoothed, where=den > 1e-6)
     smoothed[~finite_mask] = np.nan
     return smoothed
+
+
+# ---------------------------------------------------------------------------
+# MRMS radar_ptype composition (reflectivity + PrecipFlag → indexed palette)
+# ---------------------------------------------------------------------------
+
+def compose_mrms_radar_ptype(
+    reflectivity: np.ndarray,
+    precip_flag: np.ndarray,
+    *,
+    min_visible_dbz: float = 10.0,
+) -> np.ndarray:
+    """Compose reflectivity + PrecipFlag into an indexed flat palette array.
+
+    Returns a float32 array where valid pixels contain palette index values
+    (matching RADAR_PTYPE_BREAKS offsets) and invalid pixels are NaN.
+    This mirrors the forecast ``_derive_radar_ptype_combo`` output format.
+    """
+    refl = np.asarray(reflectivity, dtype=np.float32)
+    flags = np.asarray(precip_flag, dtype=np.float32)
+
+    if refl.shape != flags.shape:
+        raise ValueError(
+            f"Reflectivity and PrecipFlag shape mismatch: "
+            f"refl={refl.shape} flags={flags.shape}"
+        )
+
+    # Map integer flag codes to ptype strings (vectorised)
+    ptype = np.empty(refl.shape, dtype="U5")  # max len "sleet"
+    ptype[:] = ""
+    flag_int = np.rint(flags).astype(np.int32)
+    for flag_code, ptype_name in MRMS_PRECIP_FLAG_TO_PTYPE.items():
+        if ptype_name is not None:
+            ptype[flag_int == flag_code] = ptype_name
+
+    # Normalise reflectivity to [0, 1] for binning (same as forecast)
+    refl_safe = np.where(np.isfinite(refl), np.maximum(refl, 0.0), np.nan)
+    normalized = np.clip(refl_safe / 70.0, 0.0, 1.0)
+
+    indexed = np.full(refl.shape, np.nan, dtype=np.float32)
+    for code in RADAR_PTYPE_ORDER:
+        breaks = RADAR_PTYPE_BREAKS[code]
+        offset = int(breaks["offset"])
+        count = int(breaks["count"])
+        local_bin = np.clip(
+            np.rint(normalized * (count - 1)), 0, count - 1,
+        ).astype(np.int32)
+        selector = (
+            (ptype == code)
+            & np.isfinite(refl_safe)
+            & (refl_safe >= min_visible_dbz)
+        )
+        indexed[selector] = (offset + local_bin[selector]).astype(np.float32)
+
+    return indexed
+
+
+def write_mrms_radar_ptype_frame(
+    *,
+    data_root: Path,
+    run_id: str,
+    forecast_hour: int,
+    frame: MRMSBundleFrame,
+) -> None:
+    """Write an mrms_radar_ptype frame by compositing reflectivity + PrecipFlag."""
+    if frame.precip_flag_values is None:
+        raise ValueError("Cannot write mrms_radar_ptype frame without precip_flag_values")
+
+    reflectivity = np.asarray(frame.values, dtype=np.float32)
+    reflectivity = _warp_frame_to_target_grid(reflectivity, frame=frame)
+
+    precip_flag = np.asarray(frame.precip_flag_values, dtype=np.float32)
+    # PrecipFlag shares the same native grid as reflectivity, so warp the same way
+    pf_frame = MRMSBundleFrame(
+        valid_time=frame.valid_time,
+        values=precip_flag,
+        source_crs=frame.source_crs,
+        source_transform=frame.source_transform,
+    )
+    precip_flag = _warp_frame_to_target_grid(precip_flag, frame=pf_frame)
+
+    indexed = compose_mrms_radar_ptype(reflectivity, precip_flag)
+
+    fh_str = f"fh{int(forecast_hour):03d}"
+    staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    value_path = staging_dir / f"{fh_str}.val.cog.tif"
+    sidecar_path = staging_dir / f"{fh_str}.json"
+
+    _, colorize_meta = float_to_rgba(indexed, MRMS_RADAR_PTYPE_COLOR_MAP_ID, meta_var_key=MRMS_RADAR_PTYPE_VARIABLE_ID)
+    write_value_cog(
+        indexed,
+        value_path,
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+    )
+
+    run_dt = datetime.now(timezone.utc)
+    sidecar = build_sidecar_json(
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+        run_id=run_id,
+        var_id=MRMS_RADAR_PTYPE_VARIABLE_ID,
+        fh=int(forecast_hour),
+        run_date=run_dt,
+        colorize_meta=colorize_meta,
+        var_spec={"type": "indexed", "units": "index"},
+        var_spec_model=None,
+        value_downsample_factor=1,
+        quality=frame.quality,
+        quality_flags=frame.quality_flags,
+        valid_time_override=frame.valid_time.astimezone(timezone.utc),
+    )
+    if frame.source_url:
+        sidecar["source_url"] = frame.source_url
+    if frame.source_filename:
+        sidecar["source_filename"] = frame.source_filename
+    source_metadata = dict(frame.metadata) if frame.metadata else {}
+    if frame.source_valid_time is not None:
+        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if source_metadata:
+        sidecar["source_metadata"] = source_metadata
+    write_json_atomic(sidecar_path, sidecar)
+    if grid_build_enabled():
+        write_grid_frame_for_run_root(
+            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+            model=MRMS_MODEL_ID,
+            var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+            fh=int(forecast_hour),
+            values=indexed,
+            transform=_target_grid_transform(),
+        )

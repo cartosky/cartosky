@@ -7,12 +7,16 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from app.services.mrms_fetch import (
     MRMS_LISTING_URL,
+    MRMS_PRECIP_FLAG_FILE_RE,
+    MRMS_PRECIP_FLAG_LISTING_URL,
     MRMSScanRef,
     decode_scan,
     discover_recent_scans_http,
@@ -48,6 +52,7 @@ DEFAULT_FRAME_WRITE_WORKERS = 2
 class MRMSPollerConfig:
     data_root: Path
     listing_url: str
+    precip_flag_listing_url: str
     poll_seconds: int
     keep_runs: int
     window_minutes: int
@@ -91,6 +96,23 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         len(frozen),
         target_frame_count,
     )
+
+    # Discover PrecipFlag scans and build a lookup by valid_time
+    precip_flag_by_time: dict[datetime, MRMSScanRef] = {}
+    if config.precip_flag_listing_url:
+        try:
+            pf_scans = discover_recent_scans_http(
+                listing_url=config.precip_flag_listing_url,
+                file_re=MRMS_PRECIP_FLAG_FILE_RE,
+                limit=max(target_frame_count * 3, target_frame_count),
+                timeout_seconds=config.listing_timeout_seconds,
+            )
+            for pf_scan in pf_scans:
+                precip_flag_by_time[pf_scan.valid_time.astimezone(timezone.utc)] = pf_scan
+            logger.info("MRMS PrecipFlag discovered=%d", len(pf_scans))
+        except Exception:
+            logger.exception("MRMS PrecipFlag listing failed; proceeding without precip type data")
+
     if not frozen:
         return MRMSPollerCycleResult(
             action="noop",
@@ -149,14 +171,23 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
                 _format_iso(scan.source_valid_time or scan.valid_time),
             )
             try:
-                decoded_frame = _decode_scan_ref(scan, download_dir=download_dir, config=config)
+                pf_scan = _find_closest_precip_flag_scan(
+                    scan.valid_time, precip_flag_by_time,
+                )
+                decoded_frame = _decode_scan_ref(
+                    scan,
+                    download_dir=download_dir,
+                    config=config,
+                    precip_flag_scan=pf_scan,
+                )
                 frames.append(decoded_frame)
                 logger.info(
-                    "MRMS frame %d/%d ready decoder=%s shape=%s",
+                    "MRMS frame %d/%d ready decoder=%s shape=%s pf=%s",
                     index,
                     total_scans,
                     str(decoded_frame.metadata.get("decoder", "unknown")),
                     tuple(decoded_frame.values.shape),
+                    "yes" if decoded_frame.precip_flag_values is not None else "no",
                 )
             except Exception as exc:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
@@ -223,8 +254,9 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
 
 def run_poller(config: MRMSPollerConfig, *, once: bool) -> int:
     logger.info(
-        "MRMS poller starting listing=%s data_root=%s poll=%ss keep_runs=%d window=%dm cadence=%dm decoder=%s/%s",
+        "MRMS poller starting listing=%s precip_flag=%s data_root=%s poll=%ss keep_runs=%d window=%dm cadence=%dm decoder=%s/%s",
         config.listing_url,
+        config.precip_flag_listing_url,
         config.data_root,
         config.poll_seconds,
         config.keep_runs,
@@ -252,11 +284,33 @@ def compute_target_frame_count(*, window_minutes: int, frame_cadence_minutes: in
     return max(1, (safe_window // safe_cadence) + 1)
 
 
+PRECIP_FLAG_MATCH_TOLERANCE = timedelta(minutes=4)
+
+
+def _find_closest_precip_flag_scan(
+    valid_time: datetime,
+    precip_flag_by_time: dict[datetime, MRMSScanRef],
+) -> MRMSScanRef | None:
+    """Find the PrecipFlag scan closest to the given valid_time within tolerance."""
+    if not precip_flag_by_time:
+        return None
+    target = valid_time.astimezone(timezone.utc)
+    best: MRMSScanRef | None = None
+    best_delta = PRECIP_FLAG_MATCH_TOLERANCE
+    for pf_time, pf_scan in precip_flag_by_time.items():
+        delta = abs(pf_time - target)
+        if delta < best_delta:
+            best_delta = delta
+            best = pf_scan
+    return best
+
+
 def _decode_scan_ref(
     scan: MRMSScanRef,
     *,
     download_dir: Path,
     config: MRMSPollerConfig,
+    precip_flag_scan: MRMSScanRef | None = None,
 ) -> MRMSBundleFrame:
     downloaded = download_scan(
         scan,
@@ -269,6 +323,35 @@ def _decode_scan_ref(
         preferred_decoder=config.preferred_decoder,
         fallback_decoder=config.fallback_decoder,
     )
+
+    precip_flag_values: np.ndarray | None = None
+    if precip_flag_scan is not None:
+        try:
+            pf_downloaded = download_scan(
+                precip_flag_scan,
+                dest_dir=download_dir,
+                timeout_seconds=config.download_timeout_seconds,
+            )
+            pf_decoded = decode_scan(
+                pf_downloaded,
+                valid_time=precip_flag_scan.valid_time,
+                file_re=MRMS_PRECIP_FLAG_FILE_RE,
+                preferred_decoder=config.preferred_decoder,
+                fallback_decoder=config.fallback_decoder,
+            )
+            precip_flag_values = pf_decoded.values
+            logger.info(
+                "MRMS PrecipFlag decoded shape=%s for refl scan valid=%s",
+                tuple(pf_decoded.values.shape),
+                _format_iso(scan.valid_time),
+            )
+        except Exception:
+            logger.warning(
+                "MRMS PrecipFlag decode failed for %s; reflectivity-only frame",
+                precip_flag_scan.filename,
+                exc_info=True,
+            )
+
     return MRMSBundleFrame(
         valid_time=scan.valid_time,
         source_valid_time=decoded.valid_time,
@@ -281,6 +364,7 @@ def _decode_scan_ref(
             "decoder": decoded.decoder,
             **dict(decoded.metadata),
         },
+        precip_flag_values=precip_flag_values,
     )
 
 
@@ -408,6 +492,10 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
             args.listing_url.strip()
             if isinstance(args.listing_url, str) and args.listing_url.strip()
             else _env_value("CARTOSKY_MRMS_LISTING_URL", default=MRMS_LISTING_URL)
+        ),
+        precip_flag_listing_url=_env_value(
+            "CARTOSKY_MRMS_PRECIP_FLAG_LISTING_URL",
+            default=MRMS_PRECIP_FLAG_LISTING_URL,
         ),
         poll_seconds=(
             int(args.poll_seconds)

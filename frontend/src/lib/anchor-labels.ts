@@ -59,6 +59,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   reflectivity: { mode: "active-only", threshold: 15 },
   radar_reflectivity: { mode: "active-only", threshold: 15 },
   radar_ptype: { mode: "hidden" },
+  mrms_radar_ptype: { mode: "hidden" },
 });
 
 function isObject(value: unknown): value is Record<string, unknown> {

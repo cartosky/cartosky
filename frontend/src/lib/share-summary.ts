@@ -33,6 +33,7 @@ const MODEL_LABELS: Record<string, string> = {
 
 const VARIABLE_SPECIAL_CASES: Record<string, string> = {
   radar_ptype: "Radar & precip type",
+  mrms_radar_ptype: "Radar & precip type",
   precip_ptype: "Precip type",
   qpf: "QPF",
   tmp2m: "2m temperature",

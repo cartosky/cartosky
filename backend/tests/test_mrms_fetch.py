@@ -187,6 +187,49 @@ def test_wgrib2_decoder_falls_back_when_order_option_fails(monkeypatch, tmp_path
     np.testing.assert_allclose(decoded.values, np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32))
 
 
+def test_discover_recent_scans_parses_precip_flag_listing_filenames() -> None:
+    from app.services.mrms_fetch import MRMS_PRECIP_FLAG_FILE_RE, MRMS_PRECIP_FLAG_LISTING_URL
+
+    html = """
+    <html><body>
+      <a href="MRMS_PrecipFlag_00.00_20260327-120000.grib2.gz">old</a>
+      <a href="MRMS_PrecipFlag_00.00_20260327-120200.grib2.gz">new</a>
+    </body></html>
+    """
+
+    scans = discover_recent_scans_from_listing_html(
+        html,
+        base_url=MRMS_PRECIP_FLAG_LISTING_URL,
+        file_re=MRMS_PRECIP_FLAG_FILE_RE,
+    )
+    assert len(scans) == 2
+    assert [scan.valid_time.isoformat() for scan in scans] == [
+        "2026-03-27T12:02:00+00:00",
+        "2026-03-27T12:00:00+00:00",
+    ]
+    assert scans[0].url.endswith("MRMS_PrecipFlag_00.00_20260327-120200.grib2.gz")
+    assert "PrecipFlag" in scans[0].url
+
+
+def test_discover_recent_scans_ignores_reflectivity_files_with_precip_flag_regex() -> None:
+    from app.services.mrms_fetch import MRMS_PRECIP_FLAG_FILE_RE, MRMS_PRECIP_FLAG_LISTING_URL
+
+    html = """
+    <html><body>
+      <a href="MRMS_MergedBaseReflectivityQC_00.50_20260327-120000.grib2.gz">refl</a>
+      <a href="MRMS_PrecipFlag_00.00_20260327-120000.grib2.gz">pf</a>
+    </body></html>
+    """
+
+    scans = discover_recent_scans_from_listing_html(
+        html,
+        base_url=MRMS_PRECIP_FLAG_LISTING_URL,
+        file_re=MRMS_PRECIP_FLAG_FILE_RE,
+    )
+    assert len(scans) == 1
+    assert "PrecipFlag" in scans[0].filename
+
+
 def test_pygrib_source_transform_normalizes_to_north_up_west_east() -> None:
     class _Message:
         def latlons(self):

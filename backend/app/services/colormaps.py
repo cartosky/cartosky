@@ -503,6 +503,18 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         # remains on the unsmoothed value raster.
         "display_resampling_override": "bilinear",
     },
+    "mrms_radar_ptype": {
+        "type": "indexed",
+        "units": "dBZ",
+        "transparent_zero": True,
+        "levels": RADAR_PTYPE_LEVELS,
+        "colors": RADAR_PTYPE_COLORS,
+        "display_name": "Reflectivity + Precip Type",
+        "legend_title": "MRMS Reflectivity + Precip Type (dBZ)",
+        "ptype_order": list(RADAR_PTYPE_ORDER),
+        "ptype_breaks": RADAR_PTYPE_BREAKS,
+        "ptype_levels": RADAR_PTYPE_LEVELS_BY_TYPE,
+    },
 }
 
 # Aliases kept for historical compatibility with already-published metadata.

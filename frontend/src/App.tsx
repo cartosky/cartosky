@@ -581,7 +581,7 @@ function normalizeLegendUnits(
     return units;
   }
   const id = String(meta.var_key ?? meta.spec_key ?? meta.id ?? meta.var ?? "").toLowerCase();
-  if (id === "radar_ptype") {
+  if (id === "radar_ptype" || id === "mrms_radar_ptype") {
     return "dBZ";
   }
   return units;

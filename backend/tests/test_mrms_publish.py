@@ -318,3 +318,237 @@ def test_publish_mrms_bundle_does_not_write_rgba_cogs(
     )
 
     assert not any(result.published_run_dir.rglob("*.rgba.cog.tif"))
+
+
+# ---------------------------------------------------------------------------
+# compose_mrms_radar_ptype tests
+# ---------------------------------------------------------------------------
+
+def test_compose_mrms_radar_ptype_rain_produces_correct_indices() -> None:
+    """Rain (flag=1) at various reflectivities maps to rain palette offsets."""
+    refl = np.array([[10.0, 35.0, 70.0]], dtype=np.float32)
+    flags = np.array([[1.0, 1.0, 1.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    # rain: offset=0, count=20
+    # 10/70 * 19 ≈ 2.71 → round(2.71) = 3 → 0 + 3 = 3
+    assert indexed[0, 0] == 3.0
+    # 35/70 * 19 = 9.5 → round(9.5) = 10 → 0 + 10 = 10 (python rounds to even, but np.rint(9.5)=10.0)
+    assert indexed[0, 1] == 10.0
+    # 70/70 * 19 = 19.0 → 0 + 19 = 19
+    assert indexed[0, 2] == 19.0
+
+
+def test_compose_mrms_radar_ptype_snow_produces_correct_indices() -> None:
+    """Snow (flag=3) maps to snow palette offsets."""
+    refl = np.array([[15.0, 50.0]], dtype=np.float32)
+    flags = np.array([[3.0, 3.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    # snow: offset=20, count=16
+    # 15/70 * 15 ≈ 3.21 → round = 3 → 20 + 3 = 23
+    assert indexed[0, 0] == 23.0
+    # 50/70 * 15 ≈ 10.71 → round = 11 → 20 + 11 = 31
+    assert indexed[0, 1] == 31.0
+
+
+def test_compose_mrms_radar_ptype_frzr_produces_correct_indices() -> None:
+    """Freezing rain (flag=7) maps to frzr palette offsets."""
+    refl = np.array([[20.0]], dtype=np.float32)
+    flags = np.array([[7.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    # frzr: offset=52, count=16
+    # 20/70 * 15 ≈ 4.29 → round = 4 → 52 + 4 = 56
+    assert indexed[0, 0] == 56.0
+
+
+def test_compose_mrms_radar_ptype_convective_rain_maps_to_rain() -> None:
+    """Convective rain (flag=6) maps to rain palette like warm stratiform."""
+    refl = np.array([[35.0]], dtype=np.float32)
+    flags_warm = np.array([[1.0]], dtype=np.float32)
+    flags_conv = np.array([[6.0]], dtype=np.float32)
+
+    indexed_warm = mrms_publish.compose_mrms_radar_ptype(refl, flags_warm)
+    indexed_conv = mrms_publish.compose_mrms_radar_ptype(refl, flags_conv)
+
+    # Both should produce the same rain index
+    assert indexed_warm[0, 0] == indexed_conv[0, 0]
+
+
+def test_compose_mrms_radar_ptype_dry_snow_maps_to_snow() -> None:
+    """Dry/cold snow (flag=10) maps to snow palette like regular snow."""
+    refl = np.array([[25.0]], dtype=np.float32)
+    flags_snow = np.array([[3.0]], dtype=np.float32)
+    flags_dry = np.array([[10.0]], dtype=np.float32)
+
+    indexed_snow = mrms_publish.compose_mrms_radar_ptype(refl, flags_snow)
+    indexed_dry = mrms_publish.compose_mrms_radar_ptype(refl, flags_dry)
+
+    assert indexed_snow[0, 0] == indexed_dry[0, 0]
+
+
+def test_compose_mrms_radar_ptype_no_precip_is_nan() -> None:
+    """No-precipitation flag (0) produces NaN regardless of reflectivity."""
+    refl = np.array([[40.0, 60.0]], dtype=np.float32)
+    flags = np.array([[0.0, 0.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+    assert np.isnan(indexed[0, 1])
+
+
+def test_compose_mrms_radar_ptype_no_coverage_is_nan() -> None:
+    """No-coverage flag (-3) produces NaN."""
+    refl = np.array([[40.0]], dtype=np.float32)
+    flags = np.array([[-3.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+
+
+def test_compose_mrms_radar_ptype_low_reflectivity_is_nan() -> None:
+    """Reflectivity below min_visible_dbz (10) produces NaN even with valid ptype."""
+    refl = np.array([[5.0, 9.9]], dtype=np.float32)
+    flags = np.array([[1.0, 3.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+    assert np.isnan(indexed[0, 1])
+
+
+def test_compose_mrms_radar_ptype_nan_reflectivity_is_nan() -> None:
+    """NaN reflectivity produces NaN output."""
+    refl = np.array([[np.nan]], dtype=np.float32)
+    flags = np.array([[1.0]], dtype=np.float32)
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+
+
+def test_compose_mrms_radar_ptype_shape_mismatch_raises() -> None:
+    """Mismatched reflectivity and PrecipFlag shapes raise ValueError."""
+    refl = np.array([[10.0, 20.0]], dtype=np.float32)
+    flags = np.array([[1.0]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="shape mismatch"):
+        mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+
+def test_compose_mrms_radar_ptype_unknown_flag_is_nan() -> None:
+    """Unknown/unmapped PrecipFlag values produce NaN."""
+    refl = np.array([[40.0]], dtype=np.float32)
+    flags = np.array([[99.0]], dtype=np.float32)  # not in the mapping
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+
+
+def test_compose_mrms_radar_ptype_mixed_ptypes() -> None:
+    """Mixed ptype flags in one grid produce correct per-cell indices."""
+    refl = np.array([[30.0, 30.0, 30.0, 30.0]], dtype=np.float32)
+    flags = np.array([[1.0, 3.0, 7.0, 0.0]], dtype=np.float32)  # rain, snow, frzr, no-precip
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    # rain offset=0: 30/70*19 ≈ 8.14 → 8 → 0+8 = 8
+    assert indexed[0, 0] == 8.0
+    # snow offset=20: 30/70*15 ≈ 6.43 → 6 → 20+6 = 26
+    assert indexed[0, 1] == 26.0
+    # frzr offset=52: 30/70*15 ≈ 6.43 → 6 → 52+6 = 58
+    assert indexed[0, 2] == 58.0
+    # no-precip → NaN
+    assert np.isnan(indexed[0, 3])
+
+
+# ---------------------------------------------------------------------------
+# Dual-variable publish test (reflectivity + mrms_radar_ptype)
+# ---------------------------------------------------------------------------
+
+def test_publish_mrms_bundle_writes_mrms_radar_ptype_when_precip_flag_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+
+    base_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    frames = [
+        mrms_publish.MRMSBundleFrame(
+            valid_time=base_time,
+            values=np.array([[30.0, 40.0, 50.0], [60.0, 20.0, 15.0]], dtype=np.float32),
+            source_url="https://example.com/scan0.grib2.gz",
+            source_filename="scan0.grib2.gz",
+            precip_flag_values=np.array([[1.0, 3.0, 7.0], [6.0, 10.0, 0.0]], dtype=np.float32),
+        ),
+    ]
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=frames,
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    # Reflectivity artifacts exist
+    assert (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").is_file()
+    assert (result.published_run_dir / "reflectivity" / "fh000.json").is_file()
+
+    # mrms_radar_ptype artifacts exist
+    assert (result.published_run_dir / "mrms_radar_ptype" / "fh000.val.cog.tif").is_file()
+    assert (result.published_run_dir / "mrms_radar_ptype" / "fh000.json").is_file()
+
+    # Check manifest includes both variables
+    manifest = json.loads(result.manifest_path.read_text())
+    assert "reflectivity" in manifest["variables"]
+    assert "mrms_radar_ptype" in manifest["variables"]
+
+    ptype_var = manifest["variables"]["mrms_radar_ptype"]
+    assert ptype_var["available_frames"] == 1
+    assert ptype_var["frames"] == [
+        {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
+    ]
+
+    # Check mrms_radar_ptype sidecar
+    ptype_sidecar = json.loads((result.published_run_dir / "mrms_radar_ptype" / "fh000.json").read_text())
+    assert ptype_sidecar["var"] == "mrms_radar_ptype"
+    assert ptype_sidecar["valid_time"] == "2026-03-27T12:00:00Z"
+
+
+def test_publish_mrms_bundle_omits_mrms_radar_ptype_when_no_precip_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+
+    base_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    frames = [
+        mrms_publish.MRMSBundleFrame(
+            valid_time=base_time,
+            values=np.array([[30.0, 40.0, 50.0], [60.0, 20.0, 15.0]], dtype=np.float32),
+            # No precip_flag_values
+        ),
+    ]
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=frames,
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+    )
+
+    # Reflectivity artifacts exist
+    assert (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").is_file()
+
+    # No mrms_radar_ptype directory
+    assert not (result.published_run_dir / "mrms_radar_ptype").exists()
+
+    # Manifest should NOT include mrms_radar_ptype
+    manifest = json.loads(result.manifest_path.read_text())
+    assert "reflectivity" in manifest["variables"]
+    assert "mrms_radar_ptype" not in manifest["variables"]

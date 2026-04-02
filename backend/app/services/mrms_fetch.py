@@ -23,6 +23,13 @@ MRMS_FILE_RE = re.compile(
     r"MRMS_MergedBaseReflectivityQC_00\.50_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
     re.IGNORECASE,
 )
+
+MRMS_PRECIP_FLAG_LISTING_URL = "https://mrms.ncep.noaa.gov/2D/PrecipFlag/"
+MRMS_PRECIP_FLAG_FILE_RE = re.compile(
+    r"MRMS_PrecipFlag_00\.00_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
+    re.IGNORECASE,
+)
+
 WGRIB2_GRID_SHAPE_RE = re.compile(r"\((?P<nx>\d+)\s*x\s*(?P<ny>\d+)\)")
 WGRIB2_UNDEFINED_SENTINEL = np.float32(9.999e20)
 
@@ -58,6 +65,7 @@ def discover_recent_scans_from_listing_html(
     listing_html: str,
     *,
     base_url: str = MRMS_LISTING_URL,
+    file_re: re.Pattern[str] = MRMS_FILE_RE,
     limit: int | None = None,
 ) -> list[MRMSScanRef]:
     scans: dict[datetime, MRMSScanRef] = {}
@@ -65,7 +73,7 @@ def discover_recent_scans_from_listing_html(
     for match in href_re.finditer(str(listing_html)):
         href = match.group("href").strip()
         filename = Path(href).name
-        parsed = _scan_ref_from_filename(filename, base_url=base_url)
+        parsed = _scan_ref_from_filename(filename, base_url=base_url, file_re=file_re)
         if parsed is None:
             continue
         scans[parsed.valid_time] = parsed
@@ -91,12 +99,14 @@ def fetch_listing_html(*, listing_url: str = MRMS_LISTING_URL, timeout_seconds: 
 def discover_recent_scans_http(
     *,
     listing_url: str = MRMS_LISTING_URL,
+    file_re: re.Pattern[str] = MRMS_FILE_RE,
     limit: int | None = None,
     timeout_seconds: float = 15.0,
 ) -> list[MRMSScanRef]:
     return discover_recent_scans_from_listing_html(
         fetch_listing_html(listing_url=listing_url, timeout_seconds=timeout_seconds),
         base_url=listing_url,
+        file_re=file_re,
         limit=limit,
     )
 
@@ -182,10 +192,11 @@ def decode_scan(
     scan_path: Path,
     *,
     valid_time: datetime | None = None,
+    file_re: re.Pattern[str] = MRMS_FILE_RE,
     preferred_decoder: str = "wgrib2",
     fallback_decoder: str = "pygrib",
 ) -> MRMSDecodedScan:
-    resolved_valid_time = valid_time or _valid_time_from_filename(scan_path.name)
+    resolved_valid_time = valid_time or _valid_time_from_filename(scan_path.name, file_re=file_re)
     if resolved_valid_time is None:
         raise MRMSDecodeError(f"Unable to derive MRMS valid time from filename: {scan_path.name}")
 
@@ -215,8 +226,10 @@ def decode_scan(
             cleanup_path.unlink(missing_ok=True)
 
 
-def _scan_ref_from_filename(filename: str, *, base_url: str) -> MRMSScanRef | None:
-    valid_time = _valid_time_from_filename(filename)
+def _scan_ref_from_filename(
+    filename: str, *, base_url: str, file_re: re.Pattern[str] = MRMS_FILE_RE,
+) -> MRMSScanRef | None:
+    valid_time = _valid_time_from_filename(filename, file_re=file_re)
     if valid_time is None:
         return None
     return MRMSScanRef(
@@ -240,8 +253,10 @@ def _ceil_to_cadence(value: datetime, cadence_minutes: int) -> datetime:
     return floored + timedelta(minutes=max(1, int(cadence_minutes)))
 
 
-def _valid_time_from_filename(filename: str) -> datetime | None:
-    match = MRMS_FILE_RE.match(Path(filename).name)
+def _valid_time_from_filename(
+    filename: str, *, file_re: re.Pattern[str] = MRMS_FILE_RE,
+) -> datetime | None:
+    match = file_re.match(Path(filename).name)
     if match is None:
         return None
     try:

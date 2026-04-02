@@ -20,6 +20,7 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
     return mrms_poller.MRMSPollerConfig(
         data_root=tmp_path,
         listing_url="https://example.test/mrms/",
+        precip_flag_listing_url="",
         poll_seconds=120,
         keep_runs=4,
         window_minutes=120,
@@ -208,6 +209,57 @@ def test_run_once_retries_same_latest_scan_when_existing_bundle_is_incomplete(tm
 
     result = mrms_poller.run_once(config)
     assert result.action == "published"
+
+
+# ---------------------------------------------------------------------------
+# _find_closest_precip_flag_scan tests
+# ---------------------------------------------------------------------------
+
+def test_find_closest_precip_flag_scan_exact_match() -> None:
+    t = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    pf_scan = MRMSScanRef(valid_time=t, url="https://example.test/pf.grib2.gz", filename="pf.grib2.gz")
+    result = mrms_poller._find_closest_precip_flag_scan(t, {t: pf_scan})
+    assert result is pf_scan
+
+
+def test_find_closest_precip_flag_scan_within_tolerance() -> None:
+    from datetime import timedelta
+
+    t = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    pf_time = t + timedelta(minutes=2)
+    pf_scan = MRMSScanRef(valid_time=pf_time, url="https://example.test/pf.grib2.gz", filename="pf.grib2.gz")
+    result = mrms_poller._find_closest_precip_flag_scan(t, {pf_time: pf_scan})
+    assert result is pf_scan
+
+
+def test_find_closest_precip_flag_scan_beyond_tolerance_returns_none() -> None:
+    from datetime import timedelta
+
+    t = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    pf_time = t + timedelta(minutes=5)  # beyond 4-minute tolerance
+    pf_scan = MRMSScanRef(valid_time=pf_time, url="https://example.test/pf.grib2.gz", filename="pf.grib2.gz")
+    result = mrms_poller._find_closest_precip_flag_scan(t, {pf_time: pf_scan})
+    assert result is None
+
+
+def test_find_closest_precip_flag_scan_picks_nearest_of_multiple() -> None:
+    from datetime import timedelta
+
+    t = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    t_minus1 = t - timedelta(minutes=1)
+    t_plus3 = t + timedelta(minutes=3)
+    scan_near = MRMSScanRef(valid_time=t_minus1, url="https://example.test/near.grib2.gz", filename="near.grib2.gz")
+    scan_far = MRMSScanRef(valid_time=t_plus3, url="https://example.test/far.grib2.gz", filename="far.grib2.gz")
+    result = mrms_poller._find_closest_precip_flag_scan(
+        t, {t_minus1: scan_near, t_plus3: scan_far},
+    )
+    assert result is scan_near
+
+
+def test_find_closest_precip_flag_scan_empty_dict_returns_none() -> None:
+    t = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    result = mrms_poller._find_closest_precip_flag_scan(t, {})
+    assert result is None
 
 
 def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: Path, monkeypatch) -> None:
