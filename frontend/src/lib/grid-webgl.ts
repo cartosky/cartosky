@@ -526,7 +526,7 @@ export class GridWebglLayerController {
 
     const nextSignature = this.buildFrameSignature(this.frameUrl);
     if (!this.active || !this.frameUrl || !this.manifest) {
-      this.currentFrameSignature = nextSignature;
+      this.currentFrameSignature = null;
       this.map?.triggerRepaint();
       return;
     }
