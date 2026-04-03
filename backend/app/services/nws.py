@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -426,16 +427,34 @@ def _mm_to_in(mm: float | None) -> float | None:
 
 
 def _safe_float(obj: dict[str, Any] | None) -> float | None:
-    """Extract the numeric value from an NWS quantity object like {"value": 12.3, "unitCode": "..."}."""
+    """Extract a finite numeric value from an NWS quantity object."""
     if obj is None:
         return None
     val = obj.get("value")
     if val is None:
         return None
     try:
-        return float(val)
+        parsed = float(val)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _safe_int(value: Any) -> int | None:
+    """Extract a finite integer-like value from raw NWS data."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    if parsed.is_integer():
+        return int(parsed)
+    return round(parsed)
 
 
 def _wind_direction_label(degrees: float | None) -> str | None:
@@ -754,10 +773,10 @@ def _parse_forecast(raw: dict[str, Any]) -> ForecastResult:
                     pass
 
         periods.append(ForecastPeriod(
-            number=p.get("number", 0),
+            number=_safe_int(p.get("number")) or 0,
             name=p.get("name", ""),
             is_daytime=p.get("isDaytime", True),
-            temp_f=p.get("temperature"),
+            temp_f=_safe_int(p.get("temperature")),
             wind_speed=p.get("windSpeed"),
             wind_direction=p.get("windDirection"),
             short_forecast=p.get("shortForecast"),
