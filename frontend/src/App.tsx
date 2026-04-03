@@ -65,9 +65,6 @@ import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout
 const TwfShareModal = lazy(() =>
   import("@/components/twf-share-modal").then((module) => ({ default: module.TwfShareModal }))
 );
-const NwsCityModal = lazy(() =>
-  import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
-);
 const MapLegend = lazy(() =>
   import("@/components/map-legend").then((module) => ({ default: module.MapLegend }))
 );
@@ -773,12 +770,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [selectedAnchorCity, setSelectedAnchorCity] = useState<{
-    id: string;
-    city: string;
-    state: string;
-    st: string;
-  } | null>(null);
   const [sharePayload, setSharePayload] = useState<SharePayload>({
     permalink: "",
     summary: "CartoSky viewer share",
@@ -817,7 +808,6 @@ export default function App() {
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
-  const [anchorsActivated, setAnchorsActivated] = useState(false);
   const selectionEpochRef = useRef(selectionEpoch);
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
   const datasetGenerationRef = useRef(0);
@@ -2020,16 +2010,6 @@ export default function App() {
         setRun(requestedRun || "latest");
         setRuns([]);
         setRunManifest(null);
-
-        // Seed the grid run ref from capabilities so selectionKey avoids the
-        // "pending-grid" sentinel on first render.  This prevents the
-        // selectionKey from changing twice during init (pending → real), which
-        // would wipe gridReadyFrameUrlsRef and abort in-flight manifest fetches.
-        const bootstrapLatestRun =
-          capabilitiesData.availability?.[nextModel]?.latest_run ?? null;
-        if (bootstrapLatestRun && (!requestedRun || requestedRun === "latest")) {
-          lastResolvedGridRunRef.current = bootstrapLatestRun;
-        }
         setFrameRows([]);
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
@@ -2051,46 +2031,10 @@ export default function App() {
   }, [initialPermalink]);
 
   useEffect(() => {
-    if (anchorsActivated) {
-      return;
-    }
-    const anchorsReadyToActivate = deferNonCriticalBootstrapEnabled
+    const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled
       ? (bootstrapHydrated && firstWeatherFramePainted)
       : bootstrapHydrated;
-    if (!anchorsReadyToActivate) {
-      return;
-    }
-
-    let cancelled = false;
-    let timeoutId: number | null = null;
-    const activateAnchors = () => {
-      if (cancelled) {
-        return;
-      }
-      setAnchorsActivated(true);
-    };
-
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const idleId = window.requestIdleCallback(() => {
-        activateAnchors();
-      }, { timeout: 2000 });
-      return () => {
-        cancelled = true;
-        window.cancelIdleCallback(idleId);
-      };
-    }
-
-    timeoutId = globalThis.setTimeout(activateAnchors, 1200);
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) {
-        globalThis.clearTimeout(timeoutId);
-      }
-    };
-  }, [anchorsActivated, bootstrapHydrated, deferNonCriticalBootstrapEnabled, firstWeatherFramePainted]);
-
-  useEffect(() => {
-    if (!anchorsActivated) {
+    if (!anchorsReadyToLoad) {
       return;
     }
     if (anchorBaseGeoJson) {
@@ -2116,7 +2060,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [anchorBaseGeoJson, anchorsActivated]);
+  }, [deferNonCriticalBootstrapEnabled, bootstrapHydrated, firstWeatherFramePainted, anchorBaseGeoJson]);
 
   useEffect(() => {
     if (!model) return;
@@ -2354,15 +2298,6 @@ export default function App() {
   useEffect(() => {
     const generation = requestGenerationRef.current;
 
-    if (!anchorsActivated) {
-      anchorSelectionKeyRef.current = selectionKey;
-      anchorBatchLastAppliedHourRef.current = null;
-      anchorBatchLastAppliedSelectionKeyRef.current = "";
-      resetAnchorBatchQueue(true);
-      setAnchorDisplayGeoJson(null);
-      return;
-    }
-
     if (!anchorBaseGeoJson) {
       anchorSelectionKeyRef.current = selectionKey;
       anchorBatchLastAppliedHourRef.current = null;
@@ -2459,7 +2394,6 @@ export default function App() {
   }, [
     anchorBaseGeoJson,
     anchorBatchPoints,
-    anchorsActivated,
     hasRenderableSelection,
     isGridPreloadingForPlay,
     isPlaying,
@@ -3543,7 +3477,6 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={onHover}
           onMapHoverEnd={onHoverEnd}
-          onAnchorClick={setSelectedAnchorCity}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
 
@@ -3810,16 +3743,6 @@ export default function App() {
             payload={sharePayload}
             buildScreenshotState={buildScreenshotExportState}
             getLegend={() => legend}
-          />
-        </Suspense>
-      ) : null}
-
-      {selectedAnchorCity ? (
-        <Suspense fallback={null}>
-          <NwsCityModal
-            open={!!selectedAnchorCity}
-            onClose={() => setSelectedAnchorCity(null)}
-            anchor={selectedAnchorCity}
           />
         </Suspense>
       ) : null}

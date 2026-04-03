@@ -239,8 +239,6 @@ type ActiveAnchorMarker = {
   lngLat: [number, number];
   label: string;
   cityName: string;
-  state: string;
-  st: string;
   priority: number;
 };
 
@@ -333,8 +331,6 @@ function getActiveAnchorMarkers(
     const lat = Number(coordinates?.[1]);
     const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
     const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
-    const stateName = typeof feature.properties?.state === "string" ? feature.properties.state.trim() : "";
-    const stAbbr = typeof feature.properties?.st === "string" ? feature.properties.st.trim() : "";
     const active = feature.properties?.active === true;
     if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
       continue;
@@ -344,8 +340,6 @@ function getActiveAnchorMarkers(
       lngLat: [lng, lat],
       label,
       cityName,
-      state: stateName,
-      st: stAbbr,
       priority: anchorPriorityFromId(id),
     });
   }
@@ -553,7 +547,6 @@ type MapCanvasProps = {
   onMapReady?: (map: maplibregl.Map) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
-  onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
 };
 
 export function MapCanvas({
@@ -585,7 +578,6 @@ export function MapCanvas({
   onMapReady,
   onMapHover,
   onMapHoverEnd,
-  onAnchorClick,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -841,7 +833,7 @@ export function MapCanvas({
             anchorHoverLeaveTimeoutRef.current = null;
           }
           isHoveringAnchorRef.current = true;
-          onMapHoverEndRef.current?.();
+          onMapHoverEnd?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
         chip.addEventListener("mouseleave", () => {
@@ -860,7 +852,7 @@ export function MapCanvas({
             anchorHoverLeaveTimeoutRef.current = null;
           }
           isHoveringAnchorRef.current = true;
-          onMapHoverEndRef.current?.();
+          onMapHoverEnd?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
         chip.addEventListener("blur", () => {
@@ -872,15 +864,6 @@ export function MapCanvas({
             isHoveringAnchorRef.current = false;
             anchorHoverLeaveTimeoutRef.current = null;
           }, ANCHOR_HOVER_RESUME_DELAY_MS);
-        });
-        chip.addEventListener("click", (e) => {
-          e.stopPropagation();
-          onAnchorClick?.({
-            id: activeMarker.id,
-            city: activeMarker.cityName,
-            state: activeMarker.state,
-            st: activeMarker.st,
-          });
         });
 
         element.appendChild(chip);
@@ -898,7 +881,7 @@ export function MapCanvas({
         snapAnchorMarkerToPixels(map, record);
       }
     },
-    [clearAnchorMarkers, hideAnchorTooltip, onAnchorClick, showAnchorTooltip]
+    [clearAnchorMarkers, hideAnchorTooltip, onMapHoverEnd, showAnchorTooltip]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
@@ -969,7 +952,7 @@ export function MapCanvas({
     };
 
     map.on("error", handleMapError as any);
-    map.once("style.load", () => {
+    map.on("load", () => {
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
@@ -1008,17 +991,17 @@ export function MapCanvas({
 
     lastAppliedBasemapModeRef.current = basemapMode;
     const controller = gridWebglControllerRef.current;
-    const onStyleLoad = () => {
+    const onStyleData = () => {
       controller?.ensureAttached(map, COASTLINE_LAYER_ID);
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
-    map.once("style.load", onStyleLoad);
+    map.once("styledata", onStyleData);
     map.setStyle(buildMapStyle(contourGeoJsonUrl, basemapMode));
 
     return () => {
-      map.off("style.load", onStyleLoad);
+      map.off("styledata", onStyleData);
     };
   }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded]);
 
@@ -1217,9 +1200,6 @@ export function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
-      return;
-    }
-    if (!map.isStyleLoaded()) {
       return;
     }
     enforceLayerOrder(map);
