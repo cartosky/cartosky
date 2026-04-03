@@ -1033,7 +1033,7 @@ export function MapCanvas({
     let resizeRafId: number | null = null;
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode),
+      style: buildMapStyle(null, null, basemapMode),
       center: view.center,
       zoom: view.zoom,
       minZoom: view.minZoom ?? 3,
@@ -1065,9 +1065,6 @@ export function MapCanvas({
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
-      if (shouldUseGridController) {
-        gridWebglControllerRef.current?.ensureAttached(map, COASTLINE_LAYER_ID);
-      }
       onMapReadyRef.current?.(map);
     });
 
@@ -1095,7 +1092,7 @@ export function MapCanvas({
       mapRef.current = null;
       setIsLoaded(false);
     };
-  }, [basemapMode, clearAnchorMarkers, contourGeoJsonUrl, enforceLayerOrder, shouldUseGridController, vectorGeoJsonUrl, view.center, view.maxZoom, view.minZoom, view.zoom]);
+  }, [clearAnchorMarkers, enforceLayerOrder]);
 
   useEffect(() => {
     const map = mapRef.current;
