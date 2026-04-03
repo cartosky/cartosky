@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { type StyleSpecification } from "maplibre-gl";
+import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
@@ -66,9 +66,10 @@ const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
-const VECTOR_SOURCE_ID = "twf-vectors";
-const VECTOR_FILL_LAYER_ID = "twf-vectors-fill";
-const VECTOR_LINE_LAYER_ID = "twf-vectors-line";
+const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
+const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
+const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
+const VECTOR_TRANSITION_MS = 180;
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
 const COASTLINE_LAYER_ID = "twf-coastline";
 const STATE_BOUNDARY_LAYER_ID = "twf-state-boundaries";
@@ -219,6 +220,60 @@ function setLayerVisibility(map: maplibregl.Map, id: string, visible: boolean) {
   map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
 }
 
+function buildVectorBufferLayers(): LayerSpecification[] {
+  return [0, 1].flatMap((bufferIndex) => {
+    const sourceId = VECTOR_SOURCE_IDS[bufferIndex as 0 | 1];
+    const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex as 0 | 1];
+    const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex as 0 | 1];
+    return [
+      {
+        id: fillLayerId,
+        type: "fill",
+        source: sourceId,
+        layout: {
+          visibility: "none",
+          "fill-sort-key": ["coalesce", ["get", "sort_rank"], 0] as any,
+        },
+        paint: {
+          "fill-color": ["coalesce", ["get", "fill"], "#ffffff"] as any,
+          "fill-opacity": vectorFillOpacityExpression(0) as any,
+        },
+      } as LayerSpecification,
+      {
+        id: lineLayerId,
+        type: "line",
+        source: sourceId,
+        layout: {
+          visibility: "none",
+          "line-join": "round",
+          "line-cap": "round",
+          "line-sort-key": ["coalesce", ["get", "sort_rank"], 0] as any,
+        },
+        paint: {
+          "line-color": ["coalesce", ["get", "stroke"], "#000000"] as any,
+          "line-opacity": 0,
+          "line-width": ["coalesce", ["get", "stroke_width"], 1.25] as any,
+        },
+      } as LayerSpecification,
+    ];
+  });
+}
+
+function vectorFillOpacityExpression(fade: number) {
+  return ["*", Math.max(0, Math.min(1, fade)), ["coalesce", ["get", "fill_opacity"], 0.65]] as const;
+}
+
+function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: number) {
+  const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex];
+  const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex];
+  if (map.getLayer(fillLayerId)) {
+    map.setPaintProperty(fillLayerId, "fill-opacity", vectorFillOpacityExpression(fade));
+  }
+  if (map.getLayer(lineLayerId)) {
+    map.setPaintProperty(lineLayerId, "line-opacity", Math.max(0, Math.min(1, fade)));
+  }
+}
+
 type AnchorMarkerRecord = {
   marker: maplibregl.Marker;
   element: HTMLDivElement;
@@ -361,6 +416,7 @@ export function buildMapStyle(
   vectorGeoJsonUrl?: string | null,
   basemapMode: BasemapMode = "light"
 ): StyleSpecification {
+  void vectorGeoJsonUrl;
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
   const labelTiles = basemapMode === "dark" ? CARTO_DARK_LABEL_TILES : CARTO_LIGHT_LABEL_TILES;
   const mapBackgroundColor = getMapBackgroundColor(basemapMode);
@@ -390,9 +446,13 @@ export function buildMapStyle(
         type: "geojson",
         data: contourGeoJsonUrl ? contourGeoJsonUrl : EMPTY_FEATURE_COLLECTION,
       },
-      [VECTOR_SOURCE_ID]: {
+      [VECTOR_SOURCE_IDS[0]]: {
         type: "geojson",
-        data: vectorGeoJsonUrl ? vectorGeoJsonUrl : EMPTY_FEATURE_COLLECTION,
+        data: EMPTY_FEATURE_COLLECTION,
+      },
+      [VECTOR_SOURCE_IDS[1]]: {
+        type: "geojson",
+        data: EMPTY_FEATURE_COLLECTION,
       },
     },
     layers: [
@@ -522,35 +582,7 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
-      {
-        id: VECTOR_FILL_LAYER_ID,
-        type: "fill",
-        source: VECTOR_SOURCE_ID,
-        layout: {
-          visibility: vectorGeoJsonUrl ? "visible" : "none",
-          "fill-sort-key": ["coalesce", ["get", "sort_rank"], 0],
-        },
-        paint: {
-          "fill-color": ["coalesce", ["get", "fill"], "#ffffff"],
-          "fill-opacity": ["coalesce", ["get", "fill_opacity"], 0.65],
-        },
-      },
-      {
-        id: VECTOR_LINE_LAYER_ID,
-        type: "line",
-        source: VECTOR_SOURCE_ID,
-        layout: {
-          visibility: vectorGeoJsonUrl ? "visible" : "none",
-          "line-join": "round",
-          "line-cap": "round",
-          "line-sort-key": ["coalesce", ["get", "sort_rank"], 0],
-        },
-        paint: {
-          "line-color": ["coalesce", ["get", "stroke"], "#000000"],
-          "line-opacity": 1,
-          "line-width": ["coalesce", ["get", "stroke_width"], 1.25],
-        },
-      },
+      ...buildVectorBufferLayers(),
       {
         id: "twf-labels",
         type: "raster",
@@ -654,6 +686,9 @@ export function MapCanvas({
   const vectorRequestTokenRef = useRef(0);
   const vectorAbortRef = useRef<AbortController | null>(null);
   const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
+  const activeVectorBufferRef = useRef<0 | 1 | null>(null);
+  const activeVectorUrlRef = useRef("");
+  const vectorTransitionRafRef = useRef<number | null>(null);
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
 
   const view = useMemo(() => {
@@ -956,11 +991,15 @@ export function MapCanvas({
     if (map.getLayer(CONTOUR_LAYER_ID)) {
       map.moveLayer(CONTOUR_LAYER_ID, "twf-labels");
     }
-    if (map.getLayer(VECTOR_FILL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
-      map.moveLayer(VECTOR_FILL_LAYER_ID, COASTLINE_LAYER_ID);
+    for (const layerId of VECTOR_FILL_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
     }
-    if (map.getLayer(VECTOR_LINE_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
-      map.moveLayer(VECTOR_LINE_LAYER_ID, COASTLINE_LAYER_ID);
+    for (const layerId of VECTOR_LINE_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
     }
     if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
@@ -1041,6 +1080,10 @@ export function MapCanvas({
       if (resizeRafId !== null) {
         window.cancelAnimationFrame(resizeRafId);
       }
+      if (vectorTransitionRafRef.current !== null) {
+        window.cancelAnimationFrame(vectorTransitionRafRef.current);
+        vectorTransitionRafRef.current = null;
+      }
       contourAbortRef.current?.abort();
       contourAbortRef.current = null;
       vectorAbortRef.current?.abort();
@@ -1070,8 +1113,6 @@ export function MapCanvas({
         controller?.ensureAttached(map, COASTLINE_LAYER_ID);
       }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
-      setLayerVisibility(map, VECTOR_FILL_LAYER_ID, Boolean(vectorGeoJsonUrl));
-      setLayerVisibility(map, VECTOR_LINE_LAYER_ID, Boolean(vectorGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
@@ -1162,8 +1203,65 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
-    const source = map.getSource(VECTOR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!source || typeof source.setData !== "function") {
+    const resolveVectorSource = (bufferIndex: 0 | 1) => {
+      const source = map.getSource(VECTOR_SOURCE_IDS[bufferIndex]) as maplibregl.GeoJSONSource | undefined;
+      return source && typeof source.setData === "function" ? source : null;
+    };
+    const applyVectorData = (bufferIndex: 0 | 1, payload: GeoJSON.FeatureCollection) => {
+      const source = resolveVectorSource(bufferIndex);
+      if (!source) {
+        return false;
+      }
+      source.setData(payload as any);
+      return true;
+    };
+    const hideVectorBuffer = (bufferIndex: 0 | 1) => {
+      setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], false);
+      setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], false);
+      setVectorLayerFade(map, bufferIndex, 0);
+    };
+    const showVectorBuffer = (bufferIndex: 0 | 1, fade: number) => {
+      setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], true);
+      setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], true);
+      setVectorLayerFade(map, bufferIndex, fade);
+    };
+    const finishOnBuffer = (bufferIndex: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
+      if (!applyVectorData(bufferIndex, payload)) {
+        return;
+      }
+      showVectorBuffer(bufferIndex, 1);
+      hideVectorBuffer((bufferIndex === 0 ? 1 : 0));
+      activeVectorBufferRef.current = bufferIndex;
+      activeVectorUrlRef.current = url;
+    };
+    const startCrossfade = (fromBuffer: 0 | 1, toBuffer: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
+      if (!applyVectorData(toBuffer, payload)) {
+        return;
+      }
+      if (vectorTransitionRafRef.current !== null) {
+        window.cancelAnimationFrame(vectorTransitionRafRef.current);
+        vectorTransitionRafRef.current = null;
+      }
+      showVectorBuffer(toBuffer, 0);
+      showVectorBuffer(fromBuffer, 1);
+      const startedAt = performance.now();
+      const tick = (now: number) => {
+        const progress = Math.min(1, (now - startedAt) / VECTOR_TRANSITION_MS);
+        setVectorLayerFade(map, fromBuffer, 1 - progress);
+        setVectorLayerFade(map, toBuffer, progress);
+        if (progress >= 1) {
+          vectorTransitionRafRef.current = null;
+          hideVectorBuffer(fromBuffer);
+          activeVectorBufferRef.current = toBuffer;
+          activeVectorUrlRef.current = url;
+          return;
+        }
+        vectorTransitionRafRef.current = window.requestAnimationFrame(tick);
+      };
+      vectorTransitionRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    if (!resolveVectorSource(0) || !resolveVectorSource(1)) {
       return;
     }
 
@@ -1171,17 +1269,32 @@ export function MapCanvas({
     const requestToken = ++vectorRequestTokenRef.current;
     vectorAbortRef.current?.abort();
     vectorAbortRef.current = null;
-    setLayerVisibility(map, VECTOR_FILL_LAYER_ID, Boolean(normalizedUrl));
-    setLayerVisibility(map, VECTOR_LINE_LAYER_ID, Boolean(normalizedUrl));
 
     if (!normalizedUrl) {
-      source.setData(EMPTY_FEATURE_COLLECTION as any);
+      applyVectorData(0, EMPTY_FEATURE_COLLECTION);
+      applyVectorData(1, EMPTY_FEATURE_COLLECTION);
+      hideVectorBuffer(0);
+      hideVectorBuffer(1);
+      activeVectorBufferRef.current = null;
+      activeVectorUrlRef.current = "";
+      return;
+    }
+
+    if (activeVectorUrlRef.current === normalizedUrl && activeVectorBufferRef.current !== null) {
+      const activeBuffer = activeVectorBufferRef.current;
+      showVectorBuffer(activeBuffer, 1);
+      hideVectorBuffer(activeBuffer === 0 ? 1 : 0);
       return;
     }
 
     const cached = vectorCacheRef.current.get(normalizedUrl);
     if (cached) {
-      source.setData(cached as any);
+      const activeBuffer = activeVectorBufferRef.current;
+      if (activeBuffer === null) {
+        finishOnBuffer(0, cached, normalizedUrl);
+      } else {
+        startCrossfade(activeBuffer, activeBuffer === 0 ? 1 : 0, cached, normalizedUrl);
+      }
       return;
     }
 
@@ -1210,7 +1323,12 @@ export function MapCanvas({
           }
           vectorCacheRef.current.delete(oldestKey);
         }
-        source.setData(payload as any);
+        const activeBuffer = activeVectorBufferRef.current;
+        if (activeBuffer === null) {
+          finishOnBuffer(0, payload, normalizedUrl);
+          return;
+        }
+        startCrossfade(activeBuffer, activeBuffer === 0 ? 1 : 0, payload, normalizedUrl);
       })
       .catch((error) => {
         if (controller.signal.aborted) {
@@ -1230,7 +1348,7 @@ export function MapCanvas({
         vectorAbortRef.current = null;
       }
     };
-  }, [isLoaded, vectorGeoJsonUrl]);
+  }, [basemapMode, isLoaded, vectorGeoJsonUrl]);
 
   useEffect(() => {
     if (!isLoaded || vectorPrefetchUrls.length === 0) {
