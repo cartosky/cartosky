@@ -841,7 +841,7 @@ export function MapCanvas({
             anchorHoverLeaveTimeoutRef.current = null;
           }
           isHoveringAnchorRef.current = true;
-          onMapHoverEnd?.();
+          onMapHoverEndRef.current?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
         chip.addEventListener("mouseleave", () => {
@@ -860,7 +860,7 @@ export function MapCanvas({
             anchorHoverLeaveTimeoutRef.current = null;
           }
           isHoveringAnchorRef.current = true;
-          onMapHoverEnd?.();
+          onMapHoverEndRef.current?.();
           showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
         });
         chip.addEventListener("blur", () => {
@@ -898,7 +898,7 @@ export function MapCanvas({
         snapAnchorMarkerToPixels(map, record);
       }
     },
-    [clearAnchorMarkers, hideAnchorTooltip, onAnchorClick, onMapHoverEnd, showAnchorTooltip]
+    [clearAnchorMarkers, hideAnchorTooltip, onAnchorClick, showAnchorTooltip]
   );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
