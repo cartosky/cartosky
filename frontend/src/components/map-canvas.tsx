@@ -1648,6 +1648,9 @@ export function MapCanvas({
       const vectorFeature = map.queryRenderedFeatures(e.point, {
         layers: [...VECTOR_FILL_LAYER_IDS],
       })[0] as { properties?: Record<string, unknown> } | undefined;
+      const hoverLabel = typeof vectorFeature?.properties?.hover_label === "string"
+        ? vectorFeature.properties.hover_label.trim()
+        : "";
       const riskLabel = typeof vectorFeature?.properties?.risk_label === "string"
         ? vectorFeature.properties.risk_label.trim()
         : "";
@@ -1660,10 +1663,10 @@ export function MapCanvas({
         lng,
         x,
         y,
-        riskLabel
+        (hoverLabel || riskLabel)
           ? {
               kind: "label",
-              label: riskLabel,
+              label: hoverLabel || riskLabel,
               color: fillColor,
               x,
               y,

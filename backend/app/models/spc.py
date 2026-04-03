@@ -18,6 +18,18 @@ class SPCPlugin(BaseModelPlugin):
             "convective_outlook": "convective",
             "spc_convective": "convective",
             "day1_3_convective": "convective",
+            "tornado": "tornado_prob",
+            "tornado_prob": "tornado_prob",
+            "tornado_probability": "tornado_prob",
+            "spc_tornado": "tornado_prob",
+            "wind": "wind_prob",
+            "wind_prob": "wind_prob",
+            "wind_probability": "wind_prob",
+            "spc_wind": "wind_prob",
+            "hail": "hail_prob",
+            "hail_prob": "hail_prob",
+            "hail_probability": "hail_prob",
+            "spc_hail": "hail_prob",
         }
         return aliases.get(normalized, normalized)
 
@@ -47,6 +59,21 @@ SPC_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="categorical",
     ),
+    "tornado_prob": VarSpec(
+        id="tornado_prob",
+        name="SPC Tornado Probability",
+        kind="categorical",
+    ),
+    "wind_prob": VarSpec(
+        id="wind_prob",
+        name="SPC Wind Probability",
+        kind="categorical",
+    ),
+    "hail_prob": VarSpec(
+        id="hail_prob",
+        name="SPC Hail Probability",
+        kind="categorical",
+    ),
 }
 
 
@@ -60,6 +87,36 @@ SPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         order=0,
         group="Outlooks",
         legend_title="Legend",
+        render_substrates=["vector"],
+    ),
+    "tornado_prob": VariableCapability(
+        var_key="tornado_prob",
+        name="SPC Tornado Probability",
+        kind="categorical",
+        buildable=True,
+        order=1,
+        group="Outlooks",
+        legend_title="Tornado Probability",
+        render_substrates=["vector"],
+    ),
+    "wind_prob": VariableCapability(
+        var_key="wind_prob",
+        name="SPC Wind Probability",
+        kind="categorical",
+        buildable=True,
+        order=2,
+        group="Outlooks",
+        legend_title="Wind Probability",
+        render_substrates=["vector"],
+    ),
+    "hail_prob": VariableCapability(
+        var_key="hail_prob",
+        name="SPC Hail Probability",
+        kind="categorical",
+        buildable=True,
+        order=3,
+        group="Outlooks",
+        legend_title="Hail Probability",
         render_substrates=["vector"],
     ),
 }

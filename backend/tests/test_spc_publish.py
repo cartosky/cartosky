@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -108,6 +110,7 @@ def test_publish_spc_bundle_writes_manifest_latest_pointer_and_vector_sidecars(t
 
     assert result.run_id == "20260401_0630z"
     assert result.frame_count == 3
+    assert result.variable_ids == ["convective"]
     assert result.published_run_dir.is_dir()
 
     latest_payload = json.loads((tmp_path / "published" / "spc" / "LATEST.json").read_text())
@@ -124,7 +127,7 @@ def test_publish_spc_bundle_writes_manifest_latest_pointer_and_vector_sidecars(t
     ]
 
     sidecar = json.loads((result.published_run_dir / "convective" / "fh000.json").read_text())
-    assert sidecar["legend_entries"][0]["label"] == "T-Storms"
+    assert sidecar["legend_entries"][0]["label"] == "Slight"
     assert sidecar["vector_layers"]["primary"]["path"] == "vectors/fh000.geojson"
     assert sidecar["day_label"] == "Day 1"
     assert sidecar["issue_time"] == "2026-04-01T06:30:00Z"
@@ -132,3 +135,199 @@ def test_publish_spc_bundle_writes_manifest_latest_pointer_and_vector_sidecars(t
     vector_payload = json.loads((result.published_run_dir / "convective" / "vectors" / "fh000.geojson").read_text())
     assert vector_payload["type"] == "FeatureCollection"
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Slight"
+
+
+def test_collect_latest_spc_products_includes_probability_products_and_skips_missing_days(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = {
+        1: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "DN": 2,
+                        "label": "MRGL",
+                        "label2": "Marginal Risk",
+                        "VALID": "2026-04-01T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-98.0, 35.0], [-97.0, 35.0], [-97.0, 36.0], [-98.0, 35.0]]]},
+                }
+            ],
+        },
+        9: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "DN": 3,
+                        "label": "SLGT",
+                        "label2": "Slight Risk",
+                        "VALID": "2026-04-02T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-96.0, 34.0], [-95.0, 34.0], [-95.0, 35.0], [-96.0, 34.0]]]},
+                }
+            ],
+        },
+        17: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "DN": 2,
+                        "label": "MRGL",
+                        "label2": "Marginal Risk",
+                        "VALID": "2026-04-03T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-94.0, 33.0], [-93.0, 33.0], [-93.0, 34.0], [-94.0, 33.0]]]},
+                }
+            ],
+        },
+        3: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "0.05",
+                        "label2": "5% Tornado Risk",
+                        "fill": "#BD998A",
+                        "stroke": "#7F3F27",
+                        "VALID": "2026-04-01T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-90.0, 32.0], [-89.0, 32.0], [-89.0, 33.0], [-90.0, 32.0]]]},
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "CIG1",
+                        "label2": "Tornado Conditional Intensity Group 1 Risk",
+                        "fill": "#888888",
+                        "stroke": "#000000",
+                        "VALID": "2026-04-01T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-89.5, 32.1], [-89.2, 32.1], [-89.2, 32.4], [-89.5, 32.1]]]},
+                },
+            ],
+        },
+        11: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "0.02",
+                        "label2": "2% Tornado Risk",
+                        "fill": "#79BA7A",
+                        "stroke": "#1A731D",
+                        "VALID": "2026-04-02T12:00:00Z",
+                        "ISSUE": "2026-04-01T07:45:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-88.0, 31.0], [-87.0, 31.0], [-87.0, 32.0], [-88.0, 31.0]]]},
+                }
+            ],
+        },
+        7: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "0.15",
+                        "label2": "15% Wind Risk",
+                        "fill": "#FFEB7F",
+                        "stroke": "#FF9600",
+                        "VALID": "2026-04-01T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-86.0, 30.0], [-85.0, 30.0], [-85.0, 31.0], [-86.0, 30.0]]]},
+                }
+            ],
+        },
+        15: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "0.05",
+                        "label2": "5% Wind Risk",
+                        "fill": "#C5A392",
+                        "stroke": "#8B4726",
+                        "VALID": "2026-04-02T12:00:00Z",
+                        "ISSUE": "2026-04-01T07:45:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-84.0, 29.0], [-83.0, 29.0], [-83.0, 30.0], [-84.0, 29.0]]]},
+                }
+            ],
+        },
+        5: {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "label": "0.15",
+                        "label2": "15% Hail Risk",
+                        "fill": "#FFEB7F",
+                        "stroke": "#FF9600",
+                        "VALID": "2026-04-01T12:00:00Z",
+                        "ISSUE": "2026-04-01T06:30:00Z",
+                    },
+                    "geometry": {"type": "Polygon", "coordinates": [[[-82.0, 28.0], [-81.0, 28.0], [-81.0, 29.0], [-82.0, 28.0]]]},
+                }
+            ],
+        },
+        13: {"type": "FeatureCollection", "features": []},
+    }
+
+    monkeypatch.setattr(spc_publish, "fetch_spc_layer_geojson", lambda layer_id, **_: payloads[layer_id])
+
+    products, issue_time = spc_publish.collect_latest_spc_products()
+
+    assert set(products.keys()) == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
+    assert [frame.fh for frame in products["hail_prob"]] == [0]
+    assert products["tornado_prob"][0].features[0]["properties"]["hover_label"] == "5% Tornado Probability"
+    assert products["tornado_prob"][0].features[1]["properties"]["hover_label"] == "Significant Tornado Area"
+    assert issue_time == datetime(2026, 4, 1, 6, 30, tzinfo=timezone.utc)
+
+
+def test_publish_latest_spc_outlooks_writes_multiple_probability_variables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = {
+        1: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"DN": 2, "label": "MRGL", "label2": "Marginal Risk", "VALID": "2026-04-01T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-98.0, 35.0], [-97.0, 35.0], [-97.0, 36.0], [-98.0, 35.0]]]}}]},
+        9: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"DN": 3, "label": "SLGT", "label2": "Slight Risk", "VALID": "2026-04-02T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-96.0, 34.0], [-95.0, 34.0], [-95.0, 35.0], [-96.0, 34.0]]]}}]},
+        17: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"DN": 2, "label": "MRGL", "label2": "Marginal Risk", "VALID": "2026-04-03T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-94.0, 33.0], [-93.0, 33.0], [-93.0, 34.0], [-94.0, 33.0]]]}}]},
+        3: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.05", "label2": "5% Tornado Risk", "fill": "#BD998A", "stroke": "#7F3F27", "VALID": "2026-04-01T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-90.0, 32.0], [-89.0, 32.0], [-89.0, 33.0], [-90.0, 32.0]]]}}]},
+        11: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.02", "label2": "2% Tornado Risk", "fill": "#79BA7A", "stroke": "#1A731D", "VALID": "2026-04-02T12:00:00Z", "ISSUE": "2026-04-01T07:45:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-88.0, 31.0], [-87.0, 31.0], [-87.0, 32.0], [-88.0, 31.0]]]}}]},
+        7: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.15", "label2": "15% Wind Risk", "fill": "#FFEB7F", "stroke": "#FF9600", "VALID": "2026-04-01T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-86.0, 30.0], [-85.0, 30.0], [-85.0, 31.0], [-86.0, 30.0]]]}}]},
+        15: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.05", "label2": "5% Wind Risk", "fill": "#C5A392", "stroke": "#8B4726", "VALID": "2026-04-02T12:00:00Z", "ISSUE": "2026-04-01T07:45:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-84.0, 29.0], [-83.0, 29.0], [-83.0, 30.0], [-84.0, 29.0]]]}}]},
+        5: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.15", "label2": "15% Hail Risk", "fill": "#FFEB7F", "stroke": "#FF9600", "VALID": "2026-04-01T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-82.0, 28.0], [-81.0, 28.0], [-81.0, 29.0], [-82.0, 28.0]]]}}]},
+        13: {"type": "FeatureCollection", "features": []},
+    }
+
+    monkeypatch.setattr(spc_publish, "fetch_spc_layer_geojson", lambda layer_id, **_: payloads[layer_id])
+
+    result = spc_publish.publish_latest_spc_outlooks(data_root=tmp_path)
+
+    assert result.variable_ids == ["convective", "hail_prob", "tornado_prob", "wind_prob"]
+    manifest = json.loads(result.manifest_path.read_text())
+    assert set(manifest["variables"].keys()) == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
+    assert manifest["variables"]["hail_prob"]["frames"] == [{"fh": 0, "valid_time": "2026-04-01T12:00:00Z"}]
+
+    tornado_sidecar = json.loads((result.published_run_dir / "tornado_prob" / "fh000.json").read_text())
+    assert tornado_sidecar["legend_title"] == "Tornado Probability"
+    assert tornado_sidecar["legend_entries"][0]["label"] == "5%"
+
+    wind_payload = json.loads((result.published_run_dir / "wind_prob" / "vectors" / "fh001.geojson").read_text())
+    assert wind_payload["features"][0]["properties"]["hover_label"] == "5% Wind Probability"

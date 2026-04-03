@@ -33,6 +33,21 @@ type VariableOption = Option & {
   group: string | null;
 };
 
+function spcVariableToolbarLabel(option: VariableOption): string {
+  switch (option.value) {
+    case "convective":
+      return "Categorical";
+    case "tornado_prob":
+      return "Tornado";
+    case "wind_prob":
+      return "Wind";
+    case "hail_prob":
+      return "Hail";
+    default:
+      return option.label;
+  }
+}
+
 type WeatherToolbarProps = {
   region: string;
   onRegionChange: (value: string) => void;
@@ -357,9 +372,13 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
   const isDesktopLayout = layoutMode === "desktop";
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isCompactTouchLayout = !isDesktopLayout;
+  const displayVariables = useMemo(
+    () => (model === "spc" ? variables.map((option) => ({ ...option, label: spcVariableToolbarLabel(option) })) : variables),
+    [model, variables]
+  );
 
   const selectedModelLabel = models.find((opt) => opt.value === model)?.label ?? "Model";
-  const selectedVariableLabel = variables.find((opt) => opt.value === variable)?.label ?? "Variable";
+  const selectedVariableLabel = displayVariables.find((opt) => opt.value === variable)?.label ?? "Variable";
   const selectedRunLabel = (runDisplayLabel ?? runs.find((opt) => opt.value === run)?.label ?? "Run").replace(
     /^Latest\s*\((.*)\)$/,
     "$1"
@@ -430,7 +449,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               icon={Layers}
               value={variable}
               onValueChange={onVariableChange}
-              options={variables}
+              options={displayVariables}
               disabled={disabled}
               placeholder="Variable"
               grouped
@@ -554,7 +573,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 icon={Layers}
                 value={variable}
                 onValueChange={onVariableChange}
-                options={variables}
+                options={displayVariables}
                 disabled={disabled}
                 placeholder="Variable"
                 grouped

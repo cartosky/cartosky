@@ -20,7 +20,7 @@ def test_spc_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"convective"}
+    assert buildable_var_keys == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
 
     assert capabilities.ui_defaults["default_var_key"] == "convective"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -58,6 +58,18 @@ def test_spc_capabilities_schema_snapshot_invariants() -> None:
     assert convective["group"] == "Outlooks"
     assert convective["render_substrates"] == ["vector"]
 
+    tornado = payload["variables"]["tornado_prob"]
+    assert tornado["display_name"] == "SPC Tornado Probability"
+    assert tornado["render_substrates"] == ["vector"]
+
+    wind = payload["variables"]["wind_prob"]
+    assert wind["display_name"] == "SPC Wind Probability"
+    assert wind["render_substrates"] == ["vector"]
+
+    hail = payload["variables"]["hail_prob"]
+    assert hail["display_name"] == "SPC Hail Probability"
+    assert hail["render_substrates"] == ["vector"]
+
 
 def test_spc_aliases_normalize() -> None:
     assert SPC_MODEL.normalize_var_id("convective") == "convective"
@@ -65,3 +77,7 @@ def test_spc_aliases_normalize() -> None:
     assert SPC_MODEL.normalize_var_id("convective_outlook") == "convective"
     assert SPC_MODEL.normalize_var_id("spc_convective") == "convective"
     assert SPC_MODEL.normalize_var_id("day1_3_convective") == "convective"
+    assert SPC_MODEL.normalize_var_id("tornado") == "tornado_prob"
+    assert SPC_MODEL.normalize_var_id("tornado_probability") == "tornado_prob"
+    assert SPC_MODEL.normalize_var_id("wind") == "wind_prob"
+    assert SPC_MODEL.normalize_var_id("hail") == "hail_prob"

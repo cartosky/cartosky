@@ -10,14 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.services.publish_utils import enforce_run_artifact_retention
-from app.services.run_ids import format_run_id
-from app.services.spc_publish import (
-    SPC_DAY_LAYERS,
-    SPC_LAYER_BASE_URL,
-    fetch_spc_layer_geojson,
-    normalize_spc_geojson,
-    publish_spc_bundle,
-)
+from app.services.spc_publish import SPC_LAYER_BASE_URL, collect_latest_spc_products, publish_latest_spc_outlooks
 
 logger = logging.getLogger(__name__)
 
@@ -45,28 +38,31 @@ class SPCPollerCycleResult:
 
 
 def run_once(config: SPCPollerConfig) -> SPCPollerCycleResult:
-    frames = []
-    for fh, (layer_id, day_label) in enumerate(SPC_DAY_LAYERS):
-        payload = fetch_spc_layer_geojson(layer_id, timeout_seconds=config.timeout_seconds, base_url=config.base_url)
-        frames.append(normalize_spc_geojson(payload, day_label=day_label, fh=fh))
-
-    issue_time = min(frame.issue_time for frame in frames).astimezone(timezone.utc)
-    run_id = format_run_id(issue_time, include_minutes=True)
+    products, issue_time = collect_latest_spc_products(
+        timeout_seconds=config.timeout_seconds,
+        base_url=config.base_url,
+    )
+    run_id = issue_time.astimezone(timezone.utc).strftime("%Y%m%d_%H%Mz").lower()
     if _latest_published_run_id(config.data_root) == run_id and _bundle_exists(config.data_root, run_id):
-        return SPCPollerCycleResult(
-            action="noop",
-            published_run_id=run_id,
-            latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            message=f"SPC latest bundle {run_id} is already published.",
-        )
+        if _manifest_variable_ids(config.data_root, run_id) == set(products.keys()):
+            return SPCPollerCycleResult(
+                action="noop",
+                published_run_id=run_id,
+                latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                message=f"SPC latest bundle {run_id} is already published.",
+            )
 
-    result = publish_spc_bundle(data_root=config.data_root, frames=frames, issue_time=issue_time)
+    result = publish_latest_spc_outlooks(
+        data_root=config.data_root,
+        timeout_seconds=config.timeout_seconds,
+        base_url=config.base_url,
+    )
     _enforce_retention(config)
     return SPCPollerCycleResult(
         action="published",
         published_run_id=result.run_id,
         latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        message=f"Published SPC bundle {result.run_id} with {result.frame_count} frames.",
+        message=f"Published SPC bundle {result.run_id} with {result.frame_count} frames across {len(result.variable_ids)} variables.",
     )
 
 
@@ -103,8 +99,22 @@ def _latest_published_run_id(data_root: Path) -> str | None:
     return str(run_id).strip() if isinstance(run_id, str) and run_id.strip() else None
 
 
+def _manifest_variable_ids(data_root: Path, run_id: str) -> set[str]:
+    manifest_path = data_root / "manifests" / "spc" / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return set()
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return set()
+    variables = payload.get("variables")
+    if not isinstance(variables, dict):
+        return set()
+    return {str(key).strip() for key in variables.keys() if str(key).strip()}
+
+
 def _bundle_exists(data_root: Path, run_id: str) -> bool:
-    published_run_dir = data_root / "published" / "spc" / run_id / "convective"
+    published_run_dir = data_root / "published" / "spc" / run_id
     manifest_path = data_root / "manifests" / "spc" / f"{run_id}.json"
     return published_run_dir.is_dir() and manifest_path.is_file()
 
@@ -147,10 +157,7 @@ def _float_env(name: str, fallback: float, *, minimum: float) -> float:
 
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 def build_config_from_env() -> SPCPollerConfig:

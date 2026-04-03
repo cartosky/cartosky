@@ -472,12 +472,15 @@ Business
 
 ## RoadMap Condensed
 **PHASE 1 - Immediate Value (retain + attract users)**
-- [ ] Add radar
-- [ ] Add obs, NWS forecasts, AFDs for cities
+- [X] Add radar
+- [X] Add obs, NWS forecasts, AFDs for cities
+- [ ] Add SPC outlooks/products
+- [ ] Add NWS hazards per county
 - [ ] Add selected new variables
 - [ ] Add Kuchera to NAM and GFS
 - [ ] Add selected new models
 - [ ] Add groups/titles in dropdown
+- [ ] Redesign frontend
 - [ ] Add lightweight feedback collection/ability
 
 **LAUNCH PUBLIC BETA TO TWF**
@@ -493,10 +496,10 @@ Business
 - [ ] Comparison tools
 - [ ] GIF/trends
 - [ ] Model consensus/probabilities
+- [ ] Add location search/favorites
+- [ ] Expand to North America
 
 **PHASE 4 - SCALE + UX**
-- [ ] Redesign frontend
-- [ ] Expand to North America
 - [ ] Add “storm/event” mode
 - [ ] Add social sharing targets
 
