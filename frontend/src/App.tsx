@@ -241,8 +241,6 @@ const MODEL_ORDER_BY_ID: Record<string, number> = {
   spc: 4,
 };
 
-const SPC_VECTOR_VARIABLE_IDS = new Set(["convective", "tornado_prob", "wind_prob", "hail_prob"]);
-
 function readBasemapModePreference(): BasemapMode {
   if (typeof window === "undefined") {
     return "light";
@@ -403,21 +401,13 @@ function capabilityVarsForManifest(
   }
   const manifestKeys = Object.keys(manifestVars);
   if (manifestKeys.length === 0) {
-    return capabilityVars;
+    return [];
   }
   const manifestSet = new Set(manifestKeys);
-  const known = capabilityVars;
-  const knownSet = new Set(capabilityVars.map((entry) => entry.id));
+  const known = capabilityVars.filter((entry) => manifestSet.has(entry.id));
+  const knownSet = new Set(known.map((entry) => entry.id));
   const extras = normalizeManifestVarRows(manifestVars).filter((entry) => !knownSet.has(entry.id));
-  const orderedExtras = extras.sort((a, b) => {
-    const aInManifest = manifestSet.has(a.id) ? 0 : 1;
-    const bInManifest = manifestSet.has(b.id) ? 0 : 1;
-    if (aInManifest !== bInManifest) {
-      return aInManifest - bInManifest;
-    }
-    return a.id.localeCompare(b.id);
-  });
-  return [...known, ...orderedExtras];
+  return [...known, ...extras];
 }
 
 function normalizeManifestVarRows(
@@ -984,13 +974,8 @@ export default function App() {
   const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
     ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid"])
     : [];
-  const manifestBackedSpcVectorSelection = model === "spc"
-    && Boolean(variable)
-    && manifestVarIds.has(variable)
-    && SPC_VECTOR_VARIABLE_IDS.has(variable);
-  const selectionSupportsVector = (selectionCapabilitiesResolved
-    && selectedVariableRenderSubstrates.includes("vector"))
-    || manifestBackedSpcVectorSelection;
+  const selectionSupportsVector = selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("vector");
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
   const gridOnlySelection = selectionSupportsGrid;
