@@ -7,7 +7,10 @@
       "properties": {
         "st": "AL",
         "state": "Alabama",
-        "city": "Birmingham"
+        "city": "Birmingham",
+        "wfo": "BMX",
+        "gridX": 59,
+        "gridY": 84
       },
       "geometry": {
         "type": "Point",
@@ -23,7 +26,10 @@
       "properties": {
         "st": "AL",
         "state": "Alabama",
-        "city": "Huntsville"
+        "city": "Huntsville",
+        "wfo": "HUN",
+        "gridX": 63,
+        "gridY": 43
       },
       "geometry": {
         "type": "Point",
@@ -39,7 +45,10 @@
       "properties": {
         "st": "AL",
         "state": "Alabama",
-        "city": "Mobile"
+        "city": "Mobile",
+        "wfo": "MOB",
+        "gridX": 52,
+        "gridY": 67
       },
       "geometry": {
         "type": "Point",
@@ -55,7 +64,10 @@
       "properties": {
         "st": "AL",
         "state": "Alabama",
-        "city": "Montgomery"
+        "city": "Montgomery",
+        "wfo": "BMX",
+        "gridX": 81,
+        "gridY": 35
       },
       "geometry": {
         "type": "Point",
@@ -71,7 +83,10 @@
       "properties": {
         "st": "AR",
         "state": "Arkansas",
-        "city": "Little Rock"
+        "city": "Little Rock",
+        "wfo": "LZK",
+        "gridX": 82,
+        "gridY": 73
       },
       "geometry": {
         "type": "Point",
@@ -87,7 +102,10 @@
       "properties": {
         "st": "AR",
         "state": "Arkansas",
-        "city": "Fayetteville"
+        "city": "Fayetteville",
+        "wfo": "TSA",
+        "gridX": 107,
+        "gridY": 101
       },
       "geometry": {
         "type": "Point",
@@ -103,7 +121,10 @@
       "properties": {
         "st": "AR",
         "state": "Arkansas",
-        "city": "Fort Smith"
+        "city": "Fort Smith",
+        "wfo": "TSA",
+        "gridX": 99,
+        "gridY": 70
       },
       "geometry": {
         "type": "Point",
@@ -119,7 +140,10 @@
       "properties": {
         "st": "AR",
         "state": "Arkansas",
-        "city": "Jonesboro"
+        "city": "Jonesboro",
+        "wfo": "MEG",
+        "gridX": 17,
+        "gridY": 97
       },
       "geometry": {
         "type": "Point",
@@ -135,7 +159,10 @@
       "properties": {
         "st": "AZ",
         "state": "Arizona",
-        "city": "Phoenix"
+        "city": "Phoenix",
+        "wfo": "PSR",
+        "gridX": 159,
+        "gridY": 58
       },
       "geometry": {
         "type": "Point",
@@ -151,7 +178,10 @@
       "properties": {
         "st": "AZ",
         "state": "Arizona",
-        "city": "Tucson"
+        "city": "Tucson",
+        "wfo": "TWC",
+        "gridX": 91,
+        "gridY": 49
       },
       "geometry": {
         "type": "Point",
@@ -167,7 +197,10 @@
       "properties": {
         "st": "AZ",
         "state": "Arizona",
-        "city": "Yuma"
+        "city": "Yuma",
+        "wfo": "PSR",
+        "gridX": 61,
+        "gridY": 37
       },
       "geometry": {
         "type": "Point",
@@ -183,7 +216,10 @@
       "properties": {
         "st": "AZ",
         "state": "Arizona",
-        "city": "Flagstaff"
+        "city": "Flagstaff",
+        "wfo": "FGZ",
+        "gridX": 74,
+        "gridY": 89
       },
       "geometry": {
         "type": "Point",
@@ -199,7 +235,10 @@
       "properties": {
         "st": "CA",
         "state": "California",
-        "city": "Los Angeles"
+        "city": "Los Angeles",
+        "wfo": "LOX",
+        "gridX": 155,
+        "gridY": 45
       },
       "geometry": {
         "type": "Point",
@@ -215,7 +254,10 @@
       "properties": {
         "st": "CA",
         "state": "California",
-        "city": "San Francisco"
+        "city": "San Francisco",
+        "wfo": "MTR",
+        "gridX": 85,
+        "gridY": 105
       },
       "geometry": {
         "type": "Point",
@@ -231,7 +273,10 @@
       "properties": {
         "st": "CA",
         "state": "California",
-        "city": "San Diego"
+        "city": "San Diego",
+        "wfo": "SGX",
+        "gridX": 57,
+        "gridY": 14
       },
       "geometry": {
         "type": "Point",
@@ -247,7 +292,10 @@
       "properties": {
         "st": "CA",
         "state": "California",
-        "city": "Sacramento"
+        "city": "Sacramento",
+        "wfo": "STO",
+        "gridX": 41,
+        "gridY": 68
       },
       "geometry": {
         "type": "Point",
@@ -263,7 +311,10 @@
       "properties": {
         "st": "CO",
         "state": "Colorado",
-        "city": "Denver"
+        "city": "Denver",
+        "wfo": "BOU",
+        "gridX": 63,
+        "gridY": 62
       },
       "geometry": {
         "type": "Point",
@@ -279,7 +330,10 @@
       "properties": {
         "st": "CO",
         "state": "Colorado",
-        "city": "Colorado Springs"
+        "city": "Colorado Springs",
+        "wfo": "PUB",
+        "gridX": 90,
+        "gridY": 91
       },
       "geometry": {
         "type": "Point",
@@ -295,7 +349,10 @@
       "properties": {
         "st": "CO",
         "state": "Colorado",
-        "city": "Fort Collins"
+        "city": "Fort Collins",
+        "wfo": "BOU",
+        "gridX": 63,
+        "gridY": 100
       },
       "geometry": {
         "type": "Point",
@@ -311,7 +368,10 @@
       "properties": {
         "st": "CO",
         "state": "Colorado",
-        "city": "Grand Junction"
+        "city": "Grand Junction",
+        "wfo": "GJT",
+        "gridX": 95,
+        "gridY": 102
       },
       "geometry": {
         "type": "Point",
@@ -327,7 +387,10 @@
       "properties": {
         "st": "CT",
         "state": "Connecticut",
-        "city": "Hartford"
+        "city": "Hartford",
+        "wfo": "BOX",
+        "gridX": 22,
+        "gridY": 54
       },
       "geometry": {
         "type": "Point",
@@ -343,7 +406,10 @@
       "properties": {
         "st": "CT",
         "state": "Connecticut",
-        "city": "Bridgeport"
+        "city": "Bridgeport",
+        "wfo": "OKX",
+        "gridX": 58,
+        "gridY": 60
       },
       "geometry": {
         "type": "Point",
@@ -359,7 +425,10 @@
       "properties": {
         "st": "CT",
         "state": "Connecticut",
-        "city": "New Haven"
+        "city": "New Haven",
+        "wfo": "OKX",
+        "gridX": 66,
+        "gridY": 68
       },
       "geometry": {
         "type": "Point",
@@ -375,7 +444,10 @@
       "properties": {
         "st": "DC",
         "state": "District of Columbia",
-        "city": "Washington"
+        "city": "Washington",
+        "wfo": "LWX",
+        "gridX": 96,
+        "gridY": 72
       },
       "geometry": {
         "type": "Point",
@@ -391,7 +463,10 @@
       "properties": {
         "st": "DE",
         "state": "Delaware",
-        "city": "Wilmington"
+        "city": "Wilmington",
+        "wfo": "PHI",
+        "gridX": 38,
+        "gridY": 64
       },
       "geometry": {
         "type": "Point",
@@ -407,7 +482,10 @@
       "properties": {
         "st": "DE",
         "state": "Delaware",
-        "city": "Dover"
+        "city": "Dover",
+        "wfo": "PHI",
+        "gridX": 42,
+        "gridY": 38
       },
       "geometry": {
         "type": "Point",
@@ -423,7 +501,10 @@
       "properties": {
         "st": "FL",
         "state": "Florida",
-        "city": "Miami"
+        "city": "Miami",
+        "wfo": "MFL",
+        "gridX": 110,
+        "gridY": 50
       },
       "geometry": {
         "type": "Point",
@@ -439,7 +520,10 @@
       "properties": {
         "st": "FL",
         "state": "Florida",
-        "city": "Tampa"
+        "city": "Tampa",
+        "wfo": "TBW",
+        "gridX": 71,
+        "gridY": 98
       },
       "geometry": {
         "type": "Point",
@@ -455,7 +539,10 @@
       "properties": {
         "st": "FL",
         "state": "Florida",
-        "city": "Orlando"
+        "city": "Orlando",
+        "wfo": "MLB",
+        "gridX": 26,
+        "gridY": 68
       },
       "geometry": {
         "type": "Point",
@@ -471,7 +558,10 @@
       "properties": {
         "st": "FL",
         "state": "Florida",
-        "city": "Jacksonville"
+        "city": "Jacksonville",
+        "wfo": "JAX",
+        "gridX": 66,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -487,7 +577,10 @@
       "properties": {
         "st": "GA",
         "state": "Georgia",
-        "city": "Atlanta"
+        "city": "Atlanta",
+        "wfo": "FFC",
+        "gridX": 51,
+        "gridY": 87
       },
       "geometry": {
         "type": "Point",
@@ -503,7 +596,10 @@
       "properties": {
         "st": "GA",
         "state": "Georgia",
-        "city": "Savannah"
+        "city": "Savannah",
+        "wfo": "CHS",
+        "gridX": 47,
+        "gridY": 41
       },
       "geometry": {
         "type": "Point",
@@ -519,7 +615,10 @@
       "properties": {
         "st": "GA",
         "state": "Georgia",
-        "city": "Augusta"
+        "city": "Augusta",
+        "wfo": "CAE",
+        "gridX": 31,
+        "gridY": 34
       },
       "geometry": {
         "type": "Point",
@@ -535,7 +634,10 @@
       "properties": {
         "st": "GA",
         "state": "Georgia",
-        "city": "Columbus"
+        "city": "Columbus",
+        "wfo": "FFC",
+        "gridX": 33,
+        "gridY": 28
       },
       "geometry": {
         "type": "Point",
@@ -551,7 +653,10 @@
       "properties": {
         "st": "IA",
         "state": "Iowa",
-        "city": "Des Moines"
+        "city": "Des Moines",
+        "wfo": "DMX",
+        "gridX": 73,
+        "gridY": 49
       },
       "geometry": {
         "type": "Point",
@@ -567,7 +672,10 @@
       "properties": {
         "st": "IA",
         "state": "Iowa",
-        "city": "Davenport"
+        "city": "Davenport",
+        "wfo": "DVN",
+        "gridX": 68,
+        "gridY": 66
       },
       "geometry": {
         "type": "Point",
@@ -583,7 +691,10 @@
       "properties": {
         "st": "IA",
         "state": "Iowa",
-        "city": "Cedar Rapids"
+        "city": "Cedar Rapids",
+        "wfo": "DVN",
+        "gridX": 30,
+        "gridY": 86
       },
       "geometry": {
         "type": "Point",
@@ -599,7 +710,10 @@
       "properties": {
         "st": "IA",
         "state": "Iowa",
-        "city": "Sioux City"
+        "city": "Sioux City",
+        "wfo": "FSD",
+        "gridX": 108,
+        "gridY": 16
       },
       "geometry": {
         "type": "Point",
@@ -615,7 +729,10 @@
       "properties": {
         "st": "ID",
         "state": "Idaho",
-        "city": "Boise"
+        "city": "Boise",
+        "wfo": "BOI",
+        "gridX": 133,
+        "gridY": 86
       },
       "geometry": {
         "type": "Point",
@@ -631,7 +748,10 @@
       "properties": {
         "st": "ID",
         "state": "Idaho",
-        "city": "Coeur d'Alene"
+        "city": "Coeur d'Alene",
+        "wfo": "OTX",
+        "gridX": 161,
+        "gridY": 87
       },
       "geometry": {
         "type": "Point",
@@ -647,7 +767,10 @@
       "properties": {
         "st": "ID",
         "state": "Idaho",
-        "city": "Idaho Falls"
+        "city": "Idaho Falls",
+        "wfo": "PIH",
+        "gridX": 124,
+        "gridY": 74
       },
       "geometry": {
         "type": "Point",
@@ -663,7 +786,10 @@
       "properties": {
         "st": "ID",
         "state": "Idaho",
-        "city": "Pocatello"
+        "city": "Pocatello",
+        "wfo": "PIH",
+        "gridX": 107,
+        "gridY": 48
       },
       "geometry": {
         "type": "Point",
@@ -679,7 +805,10 @@
       "properties": {
         "st": "IL",
         "state": "Illinois",
-        "city": "Chicago"
+        "city": "Chicago",
+        "wfo": "LOT",
+        "gridX": 76,
+        "gridY": 73
       },
       "geometry": {
         "type": "Point",
@@ -695,7 +824,10 @@
       "properties": {
         "st": "IL",
         "state": "Illinois",
-        "city": "Peoria"
+        "city": "Peoria",
+        "wfo": "ILX",
+        "gridX": 48,
+        "gridY": 97
       },
       "geometry": {
         "type": "Point",
@@ -711,7 +843,10 @@
       "properties": {
         "st": "IL",
         "state": "Illinois",
-        "city": "Rockford"
+        "city": "Rockford",
+        "wfo": "LOT",
+        "gridX": 25,
+        "gridY": 89
       },
       "geometry": {
         "type": "Point",
@@ -727,7 +862,10 @@
       "properties": {
         "st": "IL",
         "state": "Illinois",
-        "city": "Springfield"
+        "city": "Springfield",
+        "wfo": "ILX",
+        "gridX": 47,
+        "gridY": 55
       },
       "geometry": {
         "type": "Point",
@@ -743,7 +881,10 @@
       "properties": {
         "st": "IN",
         "state": "Indiana",
-        "city": "Indianapolis"
+        "city": "Indianapolis",
+        "wfo": "IND",
+        "gridX": 58,
+        "gridY": 69
       },
       "geometry": {
         "type": "Point",
@@ -759,7 +900,10 @@
       "properties": {
         "st": "IN",
         "state": "Indiana",
-        "city": "Fort Wayne"
+        "city": "Fort Wayne",
+        "wfo": "IWX",
+        "gridX": 69,
+        "gridY": 38
       },
       "geometry": {
         "type": "Point",
@@ -775,7 +919,10 @@
       "properties": {
         "st": "IN",
         "state": "Indiana",
-        "city": "South Bend"
+        "city": "South Bend",
+        "wfo": "IWX",
+        "gridX": 29,
+        "gridY": 63
       },
       "geometry": {
         "type": "Point",
@@ -791,7 +938,10 @@
       "properties": {
         "st": "IN",
         "state": "Indiana",
-        "city": "Evansville"
+        "city": "Evansville",
+        "wfo": "PAH",
+        "gridX": 166,
+        "gridY": 97
       },
       "geometry": {
         "type": "Point",
@@ -807,7 +957,10 @@
       "properties": {
         "st": "KS",
         "state": "Kansas",
-        "city": "Wichita"
+        "city": "Wichita",
+        "wfo": "ICT",
+        "gridX": 62,
+        "gridY": 34
       },
       "geometry": {
         "type": "Point",
@@ -823,7 +976,10 @@
       "properties": {
         "st": "KS",
         "state": "Kansas",
-        "city": "Kansas City"
+        "city": "Kansas City",
+        "wfo": "EAX",
+        "gridX": 42,
+        "gridY": 51
       },
       "geometry": {
         "type": "Point",
@@ -839,7 +995,10 @@
       "properties": {
         "st": "KS",
         "state": "Kansas",
-        "city": "Topeka"
+        "city": "Topeka",
+        "wfo": "TOP",
+        "gridX": 81,
+        "gridY": 48
       },
       "geometry": {
         "type": "Point",
@@ -855,7 +1014,10 @@
       "properties": {
         "st": "KS",
         "state": "Kansas",
-        "city": "Manhattan"
+        "city": "Manhattan",
+        "wfo": "TOP",
+        "gridX": 50,
+        "gridY": 55
       },
       "geometry": {
         "type": "Point",
@@ -871,7 +1033,10 @@
       "properties": {
         "st": "KY",
         "state": "Kentucky",
-        "city": "Louisville"
+        "city": "Louisville",
+        "wfo": "LMK",
+        "gridX": 50,
+        "gridY": 78
       },
       "geometry": {
         "type": "Point",
@@ -887,7 +1052,10 @@
       "properties": {
         "st": "KY",
         "state": "Kentucky",
-        "city": "Lexington"
+        "city": "Lexington",
+        "wfo": "LMK",
+        "gridX": 95,
+        "gridY": 71
       },
       "geometry": {
         "type": "Point",
@@ -903,7 +1071,10 @@
       "properties": {
         "st": "KY",
         "state": "Kentucky",
-        "city": "Bowling Green"
+        "city": "Bowling Green",
+        "wfo": "LMK",
+        "gridX": 28,
+        "gridY": 18
       },
       "geometry": {
         "type": "Point",
@@ -919,7 +1090,10 @@
       "properties": {
         "st": "LA",
         "state": "Louisiana",
-        "city": "New Orleans"
+        "city": "New Orleans",
+        "wfo": "LIX",
+        "gridX": 68,
+        "gridY": 88
       },
       "geometry": {
         "type": "Point",
@@ -935,7 +1109,10 @@
       "properties": {
         "st": "LA",
         "state": "Louisiana",
-        "city": "Baton Rouge"
+        "city": "Baton Rouge",
+        "wfo": "LIX",
+        "gridX": 25,
+        "gridY": 109
       },
       "geometry": {
         "type": "Point",
@@ -951,7 +1128,10 @@
       "properties": {
         "st": "LA",
         "state": "Louisiana",
-        "city": "Lafayette"
+        "city": "Lafayette",
+        "wfo": "LCH",
+        "gridX": 105,
+        "gridY": 95
       },
       "geometry": {
         "type": "Point",
@@ -967,7 +1147,10 @@
       "properties": {
         "st": "LA",
         "state": "Louisiana",
-        "city": "Shreveport"
+        "city": "Shreveport",
+        "wfo": "SHV",
+        "gridX": 74,
+        "gridY": 69
       },
       "geometry": {
         "type": "Point",
@@ -983,7 +1166,10 @@
       "properties": {
         "st": "MA",
         "state": "Massachusetts",
-        "city": "Boston"
+        "city": "Boston",
+        "wfo": "BOX",
+        "gridX": 71,
+        "gridY": 90
       },
       "geometry": {
         "type": "Point",
@@ -999,7 +1185,10 @@
       "properties": {
         "st": "MA",
         "state": "Massachusetts",
-        "city": "Worcester"
+        "city": "Worcester",
+        "wfo": "BOX",
+        "gridX": 47,
+        "gridY": 81
       },
       "geometry": {
         "type": "Point",
@@ -1015,7 +1204,10 @@
       "properties": {
         "st": "MA",
         "state": "Massachusetts",
-        "city": "Springfield"
+        "city": "Springfield",
+        "wfo": "BOX",
+        "gridX": 22,
+        "gridY": 69
       },
       "geometry": {
         "type": "Point",
@@ -1031,7 +1223,10 @@
       "properties": {
         "st": "MD",
         "state": "Maryland",
-        "city": "Baltimore"
+        "city": "Baltimore",
+        "wfo": "LWX",
+        "gridX": 109,
+        "gridY": 91
       },
       "geometry": {
         "type": "Point",
@@ -1047,7 +1242,10 @@
       "properties": {
         "st": "MD",
         "state": "Maryland",
-        "city": "Hagerstown"
+        "city": "Hagerstown",
+        "wfo": "LWX",
+        "gridX": 68,
+        "gridY": 102
       },
       "geometry": {
         "type": "Point",
@@ -1063,7 +1261,10 @@
       "properties": {
         "st": "MD",
         "state": "Maryland",
-        "city": "Salisbury"
+        "city": "Salisbury",
+        "wfo": "AKQ",
+        "gridX": 105,
+        "gridY": 122
       },
       "geometry": {
         "type": "Point",
@@ -1079,7 +1280,10 @@
       "properties": {
         "st": "ME",
         "state": "Maine",
-        "city": "Portland"
+        "city": "Portland",
+        "wfo": "GYX",
+        "gridX": 72,
+        "gridY": 58
       },
       "geometry": {
         "type": "Point",
@@ -1095,7 +1299,10 @@
       "properties": {
         "st": "ME",
         "state": "Maine",
-        "city": "Bangor"
+        "city": "Bangor",
+        "wfo": "CAR",
+        "gridX": 66,
+        "gridY": 62
       },
       "geometry": {
         "type": "Point",
@@ -1111,7 +1318,10 @@
       "properties": {
         "st": "ME",
         "state": "Maine",
-        "city": "Augusta"
+        "city": "Augusta",
+        "wfo": "GYX",
+        "gridX": 82,
+        "gridY": 91
       },
       "geometry": {
         "type": "Point",
@@ -1127,7 +1337,10 @@
       "properties": {
         "st": "MI",
         "state": "Michigan",
-        "city": "Detroit"
+        "city": "Detroit",
+        "wfo": "DTX",
+        "gridX": 66,
+        "gridY": 34
       },
       "geometry": {
         "type": "Point",
@@ -1143,7 +1356,10 @@
       "properties": {
         "st": "MI",
         "state": "Michigan",
-        "city": "Grand Rapids"
+        "city": "Grand Rapids",
+        "wfo": "GRR",
+        "gridX": 41,
+        "gridY": 47
       },
       "geometry": {
         "type": "Point",
@@ -1159,7 +1375,10 @@
       "properties": {
         "st": "MI",
         "state": "Michigan",
-        "city": "Lansing"
+        "city": "Lansing",
+        "wfo": "GRR",
+        "gridX": 79,
+        "gridY": 39
       },
       "geometry": {
         "type": "Point",
@@ -1175,7 +1394,10 @@
       "properties": {
         "st": "MI",
         "state": "Michigan",
-        "city": "Traverse City"
+        "city": "Traverse City",
+        "wfo": "APX",
+        "gridX": 29,
+        "gridY": 46
       },
       "geometry": {
         "type": "Point",
@@ -1191,7 +1413,10 @@
       "properties": {
         "st": "MN",
         "state": "Minnesota",
-        "city": "Minneapolis"
+        "city": "Minneapolis",
+        "wfo": "MPX",
+        "gridX": 108,
+        "gridY": 72
       },
       "geometry": {
         "type": "Point",
@@ -1207,7 +1432,10 @@
       "properties": {
         "st": "MN",
         "state": "Minnesota",
-        "city": "Duluth"
+        "city": "Duluth",
+        "wfo": "DLH",
+        "gridX": 91,
+        "gridY": 69
       },
       "geometry": {
         "type": "Point",
@@ -1223,7 +1451,10 @@
       "properties": {
         "st": "MN",
         "state": "Minnesota",
-        "city": "Rochester"
+        "city": "Rochester",
+        "wfo": "ARX",
+        "gridX": 22,
+        "gridY": 70
       },
       "geometry": {
         "type": "Point",
@@ -1239,7 +1470,10 @@
       "properties": {
         "st": "MN",
         "state": "Minnesota",
-        "city": "St. Cloud"
+        "city": "St. Cloud",
+        "wfo": "MPX",
+        "gridX": 79,
+        "gridY": 99
       },
       "geometry": {
         "type": "Point",
@@ -1255,7 +1489,10 @@
       "properties": {
         "st": "MO",
         "state": "Missouri",
-        "city": "St. Louis"
+        "city": "St. Louis",
+        "wfo": "LSX",
+        "gridX": 95,
+        "gridY": 74
       },
       "geometry": {
         "type": "Point",
@@ -1271,7 +1508,10 @@
       "properties": {
         "st": "MO",
         "state": "Missouri",
-        "city": "Kansas City"
+        "city": "Kansas City",
+        "wfo": "EAX",
+        "gridX": 44,
+        "gridY": 51
       },
       "geometry": {
         "type": "Point",
@@ -1287,7 +1527,10 @@
       "properties": {
         "st": "MO",
         "state": "Missouri",
-        "city": "Springfield"
+        "city": "Springfield",
+        "wfo": "SGF",
+        "gridX": 67,
+        "gridY": 35
       },
       "geometry": {
         "type": "Point",
@@ -1303,7 +1546,10 @@
       "properties": {
         "st": "MO",
         "state": "Missouri",
-        "city": "Columbia"
+        "city": "Columbia",
+        "wfo": "LSX",
+        "gridX": 20,
+        "gridY": 87
       },
       "geometry": {
         "type": "Point",
@@ -1319,7 +1565,10 @@
       "properties": {
         "st": "MS",
         "state": "Mississippi",
-        "city": "Jackson"
+        "city": "Jackson",
+        "wfo": "JAN",
+        "gridX": 76,
+        "gridY": 63
       },
       "geometry": {
         "type": "Point",
@@ -1335,7 +1584,10 @@
       "properties": {
         "st": "MS",
         "state": "Mississippi",
-        "city": "Gulfport"
+        "city": "Gulfport",
+        "wfo": "LIX",
+        "gridX": 104,
+        "gridY": 108
       },
       "geometry": {
         "type": "Point",
@@ -1351,7 +1603,10 @@
       "properties": {
         "st": "MS",
         "state": "Mississippi",
-        "city": "Hattiesburg"
+        "city": "Hattiesburg",
+        "wfo": "JAN",
+        "gridX": 111,
+        "gridY": 21
       },
       "geometry": {
         "type": "Point",
@@ -1367,7 +1622,10 @@
       "properties": {
         "st": "MS",
         "state": "Mississippi",
-        "city": "Tupelo"
+        "city": "Tupelo",
+        "wfo": "MEG",
+        "gridX": 93,
+        "gridY": 29
       },
       "geometry": {
         "type": "Point",
@@ -1383,7 +1641,10 @@
       "properties": {
         "st": "MT",
         "state": "Montana",
-        "city": "Billings"
+        "city": "Billings",
+        "wfo": "BYZ",
+        "gridX": 103,
+        "gridY": 92
       },
       "geometry": {
         "type": "Point",
@@ -1399,7 +1660,10 @@
       "properties": {
         "st": "MT",
         "state": "Montana",
-        "city": "Bozeman"
+        "city": "Bozeman",
+        "wfo": "TFX",
+        "gridX": 96,
+        "gridY": 58
       },
       "geometry": {
         "type": "Point",
@@ -1415,7 +1679,10 @@
       "properties": {
         "st": "MT",
         "state": "Montana",
-        "city": "Missoula"
+        "city": "Missoula",
+        "wfo": "MSO",
+        "gridX": 105,
+        "gridY": 131
       },
       "geometry": {
         "type": "Point",
@@ -1431,7 +1698,10 @@
       "properties": {
         "st": "MT",
         "state": "Montana",
-        "city": "Great Falls"
+        "city": "Great Falls",
+        "wfo": "TFX",
+        "gridX": 98,
+        "gridY": 145
       },
       "geometry": {
         "type": "Point",
@@ -1447,7 +1717,10 @@
       "properties": {
         "st": "NC",
         "state": "North Carolina",
-        "city": "Charlotte"
+        "city": "Charlotte",
+        "wfo": "GSP",
+        "gridX": 119,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -1463,7 +1736,10 @@
       "properties": {
         "st": "NC",
         "state": "North Carolina",
-        "city": "Raleigh"
+        "city": "Raleigh",
+        "wfo": "RAH",
+        "gridX": 75,
+        "gridY": 57
       },
       "geometry": {
         "type": "Point",
@@ -1479,7 +1755,10 @@
       "properties": {
         "st": "NC",
         "state": "North Carolina",
-        "city": "Greensboro"
+        "city": "Greensboro",
+        "wfo": "RAH",
+        "gridX": 32,
+        "gridY": 66
       },
       "geometry": {
         "type": "Point",
@@ -1495,7 +1774,10 @@
       "properties": {
         "st": "NC",
         "state": "North Carolina",
-        "city": "Asheville"
+        "city": "Asheville",
+        "wfo": "GSP",
+        "gridX": 56,
+        "gridY": 75
       },
       "geometry": {
         "type": "Point",
@@ -1511,7 +1793,10 @@
       "properties": {
         "st": "ND",
         "state": "North Dakota",
-        "city": "Fargo"
+        "city": "Fargo",
+        "wfo": "FGF",
+        "gridX": 100,
+        "gridY": 57
       },
       "geometry": {
         "type": "Point",
@@ -1527,7 +1812,10 @@
       "properties": {
         "st": "ND",
         "state": "North Dakota",
-        "city": "Bismarck"
+        "city": "Bismarck",
+        "wfo": "BIS",
+        "gridX": 110,
+        "gridY": 47
       },
       "geometry": {
         "type": "Point",
@@ -1543,7 +1831,10 @@
       "properties": {
         "st": "ND",
         "state": "North Dakota",
-        "city": "Grand Forks"
+        "city": "Grand Forks",
+        "wfo": "FGF",
+        "gridX": 93,
+        "gridY": 107
       },
       "geometry": {
         "type": "Point",
@@ -1559,7 +1850,10 @@
       "properties": {
         "st": "NE",
         "state": "Nebraska",
-        "city": "Omaha"
+        "city": "Omaha",
+        "wfo": "OAX",
+        "gridX": 83,
+        "gridY": 60
       },
       "geometry": {
         "type": "Point",
@@ -1575,7 +1869,10 @@
       "properties": {
         "st": "NE",
         "state": "Nebraska",
-        "city": "Lincoln"
+        "city": "Lincoln",
+        "wfo": "OAX",
+        "gridX": 56,
+        "gridY": 40
       },
       "geometry": {
         "type": "Point",
@@ -1591,7 +1888,10 @@
       "properties": {
         "st": "NE",
         "state": "Nebraska",
-        "city": "Grand Island"
+        "city": "Grand Island",
+        "wfo": "GID",
+        "gridX": 68,
+        "gridY": 84
       },
       "geometry": {
         "type": "Point",
@@ -1607,7 +1907,10 @@
       "properties": {
         "st": "NH",
         "state": "New Hampshire",
-        "city": "Manchester"
+        "city": "Manchester",
+        "wfo": "GYX",
+        "gridX": 38,
+        "gridY": 20
       },
       "geometry": {
         "type": "Point",
@@ -1623,7 +1926,10 @@
       "properties": {
         "st": "NH",
         "state": "New Hampshire",
-        "city": "Concord"
+        "city": "Concord",
+        "wfo": "GYX",
+        "gridX": 34,
+        "gridY": 30
       },
       "geometry": {
         "type": "Point",
@@ -1639,7 +1945,10 @@
       "properties": {
         "st": "NH",
         "state": "New Hampshire",
-        "city": "Portsmouth"
+        "city": "Portsmouth",
+        "wfo": "GYX",
+        "gridX": 60,
+        "gridY": 28
       },
       "geometry": {
         "type": "Point",
@@ -1655,7 +1964,10 @@
       "properties": {
         "st": "NJ",
         "state": "New Jersey",
-        "city": "Newark"
+        "city": "Newark",
+        "wfo": "OKX",
+        "gridX": 27,
+        "gridY": 35
       },
       "geometry": {
         "type": "Point",
@@ -1671,7 +1983,10 @@
       "properties": {
         "st": "NJ",
         "state": "New Jersey",
-        "city": "Camden"
+        "city": "Camden",
+        "wfo": "PHI",
+        "gridX": 51,
+        "gridY": 75
       },
       "geometry": {
         "type": "Point",
@@ -1687,7 +2002,10 @@
       "properties": {
         "st": "NJ",
         "state": "New Jersey",
-        "city": "Trenton"
+        "city": "Trenton",
+        "wfo": "PHI",
+        "gridX": 62,
+        "gridY": 90
       },
       "geometry": {
         "type": "Point",
@@ -1703,7 +2021,10 @@
       "properties": {
         "st": "NJ",
         "state": "New Jersey",
-        "city": "Atlantic City"
+        "city": "Atlantic City",
+        "wfo": "PHI",
+        "gridX": 79,
+        "gridY": 53
       },
       "geometry": {
         "type": "Point",
@@ -1719,7 +2040,10 @@
       "properties": {
         "st": "NM",
         "state": "New Mexico",
-        "city": "Albuquerque"
+        "city": "Albuquerque",
+        "wfo": "ABQ",
+        "gridX": 98,
+        "gridY": 121
       },
       "geometry": {
         "type": "Point",
@@ -1735,7 +2059,10 @@
       "properties": {
         "st": "NM",
         "state": "New Mexico",
-        "city": "Las Cruces"
+        "city": "Las Cruces",
+        "wfo": "EPZ",
+        "gridX": 92,
+        "gridY": 81
       },
       "geometry": {
         "type": "Point",
@@ -1751,7 +2078,10 @@
       "properties": {
         "st": "NM",
         "state": "New Mexico",
-        "city": "Santa Fe"
+        "city": "Santa Fe",
+        "wfo": "ABQ",
+        "gridX": 126,
+        "gridY": 146
       },
       "geometry": {
         "type": "Point",
@@ -1767,7 +2097,10 @@
       "properties": {
         "st": "NV",
         "state": "Nevada",
-        "city": "Las Vegas"
+        "city": "Las Vegas",
+        "wfo": "VEF",
+        "gridX": 123,
+        "gridY": 98
       },
       "geometry": {
         "type": "Point",
@@ -1783,7 +2116,10 @@
       "properties": {
         "st": "NV",
         "state": "Nevada",
-        "city": "Reno"
+        "city": "Reno",
+        "wfo": "REV",
+        "gridX": 45,
+        "gridY": 106
       },
       "geometry": {
         "type": "Point",
@@ -1799,7 +2135,10 @@
       "properties": {
         "st": "NV",
         "state": "Nevada",
-        "city": "Elko"
+        "city": "Elko",
+        "wfo": "LKN",
+        "gridX": 122,
+        "gridY": 131
       },
       "geometry": {
         "type": "Point",
@@ -1815,7 +2154,10 @@
       "properties": {
         "st": "NY",
         "state": "New York",
-        "city": "New York"
+        "city": "New York",
+        "wfo": "OKX",
+        "gridX": 33,
+        "gridY": 35
       },
       "geometry": {
         "type": "Point",
@@ -1831,7 +2173,10 @@
       "properties": {
         "st": "NY",
         "state": "New York",
-        "city": "Buffalo"
+        "city": "Buffalo",
+        "wfo": "BUF",
+        "gridX": 36,
+        "gridY": 47
       },
       "geometry": {
         "type": "Point",
@@ -1847,7 +2192,10 @@
       "properties": {
         "st": "NY",
         "state": "New York",
-        "city": "Rochester"
+        "city": "Rochester",
+        "wfo": "BUF",
+        "gridX": 77,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -1863,7 +2211,10 @@
       "properties": {
         "st": "NY",
         "state": "New York",
-        "city": "Albany"
+        "city": "Albany",
+        "wfo": "ALY",
+        "gridX": 72,
+        "gridY": 63
       },
       "geometry": {
         "type": "Point",
@@ -1879,7 +2230,10 @@
       "properties": {
         "st": "OH",
         "state": "Ohio",
-        "city": "Columbus"
+        "city": "Columbus",
+        "wfo": "ILN",
+        "gridX": 85,
+        "gridY": 81
       },
       "geometry": {
         "type": "Point",
@@ -1895,7 +2249,10 @@
       "properties": {
         "st": "OH",
         "state": "Ohio",
-        "city": "Cleveland"
+        "city": "Cleveland",
+        "wfo": "CLE",
+        "gridX": 83,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -1911,7 +2268,10 @@
       "properties": {
         "st": "OH",
         "state": "Ohio",
-        "city": "Cincinnati"
+        "city": "Cincinnati",
+        "wfo": "ILN",
+        "gridX": 36,
+        "gridY": 38
       },
       "geometry": {
         "type": "Point",
@@ -1927,7 +2287,10 @@
       "properties": {
         "st": "OH",
         "state": "Ohio",
-        "city": "Toledo"
+        "city": "Toledo",
+        "wfo": "CLE",
+        "gridX": 20,
+        "gridY": 66
       },
       "geometry": {
         "type": "Point",
@@ -1943,7 +2306,10 @@
       "properties": {
         "st": "OK",
         "state": "Oklahoma",
-        "city": "Oklahoma City"
+        "city": "Oklahoma City",
+        "wfo": "OUN",
+        "gridX": 97,
+        "gridY": 94
       },
       "geometry": {
         "type": "Point",
@@ -1959,7 +2325,10 @@
       "properties": {
         "st": "OK",
         "state": "Oklahoma",
-        "city": "Tulsa"
+        "city": "Tulsa",
+        "wfo": "TSA",
+        "gridX": 41,
+        "gridY": 105
       },
       "geometry": {
         "type": "Point",
@@ -1975,7 +2344,10 @@
       "properties": {
         "st": "OK",
         "state": "Oklahoma",
-        "city": "Lawton"
+        "city": "Lawton",
+        "wfo": "OUN",
+        "gridX": 64,
+        "gridY": 56
       },
       "geometry": {
         "type": "Point",
@@ -1991,7 +2363,10 @@
       "properties": {
         "st": "OR",
         "state": "Oregon",
-        "city": "Portland"
+        "city": "Portland",
+        "wfo": "PQR",
+        "gridX": 113,
+        "gridY": 104
       },
       "geometry": {
         "type": "Point",
@@ -2007,7 +2382,10 @@
       "properties": {
         "st": "OR",
         "state": "Oregon",
-        "city": "Eugene"
+        "city": "Eugene",
+        "wfo": "PQR",
+        "gridX": 85,
+        "gridY": 39
       },
       "geometry": {
         "type": "Point",
@@ -2023,7 +2401,10 @@
       "properties": {
         "st": "OR",
         "state": "Oregon",
-        "city": "Medford"
+        "city": "Medford",
+        "wfo": "MFR",
+        "gridX": 105,
+        "gridY": 73
       },
       "geometry": {
         "type": "Point",
@@ -2039,7 +2420,10 @@
       "properties": {
         "st": "OR",
         "state": "Oregon",
-        "city": "Bend"
+        "city": "Bend",
+        "wfo": "PDT",
+        "gridX": 35,
+        "gridY": 41
       },
       "geometry": {
         "type": "Point",
@@ -2055,7 +2439,10 @@
       "properties": {
         "st": "PA",
         "state": "Pennsylvania",
-        "city": "Philadelphia"
+        "city": "Philadelphia",
+        "wfo": "PHI",
+        "gridX": 50,
+        "gridY": 76
       },
       "geometry": {
         "type": "Point",
@@ -2071,7 +2458,10 @@
       "properties": {
         "st": "PA",
         "state": "Pennsylvania",
-        "city": "Pittsburgh"
+        "city": "Pittsburgh",
+        "wfo": "PBZ",
+        "gridX": 78,
+        "gridY": 66
       },
       "geometry": {
         "type": "Point",
@@ -2087,7 +2477,10 @@
       "properties": {
         "st": "PA",
         "state": "Pennsylvania",
-        "city": "Harrisburg"
+        "city": "Harrisburg",
+        "wfo": "CTP",
+        "gridX": 105,
+        "gridY": 38
       },
       "geometry": {
         "type": "Point",
@@ -2103,7 +2496,10 @@
       "properties": {
         "st": "PA",
         "state": "Pennsylvania",
-        "city": "Scranton"
+        "city": "Scranton",
+        "wfo": "BGM",
+        "gridX": 79,
+        "gridY": 27
       },
       "geometry": {
         "type": "Point",
@@ -2119,7 +2515,10 @@
       "properties": {
         "st": "RI",
         "state": "Rhode Island",
-        "city": "Providence"
+        "city": "Providence",
+        "wfo": "BOX",
+        "gridX": 64,
+        "gridY": 64
       },
       "geometry": {
         "type": "Point",
@@ -2135,7 +2534,10 @@
       "properties": {
         "st": "SC",
         "state": "South Carolina",
-        "city": "Charleston"
+        "city": "Charleston",
+        "wfo": "CHS",
+        "gridX": 87,
+        "gridY": 77
       },
       "geometry": {
         "type": "Point",
@@ -2151,7 +2553,10 @@
       "properties": {
         "st": "SC",
         "state": "South Carolina",
-        "city": "Greenville"
+        "city": "Greenville",
+        "wfo": "GSP",
+        "gridX": 64,
+        "gridY": 43
       },
       "geometry": {
         "type": "Point",
@@ -2167,7 +2572,10 @@
       "properties": {
         "st": "SC",
         "state": "South Carolina",
-        "city": "Columbia"
+        "city": "Columbia",
+        "wfo": "CAE",
+        "gridX": 65,
+        "gridY": 61
       },
       "geometry": {
         "type": "Point",
@@ -2183,7 +2591,10 @@
       "properties": {
         "st": "SC",
         "state": "South Carolina",
-        "city": "Myrtle Beach"
+        "city": "Myrtle Beach",
+        "wfo": "ILM",
+        "gridX": 58,
+        "gridY": 40
       },
       "geometry": {
         "type": "Point",
@@ -2199,7 +2610,10 @@
       "properties": {
         "st": "SD",
         "state": "South Dakota",
-        "city": "Sioux Falls"
+        "city": "Sioux Falls",
+        "wfo": "FSD",
+        "gridX": 98,
+        "gridY": 64
       },
       "geometry": {
         "type": "Point",
@@ -2215,7 +2629,10 @@
       "properties": {
         "st": "SD",
         "state": "South Dakota",
-        "city": "Rapid City"
+        "city": "Rapid City",
+        "wfo": "UNR",
+        "gridX": 97,
+        "gridY": 58
       },
       "geometry": {
         "type": "Point",
@@ -2231,7 +2648,10 @@
       "properties": {
         "st": "SD",
         "state": "South Dakota",
-        "city": "Aberdeen"
+        "city": "Aberdeen",
+        "wfo": "ABR",
+        "gridX": 118,
+        "gridY": 93
       },
       "geometry": {
         "type": "Point",
@@ -2247,7 +2667,10 @@
       "properties": {
         "st": "TN",
         "state": "Tennessee",
-        "city": "Nashville"
+        "city": "Nashville",
+        "wfo": "OHX",
+        "gridX": 50,
+        "gridY": 57
       },
       "geometry": {
         "type": "Point",
@@ -2263,7 +2686,10 @@
       "properties": {
         "st": "TN",
         "state": "Tennessee",
-        "city": "Memphis"
+        "city": "Memphis",
+        "wfo": "MEG",
+        "gridX": 42,
+        "gridY": 67
       },
       "geometry": {
         "type": "Point",
@@ -2279,7 +2705,10 @@
       "properties": {
         "st": "TN",
         "state": "Tennessee",
-        "city": "Knoxville"
+        "city": "Knoxville",
+        "wfo": "MRX",
+        "gridX": 71,
+        "gridY": 51
       },
       "geometry": {
         "type": "Point",
@@ -2295,7 +2724,10 @@
       "properties": {
         "st": "TN",
         "state": "Tennessee",
-        "city": "Chattanooga"
+        "city": "Chattanooga",
+        "wfo": "MRX",
+        "gridX": 24,
+        "gridY": 7
       },
       "geometry": {
         "type": "Point",
@@ -2311,7 +2743,10 @@
       "properties": {
         "st": "TX",
         "state": "Texas",
-        "city": "Dallas"
+        "city": "Dallas",
+        "wfo": "FWD",
+        "gridX": 89,
+        "gridY": 104
       },
       "geometry": {
         "type": "Point",
@@ -2327,7 +2762,10 @@
       "properties": {
         "st": "TX",
         "state": "Texas",
-        "city": "Houston"
+        "city": "Houston",
+        "wfo": "HGX",
+        "gridX": 63,
+        "gridY": 95
       },
       "geometry": {
         "type": "Point",
@@ -2343,7 +2781,10 @@
       "properties": {
         "st": "TX",
         "state": "Texas",
-        "city": "San Antonio"
+        "city": "San Antonio",
+        "wfo": "EWX",
+        "gridX": 126,
+        "gridY": 54
       },
       "geometry": {
         "type": "Point",
@@ -2359,7 +2800,10 @@
       "properties": {
         "st": "TX",
         "state": "Texas",
-        "city": "Austin"
+        "city": "Austin",
+        "wfo": "EWX",
+        "gridX": 156,
+        "gridY": 91
       },
       "geometry": {
         "type": "Point",
@@ -2375,7 +2819,10 @@
       "properties": {
         "st": "UT",
         "state": "Utah",
-        "city": "Salt Lake City"
+        "city": "Salt Lake City",
+        "wfo": "SLC",
+        "gridX": 100,
+        "gridY": 175
       },
       "geometry": {
         "type": "Point",
@@ -2391,7 +2838,10 @@
       "properties": {
         "st": "UT",
         "state": "Utah",
-        "city": "Provo"
+        "city": "Provo",
+        "wfo": "SLC",
+        "gridX": 105,
+        "gridY": 151
       },
       "geometry": {
         "type": "Point",
@@ -2407,7 +2857,10 @@
       "properties": {
         "st": "UT",
         "state": "Utah",
-        "city": "St. George"
+        "city": "St. George",
+        "wfo": "SLC",
+        "gridX": 20,
+        "gridY": 19
       },
       "geometry": {
         "type": "Point",
@@ -2423,7 +2876,10 @@
       "properties": {
         "st": "VA",
         "state": "Virginia",
-        "city": "Richmond"
+        "city": "Richmond",
+        "wfo": "AKQ",
+        "gridX": 46,
+        "gridY": 77
       },
       "geometry": {
         "type": "Point",
@@ -2439,7 +2895,10 @@
       "properties": {
         "st": "VA",
         "state": "Virginia",
-        "city": "Virginia Beach"
+        "city": "Virginia Beach",
+        "wfo": "AKQ",
+        "gridX": 101,
+        "gridY": 53
       },
       "geometry": {
         "type": "Point",
@@ -2455,7 +2914,10 @@
       "properties": {
         "st": "VA",
         "state": "Virginia",
-        "city": "Roanoke"
+        "city": "Roanoke",
+        "wfo": "RNK",
+        "gridX": 74,
+        "gridY": 69
       },
       "geometry": {
         "type": "Point",
@@ -2471,7 +2933,10 @@
       "properties": {
         "st": "VA",
         "state": "Virginia",
-        "city": "Charlottesville"
+        "city": "Charlottesville",
+        "wfo": "LWX",
+        "gridX": 51,
+        "gridY": 26
       },
       "geometry": {
         "type": "Point",
@@ -2487,7 +2952,10 @@
       "properties": {
         "st": "VT",
         "state": "Vermont",
-        "city": "Burlington"
+        "city": "Burlington",
+        "wfo": "BTV",
+        "gridX": 89,
+        "gridY": 56
       },
       "geometry": {
         "type": "Point",
@@ -2503,7 +2971,10 @@
       "properties": {
         "st": "VT",
         "state": "Vermont",
-        "city": "Rutland"
+        "city": "Rutland",
+        "wfo": "BTV",
+        "gridX": 103,
+        "gridY": 18
       },
       "geometry": {
         "type": "Point",
@@ -2519,7 +2990,10 @@
       "properties": {
         "st": "WA",
         "state": "Washington",
-        "city": "Seattle"
+        "city": "Seattle",
+        "wfo": "SEW",
+        "gridX": 125,
+        "gridY": 68
       },
       "geometry": {
         "type": "Point",
@@ -2535,7 +3009,10 @@
       "properties": {
         "st": "WA",
         "state": "Washington",
-        "city": "Spokane"
+        "city": "Spokane",
+        "wfo": "OTX",
+        "gridX": 140,
+        "gridY": 90
       },
       "geometry": {
         "type": "Point",
@@ -2551,7 +3028,10 @@
       "properties": {
         "st": "WA",
         "state": "Washington",
-        "city": "Tri-Cities"
+        "city": "Tri-Cities",
+        "wfo": "PDT",
+        "gridX": 126,
+        "gridY": 127
       },
       "geometry": {
         "type": "Point",
@@ -2567,7 +3047,10 @@
       "properties": {
         "st": "WA",
         "state": "Washington",
-        "city": "Bellingham"
+        "city": "Bellingham",
+        "wfo": "SEW",
+        "gridX": 131,
+        "gridY": 123
       },
       "geometry": {
         "type": "Point",
@@ -2583,7 +3066,10 @@
       "properties": {
         "st": "WI",
         "state": "Wisconsin",
-        "city": "Milwaukee"
+        "city": "Milwaukee",
+        "wfo": "MKX",
+        "gridX": 88,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -2599,7 +3085,10 @@
       "properties": {
         "st": "WI",
         "state": "Wisconsin",
-        "city": "Madison"
+        "city": "Madison",
+        "wfo": "MKX",
+        "gridX": 38,
+        "gridY": 64
       },
       "geometry": {
         "type": "Point",
@@ -2615,7 +3104,10 @@
       "properties": {
         "st": "WI",
         "state": "Wisconsin",
-        "city": "Green Bay"
+        "city": "Green Bay",
+        "wfo": "GRB",
+        "gridX": 79,
+        "gridY": 32
       },
       "geometry": {
         "type": "Point",
@@ -2631,7 +3123,10 @@
       "properties": {
         "st": "WI",
         "state": "Wisconsin",
-        "city": "Eau Claire"
+        "city": "Eau Claire",
+        "wfo": "MPX",
+        "gridX": 167,
+        "gridY": 65
       },
       "geometry": {
         "type": "Point",
@@ -2647,7 +3142,10 @@
       "properties": {
         "st": "WV",
         "state": "West Virginia",
-        "city": "Charleston"
+        "city": "Charleston",
+        "wfo": "RLX",
+        "gridX": 63,
+        "gridY": 67
       },
       "geometry": {
         "type": "Point",
@@ -2663,7 +3161,10 @@
       "properties": {
         "st": "WV",
         "state": "West Virginia",
-        "city": "Huntington"
+        "city": "Huntington",
+        "wfo": "RLX",
+        "gridX": 34,
+        "gridY": 68
       },
       "geometry": {
         "type": "Point",
@@ -2679,7 +3180,10 @@
       "properties": {
         "st": "WV",
         "state": "West Virginia",
-        "city": "Morgantown"
+        "city": "Morgantown",
+        "wfo": "PBZ",
+        "gridX": 83,
+        "gridY": 30
       },
       "geometry": {
         "type": "Point",
@@ -2695,7 +3199,10 @@
       "properties": {
         "st": "WY",
         "state": "Wyoming",
-        "city": "Cheyenne"
+        "city": "Cheyenne",
+        "wfo": "CYS",
+        "gridX": 110,
+        "gridY": 14
       },
       "geometry": {
         "type": "Point",
@@ -2711,7 +3218,10 @@
       "properties": {
         "st": "WY",
         "state": "Wyoming",
-        "city": "Jackson"
+        "city": "Jackson",
+        "wfo": "RIW",
+        "gridX": 42,
+        "gridY": 139
       },
       "geometry": {
         "type": "Point",
@@ -2727,7 +3237,10 @@
       "properties": {
         "st": "WY",
         "state": "Wyoming",
-        "city": "Casper"
+        "city": "Casper",
+        "wfo": "RIW",
+        "gridX": 187,
+        "gridY": 95
       },
       "geometry": {
         "type": "Point",

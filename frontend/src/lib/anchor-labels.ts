@@ -8,6 +8,9 @@ export type AnchorFeatureProperties = {
   active?: boolean;
   value?: number | null;
   units?: string | null;
+  wfo?: string | null;
+  gridX?: number | null;
+  gridY?: number | null;
 };
 
 export type AnchorFeature = Feature<Point, AnchorFeatureProperties> & {

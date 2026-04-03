@@ -65,6 +65,9 @@ import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout
 const TwfShareModal = lazy(() =>
   import("@/components/twf-share-modal").then((module) => ({ default: module.TwfShareModal }))
 );
+const NwsCityModal = lazy(() =>
+  import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
+);
 const MapLegend = lazy(() =>
   import("@/components/map-legend").then((module) => ({ default: module.MapLegend }))
 );
@@ -770,6 +773,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [selectedAnchorCity, setSelectedAnchorCity] = useState<{
+    id: string;
+    city: string;
+    state: string;
+    st: string;
+  } | null>(null);
   const [sharePayload, setSharePayload] = useState<SharePayload>({
     permalink: "",
     summary: "CartoSky viewer share",
@@ -3477,6 +3486,7 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={onHover}
           onMapHoverEnd={onHoverEnd}
+          onAnchorClick={setSelectedAnchorCity}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
 
@@ -3743,6 +3753,16 @@ export default function App() {
             payload={sharePayload}
             buildScreenshotState={buildScreenshotExportState}
             getLegend={() => legend}
+          />
+        </Suspense>
+      ) : null}
+
+      {selectedAnchorCity ? (
+        <Suspense fallback={null}>
+          <NwsCityModal
+            open={!!selectedAnchorCity}
+            onClose={() => setSelectedAnchorCity(null)}
+            anchor={selectedAnchorCity}
           />
         </Suspense>
       ) : null}

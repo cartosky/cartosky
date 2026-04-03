@@ -75,6 +75,7 @@ from .services.render_resampling import (
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services import admin_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import nws as nws_service
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -2514,6 +2515,79 @@ def _sample_payload(
         "lon": lon,
         "noData": no_data,
     }
+
+
+# ---------------------------------------------------------------------------
+# NWS Anchor City Weather
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/v4/anchors/{anchor_id}/weather")
+async def nws_anchor_weather(anchor_id: str):
+    """Current observations + 7-day forecast for an anchor city."""
+    try:
+        bundle = await nws_service.get_weather_bundle(anchor_id)
+    except nws_service.AnchorNotFoundError:
+        return _error_response(
+            status_code=404,
+            code="ANCHOR_NOT_FOUND",
+            message=f"Anchor '{anchor_id}' not found.",
+        )
+    except nws_service.NwsUpstreamError as exc:
+        return _error_response(
+            status_code=502,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+    except nws_service.NwsServiceError as exc:
+        return _error_response(
+            status_code=500,
+            code=exc.code,
+            message=exc.message,
+        )
+
+    return JSONResponse(
+        content=nws_service.serialize_weather_bundle(bundle),
+        headers={"Cache-Control": "public, max-age=180"},
+    )
+
+
+@app.get("/api/v4/anchors/{anchor_id}/afd")
+async def nws_anchor_afd(anchor_id: str):
+    """Latest Area Forecast Discussion for an anchor city's WFO."""
+    try:
+        afd = await nws_service.get_afd(anchor_id)
+    except nws_service.AnchorNotFoundError:
+        return _error_response(
+            status_code=404,
+            code="ANCHOR_NOT_FOUND",
+            message=f"Anchor '{anchor_id}' not found.",
+        )
+    except nws_service.NwsUpstreamError as exc:
+        return _error_response(
+            status_code=502,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+    except nws_service.NwsServiceError as exc:
+        return _error_response(
+            status_code=500,
+            code=exc.code,
+            message=exc.message,
+        )
+
+    if afd is None:
+        return JSONResponse(
+            content={"afd": None, "reason": "no_afd_available", "meta": {"anchorId": anchor_id}},
+            headers={"Cache-Control": "public, max-age=1800"},
+        )
+
+    return JSONResponse(
+        content=nws_service.serialize_afd(afd, anchor_id),
+        headers={"Cache-Control": "public, max-age=1800"},
+    )
 
 
 @app.get("/api/v4/health")

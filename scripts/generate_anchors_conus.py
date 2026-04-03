@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,13 @@ class SelectedAnchor:
     lon: float
     index: int
     selection_mode: str
+
+
+@dataclass(frozen=True)
+class NwsPointMetadata:
+    wfo: str
+    grid_x: int
+    grid_y: int
 
 
 def city(name: str, lat: float, lon: float, population: int) -> CityCandidate:
@@ -542,25 +553,158 @@ def build_selected_anchors() -> list[SelectedAnchor]:
     return selected_anchors
 
 
-def build_geojson(selected_anchors: list[SelectedAnchor]) -> dict[str, object]:
-    return {
-        "type": "FeatureCollection",
-        "features": [
+NWS_API_BASE = "https://api.weather.gov"
+NWS_USER_AGENT = "(CartoSky anchor-generator, admin@cartosky.com)"
+NWS_REQUEST_TIMEOUT = 15.0
+NWS_MAX_RETRIES = 2
+
+
+def _fetch_nws_point(lat: float, lon: float) -> dict[str, Any]:
+    """Fetch /points/{lat},{lon} from the NWS API.
+
+    Returns the parsed JSON response.  Retries once on transient failures
+    (timeout, 502, 503, 504).
+    """
+    import httpx
+
+    url = f"{NWS_API_BASE}/points/{lat},{lon}"
+    headers = {"User-Agent": NWS_USER_AGENT, "Accept": "application/geo+json"}
+
+    last_error: Exception | None = None
+    for attempt in range(NWS_MAX_RETRIES):
+        try:
+            with httpx.Client(timeout=NWS_REQUEST_TIMEOUT) as client:
+                response = client.get(url, headers=headers)
+                if response.status_code in (502, 503, 504):
+                    last_error = RuntimeError(
+                        f"NWS transient error {response.status_code} for {url}"
+                    )
+                    if attempt < NWS_MAX_RETRIES - 1:
+                        time.sleep(1.0)
+                        continue
+                    raise last_error
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            if attempt < NWS_MAX_RETRIES - 1:
+                time.sleep(1.0)
+                continue
+    raise last_error or RuntimeError(f"Failed to fetch {url}")
+
+
+def _parse_nws_point_metadata(data: dict[str, Any]) -> NwsPointMetadata:
+    """Extract wfo, gridX, gridY from a /points response."""
+    props = data.get("properties") or {}
+    wfo = props.get("cwa") or props.get("gridId")
+    grid_x = props.get("gridX")
+    grid_y = props.get("gridY")
+    if not wfo or grid_x is None or grid_y is None:
+        raise ValueError(
+            f"Missing NWS point metadata: wfo={wfo!r} gridX={grid_x!r} gridY={grid_y!r}"
+        )
+    return NwsPointMetadata(wfo=str(wfo), grid_x=int(grid_x), grid_y=int(grid_y))
+
+
+def resolve_nws_metadata(
+    selected_anchors: list[SelectedAnchor],
+    *,
+    delay_seconds: float = 0.5,
+) -> dict[str, NwsPointMetadata]:
+    """Resolve NWS /points metadata for every anchor city.
+
+    Returns a dict keyed by anchor ID (e.g. "NY_1") to NwsPointMetadata.
+    Prints progress to stdout and errors to stderr.
+    """
+    results: dict[str, NwsPointMetadata] = {}
+    total = len(selected_anchors)
+    errors: list[str] = []
+
+    for i, anchor in enumerate(selected_anchors):
+        anchor_id = f"{anchor.state_code}_{anchor.index}"
+        label = f"[{i + 1}/{total}] {anchor_id} {anchor.city_name}, {anchor.state_code}"
+        try:
+            data = _fetch_nws_point(anchor.lat, anchor.lon)
+            meta = _parse_nws_point_metadata(data)
+            results[anchor_id] = meta
+            print(f"  {label} -> wfo={meta.wfo} gridX={meta.grid_x} gridY={meta.grid_y}")
+        except Exception as exc:
+            errors.append(f"{anchor_id}: {exc}")
+            print(f"  {label} -> ERROR: {exc}", file=sys.stderr)
+
+        if i < total - 1:
+            time.sleep(delay_seconds)
+
+    if errors:
+        print(f"\nnws_resolution_errors={len(errors)}", file=sys.stderr)
+        for error in errors:
+            print(f"  {error}", file=sys.stderr)
+
+    return results
+
+
+def build_geojson(
+    selected_anchors: list[SelectedAnchor],
+    nws_metadata: dict[str, NwsPointMetadata] | None = None,
+) -> dict[str, object]:
+    features: list[dict[str, object]] = []
+    for anchor in selected_anchors:
+        anchor_id = f"{anchor.state_code}_{anchor.index}"
+        properties: dict[str, object] = {
+            "st": anchor.state_code,
+            "state": anchor.state_name,
+            "city": anchor.city_name,
+        }
+        if nws_metadata and anchor_id in nws_metadata:
+            meta = nws_metadata[anchor_id]
+            properties["wfo"] = meta.wfo
+            properties["gridX"] = meta.grid_x
+            properties["gridY"] = meta.grid_y
+
+        features.append(
             {
                 "type": "Feature",
-                "id": f"{anchor.state_code}_{anchor.index}",
-                "properties": {
-                    "st": anchor.state_code,
-                    "state": anchor.state_name,
-                    "city": anchor.city_name,
-                },
+                "id": anchor_id,
+                "properties": properties,
                 "geometry": {
                     "type": "Point",
                     "coordinates": [anchor.lon, anchor.lat],
                 },
             }
-            for anchor in selected_anchors
-        ],
+        )
+    return {"type": "FeatureCollection", "features": features}
+
+
+def build_backend_anchor_index(
+    selected_anchors: list[SelectedAnchor],
+    nws_metadata: dict[str, NwsPointMetadata],
+) -> dict[str, object]:
+    """Build the backend anchor_index.json payload.
+
+    Every anchor gets an entry.  Anchors that failed NWS resolution are
+    included without wfo/gridX/gridY so the backend can attempt live
+    resolution on first request.
+    """
+    anchors: dict[str, object] = {}
+    for anchor in selected_anchors:
+        anchor_id = f"{anchor.state_code}_{anchor.index}"
+        entry: dict[str, object] = {
+            "city": anchor.city_name,
+            "state": anchor.state_name,
+            "st": anchor.state_code,
+            "lat": anchor.lat,
+            "lon": anchor.lon,
+        }
+        meta = nws_metadata.get(anchor_id)
+        if meta:
+            entry["wfo"] = meta.wfo
+            entry["gridX"] = meta.grid_x
+            entry["gridY"] = meta.grid_y
+        anchors[anchor_id] = entry
+
+    return {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "anchors": anchors,
     }
 
 
@@ -593,6 +737,11 @@ def default_output_path() -> Path:
     return repo_root / "frontend" / "public" / "data" / "anchors_conus.geojson"
 
 
+def default_backend_index_path() -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    return repo_root / "backend" / "data" / "anchor_index.json"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a sparse metro-weighted CONUS anchor catalog")
     parser.add_argument(
@@ -601,14 +750,58 @@ def parse_args() -> argparse.Namespace:
         default=default_output_path(),
         help="Path to the anchors_conus.geojson output file",
     )
+    parser.add_argument(
+        "--resolve-nws",
+        action="store_true",
+        default=False,
+        help="Resolve NWS /points metadata (wfo, gridX, gridY) for each anchor city",
+    )
+    parser.add_argument(
+        "--backend-index",
+        type=Path,
+        default=default_backend_index_path(),
+        help="Path to the backend anchor_index.json output file (only written when --resolve-nws is set)",
+    )
+    parser.add_argument(
+        "--nws-delay",
+        type=float,
+        default=0.5,
+        help="Delay in seconds between NWS API calls (courtesy rate limiting)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     selected_anchors = build_selected_anchors()
-    geojson = build_geojson(selected_anchors)
+
+    nws_metadata: dict[str, NwsPointMetadata] | None = None
+    if args.resolve_nws:
+        print(f"\nResolving NWS /points metadata for {len(selected_anchors)} anchors...")
+        print(f"  delay={args.nws_delay}s between requests")
+        print(f"  estimated time: ~{len(selected_anchors) * args.nws_delay:.0f}s\n")
+        nws_metadata = resolve_nws_metadata(
+            selected_anchors, delay_seconds=args.nws_delay,
+        )
+        resolved_count = len(nws_metadata)
+        failed_count = len(selected_anchors) - resolved_count
+        print(f"\nnws_resolved={resolved_count}/{len(selected_anchors)}")
+        if failed_count > 0:
+            print(f"nws_failed={failed_count}", file=sys.stderr)
+
+    geojson = build_geojson(selected_anchors, nws_metadata)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(f"{json.dumps(geojson, indent=2)}\n", encoding="utf-8")
+    print(f"\nGeoJSON written to {args.output}")
+
+    if args.resolve_nws and nws_metadata is not None:
+        backend_index = build_backend_anchor_index(selected_anchors, nws_metadata)
+        args.backend_index.parent.mkdir(parents=True, exist_ok=True)
+        args.backend_index.write_text(
+            f"{json.dumps(backend_index, indent=2)}\n", encoding="utf-8",
+        )
+        print(f"Backend anchor index written to {args.backend_index}")
+
     print_summary(selected_anchors)
 
 

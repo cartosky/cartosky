@@ -615,3 +615,125 @@ export function buildContourUrl(params: {
   const enc = encodeURIComponent;
   return `${API_V4_BASE}/${enc(params.model)}/${enc(params.run)}/${enc(params.varKey)}/${enc(params.fh)}/contours/${enc(params.key)}`;
 }
+
+// ── NWS Anchor City Weather ──────────────────────────────────────────
+
+export type NwsObservation = {
+  stationName: string | null;
+  stationId: string | null;
+  observedAt: string | null;
+  tempF: number | null;
+  dewpointF: number | null;
+  relativeHumidity: number | null;
+  windDirection: string | null;
+  windSpeedMph: number | null;
+  windGustMph: number | null;
+  windChillF: number | null;
+  heatIndexF: number | null;
+  pressureInHg: number | null;
+  visibilityMi: number | null;
+  textDescription: string | null;
+  precipLastHourIn: number | null;
+};
+
+export type NwsForecastPeriod = {
+  number: number;
+  name: string;
+  isDaytime: boolean;
+  tempF: number | null;
+  windSpeed: string | null;
+  windDirection: string | null;
+  shortForecast: string | null;
+  detailedForecast: string | null;
+  precipProbability: number | null;
+};
+
+export type NwsForecast = {
+  generatedAt: string | null;
+  periods: NwsForecastPeriod[];
+};
+
+export type NwsWeatherMeta = {
+  anchorId: string;
+  resolvedFromCache: boolean;
+  observationDegraded: boolean | null;
+  observationStationFallbackUsed: boolean | null;
+  stationsAttempted: number;
+};
+
+export type AnchorWeatherResponse = {
+  city: string;
+  state: string;
+  st: string;
+  observation: NwsObservation | null;
+  forecast: NwsForecast | null;
+  meta: NwsWeatherMeta;
+};
+
+export type AnchorAfdResponse = {
+  wfo: string;
+  officeName: string | null;
+  issuedAt: string | null;
+  productText: string | null;
+  meta: {
+    anchorId: string;
+    productId: string | null;
+  };
+};
+
+export type AnchorAfdEmptyResponse = {
+  afd: null;
+  reason: string;
+  meta: {
+    anchorId: string;
+  };
+};
+
+export async function fetchAnchorWeather(
+  anchorId: string,
+  signal?: AbortSignal,
+): Promise<AnchorWeatherResponse | null> {
+  const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/weather`;
+  try {
+    const response = await fetch(url, { credentials: "omit", signal });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`Anchor weather request failed: ${response.status}`);
+    }
+    return (await response.json()) as AnchorWeatherResponse;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function fetchAnchorAfd(
+  anchorId: string,
+  signal?: AbortSignal,
+): Promise<AnchorAfdResponse | null> {
+  const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/afd`;
+  try {
+    const response = await fetch(url, { credentials: "omit", signal });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`Anchor AFD request failed: ${response.status}`);
+    }
+    const payload = await response.json();
+    // Handle the "no AFD available" shape
+    if (payload && payload.afd === null) {
+      return null;
+    }
+    return payload as AnchorAfdResponse;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return null;
+    }
+    throw err;
+  }
+}
