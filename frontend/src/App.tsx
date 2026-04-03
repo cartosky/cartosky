@@ -50,7 +50,9 @@ import { buildRunOptions, formatRunLabel, latestRunLabel, pickLatestRunId, sortR
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import {
   deriveObservedSourceStatus,
+  frameIssueTime,
   frameValidTime,
+  formatIssuedTimeISO,
   formatObservedCompactTime,
   formatValidTime,
   observedSourceStatusFromAvailability,
@@ -3254,6 +3256,12 @@ export default function App() {
     return fromOptions ?? model;
   }, [models, model]);
   const selectedRunLabel = useMemo(() => {
+    if (selectedTimeAxisMode === "valid") {
+      const issuedAtLabel = formatIssuedTimeISO(frameIssueTime(currentFrame) ?? frameIssueTime(frameRows[0] ?? null));
+      if (issuedAtLabel) {
+        return `Issued ${issuedAtLabel}`;
+      }
+    }
     if (
       run === "latest"
       && gridOnlySelection
@@ -3271,7 +3279,7 @@ export default function App() {
       return latestRunLabel(latestRunId, selectedTimeAxisMode);
     }
     return formatRunLabel(run, selectedTimeAxisMode);
-  }, [runOptions, run, latestRunId, selectedTimeAxisMode, gridOnlySelection, resolvedGridLatestRunId]);
+  }, [runOptions, run, latestRunId, selectedTimeAxisMode, gridOnlySelection, resolvedGridLatestRunId, currentFrame, frameRows]);
   const latestAvailableRunLabel = useMemo(() => {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);

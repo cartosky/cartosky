@@ -121,6 +121,7 @@ export type LegendMeta = {
   legend_title?: string;
   units?: string;
   valid_time?: string;
+  issue_time?: string;
   legend_stops?: LegendStops;
   legend?: { type?: string; stops?: LegendStops };
   legend_entries?: Array<{ value: number; color: string; label?: string }>;

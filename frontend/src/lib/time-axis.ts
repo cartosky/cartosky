@@ -52,12 +52,24 @@ export function formatValidRunIssuedLabel(runId: string): string {
   if (!parsed) {
     return runId;
   }
+  return formatIssuedTimeLabel(parsed);
+}
+
+export function formatIssuedTimeISO(iso: string | null | undefined): string | null {
+  const parsed = parseIsoDate(iso);
+  if (!parsed) {
+    return null;
+  }
+  return formatIssuedTimeLabel(parsed);
+}
+
+function formatIssuedTimeLabel(date: Date): string {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(parsed);
+  }).format(date);
 }
 
 export function formatObservedRunLabel(runId: string): string {
@@ -137,6 +149,11 @@ export function frameValidTime(row: { valid_time?: string; meta?: { meta?: { val
     return direct;
   }
   const nested = row?.meta?.meta?.valid_time;
+  return typeof nested === "string" && nested.trim() ? nested.trim() : null;
+}
+
+export function frameIssueTime(row: { meta?: { meta?: { issue_time?: string | null } | null } | null } | null | undefined): string | null {
+  const nested = row?.meta?.meta?.issue_time;
   return typeof nested === "string" && nested.trim() ? nested.trim() : null;
 }
 

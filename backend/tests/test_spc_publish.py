@@ -127,6 +127,7 @@ def test_publish_spc_bundle_writes_manifest_latest_pointer_and_vector_sidecars(t
     assert sidecar["legend_entries"][0]["label"] == "T-Storms"
     assert sidecar["vector_layers"]["primary"]["path"] == "vectors/fh000.geojson"
     assert sidecar["day_label"] == "Day 1"
+    assert sidecar["issue_time"] == "2026-04-01T06:30:00Z"
 
     vector_payload = json.loads((result.published_run_dir / "convective" / "vectors" / "fh000.geojson").read_text())
     assert vector_payload["type"] == "FeatureCollection"
