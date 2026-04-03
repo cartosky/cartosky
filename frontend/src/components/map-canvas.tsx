@@ -289,7 +289,7 @@ function buildVectorBufferLayers(): LayerSpecification[] {
         paint: {
           "line-color": ["coalesce", ["get", "stroke"], "#000000"] as any,
           "line-opacity": 0,
-          "line-width": ["+", ["coalesce", ["get", "stroke_width"], 1.25], 0.5] as any,
+          "line-width": ["+", ["coalesce", ["get", "stroke_width"], 1.25], 1.1] as any,
         },
       } as LayerSpecification,
     ];
@@ -301,11 +301,11 @@ function vectorFillOpacityExpression(fade: number) {
 }
 
 function vectorSignificantOpacityExpression(fade: number) {
-  return ["*", Math.max(0, Math.min(1, fade)), 0.34] as const;
+  return ["*", Math.max(0, Math.min(1, fade)), 0.52] as const;
 }
 
 function buildSignificantPatternImage(): ImageData {
-  const size = 8;
+  const size = 12;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -315,10 +315,10 @@ function buildSignificantPatternImage(): ImageData {
   }
 
   context.clearRect(0, 0, size, size);
-  context.strokeStyle = "rgba(0, 0, 0, 0.72)";
-  context.lineWidth = 1;
+  context.strokeStyle = "rgba(0, 0, 0, 0.92)";
+  context.lineWidth = 1.8;
 
-  for (let offset = -size; offset <= size * 2; offset += 4) {
+  for (let offset = -size; offset <= size * 2; offset += 5) {
     context.beginPath();
     context.moveTo(offset, size);
     context.lineTo(offset + size, 0);
@@ -1448,6 +1448,15 @@ export function MapCanvas({
       return;
     }
 
+    const normalizedActiveUrl = String(vectorGeoJsonUrl ?? "").trim();
+    if (
+      normalizedActiveUrl
+      && activeVectorUrlRef.current !== normalizedActiveUrl
+      && !vectorCacheRef.current.has(normalizedActiveUrl)
+    ) {
+      return;
+    }
+
     const controller = new AbortController();
 
     for (const rawUrl of vectorPrefetchUrls) {
@@ -1490,7 +1499,7 @@ export function MapCanvas({
     return () => {
       controller.abort();
     };
-  }, [isLoaded, vectorPrefetchUrls]);
+  }, [isLoaded, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
   useEffect(() => {
     const map = mapRef.current;
