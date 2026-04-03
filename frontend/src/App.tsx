@@ -1223,20 +1223,38 @@ export default function App() {
     telemetryRunId,
     variable,
   ]);
+  // Clock tick (30s) so the observed-source freshness badge re-evaluates as
+  // real time passes, rather than staying frozen on the initial server value.
+  const [freshnessTickMs, setFreshnessTickMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (selectedTimeAxisMode !== "observed") return;
+    const id = window.setInterval(() => setFreshnessTickMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [selectedTimeAxisMode]);
+
   const observedSourceStatus = useMemo(() => {
     if (selectedTimeAxisMode !== "observed") {
       return null;
     }
     const availability = model ? capabilities?.availability?.[model] : null;
+
+    // When we have live frame data, derive freshness client-side so the badge
+    // stays current between capabilities re-fetches (the server value is only
+    // fetched once at page load and goes stale).
+    if (newestFrameValidTimeISO && frameRows.length > 0) {
+      return deriveObservedSourceStatus({
+        latestRunAvailable: Boolean(availability?.latest_run),
+        latestRunReady: availability?.latest_run_ready,
+        newestValidTimeISO: newestFrameValidTimeISO,
+        availableFrameCount: frameRows.length,
+        nowMs: freshnessTickMs,
+      });
+    }
+
+    // No frame data yet — fall back to the server-authoritative status from
+    // the initial capabilities fetch, or derive from what we have.
     const authoritativeStatus = observedSourceStatusFromAvailability(availability);
-    if (
-      authoritativeStatus &&
-      !(
-        authoritativeStatus.tone === "unavailable" &&
-        newestFrameValidTimeISO &&
-        frameRows.length > 0
-      )
-    ) {
+    if (authoritativeStatus) {
       return authoritativeStatus;
     }
     return deriveObservedSourceStatus({
@@ -1244,8 +1262,9 @@ export default function App() {
       latestRunReady: availability?.latest_run_ready,
       newestValidTimeISO: newestFrameValidTimeISO,
       availableFrameCount: frameRows.length,
+      nowMs: freshnessTickMs,
     });
-  }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length]);
+  }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length, freshnessTickMs]);
   useEffect(() => {
     selectionEpochRef.current = selectionEpoch;
   }, [selectionEpoch]);
