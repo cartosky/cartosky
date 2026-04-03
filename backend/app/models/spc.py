@@ -59,7 +59,7 @@ SPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         buildable=True,
         order=0,
         group="Outlooks",
-        legend_title="Severe Storm Outlook",
+        legend_title="Legend",
         render_substrates=["vector"],
     ),
 }

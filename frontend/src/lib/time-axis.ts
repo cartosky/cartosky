@@ -47,6 +47,20 @@ export function formatRunLabel(runId: string): string {
   return `${timeLabel} ${month}/${day}`;
 }
 
+export function formatValidRunIssuedLabel(runId: string): string {
+  const parsed = parseRunId(runId);
+  if (!parsed) {
+    return runId;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(parsed);
+}
+
 export function formatObservedRunLabel(runId: string): string {
   const parsed = parseRunId(runId);
   if (!parsed) {

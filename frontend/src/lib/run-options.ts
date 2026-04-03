@@ -1,4 +1,5 @@
 import {
+  formatValidRunIssuedLabel,
   formatObservedRunLabel,
   formatRunLabel as formatRunLabelFromTimeAxis,
   parseRunId,
@@ -11,12 +12,18 @@ export type RunOption = {
 };
 
 export function formatRunLabel(runId: string, timeAxisMode: TimeAxisMode = "forecast"): string {
+  if (timeAxisMode === "valid") {
+    return formatValidRunIssuedLabel(runId);
+  }
   return timeAxisMode === "observed" ? formatObservedRunLabel(runId) : formatRunLabelFromTimeAxis(runId);
 }
 
 export function latestRunLabel(runId: string | null, timeAxisMode: TimeAxisMode = "forecast"): string {
   if (!runId) {
     return "Latest";
+  }
+  if (timeAxisMode === "valid") {
+    return `Latest (Issued ${formatValidRunIssuedLabel(runId)})`;
   }
   return `Latest (${formatRunLabel(runId, timeAxisMode)})`;
 }

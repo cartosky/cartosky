@@ -267,7 +267,7 @@ def _build_frame_sidecar(*, run_id: str, frame: SPCFramePayload) -> dict:
         "region": SPC_REGION_ID,
         "valid_time": frame.valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "kind": "categorical",
-        "legend_title": "Severe Storm Outlook",
+        "legend_title": "Legend",
         "display_name": "SPC Convective Outlook",
         "day_label": frame.day_label,
         "legend_entries": SPC_LEGEND_ENTRIES,

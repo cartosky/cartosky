@@ -46,7 +46,7 @@ import {
   OVERLAY_DEFAULT_OPACITY,
   type WeatherSubstrate,
 } from "@/lib/config";
-import { buildRunOptions, formatRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
+import { buildRunOptions, formatRunLabel, latestRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import {
   deriveObservedSourceStatus,
@@ -3265,7 +3265,7 @@ export default function App() {
       return fromOptions;
     }
     if (run === "latest") {
-      return latestRunId ? `Latest (${formatRunLabel(latestRunId, selectedTimeAxisMode)})` : "Latest";
+      return latestRunLabel(latestRunId, selectedTimeAxisMode);
     }
     return formatRunLabel(run, selectedTimeAxisMode);
   }, [runOptions, run, latestRunId, selectedTimeAxisMode, gridOnlySelection, resolvedGridLatestRunId]);
