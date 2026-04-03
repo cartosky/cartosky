@@ -969,7 +969,7 @@ export function MapCanvas({
     };
 
     map.on("error", handleMapError as any);
-    map.on("load", () => {
+    map.once("style.load", () => {
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
