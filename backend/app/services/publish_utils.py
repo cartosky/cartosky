@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from collections.abc import Iterable
@@ -55,7 +56,7 @@ def promote_run(*, data_root: Path, model: str, run_id: str) -> None:
     if tmp_run.exists():
         raise ValueError(f"Cannot clear temporary promotion dir: {tmp_run}")
 
-    shutil.copytree(stage_run, tmp_run)
+    shutil.copytree(stage_run, tmp_run, copy_function=os.link)
 
     if published_run.exists():
         shutil.rmtree(published_run, ignore_errors=True)
