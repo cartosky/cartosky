@@ -215,9 +215,19 @@ class _TtlCache:
 # ---------------------------------------------------------------------------
 
 _anchor_index: dict[str, AnchorInfo] | None = None
+_configured_data_root: Path | None = None
 
 
-def _data_root() -> Path:
+def configure_data_root(data_root: Path) -> None:
+    """Set the data root directory. Called once from main.py at import time."""
+    global _configured_data_root
+    _configured_data_root = data_root
+
+
+def _resolve_data_root() -> Path:
+    if _configured_data_root is not None:
+        return _configured_data_root
+    # Fallback: derive from env vars (same logic as main.py DATA_ROOT)
     return Path(
         os.environ.get("CARTOSKY_DATA_ROOT")
         or os.environ.get("CARTOSKY_V3_DATA_ROOT")
@@ -227,13 +237,26 @@ def _data_root() -> Path:
 
 
 def load_anchor_index(path: Path | None = None) -> dict[str, AnchorInfo]:
-    """Load the anchor index JSON from disk. Called once at startup."""
+    """Load the anchor index JSON from disk. Called once on first access."""
     global _anchor_index
     if path is None:
-        path = _data_root() / "anchor_index.json"
+        path = _resolve_data_root() / "anchor_index.json"
 
-    with open(path, "r") as f:
-        raw = json.load(f)
+    try:
+        with open(path, "r") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        logger.error("NWS anchor index not found at %s", path)
+        raise NwsServiceError(
+            code="ANCHOR_INDEX_MISSING",
+            message=f"Anchor index file not found: {path}",
+        )
+    except json.JSONDecodeError as exc:
+        logger.error("NWS anchor index is not valid JSON: %s", exc)
+        raise NwsServiceError(
+            code="ANCHOR_INDEX_INVALID",
+            message=f"Anchor index file is not valid JSON: {exc}",
+        )
 
     anchors: dict[str, AnchorInfo] = {}
     for anchor_id, data in raw.get("anchors", {}).items():

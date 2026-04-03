@@ -96,6 +96,7 @@ def _normalized_path_prefix(value: str, *, default: str) -> str:
 
 
 DATA_ROOT = Path(_env_value("CARTOSKY_DATA_ROOT", "CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data"))
+nws_service.configure_data_root(DATA_ROOT)
 PUBLISHED_ROOT = DATA_ROOT / "published"
 MANIFESTS_ROOT = DATA_ROOT / "manifests"
 LOOP_CACHE_ROOT = Path(
