@@ -810,6 +810,9 @@ export function MapCanvas({
     }
     return urls;
   }, [apiRoot, gridFrameHour, gridFrameUrl, gridManifest, mode]);
+  const shouldUseGridController = Boolean(
+    gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0
+  );
 
   const clearAnchorMarkers = useCallback(() => {
     if (anchorHoverLeaveTimeoutRef.current !== null) {
@@ -1021,7 +1024,9 @@ export function MapCanvas({
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
-      gridWebglControllerRef.current?.ensureAttached(map, COASTLINE_LAYER_ID);
+      if (shouldUseGridController) {
+        gridWebglControllerRef.current?.ensureAttached(map, COASTLINE_LAYER_ID);
+      }
       onMapReadyRef.current?.(map);
     });
 
@@ -1045,7 +1050,7 @@ export function MapCanvas({
       mapRef.current = null;
       setIsLoaded(false);
     };
-  }, [basemapMode, clearAnchorMarkers, contourGeoJsonUrl, enforceLayerOrder, vectorGeoJsonUrl, view.center, view.maxZoom, view.minZoom, view.zoom]);
+  }, [basemapMode, clearAnchorMarkers, contourGeoJsonUrl, enforceLayerOrder, shouldUseGridController, vectorGeoJsonUrl, view.center, view.maxZoom, view.minZoom, view.zoom]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1059,7 +1064,9 @@ export function MapCanvas({
     lastAppliedBasemapModeRef.current = basemapMode;
     const controller = gridWebglControllerRef.current;
     const onStyleData = () => {
-      controller?.ensureAttached(map, COASTLINE_LAYER_ID);
+      if (shouldUseGridController) {
+        controller?.ensureAttached(map, COASTLINE_LAYER_ID);
+      }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
       setLayerVisibility(map, VECTOR_FILL_LAYER_ID, Boolean(vectorGeoJsonUrl));
       setLayerVisibility(map, VECTOR_LINE_LAYER_ID, Boolean(vectorGeoJsonUrl));
@@ -1072,7 +1079,7 @@ export function MapCanvas({
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, vectorGeoJsonUrl]);
+  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, shouldUseGridController, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1302,6 +1309,11 @@ export function MapCanvas({
       return;
     }
 
+    if (!shouldUseGridController) {
+      controller.remove(map);
+      return;
+    }
+
     controller.ensureAttached(map, COASTLINE_LAYER_ID);
     controller.update({
       active: Boolean(gridActive && gridManifest && gridFrameUrl),
@@ -1337,6 +1349,7 @@ export function MapCanvas({
     overlayFadeOutZoom,
     selectionEpoch,
     selectionKey,
+    shouldUseGridController,
     variable,
   ]);
 

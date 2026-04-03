@@ -28,6 +28,7 @@ import {
   readCapabilityDefaultFrameSelection,
   readCapabilityLatestOnly,
   readCapabilityRenderSubstrates,
+  readCapabilitySupportsSampling,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
 import {
@@ -453,7 +454,7 @@ function resolveManifestFrames(
     }
     rows.push({
       fh,
-      has_cog: true,
+      has_cog: false,
       run: manifest.run,
       valid_time: typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : undefined,
       meta:
@@ -961,6 +962,7 @@ export default function App() {
   );
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
+  const selectedModelSupportsSampling = readCapabilitySupportsSampling(selectedModelCapability);
   const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
@@ -1689,10 +1691,10 @@ export default function App() {
 
   // ── Hover-for-data tooltip ──────────────────────────────────────────
   const { tooltip, onHover, onHoverEnd } = useSampleTooltip({
-    model,
-    run: resolvedRunForRequests,
-    varId: variable,
-    fh: forecastHour,
+    model: selectedModelSupportsSampling ? model : "",
+    run: selectedModelSupportsSampling ? resolvedRunForRequests : "",
+    varId: selectedModelSupportsSampling ? variable : "",
+    fh: selectedModelSupportsSampling ? forecastHour : Number.NaN,
   });
 
   useEffect(() => {

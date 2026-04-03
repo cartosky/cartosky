@@ -2362,6 +2362,10 @@ def _resolve_sidecar(model: str, run: str, var: str, fh: int) -> dict | None:
     return None
 
 
+def _frame_has_cog(model: str, run: str, var: str, fh: int) -> bool:
+    return _resolve_val_cog(model, run, var, fh) is not None
+
+
 def _load_grid_manifest(model: str, run: str, var: str) -> dict[str, Any] | None:
     path = grid_manifest_path(DATA_ROOT, model, run, var)
     if not path.is_file():
@@ -2797,7 +2801,7 @@ def get_bootstrap_v4(
                     frames_payload.append(
                         {
                             "fh": fh,
-                            "has_cog": True,
+                            "has_cog": _frame_has_cog(selected_model, selected_run, selected_var, fh),
                             "run": selected_run,
                             "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
                         }
@@ -3036,7 +3040,7 @@ def list_frames(request: Request, model: str, run: str, var: str):
             frames.append(
                 {
                     "fh": fh,
-                    "has_cog": True,
+                    "has_cog": _frame_has_cog(model, resolved, var, fh),
                     "run": resolved,
                     "meta": {"meta": meta},
                 }

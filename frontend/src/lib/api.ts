@@ -474,7 +474,7 @@ export async function fetchFrames(
     return [];
   }
   return response
-    .filter((row) => row && row.has_cog && Number.isFinite(Number(row.fh)))
+    .filter((row) => row && Number.isFinite(Number(row.fh)))
     .map((row) => {
       const nestedValidTime = row?.meta?.meta?.valid_time;
       return {
