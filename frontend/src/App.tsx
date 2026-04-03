@@ -744,8 +744,7 @@ function buildVectorLayerUrl(params: {
   const resolvedRun = String(params.run ?? "").trim();
   const layerKey = String(params.layerKey ?? "primary").trim();
   const fh = Number(params.frame?.fh);
-  const meta = extractLegendMeta(params.frame);
-  if (!resolvedRun || !Number.isFinite(fh) || !meta?.vector_layers || !meta.vector_layers[layerKey]) {
+  if (!resolvedRun || !Number.isFinite(fh) || !layerKey) {
     return null;
   }
   return `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;

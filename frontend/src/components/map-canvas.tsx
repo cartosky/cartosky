@@ -69,8 +69,11 @@ const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
 const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
+const VECTOR_SIGNIFICANT_FILL_LAYER_IDS = ["twf-vectors-significant-fill-a", "twf-vectors-significant-fill-b"] as const;
+const VECTOR_SIGNIFICANT_LINE_LAYER_IDS = ["twf-vectors-significant-line-a", "twf-vectors-significant-line-b"] as const;
 const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
 const VECTOR_TRANSITION_MS = 180;
+const VECTOR_SIGNIFICANT_PATTERN_ID = "twf-vectors-significant-hatch";
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
 const COASTLINE_LAYER_ID = "twf-coastline";
 const STATE_BOUNDARY_LAYER_ID = "twf-state-boundaries";
@@ -225,6 +228,8 @@ function buildVectorBufferLayers(): LayerSpecification[] {
   return [0, 1].flatMap((bufferIndex) => {
     const sourceId = VECTOR_SOURCE_IDS[bufferIndex as 0 | 1];
     const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex as 0 | 1];
+    const significantFillLayerId = VECTOR_SIGNIFICANT_FILL_LAYER_IDS[bufferIndex as 0 | 1];
+    const significantLineLayerId = VECTOR_SIGNIFICANT_LINE_LAYER_IDS[bufferIndex as 0 | 1];
     const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex as 0 | 1];
     return [
       {
@@ -238,6 +243,20 @@ function buildVectorBufferLayers(): LayerSpecification[] {
         paint: {
           "fill-color": ["coalesce", ["get", "fill"], "#ffffff"] as any,
           "fill-opacity": vectorFillOpacityExpression(0) as any,
+        },
+      } as LayerSpecification,
+      {
+        id: significantFillLayerId,
+        type: "fill",
+        source: sourceId,
+        filter: ["==", ["coalesce", ["get", "is_significant"], false], true] as any,
+        layout: {
+          visibility: "none",
+          "fill-sort-key": ["coalesce", ["get", "sort_rank"], 0] as any,
+        },
+        paint: {
+          "fill-pattern": VECTOR_SIGNIFICANT_PATTERN_ID as any,
+          "fill-opacity": vectorSignificantOpacityExpression(0) as any,
         },
       } as LayerSpecification,
       {
@@ -256,6 +275,23 @@ function buildVectorBufferLayers(): LayerSpecification[] {
           "line-width": ["coalesce", ["get", "stroke_width"], 1.25] as any,
         },
       } as LayerSpecification,
+      {
+        id: significantLineLayerId,
+        type: "line",
+        source: sourceId,
+        filter: ["==", ["coalesce", ["get", "is_significant"], false], true] as any,
+        layout: {
+          visibility: "none",
+          "line-join": "round",
+          "line-cap": "round",
+          "line-sort-key": ["coalesce", ["get", "sort_rank"], 0] as any,
+        },
+        paint: {
+          "line-color": ["coalesce", ["get", "stroke"], "#000000"] as any,
+          "line-opacity": 0,
+          "line-width": ["+", ["coalesce", ["get", "stroke_width"], 1.25], 0.5] as any,
+        },
+      } as LayerSpecification,
     ];
   });
 }
@@ -264,14 +300,57 @@ function vectorFillOpacityExpression(fade: number) {
   return ["*", Math.max(0, Math.min(1, fade)), ["coalesce", ["get", "fill_opacity"], 0.65]] as const;
 }
 
+function vectorSignificantOpacityExpression(fade: number) {
+  return ["*", Math.max(0, Math.min(1, fade)), 0.34] as const;
+}
+
+function buildSignificantPatternImage(): ImageData {
+  const size = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return new ImageData(size, size);
+  }
+
+  context.clearRect(0, 0, size, size);
+  context.strokeStyle = "rgba(0, 0, 0, 0.72)";
+  context.lineWidth = 1;
+
+  for (let offset = -size; offset <= size * 2; offset += 4) {
+    context.beginPath();
+    context.moveTo(offset, size);
+    context.lineTo(offset + size, 0);
+    context.stroke();
+  }
+
+  return context.getImageData(0, 0, size, size);
+}
+
+function ensureSignificantPattern(map: maplibregl.Map) {
+  if (map.hasImage(VECTOR_SIGNIFICANT_PATTERN_ID)) {
+    return;
+  }
+  map.addImage(VECTOR_SIGNIFICANT_PATTERN_ID, buildSignificantPatternImage(), { pixelRatio: 2 });
+}
+
 function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: number) {
   const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex];
+  const significantFillLayerId = VECTOR_SIGNIFICANT_FILL_LAYER_IDS[bufferIndex];
+  const significantLineLayerId = VECTOR_SIGNIFICANT_LINE_LAYER_IDS[bufferIndex];
   const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex];
   if (map.getLayer(fillLayerId)) {
     map.setPaintProperty(fillLayerId, "fill-opacity", vectorFillOpacityExpression(fade));
   }
+  if (map.getLayer(significantFillLayerId)) {
+    map.setPaintProperty(significantFillLayerId, "fill-opacity", vectorSignificantOpacityExpression(fade));
+  }
   if (map.getLayer(lineLayerId)) {
     map.setPaintProperty(lineLayerId, "line-opacity", Math.max(0, Math.min(1, fade)));
+  }
+  if (map.getLayer(significantLineLayerId)) {
+    map.setPaintProperty(significantLineLayerId, "line-opacity", Math.max(0, Math.min(1, fade)));
   }
 }
 
@@ -997,7 +1076,17 @@ export function MapCanvas({
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
     }
+    for (const layerId of VECTOR_SIGNIFICANT_FILL_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
     for (const layerId of VECTOR_LINE_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
+    for (const layerId of VECTOR_SIGNIFICANT_LINE_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
@@ -1065,6 +1154,7 @@ export function MapCanvas({
     map.on("load", () => {
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
+      ensureSignificantPattern(map);
       enforceLayerOrder(map);
       onMapReadyRef.current?.(map);
     });
@@ -1107,6 +1197,7 @@ export function MapCanvas({
     lastAppliedBasemapModeRef.current = basemapMode;
     const controller = gridWebglControllerRef.current;
     const onStyleData = () => {
+      ensureSignificantPattern(map);
       if (shouldUseGridController) {
         controller?.ensureAttached(map, COASTLINE_LAYER_ID);
       }
@@ -1215,11 +1306,15 @@ export function MapCanvas({
     };
     const hideVectorBuffer = (bufferIndex: 0 | 1) => {
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], false);
+      setLayerVisibility(map, VECTOR_SIGNIFICANT_FILL_LAYER_IDS[bufferIndex], false);
+      setLayerVisibility(map, VECTOR_SIGNIFICANT_LINE_LAYER_IDS[bufferIndex], false);
       setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], false);
       setVectorLayerFade(map, bufferIndex, 0);
     };
     const showVectorBuffer = (bufferIndex: 0 | 1, fade: number) => {
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], true);
+      setLayerVisibility(map, VECTOR_SIGNIFICANT_FILL_LAYER_IDS[bufferIndex], true);
+      setLayerVisibility(map, VECTOR_SIGNIFICANT_LINE_LAYER_IDS[bufferIndex], true);
       setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], true);
       setVectorLayerFade(map, bufferIndex, fade);
     };
@@ -1646,7 +1741,7 @@ export function MapCanvas({
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
       const vectorFeature = map.queryRenderedFeatures(e.point, {
-        layers: [...VECTOR_FILL_LAYER_IDS],
+        layers: [...VECTOR_SIGNIFICANT_FILL_LAYER_IDS, ...VECTOR_FILL_LAYER_IDS],
       })[0] as { properties?: Record<string, unknown> } | undefined;
       const hoverLabel = typeof vectorFeature?.properties?.hover_label === "string"
         ? vectorFeature.properties.hover_label.trim()
