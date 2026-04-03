@@ -817,6 +817,7 @@ export default function App() {
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
+  const [anchorsActivated, setAnchorsActivated] = useState(false);
   const selectionEpochRef = useRef(selectionEpoch);
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
   const datasetGenerationRef = useRef(0);
@@ -2040,10 +2041,46 @@ export default function App() {
   }, [initialPermalink]);
 
   useEffect(() => {
-    const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled
+    if (anchorsActivated) {
+      return;
+    }
+    const anchorsReadyToActivate = deferNonCriticalBootstrapEnabled
       ? (bootstrapHydrated && firstWeatherFramePainted)
       : bootstrapHydrated;
-    if (!anchorsReadyToLoad) {
+    if (!anchorsReadyToActivate) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const activateAnchors = () => {
+      if (cancelled) {
+        return;
+      }
+      setAnchorsActivated(true);
+    };
+
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(() => {
+        activateAnchors();
+      }, { timeout: 2000 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(idleId);
+      };
+    }
+
+    timeoutId = globalThis.setTimeout(activateAnchors, 1200);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+    };
+  }, [anchorsActivated, bootstrapHydrated, deferNonCriticalBootstrapEnabled, firstWeatherFramePainted]);
+
+  useEffect(() => {
+    if (!anchorsActivated) {
       return;
     }
     if (anchorBaseGeoJson) {
@@ -2069,7 +2106,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [deferNonCriticalBootstrapEnabled, bootstrapHydrated, firstWeatherFramePainted, anchorBaseGeoJson]);
+  }, [anchorBaseGeoJson, anchorsActivated]);
 
   useEffect(() => {
     if (!model) return;
@@ -2307,6 +2344,15 @@ export default function App() {
   useEffect(() => {
     const generation = requestGenerationRef.current;
 
+    if (!anchorsActivated) {
+      anchorSelectionKeyRef.current = selectionKey;
+      anchorBatchLastAppliedHourRef.current = null;
+      anchorBatchLastAppliedSelectionKeyRef.current = "";
+      resetAnchorBatchQueue(true);
+      setAnchorDisplayGeoJson(null);
+      return;
+    }
+
     if (!anchorBaseGeoJson) {
       anchorSelectionKeyRef.current = selectionKey;
       anchorBatchLastAppliedHourRef.current = null;
@@ -2403,6 +2449,7 @@ export default function App() {
   }, [
     anchorBaseGeoJson,
     anchorBatchPoints,
+    anchorsActivated,
     hasRenderableSelection,
     isGridPreloadingForPlay,
     isPlaying,
