@@ -6,7 +6,12 @@ import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { formatObservedCompactTime, formatObservedValidTime } from "@/lib/time-axis";
+import {
+  formatObservedCompactTime,
+  formatObservedValidTime,
+  formatValidTime,
+  validDayLabel,
+} from "@/lib/time-axis";
 import {
   Tooltip,
   TooltipContent,
@@ -55,6 +60,19 @@ function formatTimelineDisplay(params: {
       secondary: "Observed",
       compactValue,
       axisLabel: "Observed Time",
+    };
+  }
+
+  if (params.timeAxisMode === "valid") {
+    const primary = formatValidTime(params.validTimeISO);
+    if (!primary) {
+      return null;
+    }
+    return {
+      primary,
+      secondary: validDayLabel(params.forecastHour),
+      compactValue: validDayLabel(params.forecastHour),
+      axisLabel: "Valid Day",
     };
   }
 
@@ -343,10 +361,10 @@ export function BottomForecastControls({
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
                   <Clock className="h-3 w-3" />
-                  {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : "Forecast Hour")}
+                  {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
                 </span>
                 <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95 transition-all duration-150">
-                  {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : `${forecastHour}h`)}
+                  {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
                 </span>
               </div>
               <Slider

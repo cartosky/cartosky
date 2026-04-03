@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 export type LegendEntry = {
   value: number;
   color: string;
+  label?: string;
 };
 
 export type LegendPayload = {
@@ -460,8 +461,8 @@ export function MapLegend({
                         className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
                         style={{ backgroundColor: entry.color }}
                       />
-                      <span className="font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95">
-                        {formatValue(entry.value)}
+                      <span className={entry.label ? "text-[10px] font-medium leading-none tracking-tight text-foreground/95" : "font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"}>
+                        {entry.label?.trim() || formatValue(entry.value)}
                       </span>
                     </div>
                   ))}

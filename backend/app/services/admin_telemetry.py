@@ -381,6 +381,53 @@ def _sidecar_path(data_root: Path, model_id: str, run_id: str, variable_id: str,
     return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
 
 
+def _time_axis_mode_for_model(model_id: str) -> str:
+    plugin = MODEL_REGISTRY.get(model_id)
+    capabilities = getattr(plugin, "capabilities", None) if plugin is not None else None
+    constraints = getattr(capabilities, "ui_constraints", {}) if capabilities is not None else {}
+    raw = str(constraints.get("time_axis_mode", "") or "").strip().lower()
+    return raw if raw in {"observed", "valid"} else "forecast"
+
+
+def _variable_render_substrates(model_id: str, variable_id: str) -> list[str]:
+    plugin = MODEL_REGISTRY.get(model_id)
+    capabilities = getattr(plugin, "capabilities", None) if plugin is not None else None
+    variable_catalog = getattr(capabilities, "variable_catalog", {}) if capabilities is not None else {}
+    capability = variable_catalog.get(variable_id) if isinstance(variable_catalog, dict) else None
+    configured = getattr(capability, "render_substrates", None) if capability is not None else None
+    if isinstance(configured, (list, tuple)):
+        normalized: list[str] = []
+        for item in configured:
+            substrate = str(item or "").strip().lower()
+            if substrate and substrate not in normalized:
+                normalized.append(substrate)
+        if normalized:
+            return normalized
+    return ["grid"]
+
+
+def _vector_artifact_paths(
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    variable_id: str,
+    forecast_hour: int,
+    sidecar: dict[str, Any] | None,
+) -> list[Path]:
+    if not isinstance(sidecar, dict):
+        return []
+    vector_layers = sidecar.get("vector_layers")
+    if not isinstance(vector_layers, dict):
+        return []
+    var_root = data_root / "published" / model_id / run_id / variable_id
+    paths: list[Path] = []
+    for layer_meta in vector_layers.values():
+        relative_path = layer_meta.get("path") if isinstance(layer_meta, dict) else None
+        if isinstance(relative_path, str) and relative_path.strip():
+            paths.append(var_root / relative_path.strip())
+    return paths
+
+
 def _manifest_path(data_root: Path, model_id: str, run_id: str) -> Path:
     return data_root / "manifests" / model_id / f"{run_id}.json"
 
@@ -1515,7 +1562,7 @@ def _scan_run_issue(
         "model_id": model_id,
         "run_id": run_id,
         "latest_for_model": latest_for_model,
-        "time_axis_mode": "observed" if observed_model else "forecast",
+        "time_axis_mode": _time_axis_mode_for_model(model_id),
         "run_timestamp": run_timestamp,
         "run_age_hours": round(max(0.0, (now_utc.timestamp() - (run_timestamp or now_utc.timestamp())) / 3600.0), 1),
         "expected_frames": 0,
@@ -1582,22 +1629,41 @@ def _scan_run_issue(
             if isinstance(frame, dict) and isinstance(frame.get("fh"), int)
         )
         for fh in frame_hours:
+            substrates = _variable_render_substrates(model_id, str(variable_id))
             value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
             sidecar_path = _sidecar_path(data_root, model_id, run_id, str(variable_id), fh)
+            sidecar_payload = _load_json_file(sidecar_path) if sidecar_path.is_file() else None
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, str(variable_id), fh, sidecar_payload)
             missing_here = False
-            if not value_path.is_file():
+            artifact_path: str | None = None
+            if "grid" in substrates and not value_path.is_file():
                 missing_artifact_count += 1
                 missing_here = True
+                artifact_path = str(value_path)
             if not sidecar_path.is_file():
                 missing_artifact_count += 1
                 missing_here = True
+                artifact_path = artifact_path or str(sidecar_path)
+            if "vector" in substrates:
+                if vector_paths:
+                    for vector_path in vector_paths:
+                        if vector_path.is_file():
+                            continue
+                        missing_artifact_count += 1
+                        missing_here = True
+                        artifact_path = artifact_path or str(vector_path)
+                elif sidecar_path.is_file():
+                    missing_artifact_count += 1
+                    missing_here = True
+                    artifact_path = artifact_path or str(sidecar_path)
             if missing_here and len(sample_paths) < 6:
                 sample_paths.append(
                     {
                         "variable_id": str(variable_id),
                         "forecast_hour": fh,
                         "issue": "missing_artifact",
-                        "value_grid_path": str(value_path),
+                        "value_grid_path": str(value_path) if "grid" in substrates else None,
+                        "artifact_path": artifact_path,
                         "sidecar_path": str(sidecar_path),
                     }
                 )
@@ -1606,24 +1672,47 @@ def _scan_run_issue(
         if len(frame_hours) > 1:
             sample_hours.append(frame_hours[-1])
         for fh in sorted(set(sample_hours)):
+            substrates = _variable_render_substrates(model_id, str(variable_id))
             value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
-            if not value_path.is_file():
-                continue
-            try:
-                with rasterio.open(value_path):
-                    pass
-            except Exception as exc:
-                unreadable_artifact_count += 1
-                if len(sample_paths) < 6:
-                    sample_paths.append(
-                        {
-                            "variable_id": str(variable_id),
-                            "forecast_hour": fh,
-                            "issue": "unreadable_value_grid",
-                            "value_grid_path": str(value_path),
-                            "read_error": str(exc),
-                        }
-                    )
+            sidecar_payload = _load_json_file(_sidecar_path(data_root, model_id, run_id, str(variable_id), fh))
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, str(variable_id), fh, sidecar_payload)
+            if "grid" in substrates and value_path.is_file():
+                try:
+                    with rasterio.open(value_path):
+                        pass
+                except Exception as exc:
+                    unreadable_artifact_count += 1
+                    if len(sample_paths) < 6:
+                        sample_paths.append(
+                            {
+                                "variable_id": str(variable_id),
+                                "forecast_hour": fh,
+                                "issue": "unreadable_value_grid",
+                                "value_grid_path": str(value_path),
+                                "artifact_path": str(value_path),
+                                "read_error": str(exc),
+                            }
+                        )
+            if "vector" in substrates:
+                for vector_path in vector_paths:
+                    if not vector_path.is_file():
+                        continue
+                    try:
+                        json.loads(vector_path.read_text())
+                    except Exception as exc:
+                        unreadable_artifact_count += 1
+                        if len(sample_paths) < 6:
+                            sample_paths.append(
+                                {
+                                    "variable_id": str(variable_id),
+                                    "forecast_hour": fh,
+                                    "issue": "unreadable_vector_artifact",
+                                    "artifact_path": str(vector_path),
+                                    "sidecar_path": str(_sidecar_path(data_root, model_id, run_id, str(variable_id), fh)),
+                                    "read_error": str(exc),
+                                }
+                            )
+                        break
 
     completion_pct = round((available_frames / expected_frames) * 100.0, 1) if expected_frames > 0 else 0.0
     expected_latest_dt = _expected_latest_run_time(model_id=model_id, now_utc=now_utc)

@@ -140,6 +140,7 @@ def isolate_environment(tmp_path: Path) -> None:
     main_module.DATA_ROOT = data_root
     main_module.PUBLISHED_ROOT = data_root / "published"
     main_module.MANIFESTS_ROOT = data_root / "manifests"
+    main_module.ADMIN_MEMBER_IDS = {42}
 
 
 @pytest.fixture
@@ -149,8 +150,22 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield test_client
 
 
-async def test_status_results_reports_incomplete_and_artifact_failures(client: httpx.AsyncClient) -> None:
+async def test_status_results_reports_incomplete_and_artifact_failures(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 3, 11, 14, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
     _seed_run(
         main_module.DATA_ROOT,
         model_id="hrrr",
@@ -238,6 +253,81 @@ async def test_status_results_flags_stale_latest_run(client: httpx.AsyncClient, 
     rows = response.json()["results"]
     assert rows[0]["issue_type"] == "stale_run"
     assert rows[0]["status"] == "warning"
+
+
+async def test_status_results_treats_vector_only_spc_run_as_valid_bundle(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    model_id = "spc"
+    run_id = "20260401_0630z"
+    manifest_path = main_module.DATA_ROOT / "manifests" / model_id / f"{run_id}.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "3.0",
+                "model": model_id,
+                "run": run_id,
+                "variables": {
+                    "convective": {
+                        "display_name": "SPC Convective Outlook",
+                        "kind": "categorical",
+                        "units": "",
+                        "expected_frames": 3,
+                        "available_frames": 3,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-04-01T12:00:00Z"},
+                            {"fh": 1, "valid_time": "2026-04-02T12:00:00Z"},
+                            {"fh": 2, "valid_time": "2026-04-03T12:00:00Z"},
+                        ],
+                    }
+                },
+            }
+        )
+    )
+
+    latest_path = main_module.DATA_ROOT / "published" / model_id / "LATEST.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text(json.dumps({"run_id": run_id}))
+
+    var_dir = main_module.DATA_ROOT / "published" / model_id / run_id / "convective"
+    (var_dir / "vectors").mkdir(parents=True, exist_ok=True)
+    for fh in range(3):
+        (var_dir / f"fh{fh:03d}.json").write_text(
+            json.dumps(
+                {
+                    "contract_version": "3.0",
+                    "model": model_id,
+                    "run": run_id,
+                    "var": "convective",
+                    "fh": fh,
+                    "kind": "categorical",
+                    "valid_time": f"2026-04-0{fh + 1}T12:00:00Z",
+                    "vector_layers": {
+                        "primary": {
+                            "format": "geojson",
+                            "path": f"vectors/fh{fh:03d}.geojson",
+                        }
+                    },
+                }
+            )
+        )
+        (var_dir / "vectors" / f"fh{fh:03d}.geojson").write_text(
+            json.dumps({"type": "FeatureCollection", "features": []})
+        )
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=spc",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["model_id"] == "spc"
+    assert rows[0]["time_axis_mode"] == "valid"
+    assert rows[0]["status"] == "healthy"
+    assert rows[0]["missing_artifact_count"] == 0
 
 
 async def test_status_results_requires_admin(client: httpx.AsyncClient) -> None:

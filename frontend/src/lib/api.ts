@@ -11,7 +11,7 @@ export type ModelOption = {
   name: string;
 };
 
-export type ModelTimeAxisMode = "forecast" | "observed";
+export type ModelTimeAxisMode = "forecast" | "observed" | "valid";
 export type ModelDefaultFrameSelection = "first" | "latest";
 export type AvailabilityFreshnessState = "live" | "delayed" | "stale" | "unavailable";
 
@@ -123,6 +123,7 @@ export type LegendMeta = {
   valid_time?: string;
   legend_stops?: LegendStops;
   legend?: { type?: string; stops?: LegendStops };
+  legend_entries?: Array<{ value: number; color: string; label?: string }>;
   colors?: string[];
   levels?: number[];
   ptype_order?: string[];
@@ -139,6 +140,15 @@ export type LegendMeta = {
       level?: number;
     }
   >;
+  vector_layers?: Record<
+    string,
+    {
+      format?: string;
+      path?: string;
+      style_key?: string;
+    }
+  >;
+  day_label?: string;
 };
 
 export type FrameRow = {
@@ -237,11 +247,17 @@ function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null 
   if (normalized === "grid") {
     return "grid";
   }
+  if (normalized === "vector") {
+    return "vector";
+  }
   return null;
 }
 
 export function readCapabilityTimeAxisMode(model: CapabilityModel | null | undefined): ModelTimeAxisMode {
   const raw = String(model?.constraints?.time_axis_mode ?? "").trim().toLowerCase();
+  if (raw === "valid") {
+    return "valid";
+  }
   return raw === "observed" ? "observed" : "forecast";
 }
 

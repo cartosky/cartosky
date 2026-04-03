@@ -74,6 +74,7 @@ class VariableCapability:
     conversion: Optional[str] = None
     constraints: dict[str, Any] = field(default_factory=dict)
     frontend: dict[str, Any] = field(default_factory=dict)
+    render_substrates: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "selectors", normalize_selectors(self.selectors))

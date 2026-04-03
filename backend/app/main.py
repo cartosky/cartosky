@@ -1881,7 +1881,7 @@ def _run_matches_model_cycle(model: str, run_id: str) -> bool:
         product = str(getattr(capabilities, "product", "") or "").strip().lower()
         ui_constraints = getattr(capabilities, "ui_constraints", {}) or {}
         time_axis_mode = str(ui_constraints.get("time_axis_mode", "")).strip().lower()
-        if product == "obs" or time_axis_mode == "observed":
+        if product == "obs" or time_axis_mode in {"observed", "valid"}:
             return parse_run_id_datetime(run_id) is not None
     hour = _run_hour(run_id)
     if hour is None:
@@ -3516,3 +3516,60 @@ def get_contour_geojson(
             contour_path,
         )
         raise HTTPException(status_code=500, detail=f"Failed to read contour GeoJSON: {exc}") from exc
+
+
+@app.get("/api/v4/{model}/{run}/{var}/{fh:int}/vectors/{key}")
+def get_vector_geojson(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    key: str,
+):
+    var_dir = _resolve_frame_var_dir(model, run, var, fh)
+    if var_dir is None:
+        raise HTTPException(status_code=404, detail="Frame not found")
+
+    sidecar_path = var_dir / f"fh{fh:03d}.json"
+    if not sidecar_path.is_file():
+        raise HTTPException(status_code=404, detail="Sidecar not found")
+
+    try:
+        sidecar = json.loads(sidecar_path.read_text())
+    except Exception as exc:
+        logger.exception(
+            "Failed to read sidecar for vector: %s/%s/%s/fh%03d (%s)",
+            model,
+            run,
+            var,
+            fh,
+            sidecar_path,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to read sidecar: {exc}") from exc
+
+    vector_layers = sidecar.get("vector_layers")
+    if not isinstance(vector_layers, dict) or key not in vector_layers:
+        raise HTTPException(status_code=404, detail=f"Vector layer '{key}' not found")
+
+    vector_meta = vector_layers[key]
+    vector_rel_path = vector_meta.get("path") if isinstance(vector_meta, dict) else None
+    if not isinstance(vector_rel_path, str) or not vector_rel_path:
+        raise HTTPException(status_code=500, detail=f"Vector layer '{key}' has invalid sidecar path")
+
+    vector_path = var_dir / vector_rel_path
+    if not vector_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Vector file missing: {vector_rel_path}")
+
+    try:
+        return json.loads(vector_path.read_text())
+    except Exception as exc:
+        logger.exception(
+            "Failed to read vector GeoJSON: %s/%s/%s/fh%03d/%s (%s)",
+            model,
+            run,
+            var,
+            fh,
+            key,
+            vector_path,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to read vector GeoJSON: {exc}") from exc

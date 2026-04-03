@@ -1,4 +1,4 @@
-export type TimeAxisMode = "forecast" | "observed";
+export type TimeAxisMode = "forecast" | "observed" | "valid";
 export type ObservedSourceStatusTone = "live" | "delayed" | "stale" | "unavailable";
 
 export type ObservedSourceStatus = {
@@ -86,6 +86,36 @@ export function formatObservedCompactTime(iso: string | null | undefined): strin
     hour: "numeric",
     minute: "2-digit",
   }).format(parsed);
+}
+
+export function formatValidTime(iso: string | null | undefined): string | null {
+  const parsed = parseIsoDate(iso);
+  if (!parsed) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZoneName: "short",
+  }).format(parsed);
+}
+
+export function formatValidCompactTime(iso: string | null | undefined): string | null {
+  const parsed = parseIsoDate(iso);
+  if (!parsed) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(parsed);
+}
+
+export function validDayLabel(forecastHour: number | null | undefined): string {
+  const resolved = Number.isFinite(forecastHour) ? Math.max(0, Math.round(Number(forecastHour))) : 0;
+  return `Day ${resolved + 1}`;
 }
 
 export function frameValidTime(row: { valid_time?: string; meta?: { meta?: { valid_time?: string | null } | null } | null } | null | undefined): string | null {

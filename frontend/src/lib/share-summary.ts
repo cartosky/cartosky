@@ -1,4 +1,4 @@
-import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel, formatValidTime, validDayLabel } from "@/lib/time-axis";
 
 type BuildShareSummaryInput = {
   modelId: string;
@@ -8,7 +8,7 @@ type BuildShareSummaryInput = {
   regionId: string;
   regionLabel?: string | null;
   forecastHour: number | null;
-  timeAxisMode?: "forecast" | "observed";
+  timeAxisMode?: "forecast" | "observed" | "valid";
   validTimeISO?: string | null;
   centerLat: number | null;
   centerLon: number | null;
@@ -60,7 +60,7 @@ function modelLabel(modelId: string): string {
   return MODEL_LABELS[key] ?? key.toUpperCase();
 }
 
-function runLabel(runId: string, timeAxisMode: "forecast" | "observed" = "forecast"): string {
+function runLabel(runId: string, timeAxisMode: "forecast" | "observed" | "valid" = "forecast"): string {
   const trimmed = runId.trim();
   if (!trimmed) {
     return "Latest";
@@ -108,6 +108,10 @@ function formatTimeSummary(input: BuildShareSummaryInput): string {
   if (input.timeAxisMode === "observed") {
     const observed = formatObservedCompactTime(input.validTimeISO);
     return observed ? `Observed ${observed}` : "Observed time n/a";
+  }
+  if (input.timeAxisMode === "valid") {
+    const valid = formatValidTime(input.validTimeISO);
+    return valid ? `${validDayLabel(input.forecastHour)} • ${valid}` : validDayLabel(input.forecastHour);
   }
   return formatForecastHour(input.forecastHour);
 }

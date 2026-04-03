@@ -46,7 +46,7 @@ export type StatusResult = {
   id: string;
   model_id: string;
   run_id: string;
-  time_axis_mode?: "forecast" | "observed";
+  time_axis_mode?: "forecast" | "observed" | "valid";
   status: "healthy" | "warning" | "error";
   issue_type: string;
   summary: string;
@@ -74,6 +74,7 @@ export type StatusResult = {
     forecast_hour: number;
     issue: string;
     value_grid_path?: string;
+    artifact_path?: string;
     sidecar_path?: string;
     read_error?: string;
   }>;

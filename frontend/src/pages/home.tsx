@@ -75,6 +75,13 @@ export default function Home() {
         forecast: "0-384h",
         notes: "Global trends",
       },
+      {
+        key: "SPC",
+        modelId: "spc",
+        update: "Latest issuance",
+        forecast: "Days 1-3",
+        notes: "Convective outlooks",
+      },
     ],
     []
   );
@@ -90,21 +97,26 @@ export default function Home() {
     if (normalized.toLowerCase() === "latest") {
       return "Latest";
     }
-    const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
+    const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})?z$/i);
     if (runMatch) {
-      const [, year, month, day, hour] = runMatch;
-      const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0));
+      const [, year, month, day, hour, minuteRaw] = runMatch;
+      const minute = Number(minuteRaw ?? "0");
+      const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), minute, 0));
       const dateLabel = new Intl.DateTimeFormat("en-US", {
         month: "short",
         day: "numeric",
         timeZone: "UTC",
       }).format(runDate);
-      return `${hour}Z (${dateLabel})`;
+      const timeLabel = minute > 0 ? `${hour}:${String(minute).padStart(2, "0")}Z` : `${hour}Z`;
+      return `${timeLabel} (${dateLabel})`;
     }
 
-    const hourMatch = normalized.match(/_(\d{2})z$/i);
+    const hourMatch = normalized.match(/_(\d{2})(\d{2})?z$/i);
     if (hourMatch) {
-      return `${hourMatch[1]}Z`;
+      const minute = Number(hourMatch[2] ?? "0");
+      return minute > 0
+        ? `${hourMatch[1]}:${String(minute).padStart(2, "0")}Z`
+        : `${hourMatch[1]}Z`;
     }
     return normalized;
   }

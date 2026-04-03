@@ -2,7 +2,7 @@ import maplibregl from "maplibre-gl";
 import type { LegendPayload } from "@/components/map-legend";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import type { TimeAxisMode } from "@/lib/time-axis";
-import { formatObservedCompactTime, formatObservedValidTime } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedValidTime, formatValidTime, validDayLabel } from "@/lib/time-axis";
 
 export type ScreenshotExportState = {
   style: any;
@@ -213,6 +213,10 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
     const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
     return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
+  }
+  if (state.timeAxisMode === "valid") {
+    const validLabel = formatValidTime(state.validTimeISO) ?? "Valid time n/a";
+    return [`${model} • ${run} • ${validDayLabel(state.fh)} • ${validLabel}`, variableLabel];
   }
   return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
 }

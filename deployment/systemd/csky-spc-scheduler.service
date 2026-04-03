@@ -1,0 +1,22 @@
+[Unit]
+Description=CartoSky SPC Poller
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cartosky
+Group=cartosky
+UMask=0027
+LimitNOFILE=65536
+WorkingDirectory=/opt/cartosky/backend
+EnvironmentFile=-/etc/cartosky/scheduler-spc.env
+Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/opt/cartosky/.venv/bin/python -m app.services.spc_poller
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

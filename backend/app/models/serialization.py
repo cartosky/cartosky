@@ -6,6 +6,21 @@ from ..config import grid_render_substrates
 from ..services.render_resampling import display_resampling_override
 
 
+def _render_substrates_for_variable(model_id: str, capability: Any | None) -> list[str]:
+    configured = getattr(capability, "render_substrates", None) if capability is not None else None
+    if isinstance(configured, (list, tuple)):
+        normalized: list[str] = []
+        for item in configured:
+            substrate = str(item or "").strip().lower()
+            if substrate and substrate not in normalized:
+                normalized.append(substrate)
+        if normalized:
+            return normalized
+
+    var_key = str(getattr(capability, "var_key", "")) if capability is not None else ""
+    return list(grid_render_substrates(model_id, var_key))
+
+
 def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:
     constraints = getattr(capability, "constraints", None)
     constraints_payload = dict(constraints) if isinstance(constraints, dict) else {}
@@ -21,7 +36,7 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         "buildable": bool(getattr(capability, "buildable", False)),
         "color_map_id": getattr(capability, "color_map_id", None),
         "display_resampling_override": display_resampling_override(model_id, var_key),
-        "render_substrates": list(grid_render_substrates(model_id, var_key)),
+        "render_substrates": _render_substrates_for_variable(model_id, capability),
         "constraints": constraints_payload,
         "derived": bool(getattr(capability, "derived", False)),
         "derive_strategy_id": getattr(capability, "derive_strategy_id", None),
@@ -47,7 +62,10 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
     constraints = getattr(capability, "ui_constraints", None)
     run_discovery = getattr(capability, "run_discovery", None)
     defaults_payload = dict(defaults) if isinstance(defaults, dict) else {}
-    defaults_payload["default_render_substrate"] = "grid"
+    default_var_key = str(defaults_payload.get("default_var_key") or "").strip()
+    default_var_capability = variable_catalog.get(default_var_key) if isinstance(variable_catalog, dict) else None
+    default_substrates = _render_substrates_for_variable(model_id, default_var_capability)
+    defaults_payload["default_render_substrate"] = default_substrates[0] if default_substrates else "grid"
     return {
         "model_id": model_id,
         "name": str(getattr(capability, "name", model_id.upper())),

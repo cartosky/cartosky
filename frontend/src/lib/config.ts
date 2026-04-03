@@ -16,7 +16,7 @@ const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED
 const GRAFANA_TRACES_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_TRACES_URL ?? "").trim();
 const RELEASE_SHA_ENV = String(import.meta.env.VITE_RELEASE_SHA ?? "").trim();
 
-export type WeatherSubstrate = "grid";
+export type WeatherSubstrate = "grid" | "vector";
 
 export const MAP_VIEW_DEFAULTS = {
   region: "conus",

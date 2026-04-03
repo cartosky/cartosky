@@ -66,6 +66,9 @@ const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
+const VECTOR_SOURCE_ID = "twf-vectors";
+const VECTOR_FILL_LAYER_ID = "twf-vectors-fill";
+const VECTOR_LINE_LAYER_ID = "twf-vectors-line";
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
 const COASTLINE_LAYER_ID = "twf-coastline";
 const STATE_BOUNDARY_LAYER_ID = "twf-state-boundaries";
@@ -355,6 +358,7 @@ function getActiveAnchorMarkers(
 
 export function buildMapStyle(
   contourGeoJsonUrl?: string | null,
+  vectorGeoJsonUrl?: string | null,
   basemapMode: BasemapMode = "light"
 ): StyleSpecification {
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
@@ -385,6 +389,10 @@ export function buildMapStyle(
       [CONTOUR_SOURCE_ID]: {
         type: "geojson",
         data: contourGeoJsonUrl ? contourGeoJsonUrl : EMPTY_FEATURE_COLLECTION,
+      },
+      [VECTOR_SOURCE_ID]: {
+        type: "geojson",
+        data: vectorGeoJsonUrl ? vectorGeoJsonUrl : EMPTY_FEATURE_COLLECTION,
       },
     },
     layers: [
@@ -515,6 +523,35 @@ export function buildMapStyle(
         },
       },
       {
+        id: VECTOR_FILL_LAYER_ID,
+        type: "fill",
+        source: VECTOR_SOURCE_ID,
+        layout: {
+          visibility: vectorGeoJsonUrl ? "visible" : "none",
+          "fill-sort-key": ["coalesce", ["get", "sort_rank"], 0],
+        },
+        paint: {
+          "fill-color": ["coalesce", ["get", "fill"], "#ffffff"],
+          "fill-opacity": ["coalesce", ["get", "fill_opacity"], 0.65],
+        },
+      },
+      {
+        id: VECTOR_LINE_LAYER_ID,
+        type: "line",
+        source: VECTOR_SOURCE_ID,
+        layout: {
+          visibility: vectorGeoJsonUrl ? "visible" : "none",
+          "line-join": "round",
+          "line-cap": "round",
+          "line-sort-key": ["coalesce", ["get", "sort_rank"], 0],
+        },
+        paint: {
+          "line-color": ["coalesce", ["get", "stroke"], "#000000"],
+          "line-opacity": 1,
+          "line-width": ["coalesce", ["get", "stroke_width"], 1.25],
+        },
+      },
+      {
         id: "twf-labels",
         type: "raster",
         source: "twf-labels",
@@ -533,6 +570,7 @@ type MapCanvasProps = {
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
   contourGeoJsonUrl?: string | null;
+  vectorGeoJsonUrl?: string | null;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
   showZoomControls?: boolean;
@@ -565,6 +603,7 @@ export function MapCanvas({
   gridLegend = null,
   gridActive = false,
   contourGeoJsonUrl,
+  vectorGeoJsonUrl,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
   showZoomControls = false,
@@ -610,6 +649,9 @@ export function MapCanvas({
   const contourRequestTokenRef = useRef(0);
   const contourAbortRef = useRef<AbortController | null>(null);
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
+  const vectorRequestTokenRef = useRef(0);
+  const vectorAbortRef = useRef<AbortController | null>(null);
+  const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
 
   const view = useMemo(() => {
@@ -909,6 +951,12 @@ export function MapCanvas({
     if (map.getLayer(CONTOUR_LAYER_ID)) {
       map.moveLayer(CONTOUR_LAYER_ID, "twf-labels");
     }
+    if (map.getLayer(VECTOR_FILL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
+      map.moveLayer(VECTOR_FILL_LAYER_ID, COASTLINE_LAYER_ID);
+    }
+    if (map.getLayer(VECTOR_LINE_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
+      map.moveLayer(VECTOR_LINE_LAYER_ID, COASTLINE_LAYER_ID);
+    }
     if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
     }
@@ -941,7 +989,7 @@ export function MapCanvas({
     let resizeRafId: number | null = null;
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: buildMapStyle(contourGeoJsonUrl, basemapMode),
+      style: buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode),
       center: view.center,
       zoom: view.zoom,
       minZoom: view.minZoom ?? 3,
@@ -988,6 +1036,8 @@ export function MapCanvas({
       }
       contourAbortRef.current?.abort();
       contourAbortRef.current = null;
+      vectorAbortRef.current?.abort();
+      vectorAbortRef.current = null;
       map.off("error", handleMapError as any);
       clearAnchorMarkers();
       gridWebglControllerRef.current?.remove(map);
@@ -995,7 +1045,7 @@ export function MapCanvas({
       mapRef.current = null;
       setIsLoaded(false);
     };
-  }, [basemapMode, clearAnchorMarkers, contourGeoJsonUrl, enforceLayerOrder, view.center, view.maxZoom, view.minZoom, view.zoom]);
+  }, [basemapMode, clearAnchorMarkers, contourGeoJsonUrl, enforceLayerOrder, vectorGeoJsonUrl, view.center, view.maxZoom, view.minZoom, view.zoom]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1011,16 +1061,18 @@ export function MapCanvas({
     const onStyleData = () => {
       controller?.ensureAttached(map, COASTLINE_LAYER_ID);
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
+      setLayerVisibility(map, VECTOR_FILL_LAYER_ID, Boolean(vectorGeoJsonUrl));
+      setLayerVisibility(map, VECTOR_LINE_LAYER_ID, Boolean(vectorGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
     map.once("styledata", onStyleData);
-    map.setStyle(buildMapStyle(contourGeoJsonUrl, basemapMode));
+    map.setStyle(buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode));
 
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded]);
+  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1095,6 +1147,81 @@ export function MapCanvas({
       }
     };
   }, [basemapMode, contourGeoJsonUrl, isLoaded]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    const source = map.getSource(VECTOR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (!source || typeof source.setData !== "function") {
+      return;
+    }
+
+    const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
+    const requestToken = ++vectorRequestTokenRef.current;
+    vectorAbortRef.current?.abort();
+    vectorAbortRef.current = null;
+    setLayerVisibility(map, VECTOR_FILL_LAYER_ID, Boolean(normalizedUrl));
+    setLayerVisibility(map, VECTOR_LINE_LAYER_ID, Boolean(normalizedUrl));
+
+    if (!normalizedUrl) {
+      source.setData(EMPTY_FEATURE_COLLECTION as any);
+      return;
+    }
+
+    const cached = vectorCacheRef.current.get(normalizedUrl);
+    if (cached) {
+      source.setData(cached as any);
+      return;
+    }
+
+    const controller = new AbortController();
+    vectorAbortRef.current = controller;
+
+    void fetch(normalizedUrl, {
+      credentials: "omit",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Vector request failed: ${response.status}`);
+        }
+        return (await response.json()) as GeoJSON.FeatureCollection;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted || vectorRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        vectorCacheRef.current.set(normalizedUrl, payload);
+        while (vectorCacheRef.current.size > 16) {
+          const oldestKey = vectorCacheRef.current.keys().next().value;
+          if (!oldestKey) {
+            break;
+          }
+          vectorCacheRef.current.delete(oldestKey);
+        }
+        source.setData(payload as any);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.warn("[map] vector fetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
+      })
+      .finally(() => {
+        if (vectorAbortRef.current === controller) {
+          vectorAbortRef.current = null;
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (vectorAbortRef.current === controller) {
+        vectorAbortRef.current = null;
+      }
+    };
+  }, [isLoaded, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;

@@ -51,8 +51,10 @@ import {
   deriveObservedSourceStatus,
   frameValidTime,
   formatObservedCompactTime,
+  formatValidTime,
   observedSourceStatusFromAvailability,
   runIdToIso,
+  validDayLabel,
   type TimeAxisMode,
 } from "@/lib/time-axis";
 import { readPermalink } from "@/lib/permalink-read";
@@ -233,6 +235,7 @@ const MODEL_ORDER_BY_ID: Record<string, number> = {
   nam: 1,
   nbm: 2,
   gfs: 3,
+  spc: 4,
 };
 
 function readBasemapModePreference(): BasemapMode {
@@ -287,9 +290,11 @@ function buildFallbackSharePayload(params: {
 }): SharePayload {
   const timeLabel = params.timeAxisMode === "observed"
     ? (params.validTimeISO ? `Observed ${formatObservedCompactTime(params.validTimeISO) ?? params.validTimeISO}` : "Observed time n/a")
-    : (Number.isFinite(params.forecastHour)
-      ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
-      : "FH n/a");
+    : params.timeAxisMode === "valid"
+      ? (params.validTimeISO ? `${validDayLabel(params.forecastHour)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}` : validDayLabel(params.forecastHour))
+      : (Number.isFinite(params.forecastHour)
+        ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
+        : "FH n/a");
   const summary = [params.modelLabel, params.runLabel, timeLabel, params.variableLabel]
     .map((part) => part.trim())
     .filter(Boolean)
@@ -607,6 +612,25 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
     bins_per_ptype: metaWithIds.bins_per_ptype,
   };
 
+  if (Array.isArray(meta.legend_entries) && meta.legend_entries.length > 0) {
+    const entries = meta.legend_entries
+      .map((entry) => ({
+        value: Number(entry.value),
+        color: String(entry.color ?? "").trim(),
+        label: typeof entry.label === "string" ? entry.label.trim() : undefined,
+      }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.color);
+    if (entries.length > 0) {
+      return {
+        title,
+        units,
+        entries,
+        opacity,
+        ...legendMetadata,
+      };
+    }
+  }
+
   // V3 sidecar format: meta.legend.stops = [[value, color], ...]
   const resolvedStops = meta.legend_stops ?? meta.legend?.stops;
   if (Array.isArray(resolvedStops) && resolvedStops.length > 0) {
@@ -701,6 +725,24 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
   }
 
   return null;
+}
+
+function buildVectorLayerUrl(params: {
+  apiRoot: string;
+  model: string;
+  run: string | null | undefined;
+  variable: string;
+  frame: FrameRow | null | undefined;
+  layerKey?: string;
+}): string | null {
+  const resolvedRun = String(params.run ?? "").trim();
+  const layerKey = String(params.layerKey ?? "primary").trim();
+  const fh = Number(params.frame?.fh);
+  const meta = extractLegendMeta(params.frame);
+  if (!resolvedRun || !Number.isFinite(fh) || !meta?.vector_layers || !meta.vector_layers[layerKey]) {
+    return null;
+  }
+  return `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
 }
 
 export default function App() {
@@ -926,6 +968,8 @@ export default function App() {
   const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
     ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid"])
     : [];
+  const selectionSupportsVector = selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("vector");
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
   const gridOnlySelection = selectionSupportsGrid;
@@ -1321,6 +1365,12 @@ export default function App() {
     }
     return gridFrameHours.every((fh) => Boolean(gridFrameByHour.get(fh)?.url));
   }, [gridFrameByHour, gridFrameHours]);
+  const canAnimateTimeline = useMemo(() => {
+    if (canUseGridPlayback) {
+      return true;
+    }
+    return selectableFrameHours.length > 1;
+  }, [canUseGridPlayback, selectableFrameHours]);
   const requestedGridDisplayHour = useMemo(() => {
     const requested = (isPlaying || isGridPreloadingForPlay || isScrubbing || isVariableSwitching)
       ? targetForecastHour
@@ -1586,6 +1636,19 @@ export default function App() {
   const contourGeoJsonUrl = useMemo(() => {
     return null;
   }, []);
+  const vectorGeoJsonUrl = useMemo(() => {
+    if (!selectionSupportsVector || !model || !variable) {
+      return null;
+    }
+    return buildVectorLayerUrl({
+      apiRoot,
+      model,
+      run: resolvedRunForRequests,
+      variable,
+      frame: currentFrame,
+      layerKey: "primary",
+    });
+  }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -2811,10 +2874,37 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (gridFrameHours.length === 0 && isPlaying) {
+    if (!isPlaying || canUseGridPlayback || selectableFrameHours.length <= 1) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const currentHour = Number.isFinite(forecastHourRef.current)
+        ? Number(forecastHourRef.current)
+        : selectableFrameHours[0];
+      const currentIndex = selectableFrameHours.indexOf(currentHour);
+      if (currentIndex < 0) {
+        setTargetForecastHour(selectableFrameHours[0]);
+        return;
+      }
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= selectableFrameHours.length) {
+        setIsPlaying(false);
+        return;
+      }
+      setTargetForecastHour(selectableFrameHours[nextIndex]);
+    }, AUTOPLAY_TICK_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [canUseGridPlayback, isPlaying, selectableFrameHours]);
+
+  useEffect(() => {
+    if (selectableFrameHours.length === 0 && isPlaying) {
       setIsPlaying(false);
     }
-  }, [gridFrameHours, isPlaying]);
+  }, [selectableFrameHours, isPlaying]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -2830,11 +2920,11 @@ export default function App() {
       setIsGridPreloadingForPlay(false);
       return;
     }
-    if (loading || gridFrameHours.length === 0) {
+    if (loading || selectableFrameHours.length === 0) {
       pendingLoopStartMetricRef.current = null;
       return;
     }
-    if (!canUseGridPlayback) {
+    if (!canAnimateTimeline) {
       pendingLoopStartMetricRef.current = null;
       setIsPlaying(false);
       setIsGridPreloadingForPlay(false);
@@ -2867,10 +2957,15 @@ export default function App() {
       setIsPlaying(false);
       setIsGridPreloadingForPlay(true);
       showTransientFrameStatus("Buffering grid frames");
+      return;
     }
+    setIsGridPreloadingForPlay(false);
+    setIsPlaying(true);
+    showTransientFrameStatus("Starting playback");
   }, [
     loading,
-    gridFrameHours.length,
+    selectableFrameHours.length,
+    canAnimateTimeline,
     canUseGridPlayback,
     gridPlaybackStartHour,
     isGridPlaybackStartReady,
@@ -2882,15 +2977,16 @@ export default function App() {
     region,
     targetForecastHour,
     forecastHour,
+    selectableFrameHours.length,
   ]);
 
   useEffect(() => {
-    if (isPlaying && !canUseGridPlayback) {
+    if (isPlaying && !canAnimateTimeline) {
       setIsPlaying(false);
       setIsGridPreloadingForPlay(false);
       showTransientFrameStatus("Animation unavailable for this selection");
     }
-  }, [canUseGridPlayback, isPlaying, showTransientFrameStatus]);
+  }, [canAnimateTimeline, isPlaying, showTransientFrameStatus]);
 
   const handleZoomRoutingSignal = useCallback((payload: { zoom: number; gestureActive: boolean }) => {
     setMapZoom(payload.zoom);
@@ -3234,7 +3330,7 @@ export default function App() {
       })
       .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
-    const style = buildMapStyle(contourGeoJsonUrl, basemapMode);
+    const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode);
 
     return {
       style,
@@ -3467,6 +3563,7 @@ export default function App() {
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
           contourGeoJsonUrl={contourGeoJsonUrl}
+          vectorGeoJsonUrl={vectorGeoJsonUrl}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}
           region={region}

@@ -43,20 +43,27 @@ function formatRunLabel(runId?: string): string {
   if (!normalized) return "Loading...";
   if (normalized.toLowerCase() === "latest") return "Latest";
 
-  const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
+  const runMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})?z$/i);
   if (runMatch) {
-    const [, year, month, day, hour] = runMatch;
-    const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), 0, 0));
+    const [, year, month, day, hour, minuteRaw] = runMatch;
+    const minute = Number(minuteRaw ?? "0");
+    const runDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), minute, 0));
     const dateLabel = new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
       timeZone: "UTC",
     }).format(runDate);
-    return `${hour}Z (${dateLabel})`;
+    const timeLabel = minute > 0 ? `${hour}:${String(minute).padStart(2, "0")}Z` : `${hour}Z`;
+    return `${timeLabel} (${dateLabel})`;
   }
 
-  const hourMatch = normalized.match(/_(\d{2})z$/i);
-  if (hourMatch) return `${hourMatch[1]}Z`;
+  const hourMatch = normalized.match(/_(\d{2})(\d{2})?z$/i);
+  if (hourMatch) {
+    const minute = Number(hourMatch[2] ?? "0");
+    return minute > 0
+      ? `${hourMatch[1]}:${String(minute).padStart(2, "0")}Z`
+      : `${hourMatch[1]}Z`;
+  }
   return normalized;
 }
 
@@ -206,6 +213,31 @@ export default function Models() {
           { k: "Domain", v: "CONUS, PNW" },
           { k: "Cadence", v: "Every 3 hours" },
           { k: "Horizon", v: "Extended range (11 days)" },
+        ],
+      },
+      {
+        id: "spc",
+        name: "SPC",
+        oneLiner: "Storm Prediction Center categorical convective outlooks, rendered as vector polygons for fast Day 1-3 risk inspection.",
+        pills: ["CONUS", "Days 1-3", "Latest issuance"],
+        bestFor: [
+          "Severe-weather risk area overview before diving into deterministic guidance",
+          "Fast Day 1 / Day 2 / Day 3 convective outlook comparisons",
+          "Communicating categorical risk areas with official SPC styling",
+          "Context-setting for mesoscale and convective forecasting workflows",
+        ],
+        limitations: [
+          "Categorical outlooks only in v1",
+          "Latest issuance only; no historical browse in the viewer",
+          "Not composited over deterministic model grids in this release",
+        ],
+        notes: [
+          "Backed by NOAA/SPC GIS polygons and published as immutable vector bundles per issuance.",
+        ],
+        specs: [
+          { k: "Domain", v: "CONUS" },
+          { k: "Cadence", v: "SPC issuance-driven" },
+          { k: "Horizon", v: "Day 1-3 convective outlooks" },
         ],
       },
     ],
