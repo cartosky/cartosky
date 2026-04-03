@@ -7,6 +7,7 @@ import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@
 import type { GridManifestResponse } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
+import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
@@ -622,7 +623,7 @@ type MapCanvasProps = {
   onGridFrameEvicted?: (frameUrl: string) => void;
   isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
-  onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
+  onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
 };
@@ -1644,8 +1645,31 @@ export function MapCanvas({
       }
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
+      const vectorFeature = map.queryRenderedFeatures(e.point, {
+        layers: [...VECTOR_FILL_LAYER_IDS],
+      })[0] as { properties?: Record<string, unknown> } | undefined;
+      const riskLabel = typeof vectorFeature?.properties?.risk_label === "string"
+        ? vectorFeature.properties.risk_label.trim()
+        : "";
+      const fillColor = typeof vectorFeature?.properties?.fill === "string"
+        ? vectorFeature.properties.fill.trim()
+        : null;
       canvas.style.cursor = onMapHoverRef.current ? "crosshair" : "";
-      onMapHoverRef.current?.(lat, lng, x, y);
+      onMapHoverRef.current?.(
+        lat,
+        lng,
+        x,
+        y,
+        riskLabel
+          ? {
+              kind: "label",
+              label: riskLabel,
+              color: fillColor,
+              x,
+              y,
+            }
+          : undefined,
+      );
     };
 
     const handleLeave = () => {

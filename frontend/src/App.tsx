@@ -1721,6 +1721,21 @@ export default function App() {
     varId: selectedModelSupportsSampling ? variable : "",
     fh: selectedModelSupportsSampling ? forecastHour : Number.NaN,
   });
+  const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);
+  const handleMapHover = useCallback((lat: number, lon: number, x: number, y: number, hoverTooltip?: Exclude<typeof tooltip, null>) => {
+    if (hoverTooltip?.kind === "label") {
+      setVectorHoverTooltip(hoverTooltip);
+      onHoverEnd();
+      return;
+    }
+    setVectorHoverTooltip(null);
+    onHover(lat, lon, x, y);
+  }, [onHover, onHoverEnd]);
+  const handleMapHoverEnd = useCallback(() => {
+    setVectorHoverTooltip(null);
+    onHoverEnd();
+  }, [onHoverEnd]);
+  const activeTooltip = vectorHoverTooltip ?? tooltip;
 
   useEffect(() => {
     const pendingVarSwitch = pendingVariableSwitchRef.current;
@@ -3615,8 +3630,8 @@ export default function App() {
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}
           onMapReady={handleMapReady}
-          onMapHover={onHover}
-          onMapHoverEnd={onHoverEnd}
+          onMapHover={handleMapHover}
+          onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
         />
@@ -3651,15 +3666,17 @@ export default function App() {
           </div>
         )}
 
-        {tooltip && (
+        {activeTooltip && (
           <div
             className="pointer-events-none absolute z-50 rounded-xl glass px-2.5 py-1.5 text-xs font-medium shadow-xl"
             style={{
-              left: tooltip.x + 14,
-              top: tooltip.y - 32,
+              left: activeTooltip.x + 14,
+              top: activeTooltip.y - 32,
             }}
           >
-            {tooltip.value.toFixed(1)} {tooltip.units}
+            {activeTooltip.kind === "sample"
+              ? `${activeTooltip.value.toFixed(1)} ${activeTooltip.units}`
+              : activeTooltip.label}
           </div>
         )}
 

@@ -60,8 +60,15 @@ const DEBOUNCE_MS = 80;
 // ── Hook ─────────────────────────────────────────────────────────────
 
 export type SampleTooltipState = {
+  kind: "sample";
   value: number;
   units: string;
+  x: number;
+  y: number;
+} | {
+  kind: "label";
+  label: string;
+  color?: string | null;
   x: number;
   y: number;
 } | null;
@@ -139,7 +146,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           if (!isTooltipVisibleSample(ctx, cached)) {
             setTooltip(null);
           } else {
-            setTooltip({ value: cached.value, units: cached.units, x, y });
+            setTooltip({ kind: "sample", value: cached.value, units: cached.units, x, y });
           }
           return;
         }
@@ -164,7 +171,7 @@ export function useSampleTooltip(ctx: SampleContext) {
               setTooltip(null);
               return;
             }
-            setTooltip({ value: result.value, units: result.units, x, y });
+            setTooltip({ kind: "sample", value: result.value, units: result.units, x, y });
           })
           .catch((error) => {
             // Silently drop errors — don't flash error state for hover
