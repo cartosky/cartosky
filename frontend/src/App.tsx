@@ -1176,16 +1176,22 @@ export default function App() {
     const controller = new AbortController();
     const resolveManifest = async () => {
       if (gridOnlySelection && run === "latest") {
-        // Try candidate runs in priority order and stop at the first valid
-        // manifest instead of waiting for every fallback candidate to settle.
-        for (const candidateRun of latestGridRunCandidates) {
-          const manifest = await fetchGridManifest(model, candidateRun, variable, { signal: controller.signal });
-          if (controller.signal.aborted) {
-            return;
-          }
-          if (manifest) {
-            setResolvedGridLatestRunId(candidateRun);
-            setGridManifest(manifest);
+        // Probe all candidate runs in parallel; pick the first (by priority
+        // order) that returns a valid manifest.
+        const results = await Promise.allSettled(
+          latestGridRunCandidates.map((candidateRun) =>
+            fetchGridManifest(model, candidateRun, variable, { signal: controller.signal })
+              .then((manifest) => ({ candidateRun, manifest })),
+          ),
+        );
+        if (controller.signal.aborted) {
+          return;
+        }
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (result.status === "fulfilled" && result.value.manifest) {
+            setResolvedGridLatestRunId(result.value.candidateRun);
+            setGridManifest(result.value.manifest);
             return;
           }
         }
@@ -2014,6 +2020,16 @@ export default function App() {
         setRun(requestedRun || "latest");
         setRuns([]);
         setRunManifest(null);
+
+        // Seed the grid run ref from capabilities so selectionKey avoids the
+        // "pending-grid" sentinel on first render.  This prevents the
+        // selectionKey from changing twice during init (pending → real), which
+        // would wipe gridReadyFrameUrlsRef and abort in-flight manifest fetches.
+        const bootstrapLatestRun =
+          capabilitiesData.availability?.[nextModel]?.latest_run ?? null;
+        if (bootstrapLatestRun && (!requestedRun || requestedRun === "latest")) {
+          lastResolvedGridRunRef.current = bootstrapLatestRun;
+        }
         setFrameRows([]);
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
