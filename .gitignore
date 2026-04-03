@@ -65,3 +65,4 @@ extract_colorbar.py
 .github/
 /.vscode/
 /.idea/
+/.playwright-mcp/

@@ -241,6 +241,8 @@ const MODEL_ORDER_BY_ID: Record<string, number> = {
   spc: 4,
 };
 
+const SPC_VECTOR_VARIABLE_IDS = new Set(["convective", "tornado_prob", "wind_prob", "hail_prob"]);
+
 function readBasemapModePreference(): BasemapMode {
   if (typeof window === "undefined") {
     return "light";
@@ -982,8 +984,13 @@ export default function App() {
   const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
     ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid"])
     : [];
-  const selectionSupportsVector = selectionCapabilitiesResolved
-    && selectedVariableRenderSubstrates.includes("vector");
+  const manifestBackedSpcVectorSelection = model === "spc"
+    && Boolean(variable)
+    && manifestVarIds.has(variable)
+    && SPC_VECTOR_VARIABLE_IDS.has(variable);
+  const selectionSupportsVector = (selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("vector"))
+    || manifestBackedSpcVectorSelection;
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
   const gridOnlySelection = selectionSupportsGrid;
@@ -1667,8 +1674,14 @@ export default function App() {
     if (!selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
       return [] as string[];
     }
+    const currentHour = Number.isFinite(forecastHour) ? Number(forecastHour) : Number(currentFrame?.fh);
+    const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
+    const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
+    const candidateRows = pivotIndex >= 0
+      ? orderedRows.filter((_, index) => Math.abs(index - pivotIndex) === 1)
+      : orderedRows.slice(1, 3);
     const urls: string[] = [];
-    for (const row of frameRows) {
+    for (const row of candidateRows) {
       const url = buildVectorLayerUrl({
         apiRoot,
         model,
@@ -1682,7 +1695,7 @@ export default function App() {
       }
     }
     return urls;
-  }, [apiRoot, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl]);
+  }, [apiRoot, currentFrame, forecastHour, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl]);
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
