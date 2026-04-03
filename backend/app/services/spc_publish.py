@@ -227,8 +227,6 @@ def _probability_percent_from_label(value: object) -> int | None:
 
 
 def _format_probability_hover_label(*, probability_name: str, percent: int | None, significant: bool) -> str:
-    if significant:
-        return f"Significant {probability_name} Area"
     if percent is None:
         return f"{probability_name} Probability"
     return f"{percent}% {probability_name} Probability"

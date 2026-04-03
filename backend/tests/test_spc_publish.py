@@ -296,7 +296,7 @@ def test_collect_latest_spc_products_includes_probability_products_and_skips_mis
     assert set(products.keys()) == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
     assert [frame.fh for frame in products["hail_prob"]] == [0]
     assert products["tornado_prob"][0].features[0]["properties"]["hover_label"] == "5% Tornado Probability"
-    assert products["tornado_prob"][0].features[1]["properties"]["hover_label"] == "Significant Tornado Area"
+    assert products["tornado_prob"][0].features[1]["properties"]["hover_label"] == "Tornado Probability"
     assert issue_time == datetime(2026, 4, 1, 6, 30, tzinfo=timezone.utc)
 
 
