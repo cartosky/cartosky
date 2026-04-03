@@ -118,34 +118,71 @@ def _parse_timestamp(props: dict, *candidate_keys: str) -> datetime | None:
         parsed = _coerce_datetime(props.get(key))
         if parsed is not None:
             return parsed
+        lowered = props.get(str(key).lower())
+        parsed = _coerce_datetime(lowered)
+        if parsed is not None:
+            return parsed
     return None
 
 
 def _risk_code_from_properties(props: dict) -> int | None:
-    for candidate in (props.get("DN"), props.get("RISK_CODE"), props.get("risk"), props.get("RISKLVL"), props.get("LEVEL")):
-        try:
-            code = int(candidate)
-        except (TypeError, ValueError):
-            continue
-        if code in SPC_RISK_STYLE_BY_CODE:
-            return code
-
-    label_text = str(props.get("LABEL") or props.get("LABEL2") or props.get("CATEGORY") or "").strip().lower()
+    label_text = str(
+        props.get("label")
+        or props.get("LABEL")
+        or props.get("label2")
+        or props.get("LABEL2")
+        or props.get("CATEGORY")
+        or ""
+    ).strip().lower()
     label_map = {
         "tstm": 1,
         "t-storms": 1,
         "thunderstorms": 1,
+        "general thunderstorms risk": 1,
         "mrgl": 2,
         "marginal": 2,
+        "marginal risk": 2,
         "slgt": 3,
         "slight": 3,
+        "slight risk": 3,
         "enh": 4,
         "enhanced": 4,
+        "enhanced risk": 4,
         "mdt": 5,
         "moderate": 5,
+        "moderate risk": 5,
         "high": 6,
+        "high risk": 6,
     }
-    return label_map.get(label_text)
+    if label_text in label_map:
+        return label_map[label_text]
+
+    dn_map = {
+        1: 1,
+        2: 1,
+        3: 2,
+        4: 3,
+        5: 4,
+        6: 5,
+        7: 6,
+    }
+    for candidate in (
+        props.get("dn"),
+        props.get("DN"),
+        props.get("RISK_CODE"),
+        props.get("risk"),
+        props.get("RISKLVL"),
+        props.get("LEVEL"),
+    ):
+        try:
+            code = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        mapped = dn_map.get(code)
+        if mapped in SPC_RISK_STYLE_BY_CODE:
+            return mapped
+
+    return None
 
 
 def normalize_spc_geojson(payload: dict, *, day_label: str, fh: int) -> SPCFramePayload:
@@ -186,8 +223,24 @@ def normalize_spc_geojson(payload: dict, *, day_label: str, fh: int) -> SPCFrame
                 "geometry": geometry,
             }
         )
-        valid_time = valid_time or _parse_timestamp(props, "VALID", "VALID2", "VALID_TIME", "VALIDTIME", "prodValid")
-        issue_time = issue_time or _parse_timestamp(props, "ISSUE", "ISSUE2", "ISSUED", "ISSUE_TIME", "productIssued")
+        valid_time = valid_time or _parse_timestamp(
+            props,
+            "valid",
+            "VALID",
+            "VALID2",
+            "VALID_TIME",
+            "VALIDTIME",
+            "prodValid",
+        )
+        issue_time = issue_time or _parse_timestamp(
+            props,
+            "issue",
+            "ISSUE",
+            "ISSUE2",
+            "ISSUED",
+            "ISSUE_TIME",
+            "productIssued",
+        )
 
     if not normalized_features:
         raise SPCPublishError(f"SPC {day_label} payload had no recognized categorical features")

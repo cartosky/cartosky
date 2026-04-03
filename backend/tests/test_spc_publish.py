@@ -20,6 +20,8 @@ def test_normalize_spc_geojson_maps_risks_and_orders_features() -> None:
                 "type": "Feature",
                 "properties": {
                     "DN": 5,
+                    "label": "ENH",
+                    "label2": "Enhanced Risk",
                     "VALID": "2026-03-30T00:00:00Z",
                     "ISSUE": "2026-03-29T18:00:00Z",
                 },
@@ -32,6 +34,8 @@ def test_normalize_spc_geojson_maps_risks_and_orders_features() -> None:
                 "type": "Feature",
                 "properties": {
                     "DN": 2,
+                    "label": "TSTM",
+                    "label2": "General Thunderstorms Risk",
                     "VALID": "2026-03-30T00:00:00Z",
                     "ISSUE": "2026-03-29T18:00:00Z",
                 },
@@ -49,10 +53,10 @@ def test_normalize_spc_geojson_maps_risks_and_orders_features() -> None:
     assert frame.day_label == "Day 1"
     assert frame.issue_time == datetime(2026, 3, 29, 18, 0, tzinfo=timezone.utc)
     assert frame.valid_time == datetime(2026, 3, 30, 0, 0, tzinfo=timezone.utc)
-    assert [feature["properties"]["risk_code"] for feature in frame.features] == [2, 5]
-    assert [feature["properties"]["risk_label"] for feature in frame.features] == ["Marginal", "Moderate"]
-    assert frame.features[0]["properties"]["fill"] == "#008000"
-    assert frame.features[1]["properties"]["fill"] == "#FF0000"
+    assert [feature["properties"]["risk_code"] for feature in frame.features] == [1, 4]
+    assert [feature["properties"]["risk_label"] for feature in frame.features] == ["T-Storms", "Enhanced"]
+    assert frame.features[0]["properties"]["fill"] == "#808080"
+    assert frame.features[1]["properties"]["fill"] == "#FFA500"
     assert all(feature["properties"]["stroke"] == "#000000" for feature in frame.features)
 
 
