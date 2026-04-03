@@ -571,6 +571,7 @@ type MapCanvasProps = {
   gridActive?: boolean;
   contourGeoJsonUrl?: string | null;
   vectorGeoJsonUrl?: string | null;
+  vectorPrefetchUrls?: string[];
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
   showZoomControls?: boolean;
@@ -604,6 +605,7 @@ export function MapCanvas({
   gridActive = false,
   contourGeoJsonUrl,
   vectorGeoJsonUrl,
+  vectorPrefetchUrls = [],
   anchorGeoJson = null,
   pointLabelsEnabled = true,
   showZoomControls = false,
@@ -1229,6 +1231,55 @@ export function MapCanvas({
       }
     };
   }, [isLoaded, vectorGeoJsonUrl]);
+
+  useEffect(() => {
+    if (!isLoaded || vectorPrefetchUrls.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    for (const rawUrl of vectorPrefetchUrls) {
+      const normalizedUrl = String(rawUrl ?? "").trim();
+      if (!normalizedUrl || vectorCacheRef.current.has(normalizedUrl)) {
+        continue;
+      }
+
+      void fetch(normalizedUrl, {
+        credentials: "omit",
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Vector prefetch failed: ${response.status}`);
+          }
+          return (await response.json()) as GeoJSON.FeatureCollection;
+        })
+        .then((payload) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          vectorCacheRef.current.set(normalizedUrl, payload);
+          while (vectorCacheRef.current.size > 24) {
+            const oldestKey = vectorCacheRef.current.keys().next().value;
+            if (!oldestKey) {
+              break;
+            }
+            vectorCacheRef.current.delete(oldestKey);
+          }
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          console.warn("[map] vector prefetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
+        });
+    }
+
+    return () => {
+      controller.abort();
+    };
+  }, [isLoaded, vectorPrefetchUrls]);
 
   useEffect(() => {
     const map = mapRef.current;

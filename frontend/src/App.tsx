@@ -1651,6 +1651,26 @@ export default function App() {
       layerKey: "primary",
     });
   }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
+  const vectorPrefetchUrls = useMemo(() => {
+    if (!selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
+      return [] as string[];
+    }
+    const urls: string[] = [];
+    for (const row of frameRows) {
+      const url = buildVectorLayerUrl({
+        apiRoot,
+        model,
+        run: resolvedRunForRequests,
+        variable,
+        frame: row,
+        layerKey: "primary",
+      });
+      if (url && url !== vectorGeoJsonUrl && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+    return urls;
+  }, [apiRoot, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl]);
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -3566,6 +3586,7 @@ export default function App() {
           gridActive={isGridLowMidActive}
           contourGeoJsonUrl={contourGeoJsonUrl}
           vectorGeoJsonUrl={vectorGeoJsonUrl}
+          vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}
           region={region}
