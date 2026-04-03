@@ -432,6 +432,8 @@ export class GridWebglLayerController {
   private transitionStartedAt = 0;
   private transitionDurationMs = 0;
   private quadSignature: string | null = null;
+  private pendingAttachMap: maplibregl.Map | null = null;
+  private pendingAttachListener: (() => void) | null = null;
 
   createLayer(): maplibregl.CustomLayerInterface {
     return {
@@ -461,8 +463,14 @@ export class GridWebglLayerController {
 
   ensureAttached(map: maplibregl.Map, beforeId?: string) {
     if (map.getLayer(GRID_WEBGL_LAYER_ID)) {
+      this.clearPendingAttach(map);
       return;
     }
+    if (!map.isStyleLoaded()) {
+      this.queueAttachWhenStyleReady(map, beforeId);
+      return;
+    }
+    this.clearPendingAttach(map);
     const resolvedBeforeId = beforeId && map.getLayer(beforeId) ? beforeId : undefined;
     map.addLayer(this.createLayer(), resolvedBeforeId);
   }
@@ -542,10 +550,40 @@ export class GridWebglLayerController {
 
   remove(map?: maplibregl.Map | null) {
     const target = map ?? this.map;
+    this.clearPendingAttach(target ?? undefined);
     if (target?.getLayer(GRID_WEBGL_LAYER_ID)) {
       target.removeLayer(GRID_WEBGL_LAYER_ID);
     }
     this.disposeGlResources();
+  }
+
+  private queueAttachWhenStyleReady(map: maplibregl.Map, beforeId?: string) {
+    if (this.pendingAttachMap === map && this.pendingAttachListener) {
+      return;
+    }
+    this.clearPendingAttach();
+    const retryAttach = () => {
+      this.pendingAttachMap = null;
+      this.pendingAttachListener = null;
+      this.ensureAttached(map, beforeId);
+    };
+    this.pendingAttachMap = map;
+    this.pendingAttachListener = retryAttach;
+    map.once("style.load", retryAttach);
+  }
+
+  private clearPendingAttach(map?: maplibregl.Map) {
+    if (!this.pendingAttachMap || !this.pendingAttachListener) {
+      this.pendingAttachMap = null;
+      this.pendingAttachListener = null;
+      return;
+    }
+    if (map && this.pendingAttachMap !== map) {
+      return;
+    }
+    this.pendingAttachMap.off("style.load", this.pendingAttachListener);
+    this.pendingAttachMap = null;
+    this.pendingAttachListener = null;
   }
 
   private buildFrameSignature(frameUrl: string | null): string | null {

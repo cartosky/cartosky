@@ -1008,17 +1008,17 @@ export function MapCanvas({
 
     lastAppliedBasemapModeRef.current = basemapMode;
     const controller = gridWebglControllerRef.current;
-    const onStyleData = () => {
+    const onStyleLoad = () => {
       controller?.ensureAttached(map, COASTLINE_LAYER_ID);
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
-    map.once("styledata", onStyleData);
+    map.once("style.load", onStyleLoad);
     map.setStyle(buildMapStyle(contourGeoJsonUrl, basemapMode));
 
     return () => {
-      map.off("styledata", onStyleData);
+      map.off("style.load", onStyleLoad);
     };
   }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded]);
 
@@ -1217,6 +1217,9 @@ export function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
+      return;
+    }
+    if (!map.isStyleLoaded()) {
       return;
     }
     enforceLayerOrder(map);
