@@ -1656,9 +1656,18 @@ export function MapCanvas({
       }
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
-      const vectorFeature = map.queryRenderedFeatures(e.point, {
+      const vectorFeatures = map.queryRenderedFeatures(e.point, {
         layers: [...VECTOR_FILL_LAYER_IDS],
-      })[0] as { properties?: Record<string, unknown> } | undefined;
+      }) as Array<{ properties?: Record<string, unknown> }>;
+      const vectorFeature = vectorFeatures.find((feature) => {
+        const hover = typeof feature?.properties?.hover_label === "string"
+          ? feature.properties.hover_label.trim()
+          : "";
+        const risk = typeof feature?.properties?.risk_label === "string"
+          ? feature.properties.risk_label.trim()
+          : "";
+        return /\d+%/.test(hover) || /\d+%/.test(risk);
+      }) ?? vectorFeatures[0];
       const hoverLabel = typeof vectorFeature?.properties?.hover_label === "string"
         ? vectorFeature.properties.hover_label.trim()
         : "";
