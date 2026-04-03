@@ -23,7 +23,7 @@ export function latestRunLabel(runId: string | null, timeAxisMode: TimeAxisMode 
     return "Latest";
   }
   if (timeAxisMode === "valid") {
-    return `Latest (Issued ${formatValidRunIssuedLabel(runId)})`;
+    return `Issued ${formatValidRunIssuedLabel(runId)}`;
   }
   return `Latest (${formatRunLabel(runId, timeAxisMode)})`;
 }

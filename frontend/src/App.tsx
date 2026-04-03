@@ -602,7 +602,10 @@ function buildLegend(meta: LegendMeta | null | undefined, opacity: number): Lege
   }
   const metaWithIds = meta as LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string };
   const isPrecipPtype = isPrecipPtypeLegendMeta(metaWithIds);
-  const baseTitle = meta.legend_title ?? meta.display_name ?? "Legend";
+  const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
+  const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
+    ? "Legend"
+    : rawTitle;
   const title = isPrecipPtype ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
   const units = normalizeLegendUnits(meta.units, metaWithIds);
   const legendMetadata = {

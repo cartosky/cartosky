@@ -422,7 +422,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                   : null
               }
               onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-              triggerClassName="min-w-[142px] max-w-[142px] rounded-full border-white/10 bg-white/8 px-3"
+              triggerClassName="min-w-[210px] max-w-[210px] rounded-full border-white/10 bg-white/8 px-3"
             />
 
             <ToolbarSelect
