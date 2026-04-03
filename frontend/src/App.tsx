@@ -1674,6 +1674,9 @@ export default function App() {
     if (!selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
       return [] as string[];
     }
+    if (model === "spc") {
+      return [] as string[];
+    }
     const currentHour = Number.isFinite(forecastHour) ? Number(forecastHour) : Number(currentFrame?.fh);
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
     const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
