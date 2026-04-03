@@ -1176,22 +1176,16 @@ export default function App() {
     const controller = new AbortController();
     const resolveManifest = async () => {
       if (gridOnlySelection && run === "latest") {
-        // Probe all candidate runs in parallel; pick the first (by priority
-        // order) that returns a valid manifest.
-        const results = await Promise.allSettled(
-          latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, variable, { signal: controller.signal })
-              .then((manifest) => ({ candidateRun, manifest })),
-          ),
-        );
-        if (controller.signal.aborted) {
-          return;
-        }
-        for (let i = 0; i < results.length; i++) {
-          const result = results[i];
-          if (result.status === "fulfilled" && result.value.manifest) {
-            setResolvedGridLatestRunId(result.value.candidateRun);
-            setGridManifest(result.value.manifest);
+        // Try candidate runs in priority order and stop at the first valid
+        // manifest instead of waiting for every fallback candidate to settle.
+        for (const candidateRun of latestGridRunCandidates) {
+          const manifest = await fetchGridManifest(model, candidateRun, variable, { signal: controller.signal });
+          if (controller.signal.aborted) {
+            return;
+          }
+          if (manifest) {
+            setResolvedGridLatestRunId(candidateRun);
+            setGridManifest(manifest);
             return;
           }
         }
