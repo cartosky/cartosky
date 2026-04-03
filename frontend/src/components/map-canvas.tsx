@@ -1458,45 +1458,47 @@ export function MapCanvas({
     }
 
     const controller = new AbortController();
+    const startPrefetchTimer = window.setTimeout(() => {
+      for (const rawUrl of vectorPrefetchUrls) {
+        const normalizedUrl = String(rawUrl ?? "").trim();
+        if (!normalizedUrl || vectorCacheRef.current.has(normalizedUrl)) {
+          continue;
+        }
 
-    for (const rawUrl of vectorPrefetchUrls) {
-      const normalizedUrl = String(rawUrl ?? "").trim();
-      if (!normalizedUrl || vectorCacheRef.current.has(normalizedUrl)) {
-        continue;
-      }
-
-      void fetch(normalizedUrl, {
-        credentials: "omit",
-        signal: controller.signal,
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            throw new Error(`Vector prefetch failed: ${response.status}`);
-          }
-          return (await response.json()) as GeoJSON.FeatureCollection;
+        void fetch(normalizedUrl, {
+          credentials: "omit",
+          signal: controller.signal,
         })
-        .then((payload) => {
-          if (controller.signal.aborted) {
-            return;
-          }
-          vectorCacheRef.current.set(normalizedUrl, payload);
-          while (vectorCacheRef.current.size > 24) {
-            const oldestKey = vectorCacheRef.current.keys().next().value;
-            if (!oldestKey) {
-              break;
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`Vector prefetch failed: ${response.status}`);
             }
-            vectorCacheRef.current.delete(oldestKey);
-          }
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) {
-            return;
-          }
-          console.warn("[map] vector prefetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
-        });
-    }
+            return (await response.json()) as GeoJSON.FeatureCollection;
+          })
+          .then((payload) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            vectorCacheRef.current.set(normalizedUrl, payload);
+            while (vectorCacheRef.current.size > 24) {
+              const oldestKey = vectorCacheRef.current.keys().next().value;
+              if (!oldestKey) {
+                break;
+              }
+              vectorCacheRef.current.delete(oldestKey);
+            }
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            console.warn("[map] vector prefetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
+          });
+      }
+    }, 350);
 
     return () => {
+      window.clearTimeout(startPrefetchTimer);
       controller.abort();
     };
   }, [isLoaded, vectorGeoJsonUrl, vectorPrefetchUrls]);

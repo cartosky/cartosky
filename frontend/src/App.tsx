@@ -401,13 +401,21 @@ function capabilityVarsForManifest(
   }
   const manifestKeys = Object.keys(manifestVars);
   if (manifestKeys.length === 0) {
-    return [];
+    return capabilityVars;
   }
   const manifestSet = new Set(manifestKeys);
-  const known = capabilityVars.filter((entry) => manifestSet.has(entry.id));
-  const knownSet = new Set(known.map((entry) => entry.id));
+  const known = capabilityVars;
+  const knownSet = new Set(capabilityVars.map((entry) => entry.id));
   const extras = normalizeManifestVarRows(manifestVars).filter((entry) => !knownSet.has(entry.id));
-  return [...known, ...extras];
+  const orderedExtras = extras.sort((a, b) => {
+    const aInManifest = manifestSet.has(a.id) ? 0 : 1;
+    const bInManifest = manifestSet.has(b.id) ? 0 : 1;
+    if (aInManifest !== bInManifest) {
+      return aInManifest - bInManifest;
+    }
+    return a.id.localeCompare(b.id);
+  });
+  return [...known, ...orderedExtras];
 }
 
 function normalizeManifestVarRows(
