@@ -432,6 +432,20 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
             "page": "/viewer",
             "meta": {"cf_cache_status": "BYPASS"},
         },
+        {
+            "metric_name": "grid_binary_fetch_duration",
+            "metric_value": 640.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-4",
+            "model_id": "mrms",
+            "variable_id": "reflectivity",
+            "run_id": "latest",
+            "device_type": "desktop",
+            "viewport_bucket": "lg",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "MISS"},
+        },
     ]
 
     for payload in payloads:
@@ -463,6 +477,11 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
     sample_metric = next(item for item in body["metrics"] if item["metric_name"] == "sample_request_duration")
     assert sample_metric["summary"]["count"] == 1
     assert sample_metric["by_cf_cache_status"][0]["key"] == "BYPASS"
+
+    grid_metric = next(item for item in body["metrics"] if item["metric_name"] == "grid_binary_fetch_duration")
+    assert grid_metric["label"] == "Grid Binary"
+    assert grid_metric["summary"]["count"] == 1
+    assert grid_metric["by_cf_cache_status"][0]["key"] == "MISS"
 
 
 async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:

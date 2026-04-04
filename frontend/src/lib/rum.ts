@@ -173,6 +173,7 @@ export function trackRumDiagnosticMetric(params: {
     | "regions_fetch_duration"
     | "frames_fetch_duration"
     | "grid_manifest_fetch_duration"
+    | "grid_binary_fetch_duration"
     | "sample_request_duration"
     | "sample_batch_request_duration"
     | "contour_fetch_duration"

@@ -2,6 +2,7 @@ import maplibregl from "maplibre-gl";
 
 import type { LegendPayload } from "@/components/map-legend";
 import type { GridManifestResponse } from "@/lib/api";
+import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
 
@@ -993,8 +994,24 @@ export class GridWebglLayerController {
     }
     const abortController = new AbortController();
     this.frameFetchAbortControllers.set(frameUrl, abortController);
+    const startedAtMs = startNetworkTimer();
     const request = fetch(frameUrl, { credentials: "omit", signal: abortController.signal })
       .then(async (response) => {
+        trackNetworkFetchDuration({
+          metric_name: "grid_binary_fetch_duration",
+          started_at_ms: startedAtMs,
+          response,
+          model_id: this.manifest?.model ?? null,
+          variable_id: this.manifest?.var ?? null,
+          run_id: this.manifest?.run ?? null,
+          forecast_hour: this.frameHour,
+          meta: {
+            frame_url: frameUrl,
+            grid_width: this.manifest?.grid?.width ?? null,
+            grid_height: this.manifest?.grid?.height ?? null,
+            selection_key: this.selectionKey || null,
+          },
+        });
         if (!response.ok) {
           throw new Error(`Grid frame request failed: ${response.status}`);
         }

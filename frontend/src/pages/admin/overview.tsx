@@ -190,6 +190,7 @@ const NETWORK_P95_TARGETS: Partial<Record<NetworkDiagnosticMetricName, number>> 
   manifest_fetch_duration: 600,
   frames_fetch_duration: 650,
   grid_manifest_fetch_duration: 500,
+  grid_binary_fetch_duration: 1200,
   sample_request_duration: 450,
   sample_batch_request_duration: 700,
   contour_fetch_duration: 500,
@@ -198,8 +199,8 @@ const NETWORK_P95_TARGETS: Partial<Record<NetworkDiagnosticMetricName, number>> 
 
 const NETWORK_CARD_METRICS: NetworkDiagnosticMetricName[] = [
   "bootstrap_fetch_duration",
+  "grid_binary_fetch_duration",
   "frames_fetch_duration",
-  "grid_manifest_fetch_duration",
   "sample_request_duration",
 ];
 
