@@ -37,6 +37,18 @@ function readBooleanEnv(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+function readNumberEnv(value: unknown, fallback: number, min: number, max: number): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, parsed));
+}
+
 export function isDeferredNonCriticalBootstrapEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_DEFER_NON_CRITICAL_BOOTSTRAP, true);
 }
@@ -51,6 +63,10 @@ export function isWebVitalsEnabled(): boolean {
 
 export function isRumEnabled(): boolean {
   return readBooleanEnv(import.meta.env.VITE_CARTOSKY_RUM_ENABLED, false);
+}
+
+export function getRumDiagnosticsSampleRate(): number {
+  return readNumberEnv(import.meta.env.VITE_CARTOSKY_RUM_DIAGNOSTICS_SAMPLE_RATE, 1, 0, 1);
 }
 
 export function isPostHogEnabled(): boolean {

@@ -1,7 +1,5 @@
-import { isRumEnabled, isWebVitalsEnabled } from "@/lib/config";
+import { getRumDiagnosticsSampleRate, isRumEnabled, isWebVitalsEnabled } from "@/lib/config";
 import { getTelemetrySessionId, isSampledSession, trackRumMetric } from "@/lib/telemetry";
-
-const RUM_SAMPLE_RATE = 0.1;
 
 let initialized = false;
 
@@ -164,7 +162,7 @@ export function initRumTelemetry(): void {
 }
 
 export function shouldTrackRumDiagnostics(): boolean {
-  return isRumEnabled() && isSampledSession(RUM_SAMPLE_RATE);
+  return isRumEnabled() && isSampledSession(getRumDiagnosticsSampleRate());
 }
 
 export function trackRumDiagnosticMetric(params: {
@@ -198,6 +196,6 @@ export function trackRumDiagnosticMetric(params: {
   }
   trackRumMetric({
     ...params,
-    sample_rate: params.sample_rate ?? RUM_SAMPLE_RATE,
+    sample_rate: params.sample_rate ?? getRumDiagnosticsSampleRate(),
   });
 }
