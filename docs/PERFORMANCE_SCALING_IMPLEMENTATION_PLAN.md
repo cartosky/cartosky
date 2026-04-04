@@ -262,11 +262,15 @@ If process supervision and operational controls matter more:
 
 ### Phase 1B: Serve Grid Artifacts Without Going Through Python
 
+#### Current Status
+
+Repo support complete. Backend can now offload validated grid binaries through nginx via `X-Accel-Redirect`, and the repo includes an example nginx internal location. Production nginx rollout and live verification still pending.
+
 #### Tasks
 
-1. Design an nginx-backed path for immutable grid artifacts.
+1. Deploy the nginx internal location for immutable grid artifacts.
 2. Keep the frontend contract stable if possible by preserving the current `/api/v4/grid/...` route shape.
-3. Make nginx serve files directly from disk using a mapped location, alias, or internal redirect strategy.
+3. Make nginx serve files directly from disk using the new internal redirect strategy.
 4. Keep authentication-sensitive routes on the proxied API path.
 5. Preserve immutable cache behavior for completed runs.
 

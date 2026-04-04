@@ -158,6 +158,13 @@ def _env_float(*names: str, default: float, min_value: float = 0.0) -> float:
     return parsed if parsed >= min_value else default
 
 
+GRID_ACCEL_REDIRECT_ENABLED = _env_bool("CARTOSKY_GRID_ACCEL_REDIRECT_ENABLED", default=False)
+GRID_ACCEL_REDIRECT_PREFIX = _normalized_path_prefix(
+    _env_value("CARTOSKY_GRID_ACCEL_REDIRECT_PREFIX", default="/_cartosky_grid_internal/"),
+    default="/_cartosky_grid_internal/",
+)
+
+
 def _legacy_telemetry_write_enabled() -> bool:
     return _env_bool("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", default=True)
 
@@ -3230,13 +3237,29 @@ def _get_grid_file(model: str, run: str, var: str, filename: str):
             ("grid_file_total", (time.perf_counter() - started_at) * 1000.0),
         ]
     )
+    headers = {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Server-Timing": timing_header,
+    }
+    if GRID_ACCEL_REDIRECT_ENABLED:
+        try:
+            relative_candidate = candidate.resolve().relative_to(PUBLISHED_ROOT.resolve())
+        except ValueError:
+            logger.warning("Grid artifact fell outside published root; falling back to FileResponse: %s", candidate)
+        else:
+            # Let nginx serve validated immutable grid artifacts directly from disk.
+            return Response(
+                status_code=200,
+                media_type="application/octet-stream",
+                headers={
+                    **headers,
+                    "X-Accel-Redirect": f"{GRID_ACCEL_REDIRECT_PREFIX}{relative_candidate.as_posix()}",
+                },
+            )
     return FileResponse(
         candidate,
         media_type="application/octet-stream",
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "Server-Timing": timing_header,
-        },
+        headers=headers,
     )
 
 

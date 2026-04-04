@@ -826,6 +826,25 @@ async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClie
     assert encoded.size == 4
 
 
+async def test_grid_frame_endpoint_can_use_nginx_accel_redirect(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_module, "GRID_ACCEL_REDIRECT_ENABLED", True)
+    monkeypatch.setattr(main_module, "GRID_ACCEL_REDIRECT_PREFIX", "/_cartosky_grid_internal/")
+
+    response = await client.get("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "grid_file_total;dur=" in response.headers.get("server-timing", "")
+    assert (
+        response.headers["x-accel-redirect"]
+        == "/_cartosky_grid_internal/hrrr/20260330_12z/tmp2m/grid/fh000.l0.u16.bin"
+    )
+    assert response.content == b""
+
+
 async def test_grid_frame_endpoint_serves_legacy_grid_v1_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_root = tmp_path / "data"
     manifests_root = data_root / "manifests"

@@ -1,0 +1,19 @@
+# Insert this location block inside the existing `server {}` for `api.cartosky.com`
+# after proxy locations are defined. It must stay `internal` so clients cannot hit
+# it directly; the API returns `X-Accel-Redirect` only after validating the file.
+#
+# This alias path must match `CARTOSKY_DATA_ROOT/published/`.
+# This URI prefix must match `CARTOSKY_GRID_ACCEL_REDIRECT_PREFIX`.
+
+location ^~ /_cartosky_grid_internal/ {
+    internal;
+    alias /opt/cartosky/data/published/;
+
+    default_type application/octet-stream;
+
+    # These files are immutable published artifacts. Avoid recompressing origin
+    # fills here; Cloudflare can still cache and serve them at the edge.
+    gzip off;
+
+    add_header Cross-Origin-Resource-Policy "cross-origin" always;
+}
