@@ -380,6 +380,27 @@ async def test_capabilities_availability_readiness_fields(client: httpx.AsyncCli
     assert gfs["latest_run_ready_frame_count"] == 1
 
 
+async def test_capabilities_if_none_match_short_circuits_payload_build(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = await client.get("/api/v4/capabilities")
+    assert initial.status_code == 200
+    etag = initial.headers.get("etag")
+    assert isinstance(etag, str)
+
+    def _unexpected_payload_build(*args, **kwargs) -> dict[str, object]:
+        raise AssertionError("capabilities payload should not be rebuilt for matching ETag")
+
+    monkeypatch.setattr(main_module, "_build_capabilities_payload_for_models", _unexpected_payload_build)
+
+    response = await client.get("/api/v4/capabilities", headers={"If-None-Match": etag})
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response.headers.get("etag") == etag
+
+
 async def test_latest_run_skips_newer_grid_unsupported_published_run(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/gfs/latest/tmp2m/grid-manifest")
 
@@ -414,6 +435,34 @@ async def test_bootstrap_endpoint_includes_selection_and_frames(client: httpx.As
     assert payload["frames"]
     server_timing = response.headers.get("server-timing", "")
     assert "bootstrap_total;dur=" in server_timing
+
+
+async def test_bootstrap_if_none_match_short_circuits_payload_and_frame_build(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = await client.get("/api/v4/bootstrap?model=hrrr&run=latest&var=radar_ptype&region=conus")
+    assert initial.status_code == 200
+    etag = initial.headers.get("etag")
+    assert isinstance(etag, str)
+
+    def _unexpected_payload_build(*args, **kwargs):
+        raise AssertionError("bootstrap capabilities payload should not be rebuilt for matching ETag")
+
+    def _unexpected_sidecar(*args, **kwargs):
+        raise AssertionError("bootstrap frame sidecars should not be loaded for matching ETag")
+
+    monkeypatch.setattr(main_module, "_build_capabilities_payload_for_models", _unexpected_payload_build)
+    monkeypatch.setattr(main_module, "_resolve_sidecar", _unexpected_sidecar)
+
+    response = await client.get(
+        "/api/v4/bootstrap?model=hrrr&run=latest&var=radar_ptype&region=conus",
+        headers={"If-None-Match": etag},
+    )
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response.headers.get("etag") == etag
 
 
 async def test_region_presets_include_server_timing(client: httpx.AsyncClient) -> None:

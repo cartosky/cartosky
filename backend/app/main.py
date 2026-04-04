@@ -381,6 +381,11 @@ def _make_etag(payload: object) -> str:
     return f'"{digest}"'
 
 
+def _make_etag_from_parts(*parts: object) -> str:
+    digest = hashlib.md5(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return f'"{digest}"'
+
+
 def _maybe_304(request: Request, *, etag: str, cache_control: str) -> Response | None:
     inm = request.headers.get("if-none-match")
     if _etag_matches(inm, etag):
@@ -2217,19 +2222,186 @@ def _refresh_prometheus_gauges() -> None:
 
 
 def _build_capabilities_payload() -> dict[str, Any]:
+    return _build_capabilities_payload_for_models(list_model_capabilities())
+
+
+def _build_capabilities_payload_for_models(
+    capabilities_by_model: dict[str, Any],
+    *,
+    availability: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    model_catalog = {
+        model_id: _serialize_model_capability(model_id, capability)
+        for model_id, capability in sorted(capabilities_by_model.items(), key=lambda item: item[0])
+    }
+    supported_models = sorted(model_catalog.keys())
+    resolved_availability = (
+        availability if availability is not None else _availability_for_models(supported_models, capabilities_by_model)
+    )
+    return {
+        "contract_version": CAPABILITIES_CONTRACT_VERSION,
+        "supported_models": supported_models,
+        "model_catalog": model_catalog,
+        "availability": resolved_availability,
+    }
+
+
+@lru_cache(maxsize=1)
+def _capabilities_catalog_signature() -> str:
     capabilities_by_model = list_model_capabilities()
     model_catalog = {
         model_id: _serialize_model_capability(model_id, capability)
         for model_id, capability in sorted(capabilities_by_model.items(), key=lambda item: item[0])
     }
     supported_models = sorted(model_catalog.keys())
-    availability = _availability_for_models(supported_models, capabilities_by_model)
+    return _make_etag_from_parts(CAPABILITIES_CONTRACT_VERSION, supported_models, model_catalog)
+
+
+def _capabilities_state_etag(
+    capabilities_by_model: dict[str, Any],
+    availability: dict[str, dict[str, Any]],
+) -> str:
+    observed_minute_bucket = int(time.time() // 60) if any(
+        is_observed_model_capability(capability) for capability in capabilities_by_model.values()
+    ) else None
+    return _make_etag_from_parts(
+        CAPABILITIES_CONTRACT_VERSION,
+        _capabilities_catalog_signature(),
+        availability,
+        observed_minute_bucket,
+    )
+
+
+def _model_default_var(model_capability: Any | None) -> str:
+    if model_capability is None:
+        return ""
+    defaults = getattr(model_capability, "ui_defaults", {}) or {}
+    return str(defaults.get("default_var_key") or "").strip()
+
+
+def _model_canonical_region(model_capability: Any | None) -> str:
+    if model_capability is None:
+        return "conus"
+    canonical_region = str(getattr(model_capability, "canonical_region", "") or "").strip().lower()
+    return canonical_region or "conus"
+
+
+def _path_mtime_ns(path: Path) -> int:
+    try:
+        return int(path.stat().st_mtime_ns)
+    except OSError:
+        return 0
+
+
+def _bootstrap_frames_state_token(model: str, run: str, var: str, manifest: dict[str, Any] | None) -> str:
+    variables = manifest.get("variables") if isinstance(manifest, dict) else None
+    var_entry = variables.get(var) if isinstance(variables, dict) else None
+    frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else None
+    if not isinstance(frame_entries, list):
+        return ""
+
+    var_dir = _published_var_dir(model, run, var)
+    frame_state: list[tuple[int, int, int]] = []
+    for item in frame_entries:
+        if not isinstance(item, dict):
+            continue
+        fh = item.get("fh")
+        if not isinstance(fh, int):
+            continue
+        sidecar_path = var_dir / f"fh{fh:03d}.json"
+        cog_path = var_dir / f"fh{fh:03d}.val.cog.tif"
+        frame_state.append((fh, _path_mtime_ns(sidecar_path), _path_mtime_ns(cog_path)))
+    return _make_etag_from_parts(frame_state) if frame_state else ""
+
+
+def _bootstrap_selection_state(
+    *,
+    model: str | None,
+    run: str,
+    var: str | None,
+    region: str | None,
+    capabilities_by_model: dict[str, Any],
+) -> dict[str, Any]:
+    supported_models = sorted(capabilities_by_model.keys())
+    requested_model = (model or "").strip().lower()
+    selected_model = requested_model if requested_model in supported_models else ""
+    if not selected_model:
+        selected_model = "hrrr" if "hrrr" in supported_models else (supported_models[0] if supported_models else "")
+
+    selected_run: str | None = None
+    run_manifest: dict[str, Any] | None = None
+    selected_var = ""
+    manifest_load_ms = 0.0
+
+    model_capability = capabilities_by_model.get(selected_model) if selected_model else None
+
+    if selected_model:
+        manifest_started_at = time.perf_counter()
+        selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
+        if selected_run:
+            run_manifest = _load_manifest(selected_model, selected_run)
+        manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
+
+        requested_var = (var or "").strip()
+        default_var = _model_default_var(model_capability)
+        if run_manifest and isinstance(run_manifest.get("variables"), dict):
+            manifest_vars = run_manifest.get("variables", {})
+            ordered_manifest_vars = _ordered_manifest_var_keys(selected_model, manifest_vars)
+            if requested_var and requested_var in ordered_manifest_vars:
+                selected_var = requested_var
+            elif default_var and default_var in ordered_manifest_vars:
+                selected_var = default_var
+            elif ordered_manifest_vars:
+                selected_var = ordered_manifest_vars[0]
+
+    default_region = "conus"
+    canonical_region = _model_canonical_region(model_capability)
+    requested_region = (region or "").strip().lower()
+    if requested_region in REGION_PRESETS:
+        selected_region = requested_region
+    elif canonical_region in REGION_PRESETS:
+        selected_region = canonical_region
+    else:
+        selected_region = default_region
+
     return {
-        "contract_version": CAPABILITIES_CONTRACT_VERSION,
-        "supported_models": supported_models,
-        "model_catalog": model_catalog,
-        "availability": availability,
+        "selected_model": selected_model,
+        "selected_run": selected_run,
+        "selected_var": selected_var,
+        "selected_region": selected_region,
+        "run_manifest": run_manifest,
+        "model_capability": model_capability,
+        "manifest_load_ms": manifest_load_ms,
     }
+
+
+def _bootstrap_state_etag(
+    *,
+    requested_run: str,
+    capabilities_etag: str,
+    selection_state: dict[str, Any],
+) -> str:
+    selected_model = str(selection_state.get("selected_model") or "")
+    selected_run = str(selection_state.get("selected_run") or "")
+    selected_var = str(selection_state.get("selected_var") or "")
+    selected_region = str(selection_state.get("selected_region") or "")
+    run_manifest = selection_state.get("run_manifest")
+    manifest_token = _run_version_token(selected_model, selected_run) if selected_model and selected_run else ""
+    frames_token = (
+        _bootstrap_frames_state_token(selected_model, selected_run, selected_var, run_manifest)
+        if selected_model and selected_run and selected_var
+        else ""
+    )
+    return _make_etag_from_parts(
+        CAPABILITIES_CONTRACT_VERSION,
+        capabilities_etag,
+        selected_model,
+        selected_run or requested_run,
+        selected_var,
+        selected_region,
+        manifest_token,
+        frames_token,
+    )
 
 
 def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> list[str]:
@@ -2749,9 +2921,11 @@ def list_models_v4(request: Request):
 @app.get("/api/v4/capabilities")
 def get_capabilities_v4(request: Request):
     started_at = time.perf_counter()
-    payload = _build_capabilities_payload()
+    capabilities_by_model = list_model_capabilities()
+    supported_models = sorted(capabilities_by_model.keys())
+    availability = _availability_for_models(supported_models, capabilities_by_model)
     cache_control = "public, max-age=60"
-    etag = _make_etag(payload)
+    etag = _capabilities_state_etag(capabilities_by_model, availability)
     timing_header = _format_server_timing(
         [
             ("capabilities_total", (time.perf_counter() - started_at) * 1000.0),
@@ -2761,6 +2935,7 @@ def get_capabilities_v4(request: Request):
     if r304 is not None:
         r304.headers["Server-Timing"] = timing_header
         return r304
+    payload = _build_capabilities_payload_for_models(capabilities_by_model, availability=availability)
     return JSONResponse(
         content=payload,
         headers={
@@ -2780,107 +2955,96 @@ def get_bootstrap_v4(
     region: str | None = Query(None, description="Optional preferred region preset ID"),
 ):
     started_at = time.perf_counter()
+    capabilities_by_model = list_model_capabilities()
+    supported_models = sorted(capabilities_by_model.keys())
+    availability = _availability_for_models(supported_models, capabilities_by_model)
+    capabilities_etag = _capabilities_state_etag(capabilities_by_model, availability)
+
+    manifest_started_at = time.perf_counter()
+    with otel_tracing.start_as_current_span(
+        "bootstrap.manifest",
+        attributes={
+            "cartosky.requested_model": (model or "").strip().lower(),
+            "cartosky.requested_run": run,
+        },
+    ):
+        selection_state = _bootstrap_selection_state(
+            model=model,
+            run=run,
+            var=var,
+            region=region,
+            capabilities_by_model=capabilities_by_model,
+        )
+        selected_model = str(selection_state.get("selected_model") or "")
+        selected_run = selection_state.get("selected_run")
+        run_manifest = selection_state.get("run_manifest")
+        selected_var = str(selection_state.get("selected_var") or "")
+        selected_region = str(selection_state.get("selected_region") or "conus")
+        if selected_run:
+            otel_tracing.set_current_attributes({"cartosky.resolved_run": selected_run})
+    manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
+
+    cache_control = "public, max-age=60"
+    etag = _bootstrap_state_etag(
+        requested_run=run,
+        capabilities_etag=capabilities_etag,
+        selection_state=selection_state,
+    )
+    prebuild_timing_header = _format_server_timing(
+        [
+            ("bootstrap_capabilities", 0.0),
+            ("bootstrap_manifest", manifest_load_ms),
+            ("bootstrap_frames", 0.0),
+            ("bootstrap_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
+    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    if r304 is not None:
+        r304.headers["Server-Timing"] = prebuild_timing_header
+        return r304
 
     capabilities_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span("bootstrap.capabilities") as _span:
-        capabilities_payload = _build_capabilities_payload()
+        capabilities_payload = _build_capabilities_payload_for_models(
+            capabilities_by_model,
+            availability=availability,
+        )
     capabilities_ms = (time.perf_counter() - capabilities_started_at) * 1000.0
 
-    supported_models = capabilities_payload.get("supported_models", [])
-    model_catalog = capabilities_payload.get("model_catalog", {})
-    requested_model = (model or "").strip().lower()
-    selected_model = requested_model if requested_model in supported_models else ""
-    if not selected_model:
-        selected_model = "hrrr" if "hrrr" in supported_models else (supported_models[0] if supported_models else "")
-
-    selected_run = None
-    run_manifest = None
-    selected_var = ""
     frames_payload: list[dict[str, Any]] = []
-
-    manifest_load_ms = 0.0
     frames_build_ms = 0.0
-
-    if selected_model:
-        manifest_started_at = time.perf_counter()
+    if selected_var and selected_run and run_manifest:
+        frames_started_at = time.perf_counter()
         with otel_tracing.start_as_current_span(
-            "bootstrap.manifest",
+            "bootstrap.frames",
             attributes={
                 "cartosky.model": selected_model,
-                "cartosky.requested_run": run,
+                "cartosky.run": selected_run,
+                "cartosky.variable": selected_var,
             },
         ):
-            selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
-            if selected_run:
-                otel_tracing.set_current_attributes({"cartosky.resolved_run": selected_run})
-                run_manifest = _load_manifest(selected_model, selected_run)
-        manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
-
-        model_capability = model_catalog.get(selected_model, {}) if isinstance(model_catalog, dict) else {}
-        default_var = ""
-        if isinstance(model_capability, dict):
-            defaults = model_capability.get("defaults", {})
-            if isinstance(defaults, dict):
-                default_var = str(defaults.get("default_var_key") or "").strip()
-
-        requested_var = (var or "").strip()
-        if run_manifest and isinstance(run_manifest.get("variables"), dict):
-            manifest_vars = run_manifest.get("variables", {})
-            ordered_manifest_vars = _ordered_manifest_var_keys(selected_model, manifest_vars)
-            if requested_var and requested_var in ordered_manifest_vars:
-                selected_var = requested_var
-            elif default_var and default_var in ordered_manifest_vars:
-                selected_var = default_var
-            elif ordered_manifest_vars:
-                selected_var = ordered_manifest_vars[0]
-
-        if selected_var and selected_run and run_manifest:
-            frames_started_at = time.perf_counter()
-            with otel_tracing.start_as_current_span(
-                "bootstrap.frames",
-                attributes={
-                    "cartosky.model": selected_model,
-                    "cartosky.run": selected_run,
-                    "cartosky.variable": selected_var,
-                },
-            ):
-                variables = run_manifest.get("variables", {})
-                var_entry = variables.get(selected_var) if isinstance(variables, dict) else None
-                frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
-                if not isinstance(frame_entries, list):
-                    frame_entries = []
-                for item in frame_entries:
-                    if not isinstance(item, dict):
-                        continue
-                    fh = item.get("fh")
-                    if not isinstance(fh, int):
-                        continue
-                    frames_payload.append(
-                        {
-                            "fh": fh,
-                            "has_cog": _frame_has_cog(selected_model, selected_run, selected_var, fh),
-                            "run": selected_run,
-                            "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
-                        }
-                    )
-                otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames_payload)})
-                frames_payload.sort(key=lambda row: int(row["fh"]))
-            frames_build_ms = (time.perf_counter() - frames_started_at) * 1000.0
-
-    model_constraints = {}
-    if selected_model and isinstance(model_catalog, dict):
-        selected_model_catalog = model_catalog.get(selected_model, {})
-        if isinstance(selected_model_catalog, dict):
-            model_constraints = selected_model_catalog.get("constraints", {})
-    default_region = "conus"
-    canonical_region = str(model_constraints.get("canonical_region") or default_region).strip().lower()
-    requested_region = (region or "").strip().lower()
-    if requested_region in REGION_PRESETS:
-        selected_region = requested_region
-    elif canonical_region in REGION_PRESETS:
-        selected_region = canonical_region
-    else:
-        selected_region = default_region
+            variables = run_manifest.get("variables", {})
+            var_entry = variables.get(selected_var) if isinstance(variables, dict) else None
+            frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else []
+            if not isinstance(frame_entries, list):
+                frame_entries = []
+            for item in frame_entries:
+                if not isinstance(item, dict):
+                    continue
+                fh = item.get("fh")
+                if not isinstance(fh, int):
+                    continue
+                frames_payload.append(
+                    {
+                        "fh": fh,
+                        "has_cog": _frame_has_cog(selected_model, selected_run, selected_var, fh),
+                        "run": selected_run,
+                        "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
+                    }
+                )
+            otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames_payload)})
+            frames_payload.sort(key=lambda row: int(row["fh"]))
+        frames_build_ms = (time.perf_counter() - frames_started_at) * 1000.0
 
     payload = {
         "contract_version": CAPABILITIES_CONTRACT_VERSION,
@@ -2895,9 +3059,6 @@ def get_bootstrap_v4(
         "manifest": run_manifest,
         "frames": frames_payload,
     }
-
-    cache_control = "public, max-age=60"
-    etag = _make_etag(payload)
     timing_header = _format_server_timing(
         [
             ("bootstrap_capabilities", capabilities_ms),
@@ -2906,10 +3067,6 @@ def get_bootstrap_v4(
             ("bootstrap_total", (time.perf_counter() - started_at) * 1000.0),
         ]
     )
-    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
-    if r304 is not None:
-        r304.headers["Server-Timing"] = timing_header
-        return r304
     return JSONResponse(
         content=payload,
         headers={
@@ -3591,13 +3748,13 @@ def get_contour_geojson(
         raise HTTPException(status_code=404, detail=f"Contour file missing: {contour_rel_path}")
 
     try:
-        payload = json.loads(contour_path.read_text())
+        payload = contour_path.read_bytes()
         timing_header = _format_server_timing(
             [
                 ("contour_total", (time.perf_counter() - started_at) * 1000.0),
             ]
         )
-        return JSONResponse(content=payload, headers={"Server-Timing": timing_header})
+        return Response(content=payload, media_type="application/geo+json", headers={"Server-Timing": timing_header})
     except Exception as exc:
         logger.exception(
             "Failed to read contour GeoJSON: %s/%s/%s/fh%03d/%s (%s)",
@@ -3655,13 +3812,13 @@ def get_vector_geojson(
         raise HTTPException(status_code=404, detail=f"Vector file missing: {vector_rel_path}")
 
     try:
-        payload = json.loads(vector_path.read_text())
+        payload = vector_path.read_bytes()
         timing_header = _format_server_timing(
             [
                 ("vector_total", (time.perf_counter() - started_at) * 1000.0),
             ]
         )
-        return JSONResponse(content=payload, headers={"Server-Timing": timing_header})
+        return Response(content=payload, media_type="application/geo+json", headers={"Server-Timing": timing_header})
     except Exception as exc:
         logger.exception(
             "Failed to read vector GeoJSON: %s/%s/%s/fh%03d/%s (%s)",

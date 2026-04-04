@@ -241,6 +241,8 @@ async def test_spc_latest_manifest_frames_and_vector_endpoint_resolve(client: ht
 
     vector_response = await client.get("/api/v4/spc/latest/convective/0/vectors/primary")
     assert vector_response.status_code == 200
+    assert vector_response.headers["content-type"].startswith("application/geo+json")
+    assert "vector_total;dur=" in vector_response.headers.get("server-timing", "")
     vector_payload = vector_response.json()
     assert vector_payload["type"] == "FeatureCollection"
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Marginal"
@@ -253,5 +255,7 @@ async def test_spc_latest_manifest_frames_and_vector_endpoint_resolve(client: ht
 
     tornado_vector_response = await client.get("/api/v4/spc/latest/tornado_prob/0/vectors/primary")
     assert tornado_vector_response.status_code == 200
+    assert tornado_vector_response.headers["content-type"].startswith("application/geo+json")
+    assert "vector_total;dur=" in tornado_vector_response.headers.get("server-timing", "")
     tornado_vector_payload = tornado_vector_response.json()
     assert tornado_vector_payload["features"][0]["properties"]["hover_label"] == "5% Tornado Probability"

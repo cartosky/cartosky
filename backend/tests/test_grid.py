@@ -763,7 +763,40 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
     _write_value_cog(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
-        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
+        json.dumps(
+            {
+                "fh": 0,
+                "units": "F",
+                "valid_time": "2026-03-30T12:00:00Z",
+                "contours": {
+                    "freezing": {
+                        "format": "geojson",
+                        "path": "contours/fh000_freezing.geojson",
+                    }
+                },
+            }
+        )
+    )
+    (var_dir / "contours").mkdir(parents=True, exist_ok=True)
+    (var_dir / "contours" / "fh000_freezing.geojson").write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "level": 32,
+                            "label": "Freezing line",
+                        },
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": [[-99.0, 35.0], [-97.0, 36.0]],
+                        },
+                    }
+                ],
+            }
+        )
     )
     (published_root / model / run_id).mkdir(parents=True, exist_ok=True)
     (published_root / model / "LATEST.json").parent.mkdir(parents=True, exist_ok=True)
@@ -843,6 +876,17 @@ async def test_grid_frame_endpoint_can_use_nginx_accel_redirect(
         == "/_cartosky_grid_internal/hrrr/20260330_12z/tmp2m/grid/fh000.l0.u16.bin"
     )
     assert response.content == b""
+
+
+async def test_contour_endpoint_serves_geojson_bytes(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/v4/hrrr/20260330_12z/tmp2m/0/contours/freezing")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/geo+json")
+    assert "contour_total;dur=" in response.headers.get("server-timing", "")
+    payload = response.json()
+    assert payload["type"] == "FeatureCollection"
+    assert payload["features"][0]["properties"]["label"] == "Freezing line"
 
 
 async def test_grid_frame_endpoint_serves_legacy_grid_v1_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
