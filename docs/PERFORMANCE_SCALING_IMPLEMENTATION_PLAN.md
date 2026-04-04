@@ -9,7 +9,7 @@ The repo-specific and production-specific conclusions locked by this plan are:
 1. The API is already behind nginx in production.
 2. nginx is currently proxying API traffic, not directly serving the heaviest grid artifacts.
 3. Cloudflare is already caching some high-volume API paths, including grid binaries, boundary tiles, and `capabilities`.
-4. The API is still effectively single-process because the service unit does not consume `CARTOSKY_WORKERS`.
+4. The API should be treated as single-process in production until the updated service unit is deployed and the worker count is verified live.
 5. The highest-leverage work is now split between:
    - origin efficiency for cold-cache and bypass traffic
    - direct user-facing smoothness on the frontend
@@ -32,9 +32,9 @@ These facts are treated as confirmed for planning.
 
 1. `api.cartosky.com` is reverse-proxied through nginx.
 2. `cartosky.com` is served directly from nginx using the built frontend bundle.
-3. The API systemd unit starts uvicorn with no `--workers` flag:
+3. The repo's API systemd unit now starts uvicorn with an explicit worker flag:
    - `deployment/systemd/csky-api.service`
-4. The repo's API env example defines `CARTOSKY_WORKERS=4`, but that value is not currently consumed by the API service:
+4. The repo's API env example now separates API worker count from scheduler worker count:
    - `deployment/systemd/api.env.example`
 5. The production nginx config proxies `/api/v4/` to uvicorn rather than serving grid files from disk.
 6. The production nginx config provided during review does not confirm HTTP/2 for the API vhost.
@@ -225,13 +225,17 @@ This is the highest-priority bundle because it directly affects:
 
 ### Phase 1A: Make API Worker Count Effective
 
+#### Current Status
+
+Repo wiring complete. Production rollout and live verification still pending.
+
 #### Tasks
 
-1. Update the API process model so worker count is explicitly controlled.
-2. Decide between:
+1. Deploy the updated systemd unit so worker count is explicitly controlled in production.
+2. Verify the chosen worker count is coming from `CARTOSKY_API_WORKERS`, with `CARTOSKY_WORKERS` only acting as a backward-compatible fallback.
+3. Decide whether to stay on:
    - `uvicorn --workers N`
    - `gunicorn` with uvicorn workers
-3. Make worker count come from a deployment-controlled setting rather than a dead env var.
 4. Document the chosen default and how to scale it on the current host class.
 
 #### Recommended Direction
@@ -241,8 +245,8 @@ Prefer an explicit production-grade process model rather than implicit assumptio
 If minimal change is preferred:
 
 1. Keep uvicorn
-2. add `--workers <count>` to the systemd unit
-3. make the worker count explicit in deployment docs
+2. keep the new systemd wiring that reads `CARTOSKY_API_WORKERS`
+3. make the worker count explicit in deployment docs and env files
 
 If process supervision and operational controls matter more:
 

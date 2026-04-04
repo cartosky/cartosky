@@ -8,9 +8,10 @@ User=cartosky
 Group=cartosky
 UMask=0027
 WorkingDirectory=/opt/cartosky
+Environment=CARTOSKY_API_WORKERS=4
 EnvironmentFile=-/etc/cartosky/api.env
 Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/opt/cartosky/.venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8200
+ExecStart=/bin/sh -c 'exec /opt/cartosky/.venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8200 --workers "${CARTOSKY_API_WORKERS:-${CARTOSKY_WORKERS:-4}}"'
 Restart=on-failure
 RestartSec=2
 
