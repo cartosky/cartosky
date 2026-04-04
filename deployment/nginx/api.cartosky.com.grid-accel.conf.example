@@ -15,5 +15,8 @@ location ^~ /_cartosky_grid_internal/ {
     # fills here; Cloudflare can still cache and serve them at the edge.
     gzip off;
 
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Expose-Headers "CF-Cache-Status, Server-Timing, X-Request-ID, X-Trace-ID" always;
+    add_header Vary "Origin" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
 }
