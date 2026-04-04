@@ -821,6 +821,7 @@ async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClie
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert "grid_file_total;dur=" in response.headers.get("server-timing", "")
     encoded = np.frombuffer(response.content, dtype="<u2")
     assert encoded.size == 4
 

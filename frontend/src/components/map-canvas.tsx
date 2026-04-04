@@ -7,6 +7,7 @@ import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@
 import type { GridManifestResponse } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
+import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
@@ -1151,6 +1152,7 @@ export function MapCanvas({
 
     const controller = new AbortController();
     contourAbortRef.current = controller;
+    const startedAtMs = startNetworkTimer();
 
     void fetch(normalizedUrl, {
       credentials: "omit",
@@ -1160,7 +1162,16 @@ export function MapCanvas({
         if (!response.ok) {
           throw new Error(`Contour request failed: ${response.status}`);
         }
-        return (await response.json()) as GeoJSON.FeatureCollection;
+        const payload = (await response.json()) as GeoJSON.FeatureCollection;
+        trackNetworkFetchDuration({
+          metric_name: "contour_fetch_duration",
+          started_at_ms: startedAtMs,
+          response,
+          meta: {
+            contour_url_path: normalizedUrl,
+          },
+        });
+        return payload;
       })
       .then((payload) => {
         if (controller.signal.aborted || contourRequestTokenRef.current !== requestToken) {
@@ -1298,6 +1309,7 @@ export function MapCanvas({
 
     const controller = new AbortController();
     vectorAbortRef.current = controller;
+    const startedAtMs = startNetworkTimer();
 
     void fetch(normalizedUrl, {
       credentials: "omit",
@@ -1307,7 +1319,16 @@ export function MapCanvas({
         if (!response.ok) {
           throw new Error(`Vector request failed: ${response.status}`);
         }
-        return (await response.json()) as GeoJSON.FeatureCollection;
+        const payload = (await response.json()) as GeoJSON.FeatureCollection;
+        trackNetworkFetchDuration({
+          metric_name: "vector_fetch_duration",
+          started_at_ms: startedAtMs,
+          response,
+          meta: {
+            vector_url_path: normalizedUrl,
+          },
+        });
+        return payload;
       })
       .then((payload) => {
         if (controller.signal.aborted || vectorRequestTokenRef.current !== requestToken) {

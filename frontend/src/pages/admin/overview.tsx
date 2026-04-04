@@ -3,13 +3,17 @@ import { Activity, AlertTriangle, BarChart3, ClipboardCheck, Database, Gauge, Wa
 import { Link } from "react-router-dom";
 
 import {
+  fetchAdminNetworkDiagnostics,
   fetchAdminObservabilitySummary,
   fetchAdminOverviewSummary,
   fetchAdminStatusResults,
   fetchAdminStatusQaSummary,
   fetchAdminTracesSummary,
+  type AdminNetworkDiagnosticsResponse,
   fetchTwfStatus,
   type AdminObservabilitySummaryResponse,
+  type NetworkDiagnosticBreakdown,
+  type NetworkDiagnosticMetricName,
   type AdminOverviewSummaryResponse,
   type AdminTracesSummaryResponse,
   type OverviewMetricSummary,
@@ -179,10 +183,107 @@ function formatRelativeTimestamp(timestampSeconds: number | null): string {
   return `${Math.round(deltaSeconds / 86_400)}d ago`;
 }
 
+const NETWORK_P95_TARGETS: Partial<Record<NetworkDiagnosticMetricName, number>> = {
+  bootstrap_fetch_duration: 800,
+  capabilities_fetch_duration: 350,
+  regions_fetch_duration: 350,
+  manifest_fetch_duration: 600,
+  frames_fetch_duration: 650,
+  grid_manifest_fetch_duration: 500,
+  sample_request_duration: 450,
+  sample_batch_request_duration: 700,
+  contour_fetch_duration: 500,
+  vector_fetch_duration: 500,
+};
+
+const NETWORK_CARD_METRICS: NetworkDiagnosticMetricName[] = [
+  "bootstrap_fetch_duration",
+  "frames_fetch_duration",
+  "grid_manifest_fetch_duration",
+  "sample_request_duration",
+];
+
+function formatNetworkBreakdowns(items: NetworkDiagnosticBreakdown[] | null | undefined): string {
+  if (!items || items.length === 0) {
+    return "Awaiting data";
+  }
+  return items
+    .filter((item) => item.count > 0)
+    .slice(0, 3)
+    .map((item) => {
+      const p95 = Number.isFinite(item.p95) ? `${Math.round(Number(item.p95))} ms` : "n/a";
+      return `${item.key}: ${p95} (${item.count})`;
+    })
+    .join(" · ");
+}
+
+function getNetworkStatus(summary: OverviewMetricSummary | null, targetMs: number | null): {
+  label: string;
+  className: string;
+  accentClassName: string;
+} {
+  if (!summary || !summary.count || !Number.isFinite(summary.p95)) {
+    return {
+      label: "Awaiting Data",
+      className: "border-white/10 bg-white/[0.05] text-white/72",
+      accentClassName: "text-white",
+    };
+  }
+  const p95 = Number(summary.p95);
+  if (!targetMs || p95 <= targetMs) {
+    return {
+      label: "Healthy",
+      className: "border-emerald-400/25 bg-emerald-500/10 text-emerald-200",
+      accentClassName: "text-[#9dd5bf]",
+    };
+  }
+  if (p95 <= targetMs * 1.5) {
+    return {
+      label: "Watch",
+      className: "border-amber-400/25 bg-amber-500/10 text-amber-200",
+      accentClassName: "text-amber-300",
+    };
+  }
+  return {
+    label: "Over Target",
+    className: "border-rose-400/25 bg-rose-500/10 text-rose-200",
+    accentClassName: "text-rose-300",
+  };
+}
+
+function getNetworkActionLabel(params: {
+  summary: OverviewMetricSummary;
+  by_cf_cache_status: NetworkDiagnosticBreakdown[];
+  targetMs: number | null;
+}): string {
+  const { summary, by_cf_cache_status: cacheBreakdown, targetMs } = params;
+  if (!summary.count) {
+    return "Awaiting samples";
+  }
+  const hit = cacheBreakdown.find((item) => item.key === "HIT");
+  const miss = cacheBreakdown.find((item) => item.key === "MISS");
+  const bypass = cacheBreakdown.find((item) => item.key === "BYPASS");
+
+  if (bypass?.count && Number.isFinite(bypass.p95) && Number.isFinite(summary.p95) && Number(bypass.p95) > Number(summary.p95) * 1.35) {
+    return "Origin path is notably slower on BYPASS";
+  }
+  if (miss?.count && hit?.count && Number.isFinite(miss.p95) && Number.isFinite(hit.p95) && Number(miss.p95) > Number(hit.p95) * 1.5) {
+    return "MISS path is materially slower than HIT";
+  }
+  if (hit?.count && targetMs && Number.isFinite(hit.p95) && Number(hit.p95) > targetMs) {
+    return "Slow even on HIT; check edge or frontend path";
+  }
+  if (!hit && !miss && !bypass) {
+    return "No cache-status split yet";
+  }
+  return "Monitor cache and device mix";
+}
+
 export default function AdminOverviewPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [results, setResults] = useState<StatusResult[]>([]);
   const [overview, setOverview] = useState<AdminOverviewSummaryResponse | null>(null);
+  const [networkDiagnostics, setNetworkDiagnostics] = useState<AdminNetworkDiagnosticsResponse | null>(null);
   const [observability, setObservability] = useState<AdminObservabilitySummaryResponse | null>(null);
   const [traces, setTraces] = useState<AdminTracesSummaryResponse | null>(null);
   const [qaSummary, setQaSummary] = useState<StatusQaSummaryResponse | null>(null);
@@ -200,9 +301,10 @@ export default function AdminOverviewPage() {
           return;
         }
 
-        const [statusResponse, overviewResponse, observabilityResponse, tracesResponse, qaSummaryResponse] = await Promise.all([
+        const [statusResponse, overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse, qaSummaryResponse] = await Promise.all([
           fetchAdminStatusResults({ window: "30d", limit: 200 }),
           fetchAdminOverviewSummary("7d"),
+          fetchAdminNetworkDiagnostics("7d"),
           fetchAdminObservabilitySummary(),
           fetchAdminTracesSummary(),
           fetchAdminStatusQaSummary(),
@@ -210,6 +312,7 @@ export default function AdminOverviewPage() {
         if (cancelled) return;
         setResults(statusResponse.results);
         setOverview(overviewResponse);
+        setNetworkDiagnostics(networkDiagnosticsResponse);
         setObservability(observabilityResponse);
         setTraces(tracesResponse);
         setQaSummary(qaSummaryResponse);
@@ -238,6 +341,11 @@ export default function AdminOverviewPage() {
   const webVitals = overview?.web_vitals ?? null;
   const rumDiagnostics = overview?.rum_diagnostics ?? null;
   const telemetryHealth = overview?.telemetry_health ?? null;
+  const networkMetrics = networkDiagnostics?.metrics ?? [];
+  const networkMetricByName = useMemo(
+    () => new Map(networkMetrics.map((metric) => [metric.metric_name, metric])),
+    [networkMetrics],
+  );
   const lcpStatus = getVitalStatus(webVitals?.lcp ?? null);
   const inpStatus = getVitalStatus(webVitals?.inp ?? null);
   const clsStatus = getVitalStatus(webVitals?.cls ?? null);
@@ -336,6 +444,90 @@ export default function AdminOverviewPage() {
             icon={Activity}
             accentClassName="text-sky-300"
           />
+        </section>
+
+        <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-lg font-semibold">Network Diagnostics</div>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
+                These sampled RUM timings make the new Phase 0 fetch diagnostics actionable. Compare overall p95 with the cache-status,
+                model, and device splits to tell whether a route is edge-bound, origin-bound, or frontend-bound.
+              </p>
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
+              Last seen {formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {NETWORK_CARD_METRICS.map((metricName) => {
+              const metric = networkMetricByName.get(metricName);
+              const targetMs = NETWORK_P95_TARGETS[metricName] ?? null;
+              const statusTone = getNetworkStatus(metric?.summary ?? null, targetMs);
+              return (
+                <SummaryCard
+                  key={metricName}
+                  title={`${metric?.label ?? metricName} p95`}
+                  value={formatMetricValue(metric?.summary ?? null, "p95")}
+                  hint={
+                    metric?.summary?.count
+                      ? `${metric.summary.count} samples · ${getNetworkActionLabel({
+                        summary: metric.summary,
+                        by_cf_cache_status: metric.by_cf_cache_status,
+                        targetMs,
+                      })}`
+                      : "Waiting for sampled diagnostics"
+                  }
+                  icon={Activity}
+                  accentClassName={statusTone.accentClassName}
+                  statusLabel={statusTone.label}
+                  statusClassName={statusTone.className}
+                />
+              );
+            })}
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03]">
+            <div className="grid grid-cols-[minmax(0,1.15fr)_120px_90px_120px_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+              <div>Metric</div>
+              <div>p95</div>
+              <div>Samples</div>
+              <div>Last Seen</div>
+              <div>Cache Split</div>
+              <div>Models</div>
+              <div>Devices</div>
+              <div>Action</div>
+            </div>
+            <div>
+              {networkMetrics.map((metric) => {
+                const targetMs = NETWORK_P95_TARGETS[metric.metric_name] ?? null;
+                const statusTone = getNetworkStatus(metric.summary, targetMs);
+                return (
+                  <div
+                    key={metric.metric_name}
+                    className="grid grid-cols-[minmax(0,1.15fr)_120px_90px_120px_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-4 border-b border-white/6 px-4 py-4 text-sm last:border-b-0"
+                  >
+                    <div>
+                      <div className="font-semibold text-white">{metric.label}</div>
+                      <div className="mt-1 text-xs text-white/48">{metric.metric_name}</div>
+                    </div>
+                    <div className={statusTone.accentClassName}>{formatMetricValue(metric.summary, "p95")}</div>
+                    <div>{new Intl.NumberFormat("en-US").format(metric.summary.count)}</div>
+                    <div className="text-white/62">{formatRelativeTimestamp(metric.last_seen_at)}</div>
+                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_cf_cache_status)}</div>
+                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_model_id)}</div>
+                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_device_type)}</div>
+                    <div className="text-white/72">{getNetworkActionLabel({
+                      summary: metric.summary,
+                      by_cf_cache_status: metric.by_cf_cache_status,
+                      targetMs,
+                    })}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </section>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

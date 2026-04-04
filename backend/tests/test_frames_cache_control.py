@@ -340,6 +340,9 @@ async def test_capabilities_invariant_supported_models_matches_catalog(client: h
     response = await client.get("/api/v4/capabilities")
 
     assert response.status_code == 200
+    assert "capabilities_total;dur=" in response.headers.get("server-timing", "")
+    exposed_headers = response.headers.get("access-control-expose-headers", "")
+    assert "CF-Cache-Status" in exposed_headers
     payload = response.json()
     supported_models = payload["supported_models"]
     model_catalog = payload["model_catalog"]
@@ -411,6 +414,13 @@ async def test_bootstrap_endpoint_includes_selection_and_frames(client: httpx.As
     assert payload["frames"]
     server_timing = response.headers.get("server-timing", "")
     assert "bootstrap_total;dur=" in server_timing
+
+
+async def test_region_presets_include_server_timing(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/regions")
+
+    assert response.status_code == 200
+    assert "regions_total;dur=" in response.headers.get("server-timing", "")
 
 
 async def test_manifest_and_frames_include_server_timing(client: httpx.AsyncClient) -> None:

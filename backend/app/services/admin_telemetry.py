@@ -56,6 +56,15 @@ ALLOWED_RUM_METRIC_NAMES = {
     "inp",
     "cls",
     "manifest_fetch_duration",
+    "bootstrap_fetch_duration",
+    "capabilities_fetch_duration",
+    "regions_fetch_duration",
+    "frames_fetch_duration",
+    "grid_manifest_fetch_duration",
+    "sample_request_duration",
+    "sample_batch_request_duration",
+    "contour_fetch_duration",
+    "vector_fetch_duration",
     "first_map_render_duration",
     "first_overlay_visible_duration",
     "tile_request_failure_count",
@@ -68,11 +77,46 @@ RUM_METRIC_UNITS = {
     "inp": "ms",
     "cls": "score",
     "manifest_fetch_duration": "ms",
+    "bootstrap_fetch_duration": "ms",
+    "capabilities_fetch_duration": "ms",
+    "regions_fetch_duration": "ms",
+    "frames_fetch_duration": "ms",
+    "grid_manifest_fetch_duration": "ms",
+    "sample_request_duration": "ms",
+    "sample_batch_request_duration": "ms",
+    "contour_fetch_duration": "ms",
+    "vector_fetch_duration": "ms",
     "first_map_render_duration": "ms",
     "first_overlay_visible_duration": "ms",
     "tile_request_failure_count": "count",
     "animation_stall_count": "count",
     "frame_drop_bucket": "count",
+}
+
+NETWORK_DIAGNOSTIC_METRIC_NAMES = (
+    "bootstrap_fetch_duration",
+    "capabilities_fetch_duration",
+    "regions_fetch_duration",
+    "manifest_fetch_duration",
+    "frames_fetch_duration",
+    "grid_manifest_fetch_duration",
+    "sample_request_duration",
+    "sample_batch_request_duration",
+    "contour_fetch_duration",
+    "vector_fetch_duration",
+)
+
+NETWORK_DIAGNOSTIC_LABELS = {
+    "bootstrap_fetch_duration": "Bootstrap",
+    "capabilities_fetch_duration": "Capabilities",
+    "regions_fetch_duration": "Regions",
+    "manifest_fetch_duration": "Manifest",
+    "frames_fetch_duration": "Frames",
+    "grid_manifest_fetch_duration": "Grid Manifest",
+    "sample_request_duration": "Sample",
+    "sample_batch_request_duration": "Sample Batch",
+    "contour_fetch_duration": "Contour",
+    "vector_fetch_duration": "Vector",
 }
 
 WEB_VITAL_THRESHOLDS = {
@@ -1875,6 +1919,15 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
     web_vitals_names = ("lcp", "inp", "cls")
     rum_diagnostic_names = (
         "manifest_fetch_duration",
+        "bootstrap_fetch_duration",
+        "capabilities_fetch_duration",
+        "regions_fetch_duration",
+        "frames_fetch_duration",
+        "grid_manifest_fetch_duration",
+        "sample_request_duration",
+        "sample_batch_request_duration",
+        "contour_fetch_duration",
+        "vector_fetch_duration",
         "first_map_render_duration",
         "first_overlay_visible_duration",
         "tile_request_failure_count",
@@ -1906,4 +1959,93 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
             "web_vitals_sample_count": _sample_count(web_vitals_names),
             "rum_sample_count": _sample_count(rum_diagnostic_names),
         },
+    }
+
+
+def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int = 4) -> dict[str, Any]:
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT metric_name, metric_value, created_at, model_id, device_type, meta_json
+            FROM rum_events
+            WHERE created_at >= ?
+              AND metric_name IN ({",".join("?" for _ in NETWORK_DIAGNOSTIC_METRIC_NAMES)})
+            ORDER BY created_at ASC
+            """,
+            (since_ts, *NETWORK_DIAGNOSTIC_METRIC_NAMES),
+        ).fetchall()
+
+    values_by_metric: dict[str, list[float]] = {name: [] for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    last_seen_by_metric: dict[str, int | None] = {name: None for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    cache_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    model_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    device_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+
+    def _append_breakdown(
+        store: dict[str, dict[str, list[float]]],
+        metric_name: str,
+        bucket_key: str,
+        metric_value: float,
+    ) -> None:
+        bucket = store[metric_name].setdefault(bucket_key, [])
+        bucket.append(metric_value)
+
+    for row in rows:
+        metric_name = str(row["metric_name"])
+        metric_value = float(row["metric_value"])
+        values_by_metric[metric_name].append(metric_value)
+        last_seen_by_metric[metric_name] = int(row["created_at"])
+
+        model_key = str(row["model_id"] or "unknown").strip() or "unknown"
+        device_key = str(row["device_type"] or "unknown").strip() or "unknown"
+        cache_key = "unknown"
+        meta_json = row["meta_json"]
+        if isinstance(meta_json, str) and meta_json.strip():
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = None
+            if isinstance(meta, dict):
+                raw_cache = str(meta.get("cf_cache_status") or "").strip().upper()
+                if raw_cache:
+                    cache_key = raw_cache
+
+        _append_breakdown(model_values_by_metric, metric_name, model_key, metric_value)
+        _append_breakdown(device_values_by_metric, metric_name, device_key, metric_value)
+        _append_breakdown(cache_values_by_metric, metric_name, cache_key, metric_value)
+
+    def _rank_breakdowns(
+        store: dict[str, dict[str, list[float]]],
+        metric_name: str,
+    ) -> list[dict[str, Any]]:
+        values_by_bucket = store.get(metric_name, {})
+        items = sorted(
+            values_by_bucket.items(),
+            key=lambda item: (len(item[1]), item[0]),
+            reverse=True,
+        )[: max(1, int(limit_per_breakdown))]
+        return [
+            {
+                "key": key,
+                **_rum_metric_summary(values, metric_unit=RUM_METRIC_UNITS[metric_name]),
+            }
+            for key, values in items
+        ]
+
+    metrics = []
+    for metric_name in NETWORK_DIAGNOSTIC_METRIC_NAMES:
+        metrics.append(
+            {
+                "metric_name": metric_name,
+                "label": NETWORK_DIAGNOSTIC_LABELS.get(metric_name, metric_name),
+                "summary": _rum_metric_summary(values_by_metric[metric_name], metric_unit=RUM_METRIC_UNITS[metric_name]),
+                "last_seen_at": last_seen_by_metric[metric_name],
+                "by_cf_cache_status": _rank_breakdowns(cache_values_by_metric, metric_name),
+                "by_model_id": _rank_breakdowns(model_values_by_metric, metric_name),
+                "by_device_type": _rank_breakdowns(device_values_by_metric, metric_name),
+            }
+        )
+
+    return {
+        "metrics": metrics,
     }

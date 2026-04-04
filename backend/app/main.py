@@ -440,6 +440,10 @@ def _append_exposed_headers(response: Response, *header_names: str) -> None:
     if values:
         response.headers["Access-Control-Expose-Headers"] = ", ".join(sorted(values))
 
+
+def _append_default_exposed_headers(response: Response) -> None:
+    _append_exposed_headers(response, "CF-Cache-Status", "Server-Timing", "X-Request-ID", "X-Trace-ID")
+
 @dataclass
 class TwfApiError(Exception):
     status_code: int
@@ -619,7 +623,7 @@ async def twf_share_guards(request: Request, call_next):
                         response.headers["X-Request-ID"] = request_id
                         if request.state.trace_id:
                             response.headers["X-Trace-ID"] = request.state.trace_id
-                        _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                        _append_default_exposed_headers(response)
                         otel_tracing.finalize_request_span(
                             trace_span,
                             route=route,
@@ -668,7 +672,7 @@ async def twf_share_guards(request: Request, call_next):
                 response.headers["X-Request-ID"] = request_id
                 if request.state.trace_id:
                     response.headers["X-Trace-ID"] = request.state.trace_id
-                _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                _append_default_exposed_headers(response)
                 otel_tracing.finalize_request_span(
                     trace_span,
                     route=route,
@@ -723,7 +727,7 @@ async def twf_share_guards(request: Request, call_next):
                 response.headers["X-Request-ID"] = request_id
                 if request.state.trace_id:
                     response.headers["X-Trace-ID"] = request.state.trace_id
-                _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+                _append_default_exposed_headers(response)
                 otel_tracing.finalize_request_span(
                     trace_span,
                     route=route,
@@ -760,7 +764,7 @@ async def twf_share_guards(request: Request, call_next):
         response.headers["X-Request-ID"] = request_id
         if request.state.trace_id:
             response.headers["X-Trace-ID"] = request.state.trace_id
-        _append_exposed_headers(response, "Server-Timing", "X-Request-ID", "X-Trace-ID")
+        _append_default_exposed_headers(response)
         otel_tracing.finalize_request_span(
             trace_span,
             route=route,
@@ -1316,6 +1320,17 @@ async def admin_overview_summary(request: Request, window: str = Query("7d")) ->
     return {
         "window": normalized_window,
         **admin_telemetry.get_overview_summary(since_ts=since_ts),
+    }
+
+
+@app.get("/api/v4/admin/overview/network-diagnostics")
+async def admin_overview_network_diagnostics(request: Request, window: str = Query("7d")) -> dict[str, Any]:
+    _require_admin_session(request)
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    return {
+        "window": normalized_window,
+        **admin_telemetry.get_network_diagnostics_summary(since_ts=since_ts),
     }
 
 
@@ -2612,6 +2627,7 @@ def health_tiles_v3():
 
 @app.get("/tiles/v3/boundaries/v1/tilejson.json")
 def boundaries_tilejson_v3():
+    started_at = time.perf_counter()
     if not BOUNDARIES_MBTILES.is_file():
         raise HTTPException(
             status_code=404,
@@ -2621,21 +2637,39 @@ def boundaries_tilejson_v3():
             },
         )
 
+    timing_header = _format_server_timing(
+        [
+            ("boundaries_tilejson_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     return Response(
         content=json.dumps(build_boundaries_tilejson()),
         media_type="application/json",
-        headers={"Cache-Control": BOUNDARY_CACHE_MISS},
+        headers={
+            "Cache-Control": BOUNDARY_CACHE_MISS,
+            "Server-Timing": timing_header,
+        },
     )
 
 
 @app.get("/tiles/v3/boundaries/v1/{z:int}/{x:int}/{y:int}.mvt")
 def boundaries_tile_v3(z: int, x: int, y: int):
+    started_at = time.perf_counter()
     tile = lookup_mbtiles_tile(BOUNDARIES_MBTILES, z=z, x=x, y=y)
     if tile is None:
         # Expected-empty vector tiles should still be a normal 200 for map clients.
-        return empty_mvt_response(cache_control=BOUNDARY_CACHE_MISS)
+        response = empty_mvt_response(cache_control=BOUNDARY_CACHE_MISS)
+        response.headers["Server-Timing"] = _format_server_timing(
+            [("boundaries_tile_total", (time.perf_counter() - started_at) * 1000.0)]
+        )
+        return response
 
-    headers = {"Cache-Control": BOUNDARY_CACHE_HIT}
+    headers = {
+        "Cache-Control": BOUNDARY_CACHE_HIT,
+        "Server-Timing": _format_server_timing(
+            [("boundaries_tile_total", (time.perf_counter() - started_at) * 1000.0)]
+        ),
+    }
     if len(tile) >= 2 and tile[0] == 0x1F and tile[1] == 0x8B:
         headers["Content-Encoding"] = "gzip"
 
@@ -2653,17 +2687,25 @@ def root_v4():
 
 @app.get("/api/regions")
 def list_region_presets(request: Request):
+    started_at = time.perf_counter()
     payload = {"regions": REGION_PRESETS}
     cache_control = "public, max-age=300"
     etag = _make_etag(payload)
+    timing_header = _format_server_timing(
+        [
+            ("regions_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
         return r304
     return JSONResponse(
         content=payload,
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
+            "Server-Timing": timing_header,
         },
     )
 
@@ -2699,17 +2741,25 @@ def list_models_v4(request: Request):
 
 @app.get("/api/v4/capabilities")
 def get_capabilities_v4(request: Request):
+    started_at = time.perf_counter()
     payload = _build_capabilities_payload()
     cache_control = "public, max-age=60"
     etag = _make_etag(payload)
+    timing_header = _format_server_timing(
+        [
+            ("capabilities_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
+        r304.headers["Server-Timing"] = timing_header
         return r304
     return JSONResponse(
         content=payload,
         headers={
             "Cache-Control": cache_control,
             "ETag": etag,
+            "Server-Timing": timing_header,
         },
     )
 
@@ -3156,6 +3206,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
 
 
 def _get_grid_file(model: str, run: str, var: str, filename: str):
+    started_at = time.perf_counter()
     resolved = _resolve_run(model, run)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -3174,10 +3225,18 @@ def _get_grid_file(model: str, run: str, var: str, filename: str):
         actual_size_bytes = candidate.stat().st_size
         if actual_size_bytes != expected_size_bytes:
             raise HTTPException(status_code=404, detail="Grid artifact invalid")
+    timing_header = _format_server_timing(
+        [
+            ("grid_file_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
     return FileResponse(
         candidate,
         media_type="application/octet-stream",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Server-Timing": timing_header,
+        },
     )
 
 
@@ -3473,6 +3532,7 @@ def get_contour_geojson(
     fh: int,
     key: str,
 ):
+    started_at = time.perf_counter()
     var_dir = _resolve_frame_var_dir(model, run, var, fh)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
@@ -3508,7 +3568,13 @@ def get_contour_geojson(
         raise HTTPException(status_code=404, detail=f"Contour file missing: {contour_rel_path}")
 
     try:
-        return json.loads(contour_path.read_text())
+        payload = json.loads(contour_path.read_text())
+        timing_header = _format_server_timing(
+            [
+                ("contour_total", (time.perf_counter() - started_at) * 1000.0),
+            ]
+        )
+        return JSONResponse(content=payload, headers={"Server-Timing": timing_header})
     except Exception as exc:
         logger.exception(
             "Failed to read contour GeoJSON: %s/%s/%s/fh%03d/%s (%s)",
@@ -3530,6 +3596,7 @@ def get_vector_geojson(
     fh: int,
     key: str,
 ):
+    started_at = time.perf_counter()
     var_dir = _resolve_frame_var_dir(model, run, var, fh)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
@@ -3565,7 +3632,13 @@ def get_vector_geojson(
         raise HTTPException(status_code=404, detail=f"Vector file missing: {vector_rel_path}")
 
     try:
-        return json.loads(vector_path.read_text())
+        payload = json.loads(vector_path.read_text())
+        timing_header = _format_server_timing(
+            [
+                ("vector_total", (time.perf_counter() - started_at) * 1000.0),
+            ]
+        )
+        return JSONResponse(content=payload, headers={"Server-Timing": timing_header})
     except Exception as exc:
         logger.exception(
             "Failed to read vector GeoJSON: %s/%s/%s/fh%03d/%s (%s)",

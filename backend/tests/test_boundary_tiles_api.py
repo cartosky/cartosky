@@ -105,6 +105,7 @@ async def test_boundaries_tilejson_served_from_main_api(client: httpx.AsyncClien
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_MISS
+    assert "boundaries_tilejson_total;dur=" in response.headers.get("server-timing", "")
     payload = response.json()
     assert payload["name"] == "Test Boundaries"
     assert payload["id"] == "test-boundaries-v1"
@@ -117,6 +118,7 @@ async def test_boundaries_tile_endpoint_preserves_gzip_and_expected_empty_behavi
 
     assert hit_response.status_code == 200
     assert hit_response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_HIT
+    assert "boundaries_tile_total;dur=" in hit_response.headers.get("server-timing", "")
     assert hit_response.headers["content-encoding"] == "gzip"
     assert hit_response.content == b"fake-mvt"
 
@@ -124,6 +126,7 @@ async def test_boundaries_tile_endpoint_preserves_gzip_and_expected_empty_behavi
 
     assert miss_response.status_code == 200
     assert miss_response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_MISS
+    assert "boundaries_tile_total;dur=" in miss_response.headers.get("server-timing", "")
     assert miss_response.headers["content-encoding"] == "gzip"
     assert miss_response.headers["content-type"].startswith("application/vnd.mapbox-vector-tile")
 

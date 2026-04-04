@@ -1,5 +1,10 @@
 import { API_ORIGIN, API_V4_BASE, type WeatherSubstrate } from "@/lib/config";
 import {
+  startNetworkTimer,
+  trackNetworkFetchDuration,
+  type NetworkDiagnosticMetricName,
+} from "@/lib/network-diagnostics";
+import {
   type AnchorBatchPoint,
   type AnchorBatchResponse,
   type AnchorFeatureCollection,
@@ -241,6 +246,8 @@ export type VarRow =
 
 type FetchOptions = {
   signal?: AbortSignal;
+  diagnosticMetricName?: NetworkDiagnosticMetricName;
+  diagnosticMeta?: Record<string, unknown> | null;
 };
 
 function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null {
@@ -296,7 +303,16 @@ export function readCapabilitySupportsSampling(model: CapabilityModel | null | u
 }
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
+  const startedAtMs = startNetworkTimer();
   const response = await fetch(url, { credentials: "omit", signal: options?.signal });
+  if (options?.diagnosticMetricName) {
+    trackNetworkFetchDuration({
+      metric_name: options.diagnosticMetricName,
+      started_at_ms: startedAtMs,
+      response,
+      meta: options.diagnosticMeta ?? null,
+    });
+  }
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status} ${response.statusText}`);
   }
@@ -354,10 +370,21 @@ export async function fetchRegionPresets(options?: FetchOptions): Promise<Record
     headers["If-None-Match"] = etag;
   }
 
+  const startedAtMs = startNetworkTimer();
   const response = await fetch(`${API_ORIGIN}/api/regions`, {
     credentials: "omit",
     headers,
     signal: options?.signal,
+  });
+  trackNetworkFetchDuration({
+    metric_name: options?.diagnosticMetricName ?? "regions_fetch_duration",
+    started_at_ms: startedAtMs,
+    response,
+    meta: {
+      ...(options?.diagnosticMeta ?? {}),
+      had_cached_regions: Boolean(cachedRaw),
+      had_if_none_match: Boolean(etag),
+    },
   });
 
   if (response.status === 304 && cachedRaw) {
@@ -395,7 +422,10 @@ export async function fetchModels(options?: FetchOptions): Promise<ModelOption[]
 }
 
 export async function fetchCapabilities(options?: FetchOptions): Promise<CapabilitiesResponse> {
-  return fetchJson<CapabilitiesResponse>(`${API_V4_BASE}/capabilities`, options);
+  return fetchJson<CapabilitiesResponse>(`${API_V4_BASE}/capabilities`, {
+    ...options,
+    diagnosticMetricName: options?.diagnosticMetricName ?? "capabilities_fetch_duration",
+  });
 }
 
 export async function fetchBootstrap(params?: {
@@ -420,7 +450,16 @@ export async function fetchBootstrap(params?: {
   }
   const suffix = query.toString();
   const url = suffix ? `${API_V4_BASE}/bootstrap?${suffix}` : `${API_V4_BASE}/bootstrap`;
-  return fetchJson<BootstrapResponse>(url, { signal: params?.signal });
+  return fetchJson<BootstrapResponse>(url, {
+    signal: params?.signal,
+    diagnosticMetricName: "bootstrap_fetch_duration",
+    diagnosticMeta: {
+      model: params?.model ?? null,
+      run: params?.run ?? null,
+      variable: params?.variable ?? null,
+      region: params?.region ?? null,
+    },
+  });
 }
 
 export async function fetchRegions(model: string, options?: FetchOptions): Promise<string[]> {
@@ -452,7 +491,15 @@ export async function fetchManifest(
   const runKey = run || "latest";
   const payload = await fetchJson<unknown>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/manifest`,
-    options
+    {
+      ...options,
+      diagnosticMetricName: options?.diagnosticMetricName ?? "manifest_fetch_duration",
+      diagnosticMeta: {
+        ...(options?.diagnosticMeta ?? {}),
+        model_id: model,
+        run_id: runKey,
+      },
+    }
   );
   if (!isRunManifestResponse(payload)) {
     throw new Error("Invalid manifest response shape");
@@ -469,7 +516,16 @@ export async function fetchFrames(
   const runKey = run || "latest";
   const response = await fetchJson<FrameRow[]>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/frames`,
-    options
+    {
+      ...options,
+      diagnosticMetricName: options?.diagnosticMetricName ?? "frames_fetch_duration",
+      diagnosticMeta: {
+        ...(options?.diagnosticMeta ?? {}),
+        model_id: model,
+        run_id: runKey,
+        variable_id: varKey,
+      },
+    }
   );
   if (!Array.isArray(response)) {
     return [];
@@ -501,7 +557,16 @@ export async function fetchGridManifest(
   try {
     const response = await fetchJson<GridManifestResponse>(
       `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest`,
-      options
+      {
+        ...options,
+        diagnosticMetricName: options?.diagnosticMetricName ?? "grid_manifest_fetch_duration",
+        diagnosticMeta: {
+          ...(options?.diagnosticMeta ?? {}),
+          model_id: model,
+          run_id: runKey,
+          variable_id: varKey,
+        },
+      }
     );
     if (
       !response
@@ -542,6 +607,7 @@ export async function fetchSampleBatch(params: {
   points: AnchorBatchPoint[];
   signal?: AbortSignal;
 }): Promise<AnchorBatchResponse | null> {
+  const startedAtMs = startNetworkTimer();
   const response = await fetch(`${API_V4_BASE}/sample/batch`, {
     method: "POST",
     credentials: "omit",
@@ -556,6 +622,18 @@ export async function fetchSampleBatch(params: {
       forecast_hour: params.forecastHour,
       points: params.points,
     }),
+  });
+  trackNetworkFetchDuration({
+    metric_name: "sample_batch_request_duration",
+    started_at_ms: startedAtMs,
+    response,
+    model_id: params.model,
+    variable_id: params.variable,
+    run_id: params.run,
+    forecast_hour: params.forecastHour,
+    meta: {
+      point_count: params.points.length,
+    },
   });
   if (response.status === 404) {
     return null;
@@ -605,7 +683,21 @@ export async function fetchSample(params: {
     lat: String(params.lat),
     lon: String(params.lon),
   });
+  const startedAtMs = startNetworkTimer();
   const response = await fetch(`${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
+  trackNetworkFetchDuration({
+    metric_name: "sample_request_duration",
+    started_at_ms: startedAtMs,
+    response,
+    model_id: params.model,
+    variable_id: params.var,
+    run_id: params.run,
+    forecast_hour: params.fh,
+    meta: {
+      lat: params.lat,
+      lon: params.lon,
+    },
+  });
   if (response.status === 404) {
     return null;
   }

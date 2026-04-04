@@ -27,6 +27,15 @@ export type AdminOverviewSummaryResponse = {
   web_vitals: Record<"lcp" | "inp" | "cls", OverviewMetricSummary>;
   rum_diagnostics: Record<
     | "manifest_fetch_duration"
+    | "bootstrap_fetch_duration"
+    | "capabilities_fetch_duration"
+    | "regions_fetch_duration"
+    | "frames_fetch_duration"
+    | "grid_manifest_fetch_duration"
+    | "sample_request_duration"
+    | "sample_batch_request_duration"
+    | "contour_fetch_duration"
+    | "vector_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
     | "tile_request_failure_count"
@@ -40,6 +49,35 @@ export type AdminOverviewSummaryResponse = {
     web_vitals_sample_count: number;
     rum_sample_count: number;
   };
+};
+
+export type NetworkDiagnosticMetricName =
+  | "bootstrap_fetch_duration"
+  | "capabilities_fetch_duration"
+  | "regions_fetch_duration"
+  | "manifest_fetch_duration"
+  | "frames_fetch_duration"
+  | "grid_manifest_fetch_duration"
+  | "sample_request_duration"
+  | "sample_batch_request_duration"
+  | "contour_fetch_duration"
+  | "vector_fetch_duration";
+
+export type NetworkDiagnosticBreakdown = OverviewMetricSummary & {
+  key: string;
+};
+
+export type AdminNetworkDiagnosticsResponse = {
+  window: string;
+  metrics: Array<{
+    metric_name: NetworkDiagnosticMetricName;
+    label: string;
+    summary: OverviewMetricSummary;
+    last_seen_at: number | null;
+    by_cf_cache_status: NetworkDiagnosticBreakdown[];
+    by_model_id: NetworkDiagnosticBreakdown[];
+    by_device_type: NetworkDiagnosticBreakdown[];
+  }>;
 };
 
 export type StatusResult = {
@@ -173,6 +211,12 @@ export async function fetchAdminOverviewSummary(window: string): Promise<AdminOv
   const search = new URLSearchParams();
   search.set("window", window);
   return fetchJson<AdminOverviewSummaryResponse>(`${API_ORIGIN}/api/v4/admin/overview/summary?${search.toString()}`);
+}
+
+export async function fetchAdminNetworkDiagnostics(window: string): Promise<AdminNetworkDiagnosticsResponse> {
+  const search = new URLSearchParams();
+  search.set("window", window);
+  return fetchJson<AdminNetworkDiagnosticsResponse>(`${API_ORIGIN}/api/v4/admin/overview/network-diagnostics?${search.toString()}`);
 }
 
 export async function fetchAdminObservabilitySummary(): Promise<AdminObservabilitySummaryResponse> {

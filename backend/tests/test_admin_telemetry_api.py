@@ -386,6 +386,85 @@ async def test_admin_overview_summary_requires_admin_membership(client: httpx.As
     }
 
 
+async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_device(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        {
+            "metric_name": "frames_fetch_duration",
+            "metric_value": 120.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-1",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "latest",
+            "device_type": "desktop",
+            "viewport_bucket": "xl",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "HIT"},
+        },
+        {
+            "metric_name": "frames_fetch_duration",
+            "metric_value": 420.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-2",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "latest",
+            "device_type": "mobile",
+            "viewport_bucket": "sm",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "MISS"},
+        },
+        {
+            "metric_name": "sample_request_duration",
+            "metric_value": 210.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-3",
+            "model_id": "mrms",
+            "variable_id": "reflectivity",
+            "run_id": "latest",
+            "device_type": "desktop",
+            "viewport_bucket": "lg",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "BYPASS"},
+        },
+    ]
+
+    for payload in payloads:
+        response = await client.post(
+            "/api/v4/telemetry/rum",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json=payload,
+        )
+        assert response.status_code == 204
+
+    response = await client.get(
+        "/api/v4/admin/overview/network-diagnostics?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    frames_metric = next(item for item in body["metrics"] if item["metric_name"] == "frames_fetch_duration")
+    assert frames_metric["label"] == "Frames"
+    assert frames_metric["summary"]["count"] == 2
+    assert frames_metric["by_cf_cache_status"][0]["key"] in {"MISS", "HIT"}
+    cache_keys = {item["key"] for item in frames_metric["by_cf_cache_status"]}
+    assert cache_keys == {"HIT", "MISS"}
+    model_keys = {item["key"] for item in frames_metric["by_model_id"]}
+    assert "hrrr" in model_keys
+    device_keys = {item["key"] for item in frames_metric["by_device_type"]}
+    assert device_keys == {"desktop", "mobile"}
+
+    sample_metric = next(item for item in body["metrics"] if item["metric_name"] == "sample_request_duration")
+    assert sample_metric["summary"]["count"] == 1
+    assert sample_metric["by_cf_cache_status"][0]["key"] == "BYPASS"
+
+
 async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:
     os.environ["CARTOSKY_PROMETHEUS_ENABLED"] = "1"
 
