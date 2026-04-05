@@ -1722,13 +1722,19 @@ export default function App() {
   const effectiveRunId = currentFrame?.run ?? resolvedRunForRequests;
   const runDateTimeISO = runIdToIso(effectiveRunId);
   const hoverSampleFrame = currentFrame ?? frameRows[0] ?? null;
+  const hoverSampleHour = selectedModelSupportsSampling && selectionSupportsGrid
+    ? (Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : Number.NaN)
+    : (Number.isFinite(hoverSampleFrame?.fh) ? Number(hoverSampleFrame?.fh) : Number.NaN);
   const hoverSamplingEnabled = selectedModelSupportsSampling
     && Boolean(variable)
-    && Boolean(hoverSampleFrame?.has_cog);
-  const hoverSampleRun = (hoverSampleFrame?.run ?? resolvedRunForRequests ?? "").trim();
-  const hoverSampleHour = Number.isFinite(hoverSampleFrame?.fh)
-    ? Number(hoverSampleFrame?.fh)
-    : Number.NaN;
+    && Number.isFinite(hoverSampleHour)
+    && Boolean((effectiveRunId ?? "").trim())
+    && (
+      selectionSupportsGrid
+        ? Boolean(presentedGridFrameUrl)
+        : Boolean(hoverSampleFrame?.has_cog)
+    );
+  const hoverSampleRun = (effectiveRunId ?? "").trim();
 
   // ── Hover-for-data tooltip ──────────────────────────────────────────
   const { tooltip, onHover, onHoverEnd } = useSampleTooltip({
