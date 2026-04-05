@@ -426,6 +426,10 @@ Improve viewer smoothness by attacking the most credible map-render hot paths fi
 
 ### Phase 3A: Reduce Anchor Marker Work On Every Render
 
+#### Current Status
+
+Implemented in repo. Anchor marker snapping no longer subscribes to every map `render` event. Marker sync and pixel snapping now flow through the existing rAF-throttled anchor sync path and only run on map movement, movement completion, or resize.
+
 #### Tasks
 
 1. Remove or reduce per-render pixel snapping where possible.

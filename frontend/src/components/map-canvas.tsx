@@ -1449,37 +1449,17 @@ export function MapCanvas({
     scheduleSync();
     map.on("move", scheduleSync);
     map.on("moveend", scheduleSync);
+    map.on("resize", scheduleSync);
 
     return () => {
       map.off("move", scheduleSync);
       map.off("moveend", scheduleSync);
+      map.off("resize", scheduleSync);
       if (rafId !== null) {
         window.cancelAnimationFrame(rafId);
       }
     };
   }, [anchorGeoJson, isLoaded, pointLabelsEnabled, syncAnchorMarkers]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
-    }
-
-    const snapAllAnchorMarkers = () => {
-      for (const record of anchorMarkersRef.current.values()) {
-        snapAnchorMarkerToPixels(map, record);
-      }
-    };
-
-    map.on("render", snapAllAnchorMarkers);
-    map.on("moveend", snapAllAnchorMarkers);
-    snapAllAnchorMarkers();
-
-    return () => {
-      map.off("render", snapAllAnchorMarkers);
-      map.off("moveend", snapAllAnchorMarkers);
-    };
-  }, [isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
