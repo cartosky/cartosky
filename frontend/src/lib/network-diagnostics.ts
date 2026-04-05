@@ -8,6 +8,10 @@ export type NetworkDiagnosticMetricName =
   | "frames_fetch_duration"
   | "grid_manifest_fetch_duration"
   | "grid_binary_fetch_duration"
+  | "grid_binary_array_buffer_duration"
+  | "grid_texture_prepare_duration"
+  | "grid_texture_upload_duration"
+  | "grid_webgl1_expand_duration"
   | "sample_request_duration"
   | "sample_batch_request_duration"
   | "contour_fetch_duration"
@@ -81,5 +85,33 @@ export function trackNetworkFetchDuration(params: {
       ...responseMeta,
       ...(params.meta ?? {}),
     },
+  });
+}
+
+export function trackClientProcessingDuration(params: {
+  metric_name: NetworkDiagnosticMetricName;
+  duration_ms: number;
+  model_id?: string | null;
+  variable_id?: string | null;
+  run_id?: string | null;
+  region_id?: string | null;
+  forecast_hour?: number | null;
+  meta?: Record<string, unknown> | null;
+}): void {
+  const durationMs = Number(params.duration_ms);
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return;
+  }
+
+  trackRumDiagnosticMetric({
+    metric_name: params.metric_name,
+    metric_value: durationMs,
+    metric_unit: "ms",
+    model_id: params.model_id ?? null,
+    variable_id: params.variable_id ?? null,
+    run_id: params.run_id ?? null,
+    region_id: params.region_id ?? null,
+    forecast_hour: Number.isFinite(params.forecast_hour) ? Number(params.forecast_hour) : null,
+    meta: params.meta ?? null,
   });
 }

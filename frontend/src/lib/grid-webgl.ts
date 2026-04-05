@@ -2,7 +2,7 @@ import maplibregl from "maplibre-gl";
 
 import type { LegendPayload } from "@/components/map-legend";
 import type { GridManifestResponse } from "@/lib/api";
-import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
+import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
 
@@ -433,6 +433,16 @@ export class GridWebglLayerController {
   private transitionStartedAt = 0;
   private transitionDurationMs = 0;
   private quadSignature: string | null = null;
+
+  private buildDiagnosticMeta(frameUrl: string): Record<string, unknown> {
+    return {
+      frame_url: frameUrl,
+      grid_width: this.manifest?.grid?.width ?? null,
+      grid_height: this.manifest?.grid?.height ?? null,
+      selection_key: this.selectionKey || null,
+      webgl_backend: this.isWebGL2 ? "webgl2" : "webgl1",
+    };
+  }
 
   createLayer(): maplibregl.CustomLayerInterface {
     return {
@@ -870,6 +880,8 @@ export class GridWebglLayerController {
     if (!bytes) {
       return null;
     }
+    const prepareStartedAtMs = startNetworkTimer();
+    const diagnosticMeta = this.buildDiagnosticMeta(frameUrl);
 
     const targetTexture = gl.createTexture();
     if (!targetTexture) {
@@ -907,11 +919,50 @@ export class GridWebglLayerController {
 
     if (this.isWebGL2) {
       const gl2 = gl as WebGL2RenderingContext;
+      const uploadStartedAtMs = startNetworkTimer();
       gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RG8, width, height, 0, gl2.RG, gl2.UNSIGNED_BYTE, bytes);
+      trackClientProcessingDuration({
+        metric_name: "grid_texture_upload_duration",
+        duration_ms: startNetworkTimer() - uploadStartedAtMs,
+        model_id: this.manifest?.model ?? null,
+        variable_id: this.manifest?.var ?? null,
+        run_id: this.manifest?.run ?? null,
+        forecast_hour: this.frameHour,
+        meta: diagnosticMeta,
+      });
     } else {
+      const expandStartedAtMs = startNetworkTimer();
       const rgba = expandUint16BytesToRgba(bytes);
+      trackClientProcessingDuration({
+        metric_name: "grid_webgl1_expand_duration",
+        duration_ms: startNetworkTimer() - expandStartedAtMs,
+        model_id: this.manifest?.model ?? null,
+        variable_id: this.manifest?.var ?? null,
+        run_id: this.manifest?.run ?? null,
+        forecast_hour: this.frameHour,
+        meta: diagnosticMeta,
+      });
+      const uploadStartedAtMs = startNetworkTimer();
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      trackClientProcessingDuration({
+        metric_name: "grid_texture_upload_duration",
+        duration_ms: startNetworkTimer() - uploadStartedAtMs,
+        model_id: this.manifest?.model ?? null,
+        variable_id: this.manifest?.var ?? null,
+        run_id: this.manifest?.run ?? null,
+        forecast_hour: this.frameHour,
+        meta: diagnosticMeta,
+      });
     }
+    trackClientProcessingDuration({
+      metric_name: "grid_texture_prepare_duration",
+      duration_ms: startNetworkTimer() - prepareStartedAtMs,
+      model_id: this.manifest?.model ?? null,
+      variable_id: this.manifest?.var ?? null,
+      run_id: this.manifest?.run ?? null,
+      forecast_hour: this.frameHour,
+      meta: diagnosticMeta,
+    });
 
     this.textureCache.set(frameUrl, {
       texture: targetTexture,
@@ -997,6 +1048,7 @@ export class GridWebglLayerController {
     const startedAtMs = startNetworkTimer();
     const request = fetch(frameUrl, { credentials: "omit", signal: abortController.signal })
       .then(async (response) => {
+        const diagnosticMeta = this.buildDiagnosticMeta(frameUrl);
         trackNetworkFetchDuration({
           metric_name: "grid_binary_fetch_duration",
           started_at_ms: startedAtMs,
@@ -1005,17 +1057,23 @@ export class GridWebglLayerController {
           variable_id: this.manifest?.var ?? null,
           run_id: this.manifest?.run ?? null,
           forecast_hour: this.frameHour,
-          meta: {
-            frame_url: frameUrl,
-            grid_width: this.manifest?.grid?.width ?? null,
-            grid_height: this.manifest?.grid?.height ?? null,
-            selection_key: this.selectionKey || null,
-          },
+          meta: diagnosticMeta,
         });
         if (!response.ok) {
           throw new Error(`Grid frame request failed: ${response.status}`);
         }
-        const bytes = new Uint8Array(await response.arrayBuffer());
+        const arrayBufferStartedAtMs = startNetworkTimer();
+        const arrayBuffer = await response.arrayBuffer();
+        trackClientProcessingDuration({
+          metric_name: "grid_binary_array_buffer_duration",
+          duration_ms: startNetworkTimer() - arrayBufferStartedAtMs,
+          model_id: this.manifest?.model ?? null,
+          variable_id: this.manifest?.var ?? null,
+          run_id: this.manifest?.run ?? null,
+          forecast_hour: this.frameHour,
+          meta: diagnosticMeta,
+        });
+        const bytes = new Uint8Array(arrayBuffer);
         this.upsertFrameCache(frameUrl, bytes);
         this.onFrameReady?.(frameUrl);
         return bytes;

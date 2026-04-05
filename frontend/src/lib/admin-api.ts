@@ -33,6 +33,10 @@ export type AdminOverviewSummaryResponse = {
     | "frames_fetch_duration"
     | "grid_manifest_fetch_duration"
     | "grid_binary_fetch_duration"
+    | "grid_binary_array_buffer_duration"
+    | "grid_texture_prepare_duration"
+    | "grid_texture_upload_duration"
+    | "grid_webgl1_expand_duration"
     | "sample_request_duration"
     | "sample_batch_request_duration"
     | "contour_fetch_duration"
@@ -60,6 +64,10 @@ export type NetworkDiagnosticMetricName =
   | "frames_fetch_duration"
   | "grid_manifest_fetch_duration"
   | "grid_binary_fetch_duration"
+  | "grid_binary_array_buffer_duration"
+  | "grid_texture_prepare_duration"
+  | "grid_texture_upload_duration"
+  | "grid_webgl1_expand_duration"
   | "sample_request_duration"
   | "sample_batch_request_duration"
   | "contour_fetch_duration"
@@ -79,6 +87,7 @@ export type AdminNetworkDiagnosticsResponse = {
     by_cf_cache_status: NetworkDiagnosticBreakdown[];
     by_model_id: NetworkDiagnosticBreakdown[];
     by_device_type: NetworkDiagnosticBreakdown[];
+    by_webgl_backend: NetworkDiagnosticBreakdown[];
   }>;
 };
 

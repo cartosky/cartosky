@@ -62,6 +62,10 @@ ALLOWED_RUM_METRIC_NAMES = {
     "frames_fetch_duration",
     "grid_manifest_fetch_duration",
     "grid_binary_fetch_duration",
+    "grid_binary_array_buffer_duration",
+    "grid_texture_prepare_duration",
+    "grid_texture_upload_duration",
+    "grid_webgl1_expand_duration",
     "sample_request_duration",
     "sample_batch_request_duration",
     "contour_fetch_duration",
@@ -84,6 +88,10 @@ RUM_METRIC_UNITS = {
     "frames_fetch_duration": "ms",
     "grid_manifest_fetch_duration": "ms",
     "grid_binary_fetch_duration": "ms",
+    "grid_binary_array_buffer_duration": "ms",
+    "grid_texture_prepare_duration": "ms",
+    "grid_texture_upload_duration": "ms",
+    "grid_webgl1_expand_duration": "ms",
     "sample_request_duration": "ms",
     "sample_batch_request_duration": "ms",
     "contour_fetch_duration": "ms",
@@ -103,6 +111,10 @@ NETWORK_DIAGNOSTIC_METRIC_NAMES = (
     "frames_fetch_duration",
     "grid_manifest_fetch_duration",
     "grid_binary_fetch_duration",
+    "grid_binary_array_buffer_duration",
+    "grid_texture_prepare_duration",
+    "grid_texture_upload_duration",
+    "grid_webgl1_expand_duration",
     "sample_request_duration",
     "sample_batch_request_duration",
     "contour_fetch_duration",
@@ -117,6 +129,10 @@ NETWORK_DIAGNOSTIC_LABELS = {
     "frames_fetch_duration": "Frames",
     "grid_manifest_fetch_duration": "Grid Manifest",
     "grid_binary_fetch_duration": "Grid Binary",
+    "grid_binary_array_buffer_duration": "Grid ArrayBuffer",
+    "grid_texture_prepare_duration": "Grid Texture Prepare",
+    "grid_texture_upload_duration": "Grid Texture Upload",
+    "grid_webgl1_expand_duration": "Grid WebGL1 Expand",
     "sample_request_duration": "Sample",
     "sample_batch_request_duration": "Sample Batch",
     "contour_fetch_duration": "Contour",
@@ -1929,6 +1945,10 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
         "frames_fetch_duration",
         "grid_manifest_fetch_duration",
         "grid_binary_fetch_duration",
+        "grid_binary_array_buffer_duration",
+        "grid_texture_prepare_duration",
+        "grid_texture_upload_duration",
+        "grid_webgl1_expand_duration",
         "sample_request_duration",
         "sample_batch_request_duration",
         "contour_fetch_duration",
@@ -1985,6 +2005,7 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
     cache_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
     model_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
     device_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    webgl_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
 
     def _append_breakdown(
         store: dict[str, dict[str, list[float]]],
@@ -2004,6 +2025,7 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
         model_key = str(row["model_id"] or "unknown").strip() or "unknown"
         device_key = str(row["device_type"] or "unknown").strip() or "unknown"
         cache_key = "unknown"
+        webgl_key = "unknown"
         meta_json = row["meta_json"]
         if isinstance(meta_json, str) and meta_json.strip():
             try:
@@ -2014,10 +2036,14 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
                 raw_cache = str(meta.get("cf_cache_status") or "").strip().upper()
                 if raw_cache:
                     cache_key = raw_cache
+                raw_webgl = str(meta.get("webgl_backend") or "").strip().lower()
+                if raw_webgl:
+                    webgl_key = raw_webgl
 
         _append_breakdown(model_values_by_metric, metric_name, model_key, metric_value)
         _append_breakdown(device_values_by_metric, metric_name, device_key, metric_value)
         _append_breakdown(cache_values_by_metric, metric_name, cache_key, metric_value)
+        _append_breakdown(webgl_values_by_metric, metric_name, webgl_key, metric_value)
 
     def _rank_breakdowns(
         store: dict[str, dict[str, list[float]]],
@@ -2048,6 +2074,7 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
                 "by_cf_cache_status": _rank_breakdowns(cache_values_by_metric, metric_name),
                 "by_model_id": _rank_breakdowns(model_values_by_metric, metric_name),
                 "by_device_type": _rank_breakdowns(device_values_by_metric, metric_name),
+                "by_webgl_backend": _rank_breakdowns(webgl_values_by_metric, metric_name),
             }
         )
 

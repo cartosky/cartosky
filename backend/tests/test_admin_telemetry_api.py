@@ -444,7 +444,35 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
             "device_type": "desktop",
             "viewport_bucket": "lg",
             "page": "/viewer",
-            "meta": {"cf_cache_status": "MISS"},
+            "meta": {"cf_cache_status": "MISS", "webgl_backend": "webgl2"},
+        },
+        {
+            "metric_name": "grid_texture_upload_duration",
+            "metric_value": 42.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-5",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20250101_00z",
+            "device_type": "desktop",
+            "viewport_bucket": "lg",
+            "page": "/viewer",
+            "meta": {"webgl_backend": "webgl2"},
+        },
+        {
+            "metric_name": "grid_webgl1_expand_duration",
+            "metric_value": 28.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-6",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "run_id": "20250101_00z",
+            "device_type": "mobile",
+            "viewport_bucket": "sm",
+            "page": "/viewer",
+            "meta": {"webgl_backend": "webgl1"},
         },
     ]
 
@@ -482,6 +510,17 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
     assert grid_metric["label"] == "Grid Binary"
     assert grid_metric["summary"]["count"] == 1
     assert grid_metric["by_cf_cache_status"][0]["key"] == "MISS"
+    assert grid_metric["by_webgl_backend"][0]["key"] == "webgl2"
+
+    upload_metric = next(item for item in body["metrics"] if item["metric_name"] == "grid_texture_upload_duration")
+    assert upload_metric["label"] == "Grid Texture Upload"
+    assert upload_metric["summary"]["count"] == 1
+    assert upload_metric["by_webgl_backend"][0]["key"] == "webgl2"
+
+    expand_metric = next(item for item in body["metrics"] if item["metric_name"] == "grid_webgl1_expand_duration")
+    assert expand_metric["label"] == "Grid WebGL1 Expand"
+    assert expand_metric["summary"]["count"] == 1
+    assert expand_metric["by_webgl_backend"][0]["key"] == "webgl1"
 
 
 async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:

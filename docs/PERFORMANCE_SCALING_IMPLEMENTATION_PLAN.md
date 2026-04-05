@@ -444,6 +444,10 @@ Implemented in repo. Anchor marker snapping no longer subscribes to every map `r
 
 ### Phase 3B: Profile Grid Upload And Decode Before Adding Worker Complexity
 
+#### Current Status
+
+Implemented in repo. The grid viewer now records separate client-side timings for grid binary fetch, `response.arrayBuffer()`, texture preparation, texture upload, and the WebGL1 byte-expansion fallback. Admin network diagnostics also break these metrics down by WebGL backend so WebGL2 and WebGL1 behavior can be compared directly.
+
 #### Tasks
 
 1. Profile the current WebGL2 path separately from the WebGL1 fallback.
