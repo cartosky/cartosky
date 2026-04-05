@@ -1721,13 +1721,21 @@ export default function App() {
 
   const effectiveRunId = currentFrame?.run ?? resolvedRunForRequests;
   const runDateTimeISO = runIdToIso(effectiveRunId);
+  const hoverSampleFrame = currentFrame ?? frameRows[0] ?? null;
+  const hoverSamplingEnabled = selectedModelSupportsSampling
+    && Boolean(variable)
+    && Boolean(hoverSampleFrame?.has_cog);
+  const hoverSampleRun = (hoverSampleFrame?.run ?? resolvedRunForRequests ?? "").trim();
+  const hoverSampleHour = Number.isFinite(hoverSampleFrame?.fh)
+    ? Number(hoverSampleFrame?.fh)
+    : Number.NaN;
 
   // ── Hover-for-data tooltip ──────────────────────────────────────────
   const { tooltip, onHover, onHoverEnd } = useSampleTooltip({
-    model: selectedModelSupportsSampling ? model : "",
-    run: selectedModelSupportsSampling ? resolvedRunForRequests : "",
-    varId: selectedModelSupportsSampling ? variable : "",
-    fh: selectedModelSupportsSampling ? forecastHour : Number.NaN,
+    model: hoverSamplingEnabled ? model : "",
+    run: hoverSamplingEnabled ? hoverSampleRun : "",
+    varId: hoverSamplingEnabled ? variable : "",
+    fh: hoverSamplingEnabled ? hoverSampleHour : Number.NaN,
   });
   const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);
   const handleMapHover = useCallback((lat: number, lon: number, x: number, y: number, hoverTooltip?: Exclude<typeof tooltip, null>) => {

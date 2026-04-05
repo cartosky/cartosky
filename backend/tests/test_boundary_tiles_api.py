@@ -81,6 +81,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     mbtiles_path = tmp_path / "data" / "boundaries" / "v1" / "cartosky_boundaries.mbtiles"
     _write_boundaries_mbtiles(mbtiles_path)
 
+    boundary_tiles._reset_mbtiles_connections()
     monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path / "data")
     monkeypatch.setattr(main_module, "BOUNDARIES_MBTILES", mbtiles_path)
     monkeypatch.setattr(boundary_tiles, "BOUNDARIES_MBTILES", mbtiles_path)
@@ -89,6 +90,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     transport = httpx.ASGITransport(app=main_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
+    boundary_tiles._reset_mbtiles_connections()
 
 
 async def test_tiles_health_reports_boundary_tileset(client: httpx.AsyncClient) -> None:
@@ -129,6 +131,31 @@ async def test_boundaries_tile_endpoint_preserves_gzip_and_expected_empty_behavi
     assert "boundaries_tile_total;dur=" in miss_response.headers.get("server-timing", "")
     assert miss_response.headers["content-encoding"] == "gzip"
     assert miss_response.headers["content-type"].startswith("application/vnd.mapbox-vector-tile")
+
+
+def test_boundary_tiles_reuse_sqlite_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mbtiles_path = tmp_path / "data" / "boundaries" / "v1" / "cartosky_boundaries.mbtiles"
+    _write_boundaries_mbtiles(mbtiles_path)
+    boundary_tiles._reset_mbtiles_connections()
+
+    real_connect = sqlite3.connect
+    connect_calls: list[str] = []
+
+    def _counting_connect(*args, **kwargs):
+        connect_calls.append(str(args[0]))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(boundary_tiles.sqlite3, "connect", _counting_connect)
+
+    metadata = boundary_tiles.read_mbtiles_metadata(mbtiles_path)
+    tile = boundary_tiles.lookup_mbtiles_tile(mbtiles_path, z=0, x=0, y=0)
+    miss = boundary_tiles.lookup_mbtiles_tile(mbtiles_path, z=1, x=1, y=1)
+
+    assert metadata["name"] == "Test Boundaries"
+    assert tile is not None
+    assert miss is None
+    assert connect_calls == [str(mbtiles_path.resolve())]
+    boundary_tiles._reset_mbtiles_connections()
 
 
 async def test_weather_png_tile_endpoint_is_retired(client: httpx.AsyncClient) -> None:

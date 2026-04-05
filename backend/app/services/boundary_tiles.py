@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 from fastapi import Response
@@ -51,17 +52,42 @@ TILES_PUBLIC_BASE_URL = _env_value(
 BOUNDARY_CACHE_HIT = "public, max-age=31536000, immutable"
 BOUNDARY_CACHE_MISS = "public, max-age=15"
 EMPTY_GZIP_MVT_TILE = base64.b64decode("H4sIAHR2n2kC/wMAAAAAAAAAAAA=")
+_MBTILES_LOCAL = threading.local()
+
+
+def _mbtiles_connection_map() -> dict[str, sqlite3.Connection]:
+    mapping = getattr(_MBTILES_LOCAL, "connections", None)
+    if isinstance(mapping, dict):
+        return mapping
+    mapping = {}
+    _MBTILES_LOCAL.connections = mapping
+    return mapping
+
+
+def _get_mbtiles_connection(path: Path) -> sqlite3.Connection | None:
+    if not path.is_file():
+        return None
+
+    key = str(path.resolve())
+    connections = _mbtiles_connection_map()
+    conn = connections.get(key)
+    if conn is not None:
+        return conn
+
+    conn = sqlite3.connect(key, timeout=5.0)
+    conn.execute("PRAGMA query_only = 1")
+    connections[key] = conn
+    return conn
 
 
 def read_mbtiles_metadata(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
     try:
-        conn = sqlite3.connect(str(path))
+        conn = _get_mbtiles_connection(path)
+        if conn is None:
+            return {}
         cur = conn.cursor()
         cur.execute("SELECT name, value FROM metadata")
         rows = cur.fetchall()
-        conn.close()
         return {str(name): str(value) for name, value in rows}
     except Exception:
         logger.exception("Failed reading MBTiles metadata: %s", path)
@@ -69,9 +95,6 @@ def read_mbtiles_metadata(path: Path) -> dict[str, str]:
 
 
 def lookup_mbtiles_tile(path: Path, *, z: int, x: int, y: int) -> bytes | None:
-    if not path.is_file():
-        return None
-
     if z < 0 or x < 0 or y < 0:
         return None
 
@@ -82,7 +105,9 @@ def lookup_mbtiles_tile(path: Path, *, z: int, x: int, y: int) -> bytes | None:
     tms_y = max_coord - y
 
     try:
-        conn = sqlite3.connect(str(path))
+        conn = _get_mbtiles_connection(path)
+        if conn is None:
+            return None
         cur = conn.cursor()
         cur.execute(
             """
@@ -93,13 +118,24 @@ def lookup_mbtiles_tile(path: Path, *, z: int, x: int, y: int) -> bytes | None:
             (z, x, tms_y),
         )
         row = cur.fetchone()
-        conn.close()
         if row is None:
             return None
         return row[0]
     except Exception:
         logger.exception("Failed reading MBTiles tile z/x/y=%s/%s/%s from %s", z, x, y, path)
         return None
+
+
+def _reset_mbtiles_connections() -> None:
+    connections = getattr(_MBTILES_LOCAL, "connections", None)
+    if not isinstance(connections, dict):
+        return
+    for conn in connections.values():
+        try:
+            conn.close()
+        except Exception:
+            pass
+    connections.clear()
 
 
 def mbtiles_min_max_zoom(metadata: dict[str, str]) -> tuple[int, int]:
