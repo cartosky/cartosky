@@ -516,6 +516,7 @@ HRRR_CAPABILITIES = ModelCapabilities(
     },
     ui_constraints={
         "canonical_region": "conus",
+        "supports_sampling": True,
     },
     variable_catalog=HRRR_VARIABLE_CATALOG,
 )

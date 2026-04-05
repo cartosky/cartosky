@@ -629,6 +629,7 @@ GFS_CAPABILITIES = ModelCapabilities(
     },
     ui_constraints={
         "canonical_region": "conus",
+        "supports_sampling": True,
         "overlay_fade_out_zoom_start": 6,
         "overlay_fade_out_zoom_end": 7,
     },

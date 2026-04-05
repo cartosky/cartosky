@@ -370,6 +370,7 @@ NBM_CAPABILITIES = ModelCapabilities(
     },
     ui_constraints={
         "canonical_region": "conus",
+        "supports_sampling": True,
     },
     variable_catalog=NBM_VARIABLE_CATALOG,
 )

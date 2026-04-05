@@ -591,6 +591,7 @@ NAM_CAPABILITIES = ModelCapabilities(
     },
     ui_constraints={
         "canonical_region": "conus",
+        "supports_sampling": True,
     },
     variable_catalog=NAM_VARIABLE_CATALOG,
 )

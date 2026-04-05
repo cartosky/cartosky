@@ -299,7 +299,7 @@ export function readCapabilityRenderSubstrates(
 }
 
 export function readCapabilitySupportsSampling(model: CapabilityModel | null | undefined): boolean {
-  return model?.constraints?.supports_sampling === true;
+  return model?.constraints?.supports_sampling !== false;
 }
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {

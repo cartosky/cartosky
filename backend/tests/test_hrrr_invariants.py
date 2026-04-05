@@ -55,6 +55,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
 
     assert capabilities.ui_defaults["default_var_key"] == "radar_ptype"
     assert capabilities.ui_defaults["default_run"] == "latest"
+    assert capabilities.ui_constraints["supports_sampling"] is True
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
         "conus": 3000.0,
@@ -81,6 +82,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert payload["name"] == "HRRR"
     assert payload["product"] == "sfc"
     assert payload["canonical_region"] == "conus"
+    assert payload["constraints"]["supports_sampling"] is True
 
     tmp2m = payload["variables"]["tmp2m"]
     assert set(tmp2m.keys()) == {

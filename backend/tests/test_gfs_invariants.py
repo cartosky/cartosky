@@ -43,6 +43,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
+    assert capabilities.ui_constraints["supports_sampling"] is True
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
         "conus": 25000.0,
@@ -54,6 +55,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     capabilities = GFS_MODEL.capabilities
     assert capabilities is not None
     payload = _serialize_model_capability("gfs", capabilities)
+    assert payload["constraints"]["supports_sampling"] is True
 
     precip_ptype = payload["variables"]["precip_ptype"]
     assert precip_ptype["buildable"] is True
