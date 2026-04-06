@@ -415,6 +415,7 @@ cors_allow_headers = [
     "Accept-Language",
     "Content-Language",
     "Content-Type",
+    "If-None-Match",
     "Origin",
     "Authorization",
     "X-Requested-With",
