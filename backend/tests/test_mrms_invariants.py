@@ -105,9 +105,10 @@ def test_mrms_radar_ptype_grid_packing_config() -> None:
         f"Expected grid packing config for {key}"
     )
     config = _PACKING_BY_MODEL_VAR[key]
+    assert config["dtype"] == "uint8"
     assert config["scale"] == 1.0
     assert config["offset"] == 0.0
-    assert config["nodata"] == 65535
+    assert config["nodata"] == 255
 
 
 def test_mrms_reflectivity_grid_packing_config() -> None:
@@ -118,6 +119,7 @@ def test_mrms_reflectivity_grid_packing_config() -> None:
         f"Expected grid packing config for {key}"
     )
     config = _PACKING_BY_MODEL_VAR[key]
-    assert config["scale"] == 0.1
-    assert config["offset"] == 0.0
-    assert config["nodata"] == 65535
+    assert config["dtype"] == "uint8"
+    assert config["scale"] == 0.5
+    assert config["offset"] == -10.0
+    assert config["nodata"] == 255

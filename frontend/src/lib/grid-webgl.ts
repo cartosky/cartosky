@@ -224,6 +224,20 @@ function expandUint16BytesToRgba(bytes: Uint8Array): Uint8Array {
   return expanded;
 }
 
+function expandUint8BytesToRgba(bytes: Uint8Array): Uint8Array {
+  const pixelCount = bytes.length;
+  const expanded = new Uint8Array(pixelCount * 4);
+  for (let index = 0; index < pixelCount; index += 1) {
+    const value = bytes[index] ?? 0;
+    const dst = index * 4;
+    expanded[dst] = value;
+    expanded[dst + 1] = 0;
+    expanded[dst + 2] = 0;
+    expanded[dst + 3] = 255;
+  }
+  return expanded;
+}
+
 function isMobileDevice(): boolean {
   if (typeof navigator === "undefined") {
     return false;
@@ -239,8 +253,13 @@ function resolveTextureCacheBudgetBytes(): number {
   return isMobileDevice() ? GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES : GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;
 }
 
-function expectedPackedFrameByteLength(width: number, height: number): number {
-  return Math.max(0, Math.floor(width) * Math.floor(height) * 2);
+function resolveGridDtype(dtype: string | null | undefined): "uint8" | "uint16" {
+  return String(dtype ?? "").trim().toLowerCase() === "uint8" ? "uint8" : "uint16";
+}
+
+function expectedPackedFrameByteLength(width: number, height: number, dtype: string | null | undefined): number {
+  const bytesPerSample = resolveGridDtype(dtype) === "uint8" ? 1 : 2;
+  return Math.max(0, Math.floor(width) * Math.floor(height) * bytesPerSample);
 }
 
 function parseContentLengthHeader(response: Response): number | null {
@@ -498,6 +517,7 @@ type ProgramBindings = {
   mixLocation: WebGLUniformLocation | null;
   hasPrevLocation: WebGLUniformLocation | null;
   powerNormGammaLocation: WebGLUniformLocation | null;
+  dataEncodingLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
   categoricalLocation: WebGLUniformLocation | null;
   transparentZeroLocation: WebGLUniformLocation | null;
@@ -567,6 +587,7 @@ export class GridWebglLayerController {
       frame_url: frameUrl,
       grid_width: this.manifest?.grid?.width ?? null,
       grid_height: this.manifest?.grid?.height ?? null,
+      grid_dtype: this.manifest?.grid?.dtype ?? null,
       selection_key: this.selectionKey || null,
       webgl_backend: this.isWebGL2 ? "webgl2" : "webgl1",
     };
@@ -746,6 +767,7 @@ export class GridWebglLayerController {
       uniform float u_mixAmount;
       uniform float u_hasPrevious;
       uniform float u_powerNormGamma;
+      uniform float u_dataEncoding;
       uniform vec2 u_texSize;
       uniform float u_categorical;
       uniform float u_transparentZero;
@@ -758,8 +780,11 @@ export class GridWebglLayerController {
       // Returns the decoded value, or -1e30 if nodata.
       float decodeSample(vec4 sample) {
         float low = floor(sample.r * 255.0 + 0.5);
-        float high = floor(sample.g * 255.0 + 0.5);
-        float encoded = low + high * 256.0;
+        float encoded = low;
+        if (u_dataEncoding > 0.5) {
+          float high = floor(sample.g * 255.0 + 0.5);
+          encoded += high * 256.0;
+        }
         if (abs(encoded - u_nodata) < 0.5) {
           return -1e30;
         }
@@ -941,6 +966,7 @@ export class GridWebglLayerController {
       mixLocation: gl.getUniformLocation(this.program, "u_mixAmount"),
       hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
       powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
+      dataEncodingLocation: gl.getUniformLocation(this.program, "u_dataEncoding"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
@@ -1020,7 +1046,8 @@ export class GridWebglLayerController {
 
     const width = Math.max(1, Math.floor(Number(grid.width) || 1));
     const height = Math.max(1, Math.floor(Number(grid.height) || 1));
-    const expectedBytes = expectedPackedFrameByteLength(width, height);
+    const gridDtype = resolveGridDtype(grid.dtype);
+    const expectedBytes = expectedPackedFrameByteLength(width, height, gridDtype);
     if (bytes.byteLength < expectedBytes) {
       this.invalidFrameUrls.add(frameUrl);
       console.warn("[grid-webgl] skipping undersized frame texture upload", {
@@ -1050,7 +1077,11 @@ export class GridWebglLayerController {
     if (this.isWebGL2) {
       const gl2 = gl as WebGL2RenderingContext;
       const uploadStartedAtMs = startNetworkTimer();
-      gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RG8, width, height, 0, gl2.RG, gl2.UNSIGNED_BYTE, bytes);
+      if (gridDtype === "uint8") {
+        gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.R8, width, height, 0, gl2.RED, gl2.UNSIGNED_BYTE, bytes);
+      } else {
+        gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RG8, width, height, 0, gl2.RG, gl2.UNSIGNED_BYTE, bytes);
+      }
       trackClientProcessingDuration({
         metric_name: "grid_texture_upload_duration",
         duration_ms: startNetworkTimer() - uploadStartedAtMs,
@@ -1062,7 +1093,9 @@ export class GridWebglLayerController {
       });
     } else {
       const expandStartedAtMs = startNetworkTimer();
-      const rgba = expandUint16BytesToRgba(bytes);
+      const rgba = gridDtype === "uint8"
+        ? expandUint8BytesToRgba(bytes)
+        : expandUint16BytesToRgba(bytes);
       trackClientProcessingDuration({
         metric_name: "grid_webgl1_expand_duration",
         duration_ms: startNetworkTimer() - expandStartedAtMs,
@@ -1402,6 +1435,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.opacityLocation, resolvedOpacity);
     gl.uniform1f(bindings.transparentBelowMinLocation, transparentBelowMinForManifest(this.manifest));
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
+    gl.uniform1f(bindings.dataEncodingLocation, resolveGridDtype(grid.dtype) === "uint16" ? 1 : 0);
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(

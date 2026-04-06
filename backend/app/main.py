@@ -3396,8 +3396,9 @@ def _get_grid_file(model: str, run: str, var: str, filename: str):
     grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
     width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
+    dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
     if width > 0 and height > 0:
-        expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height)
+        expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
         actual_size_bytes = candidate.stat().st_size
         if actual_size_bytes != expected_size_bytes:
             raise HTTPException(status_code=404, detail="Grid artifact invalid")

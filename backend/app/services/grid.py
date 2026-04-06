@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 GRID_MANIFEST_VERSION = 1
 GRID_SUBTYPE = "grid"
 GRID_PROJECTION = "EPSG:3857"
+GRID_DTYPE_UINT8 = "uint8"
+GRID_DTYPE_UINT16 = "uint16"
 GRID_DTYPE = "uint16"
 GRID_ENDIANNESS = "little"
 GRID_LEVEL = 0
@@ -211,16 +213,18 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "in",
     },
     ("mrms", "reflectivity"): {
-        "scale": 0.1,
-        "offset": 0.0,
-        "nodata": 65535,
+        "dtype": GRID_DTYPE_UINT8,
+        "scale": 0.5,
+        "offset": -10.0,
+        "nodata": 255,
         "units": "dBZ",
     },
     ("mrms", "mrms_radar_ptype"): {
+        "dtype": GRID_DTYPE_UINT8,
         "scale": 1.0,
         "offset": 0.0,
-        "nodata": 65535,
-        "units": "dBZ",
+        "nodata": 255,
+        "units": "index",
     },
 }
 
@@ -268,16 +272,45 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
-def grid_frame_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
-    return f"fh{int(fh):03d}.l{int(level)}.u16.bin"
+def grid_dtype(dtype: str | None) -> str:
+    normalized = str(dtype or GRID_DTYPE).strip().lower()
+    return GRID_DTYPE_UINT8 if normalized == GRID_DTYPE_UINT8 else GRID_DTYPE_UINT16
 
 
-def grid_frame_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
-    return grid_dir(data_root, model, run, var) / grid_frame_filename(fh, level=level)
+def grid_bytes_per_sample(dtype: str | None) -> int:
+    return 1 if grid_dtype(dtype) == GRID_DTYPE_UINT8 else 2
 
 
-def grid_frame_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
-    return grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level)
+def grid_frame_dtype_token(dtype: str | None) -> str:
+    return "u8" if grid_dtype(dtype) == GRID_DTYPE_UINT8 else "u16"
+
+
+def grid_frame_filename(fh: int, *, level: int = GRID_LEVEL, dtype: str = GRID_DTYPE) -> str:
+    return f"fh{int(fh):03d}.l{int(level)}.{grid_frame_dtype_token(dtype)}.bin"
+
+
+def grid_frame_path(
+    data_root: Path,
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    *,
+    level: int = GRID_LEVEL,
+    dtype: str = GRID_DTYPE,
+) -> Path:
+    return grid_dir(data_root, model, run, var) / grid_frame_filename(fh, level=level, dtype=dtype)
+
+
+def grid_frame_path_for_run_root(
+    run_root: Path,
+    var: str,
+    fh: int,
+    *,
+    level: int = GRID_LEVEL,
+    dtype: str = GRID_DTYPE,
+) -> Path:
+    return grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level, dtype=dtype)
 
 
 def grid_frame_meta_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
@@ -292,16 +325,23 @@ def grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, leve
     return grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
 
 
-def resolved_grid_frame_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
-    return resolved_grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level)
+def resolved_grid_frame_path_for_run_root(
+    run_root: Path,
+    var: str,
+    fh: int,
+    *,
+    level: int = GRID_LEVEL,
+    dtype: str = GRID_DTYPE,
+) -> Path:
+    return resolved_grid_dir_for_run_root(run_root, var) / grid_frame_filename(fh, level=level, dtype=dtype)
 
 
 def resolved_grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
     return resolved_grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
 
 
-def expected_grid_frame_size_bytes(*, width: int, height: int) -> int:
-    return max(0, int(width) * int(height) * 2)
+def expected_grid_frame_size_bytes(*, width: int, height: int, dtype: str = GRID_DTYPE) -> int:
+    return max(0, int(width) * int(height) * grid_bytes_per_sample(dtype))
 
 
 def grid_gzip_sidecar_path(frame_path: Path) -> Path:
@@ -336,14 +376,16 @@ def _packing_config(model: str, var: str) -> dict[str, Any] | None:
     return _PACKING_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
 
 
-def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: int) -> np.ndarray:
-    encoded = np.full(values.shape, int(nodata), dtype=np.uint16)
+def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: int, dtype: str) -> np.ndarray:
+    resolved_dtype = grid_dtype(dtype)
+    encoded_dtype: np.dtype[Any] = np.uint8 if resolved_dtype == GRID_DTYPE_UINT8 else np.uint16
+    encoded = np.full(values.shape, int(nodata), dtype=encoded_dtype)
     valid_mask = np.isfinite(values)
     if not np.any(valid_mask):
         return encoded
 
     scaled = np.rint((values[valid_mask] - float(offset)) / float(scale))
-    clipped = np.clip(scaled, 0, int(nodata) - 1).astype(np.uint16, copy=False)
+    clipped = np.clip(scaled, 0, int(nodata) - 1).astype(encoded_dtype, copy=False)
     encoded[valid_mask] = clipped
     return encoded
 
@@ -362,6 +404,7 @@ def write_grid_frame_for_run_root(
     packing = _packing_config(model, var)
     if packing is None:
         raise ValueError(f"Unsupported grid pack target: {model}/{var}")
+    packing_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
 
     values_array = np.asarray(values, dtype=np.float32)
 
@@ -382,12 +425,16 @@ def write_grid_frame_for_run_root(
         scale=float(packing["scale"]),
         offset=float(packing["offset"]),
         nodata=int(packing["nodata"]),
+        dtype=packing_dtype,
     )
     height, width = encoded.shape
     crs_text = str(projection or GRID_PROJECTION)
-    encoded_bytes = encoded.astype("<u2", copy=False).tobytes(order="C")
+    if packing_dtype == GRID_DTYPE_UINT8:
+        encoded_bytes = encoded.astype(np.uint8, copy=False).tobytes(order="C")
+    else:
+        encoded_bytes = encoded.astype("<u2", copy=False).tobytes(order="C")
 
-    out_path = grid_frame_path_for_run_root(run_root, var, fh)
+    out_path = grid_frame_path_for_run_root(run_root, var, fh, dtype=packing_dtype)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp_path.write_bytes(encoded_bytes)
@@ -473,6 +520,7 @@ def _build_manifest_for_var_from_run_root(
     packing = _packing_config(model, var)
     if packing is None:
         return False
+    packing_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
 
     var_dir = Path(run_root) / var
     if not var_dir.is_dir():
@@ -494,7 +542,7 @@ def _build_manifest_for_var_from_run_root(
             fh = int(fh_token.removeprefix("fh"))
         except ValueError:
             continue
-        frame_path = resolved_grid_frame_path_for_run_root(run_root, var, fh)
+        frame_path = resolved_grid_frame_path_for_run_root(run_root, var, fh, dtype=packing_dtype)
         frame_meta_path = resolved_grid_frame_meta_path_for_run_root(run_root, var, fh)
         value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
         if not frame_path.is_file():
@@ -517,7 +565,11 @@ def _build_manifest_for_var_from_run_root(
             frame_bbox = frame_meta.get("bbox")
             frame_projection = str(frame_meta.get("projection") or GRID_PROJECTION)
             actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
-            expected_size_bytes = expected_grid_frame_size_bytes(width=frame_width, height=frame_height)
+            expected_size_bytes = expected_grid_frame_size_bytes(
+                width=frame_width,
+                height=frame_height,
+                dtype=packing_dtype,
+            )
             if actual_size_bytes != expected_size_bytes:
                 logger.warning(
                     "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
@@ -541,7 +593,11 @@ def _build_manifest_for_var_from_run_root(
             if not value_cog_path.is_file():
                 continue
             with rasterio.open(value_cog_path) as ds:
-                expected_size_bytes = expected_grid_frame_size_bytes(width=int(ds.width), height=int(ds.height))
+                expected_size_bytes = expected_grid_frame_size_bytes(
+                    width=int(ds.width),
+                    height=int(ds.height),
+                    dtype=packing_dtype,
+                )
                 actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
                 if actual_size_bytes != expected_size_bytes:
                     logger.warning(
@@ -583,7 +639,7 @@ def _build_manifest_for_var_from_run_root(
         "grid": {
             "width": int(width),
             "height": int(height),
-            "dtype": GRID_DTYPE,
+            "dtype": packing_dtype,
             "endianness": GRID_ENDIANNESS,
             "scale": float(packing["scale"]),
             "offset": float(packing["offset"]),

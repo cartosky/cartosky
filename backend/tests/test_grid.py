@@ -675,7 +675,7 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
-    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_path = artifacts_dir / "fh000.l0.u8.bin"
     frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
     manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
@@ -691,21 +691,22 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     assert manifest["palette"]["color_map_id"] == "mrms_reflectivity"
     assert manifest["palette"]["kind"] == "discrete"
     assert manifest["palette"]["transparent_below_min"] == 10.0
-    assert manifest["grid"]["scale"] == 0.1
-    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["dtype"] == "uint8"
+    assert manifest["grid"]["scale"] == 0.5
+    assert manifest["grid"]["offset"] == -10.0
     assert manifest["grid"]["units"] == "dBZ"
     assert manifest["grid"]["width"] == values.shape[1]
     assert manifest["grid"]["height"] == values.shape[0]
     assert manifest["display_prep"]["id"] == "mrms_reflectivity_display_v1"
 
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
-    assert encoded.dtype == np.dtype("<u2")
-    assert encoded[0, 0] >= 100
-    assert encoded[0, 1] >= 200
-    assert encoded[1, 0] == 65535
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype=np.uint8).reshape(values.shape)
+    assert encoded.dtype == np.dtype(np.uint8)
+    assert encoded[0, 0] >= 40
+    assert encoded[0, 1] >= 60
+    assert encoded[1, 0] == 255
     assert encoded[1, 1] > encoded[0, 1]
-    assert encoded[1, 1] >= 500
-    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+    assert encoded[1, 1] >= 100
+    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u8.bin"
 
 
 def test_build_grid_for_run_supports_nam_radar_ptype(
