@@ -243,6 +243,15 @@ function expectedPackedFrameByteLength(width: number, height: number): number {
   return Math.max(0, Math.floor(width) * Math.floor(height) * 2);
 }
 
+function parseContentLengthHeader(response: Response): number | null {
+  const rawValue = response.headers.get("Content-Length");
+  if (!rawValue) {
+    return null;
+  }
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function transparentBelowMinForManifest(manifest: GridManifestResponse | null): number {
   const paletteThreshold = Number(manifest?.palette?.transparent_below_min);
   if (Number.isFinite(paletteThreshold)) {
@@ -881,7 +890,10 @@ export class GridWebglLayerController {
       return null;
     }
     const prepareStartedAtMs = startNetworkTimer();
-    const diagnosticMeta = this.buildDiagnosticMeta(frameUrl);
+    const diagnosticMeta = {
+      ...this.buildDiagnosticMeta(frameUrl),
+      payload_bytes: bytes.byteLength,
+    };
 
     const targetTexture = gl.createTexture();
     if (!targetTexture) {
@@ -1049,6 +1061,12 @@ export class GridWebglLayerController {
     const request = fetch(frameUrl, { credentials: "omit", signal: abortController.signal })
       .then(async (response) => {
         const diagnosticMeta = this.buildDiagnosticMeta(frameUrl);
+        const contentLengthBytes = parseContentLengthHeader(response);
+        const responseDiagnosticMeta = {
+          ...diagnosticMeta,
+          content_encoding: response.headers.get("Content-Encoding")?.trim() || null,
+          content_length_bytes: contentLengthBytes,
+        };
         trackNetworkFetchDuration({
           metric_name: "grid_binary_fetch_duration",
           started_at_ms: startedAtMs,
@@ -1057,7 +1075,7 @@ export class GridWebglLayerController {
           variable_id: this.manifest?.var ?? null,
           run_id: this.manifest?.run ?? null,
           forecast_hour: this.frameHour,
-          meta: diagnosticMeta,
+          meta: responseDiagnosticMeta,
         });
         if (!response.ok) {
           throw new Error(`Grid frame request failed: ${response.status}`);
@@ -1071,7 +1089,11 @@ export class GridWebglLayerController {
           variable_id: this.manifest?.var ?? null,
           run_id: this.manifest?.run ?? null,
           forecast_hour: this.frameHour,
-          meta: diagnosticMeta,
+          meta: {
+            ...responseDiagnosticMeta,
+            array_buffer_byte_length: arrayBuffer.byteLength,
+            payload_bytes: arrayBuffer.byteLength,
+          },
         });
         const bytes = new Uint8Array(arrayBuffer);
         this.upsertFrameCache(frameUrl, bytes);

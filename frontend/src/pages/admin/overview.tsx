@@ -457,7 +457,7 @@ export default function AdminOverviewPage() {
               <div className="text-lg font-semibold">Network Diagnostics</div>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
                 These sampled RUM timings make the new Phase 0 fetch diagnostics actionable. Compare overall p95 with the cache-status,
-                model, device, and WebGL-backend splits to tell whether a route is edge-bound, origin-bound, or frontend-bound.
+                model, device, WebGL-backend, payload-size, and encoding splits to tell whether a route is edge-bound, origin-bound, or frontend-bound.
               </p>
             </div>
             <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
@@ -494,7 +494,7 @@ export default function AdminOverviewPage() {
           </div>
 
           <div className="mt-6 overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03]">
-            <div className="grid grid-cols-[minmax(0,1.1fr)_120px_90px_120px_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,0.9fr)_minmax(0,1.05fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+            <div className="grid grid-cols-[minmax(0,1fr)_110px_80px_110px_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_minmax(0,1fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
               <div>Metric</div>
               <div>p95</div>
               <div>Samples</div>
@@ -503,6 +503,8 @@ export default function AdminOverviewPage() {
               <div>Models</div>
               <div>Devices</div>
               <div>Runtime</div>
+              <div>Payload</div>
+              <div>Encoding</div>
               <div>Action</div>
             </div>
             <div>
@@ -512,7 +514,7 @@ export default function AdminOverviewPage() {
                 return (
                   <div
                     key={metric.metric_name}
-                    className="grid grid-cols-[minmax(0,1.1fr)_120px_90px_120px_minmax(0,1.05fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,0.9fr)_minmax(0,1.05fr)] gap-4 border-b border-white/6 px-4 py-4 text-sm last:border-b-0"
+                    className="grid grid-cols-[minmax(0,1fr)_110px_80px_110px_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_minmax(0,1fr)] gap-4 border-b border-white/6 px-4 py-4 text-sm last:border-b-0"
                   >
                     <div>
                       <div className="font-semibold text-white">{metric.label}</div>
@@ -525,6 +527,8 @@ export default function AdminOverviewPage() {
                     <div className="text-white/62">{formatNetworkBreakdowns(metric.by_model_id)}</div>
                     <div className="text-white/62">{formatNetworkBreakdowns(metric.by_device_type)}</div>
                     <div className="text-white/62">{formatNetworkBreakdowns(metric.by_webgl_backend)}</div>
+                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_payload_size_bucket)}</div>
+                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_content_encoding)}</div>
                     <div className="text-white/72">{getNetworkActionLabel({
                       summary: metric.summary,
                       by_cf_cache_status: metric.by_cf_cache_status,

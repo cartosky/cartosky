@@ -29,6 +29,15 @@ function trimHeaderValue(value: string | null): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function parseHeaderInteger(value: string | null): number | null {
+  const normalized = trimHeaderValue(value);
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function safeUrlPath(rawUrl: string): string | null {
   const normalized = String(rawUrl ?? "").trim();
   if (!normalized) {
@@ -70,6 +79,8 @@ export function trackNetworkFetchDuration(params: {
     trace_id: trimHeaderValue(params.response.headers.get("X-Trace-ID")),
     cache_control: trimHeaderValue(params.response.headers.get("Cache-Control")),
     age: trimHeaderValue(params.response.headers.get("Age")),
+    content_encoding: trimHeaderValue(params.response.headers.get("Content-Encoding")),
+    content_length_bytes: parseHeaderInteger(params.response.headers.get("Content-Length")),
   };
 
   trackRumDiagnosticMetric({

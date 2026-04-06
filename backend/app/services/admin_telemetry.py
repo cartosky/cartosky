@@ -2006,6 +2006,27 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
     model_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
     device_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
     webgl_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    encoding_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+    payload_values_by_metric: dict[str, dict[str, list[float]]] = {name: {} for name in NETWORK_DIAGNOSTIC_METRIC_NAMES}
+
+    def _payload_size_bucket(value: Any) -> str:
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            return "unknown"
+        if size < 0:
+            return "unknown"
+        if size < 256 * 1024:
+            return "<256KB"
+        if size < 1024 * 1024:
+            return "256KB-1MB"
+        if size < 4 * 1024 * 1024:
+            return "1MB-4MB"
+        if size < 8 * 1024 * 1024:
+            return "4MB-8MB"
+        if size < 16 * 1024 * 1024:
+            return "8MB-16MB"
+        return "16MB+"
 
     def _append_breakdown(
         store: dict[str, dict[str, list[float]]],
@@ -2026,6 +2047,8 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
         device_key = str(row["device_type"] or "unknown").strip() or "unknown"
         cache_key = "unknown"
         webgl_key = "unknown"
+        encoding_key = "identity"
+        payload_key = "unknown"
         meta_json = row["meta_json"]
         if isinstance(meta_json, str) and meta_json.strip():
             try:
@@ -2039,11 +2062,22 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
                 raw_webgl = str(meta.get("webgl_backend") or "").strip().lower()
                 if raw_webgl:
                     webgl_key = raw_webgl
+                raw_encoding = str(meta.get("content_encoding") or "").strip().lower()
+                if raw_encoding:
+                    encoding_key = raw_encoding
+                payload_value = meta.get("payload_bytes")
+                if payload_value is None:
+                    payload_value = meta.get("array_buffer_byte_length")
+                if payload_value is None:
+                    payload_value = meta.get("content_length_bytes")
+                payload_key = _payload_size_bucket(payload_value)
 
         _append_breakdown(model_values_by_metric, metric_name, model_key, metric_value)
         _append_breakdown(device_values_by_metric, metric_name, device_key, metric_value)
         _append_breakdown(cache_values_by_metric, metric_name, cache_key, metric_value)
         _append_breakdown(webgl_values_by_metric, metric_name, webgl_key, metric_value)
+        _append_breakdown(encoding_values_by_metric, metric_name, encoding_key, metric_value)
+        _append_breakdown(payload_values_by_metric, metric_name, payload_key, metric_value)
 
     def _rank_breakdowns(
         store: dict[str, dict[str, list[float]]],
@@ -2075,6 +2109,8 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
                 "by_model_id": _rank_breakdowns(model_values_by_metric, metric_name),
                 "by_device_type": _rank_breakdowns(device_values_by_metric, metric_name),
                 "by_webgl_backend": _rank_breakdowns(webgl_values_by_metric, metric_name),
+                "by_content_encoding": _rank_breakdowns(encoding_values_by_metric, metric_name),
+                "by_payload_size_bucket": _rank_breakdowns(payload_values_by_metric, metric_name),
             }
         )
 

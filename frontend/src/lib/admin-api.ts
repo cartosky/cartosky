@@ -88,6 +88,8 @@ export type AdminNetworkDiagnosticsResponse = {
     by_model_id: NetworkDiagnosticBreakdown[];
     by_device_type: NetworkDiagnosticBreakdown[];
     by_webgl_backend: NetworkDiagnosticBreakdown[];
+    by_content_encoding: NetworkDiagnosticBreakdown[];
+    by_payload_size_bucket: NetworkDiagnosticBreakdown[];
   }>;
 };
 
