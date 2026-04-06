@@ -12,8 +12,15 @@ const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 512 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 256 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 12;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 3;
-const OBSERVED_GRID_TEXTURE_WARM_LIMIT = 24;
-const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE = 2;
+const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING = 1;
+const OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP = 28;
+const OBSERVED_GRID_TEXTURE_WARM_LIMIT_MOBILE = 10;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_DESKTOP = 4;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE = 2;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP = 2;
+const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE = 1;
+const OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP = 6;
+const OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_MOBILE = 4;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
@@ -251,6 +258,21 @@ function resolveFrameCacheBudgetBytes(): number {
 
 function resolveTextureCacheBudgetBytes(): number {
   return isMobileDevice() ? GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES : GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;
+}
+
+function resolveObservedTextureWarmLimit(): number {
+  return isMobileDevice() ? OBSERVED_GRID_TEXTURE_WARM_LIMIT_MOBILE : OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP;
+}
+
+function resolveObservedTextureWarmBatchSize(animating: boolean): number {
+  if (isMobileDevice()) {
+    return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE;
+  }
+  return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_DESKTOP;
+}
+
+function resolveObservedTextureHighPriorityCount(): number {
+  return isMobileDevice() ? OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_MOBILE : OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP;
 }
 
 function resolveGridDtype(dtype: string | null | undefined): "uint8" | "uint16" {
@@ -693,9 +715,10 @@ export class GridWebglLayerController {
     }
 
     this.scheduleTextureWarm(this.frameUrl, "high");
+    const highPriorityCount = this.textureWarmHighPriorityCount();
     for (let index = 0; index < prioritizedPrefetchUrls.length; index += 1) {
       const prefetchUrl = prioritizedPrefetchUrls[index];
-      this.scheduleTextureWarm(prefetchUrl, index < 4 ? "high" : "normal");
+      this.scheduleTextureWarm(prefetchUrl, index < highPriorityCount ? "high" : "normal");
     }
     this.map?.triggerRepaint();
   }
@@ -717,13 +740,20 @@ export class GridWebglLayerController {
 
   private textureWarmLimit(): number {
     if (isObservedGridManifest(this.manifest)) {
-      return Math.max(OBSERVED_GRID_TEXTURE_WARM_LIMIT, this.prefetchUrls.length + 1);
+      return resolveObservedTextureWarmLimit();
     }
     return GRID_TEXTURE_WARM_LIMIT;
   }
 
   private textureWarmBatchSize(): number {
-    return isObservedGridManifest(this.manifest) ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE : GRID_TEXTURE_WARM_BATCH_SIZE;
+    if (isObservedGridManifest(this.manifest)) {
+      return resolveObservedTextureWarmBatchSize(this.animating);
+    }
+    return this.animating ? GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING : GRID_TEXTURE_WARM_BATCH_SIZE;
+  }
+
+  private textureWarmHighPriorityCount(): number {
+    return isObservedGridManifest(this.manifest) ? resolveObservedTextureHighPriorityCount() : 4;
   }
 
   private rebuildLegendTexture() {
@@ -1347,9 +1377,9 @@ export class GridWebglLayerController {
   }
 
   private async pumpTextureWarmQueue() {
-    // During animation/scrub, limit to a single texture upload per tick to
-    // keep the main thread and GPU free for the frame the user actually sees.
-    const effectiveBatchSize = this.animating ? 1 : this.textureWarmBatchSize();
+    // During animation/scrub, observed MRMS grids can now warm a little more
+    // aggressively on desktop because per-frame upload cost is lower.
+    const effectiveBatchSize = this.textureWarmBatchSize();
 
     const batch: string[] = [];
     while (this.textureWarmQueue.length > 0 && batch.length < effectiveBatchSize) {
