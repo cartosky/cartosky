@@ -62,6 +62,11 @@ const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
 const FORECAST_SCRUB_MIN_BEHIND = 1;
 /** Minimum ahead-direction slots during forecast scrub. */
 const FORECAST_SCRUB_MIN_AHEAD = 2;
+const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_AHEAD = 4;
+const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_BEHIND = 1;
+const OBSERVED_MOBILE_SCRUB_PREFETCH_BUDGET = 6;
+const OBSERVED_MOBILE_SCRUB_MIN_AHEAD = 2;
+const OBSERVED_MOBILE_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
 const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
@@ -84,6 +89,13 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+}
 
 type GridPaintSettings = {
   contrast: number;
@@ -735,20 +747,41 @@ export function MapCanvas({
     let behindTarget: number;
 
     if (isObservedGrid) {
+      const mobileObserved = isMobileDevice();
       // Observed grids (MRMS): prefetch the *entire* timeline, ordered
       // outward from the current frame so the nearest neighbors arrive
       // first (progressive prefetch).  During autoplay bias forward.
       if (mode === "autoplay") {
-        aheadTarget = remainingAhead;
-        behindTarget = Math.min(remainingBehind, 2);
+        if (mobileObserved) {
+          aheadTarget = Math.min(remainingAhead, OBSERVED_MOBILE_AUTOPLAY_PREFETCH_AHEAD);
+          behindTarget = Math.min(remainingBehind, OBSERVED_MOBILE_AUTOPLAY_PREFETCH_BEHIND);
+        } else {
+          aheadTarget = remainingAhead;
+          behindTarget = Math.min(remainingBehind, 2);
+        }
       } else {
         // Scrub/idle: interleave ahead and behind from the pivot so
         // the nearest frames in *both* directions are always warm.
         // Direction bias puts the travel-direction frames at odd
         // positions (first) and the opposite direction at even
         // positions, but both are interleaved rather than sequential.
-        aheadTarget = remainingAhead;
-        behindTarget = remainingBehind;
+        if (mobileObserved) {
+          const budget = OBSERVED_MOBILE_SCRUB_PREFETCH_BUDGET;
+          if (direction > 0) {
+            behindTarget = Math.min(remainingBehind, OBSERVED_MOBILE_SCRUB_MIN_BEHIND);
+            aheadTarget = Math.min(remainingAhead, budget - behindTarget);
+          } else if (direction < 0) {
+            aheadTarget = Math.min(remainingAhead, OBSERVED_MOBILE_SCRUB_MIN_AHEAD);
+            behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+          } else {
+            const halfBudget = Math.floor(budget / 2);
+            aheadTarget = Math.min(remainingAhead, halfBudget + 1);
+            behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+          }
+        } else {
+          aheadTarget = remainingAhead;
+          behindTarget = remainingBehind;
+        }
       }
     } else if (mode === "autoplay") {
       aheadTarget = Math.min(remainingAhead, 8);
