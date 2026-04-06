@@ -1,4 +1,4 @@
-import posthog from "posthog-js";
+import type { PostHog } from "posthog-js";
 
 import type { TwfStatus } from "@/lib/admin-api";
 import {
@@ -47,7 +47,14 @@ type ProductAnalyticsProperties = {
   [key: string]: unknown;
 };
 
-let initialized = false;
+/**
+ * Lazily-resolved PostHog client instance.
+ * `null` until `initPostHogAnalytics` successfully loads and inits `posthog-js`.
+ * All public functions guard on this being non-null so callers never need to
+ * know whether PostHog has been loaded yet.
+ */
+let ph: PostHog | null = null;
+let initStarted = false;
 let replayStarted = false;
 let lastPageviewKey: string | null = null;
 
@@ -110,12 +117,12 @@ function buildCommonProperties(): ProductAnalyticsProperties {
 }
 
 function startReplay(reason: "sampled" | "error" | "unhandledrejection"): void {
-  if (!initialized || replayStarted || !isPostHogReplayEnabled()) {
+  if (!ph || replayStarted || !isPostHogReplayEnabled()) {
     return;
   }
   replayStarted = true;
-  posthog.startSessionRecording({ sampling: true });
-  posthog.register_for_session({
+  ph.startSessionRecording({ sampling: true });
+  ph.register_for_session({
     replay_start_reason: reason,
   });
 }
@@ -135,47 +142,57 @@ function attachReplayGuards(): void {
   });
 }
 
+/**
+ * Lazily load and initialize PostHog analytics.
+ *
+ * When `isPostHogEnabled()` is `false` this returns immediately without
+ * importing `posthog-js`, keeping the library out of the critical path
+ * entirely for disabled sessions.
+ */
 export function initPostHogAnalytics(): void {
-  if (initialized || !isPostHogEnabled()) {
+  if (initStarted || !isPostHogEnabled()) {
     return;
   }
-  initialized = true;
+  initStarted = true;
 
-  posthog.init(getPostHogApiKey(), {
-    api_host: getPostHogHost(),
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    disable_session_recording: true,
-    person_profiles: "identified_only",
-    before_send: (event) => {
-      if (!event) {
-        return event;
-      }
-      const eventName = String(event.event ?? "");
-      if (
-        eventName === "$identify"
-        || eventName === "$set"
-        || eventName === "$groupidentify"
-        || ALLOWED_EVENT_NAMES.has(eventName)
-      ) {
-        return event;
-      }
-      return null;
-    },
+  void import("posthog-js").then(({ default: posthog }) => {
+    posthog.init(getPostHogApiKey(), {
+      api_host: getPostHogHost(),
+      autocapture: false,
+      capture_pageview: false,
+      capture_pageleave: false,
+      disable_session_recording: true,
+      person_profiles: "identified_only",
+      before_send: (event) => {
+        if (!event) {
+          return event;
+        }
+        const eventName = String(event.event ?? "");
+        if (
+          eventName === "$identify"
+          || eventName === "$set"
+          || eventName === "$groupidentify"
+          || ALLOWED_EVENT_NAMES.has(eventName)
+        ) {
+          return event;
+        }
+        return null;
+      },
+    });
+
+    ph = posthog;
+    posthog.register(buildCommonProperties());
+    attachReplayGuards();
   });
-
-  posthog.register(buildCommonProperties());
-  attachReplayGuards();
 }
 
 export function syncPostHogAuthStatus(status: TwfStatus): void {
-  if (!initialized || !isPostHogEnabled()) {
+  if (!ph || !isPostHogEnabled()) {
     return;
   }
 
   const common = buildCommonProperties();
-  posthog.register({
+  ph.register({
     ...common,
     is_logged_in: status.linked === true,
     admin_session: status.admin === true,
@@ -196,15 +213,15 @@ export function syncPostHogAuthStatus(status: TwfStatus): void {
     first_seen_release_sha: common.release_sha,
   };
 
-  if (posthog.get_distinct_id() !== distinctId) {
-    posthog.identify(distinctId, personProps, personPropsOnce);
+  if (ph.get_distinct_id() !== distinctId) {
+    ph.identify(distinctId, personProps, personPropsOnce);
     return;
   }
-  posthog.setPersonProperties(personProps, personPropsOnce);
+  ph.setPersonProperties(personProps, personPropsOnce);
 }
 
 export function capturePostHogPageview(pathname: string, search = ""): void {
-  if (!initialized || !isPostHogEnabled()) {
+  if (!ph || !isPostHogEnabled()) {
     return;
   }
   const pageviewKey = `${pathname}${search}`;
@@ -215,7 +232,7 @@ export function capturePostHogPageview(pathname: string, search = ""): void {
   if (!canCaptureEvent()) {
     return;
   }
-  posthog.capture("$pageview", {
+  ph.capture("$pageview", {
     ...buildCommonProperties(),
     path: pathname,
     search,
@@ -228,13 +245,13 @@ export function captureProductAnalyticsEvent(
   eventName: ProductAnalyticsEventName,
   properties: ProductAnalyticsProperties = {},
 ): void {
-  if (!initialized || !isPostHogEnabled() || !ALLOWED_EVENT_NAMES.has(eventName)) {
+  if (!ph || !isPostHogEnabled() || !ALLOWED_EVENT_NAMES.has(eventName)) {
     return;
   }
   if (!canCaptureEvent()) {
     return;
   }
-  posthog.capture(eventName, {
+  ph.capture(eventName, {
     ...buildCommonProperties(),
     ...properties,
   });
