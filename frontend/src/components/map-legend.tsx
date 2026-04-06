@@ -109,6 +109,14 @@ function isPrecipPtypeLegend(legend: LegendPayload): boolean {
   return kind.includes("precip_ptype") || id === "precip_ptype";
 }
 
+function isCategoricalLegend(legend: LegendPayload): boolean {
+  const kind = legend.kind?.toLowerCase() ?? "";
+  if (kind === "categorical") {
+    return true;
+  }
+  return legend.entries.length > 0 && legend.entries.every((entry) => typeof entry.label === "string" && entry.label.trim().length > 0);
+}
+
 function buildDenseLegendTicks(entries: LegendEntry[], targetCount = DENSE_GRADIENT_LABEL_COUNT): LegendEntry[] {
   const displayed = entries.slice().reverse();
   if (displayed.length === 0) return [];
@@ -381,7 +389,11 @@ export function MapLegend({
     ? groupRadarEntries(legend.entries, legend.ptype_breaks, legend.ptype_order)
     : [];
   const showGroupedRadar = groupedRadarEntries.length > 0;
-  const showDenseLegend = !showPrecipPtypeRows && !showGroupedRadar && legend.entries.length > DENSE_LEGEND_THRESHOLD;
+  const showDenseLegend =
+    !showPrecipPtypeRows &&
+    !showGroupedRadar &&
+    !isCategoricalLegend(legend) &&
+    legend.entries.length > DENSE_LEGEND_THRESHOLD;
   const denseGradientHeight = displayPanelOpen ? DENSE_GRADIENT_HEIGHT_PANEL_OPEN : DENSE_GRADIENT_HEIGHT_DEFAULT;
 
   return (
