@@ -284,6 +284,58 @@ function expectedPackedFrameByteLength(width: number, height: number, dtype: str
   return Math.max(0, Math.floor(width) * Math.floor(height) * bytesPerSample);
 }
 
+function resolveMaxTextureSize(gl: WebGLRenderingContext | WebGL2RenderingContext): number {
+  const maxTextureSize = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE));
+  return Number.isFinite(maxTextureSize) && maxTextureSize > 0 ? Math.floor(maxTextureSize) : 4096;
+}
+
+function downsamplePackedGrid(
+  bytes: Uint8Array<ArrayBufferLike>,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+  dtype: "uint8" | "uint16",
+): Uint8Array<ArrayBufferLike> {
+  const bytesPerSample = dtype === "uint8" ? 1 : 2;
+  const output = new Uint8Array(targetWidth * targetHeight * bytesPerSample);
+  for (let y = 0; y < targetHeight; y += 1) {
+    const sourceY = Math.min(sourceHeight - 1, Math.floor((y * sourceHeight) / targetHeight));
+    for (let x = 0; x < targetWidth; x += 1) {
+      const sourceX = Math.min(sourceWidth - 1, Math.floor((x * sourceWidth) / targetWidth));
+      const sourceIndex = (sourceY * sourceWidth + sourceX) * bytesPerSample;
+      const targetIndex = (y * targetWidth + x) * bytesPerSample;
+      output[targetIndex] = bytes[sourceIndex] ?? 0;
+      if (bytesPerSample === 2) {
+        output[targetIndex + 1] = bytes[sourceIndex + 1] ?? 0;
+      }
+    }
+  }
+  return output;
+}
+
+function preparePackedGridUpload(
+  gl: WebGLRenderingContext | WebGL2RenderingContext,
+  bytes: Uint8Array<ArrayBufferLike>,
+  width: number,
+  height: number,
+  dtype: "uint8" | "uint16",
+): PreparedGridUpload {
+  const maxTextureSize = resolveMaxTextureSize(gl);
+  if (width <= maxTextureSize && height <= maxTextureSize) {
+    return { bytes, width, height, downsampled: false };
+  }
+  const scale = Math.min(maxTextureSize / width, maxTextureSize / height);
+  const targetWidth = Math.max(1, Math.min(maxTextureSize, Math.round(width * scale)));
+  const targetHeight = Math.max(1, Math.min(maxTextureSize, Math.round(height * scale)));
+  return {
+    bytes: downsamplePackedGrid(bytes, width, height, targetWidth, targetHeight, dtype),
+    width: targetWidth,
+    height: targetHeight,
+    downsampled: true,
+  };
+}
+
 function parseContentLengthHeader(response: Response): number | null {
   const rawValue = response.headers.get("Content-Length");
   if (!rawValue) {
@@ -399,6 +451,15 @@ type CachedFrame = {
 type CachedTexture = {
   texture: WebGLTexture;
   bytes: number;
+  width: number;
+  height: number;
+};
+
+type PreparedGridUpload = {
+  bytes: Uint8Array<ArrayBufferLike>;
+  width: number;
+  height: number;
+  downsampled: boolean;
 };
 
 type LruNode<T> = {
@@ -599,6 +660,8 @@ export class GridWebglLayerController {
   private lutDirty = true;
   private currentTexture: WebGLTexture | null = null;
   private previousTexture: WebGLTexture | null = null;
+  private currentTextureWidth = 1;
+  private currentTextureHeight = 1;
   private hasPreviousTexture = false;
   private transitionStartedAt = 0;
   private transitionDurationMs = 0;
@@ -1064,7 +1127,7 @@ export class GridWebglLayerController {
       return null;
     }
     const prepareStartedAtMs = startNetworkTimer();
-    const diagnosticMeta = {
+    const diagnosticMeta: Record<string, unknown> = {
       ...this.buildDiagnosticMeta(frameUrl),
       payload_bytes: bytes.byteLength,
     };
@@ -1104,13 +1167,40 @@ export class GridWebglLayerController {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    const preparedUpload = preparePackedGridUpload(gl, bytes, width, height, gridDtype);
+    diagnosticMeta.max_texture_size = resolveMaxTextureSize(gl);
+    diagnosticMeta.upload_width = preparedUpload.width;
+    diagnosticMeta.upload_height = preparedUpload.height;
+    diagnosticMeta.upload_bytes = preparedUpload.bytes.byteLength;
+    diagnosticMeta.texture_downsampled = preparedUpload.downsampled;
+
     if (this.isWebGL2) {
       const gl2 = gl as WebGL2RenderingContext;
       const uploadStartedAtMs = startNetworkTimer();
       if (gridDtype === "uint8") {
-        gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.R8, width, height, 0, gl2.RED, gl2.UNSIGNED_BYTE, bytes);
+        gl2.texImage2D(
+          gl2.TEXTURE_2D,
+          0,
+          gl2.R8,
+          preparedUpload.width,
+          preparedUpload.height,
+          0,
+          gl2.RED,
+          gl2.UNSIGNED_BYTE,
+          preparedUpload.bytes,
+        );
       } else {
-        gl2.texImage2D(gl2.TEXTURE_2D, 0, gl2.RG8, width, height, 0, gl2.RG, gl2.UNSIGNED_BYTE, bytes);
+        gl2.texImage2D(
+          gl2.TEXTURE_2D,
+          0,
+          gl2.RG8,
+          preparedUpload.width,
+          preparedUpload.height,
+          0,
+          gl2.RG,
+          gl2.UNSIGNED_BYTE,
+          preparedUpload.bytes,
+        );
       }
       trackClientProcessingDuration({
         metric_name: "grid_texture_upload_duration",
@@ -1124,8 +1214,8 @@ export class GridWebglLayerController {
     } else {
       const expandStartedAtMs = startNetworkTimer();
       const rgba = gridDtype === "uint8"
-        ? expandUint8BytesToRgba(bytes)
-        : expandUint16BytesToRgba(bytes);
+        ? expandUint8BytesToRgba(preparedUpload.bytes)
+        : expandUint16BytesToRgba(preparedUpload.bytes);
       trackClientProcessingDuration({
         metric_name: "grid_webgl1_expand_duration",
         duration_ms: startNetworkTimer() - expandStartedAtMs,
@@ -1136,7 +1226,17 @@ export class GridWebglLayerController {
         meta: diagnosticMeta,
       });
       const uploadStartedAtMs = startNetworkTimer();
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        preparedUpload.width,
+        preparedUpload.height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        rgba,
+      );
       trackClientProcessingDuration({
         metric_name: "grid_texture_upload_duration",
         duration_ms: startNetworkTimer() - uploadStartedAtMs,
@@ -1159,9 +1259,11 @@ export class GridWebglLayerController {
 
     this.textureCache.set(frameUrl, {
       texture: targetTexture,
-      bytes: bytes.byteLength,
+      bytes: preparedUpload.bytes.byteLength,
+      width: preparedUpload.width,
+      height: preparedUpload.height,
     });
-    this.textureCacheBytes += bytes.byteLength;
+    this.textureCacheBytes += preparedUpload.bytes.byteLength;
     this.evictTextureCache(frameUrl);
     return targetTexture;
   }
@@ -1183,6 +1285,9 @@ export class GridWebglLayerController {
     this.hasPreviousTexture = false;
     this.currentTexture = targetTexture;
     this.currentTextureUrl = frameUrl;
+    const cachedTexture = this.textureCache.get(frameUrl);
+    this.currentTextureWidth = cachedTexture?.width ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.width) || 1));
+    this.currentTextureHeight = cachedTexture?.height ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.height) || 1));
     this.currentTextureSignature = signature;
     this.transitionStartedAt = performance.now();
     this.map?.triggerRepaint();
@@ -1470,8 +1575,8 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
-      Math.max(1, Math.floor(Number(grid.width) || 1)),
-      Math.max(1, Math.floor(Number(grid.height) || 1)),
+      this.currentTextureWidth,
+      this.currentTextureHeight,
     );
     const elapsed = performance.now() - this.transitionStartedAt;
     const mixAmount = this.hasPreviousTexture
@@ -1560,6 +1665,8 @@ export class GridWebglLayerController {
     this.previousTexture = null;
     this.currentTextureUrl = null;
     this.previousTextureUrl = null;
+    this.currentTextureWidth = 1;
+    this.currentTextureHeight = 1;
     this.pendingFrameUrl = null;
     this.quadSignature = null;
     this.gl = null;
