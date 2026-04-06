@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import brotli
 import gzip
 import json
 import logging
@@ -42,6 +43,17 @@ try:
     GRID_GZIP_COMPRESSLEVEL = max(1, min(9, int(os.getenv("CARTOSKY_GRID_GZIP_COMPRESSLEVEL", "5"))))
 except ValueError:
     GRID_GZIP_COMPRESSLEVEL = 5
+GRID_BROTLI_SIDECARS_ENABLED = str(os.getenv("CARTOSKY_GRID_BROTLI_SIDECARS_ENABLED", "1")).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+try:
+    GRID_BROTLI_QUALITY = max(0, min(11, int(os.getenv("CARTOSKY_GRID_BROTLI_QUALITY", "5"))))
+except ValueError:
+    GRID_BROTLI_QUALITY = 5
 
 _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     ("hrrr", "tmp2m"): {
@@ -348,10 +360,23 @@ def grid_gzip_sidecar_path(frame_path: Path) -> Path:
     return frame_path.with_name(f"{frame_path.name}.gz")
 
 
+def grid_brotli_sidecar_path(frame_path: Path) -> Path:
+    return frame_path.with_name(f"{frame_path.name}.br")
+
+
 def write_grid_gzip_sidecar(frame_path: Path, payload: bytes, *, compresslevel: int = GRID_GZIP_COMPRESSLEVEL) -> Path:
     sidecar_path = grid_gzip_sidecar_path(frame_path)
     tmp_path = sidecar_path.with_suffix(f"{sidecar_path.suffix}.tmp")
     compressed = gzip.compress(payload, compresslevel=compresslevel, mtime=0)
+    tmp_path.write_bytes(compressed)
+    tmp_path.replace(sidecar_path)
+    return sidecar_path
+
+
+def write_grid_brotli_sidecar(frame_path: Path, payload: bytes, *, quality: int = GRID_BROTLI_QUALITY) -> Path:
+    sidecar_path = grid_brotli_sidecar_path(frame_path)
+    tmp_path = sidecar_path.with_suffix(f"{sidecar_path.suffix}.tmp")
+    compressed = brotli.compress(payload, quality=quality)
     tmp_path.write_bytes(compressed)
     tmp_path.replace(sidecar_path)
     return sidecar_path
@@ -370,6 +395,21 @@ def ensure_grid_gzip_sidecar(
         return sidecar_path
     payload = frame_path.read_bytes()
     return write_grid_gzip_sidecar(frame_path, payload, compresslevel=compresslevel)
+
+
+def ensure_grid_brotli_sidecar(
+    frame_path: Path,
+    *,
+    quality: int = GRID_BROTLI_QUALITY,
+    force: bool = False,
+) -> Path | None:
+    if not frame_path.is_file():
+        raise FileNotFoundError(f"Missing grid frame artifact: {frame_path}")
+    sidecar_path = grid_brotli_sidecar_path(frame_path)
+    if sidecar_path.is_file() and not force:
+        return sidecar_path
+    payload = frame_path.read_bytes()
+    return write_grid_brotli_sidecar(frame_path, payload, quality=quality)
 
 
 def _packing_config(model: str, var: str) -> dict[str, Any] | None:
@@ -441,6 +481,8 @@ def write_grid_frame_for_run_root(
     tmp_path.replace(out_path)
     if GRID_GZIP_SIDECARS_ENABLED:
         write_grid_gzip_sidecar(out_path, encoded_bytes)
+    if GRID_BROTLI_SIDECARS_ENABLED:
+        write_grid_brotli_sidecar(out_path, encoded_bytes)
 
     frame_meta = {
         "fh": int(fh),

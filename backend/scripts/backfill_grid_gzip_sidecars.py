@@ -12,7 +12,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.grid import ensure_grid_gzip_sidecar
+from app.services.grid import ensure_grid_brotli_sidecar, ensure_grid_gzip_sidecar
 
 
 def _iter_grid_frames(data_root: Path, *, model: str | None, run: str | None, var: str | None) -> list[Path]:
@@ -34,12 +34,12 @@ def _iter_grid_frames(data_root: Path, *, model: str | None, run: str | None, va
                 grid_dir = var_dir / "grid"
                 if not grid_dir.is_dir():
                     continue
-                frame_paths.extend(sorted(path for path in grid_dir.glob("fh*.u16.bin") if path.is_file()))
+                frame_paths.extend(sorted(path for path in grid_dir.glob("fh*.bin") if path.is_file()))
     return frame_paths
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill .u16.bin.gz sidecars for published grid artifacts.")
+    parser = argparse.ArgumentParser(description="Backfill .gz and .br sidecars for published grid artifacts.")
     parser.add_argument("--data-root", default=os.getenv("CARTOSKY_DATA_ROOT", "./data"), help="CartoSky data root")
     parser.add_argument("--model", default=None, help="Optional model filter")
     parser.add_argument("--run", default=None, help="Optional run filter")
@@ -57,10 +57,10 @@ def main() -> int:
     completed = 0
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(args.workers))) as pool:
-        futures = {
-            pool.submit(ensure_grid_gzip_sidecar, frame_path, force=bool(args.force)): frame_path
-            for frame_path in frame_paths
-        }
+        futures = {}
+        for frame_path in frame_paths:
+            futures[pool.submit(ensure_grid_gzip_sidecar, frame_path, force=bool(args.force))] = frame_path
+            futures[pool.submit(ensure_grid_brotli_sidecar, frame_path, force=bool(args.force))] = frame_path
         for future in concurrent.futures.as_completed(futures):
             frame_path = futures[future]
             try:

@@ -11,8 +11,13 @@ location ^~ /_cartosky_grid_internal/ {
 
     default_type application/octet-stream;
 
+    # Prefer precompressed .br sidecars when the nginx Brotli static module is
+    # available, then fall back to .gz sidecars, then to the raw grid binary.
+    # Install/enable ngx_brotli or the distro equivalent before turning this on.
+    brotli_static on;
+
     # Prefer precompressed .gz sidecars generated during grid publishing.
-    # nginx will fall back to the raw .u16.bin artifact automatically when
+    # nginx will fall back to the raw grid artifact automatically when
     # a .gz sidecar is not present.
     gzip_static on;
 

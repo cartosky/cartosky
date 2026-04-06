@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import brotli
 import json
 import os
 import sys
@@ -93,8 +94,11 @@ def test_write_grid_frame_for_run_root_writes_manifest_without_value_cog(tmp_pat
     assert manifest["lods"][0]["frames"][0]["valid_time"] == "2026-03-30T12:00:00Z"
     frame_path = run_root / "tmp2m" / "grid" / "fh000.l0.u16.bin"
     sidecar_path = frame_path.with_name(f"{frame_path.name}.gz")
+    brotli_sidecar_path = frame_path.with_name(f"{frame_path.name}.br")
     assert sidecar_path.is_file()
+    assert brotli_sidecar_path.is_file()
     assert gzip.decompress(sidecar_path.read_bytes()) == frame_path.read_bytes()
+    assert brotli.decompress(brotli_sidecar_path.read_bytes()) == frame_path.read_bytes()
 
 
 def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,13 +128,16 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
     frame_path = artifacts_dir / "fh000.l0.u16.bin"
     sidecar_path = artifacts_dir / "fh000.l0.u16.bin.gz"
+    brotli_sidecar_path = artifacts_dir / "fh000.l0.u16.bin.br"
     manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
     assert sidecar_path.is_file()
+    assert brotli_sidecar_path.is_file()
     assert manifest_path.is_file()
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
     assert gzip.decompress(sidecar_path.read_bytes()) == frame_path.read_bytes()
+    assert brotli.decompress(brotli_sidecar_path.read_bytes()) == frame_path.read_bytes()
     assert encoded[0, 0] == 1320
     assert encoded[0, 1] == 1405
     assert encoded[1, 0] == 65535
