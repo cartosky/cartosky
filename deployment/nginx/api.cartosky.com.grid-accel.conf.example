@@ -16,7 +16,7 @@ location ^~ /_cartosky_grid_internal/ {
     gzip off;
 
     add_header Access-Control-Allow-Origin "*" always;
-    add_header Access-Control-Expose-Headers "CF-Cache-Status, Server-Timing, X-Request-ID, X-Trace-ID" always;
+    add_header Access-Control-Expose-Headers "Accept-Ranges, Cache-Control, CF-Cache-Status, Content-Encoding, Content-Length, ETag, Server-Timing, X-Request-ID, X-Trace-ID" always;
     add_header Vary "Origin" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
 }

@@ -454,7 +454,18 @@ def _append_exposed_headers(response: Response, *header_names: str) -> None:
 
 
 def _append_default_exposed_headers(response: Response) -> None:
-    _append_exposed_headers(response, "CF-Cache-Status", "Server-Timing", "X-Request-ID", "X-Trace-ID")
+    _append_exposed_headers(
+        response,
+        "CF-Cache-Status",
+        "Server-Timing",
+        "X-Request-ID",
+        "X-Trace-ID",
+        "Content-Length",
+        "Content-Encoding",
+        "ETag",
+        "Accept-Ranges",
+        "Cache-Control",
+    )
 
 @dataclass
 class TwfApiError(Exception):
