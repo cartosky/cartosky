@@ -81,34 +81,225 @@ class HazardPublishResult:
     fingerprint: str
 
 
-EVENT_STYLE_OVERRIDES: dict[str, HazardStyle] = {
-    "tornado warning": HazardStyle("tornado_warning", "Tornado Warning", "#dc2626", "#7f1d1d", 390),
-    "severe thunderstorm warning": HazardStyle("severe_thunderstorm_warning", "Severe Thunderstorm Warning", "#f59e0b", "#92400e", 370),
-    "flash flood warning": HazardStyle("flash_flood_warning", "Flash Flood Warning", "#16a34a", "#14532d", 365),
-    "flood warning": HazardStyle("flood_warning", "Flood Warning", "#15803d", "#14532d", 350),
-    "blizzard warning": HazardStyle("blizzard_warning", "Blizzard Warning", "#d946ef", "#86198f", 360),
-    "winter storm warning": HazardStyle("winter_storm_warning", "Winter Storm Warning", "#c026d3", "#701a75", 355),
-    "ice storm warning": HazardStyle("ice_storm_warning", "Ice Storm Warning", "#a855f7", "#6b21a8", 352),
-    "red flag warning": HazardStyle("red_flag_warning", "Red Flag Warning", "#f72585", "#9d174d", 358),
-    "high wind warning": HazardStyle("high_wind_warning", "High Wind Warning", "#b45309", "#78350f", 345),
-    "heat advisory": HazardStyle("heat_advisory", "Heat Advisory", "#f59e0b", "#9a3412", 145),
-    "winter weather advisory": HazardStyle("winter_weather_advisory", "Winter Weather Advisory", "#67e8f9", "#0f766e", 140),
-    "wind chill advisory": HazardStyle("wind_chill_advisory", "Wind Chill Advisory", "#22d3ee", "#155e75", 138),
-    "dense fog advisory": HazardStyle("dense_fog_advisory", "Dense Fog Advisory", "#94a3b8", "#475569", 132),
-    "special weather statement": HazardStyle("special_weather_statement", "Special Weather Statement", "#e7cfa2", "#8a6b3d", 70),
-    "tornado watch": HazardStyle("tornado_watch", "Tornado Watch", "#fde047", "#854d0e", 285),
-    "severe thunderstorm watch": HazardStyle("severe_thunderstorm_watch", "Severe Thunderstorm Watch", "#facc15", "#854d0e", 275),
-    "flash flood watch": HazardStyle("flash_flood_watch", "Flash Flood Watch", "#84cc16", "#3f6212", 265),
-    "winter storm watch": HazardStyle("winter_storm_watch", "Winter Storm Watch", "#7c3aed", "#4c1d95", 255),
-    "marine warning": HazardStyle("marine_warning", "Marine Warning", "#6d28d9", "#4c1d95", 320),
-    "small craft advisory": HazardStyle("small_craft_advisory", "Small Craft Advisory", "#60a5fa", "#1d4ed8", 135),
+HAZARD_COLOR_OVERRIDES: dict[str, str] = {
+    "Tsunami Warning": "#FD6347",
+    "Tornado Warning": "#FF0000",
+    "Extreme Wind Warning": "#FF8C00",
+    "Severe Thunderstorm Warning": "#FFA500",
+    "Flash Flood Warning": "#8B0000",
+    "Flash Flood Statement": "#8B0000",
+    "Severe Weather Statement": "#00FFFF",
+    "Shelter In Place Warning": "#FA8072",
+    "Evacuation Immediate": "#7FFF00",
+    "Civil Danger Warning": "#FFB6C1",
+    "Nuclear Power Plant Warning": "#4B0082",
+    "Radiological Hazard Warning": "#4B0082",
+    "Hazardous Materials Warning": "#4B0082",
+    "Fire Warning": "#A0522D",
+    "Civil Emergency Message": "#FFB6C1",
+    "Law Enforcement Warning": "#C0C0C0",
+    "Storm Surge Warning": "#B524F7",
+    "Hurricane Force Wind Warning": "#CD5C5C",
+    "Hurricane Warning": "#DC143C",
+    "Typhoon Warning": "#DC143C",
+    "Special Marine Warning": "#FFA500",
+    "Blizzard Warning": "#FF4500",
+    "Snow Squall Warning": "#C71585",
+    "Ice Storm Warning": "#8B008B",
+    "Winter Storm Warning": "#FF69B4",
+    "High Wind Warning": "#DAA520",
+    "Tropical Storm Warning": "#B22222",
+    "Storm Warning": "#9400D3",
+    "Tsunami Advisory": "#D2691E",
+    "Tsunami Watch": "#FF00FF",
+    "Avalanche Warning": "#1E90FF",
+    "Earthquake Warning": "#8B4513",
+    "Volcano Warning": "#2F4F4F",
+    "Ashfall Warning": "#A9A9A9",
+    "Coastal Flood Warning": "#228B22",
+    "Lakeshore Flood Warning": "#228B22",
+    "Flood Warning": "#00FF00",
+    "High Surf Warning": "#228B22",
+    "Dust Storm Warning": "#FFE4C4",
+    "Blowing Dust Warning": "#FFE4C4",
+    "Lake Effect Snow Warning": "#008B8B",
+    "Excessive Heat Warning": "#C71585",
+    "Tornado Watch": "#FFFF00",
+    "Severe Thunderstorm Watch": "#DB7093",
+    "Flash Flood Watch": "#2E8B57",
+    "Gale Warning": "#DDA0DD",
+    "Flood Statement": "#00FF00",
+    "Wind Chill Warning": "#B0C4DE",
+    "Extreme Cold Warning": "#0000FF",
+    "Hard Freeze Warning": "#9400D3",
+    "Freeze Warning": "#483D8B",
+    "Red Flag Warning": "#FF1493",
+    "Storm Surge Watch": "#DB7FF7",
+    "Hurricane Watch": "#FF00FF",
+    "Hurricane Force Wind Watch": "#9932CC",
+    "Typhoon Watch": "#FF00FF",
+    "Tropical Storm Watch": "#F08080",
+    "Storm Watch": "#FFE4B5",
+    "Hurricane Local Statement": "#FFE4B5",
+    "Typhoon Local Statement": "#FFE4B5",
+    "Tropical Storm Local Statement": "#FFE4B5",
+    "Tropical Depression Local Statement": "#FFE4B5",
+    "Avalanche Advisory": "#CD853F",
+    "Winter Weather Advisory": "#7B68EE",
+    "Wind Chill Advisory": "#AFEEEE",
+    "Heat Advisory": "#FF7F50",
+    "Urban and Small Stream Flood Advisory": "#00FF7F",
+    "Small Stream Flood Advisory": "#00FF7F",
+    "Arroyo and Small Stream Flood Advisory": "#00FF7F",
+    "Flood Advisory": "#00FF7F",
+    "Hydrologic Advisory": "#00FF7F",
+    "Lakeshore Flood Advisory": "#7CFC00",
+    "Coastal Flood Advisory": "#7CFC00",
+    "High Surf Advisory": "#BA55D3",
+    "Heavy Freezing Spray Warning": "#00BFFF",
+    "Dense Fog Advisory": "#708090",
+    "Dense Smoke Advisory": "#F0E68C",
+    "Small Craft Advisory For Hazardous Seas": "#D8BFD8",
+    "Small Craft Advisory for Rough Bar": "#D8BFD8",
+    "Small Craft Advisory for Winds": "#D8BFD8",
+    "Small Craft Advisory": "#D8BFD8",
+    "Brisk Wind Advisory": "#D8BFD8",
+    "Hazardous Seas Warning": "#D8BFD8",
+    "Dust Advisory": "#BDB76B",
+    "Blowing Dust Advisory": "#BDB76B",
+    "Lake Wind Advisory": "#D2B48C",
+    "Wind Advisory": "#D2B48C",
+    "Frost Advisory": "#6495ED",
+    "Ashfall Advisory": "#696969",
+    "Freezing Fog Advisory": "#008080",
+    "Freezing Spray Advisory": "#00BFFF",
+    "Low Water Advisory": "#A52A2A",
+    "Local Area Emergency": "#C0C0C0",
+    "Avalanche Watch": "#F4A460",
+    "Blizzard Watch": "#ADFF2F",
+    "Rip Current Statement": "#40E0D0",
+    "Beach Hazards Statement": "#40E0D0",
+    "Gale Watch": "#FFC0CB",
+    "Winter Storm Watch": "#4682B4",
+    "Hazardous Seas Watch": "#483D8B",
+    "Heavy Freezing Spray Watch": "#BC8F8F",
+    "Coastal Flood Watch": "#66CDAA",
+    "Lakeshore Flood Watch": "#66CDAA",
+    "Flood Watch": "#2E8B57",
+    "High Wind Watch": "#B8860B",
+    "Excessive Heat Watch": "#800000",
+    "Extreme Cold Watch": "#0000FF",
+    "Wind Chill Watch": "#5F9EA0",
+    "Lake Effect Snow Watch": "#87CEFA",
+    "Hard Freeze Watch": "#4169E1",
+    "Freeze Watch": "#00FFFF",
+    "Fire Weather Watch": "#FFDEAD",
+    "Extreme Fire Danger": "#E9967A",
+    "911 Telephone Outage": "#C0C0C0",
+    "Coastal Flood Statement": "#6B8E23",
+    "Lakeshore Flood Statement": "#6B8E23",
+    "Special Weather Statement": "#FFE4B5",
+    "Marine Weather Statement": "#FFDAB9",
+    "Air Quality Alert": "#808080",
+    "Air Stagnation Advisory": "#808080",
+    "Hazardous Weather Outlook": "#EEE8AA",
+    "Hydrologic Outlook": "#90EE90",
+    "Short Term Forecast": "#98FB98",
+    "Administrative Message": "#C0C0C0",
+    "Test": "#F0FFFF",
+    "Child Abduction Emergency": "#FFFFFF",
+    "Blue Alert": "#FFFFFF",
 }
 
+SPECIAL_EVENT_PRIORITIES: dict[str, int] = {
+    "tornado warning": 390,
+    "extreme wind warning": 380,
+    "severe thunderstorm warning": 370,
+    "flash flood warning": 365,
+    "flash flood statement": 365,
+    "blizzard warning": 360,
+    "red flag warning": 358,
+    "winter storm warning": 355,
+    "ice storm warning": 352,
+    "flood warning": 350,
+    "high wind warning": 345,
+    "storm surge warning": 340,
+    "hurricane warning": 338,
+    "typhoon warning": 338,
+    "hurricane force wind warning": 336,
+    "tropical storm warning": 334,
+    "special marine warning": 325,
+    "storm warning": 320,
+    "hazardous seas warning": 318,
+    "tornado watch": 285,
+    "severe thunderstorm watch": 275,
+    "flash flood watch": 265,
+    "flood watch": 265,
+    "winter storm watch": 255,
+    "red flag watch": 250,
+    "small craft advisory": 135,
+}
+
+
+def _darken_hex_color(color: str, factor: float = 0.58) -> str:
+    normalized = str(color or "").strip()
+    if len(normalized) != 7 or not normalized.startswith("#"):
+        return "#000000"
+    try:
+        red = int(normalized[1:3], 16)
+        green = int(normalized[3:5], 16)
+        blue = int(normalized[5:7], 16)
+    except ValueError:
+        return "#000000"
+    clamped = max(0.0, min(1.0, factor))
+    return "#{:02X}{:02X}{:02X}".format(
+        max(0, min(255, round(red * clamped))),
+        max(0, min(255, round(green * clamped))),
+        max(0, min(255, round(blue * clamped))),
+    )
+
+
+def _priority_for_event(event_label: str) -> int:
+    normalized = str(event_label or "").strip().lower()
+    explicit = SPECIAL_EVENT_PRIORITIES.get(normalized)
+    if explicit is not None:
+        return explicit
+    if "warning" in normalized:
+        return 300
+    if "watch" in normalized:
+        return 200
+    if "advisory" in normalized:
+        return 120
+    if "statement" in normalized:
+        return 60
+    if "outlook" in normalized or "forecast" in normalized:
+        return 55
+    if "message" in normalized:
+        return 50
+    return 60
+
+
+def _build_event_style_overrides() -> dict[str, HazardStyle]:
+    overrides: dict[str, HazardStyle] = {}
+    for label, fill in HAZARD_COLOR_OVERRIDES.items():
+        normalized = label.strip().lower()
+        overrides[normalized] = HazardStyle(
+            key=normalized.replace(" ", "_"),
+            label=label,
+            fill=fill,
+            stroke=_darken_hex_color(fill),
+            priority=_priority_for_event(label),
+        )
+    return overrides
+
+
+EVENT_STYLE_OVERRIDES: dict[str, HazardStyle] = _build_event_style_overrides()
+
 SIGNIFICANCE_FALLBACKS: dict[str, HazardStyle] = {
-    "warning": HazardStyle("warning", "Warning", "#ef4444", "#7f1d1d", 300),
-    "watch": HazardStyle("watch", "Watch", "#facc15", "#854d0e", 200),
-    "advisory": HazardStyle("advisory", "Advisory", "#60a5fa", "#1d4ed8", 120),
-    "statement": HazardStyle("statement", "Statement", "#d4d4d8", "#52525b", 60),
+    "warning": HazardStyle("warning", "Warning", "#FF0000", _darken_hex_color("#FF0000"), 300),
+    "watch": HazardStyle("watch", "Watch", "#FFFF00", _darken_hex_color("#FFFF00"), 200),
+    "advisory": HazardStyle("advisory", "Advisory", "#00FF7F", _darken_hex_color("#00FF7F"), 120),
+    "statement": HazardStyle("statement", "Statement", "#FFE4B5", _darken_hex_color("#FFE4B5"), 60),
 }
 
 

@@ -120,6 +120,7 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
 
     county_feature = next(feature for feature in frame.features if feature["properties"].get("county_geoid") == "04013")
     assert county_feature["properties"]["risk_label"] == "Tornado Warning"
+    assert county_feature["properties"]["fill"] == "#FF0000"
     assert county_feature["properties"]["alert_count"] == 2
     assert county_feature["properties"]["active_hazards"] == ["Tornado Warning", "Severe Thunderstorm Watch"]
     assert county_feature["properties"]["hover_label"] == "Maricopa: Tornado Warning +1 more"
@@ -127,6 +128,7 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
 
     fallback_feature = next(feature for feature in frame.features if feature["properties"].get("area_description") == "Coastal waters")
     assert fallback_feature["properties"]["risk_label"] == "Small Craft Advisory"
+    assert fallback_feature["properties"]["fill"] == "#D8BFD8"
     assert fallback_feature["geometry"]["type"] == "Polygon"
 
 
