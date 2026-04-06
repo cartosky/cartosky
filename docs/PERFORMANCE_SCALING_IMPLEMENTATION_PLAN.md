@@ -486,6 +486,10 @@ Do not implement a complex worker/offscreen-canvas path solely because it sounds
    - previous texture protection
    - warm-queue awareness
 
+#### Status
+
+Implemented. `GridWebglLayerController` now uses an in-memory LRU store for frame-byte and texture caches, eliminating the full-cache oldest-entry scans on insert while preserving current-frame, previous-texture, and warm-queue protections during eviction.
+
 #### Acceptance Criteria
 
 1. Cache eviction no longer scans all entries on insert.

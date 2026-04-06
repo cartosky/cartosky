@@ -353,14 +353,133 @@ function resolveOpacity(
 
 type CachedFrame = {
   bytes: Uint8Array<ArrayBufferLike>;
-  lastUsedAt: number;
 };
 
 type CachedTexture = {
   texture: WebGLTexture;
-  lastUsedAt: number;
   bytes: number;
 };
+
+type LruNode<T> = {
+  key: string;
+  value: T;
+  prev: LruNode<T> | null;
+  next: LruNode<T> | null;
+};
+
+class LruStore<T> {
+  private readonly nodes = new Map<string, LruNode<T>>();
+  private head: LruNode<T> | null = null;
+  private tail: LruNode<T> | null = null;
+
+  get size(): number {
+    return this.nodes.size;
+  }
+
+  has(key: string): boolean {
+    return this.nodes.has(key);
+  }
+
+  get(key: string): T | undefined {
+    return this.nodes.get(key)?.value;
+  }
+
+  touch(key: string): T | undefined {
+    const node = this.nodes.get(key);
+    if (!node) {
+      return undefined;
+    }
+    this.moveToTail(node);
+    return node.value;
+  }
+
+  set(key: string, value: T) {
+    const existing = this.nodes.get(key);
+    if (existing) {
+      existing.value = value;
+      this.moveToTail(existing);
+      return;
+    }
+    const node: LruNode<T> = { key, value, prev: this.tail, next: null };
+    if (this.tail) {
+      this.tail.next = node;
+    } else {
+      this.head = node;
+    }
+    this.tail = node;
+    this.nodes.set(key, node);
+  }
+
+  delete(key: string): T | undefined {
+    const node = this.nodes.get(key);
+    if (!node) {
+      return undefined;
+    }
+    this.detach(node);
+    this.nodes.delete(key);
+    return node.value;
+  }
+
+  clear() {
+    this.nodes.clear();
+    this.head = null;
+    this.tail = null;
+  }
+
+  *values(): IterableIterator<T> {
+    let current = this.head;
+    while (current) {
+      yield current.value;
+      current = current.next;
+    }
+  }
+
+  evictLeastRecentlyUsed(shouldKeep?: (key: string, value: T) => boolean): { key: string; value: T } | null {
+    let current = this.head;
+    while (current) {
+      const next = current.next;
+      if (!shouldKeep || !shouldKeep(current.key, current.value)) {
+        const key = current.key;
+        const value = current.value;
+        this.detach(current);
+        this.nodes.delete(key);
+        return { key, value };
+      }
+      current = next;
+    }
+    return null;
+  }
+
+  private moveToTail(node: LruNode<T>) {
+    if (this.tail === node) {
+      return;
+    }
+    this.detach(node);
+    node.prev = this.tail;
+    node.next = null;
+    if (this.tail) {
+      this.tail.next = node;
+    } else {
+      this.head = node;
+    }
+    this.tail = node;
+  }
+
+  private detach(node: LruNode<T>) {
+    if (node.prev) {
+      node.prev.next = node.next;
+    } else {
+      this.head = node.next;
+    }
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else {
+      this.tail = node.prev;
+    }
+    node.prev = null;
+    node.next = null;
+  }
+}
 
 type ProgramBindings = {
   positionLocation: number;
@@ -408,10 +527,10 @@ export class GridWebglLayerController {
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private onFrameEvicted: ((frameUrl: string) => void) | null = null;
-  private frameCache = new Map<string, CachedFrame>();
+  private frameCache = new LruStore<CachedFrame>();
   private frameCacheBytes = 0;
   private invalidFrameUrls = new Set<string>();
-  private textureCache = new Map<string, CachedTexture>();
+  private textureCache = new LruStore<CachedTexture>();
   private textureCacheBytes = 0;
   private frameFetches = new Map<string, Promise<Uint8Array<ArrayBufferLike> | null>>();
   private frameFetchAbortControllers = new Map<string, AbortController>();
@@ -881,9 +1000,8 @@ export class GridWebglLayerController {
       return null;
     }
 
-    const existing = this.textureCache.get(frameUrl);
+    const existing = this.textureCache.touch(frameUrl);
     if (existing) {
-      existing.lastUsedAt = Date.now();
       return existing.texture;
     }
     if (!bytes) {
@@ -978,7 +1096,6 @@ export class GridWebglLayerController {
 
     this.textureCache.set(frameUrl, {
       texture: targetTexture,
-      lastUsedAt: Date.now(),
       bytes: bytes.byteLength,
     });
     this.textureCacheBytes += bytes.byteLength;
@@ -1015,15 +1132,13 @@ export class GridWebglLayerController {
     if (this.invalidFrameUrls.has(frameUrl)) {
       return;
     }
-    const warmTexture = this.textureCache.get(frameUrl);
+    const warmTexture = this.textureCache.touch(frameUrl);
     if (warmTexture) {
-      warmTexture.lastUsedAt = Date.now();
       this.activateFrameTexture(frameUrl, this.frameCache.get(frameUrl)?.bytes ?? new Uint8Array(), signature);
       return;
     }
-    const cached = this.frameCache.get(frameUrl);
+    const cached = this.frameCache.touch(frameUrl);
     if (cached) {
-      cached.lastUsedAt = Date.now();
       this.activateFrameTexture(frameUrl, cached.bytes, signature);
       return;
     }
@@ -1046,9 +1161,8 @@ export class GridWebglLayerController {
     if (this.invalidFrameUrls.has(frameUrl)) {
       return null;
     }
-    const cached = this.frameCache.get(frameUrl);
+    const cached = this.frameCache.touch(frameUrl);
     if (cached) {
-      cached.lastUsedAt = Date.now();
       return cached.bytes;
     }
     const inFlight = this.frameFetches.get(frameUrl);
@@ -1119,65 +1233,39 @@ export class GridWebglLayerController {
     if (existing) {
       this.frameCacheBytes -= existing.bytes.byteLength;
     }
-    this.frameCache.set(frameUrl, { bytes, lastUsedAt: Date.now() });
+    this.frameCache.set(frameUrl, { bytes });
     this.frameCacheBytes += bytes.byteLength;
 
     while (this.frameCacheBytes > this.frameCacheBudgetBytes && this.frameCache.size > 1) {
-      let lruKey: string | null = null;
-      let oldest = Number.POSITIVE_INFINITY;
-      for (const [candidateKey, candidate] of this.frameCache.entries()) {
-        if (candidate.lastUsedAt < oldest && candidateKey !== this.frameUrl) {
-          oldest = candidate.lastUsedAt;
-          lruKey = candidateKey;
-        }
-      }
-      if (!lruKey) {
-        break;
-      }
-      const evicted = this.frameCache.get(lruKey);
+      const evicted = this.frameCache.evictLeastRecentlyUsed((candidateKey) => candidateKey === this.frameUrl);
       if (!evicted) {
         break;
       }
-      this.frameCache.delete(lruKey);
-      this.frameCacheBytes -= evicted.bytes.byteLength;
+      this.frameCacheBytes -= evicted.value.bytes.byteLength;
       // Notify that this frame is no longer available in any cache.
-      if (!this.textureCache.has(lruKey)) {
-        this.onFrameEvicted?.(lruKey);
+      if (!this.textureCache.has(evicted.key)) {
+        this.onFrameEvicted?.(evicted.key);
       }
     }
   }
 
   private evictTextureCache(preferredUrl?: string | null) {
     while (this.textureCacheBytes > this.textureCacheBudgetBytes && this.textureCache.size > 1) {
-      let lruKey: string | null = null;
-      let oldest = Number.POSITIVE_INFINITY;
-      for (const [candidateKey, candidate] of this.textureCache.entries()) {
-        if (
+      const evicted = this.textureCache.evictLeastRecentlyUsed(
+        (candidateKey) =>
           candidateKey === preferredUrl
           || candidateKey === this.currentTextureUrl
           || candidateKey === this.previousTextureUrl
-          || this.textureWarmQueued.has(candidateKey)
-        ) {
-          continue;
-        }
-        if (candidate.lastUsedAt < oldest) {
-          oldest = candidate.lastUsedAt;
-          lruKey = candidateKey;
-        }
-      }
-      if (!lruKey) {
-        break;
-      }
-      const evicted = this.textureCache.get(lruKey);
+          || this.textureWarmQueued.has(candidateKey),
+      );
       if (!evicted) {
         break;
       }
-      this.textureCache.delete(lruKey);
-      this.textureCacheBytes -= evicted.bytes;
-      this.gl?.deleteTexture(evicted.texture);
+      this.textureCacheBytes -= evicted.value.bytes;
+      this.gl?.deleteTexture(evicted.value.texture);
       // If both caches have lost this URL, notify that it is no longer available.
-      if (!this.frameCache.has(lruKey)) {
-        this.onFrameEvicted?.(lruKey);
+      if (!this.frameCache.has(evicted.key)) {
+        this.onFrameEvicted?.(evicted.key);
       }
     }
   }
