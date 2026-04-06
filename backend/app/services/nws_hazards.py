@@ -718,11 +718,8 @@ def build_active_hazards_frame(
     county_buckets: dict[str, list[NormalizedHazardAlert]] = {}
     zone_buckets: dict[str, list[NormalizedHazardAlert]] = {}
     geometry_features: list[dict[str, Any]] = []
-    zone_references = _resolve_zone_references(
-        {zone_code for alert in normalized_alerts for zone_code in alert.zone_codes},
-        api_base=api_base,
-        timeout_seconds=timeout_seconds,
-    )
+    zone_candidate_alerts: list[NormalizedHazardAlert] = []
+    needed_zone_codes: set[str] = set()
     for alert in normalized_alerts:
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
         if alert.geometry is not None and _prefers_alert_geometry(alert):
@@ -755,11 +752,21 @@ def build_active_hazards_frame(
                 )
             )
             continue
+        if alert.zone_codes:
+            zone_candidate_alerts.append(alert)
+            needed_zone_codes.update(alert.zone_codes)
+
+    zone_references = _resolve_zone_references(
+        needed_zone_codes,
+        api_base=api_base,
+        timeout_seconds=timeout_seconds,
+    )
+    for alert in zone_candidate_alerts:
         resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
-        if resolved_zone_codes:
-            for zone_code in resolved_zone_codes:
-                zone_buckets.setdefault(zone_code, []).append(alert)
+        if not resolved_zone_codes:
             continue
+        for zone_code in resolved_zone_codes:
+            zone_buckets.setdefault(zone_code, []).append(alert)
 
     county_features: list[dict[str, Any]] = []
     for geoid, alerts in county_buckets.items():
