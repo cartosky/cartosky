@@ -52,6 +52,7 @@ class NAMPlugin(BaseModelPlugin):
             "t850mb": "tmp850",
             "temp850": "tmp850",
             "temp850mb": "tmp850",
+            "mlcape": "mlcape",
             "wgst10m": "wgst10m",
             "gust10m": "wgst10m",
             "10m_gust": "wgst10m",
@@ -212,6 +213,28 @@ NAM_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="C",
+    ),
+    "mlcape": VarSpec(
+        id="mlcape",
+        name="Mixed-Layer CAPE",
+        selectors=VarSelectors(
+            search=[":CAPE:90-0 mb above ground:"],
+            filter_by_keys={
+                "shortName": "cape",
+                "typeOfLevel": "pressureFromGroundLayer",
+                "topLevel": "0",
+                "bottomLevel": "90",
+            },
+            hints={
+                "upstream_var": "mlcape",
+                "cf_var": "cape",
+                "short_name": "cape",
+                "cape_layer": "90-0 mb above ground",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="J/kg",
     ),
     **{
         f"tmp{level}": _nam_tmp_level_component(level)
@@ -480,6 +503,7 @@ NAM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "mlcape": "mlcape",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "precip_total": "precip_total",
@@ -500,11 +524,12 @@ NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "tmp850": 3,
-    "precip_total": 4,
-    "snowfall_total": 5,
-    "wspd10m": 6,
-    "wgst10m": 7,
-    "snowfall_kuchera_total": 8,
+    "mlcape": 4,
+    "precip_total": 5,
+    "snowfall_total": 6,
+    "wspd10m": 7,
+    "wgst10m": 8,
+    "snowfall_kuchera_total": 9,
 }
 
 NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -512,6 +537,7 @@ NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "mlcape": "Instability",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
