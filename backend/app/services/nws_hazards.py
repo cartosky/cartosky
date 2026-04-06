@@ -58,6 +58,7 @@ class NormalizedHazardAlert:
     effective_time: datetime | None
     expires_time: datetime | None
     county_geoids: tuple[str, ...]
+    zone_codes: tuple[str, ...]
     geometry: dict[str, Any] | None
     area_description: str
     style: HazardStyle
@@ -372,6 +373,15 @@ def _ugc_to_geoid(code: str) -> str | None:
     return f"{state_fips}{county_code}"
 
 
+def _zone_code_from_ugc(code: str) -> str | None:
+    normalized = str(code or "").strip().upper()
+    if len(normalized) != 6 or not normalized[:2].isalpha() or not normalized[3:].isdigit():
+        return None
+    if normalized[2] == "C":
+        return None
+    return normalized
+
+
 def _build_alert_fingerprint(payload: dict[str, Any]) -> str:
     features = payload.get("features") if isinstance(payload, dict) else None
     normalized_rows: list[dict[str, Any]] = []
@@ -403,6 +413,10 @@ def fetch_active_alerts_geojson(
     api_base: str = NWS_API_BASE,
 ) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/alerts/active"
+    return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds)
+
+
+def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float) -> dict[str, Any]:
     last_error: Exception | None = None
     with httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
         "User-Agent": NWS_USER_AGENT,
@@ -432,6 +446,38 @@ def fetch_active_alerts_geojson(
             raise NWSHazardsError(f"NWS Hazards upstream returned HTTP {response.status_code}")
 
     raise NWSHazardsError("NWS Hazards request timed out after retries") from last_error
+
+
+@lru_cache(maxsize=2048)
+def _load_zone_reference_cached(zone_code: str, api_base: str, timeout_seconds: float) -> dict[str, Any] | None:
+    normalized_zone = str(zone_code or "").strip().upper()
+    if not normalized_zone:
+        return None
+    url = f"{api_base.rstrip('/')}/zones/forecast/{normalized_zone}"
+    try:
+        payload = _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds)
+    except NWSHazardsError:
+        logger.warning("NWS Hazards zone geometry lookup failed for %s", normalized_zone)
+        return None
+    geometry = payload.get("geometry")
+    props = payload.get("properties") if isinstance(payload, dict) else None
+    if not isinstance(geometry, dict):
+        return None
+    return {
+        "zone_code": normalized_zone,
+        "name": str((props or {}).get("name") or normalized_zone).strip(),
+        "state": str((props or {}).get("state") or "").strip(),
+        "geometry": geometry,
+    }
+
+
+def _resolve_zone_references(zone_codes: set[str], *, api_base: str, timeout_seconds: float) -> dict[str, dict[str, Any]]:
+    resolved: dict[str, dict[str, Any]] = {}
+    for zone_code in sorted(zone_codes):
+        zone_reference = _load_zone_reference_cached(zone_code, api_base.rstrip('/'), float(timeout_seconds))
+        if zone_reference is not None:
+            resolved[zone_code] = zone_reference
+    return resolved
 
 
 def default_county_reference_path(data_root: Path) -> Path:
@@ -493,6 +539,83 @@ def _county_geoids_from_properties(props: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(geoids))
 
 
+def _zone_codes_from_properties(props: dict[str, Any]) -> tuple[str, ...]:
+    geocode = props.get("geocode")
+    if not isinstance(geocode, dict):
+        return ()
+    zone_codes: set[str] = set()
+    for ugc_code in _string_list(geocode.get("UGC")):
+        zone_code = _zone_code_from_ugc(ugc_code)
+        if zone_code:
+            zone_codes.add(zone_code)
+    return tuple(sorted(zone_codes))
+
+
+GEOMETRY_PREFERRED_EVENTS = frozenset({
+    "flood warning",
+    "flood watch",
+    "flood statement",
+    "flood advisory",
+    "hydrologic advisory",
+    "hydrologic outlook",
+    "coastal flood warning",
+    "coastal flood watch",
+    "coastal flood advisory",
+    "coastal flood statement",
+    "lakeshore flood warning",
+    "lakeshore flood watch",
+    "lakeshore flood advisory",
+    "lakeshore flood statement",
+    "high surf warning",
+    "high surf advisory",
+    "rip current statement",
+    "beach hazards statement",
+})
+
+
+def _prefers_alert_geometry(alert: NormalizedHazardAlert) -> bool:
+    normalized_event = alert.event.strip().lower()
+    if normalized_event.startswith("flash flood"):
+        return False
+    return normalized_event in GEOMETRY_PREFERRED_EVENTS
+
+
+def _build_geometry_feature(
+    *,
+    geometry: dict[str, Any],
+    primary: NormalizedHazardAlert,
+    alerts: list[NormalizedHazardAlert],
+    hover_name: str,
+    area_description: str,
+    fill_opacity: float,
+    stroke_width: float,
+    extra_properties: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    active_hazard_labels = _unique_hazard_labels(alerts)
+    props: dict[str, Any] = {
+        "risk_code": primary.style.key,
+        "risk_label": primary.style.label,
+        "hover_label": _build_hover_label(hover_name, alerts),
+        "fill": primary.style.fill,
+        "fill_opacity": fill_opacity,
+        "stroke": primary.style.stroke,
+        "stroke_width": stroke_width,
+        "sort_rank": int(primary.style.priority),
+        "alert_count": len(alerts),
+        "alert_ids": [alert.alert_id for alert in alerts],
+        "active_hazards": active_hazard_labels,
+        "area_description": area_description,
+        "expires_time": primary.expires_time.strftime("%Y-%m-%dT%H:%M:%SZ") if primary.expires_time else None,
+    }
+    if extra_properties:
+        props.update(extra_properties)
+    return {
+        "type": "Feature",
+        "properties": props,
+        "geometry": geometry,
+    }
+
+
 def _normalize_alert(feature: dict[str, Any]) -> NormalizedHazardAlert | None:
     props = feature.get("properties")
     if not isinstance(props, dict):
@@ -513,6 +636,7 @@ def _normalize_alert(feature: dict[str, Any]) -> NormalizedHazardAlert | None:
         effective_time=_coerce_datetime(props.get("effective")),
         expires_time=_coerce_datetime(props.get("expires")),
         county_geoids=_county_geoids_from_properties(props),
+        zone_codes=_zone_codes_from_properties(props),
         geometry=feature.get("geometry") if isinstance(feature.get("geometry"), dict) else None,
         area_description=str(props.get("areaDesc") or "").strip(),
         style=_event_style(event),
@@ -567,6 +691,8 @@ def build_active_hazards_frame(
     *,
     county_reference_path: Path,
     fh: int = 0,
+    api_base: str = NWS_API_BASE,
+    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
 ) -> HazardFramePayload:
     counties = load_county_reference(county_reference_path)
     features_raw = payload.get("features")
@@ -587,36 +713,50 @@ def build_active_hazards_frame(
     valid_time = bundle_updated or issue_time
 
     county_buckets: dict[str, list[NormalizedHazardAlert]] = {}
-    fallback_features: list[dict[str, Any]] = []
+    zone_buckets: dict[str, list[NormalizedHazardAlert]] = {}
+    geometry_features: list[dict[str, Any]] = []
+    zone_references = _resolve_zone_references(
+        {zone_code for alert in normalized_alerts for zone_code in alert.zone_codes},
+        api_base=api_base,
+        timeout_seconds=timeout_seconds,
+    )
     for alert in normalized_alerts:
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
+        if alert.geometry is not None and _prefers_alert_geometry(alert):
+            geometry_features.append(
+                _build_geometry_feature(
+                    geometry=alert.geometry,
+                    primary=alert,
+                    alerts=[alert],
+                    hover_name=alert.style.label,
+                    area_description=alert.area_description,
+                    fill_opacity=0.42,
+                    stroke_width=1.6,
+                )
+            )
+            continue
         if resolved_geoids:
             for geoid in resolved_geoids:
                 county_buckets.setdefault(geoid, []).append(alert)
             continue
-        if alert.geometry is None:
+        if alert.geometry is not None:
+            geometry_features.append(
+                _build_geometry_feature(
+                    geometry=alert.geometry,
+                    primary=alert,
+                    alerts=[alert],
+                    hover_name=alert.headline,
+                    area_description=alert.area_description,
+                    fill_opacity=0.42,
+                    stroke_width=1.6,
+                )
+            )
             continue
-        fallback_features.append(
-            {
-                "type": "Feature",
-                "properties": {
-                    "risk_code": alert.style.key,
-                    "risk_label": alert.style.label,
-                    "hover_label": alert.headline,
-                    "fill": alert.style.fill,
-                    "fill_opacity": 0.42,
-                    "stroke": alert.style.stroke,
-                    "stroke_width": 1.6,
-                    "sort_rank": int(alert.style.priority),
-                    "alert_count": 1,
-                    "alert_ids": [alert.alert_id],
-                    "active_hazards": [alert.style.label],
-                    "expires_time": alert.expires_time.strftime("%Y-%m-%dT%H:%M:%SZ") if alert.expires_time else None,
-                    "area_description": alert.area_description,
-                },
-                "geometry": alert.geometry,
-            }
-        )
+        resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
+        if resolved_zone_codes:
+            for zone_code in resolved_zone_codes:
+                zone_buckets.setdefault(zone_code, []).append(alert)
+            continue
 
     county_features: list[dict[str, Any]] = []
     for geoid, alerts in county_buckets.items():
@@ -652,7 +792,32 @@ def build_active_hazards_frame(
             }
         )
 
-    all_features = county_features + fallback_features
+    zone_features: list[dict[str, Any]] = []
+    for zone_code, alerts in zone_buckets.items():
+        zone = zone_references.get(zone_code)
+        if zone is None:
+            continue
+        sorted_alerts = _sort_alerts_by_priority(alerts)
+        primary = sorted_alerts[0]
+        zone_name = str(zone.get("name") or zone_code)
+        zone_features.append(
+            _build_geometry_feature(
+                geometry=zone["geometry"],
+                primary=primary,
+                alerts=sorted_alerts,
+                hover_name=zone_name,
+                area_description=zone_name,
+                fill_opacity=0.42,
+                stroke_width=1.6,
+                extra_properties={
+                    "zone_code": zone_code,
+                    "zone_name": zone_name,
+                    "state": str(zone.get("state") or ""),
+                },
+            )
+        )
+
+    all_features = county_features + zone_features + geometry_features
     all_features.sort(key=lambda feature: int((feature.get("properties") or {}).get("sort_rank") or 0))
     return HazardFramePayload(
         fh=int(fh),
@@ -697,7 +862,12 @@ def publish_active_hazards(
     resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(timeout_seconds=timeout_seconds, api_base=api_base)
     fingerprint = _build_alert_fingerprint(resolved_payload)
     county_path = county_reference_path or default_county_reference_path(data_root)
-    frame = build_active_hazards_frame(resolved_payload, county_reference_path=county_path)
+    frame = build_active_hazards_frame(
+        resolved_payload,
+        county_reference_path=county_path,
+        api_base=api_base,
+        timeout_seconds=timeout_seconds,
+    )
     run_id = format_run_id(frame.valid_time, include_minutes=True)
 
     staging_run_root = data_root / "staging" / NWS_HAZARDS_MODEL_ID / run_id

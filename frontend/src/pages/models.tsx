@@ -243,7 +243,7 @@ export default function Models() {
       {
         id: "nws_hazards",
         name: "NWS Hazards",
-        oneLiner: "Active NWS watches, warnings, advisories, and statements rendered as county-first vector fills with alert-geometry fallback for marine and zone-based products.",
+        oneLiner: "Active NWS watches, warnings, advisories, and statements rendered as county fills by default, with precise alert polygons for flood-style hazards and zone geometry for marine products.",
         pills: ["CONUS", "Active only", "1-2 minute refresh"],
         bestFor: [
           "Fast inspection of current county-based warnings, watches, and advisories",

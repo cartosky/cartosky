@@ -132,6 +132,96 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
     assert fallback_feature["geometry"]["type"] == "Polygon"
 
 
+def test_build_active_hazards_frame_prefers_precise_geometry_for_flood_alerts(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "flood-1",
+                    "status": "Actual",
+                    "event": "Flood Warning",
+                    "headline": "Flood Warning for river reach",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Kent, MI",
+                    "geocode": {"UGC": ["MIC081"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-85.72, 42.86], [-85.67, 42.86], [-85.67, 42.92], [-85.72, 42.92], [-85.72, 42.86]]],
+                },
+            }
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(payload, county_reference_path=county_reference)
+    assert len(frame.features) == 1
+    feature = frame.features[0]
+    assert feature["properties"]["risk_label"] == "Flood Warning"
+    assert "county_geoid" not in feature["properties"]
+    assert feature["geometry"]["type"] == "Polygon"
+    assert feature["properties"]["fill"] == "#00FF00"
+
+
+def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "marine-1",
+                    "status": "Actual",
+                    "event": "Gale Warning",
+                    "headline": "Gale Warning for Lake Superior",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Ontonagon to Upper Entrance of Portage Canal MI",
+                    "geocode": {"UGC": ["LSZ242"]},
+                },
+                "geometry": None,
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        nws_hazards,
+        "_resolve_zone_references",
+        lambda zone_codes, **_: {
+            zone_code: {
+                "zone_code": zone_code,
+                "name": "Ontonagon to Upper Entrance of Portage Canal MI",
+                "state": "MI",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-89.6, 46.8], [-88.5, 46.8], [-88.5, 47.1], [-89.6, 47.1], [-89.6, 46.8]]],
+                },
+            }
+            for zone_code in zone_codes
+        },
+    )
+
+    frame = nws_hazards.build_active_hazards_frame(payload, county_reference_path=county_reference)
+    assert len(frame.features) == 1
+    feature = frame.features[0]
+    assert feature["properties"]["risk_label"] == "Gale Warning"
+    assert feature["properties"]["zone_code"] == "LSZ242"
+    assert feature["properties"]["zone_name"] == "Ontonagon to Upper Entrance of Portage Canal MI"
+    assert feature["properties"]["state"] == "MI"
+    assert feature["geometry"]["type"] == "Polygon"
+
+
 def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sidecars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
