@@ -246,6 +246,42 @@ def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
     assert feature["geometry"]["type"] == "Polygon"
 
 
+def test_build_active_hazards_frame_prefers_zone_geometry_over_county_rollup_for_public_zone_alerts(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "wind-1",
+                    "status": "Actual",
+                    "event": "Wind Advisory",
+                    "headline": "Wind Advisory for Okanogan Valley",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Okanogan Valley",
+                    "geocode": {"UGC": ["LSZ242"], "SAME": ["004013"]},
+                },
+                "geometry": None,
+            }
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+    assert len(frame.features) == 1
+    feature = frame.features[0]
+    assert feature["properties"]["zone_code"] == "LSZ242"
+    assert "county_geoid" not in feature["properties"]
+
+
 def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sidecars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -656,6 +656,12 @@ def _resolve_zone_references(
     return resolved
 
 
+def _prefers_zone_geometry(alert: NormalizedHazardAlert, zone_references: dict[str, dict[str, Any]]) -> bool:
+    if alert.geometry is not None or not alert.zone_codes:
+        return False
+    return any(zone_code in zone_references for zone_code in alert.zone_codes)
+
+
 @lru_cache(maxsize=8)
 def _load_county_reference_cached(path_key: str) -> dict[str, dict[str, Any]]:
     path = Path(path_key)
@@ -903,6 +909,10 @@ def build_active_hazards_frame(
                     stroke_width=1.6,
                 )
             )
+            continue
+        if _prefers_zone_geometry(alert, zone_references):
+            zone_candidate_alerts.append(alert)
+            needed_zone_codes.update(alert.zone_codes)
             continue
         if resolved_geoids:
             for geoid in resolved_geoids:

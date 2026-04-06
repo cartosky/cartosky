@@ -1028,6 +1028,10 @@ export function MapCanvas({
       return;
     }
 
+    const firstVectorFillLayerId = VECTOR_FILL_LAYER_IDS.find((layerId) => map.getLayer(layerId));
+    if (map.getLayer(LAKE_MASK_LAYER_ID) && firstVectorFillLayerId) {
+      map.moveLayer(LAKE_MASK_LAYER_ID, firstVectorFillLayerId);
+    }
     if (map.getLayer(CONTOUR_LAYER_ID)) {
       map.moveLayer(CONTOUR_LAYER_ID, "twf-labels");
     }
@@ -1055,9 +1059,6 @@ export function MapCanvas({
     }
     if (map.getLayer(COUNTY_BOUNDARY_LAYER_ID)) {
       map.moveLayer(COUNTY_BOUNDARY_LAYER_ID, "twf-labels");
-    }
-    if (map.getLayer(LAKE_MASK_LAYER_ID)) {
-      map.moveLayer(LAKE_MASK_LAYER_ID, "twf-labels");
     }
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
