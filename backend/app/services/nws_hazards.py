@@ -910,7 +910,7 @@ def build_active_hazards_frame(
                 )
             )
             continue
-        if _prefers_zone_geometry(alert, zone_references):
+        if alert.zone_codes:
             zone_candidate_alerts.append(alert)
             needed_zone_codes.update(alert.zone_codes)
             continue
@@ -941,10 +941,27 @@ def build_active_hazards_frame(
     )
     for alert in zone_candidate_alerts:
         resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
-        if not resolved_zone_codes:
+        if resolved_zone_codes:
+            for zone_code in resolved_zone_codes:
+                zone_buckets.setdefault(zone_code, []).append(alert)
             continue
-        for zone_code in resolved_zone_codes:
-            zone_buckets.setdefault(zone_code, []).append(alert)
+        resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
+        if resolved_geoids:
+            for geoid in resolved_geoids:
+                county_buckets.setdefault(geoid, []).append(alert)
+            continue
+        if alert.geometry is not None:
+            geometry_features.append(
+                _build_geometry_feature(
+                    geometry=alert.geometry,
+                    primary=alert,
+                    alerts=[alert],
+                    hover_name=alert.headline,
+                    area_description=alert.area_description,
+                    fill_opacity=0.42,
+                    stroke_width=1.6,
+                )
+            )
 
     county_features: list[dict[str, Any]] = []
     for geoid, alerts in county_buckets.items():
