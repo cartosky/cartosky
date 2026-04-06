@@ -35,9 +35,37 @@ def _write_county_reference(path: Path) -> Path:
     return path
 
 
+def _write_zone_reference(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "LSZ242",
+                            "name": "Ontonagon to Upper Entrance of Portage Canal MI",
+                            "state": "MI",
+                            "zone_type": "coastal",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-89.6, 46.8], [-88.5, 46.8], [-88.5, 47.1], [-89.6, 47.1], [-89.6, 46.8]]],
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
 def test_nws_hazards_poller_noops_when_fingerprint_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_root = tmp_path
     county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
     run_id = "20260406_1730z"
     manifest_dir = data_root / "manifests" / "nws_hazards"
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -83,6 +111,7 @@ def test_nws_hazards_poller_noops_when_fingerprint_matches(tmp_path: Path, monke
     config = nws_hazards_poller.NWSHazardsPollerConfig(
         data_root=data_root,
         county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
         poll_seconds=90,
         keep_runs=5,
         timeout_seconds=10.0,
@@ -96,6 +125,7 @@ def test_nws_hazards_poller_noops_when_fingerprint_matches(tmp_path: Path, monke
 def test_nws_hazards_poller_reuses_prefetched_payload_for_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_root = tmp_path
     county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -134,6 +164,7 @@ def test_nws_hazards_poller_reuses_prefetched_payload_for_publish(tmp_path: Path
     config = nws_hazards_poller.NWSHazardsPollerConfig(
         data_root=data_root,
         county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
         poll_seconds=90,
         keep_runs=5,
         timeout_seconds=10.0,

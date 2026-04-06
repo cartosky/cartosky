@@ -14,6 +14,7 @@ from app.services.nws_hazards import (
     NWSHazardsError,
     _build_alert_fingerprint,
     default_county_reference_path,
+    default_zone_reference_path,
     fetch_active_alerts_geojson,
     publish_active_hazards,
 )
@@ -30,6 +31,7 @@ DEFAULT_KEEP_RUNS = 20
 class NWSHazardsPollerConfig:
     data_root: Path
     county_reference_path: Path
+    zone_reference_path: Path
     poll_seconds: int
     keep_runs: int
     timeout_seconds: float
@@ -92,6 +94,7 @@ def run_once(config: NWSHazardsPollerConfig) -> NWSHazardsPollerCycleResult:
     result = publish_active_hazards(
         data_root=config.data_root,
         county_reference_path=config.county_reference_path,
+        zone_reference_path=config.zone_reference_path,
         timeout_seconds=config.timeout_seconds,
         api_base=config.api_base,
         payload=payload,
@@ -107,9 +110,10 @@ def run_once(config: NWSHazardsPollerConfig) -> NWSHazardsPollerCycleResult:
 
 def run_poller(config: NWSHazardsPollerConfig, *, once: bool) -> int:
     logger.info(
-        "NWS Hazards poller starting data_root=%s county_reference=%s poll=%ss keep_runs=%d timeout=%ss",
+        "NWS Hazards poller starting data_root=%s county_reference=%s zone_reference=%s poll=%ss keep_runs=%d timeout=%ss",
         config.data_root,
         config.county_reference_path,
+        config.zone_reference_path,
         config.poll_seconds,
         config.keep_runs,
         config.timeout_seconds,
@@ -165,6 +169,12 @@ def build_config_from_env() -> NWSHazardsPollerConfig:
             default=str(default_county_reference_path(data_root)),
         )
     ).expanduser()
+    zone_reference = Path(
+        _env_value(
+            "CARTOSKY_NWS_HAZARDS_ZONE_REFERENCE",
+            default=str(default_zone_reference_path(data_root)),
+        )
+    ).expanduser()
     poll_seconds = _int_env("CARTOSKY_NWS_HAZARDS_POLL_SECONDS", DEFAULT_POLL_SECONDS, minimum=60)
     keep_runs = _int_env("CARTOSKY_NWS_HAZARDS_KEEP_RUNS", DEFAULT_KEEP_RUNS, minimum=1)
     timeout_seconds = _float_env("CARTOSKY_NWS_HAZARDS_TIMEOUT_SECONDS", NWS_REQUEST_TIMEOUT, minimum=5.0)
@@ -172,6 +182,7 @@ def build_config_from_env() -> NWSHazardsPollerConfig:
     return NWSHazardsPollerConfig(
         data_root=data_root,
         county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
         poll_seconds=poll_seconds,
         keep_runs=keep_runs,
         timeout_seconds=timeout_seconds,

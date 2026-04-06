@@ -51,8 +51,36 @@ def _write_county_reference(path: Path) -> Path:
     return path
 
 
+def _write_zone_reference(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "LSZ242",
+                            "name": "Ontonagon to Upper Entrance of Portage Canal MI",
+                            "state": "MI",
+                            "zone_type": "coastal",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-89.6, 46.8], [-88.5, 46.8], [-88.5, 47.1], [-89.6, 47.1], [-89.6, 46.8]]],
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
 def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geometry_fallback(tmp_path: Path) -> None:
     county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -114,7 +142,11 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
         ],
     }
 
-    frame = nws_hazards.build_active_hazards_frame(payload, county_reference_path=county_reference)
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
     assert frame.fh == 0
     assert frame.valid_time.isoformat() == "2026-04-06T17:30:00+00:00"
 
@@ -134,6 +166,7 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
 
 def test_build_active_hazards_frame_prefers_precise_geometry_for_flood_alerts(tmp_path: Path) -> None:
     county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -159,7 +192,11 @@ def test_build_active_hazards_frame_prefers_precise_geometry_for_flood_alerts(tm
         ],
     }
 
-    frame = nws_hazards.build_active_hazards_frame(payload, county_reference_path=county_reference)
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
     assert len(frame.features) == 1
     feature = frame.features[0]
     assert feature["properties"]["risk_label"] == "Flood Warning"
@@ -170,9 +207,9 @@ def test_build_active_hazards_frame_prefers_precise_geometry_for_flood_alerts(tm
 
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -195,24 +232,11 @@ def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
         ],
     }
 
-    monkeypatch.setattr(
-        nws_hazards,
-        "_resolve_zone_references",
-        lambda zone_codes, **_: {
-            zone_code: {
-                "zone_code": zone_code,
-                "name": "Ontonagon to Upper Entrance of Portage Canal MI",
-                "state": "MI",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[-89.6, 46.8], [-88.5, 46.8], [-88.5, 47.1], [-89.6, 47.1], [-89.6, 46.8]]],
-                },
-            }
-            for zone_code in zone_codes
-        },
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
     )
-
-    frame = nws_hazards.build_active_hazards_frame(payload, county_reference_path=county_reference)
     assert len(frame.features) == 1
     feature = frame.features[0]
     assert feature["properties"]["risk_label"] == "Gale Warning"
@@ -227,6 +251,7 @@ def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sideca
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -252,7 +277,11 @@ def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sideca
     }
     monkeypatch.setattr(nws_hazards, "fetch_active_alerts_geojson", lambda **_: payload)
 
-    result = nws_hazards.publish_active_hazards(data_root=tmp_path, county_reference_path=county_reference)
+    result = nws_hazards.publish_active_hazards(
+        data_root=tmp_path,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
 
     assert result.run_id == "20260406_1730z"
     assert result.frame_count == 1

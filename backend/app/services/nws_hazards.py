@@ -24,6 +24,7 @@ NWS_HAZARDS_MODEL_ID = "nws_hazards"
 NWS_HAZARDS_REGION_ID = "conus"
 NWS_ALERTS_ACTIVE_URL = f"{NWS_API_BASE}/alerts/active"
 DEFAULT_COUNTY_REFERENCE_RELATIVE_PATH = Path("hazards") / "county_reference.geojson"
+DEFAULT_ZONE_REFERENCE_RELATIVE_PATH = Path("hazards") / "zone_reference.geojson"
 NWS_HAZARDS_MAX_RETRIES = 1
 NWS_HAZARDS_RETRY_BACKOFF_SECONDS = 1.0
 NWS_HAZARDS_RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
@@ -451,40 +452,63 @@ def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: 
     raise NWSHazardsError("NWS Hazards request timed out after retries") from last_error
 
 
-@lru_cache(maxsize=2048)
-def _load_zone_reference_cached(zone_code: str, api_base: str, timeout_seconds: float) -> dict[str, Any] | None:
-    normalized_zone = str(zone_code or "").strip().upper()
-    if not normalized_zone:
-        return None
-    url = f"{api_base.rstrip('/')}/zones/forecast/{normalized_zone}"
-    try:
-        payload = _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=False)
-    except NWSHazardsError as exc:
-        logger.warning("NWS Hazards zone geometry lookup failed for %s: %s", normalized_zone, exc)
-        return None
-    geometry = payload.get("geometry")
-    props = payload.get("properties") if isinstance(payload, dict) else None
-    if not isinstance(geometry, dict):
-        return None
-    return {
-        "zone_code": normalized_zone,
-        "name": str((props or {}).get("name") or normalized_zone).strip(),
-        "state": str((props or {}).get("state") or "").strip(),
-        "geometry": geometry,
-    }
-
-
-def _resolve_zone_references(zone_codes: set[str], *, api_base: str, timeout_seconds: float) -> dict[str, dict[str, Any]]:
-    resolved: dict[str, dict[str, Any]] = {}
-    for zone_code in sorted(zone_codes):
-        zone_reference = _load_zone_reference_cached(zone_code, api_base.rstrip('/'), float(timeout_seconds))
-        if zone_reference is not None:
-            resolved[zone_code] = zone_reference
-    return resolved
+def default_zone_reference_path(data_root: Path) -> Path:
+    return data_root / DEFAULT_ZONE_REFERENCE_RELATIVE_PATH
 
 
 def default_county_reference_path(data_root: Path) -> Path:
     return data_root / DEFAULT_COUNTY_REFERENCE_RELATIVE_PATH
+
+
+@lru_cache(maxsize=8)
+def _load_zone_reference_file_cached(path_key: str) -> dict[str, dict[str, Any]]:
+    path = Path(path_key)
+    payload = json.loads(path.read_text())
+    features = payload.get("features")
+    if not isinstance(features, list):
+        raise NWSHazardsError(f"Zone reference at {path} is missing features")
+
+    zones: dict[str, dict[str, Any]] = {}
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        geometry = feature.get("geometry")
+        props = feature.get("properties")
+        if not isinstance(geometry, dict) or not isinstance(props, dict):
+            continue
+        zone_code = str(props.get("zone_code") or props.get("id") or "").strip().upper()
+        if len(zone_code) != 6:
+            continue
+        zones[zone_code] = {
+            "zone_code": zone_code,
+            "name": str(props.get("name") or zone_code).strip(),
+            "state": str(props.get("state") or "").strip(),
+            "zone_type": str(props.get("zone_type") or props.get("type") or "").strip(),
+            "geometry": geometry,
+        }
+    if not zones:
+        raise NWSHazardsError(f"Zone reference at {path} produced no zones")
+    return zones
+
+
+def load_zone_reference(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        logger.warning("NWS Hazards zone reference file not found: %s", path)
+        return {}
+    return _load_zone_reference_file_cached(str(path.resolve()))
+
+
+def _resolve_zone_references(
+    zone_codes: set[str],
+    *,
+    zone_reference: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    resolved: dict[str, dict[str, Any]] = {}
+    for zone_code in sorted(zone_codes):
+        zone = zone_reference.get(zone_code)
+        if zone is not None:
+            resolved[zone_code] = zone
+    return resolved
 
 
 @lru_cache(maxsize=8)
@@ -693,11 +717,11 @@ def build_active_hazards_frame(
     payload: dict[str, Any],
     *,
     county_reference_path: Path,
+    zone_reference_path: Path | None = None,
     fh: int = 0,
-    api_base: str = NWS_API_BASE,
-    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
 ) -> HazardFramePayload:
     counties = load_county_reference(county_reference_path)
+    zone_references = load_zone_reference(zone_reference_path) if zone_reference_path is not None else {}
     features_raw = payload.get("features")
     if not isinstance(features_raw, list):
         raise NWSHazardsError("Active alerts payload is missing features")
@@ -758,8 +782,7 @@ def build_active_hazards_frame(
 
     zone_references = _resolve_zone_references(
         needed_zone_codes,
-        api_base=api_base,
-        timeout_seconds=timeout_seconds,
+        zone_reference=zone_references,
     )
     for alert in zone_candidate_alerts:
         resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
@@ -865,6 +888,7 @@ def publish_active_hazards(
     *,
     data_root: Path,
     county_reference_path: Path | None = None,
+    zone_reference_path: Path | None = None,
     timeout_seconds: float = NWS_REQUEST_TIMEOUT,
     api_base: str = NWS_API_BASE,
     payload: dict[str, Any] | None = None,
@@ -872,11 +896,11 @@ def publish_active_hazards(
     resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(timeout_seconds=timeout_seconds, api_base=api_base)
     fingerprint = _build_alert_fingerprint(resolved_payload)
     county_path = county_reference_path or default_county_reference_path(data_root)
+    zone_path = zone_reference_path or default_zone_reference_path(data_root)
     frame = build_active_hazards_frame(
         resolved_payload,
         county_reference_path=county_path,
-        api_base=api_base,
-        timeout_seconds=timeout_seconds,
+        zone_reference_path=zone_path,
     )
     run_id = format_run_id(frame.valid_time, include_minutes=True)
 
