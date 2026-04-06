@@ -179,6 +179,8 @@ export type GridManifestLod = {
   level: number;
   width: number;
   height: number;
+  min_zoom?: number | null;
+  max_zoom?: number | null;
   frames: GridManifestFrame[];
 };
 

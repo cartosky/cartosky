@@ -13,11 +13,12 @@ import numpy as np
 import rasterio
 from rasterio.errors import RasterioIOError
 from rasterio.transform import Affine, array_bounds
+from scipy.ndimage import zoom as ndimage_zoom
 
 from ..config import grid_supported_pair
 from .colormaps import get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
-from .render_resampling import variable_color_map_id
+from .render_resampling import resampling_name_for_kind, variable_color_map_id
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,19 @@ GRID_ENDIANNESS = "little"
 GRID_LEVEL = 0
 GRID_DIRNAME = "grid"
 LEGACY_GRID_DIRNAME = "grid_v1"
+
+_GRID_LOD_CONFIG_BY_MODEL_VAR: dict[tuple[str, str], tuple[dict[str, Any], ...]] = {
+    ("mrms", "reflectivity"): (
+        {"level": 0, "scale_factor": 1, "min_zoom": 5.5},
+        {"level": 1, "scale_factor": 2, "min_zoom": 4.0, "max_zoom": 5.5},
+        {"level": 2, "scale_factor": 4, "max_zoom": 4.0},
+    ),
+    ("mrms", "mrms_radar_ptype"): (
+        {"level": 0, "scale_factor": 1, "min_zoom": 5.5},
+        {"level": 1, "scale_factor": 2, "min_zoom": 4.0, "max_zoom": 5.5},
+        {"level": 2, "scale_factor": 4, "max_zoom": 4.0},
+    ),
+}
 
 GRID_GZIP_SIDECARS_ENABLED = str(os.getenv("CARTOSKY_GRID_GZIP_SIDECARS_ENABLED", "1")).strip().lower() not in {
     "",
@@ -356,6 +370,73 @@ def expected_grid_frame_size_bytes(*, width: int, height: int, dtype: str = GRID
     return max(0, int(width) * int(height) * grid_bytes_per_sample(dtype))
 
 
+def grid_lod_specs(model: str, var: str) -> tuple[dict[str, Any], ...]:
+    configured = _GRID_LOD_CONFIG_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
+    if not configured:
+        return ({"level": GRID_LEVEL, "scale_factor": 1},)
+
+    normalized: list[dict[str, Any]] = []
+    for raw_spec in configured:
+        level = int(raw_spec.get("level", GRID_LEVEL))
+        scale_factor = max(1, int(raw_spec.get("scale_factor", 1)))
+        spec: dict[str, Any] = {"level": level, "scale_factor": scale_factor}
+        min_zoom = raw_spec.get("min_zoom")
+        max_zoom = raw_spec.get("max_zoom")
+        if isinstance(min_zoom, (int, float)) and not isinstance(min_zoom, bool):
+            spec["min_zoom"] = float(min_zoom)
+        if isinstance(max_zoom, (int, float)) and not isinstance(max_zoom, bool):
+            spec["max_zoom"] = float(max_zoom)
+        normalized.append(spec)
+    normalized.sort(key=lambda item: int(item["level"]))
+    return tuple(normalized)
+
+
+def _lod_target_shape(height: int, width: int, scale_factor: int) -> tuple[int, int]:
+    return (
+        max(1, int(np.ceil(height / max(1, scale_factor)))),
+        max(1, int(np.ceil(width / max(1, scale_factor)))),
+    )
+
+
+def _resize_continuous_grid(values: np.ndarray, *, target_height: int, target_width: int) -> np.ndarray:
+    source = np.asarray(values, dtype=np.float32)
+    if source.shape == (target_height, target_width):
+        return source
+
+    finite_mask = np.isfinite(source)
+    if not finite_mask.any():
+        return np.full((target_height, target_width), np.nan, dtype=np.float32)
+
+    zoom_factors = (target_height / source.shape[0], target_width / source.shape[1])
+    filled = np.where(finite_mask, source, 0.0).astype(np.float32, copy=False)
+    weights = finite_mask.astype(np.float32, copy=False)
+    resized_values = ndimage_zoom(filled, zoom_factors, order=1, mode="nearest", prefilter=False)
+    resized_weights = ndimage_zoom(weights, zoom_factors, order=1, mode="nearest", prefilter=False)
+    output = np.full((target_height, target_width), np.nan, dtype=np.float32)
+    np.divide(resized_values, resized_weights, out=output, where=resized_weights > 1e-6)
+    return output
+
+
+def _resize_nearest_grid(values: np.ndarray, *, target_height: int, target_width: int) -> np.ndarray:
+    source = np.asarray(values, dtype=np.float32)
+    if source.shape == (target_height, target_width):
+        return source
+    zoom_factors = (target_height / source.shape[0], target_width / source.shape[1])
+    resized = ndimage_zoom(source, zoom_factors, order=0, mode="nearest", prefilter=False)
+    return np.asarray(resized, dtype=np.float32)
+
+
+def _values_for_lod(values: np.ndarray, *, model: str, var: str, scale_factor: int) -> np.ndarray:
+    source = np.asarray(values, dtype=np.float32)
+    if scale_factor <= 1:
+        return source
+
+    target_height, target_width = _lod_target_shape(source.shape[0], source.shape[1], scale_factor)
+    if resampling_name_for_kind(model_id=model, var_key=var) == "nearest":
+        return _resize_nearest_grid(source, target_height=target_height, target_width=target_width)
+    return _resize_continuous_grid(source, target_height=target_height, target_width=target_width)
+
+
 def grid_gzip_sidecar_path(frame_path: Path) -> Path:
     return frame_path.with_name(f"{frame_path.name}.gz")
 
@@ -437,6 +518,7 @@ def write_grid_frame_for_run_root(
     var: str,
     fh: int,
     values: np.ndarray,
+    level: int = GRID_LEVEL,
     transform: Affine | None = None,
     bbox: list[float] | tuple[float, float, float, float] | None = None,
     projection: str = GRID_PROJECTION,
@@ -474,7 +556,7 @@ def write_grid_frame_for_run_root(
     else:
         encoded_bytes = encoded.astype("<u2", copy=False).tobytes(order="C")
 
-    out_path = grid_frame_path_for_run_root(run_root, var, fh, dtype=packing_dtype)
+    out_path = grid_frame_path_for_run_root(run_root, var, fh, level=level, dtype=packing_dtype)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp_path.write_bytes(encoded_bytes)
@@ -486,6 +568,7 @@ def write_grid_frame_for_run_root(
 
     frame_meta = {
         "fh": int(fh),
+        "level": int(level),
         "file": out_path.name,
         "width": width,
         "height": height,
@@ -494,8 +577,49 @@ def write_grid_frame_for_run_root(
     }
     if prep_meta:
         frame_meta["display_prep"] = prep_meta
-    write_json_atomic(grid_frame_meta_path_for_run_root(run_root, var, fh), frame_meta)
+    write_json_atomic(grid_frame_meta_path_for_run_root(run_root, var, fh, level=level), frame_meta)
     return frame_meta
+
+
+def write_grid_frames_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    var: str,
+    fh: int,
+    values: np.ndarray,
+    transform: Affine | None = None,
+    bbox: list[float] | tuple[float, float, float, float] | None = None,
+    projection: str = GRID_PROJECTION,
+) -> list[dict[str, Any]]:
+    values_array = np.asarray(values, dtype=np.float32)
+    if bbox is None:
+        if transform is None:
+            raise ValueError(f"Missing transform/bbox for grid frame: {model}/{var}/fh{int(fh):03d}")
+        source_height, source_width = values_array.shape[:2]
+        left, bottom, right, top = array_bounds(source_height, source_width, transform)
+        bounds = [float(left), float(bottom), float(right), float(top)]
+    else:
+        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+
+    written: list[dict[str, Any]] = []
+    for lod_spec in grid_lod_specs(model, var):
+        level = int(lod_spec.get("level", GRID_LEVEL))
+        scale_factor = max(1, int(lod_spec.get("scale_factor", 1)))
+        lod_values = _values_for_lod(values_array, model=model, var=var, scale_factor=scale_factor)
+        written.append(
+            write_grid_frame_for_run_root(
+                run_root=run_root,
+                model=model,
+                var=var,
+                fh=fh,
+                values=lod_values,
+                level=level,
+                bbox=bounds,
+                projection=projection,
+            )
+        )
+    return written
 
 
 def write_grid_frame_from_value_cog_for_run_root(
@@ -510,7 +634,7 @@ def write_grid_frame_from_value_cog_for_run_root(
         raise FileNotFoundError(f"Missing grid source value COG: {value_cog_path}")
     try:
         with rasterio.open(value_cog_path) as ds:
-            return write_grid_frame_for_run_root(
+            frame_entries = write_grid_frames_for_run_root(
                 run_root=run_root,
                 model=model,
                 var=var,
@@ -519,6 +643,7 @@ def write_grid_frame_from_value_cog_for_run_root(
                 transform=ds.transform,
                 projection=ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION,
             )
+            return next((entry for entry in frame_entries if int(entry.get("level", GRID_LEVEL)) == GRID_LEVEL), frame_entries[0])
     except RasterioIOError as exc:
         raise FileNotFoundError(f"Unreadable grid source value COG: {value_cog_path}") from exc
 
@@ -563,18 +688,24 @@ def _build_manifest_for_var_from_run_root(
     if packing is None:
         return False
     packing_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    lod_specs_by_level = {
+        int(spec.get("level", GRID_LEVEL)): spec
+        for spec in grid_lod_specs(model, var)
+    }
 
     var_dir = Path(run_root) / var
     if not var_dir.is_dir():
         return False
 
-    frame_entries: list[dict[str, Any]] = []
-    width: int | None = None
-    height: int | None = None
-    bbox: list[float] | None = None
+    grid_dir_path = resolved_grid_dir_for_run_root(run_root, var)
+    if not grid_dir_path.is_dir():
+        return False
+
     projection = GRID_PROJECTION
     units = str(packing.get("units") or "")
     display_prep: dict[str, Any] | None = None
+    valid_time_by_fh: dict[int, str] = {}
+    lod_entries: dict[int, dict[str, Any]] = {}
 
     for sidecar_path in sorted(var_dir.glob("fh*.json")):
         fh_token = sidecar_path.stem
@@ -584,103 +715,118 @@ def _build_manifest_for_var_from_run_root(
             fh = int(fh_token.removeprefix("fh"))
         except ValueError:
             continue
-        frame_path = resolved_grid_frame_path_for_run_root(run_root, var, fh, dtype=packing_dtype)
-        frame_meta_path = resolved_grid_frame_meta_path_for_run_root(run_root, var, fh)
-        value_cog_path = var_dir / f"{fh_token}.val.cog.tif"
-        if not frame_path.is_file():
-            continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
         if not units:
             units = str(sidecar.get("units") or units or "")
-        frame_meta: dict[str, Any] | None = None
-        if frame_meta_path.is_file():
-            try:
-                frame_meta = json.loads(frame_meta_path.read_text())
-            except (OSError, json.JSONDecodeError):
-                frame_meta = None
-        if frame_meta is not None:
-            frame_width = int(frame_meta.get("width") or 0)
-            frame_height = int(frame_meta.get("height") or 0)
-            frame_bbox = frame_meta.get("bbox")
-            frame_projection = str(frame_meta.get("projection") or GRID_PROJECTION)
-            actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
-            expected_size_bytes = expected_grid_frame_size_bytes(
-                width=frame_width,
-                height=frame_height,
-                dtype=packing_dtype,
-            )
-            if actual_size_bytes != expected_size_bytes:
-                logger.warning(
-                    "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
-                    model,
-                    run,
-                    var,
-                    fh,
-                    actual_size_bytes,
-                    expected_size_bytes,
-                )
-                continue
-            if width is None:
-                width = frame_width
-                height = frame_height
-                if isinstance(frame_bbox, list) and len(frame_bbox) == 4:
-                    bbox = [float(frame_bbox[0]), float(frame_bbox[1]), float(frame_bbox[2]), float(frame_bbox[3])]
-                projection = frame_projection
-            if display_prep is None and isinstance(frame_meta.get("display_prep"), dict):
-                display_prep = dict(frame_meta["display_prep"])
-        else:
-            if not value_cog_path.is_file():
-                continue
-            with rasterio.open(value_cog_path) as ds:
-                expected_size_bytes = expected_grid_frame_size_bytes(
-                    width=int(ds.width),
-                    height=int(ds.height),
-                    dtype=packing_dtype,
-                )
-                actual_size_bytes = frame_path.stat().st_size if frame_path.is_file() else -1
-                if actual_size_bytes != expected_size_bytes:
-                    logger.warning(
-                        "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s actual_bytes=%s expected_bytes=%s",
-                        model,
-                        run,
-                        var,
-                        fh,
-                        actual_size_bytes,
-                        expected_size_bytes,
-                    )
-                    continue
-                if width is None:
-                    width = int(ds.width)
-                    height = int(ds.height)
-                    bbox = [float(ds.bounds.left), float(ds.bounds.bottom), float(ds.bounds.right), float(ds.bounds.top)]
-                    projection = ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION
-        frame_entry: dict[str, Any] = {
-            "fh": fh,
-            "file": frame_path.name,
-        }
         valid_time = sidecar.get("valid_time")
         if isinstance(valid_time, str) and valid_time.strip():
-            frame_entry["valid_time"] = valid_time.strip()
-        frame_entries.append(frame_entry)
+            valid_time_by_fh[fh] = valid_time.strip()
 
-    if width is None or height is None or bbox is None:
+    for frame_meta_path in sorted(grid_dir_path.glob("fh*.l*.meta.json")):
+        try:
+            frame_meta = json.loads(frame_meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        raw_fh = frame_meta.get("fh")
+        raw_level = frame_meta.get("level")
+        fh = int(raw_fh) if raw_fh is not None else -1
+        level = int(raw_level) if raw_level is not None else GRID_LEVEL
+        filename = str(frame_meta.get("file") or "").strip()
+        frame_width = int(frame_meta.get("width") or 0)
+        frame_height = int(frame_meta.get("height") or 0)
+        frame_bbox = frame_meta.get("bbox")
+        frame_projection = str(frame_meta.get("projection") or GRID_PROJECTION)
+        if fh < 0 or not filename or frame_width <= 0 or frame_height <= 0:
+            continue
+
+        frame_path = grid_dir_path / filename
+        if not frame_path.is_file():
+            continue
+
+        expected_size_bytes = expected_grid_frame_size_bytes(
+            width=frame_width,
+            height=frame_height,
+            dtype=packing_dtype,
+        )
+        actual_size_bytes = frame_path.stat().st_size
+        if actual_size_bytes != expected_size_bytes:
+            logger.warning(
+                "Skipping invalid grid frame in manifest: model=%s run=%s var=%s fh=%s level=%s actual_bytes=%s expected_bytes=%s",
+                model,
+                run,
+                var,
+                fh,
+                level,
+                actual_size_bytes,
+                expected_size_bytes,
+            )
+            continue
+
+        next_level = lod_entries.setdefault(
+            level,
+            {
+                "level": level,
+                "width": frame_width,
+                "height": frame_height,
+                "bbox": [float(frame_bbox[0]), float(frame_bbox[1]), float(frame_bbox[2]), float(frame_bbox[3])]
+                if isinstance(frame_bbox, list) and len(frame_bbox) == 4
+                else None,
+                "projection": frame_projection,
+                "frames": [],
+            },
+        )
+        next_level["frames"].append(
+            {
+                "fh": fh,
+                "file": filename,
+                **({"valid_time": valid_time_by_fh[fh]} if fh in valid_time_by_fh else {}),
+            }
+        )
+        if display_prep is None and level == GRID_LEVEL and isinstance(frame_meta.get("display_prep"), dict):
+            display_prep = dict(frame_meta["display_prep"])
+
+    if not lod_entries:
         return False
 
-    frame_entries.sort(key=lambda item: int(item["fh"]))
+    sorted_levels = sorted(lod_entries)
+    base_level = GRID_LEVEL if GRID_LEVEL in lod_entries else sorted_levels[0]
+    base_lod = lod_entries[base_level]
+    base_bbox = base_lod.get("bbox")
+    if not isinstance(base_bbox, list) or len(base_bbox) != 4:
+        return False
+
+    manifest_lods: list[dict[str, Any]] = []
+    for level in sorted_levels:
+        lod_entry = lod_entries[level]
+        lod_frames = sorted(lod_entry["frames"], key=lambda item: int(item["fh"]))
+        next_lod = {
+            "level": int(level),
+            "width": int(lod_entry["width"]),
+            "height": int(lod_entry["height"]),
+            "frames": lod_frames,
+        }
+        lod_spec = lod_specs_by_level.get(level, {})
+        if isinstance(lod_spec.get("min_zoom"), (int, float)):
+            next_lod["min_zoom"] = float(lod_spec["min_zoom"])
+        if isinstance(lod_spec.get("max_zoom"), (int, float)):
+            next_lod["max_zoom"] = float(lod_spec["max_zoom"])
+        manifest_lods.append(next_lod)
+
     manifest = {
         "manifest_version": GRID_MANIFEST_VERSION,
         "subtype": GRID_SUBTYPE,
         "model": model,
         "run": run,
         "var": var,
-        "projection": projection,
-        "bbox": bbox,
+        "projection": str(base_lod.get("projection") or GRID_PROJECTION),
+        "bbox": base_bbox,
         "grid": {
-            "width": int(width),
-            "height": int(height),
+            "width": int(base_lod["width"]),
+            "height": int(base_lod["height"]),
             "dtype": packing_dtype,
             "endianness": GRID_ENDIANNESS,
             "scale": float(packing["scale"]),
@@ -689,14 +835,7 @@ def _build_manifest_for_var_from_run_root(
             "units": units,
         },
         "palette": _build_palette_block(model, var),
-        "lods": [
-            {
-                "level": GRID_LEVEL,
-                "width": int(width),
-                "height": int(height),
-                "frames": frame_entries,
-            }
-        ],
+        "lods": manifest_lods,
     }
     if display_prep:
         manifest["display_prep"] = display_prep

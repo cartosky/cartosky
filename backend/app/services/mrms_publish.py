@@ -34,7 +34,7 @@ from app.services.publish_utils import (
 )
 from app.services.grid import (
     build_grid_manifests_for_run_root,
-    write_grid_frame_for_run_root,
+    write_grid_frames_for_run_root,
     write_grid_frame_from_value_cog_for_run_root,
 )
 from app.services.run_ids import format_run_id
@@ -439,7 +439,7 @@ def write_mrms_frame(
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
     if grid_build_enabled():
-        write_grid_frame_for_run_root(
+        write_grid_frames_for_run_root(
             run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
             model=MRMS_MODEL_ID,
             var=MRMS_VARIABLE_ID,
@@ -731,7 +731,7 @@ def write_mrms_radar_ptype_frame(
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
     if grid_build_enabled():
-        write_grid_frame_for_run_root(
+        write_grid_frames_for_run_root(
             run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
             model=MRMS_MODEL_ID,
             var=MRMS_RADAR_PTYPE_VARIABLE_ID,

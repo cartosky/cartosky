@@ -683,9 +683,13 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
     frame_path = artifacts_dir / "fh000.l0.u8.bin"
+    lod1_frame_path = artifacts_dir / "fh000.l1.u8.bin"
+    lod2_frame_path = artifacts_dir / "fh000.l2.u8.bin"
     frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
     manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
+    assert lod1_frame_path.is_file()
+    assert lod2_frame_path.is_file()
     assert frame_meta_path.is_file()
     assert manifest_path.is_file()
 
@@ -705,6 +709,9 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     assert manifest["grid"]["width"] == values.shape[1]
     assert manifest["grid"]["height"] == values.shape[0]
     assert manifest["display_prep"]["id"] == "mrms_reflectivity_display_v1"
+    assert [lod["level"] for lod in manifest["lods"]] == [0, 1, 2]
+    assert manifest["lods"][1]["frames"][0]["file"] == "fh000.l1.u8.bin"
+    assert manifest["lods"][2]["frames"][0]["file"] == "fh000.l2.u8.bin"
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype=np.uint8).reshape(values.shape)
     assert encoded.dtype == np.dtype(np.uint8)

@@ -44,6 +44,7 @@ export type GridRasterPaint = {
 export type GridWebglLayerConfig = {
   active: boolean;
   manifest: GridManifestResponse | null;
+  lodLevel?: number | null;
   frameUrl: string | null;
   frameHour: number | null;
   legend: LegendPayload | null;
@@ -617,6 +618,7 @@ export class GridWebglLayerController {
   private gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
   private active = false;
   private manifest: GridManifestResponse | null = null;
+  private lodLevel: number | null = null;
   private frameUrl: string | null = null;
   private frameHour: number | null = null;
   private legend: LegendPayload | null = null;
@@ -668,13 +670,31 @@ export class GridWebglLayerController {
   private quadSignature: string | null = null;
 
   private buildDiagnosticMeta(frameUrl: string): Record<string, unknown> {
+    const selectedLod = this.resolveSelectedLod();
     return {
       frame_url: frameUrl,
-      grid_width: this.manifest?.grid?.width ?? null,
-      grid_height: this.manifest?.grid?.height ?? null,
+      grid_width: selectedLod?.width ?? this.manifest?.grid?.width ?? null,
+      grid_height: selectedLod?.height ?? this.manifest?.grid?.height ?? null,
       grid_dtype: this.manifest?.grid?.dtype ?? null,
+      grid_lod_level: selectedLod?.level ?? this.lodLevel,
       selection_key: this.selectionKey || null,
       webgl_backend: this.isWebGL2 ? "webgl2" : "webgl1",
+    };
+  }
+
+  private resolveSelectedLod(): { level: number; width: number; height: number } | null {
+    const lods = Array.isArray(this.manifest?.lods) ? this.manifest?.lods : [];
+    const selected = lods.find((entry) => Number(entry?.level) === Number(this.lodLevel))
+      ?? lods.find((entry) => Number(entry?.level) === 0)
+      ?? lods[0]
+      ?? null;
+    if (!selected) {
+      return null;
+    }
+    return {
+      level: Number(selected.level),
+      width: Math.max(1, Math.floor(Number(selected.width) || 1)),
+      height: Math.max(1, Math.floor(Number(selected.height) || 1)),
     };
   }
 
@@ -744,6 +764,7 @@ export class GridWebglLayerController {
     }
     this.active = config.active;
     this.manifest = config.manifest;
+    this.lodLevel = Number.isFinite(config.lodLevel) ? Number(config.lodLevel) : null;
     this.frameUrl = config.frameUrl;
     this.frameHour = Number.isFinite(config.frameHour) ? Number(config.frameHour) : null;
     this.opacity = config.opacity;
@@ -1137,8 +1158,9 @@ export class GridWebglLayerController {
       return null;
     }
 
-    const width = Math.max(1, Math.floor(Number(grid.width) || 1));
-    const height = Math.max(1, Math.floor(Number(grid.height) || 1));
+    const selectedLod = this.resolveSelectedLod();
+    const width = selectedLod?.width ?? Math.max(1, Math.floor(Number(grid.width) || 1));
+    const height = selectedLod?.height ?? Math.max(1, Math.floor(Number(grid.height) || 1));
     const gridDtype = resolveGridDtype(grid.dtype);
     const expectedBytes = expectedPackedFrameByteLength(width, height, gridDtype);
     if (bytes.byteLength < expectedBytes) {

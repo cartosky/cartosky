@@ -53,6 +53,7 @@ import {
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
+import { selectGridManifestLod } from "@/lib/grid-lod";
 import { useDisplaySettings } from "@/lib/use-display-settings";
 import { useFrameStatusBadge } from "@/lib/use-frame-status-badge";
 import { usePageVisibility } from "@/lib/use-page-visibility";
@@ -676,15 +677,15 @@ export default function App() {
     return buildRunOptions(runs, latestRunId, selectedTimeAxisMode);
   }, [runs, latestRunId, selectedTimeAxisMode]);
 
-  const gridLod0 = useMemo(() => {
+  const selectedGridLod = useMemo(() => {
     if (!gridManifest?.lods?.length) {
       return null;
     }
-    return gridManifest.lods.find((entry) => Number(entry?.level) === 0) ?? gridManifest.lods[0] ?? null;
-  }, [gridManifest]);
+    return selectGridManifestLod(gridManifest, mapZoom);
+  }, [gridManifest, mapZoom]);
   const gridFrameByHour = useMemo(() => {
-    const map = new Map<number, NonNullable<typeof gridLod0>["frames"][number]>();
-    const frames = Array.isArray(gridLod0?.frames) ? gridLod0.frames : [];
+    const map = new Map<number, NonNullable<typeof selectedGridLod>["frames"][number]>();
+    const frames = Array.isArray(selectedGridLod?.frames) ? selectedGridLod.frames : [];
     for (const frame of frames) {
       const fh = Number(frame?.fh);
       if (!Number.isFinite(fh)) {
@@ -693,7 +694,7 @@ export default function App() {
       map.set(fh, frame);
     }
     return map;
-  }, [gridLod0]);
+  }, [selectedGridLod]);
   const gridFrameHours = useMemo(() => {
     return Array.from(gridFrameByHour.keys()).sort((a, b) => a - b);
   }, [gridFrameByHour]);
@@ -876,12 +877,12 @@ export default function App() {
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
       gridManifest
-      && gridLod0
+      && selectedGridLod
       && Array.isArray(gridManifest.bbox)
       && gridManifest.bbox.length === 4
       && presentedGridFrameUrl
     );
-  }, [gridLod0, gridManifest, presentedGridFrameUrl]);
+  }, [gridManifest, presentedGridFrameUrl, selectedGridLod]);
   const isGridPlayable = useMemo(() => {
     return canUseGridPlayback;
   }, [canUseGridPlayback]);
@@ -2878,6 +2879,7 @@ export default function App() {
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
+          gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
           gridFrameUrl={isGridLowMidActive ? presentedGridFrameUrl : null}
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}

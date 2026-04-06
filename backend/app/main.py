@@ -3397,6 +3397,18 @@ def _get_grid_file(model: str, run: str, var: str, filename: str):
     width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
     dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
+    lods = manifest.get("lods") if isinstance(manifest, dict) else None
+    if isinstance(lods, list):
+        for lod in lods:
+            if not isinstance(lod, dict):
+                continue
+            frames = lod.get("frames")
+            if not isinstance(frames, list):
+                continue
+            if any(isinstance(frame, dict) and str(frame.get("file") or "").strip() == safe_filename for frame in frames):
+                width = int(lod.get("width") or width)
+                height = int(lod.get("height") or height)
+                break
     if width > 0 and height > 0:
         expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
         actual_size_bytes = candidate.stat().st_size

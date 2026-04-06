@@ -611,6 +611,7 @@ type MapCanvasProps = {
   selectionKey: string;
   selectionEpoch: number;
   gridManifest?: GridManifestResponse | null;
+  gridLodLevel?: number | null;
   gridFrameUrl?: string | null;
   gridFrameHour?: number | null;
   gridLegend?: LegendPayload | null;
@@ -645,6 +646,7 @@ export function MapCanvas({
   selectionKey,
   selectionEpoch,
   gridManifest = null,
+  gridLodLevel = null,
   gridFrameUrl = null,
   gridFrameHour = null,
   gridLegend = null,
@@ -719,7 +721,10 @@ export function MapCanvas({
     }
 
     const isObservedGrid = String(gridManifest.model ?? "").trim().toLowerCase() === "mrms";
-    const lod = gridManifest.lods.find((entry) => Number(entry?.level) === 0) ?? gridManifest.lods[0] ?? null;
+    const lod = gridManifest.lods.find((entry) => Number(entry?.level) === Number(gridLodLevel))
+      ?? gridManifest.lods.find((entry) => Number(entry?.level) === 0)
+      ?? gridManifest.lods[0]
+      ?? null;
     const frames = Array.isArray(lod?.frames) ? lod.frames : [];
     const frameHours = frames
       .map((entry) => Number(entry?.fh))
@@ -881,7 +886,7 @@ export function MapCanvas({
       }
     }
     return urls;
-  }, [apiRoot, gridFrameHour, gridFrameUrl, gridManifest, mode]);
+  }, [apiRoot, gridFrameHour, gridFrameUrl, gridLodLevel, gridManifest, mode]);
   const shouldUseGridController = Boolean(
     gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0
   );
@@ -1530,6 +1535,7 @@ export function MapCanvas({
     controller.update({
       active: Boolean(gridActive && gridManifest && gridFrameUrl),
       manifest: gridManifest,
+      lodLevel: gridLodLevel,
       frameUrl: gridFrameUrl,
       frameHour: gridFrameHour,
       legend: gridLegend,
@@ -1550,6 +1556,7 @@ export function MapCanvas({
     gridFrameHour,
     gridFrameUrl,
     gridLegend,
+    gridLodLevel,
     gridManifest,
     gridPrefetchUrls,
     isAnimating,
