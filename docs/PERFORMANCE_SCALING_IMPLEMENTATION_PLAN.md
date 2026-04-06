@@ -448,6 +448,14 @@ Implemented in repo. Anchor marker snapping no longer subscribes to every map `r
 
 Implemented in repo. The grid viewer now records separate client-side timings for grid binary fetch, `response.arrayBuffer()`, texture preparation, texture upload, and the WebGL1 byte-expansion fallback. Admin network diagnostics also break these metrics down by WebGL backend so WebGL2 and WebGL1 behavior can be compared directly.
 
+#### Follow-Up Decision
+
+The first post-instrumentation pass showed that the dominant cost is large grid-body transfer/materialization, not texture upload. The next safe delivery-path change is:
+
+1. generate immutable `.u16.bin.gz` sidecars during grid publishing
+2. have nginx prefer those precompressed sidecars with raw-file fallback
+3. use the existing diagnostics to confirm `grid_binary_array_buffer_duration` improves on large payload buckets
+
 #### Tasks
 
 1. Profile the current WebGL2 path separately from the WebGL1 fallback.

@@ -11,12 +11,17 @@ location ^~ /_cartosky_grid_internal/ {
 
     default_type application/octet-stream;
 
+    # Prefer precompressed .gz sidecars generated during grid publishing.
+    # nginx will fall back to the raw .u16.bin artifact automatically when
+    # a .gz sidecar is not present.
+    gzip_static on;
+
     # These files are immutable published artifacts. Avoid recompressing origin
     # fills here; Cloudflare can still cache and serve them at the edge.
     gzip off;
 
     add_header Access-Control-Allow-Origin "*" always;
     add_header Access-Control-Expose-Headers "Accept-Ranges, Cache-Control, CF-Cache-Status, Content-Encoding, Content-Length, ETag, Server-Timing, X-Request-ID, X-Trace-ID" always;
-    add_header Vary "Origin" always;
+    add_header Vary "Accept-Encoding, Origin" always;
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
 }

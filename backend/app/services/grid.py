@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import concurrent.futures
+import gzip
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,18 @@ GRID_ENDIANNESS = "little"
 GRID_LEVEL = 0
 GRID_DIRNAME = "grid"
 LEGACY_GRID_DIRNAME = "grid_v1"
+
+GRID_GZIP_SIDECARS_ENABLED = str(os.getenv("CARTOSKY_GRID_GZIP_SIDECARS_ENABLED", "1")).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+try:
+    GRID_GZIP_COMPRESSLEVEL = max(1, min(9, int(os.getenv("CARTOSKY_GRID_GZIP_COMPRESSLEVEL", "5"))))
+except ValueError:
+    GRID_GZIP_COMPRESSLEVEL = 5
 
 _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     ("hrrr", "tmp2m"): {
@@ -290,6 +304,34 @@ def expected_grid_frame_size_bytes(*, width: int, height: int) -> int:
     return max(0, int(width) * int(height) * 2)
 
 
+def grid_gzip_sidecar_path(frame_path: Path) -> Path:
+    return frame_path.with_name(f"{frame_path.name}.gz")
+
+
+def write_grid_gzip_sidecar(frame_path: Path, payload: bytes, *, compresslevel: int = GRID_GZIP_COMPRESSLEVEL) -> Path:
+    sidecar_path = grid_gzip_sidecar_path(frame_path)
+    tmp_path = sidecar_path.with_suffix(f"{sidecar_path.suffix}.tmp")
+    compressed = gzip.compress(payload, compresslevel=compresslevel, mtime=0)
+    tmp_path.write_bytes(compressed)
+    tmp_path.replace(sidecar_path)
+    return sidecar_path
+
+
+def ensure_grid_gzip_sidecar(
+    frame_path: Path,
+    *,
+    compresslevel: int = GRID_GZIP_COMPRESSLEVEL,
+    force: bool = False,
+) -> Path | None:
+    if not frame_path.is_file():
+        raise FileNotFoundError(f"Missing grid frame artifact: {frame_path}")
+    sidecar_path = grid_gzip_sidecar_path(frame_path)
+    if sidecar_path.is_file() and not force:
+        return sidecar_path
+    payload = frame_path.read_bytes()
+    return write_grid_gzip_sidecar(frame_path, payload, compresslevel=compresslevel)
+
+
 def _packing_config(model: str, var: str) -> dict[str, Any] | None:
     return _PACKING_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
 
@@ -343,12 +385,15 @@ def write_grid_frame_for_run_root(
     )
     height, width = encoded.shape
     crs_text = str(projection or GRID_PROJECTION)
+    encoded_bytes = encoded.astype("<u2", copy=False).tobytes(order="C")
 
     out_path = grid_frame_path_for_run_root(run_root, var, fh)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-    tmp_path.write_bytes(encoded.astype("<u2", copy=False).tobytes(order="C"))
+    tmp_path.write_bytes(encoded_bytes)
     tmp_path.replace(out_path)
+    if GRID_GZIP_SIDECARS_ENABLED:
+        write_grid_gzip_sidecar(out_path, encoded_bytes)
 
     frame_meta = {
         "fh": int(fh),
