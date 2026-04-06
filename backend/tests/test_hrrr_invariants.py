@@ -45,6 +45,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "mlcape",
         "snowfall_total",
         "snowfall_kuchera_total",
         "precip_total",
@@ -90,6 +91,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
         "display_name",
         "kind",
         "display_resampling_override",
+        "render_substrates",
         "units",
         "order",
         "group",
@@ -104,6 +106,19 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["kind"] == "continuous"
     assert tmp2m["buildable"] is True
     assert tmp2m["display_resampling_override"] is None
+    assert tmp2m["render_substrates"] == ["grid"]
+
+    mlcape = payload["variables"]["mlcape"]
+    assert mlcape["var_key"] == "mlcape"
+    assert mlcape["buildable"] is True
+    assert mlcape["derived"] is False
+    assert mlcape["kind"] == "continuous"
+    assert mlcape["units"] == "J/kg"
+    assert mlcape["display_name"] == "Mixed-Layer CAPE"
+    assert mlcape["order"] == 4
+    assert mlcape["group"] == "Instability"
+    assert mlcape["color_map_id"] == "mlcape"
+    assert mlcape["display_resampling_override"] is None
 
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
@@ -111,9 +126,29 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["derive_strategy_id"] == "radar_ptype_combo"
 
     snowfall_total = payload["variables"]["snowfall_total"]
-    assert snowfall_total["display_resampling_override"] == "nearest"
+    assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
     assert snowfall_kuchera_total["buildable"] is True
     assert snowfall_kuchera_total["derived"] is True
     assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
+
+
+def test_hrrr_mlcape_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("mlcape") == "mlcape"
+
+    mlcape_spec = HRRR_MODEL.get_var("mlcape")
+    assert mlcape_spec is not None
+    assert mlcape_spec.primary is True
+    assert mlcape_spec.derived is False
+    assert mlcape_spec.kind == "continuous"
+    assert mlcape_spec.units == "J/kg"
+    assert mlcape_spec.selectors.search == [":CAPE:90-0 mb above ground:"]
+    assert mlcape_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "pressureFromGroundLayer",
+        "topLevel": "0",
+        "bottomLevel": "90",
+    }
+    assert mlcape_spec.selectors.hints["upstream_var"] == "mlcape"
+    assert mlcape_spec.selectors.hints["cape_layer"] == "90-0 mb above ground"
