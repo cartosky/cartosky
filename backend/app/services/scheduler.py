@@ -8,10 +8,11 @@ import os
 import re
 import shutil
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 import numpy as np
 import rasterio
@@ -1015,6 +1016,42 @@ def _promote_run(data_root: Path, model: str, run_id: str) -> None:
     shutil.move(str(tmp_run), str(published_run))
 
 
+@contextmanager
+def _scheduler_model_lock(data_root: Path, model: str) -> Iterator[None]:
+    lock_dir = data_root / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{model}.scheduler.lock"
+
+    try:
+        import fcntl
+    except ImportError:
+        logger.warning(
+            "Scheduler lock requested but fcntl is unavailable; proceeding unlocked for model=%s",
+            model,
+        )
+        yield
+        return
+
+    lock_file = lock_path.open("a+")
+    try:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SchedulerConfigError(
+                "Another scheduler is already running for "
+                f"model={model} data_root={data_root}. Stop the service or wait for it to finish "
+                "before starting a one-shot scheduler."
+            ) from exc
+
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_file.close()
+
+
 def _available_target_count(
     data_root: Path,
     model: str,
@@ -1595,55 +1632,56 @@ def run_scheduler(
         poll_seconds,
     )
 
-    last_run_id: str | None = None
-    last_run_available: int = 0
-    last_run_total: int = 0
-    while True:
-        run_dt = _resolve_run_dt(run_arg, plugin=plugin, probe_var=resolved_probe_var)
-        run_id = _run_id_from_dt(run_dt)
+    with _scheduler_model_lock(data_root, model):
+        last_run_id: str | None = None
+        last_run_available: int = 0
+        last_run_total: int = 0
+        while True:
+            run_dt = _resolve_run_dt(run_arg, plugin=plugin, probe_var=resolved_probe_var)
+            run_id = _run_id_from_dt(run_dt)
 
-        run_complete = last_run_total > 0 and last_run_available >= last_run_total
-        if last_run_id == run_id and not run_arg and run_complete:
-            logger.info("No new run yet (latest=%s complete); sleeping %ss", run_id, poll_seconds)
-            time.sleep(poll_seconds)
-            continue
+            run_complete = last_run_total > 0 and last_run_available >= last_run_total
+            if last_run_id == run_id and not run_arg and run_complete:
+                logger.info("No new run yet (latest=%s complete); sleeping %ss", run_id, poll_seconds)
+                time.sleep(poll_seconds)
+                continue
 
-        processed_run_id, available, total = _process_run(
-            plugin=plugin,
-            model_id=model,
-            vars_to_build=normalized_vars,
-            primary_vars=resolved_primary,
-            run_dt=run_dt,
-            data_root=data_root,
-            workers=workers,
-            keep_runs=keep_runs,
-            loop_pregenerate_enabled=loop_pregenerate_enabled,
-            loop_cache_root=loop_cache_root,
-            loop_workers=loop_workers,
-            loop_tier0_quality=loop_tier0_quality,
-            loop_tier0_max_dim=loop_tier0_max_dim,
-            loop_tier0_fixed_w=loop_tier0_fixed_w,
-            loop_tier1_quality=loop_tier1_quality,
-            loop_tier1_max_dim=loop_tier1_max_dim,
-            loop_tier1_fixed_w=loop_tier1_fixed_w,
-        )
-        last_run_id = processed_run_id
-        last_run_available = available
-        last_run_total = total
-        logger.info("Run summary: %s available=%d/%d", processed_run_id, available, total)
+            processed_run_id, available, total = _process_run(
+                plugin=plugin,
+                model_id=model,
+                vars_to_build=normalized_vars,
+                primary_vars=resolved_primary,
+                run_dt=run_dt,
+                data_root=data_root,
+                workers=workers,
+                keep_runs=keep_runs,
+                loop_pregenerate_enabled=loop_pregenerate_enabled,
+                loop_cache_root=loop_cache_root,
+                loop_workers=loop_workers,
+                loop_tier0_quality=loop_tier0_quality,
+                loop_tier0_max_dim=loop_tier0_max_dim,
+                loop_tier0_fixed_w=loop_tier0_fixed_w,
+                loop_tier1_quality=loop_tier1_quality,
+                loop_tier1_max_dim=loop_tier1_max_dim,
+                loop_tier1_fixed_w=loop_tier1_fixed_w,
+            )
+            last_run_id = processed_run_id
+            last_run_available = available
+            last_run_total = total
+            logger.info("Run summary: %s available=%d/%d", processed_run_id, available, total)
 
-        if once or run_arg:
-            return 0
+            if once or run_arg:
+                return 0
 
-        run_complete_now = total > 0 and available >= total
-        next_poll_seconds = poll_seconds if run_complete_now else INCOMPLETE_RUN_POLL_SECONDS
-        logger.info(
-            "Next poll in %ss (run=%s complete=%s)",
-            next_poll_seconds,
-            processed_run_id,
-            run_complete_now,
-        )
-        time.sleep(next_poll_seconds)
+            run_complete_now = total > 0 and available >= total
+            next_poll_seconds = poll_seconds if run_complete_now else INCOMPLETE_RUN_POLL_SECONDS
+            logger.info(
+                "Next poll in %ss (run=%s complete=%s)",
+                next_poll_seconds,
+                processed_run_id,
+                run_complete_now,
+            )
+            time.sleep(next_poll_seconds)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

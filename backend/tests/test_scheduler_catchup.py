@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -586,6 +587,55 @@ def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
     published_run = data_root / "published" / model / run_id
     assert (published_run / "tmp2m" / "fh000.json").read_text() == "published tmp2m"
     assert (published_run / "mlcape" / "fh000.json").read_text() == "staged mlcape"
+
+
+def test_scheduler_model_lock_blocks_second_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_fcntl = types.SimpleNamespace(
+        LOCK_EX=1,
+        LOCK_NB=2,
+        LOCK_UN=8,
+    )
+    calls: list[int] = []
+
+    def fake_flock(fd: int, operation: int) -> None:
+        del fd
+        if operation == (fake_fcntl.LOCK_EX | fake_fcntl.LOCK_NB):
+            calls.append(operation)
+            raise BlockingIOError()
+
+    fake_fcntl.flock = fake_flock
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    with pytest.raises(scheduler_module.SchedulerConfigError, match="Another scheduler is already running"):
+        with scheduler_module._scheduler_model_lock(tmp_path, "nam"):
+            pytest.fail("lock acquisition should have failed")
+
+
+def test_scheduler_model_lock_allows_single_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_fcntl = types.SimpleNamespace(
+        LOCK_EX=1,
+        LOCK_NB=2,
+        LOCK_UN=8,
+    )
+    operations: list[int] = []
+
+    def fake_flock(fd: int, operation: int) -> None:
+        del fd
+        operations.append(operation)
+
+    fake_fcntl.flock = fake_flock
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    with scheduler_module._scheduler_model_lock(tmp_path, "nam"):
+        assert (tmp_path / ".locks" / "nam.scheduler.lock").is_file()
+
+    assert operations == [fake_fcntl.LOCK_EX | fake_fcntl.LOCK_NB, fake_fcntl.LOCK_UN]
 
 
 def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: Path) -> None:
