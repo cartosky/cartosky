@@ -42,12 +42,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_ROOT = Path("/opt/cartosky/data")
 DEFAULT_PRIMARY_VAR = "tmp2m"
-DEFAULT_VARS = "tmp2m,tmp850,dp2m,precip_total,snowfall_total,wspd10m,wgst10m,refc,radar_ptype"
+DEFAULT_VARS = "auto"
 DEFAULT_POLL_SECONDS = 300
 INCOMPLETE_RUN_POLL_SECONDS = 60
 DEFAULT_PROMOTION_FHS = (0, 1, 2)
 DEFAULT_PROBE_VAR = "tmp2m"
 CANONICAL_COVERAGE = "conus"
+AUTO_VARS_TOKENS = {"auto", "default", "all", "buildable", "*"}
 ENV_DEFAULT_VARS = ("CARTOSKY_SCHEDULER_VARS", "CARTOSKY_V3_SCHEDULER_VARS", "TWF_V3_SCHEDULER_VARS")
 ENV_DEFAULT_PRIMARY_VARS = (
     "CARTOSKY_SCHEDULER_PRIMARY_VARS",
@@ -165,6 +166,15 @@ def _parse_vars(value: str) -> list[str]:
     if not vars_list:
         raise SchedulerConfigError("--vars cannot be empty")
     return vars_list
+
+
+def _parse_vars_or_auto(value: str | None) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    if raw.lower() in AUTO_VARS_TOKENS:
+        return []
+    return _parse_vars(raw)
 
 
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
@@ -1639,7 +1649,11 @@ def run_scheduler(
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the CartoSky model scheduler.")
     parser.add_argument("--model", required=True, help="Model id (e.g. hrrr, nam, gfs)")
-    parser.add_argument("--vars", default=None, help="Comma-separated vars to build")
+    parser.add_argument(
+        "--vars",
+        default=None,
+        help="Comma-separated vars to build; omit or use 'auto' to build all model buildable vars",
+    )
     parser.add_argument("--primary-vars", default=None, help="Comma-separated primary vars for promotion")
     parser.add_argument(
         "--data-root",
@@ -1661,7 +1675,7 @@ def main(argv: list[str] | None = None) -> int:
 
     data_root = _data_root(args.data_root)
     workers = _workers(args.workers)
-    vars_raw = args.vars if isinstance(args.vars, str) and args.vars.strip() else _env_value(ENV_DEFAULT_VARS, DEFAULT_VARS)
+    vars_raw = args.vars if isinstance(args.vars, str) else _env_value(ENV_DEFAULT_VARS, DEFAULT_VARS)
     primary_raw = (
         args.primary_vars
         if isinstance(args.primary_vars, str) and args.primary_vars.strip()
@@ -1708,7 +1722,7 @@ def main(argv: list[str] | None = None) -> int:
         min_value=64,
     )
 
-    vars_list = _parse_vars(vars_raw)
+    vars_list = _parse_vars_or_auto(vars_raw)
     primary_list = _parse_vars(primary_raw)
 
     try:

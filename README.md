@@ -131,7 +131,7 @@ npm run build      # production build → frontend/dist/
 |---|---|---|
 | `CARTOSKY_DATA_ROOT` | `./data` | Root data directory |
 | `CARTOSKY_WORKERS` | — | Parallel frame build workers |
-| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,tmp850,dp2m,…` | Variables to build each run |
+| `CARTOSKY_SCHEDULER_VARS` | `auto` | Variables to build each run; omit or set `auto` to use all buildable vars from the deployed model definition |
 | `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Variables built first (probe for availability) |
 | `CARTOSKY_SCHEDULER_POLL_SECONDS` | `300` | Idle poll interval |
 | `CARTOSKY_SCHEDULER_KEEP_RUNS` | `4` | Number of completed runs to retain |
@@ -139,9 +139,11 @@ npm run build      # production build → frontend/dist/
 | `CARTOSKY_HERBIE_SUBSET_RETRIES` | `4` | GRIB subset download retries |
 | `HERBIE_SAVE_DIR` | — | Herbie GRIB cache directory |
 
+When `CARTOSKY_SCHEDULER_VARS` is omitted or set to `auto`, the scheduler builds every variable marked buildable in the model's deployed capabilities. Use an explicit comma-separated list only when you intentionally want to constrain a rollout.
+
 ### GFS Scheduler Rollout (`/etc/cartosky/scheduler-gfs.env`)
 
-Use a dedicated env file for GFS so HRRR remains isolated. Initial rollout should use only:
+Use a dedicated env file for GFS so HRRR remains isolated. If you want GFS to automatically pick up newly deployed buildable variables, omit `CARTOSKY_SCHEDULER_VARS` or set it to `auto`. For a constrained rollout, use:
 
 | Variable | Recommended value | Description |
 |---|---|---|
@@ -151,7 +153,7 @@ Use a dedicated env file for GFS so HRRR remains isolated. Initial rollout shoul
 
 ### NAM Scheduler Rollout (`/etc/cartosky/scheduler-nam.env`)
 
-Use a dedicated env file for NAM so rollout scope stays isolated:
+Use a dedicated env file for NAM so rollout scope stays isolated. If you want NAM to automatically pick up newly deployed buildable variables, omit `CARTOSKY_SCHEDULER_VARS` or set it to `auto`. For a constrained rollout, use:
 
 | Variable | Recommended value | Description |
 |---|---|---|
@@ -161,7 +163,7 @@ Use a dedicated env file for NAM so rollout scope stays isolated:
 
 ### NBM Scheduler Rollout (`/etc/cartosky/scheduler-nbm.env`)
 
-Use a dedicated env file for NBM so rollout scope stays isolated:
+Use a dedicated env file for NBM so rollout scope stays isolated. If you want NBM to automatically pick up newly deployed buildable variables, omit `CARTOSKY_SCHEDULER_VARS` or set it to `auto`. For a constrained rollout, use:
 
 | Variable | Recommended value | Description |
 |---|---|---|

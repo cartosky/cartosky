@@ -42,6 +42,75 @@ class _FakeCapabilityPlugin(_FakePlugin):
         return str(var_id).strip().lower()
 
 
+def test_parse_vars_or_auto_supports_auto_tokens() -> None:
+    assert scheduler_module._parse_vars_or_auto(None) == []
+    assert scheduler_module._parse_vars_or_auto("") == []
+    assert scheduler_module._parse_vars_or_auto("auto") == []
+    assert scheduler_module._parse_vars_or_auto("ALL") == []
+    assert scheduler_module._parse_vars_or_auto("tmp2m, mlcape") == ["tmp2m", "mlcape"]
+
+
+def test_main_uses_auto_vars_when_env_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.delenv("CARTOSKY_SCHEDULER_VARS", raising=False)
+    monkeypatch.setenv("CARTOSKY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        scheduler_module,
+        "run_scheduler",
+        lambda **kwargs: captured.update(kwargs) or 0,
+    )
+
+    rc = scheduler_module.main(["--model", "hrrr", "--once"])
+
+    assert rc == 0
+    assert captured["model"] == "hrrr"
+    assert captured["vars_to_build"] == []
+
+
+def test_main_uses_auto_vars_when_env_requests_auto(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_VARS", "auto")
+    monkeypatch.setenv("CARTOSKY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        scheduler_module,
+        "run_scheduler",
+        lambda **kwargs: captured.update(kwargs) or 0,
+    )
+
+    rc = scheduler_module.main(["--model", "hrrr", "--once"])
+
+    assert rc == 0
+    assert captured["vars_to_build"] == []
+
+
+def test_main_parses_explicit_env_vars_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_VARS", "tmp2m,mlcape")
+    monkeypatch.setenv("CARTOSKY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        scheduler_module,
+        "run_scheduler",
+        lambda **kwargs: captured.update(kwargs) or 0,
+    )
+
+    rc = scheduler_module.main(["--model", "hrrr", "--once"])
+
+    assert rc == 0
+    assert captured["vars_to_build"] == ["tmp2m", "mlcape"]
+
+
 class _FakeGFSPlugin:
     id = "gfs"
 
