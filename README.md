@@ -145,7 +145,7 @@ Use a dedicated env file for GFS so HRRR remains isolated. Initial rollout shoul
 
 | Variable | Recommended value | Description |
 |---|---|---|
-| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
+| `CARTOSKY_SCHEDULER_VARS` | `tmp2m,dp2m,tmp850,mlcape,wspd10m,wgst10m,precip_total,snowfall_total,precip_ptype` | Core rollout vars for GFS |
 | `CARTOSKY_SCHEDULER_PRIMARY_VARS` | `tmp2m` | Promotion/probe gate var |
 | `CARTOSKY_SCHEDULER_PROBE_VAR` | `tmp2m` | Run-availability probe var |
 

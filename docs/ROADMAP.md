@@ -474,8 +474,8 @@ Business
 **PHASE 1 - Immediate Value (retain + attract users)**
 - [X] Add radar
 - [X] Add obs, NWS forecasts, AFDs for cities
-- [ ] Add SPC outlooks/products
-- [ ] Add NWS hazards per county
+- [X] Add SPC outlooks/products
+- [X] Add NWS hazards per county
 - [ ] Add selected new variables
 - [ ] Add Kuchera to NAM and GFS
 - [ ] Add selected new models

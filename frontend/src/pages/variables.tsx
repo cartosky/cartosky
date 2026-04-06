@@ -146,6 +146,30 @@ export default function Variables() {
         limitations: ["Pressure levels can intersect terrain; values may be masked or behave oddly in complex terrain."],
       },
       {
+        id: "mlcape",
+        name: "Mixed-Layer CAPE",
+        oneLiner: "Buoyant energy available to a mixed boundary-layer parcel, used to gauge convective instability.",
+        pills: ["90-0 mb mixed layer", "J/kg", "Continuous"],
+        definition:
+          "Mixed-layer CAPE estimates the positive buoyant energy a representative mixed parcel in the lowest part of the atmosphere would have if lifted. It is one of the cleaner broad-brush instability fields for warm-season convective setups.",
+        bestFor: [
+          "Locating corridors of greater convective instability",
+          "Comparing overlap of moisture, heating, and forcing before severe storms",
+          "Filtering environments where storm coverage could rapidly increase if inhibition weakens",
+        ],
+        interpretation: [
+          "Higher CAPE does not guarantee storms or severity; shear, forcing, inhibition, and storm mode still matter.",
+          "Use CAPE with dew point, lapse rates, hodographs, and convective initiation signals rather than in isolation.",
+        ],
+        limitations: [
+          "CAPE can look impressive in capped regimes where storms never initiate.",
+          "Coarser guidance may smooth narrow instability axes or under-resolve outflow and mesoscale boundaries.",
+        ],
+        notes: [
+          "Displayed as a continuous field, but the legend should still emphasize standard severe-weather threshold bands.",
+        ],
+      },
+      {
         id: "qpf",
         name: "Total Precipitation (QPF)",
         oneLiner: "Accumulated liquid-equivalent precipitation over the forecast period.",
@@ -367,7 +391,7 @@ export default function Variables() {
           <div className="space-y-3 text-sm text-white/75">
             <div className="text-[11px] uppercase tracking-wider text-white/55">Candidates</div>
             <div className="text-white/80">
-              MSLP, 500 mb heights, CAPE/CIN, PWAT, 700 mb RH, visibility, freezing rain accretion (where supported),
+              MSLP, 500 mb heights, CIN and additional CAPE variants, PWAT, 700 mb RH, visibility, freezing rain accretion (where supported),
               and additional precip-type variants.
             </div>
           </div>

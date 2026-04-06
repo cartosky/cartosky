@@ -328,6 +328,23 @@ WSPD10M_RANGE = (0.0, 100.0)
 QPF6H_LEGEND_STOPS = list(zip(precip_levels, precip_colors))
 PRECIP_TOTAL_COLOR_ANCHORS = list(zip(precip_levels, precip_colors))
 
+MLCAPE_LEGEND_LEVELS = [0.0, 100.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0]
+MLCAPE_LEGEND_COLORS = [
+    "#f3f6f7",
+    "#d5efe4",
+    "#9de39c",
+    "#57c96b",
+    "#e7e35a",
+    "#ffbb4d",
+    "#ff8c37",
+    "#f45b2d",
+    "#d9362d",
+    "#a52b66",
+    "#6e1d88",
+]
+MLCAPE_COLOR_ANCHORS = list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS))
+MLCAPE_RANGE = (0.0, 5000.0)
+
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
     (-40.0, "#90d8cb"), (-39.0, "#96cec9"), (-38.0, "#95c5c6"), (-37.0, "#9bc3cb"), (-36.0, "#9ec0cf"),
@@ -460,6 +477,17 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP850_COLOR_ANCHORS,
         "display_name": "850mb Temperature",
         "legend_title": "850mb Temperature (°C)",
+    },
+    "mlcape": {
+        "type": "continuous",
+        "units": "J/kg",
+        "range": MLCAPE_RANGE,
+        "anchors": MLCAPE_COLOR_ANCHORS,
+        "display_name": "Mixed-Layer CAPE",
+        "legend_title": "Mixed-Layer CAPE (J/kg)",
+        "legend_stops": list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS)),
+        "transparent_below_min": 25.0,
+        "display_smoothing_sigma": 0.8,
     },
     "wspd10m": {
         "type": "continuous",
