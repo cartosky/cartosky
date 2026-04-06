@@ -449,7 +449,11 @@ def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: 
 
             raise NWSHazardsError(f"NWS Hazards upstream returned HTTP {response.status_code}")
 
-    raise NWSHazardsError("NWS Hazards request timed out after retries") from last_error
+    if isinstance(last_error, NWSHazardsError):
+        raise NWSHazardsError(str(last_error)) from last_error
+    if isinstance(last_error, httpx.TimeoutException):
+        raise NWSHazardsError("NWS Hazards request timed out after retries") from last_error
+    raise NWSHazardsError(f"NWS Hazards request failed after retries for {url}") from last_error
 
 
 def default_zone_reference_path(data_root: Path) -> Path:

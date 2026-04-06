@@ -14,8 +14,8 @@ import httpx
 NWS_API_BASE = "https://api.weather.gov"
 NWS_USER_AGENT = "(CartoSky hazards-zone-builder, admin@cartosky.com)"
 DEFAULT_TIMEOUT_SECONDS = 15.0
-DEFAULT_CONCURRENCY = 24
-MAX_RETRIES = 1
+DEFAULT_CONCURRENCY = 8
+MAX_RETRIES = 3
 RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
 
 LOGGER = logging.getLogger("build_hazard_zone_reference")
@@ -33,10 +33,11 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES + 1):
         if attempt > 0:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(min(8.0, float(2 ** (attempt - 1))))
         try:
             response = await client.get(url)
         except httpx.TimeoutException as exc:
+            LOGGER.warning("Timeout fetching %s (attempt %d)", url, attempt + 1)
             last_error = exc
             continue
         except httpx.RequestError as exc:
@@ -45,6 +46,7 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
         if response.status_code == 200:
             return response.json()
         if response.status_code in RETRYABLE_STATUS_CODES:
+            LOGGER.warning("Transient HTTP %d for %s (attempt %d)", response.status_code, url, attempt + 1)
             last_error = RuntimeError(f"Transient HTTP {response.status_code} for {url}")
             continue
         raise RuntimeError(f"HTTP {response.status_code} for {url}")
