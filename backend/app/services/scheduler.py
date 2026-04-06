@@ -991,7 +991,11 @@ def _promote_run(data_root: Path, model: str, run_id: str) -> None:
     if tmp_run.exists():
         raise SchedulerConfigError(f"Cannot clear temporary promotion dir: {tmp_run}")
 
-    shutil.copytree(stage_run, tmp_run)
+    if published_run.exists():
+        shutil.copytree(published_run, tmp_run)
+        shutil.copytree(stage_run, tmp_run, dirs_exist_ok=True)
+    else:
+        shutil.copytree(stage_run, tmp_run)
 
     if published_run.exists():
         shutil.rmtree(published_run, ignore_errors=True)
@@ -1030,7 +1034,23 @@ def _write_run_manifest(
     for var_id, fh in targets:
         expected_by_var.setdefault(var_id, []).append(int(fh))
 
+    manifest_path = data_root / "manifests" / model / f"{run_id}.json"
     variables: dict[str, dict] = {}
+    if manifest_path.exists():
+        try:
+            existing_payload = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            existing_payload = None
+        existing_variables = existing_payload.get("variables") if isinstance(existing_payload, dict) else None
+        if isinstance(existing_variables, dict):
+            variables.update(
+                {
+                    str(var_id): dict(entry)
+                    for var_id, entry in existing_variables.items()
+                    if isinstance(entry, dict)
+                }
+            )
+
     for var_id, fhs in sorted(expected_by_var.items()):
         expected_fhs = sorted(set(fhs))
         frames: list[dict] = []
@@ -1084,7 +1104,6 @@ def _write_run_manifest(
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
-    manifest_path = data_root / "manifests" / model / f"{run_id}.json"
     _write_json_atomic(manifest_path, payload)
 
 

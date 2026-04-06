@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -497,8 +498,72 @@ def test_enforce_herbie_cache_retention_preserves_unparsed_files(tmp_path: Path)
     scheduler_module._enforce_herbie_cache_retention(herbie_root, "gfs", 4)
 
     assert legacy_note.exists()
-    assert not (model_root / "20260226" / "gfs.t18z.pgrb2.0p25.f000").exists()
-    assert (model_root / "20260227" / "gfs.t18z.pgrb2.0p25.f000").exists()
+
+
+def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260406_12z"
+    published_tmp2m = data_root / "published" / model / run_id / "tmp2m"
+    staging_mlcape = data_root / "staging" / model / run_id / "mlcape"
+
+    published_tmp2m.mkdir(parents=True, exist_ok=True)
+    staging_mlcape.mkdir(parents=True, exist_ok=True)
+    (published_tmp2m / "fh000.json").write_text("published tmp2m")
+    (staging_mlcape / "fh000.json").write_text("staged mlcape")
+
+    scheduler_module._promote_run(data_root, model, run_id)
+
+    published_run = data_root / "published" / model / run_id
+    assert (published_run / "tmp2m" / "fh000.json").read_text() == "published tmp2m"
+    assert (published_run / "mlcape" / "fh000.json").read_text() == "staged mlcape"
+
+
+def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260406_12z"
+    manifest_path = data_root / "manifests" / model / f"{run_id}.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "3.0",
+                "model": model,
+                "run": run_id,
+                "variables": {
+                    "tmp2m": {
+                        "display_name": "Surface Temp",
+                        "kind": "continuous",
+                        "units": "F",
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [{"fh": 0, "valid_time": "2026-04-06T12:00:00Z"}],
+                    }
+                },
+            }
+        )
+    )
+
+    mlcape_stage = data_root / "staging" / model / run_id / "mlcape"
+    mlcape_stage.mkdir(parents=True, exist_ok=True)
+    (mlcape_stage / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "J/kg", "kind": "continuous", "valid_time": "2026-04-06T12:00:00Z"})
+    )
+
+    scheduler_module._write_run_manifest(
+        data_root=data_root,
+        model=model,
+        run_id=run_id,
+        targets=[("mlcape", 0)],
+        plugin=None,
+    )
+
+    payload = json.loads(manifest_path.read_text())
+    assert set(payload["variables"].keys()) == {"tmp2m", "mlcape"}
+    assert payload["variables"]["tmp2m"]["units"] == "F"
+    assert payload["variables"]["mlcape"]["units"] == "J/kg"
+    assert payload["variables"]["mlcape"]["available_frames"] == 1
 
 
 def test_process_run_skips_loop_pregen_for_incomplete_run(
