@@ -91,3 +91,54 @@ def test_nws_hazards_poller_noops_when_fingerprint_matches(tmp_path: Path, monke
     result = nws_hazards_poller.run_once(config)
     assert result.action == "noop"
     assert result.published_run_id == run_id
+
+
+def test_nws_hazards_poller_reuses_prefetched_payload_for_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_root = tmp_path
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "alert-1",
+                    "status": "Actual",
+                    "event": "Tornado Warning",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T17:45:00Z",
+                    "geocode": {"SAME": ["004013"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-112.7, 33.0], [-111.5, 33.0], [-111.5, 33.8], [-112.7, 33.8], [-112.7, 33.0]]],
+                },
+            }
+        ],
+    }
+
+    monkeypatch.setattr(nws_hazards_poller, "fetch_active_alerts_geojson", lambda **_: payload)
+    observed: dict[str, object] = {}
+
+    def _fake_publish_active_hazards(**kwargs):
+        observed.update(kwargs)
+        return type("Result", (), {
+            "run_id": "20260406_1730z",
+            "fingerprint": "fp123",
+        })()
+
+    monkeypatch.setattr(nws_hazards_poller, "publish_active_hazards", _fake_publish_active_hazards)
+
+    config = nws_hazards_poller.NWSHazardsPollerConfig(
+        data_root=data_root,
+        county_reference_path=county_reference,
+        poll_seconds=90,
+        keep_runs=5,
+        timeout_seconds=10.0,
+        api_base="https://api.weather.gov",
+    )
+    result = nws_hazards_poller.run_once(config)
+    assert result.action == "published"
+    assert observed["payload"] == payload

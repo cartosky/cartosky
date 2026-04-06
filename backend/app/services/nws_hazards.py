@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -23,6 +24,9 @@ NWS_HAZARDS_MODEL_ID = "nws_hazards"
 NWS_HAZARDS_REGION_ID = "conus"
 NWS_ALERTS_ACTIVE_URL = f"{NWS_API_BASE}/alerts/active"
 DEFAULT_COUNTY_REFERENCE_RELATIVE_PATH = Path("hazards") / "county_reference.geojson"
+NWS_HAZARDS_MAX_RETRIES = 1
+NWS_HAZARDS_RETRY_BACKOFF_SECONDS = 1.0
+NWS_HAZARDS_RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
 
 STATE_ABBR_TO_FIPS: dict[str, str] = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09", "DE": "10",
@@ -33,6 +37,7 @@ STATE_ABBR_TO_FIPS: dict[str, str] = {
     "SC": "45", "SD": "46", "TN": "47", "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53",
     "WV": "54", "WI": "55", "WY": "56", "PR": "72", "VI": "78", "AS": "60", "GU": "66", "MP": "69",
 }
+STATE_FIPS_TO_ABBR: dict[str, str] = {value: key for key, value in STATE_ABBR_TO_FIPS.items()}
 
 
 @dataclass(frozen=True)
@@ -207,13 +212,35 @@ def fetch_active_alerts_geojson(
     api_base: str = NWS_API_BASE,
 ) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/alerts/active"
+    last_error: Exception | None = None
     with httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
         "User-Agent": NWS_USER_AGENT,
         "Accept": "application/geo+json,application/json;q=0.9,*/*;q=0.8",
     }) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(1 + NWS_HAZARDS_MAX_RETRIES):
+            if attempt > 0:
+                logger.info("NWS Hazards retry attempt %d for %s", attempt, url)
+                time.sleep(NWS_HAZARDS_RETRY_BACKOFF_SECONDS)
+            try:
+                response = client.get(url)
+            except httpx.TimeoutException as exc:
+                logger.warning("NWS Hazards request timeout: %s (attempt %d)", url, attempt + 1)
+                last_error = exc
+                continue
+            except httpx.RequestError as exc:
+                raise NWSHazardsError(f"NWS Hazards request failed: {exc}") from exc
+
+            if response.status_code == 200:
+                return response.json()
+
+            if response.status_code in NWS_HAZARDS_RETRYABLE_STATUS_CODES:
+                logger.warning("NWS Hazards HTTP %d from %s (attempt %d)", response.status_code, url, attempt + 1)
+                last_error = NWSHazardsError(f"NWS Hazards upstream HTTP {response.status_code}")
+                continue
+
+            raise NWSHazardsError(f"NWS Hazards upstream returned HTTP {response.status_code}")
+
+    raise NWSHazardsError("NWS Hazards request timed out after retries") from last_error
 
 
 def default_county_reference_path(data_root: Path) -> Path:
@@ -241,7 +268,11 @@ def _load_county_reference_cached(path_key: str) -> dict[str, dict[str, Any]]:
             continue
         counties[geoid] = {
             "name": str(props.get("NAME") or props.get("name") or geoid).strip(),
-            "state": str(props.get("STUSPS") or props.get("state") or "").strip(),
+            "state": str(
+                props.get("STUSPS")
+                or props.get("state")
+                or STATE_FIPS_TO_ABBR.get(str(props.get("STATEFP") or "").strip(), "")
+            ).strip(),
             "geometry": geometry,
         }
     if not counties:
@@ -312,10 +343,15 @@ def _sort_alerts_by_priority(alerts: list[NormalizedHazardAlert]) -> list[Normal
 def _build_hover_label(name: str, alerts: list[NormalizedHazardAlert]) -> str:
     if not alerts:
         return name
-    primary = alerts[0]
-    if len(alerts) == 1:
-        return f"{name}: {primary.style.label}"
-    return f"{name}: {primary.style.label} +{len(alerts) - 1} more"
+    unique_labels = list(dict.fromkeys(alert.style.label for alert in alerts if alert.style.label))
+    primary_label = unique_labels[0] if unique_labels else alerts[0].style.label
+    if len(unique_labels) <= 1:
+        return f"{name}: {primary_label}"
+    return f"{name}: {primary_label} +{len(unique_labels) - 1} more"
+
+
+def _unique_hazard_labels(alerts: list[NormalizedHazardAlert]) -> list[str]:
+    return list(dict.fromkeys(alert.style.label for alert in alerts if alert.style.label))
 
 
 def _legend_entries_for_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -350,14 +386,14 @@ def build_active_hazards_frame(
     if not normalized_alerts:
         raise NWSHazardsError("Active alerts payload had no recognized alerts")
 
-    issue_time_candidates = [alert.sent_time for alert in normalized_alerts if alert.sent_time is not None]
-    valid_time_candidates = [
-        _coerce_datetime(payload.get("updated")),
+    bundle_updated = _coerce_datetime(payload.get("updated"))
+    issue_time_candidates = [
+        bundle_updated,
+        *[alert.sent_time for alert in normalized_alerts if alert.sent_time is not None],
         *[alert.effective_time for alert in normalized_alerts if alert.effective_time is not None],
-        *issue_time_candidates,
     ]
-    issue_time = min(issue_time_candidates) if issue_time_candidates else datetime.now(timezone.utc)
-    valid_time = next((candidate for candidate in valid_time_candidates if candidate is not None), issue_time)
+    issue_time = next((candidate for candidate in issue_time_candidates if candidate is not None), datetime.now(timezone.utc))
+    valid_time = bundle_updated or issue_time
 
     county_buckets: dict[str, list[NormalizedHazardAlert]] = {}
     fallback_features: list[dict[str, Any]] = []
@@ -399,6 +435,7 @@ def build_active_hazards_frame(
         sorted_alerts = _sort_alerts_by_priority(alerts)
         primary = sorted_alerts[0]
         county_name = str(county.get("name") or geoid)
+        active_hazard_labels = _unique_hazard_labels(sorted_alerts)
         county_features.append(
             {
                 "type": "Feature",
@@ -416,7 +453,7 @@ def build_active_hazards_frame(
                     "state": str(county.get("state") or ""),
                     "alert_count": len(sorted_alerts),
                     "alert_ids": [alert.alert_id for alert in sorted_alerts],
-                    "active_hazards": [alert.style.label for alert in sorted_alerts],
+                    "active_hazards": active_hazard_labels,
                     "area_description": county_name,
                     "expires_time": primary.expires_time.strftime("%Y-%m-%dT%H:%M:%SZ") if primary.expires_time else None,
                 },
@@ -464,11 +501,12 @@ def publish_active_hazards(
     county_reference_path: Path | None = None,
     timeout_seconds: float = NWS_REQUEST_TIMEOUT,
     api_base: str = NWS_API_BASE,
+    payload: dict[str, Any] | None = None,
 ) -> HazardPublishResult:
-    payload = fetch_active_alerts_geojson(timeout_seconds=timeout_seconds, api_base=api_base)
-    fingerprint = _build_alert_fingerprint(payload)
+    resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(timeout_seconds=timeout_seconds, api_base=api_base)
+    fingerprint = _build_alert_fingerprint(resolved_payload)
     county_path = county_reference_path or default_county_reference_path(data_root)
-    frame = build_active_hazards_frame(payload, county_reference_path=county_path)
+    frame = build_active_hazards_frame(resolved_payload, county_reference_path=county_path)
     run_id = format_run_id(frame.valid_time, include_minutes=True)
 
     staging_run_root = data_root / "staging" / NWS_HAZARDS_MODEL_ID / run_id

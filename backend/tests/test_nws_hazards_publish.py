@@ -25,7 +25,7 @@ def _write_county_reference(path: Path) -> Path:
                         "properties": {
                             "GEOID": "04013",
                             "NAME": "Maricopa",
-                            "STUSPS": "AZ",
+                            "STATEFP": "04",
                         },
                         "geometry": {
                             "type": "Polygon",
@@ -37,7 +37,7 @@ def _write_county_reference(path: Path) -> Path:
                         "properties": {
                             "GEOID": "08031",
                             "NAME": "Denver",
-                            "STUSPS": "CO",
+                            "STATEFP": "08",
                         },
                         "geometry": {
                             "type": "Polygon",
@@ -123,6 +123,7 @@ def test_build_active_hazards_frame_rolls_alerts_up_to_counties_and_keeps_geomet
     assert county_feature["properties"]["alert_count"] == 2
     assert county_feature["properties"]["active_hazards"] == ["Tornado Warning", "Severe Thunderstorm Watch"]
     assert county_feature["properties"]["hover_label"] == "Maricopa: Tornado Warning +1 more"
+    assert county_feature["properties"]["state"] == "AZ"
 
     fallback_feature = next(feature for feature in frame.features if feature["properties"].get("area_description") == "Coastal waters")
     assert fallback_feature["properties"]["risk_label"] == "Small Craft Advisory"
@@ -178,6 +179,7 @@ def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sideca
     assert sidecar["display_name"] == "Active Hazards"
     assert sidecar["legend_entries"][0]["label"] == "Tornado Warning"
     assert sidecar["vector_layers"]["primary"]["path"] == "vectors/fh000.geojson"
+    assert sidecar["issue_time"] == "2026-04-06T17:30:00Z"
 
     vector_payload = json.loads((result.published_run_dir / "active" / "vectors" / "fh000.geojson").read_text())
     assert vector_payload["type"] == "FeatureCollection"

@@ -11,6 +11,7 @@ from pathlib import Path
 from app.services.nws import NWS_API_BASE, NWS_REQUEST_TIMEOUT
 from app.services.nws_hazards import (
     NWS_HAZARDS_MODEL_ID,
+    NWSHazardsError,
     _build_alert_fingerprint,
     default_county_reference_path,
     fetch_active_alerts_geojson,
@@ -93,6 +94,7 @@ def run_once(config: NWSHazardsPollerConfig) -> NWSHazardsPollerCycleResult:
         county_reference_path=config.county_reference_path,
         timeout_seconds=config.timeout_seconds,
         api_base=config.api_base,
+        payload=payload,
     )
     _enforce_retention(config)
     return NWSHazardsPollerCycleResult(
@@ -116,6 +118,8 @@ def run_poller(config: NWSHazardsPollerConfig, *, once: bool) -> int:
         try:
             result = run_once(config)
             logger.info("NWS Hazards cycle result action=%s message=%s", result.action, result.message)
+        except NWSHazardsError as exc:
+            logger.warning("NWS Hazards poller cycle skipped: %s", exc)
         except Exception:
             logger.exception("NWS Hazards poller cycle failed")
         if once:
