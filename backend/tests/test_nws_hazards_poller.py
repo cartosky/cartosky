@@ -100,13 +100,18 @@ def test_nws_hazards_poller_noops_when_fingerprint_matches(tmp_path: Path, monke
             {
                 "model": "nws_hazards",
                 "run": run_id,
-                "metadata": {"source_fingerprint": fingerprint},
+                "metadata": {"source_fingerprint": fingerprint, "zone_reference_signature": "zonesig"},
                 "variables": {"active": {"frames": [{"fh": 0, "valid_time": "2026-04-06T17:30:00Z"}]}},
             }
         )
     )
 
     monkeypatch.setattr(nws_hazards_poller, "fetch_active_alerts_geojson", lambda **_: payload)
+    monkeypatch.setattr(
+        nws_hazards_poller,
+        "sync_active_zone_reference",
+        lambda **_: type("Sync", (), {"signature": "zonesig"})(),
+    )
 
     config = nws_hazards_poller.NWSHazardsPollerConfig(
         data_root=data_root,
@@ -150,6 +155,11 @@ def test_nws_hazards_poller_reuses_prefetched_payload_for_publish(tmp_path: Path
     }
 
     monkeypatch.setattr(nws_hazards_poller, "fetch_active_alerts_geojson", lambda **_: payload)
+    monkeypatch.setattr(
+        nws_hazards_poller,
+        "sync_active_zone_reference",
+        lambda **_: type("Sync", (), {"signature": "zonesig"})(),
+    )
     observed: dict[str, object] = {}
 
     def _fake_publish_active_hazards(**kwargs):
@@ -173,3 +183,4 @@ def test_nws_hazards_poller_reuses_prefetched_payload_for_publish(tmp_path: Path
     result = nws_hazards_poller.run_once(config)
     assert result.action == "published"
     assert observed["payload"] == payload
+    assert observed["zone_reference_signature"] == "zonesig"

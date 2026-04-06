@@ -294,6 +294,7 @@ def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sideca
     assert manifest["metadata"]["source"] == "nws_hazards"
     assert manifest["metadata"]["time_axis_mode"] == "valid"
     assert manifest["metadata"]["source_fingerprint"] == result.fingerprint
+    assert isinstance(manifest["metadata"]["zone_reference_signature"], str)
     assert manifest["variables"]["active"]["frames"] == [{"fh": 0, "valid_time": "2026-04-06T17:30:00Z"}]
 
     sidecar = json.loads((result.published_run_dir / "active" / "fh000.json").read_text())

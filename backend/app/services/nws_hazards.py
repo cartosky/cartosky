@@ -83,6 +83,15 @@ class HazardPublishResult:
     fingerprint: str
 
 
+@dataclass(frozen=True)
+class ZoneReferenceSyncResult:
+    path: Path
+    needed_zone_codes: tuple[str, ...]
+    resolved_zone_codes: tuple[str, ...]
+    signature: str
+    updated: bool
+
+
 HAZARD_COLOR_OVERRIDES: dict[str, str] = {
     "Tsunami Warning": "#FD6347",
     "Tornado Warning": "#FF0000",
@@ -417,19 +426,27 @@ def fetch_active_alerts_geojson(
     return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=True)
 
 
-def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: bool) -> dict[str, Any]:
+def _fetch_geojson_with_retry(
+    *,
+    url: str,
+    timeout_seconds: float,
+    log_retries: bool,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
     last_error: Exception | None = None
-    with httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
+    managed_client = client is None
+    session = client or httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
         "User-Agent": NWS_USER_AGENT,
         "Accept": "application/geo+json,application/json;q=0.9,*/*;q=0.8",
-    }) as client:
+    })
+    try:
         for attempt in range(1 + NWS_HAZARDS_MAX_RETRIES):
             if attempt > 0:
                 if log_retries:
                     logger.info("NWS Hazards retry attempt %d for %s", attempt, url)
                 time.sleep(NWS_HAZARDS_RETRY_BACKOFF_SECONDS)
             try:
-                response = client.get(url)
+                response = session.get(url)
             except httpx.TimeoutException as exc:
                 if log_retries:
                     logger.warning("NWS Hazards request timeout: %s (attempt %d)", url, attempt + 1)
@@ -448,6 +465,9 @@ def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: 
                 continue
 
             raise NWSHazardsError(f"NWS Hazards upstream returned HTTP {response.status_code}")
+    finally:
+        if managed_client:
+            session.close()
 
     if isinstance(last_error, NWSHazardsError):
         raise NWSHazardsError(str(last_error)) from last_error
@@ -500,6 +520,127 @@ def load_zone_reference(path: Path) -> dict[str, dict[str, Any]]:
         logger.warning("NWS Hazards zone reference file not found: %s", path)
         return {}
     return _load_zone_reference_file_cached(str(path.resolve()))
+
+
+def _zone_feature_from_record(zone: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "Feature",
+        "properties": {
+            "zone_code": str(zone.get("zone_code") or "").strip().upper(),
+            "name": str(zone.get("name") or "").strip(),
+            "state": str(zone.get("state") or "").strip(),
+            "zone_type": str(zone.get("zone_type") or "").strip(),
+        },
+        "geometry": zone.get("geometry"),
+    }
+
+
+def _zone_reference_payload(zones: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    features = [_zone_feature_from_record(zone) for _, zone in sorted(zones.items())]
+    return {
+        "type": "FeatureCollection",
+        "metadata": {
+            "source": "nws_hazards_active_zone_reference",
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "feature_count": len(features),
+        },
+        "features": features,
+    }
+
+
+def _zone_reference_signature(zones: dict[str, dict[str, Any]]) -> str:
+    features = [_zone_feature_from_record(zone) for _, zone in sorted(zones.items())]
+    body = json.dumps(features, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def zone_reference_signature_for_path(path: Path) -> str:
+    zones = _load_zone_reference_file_cached(str(path.resolve())) if path.is_file() else {}
+    return _zone_reference_signature(zones)
+
+
+def _zone_codes_needed_for_payload(payload: dict[str, Any]) -> set[str]:
+    features_raw = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features_raw, list):
+        return set()
+    zone_codes: set[str] = set()
+    for feature in features_raw:
+        alert = _normalize_alert(feature) if isinstance(feature, dict) else None
+        if alert is None:
+            continue
+        zone_codes.update(alert.zone_codes)
+    return zone_codes
+
+
+def _fetch_zone_record(zone_code: str, *, timeout_seconds: float, api_base: str, client: httpx.Client) -> dict[str, Any] | None:
+    normalized_zone = str(zone_code or "").strip().upper()
+    if not normalized_zone:
+        return None
+    url = f"{api_base.rstrip('/')}/zones/forecast/{normalized_zone}"
+    try:
+        payload = _fetch_geojson_with_retry(
+            url=url,
+            timeout_seconds=timeout_seconds,
+            log_retries=False,
+            client=client,
+        )
+    except NWSHazardsError as exc:
+        logger.warning("NWS Hazards active zone lookup failed for %s: %s", normalized_zone, exc)
+        return None
+    geometry = payload.get("geometry")
+    props = payload.get("properties") if isinstance(payload, dict) else None
+    if not isinstance(geometry, dict) or not isinstance(props, dict):
+        return None
+    return {
+        "zone_code": normalized_zone,
+        "name": str(props.get("name") or normalized_zone).strip(),
+        "state": str(props.get("state") or "").strip(),
+        "zone_type": str(props.get("type") or "").strip(),
+        "geometry": geometry,
+    }
+
+
+def sync_active_zone_reference(
+    *,
+    payload: dict[str, Any],
+    zone_reference_path: Path,
+    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
+    api_base: str = NWS_API_BASE,
+) -> ZoneReferenceSyncResult:
+    existing_zones = _load_zone_reference_file_cached(str(zone_reference_path.resolve())) if zone_reference_path.is_file() else {}
+    needed_zone_codes = set(sorted(_zone_codes_needed_for_payload(payload)))
+    active_zones: dict[str, dict[str, Any]] = {
+        zone_code: existing_zones[zone_code]
+        for zone_code in sorted(needed_zone_codes)
+        if zone_code in existing_zones
+    }
+    missing_zone_codes = [zone_code for zone_code in sorted(needed_zone_codes) if zone_code not in active_zones]
+
+    if missing_zone_codes:
+        with httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
+            "User-Agent": NWS_USER_AGENT,
+            "Accept": "application/geo+json,application/json;q=0.9,*/*;q=0.8",
+        }) as client:
+            for zone_code in missing_zone_codes:
+                zone = _fetch_zone_record(zone_code, timeout_seconds=timeout_seconds, api_base=api_base, client=client)
+                if zone is not None:
+                    active_zones[zone_code] = zone
+
+    new_signature = _zone_reference_signature(active_zones)
+    previous_signature = _zone_reference_signature(existing_zones)
+    write_required = (new_signature != previous_signature) or (not zone_reference_path.is_file())
+    if write_required:
+        zone_reference_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(zone_reference_path, _zone_reference_payload(active_zones))
+        _load_zone_reference_file_cached.cache_clear()
+
+    return ZoneReferenceSyncResult(
+        path=zone_reference_path,
+        needed_zone_codes=tuple(sorted(needed_zone_codes)),
+        resolved_zone_codes=tuple(sorted(active_zones.keys())),
+        signature=new_signature,
+        updated=write_required,
+    )
 
 
 def _resolve_zone_references(
@@ -893,6 +1034,7 @@ def publish_active_hazards(
     data_root: Path,
     county_reference_path: Path | None = None,
     zone_reference_path: Path | None = None,
+    zone_reference_signature: str | None = None,
     timeout_seconds: float = NWS_REQUEST_TIMEOUT,
     api_base: str = NWS_API_BASE,
     payload: dict[str, Any] | None = None,
@@ -906,6 +1048,7 @@ def publish_active_hazards(
         county_reference_path=county_path,
         zone_reference_path=zone_path,
     )
+    resolved_zone_signature = zone_reference_signature or zone_reference_signature_for_path(zone_path)
     run_id = format_run_id(frame.valid_time, include_minutes=True)
 
     staging_run_root = data_root / "staging" / NWS_HAZARDS_MODEL_ID / run_id
@@ -931,6 +1074,7 @@ def publish_active_hazards(
             "available_frame_count": 1,
             "latest_valid_time": frame.valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "source_fingerprint": fingerprint,
+            "zone_reference_signature": resolved_zone_signature,
         },
     )
     write_latest_pointer(data_root=data_root, model=NWS_HAZARDS_MODEL_ID, run_id=run_id, source="nws_hazards_publish")

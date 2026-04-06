@@ -17,6 +17,7 @@ from app.services.nws_hazards import (
     default_zone_reference_path,
     fetch_active_alerts_geojson,
     publish_active_hazards,
+    sync_active_zone_reference,
 )
 from app.services.publish_utils import enforce_run_artifact_retention
 
@@ -73,6 +74,21 @@ def _manifest_fingerprint(data_root: Path, run_id: str) -> str | None:
     return str(fingerprint).strip() if isinstance(fingerprint, str) and fingerprint.strip() else None
 
 
+def _manifest_zone_reference_signature(data_root: Path, run_id: str) -> str | None:
+    manifest_path = data_root / "manifests" / NWS_HAZARDS_MODEL_ID / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    signature = metadata.get("zone_reference_signature")
+    return str(signature).strip() if isinstance(signature, str) and signature.strip() else None
+
+
 def _enforce_retention(config: NWSHazardsPollerConfig) -> None:
     enforce_run_artifact_retention(config.data_root / "staging" / NWS_HAZARDS_MODEL_ID, config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "published" / NWS_HAZARDS_MODEL_ID, config.keep_runs)
@@ -81,9 +97,19 @@ def _enforce_retention(config: NWSHazardsPollerConfig) -> None:
 
 def run_once(config: NWSHazardsPollerConfig) -> NWSHazardsPollerCycleResult:
     payload = fetch_active_alerts_geojson(timeout_seconds=config.timeout_seconds, api_base=config.api_base)
+    zone_sync = sync_active_zone_reference(
+        payload=payload,
+        zone_reference_path=config.zone_reference_path,
+        timeout_seconds=config.timeout_seconds,
+        api_base=config.api_base,
+    )
     fingerprint = _build_alert_fingerprint(payload)
     latest_run_id = _latest_published_run_id(config.data_root)
-    if latest_run_id and _manifest_fingerprint(config.data_root, latest_run_id) == fingerprint:
+    if (
+        latest_run_id
+        and _manifest_fingerprint(config.data_root, latest_run_id) == fingerprint
+        and _manifest_zone_reference_signature(config.data_root, latest_run_id) == zone_sync.signature
+    ):
         return NWSHazardsPollerCycleResult(
             action="noop",
             published_run_id=latest_run_id,
@@ -95,6 +121,7 @@ def run_once(config: NWSHazardsPollerConfig) -> NWSHazardsPollerCycleResult:
         data_root=config.data_root,
         county_reference_path=config.county_reference_path,
         zone_reference_path=config.zone_reference_path,
+        zone_reference_signature=zone_sync.signature,
         timeout_seconds=config.timeout_seconds,
         api_base=config.api_base,
         payload=payload,
