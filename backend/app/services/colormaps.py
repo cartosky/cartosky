@@ -328,22 +328,62 @@ WSPD10M_RANGE = (0.0, 100.0)
 QPF6H_LEGEND_STOPS = list(zip(precip_levels, precip_colors))
 PRECIP_TOTAL_COLOR_ANCHORS = list(zip(precip_levels, precip_colors))
 
-MLCAPE_LEGEND_LEVELS = [0.0, 100.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 5000.0]
+MLCAPE_LEGEND_LEVELS = [
+    250.0,
+    500.0,
+    750.0,
+    1000.0,
+    1250.0,
+    1500.0,
+    1750.0,
+    2000.0,
+    2250.0,
+    2500.0,
+    2750.0,
+    3000.0,
+    3250.0,
+    3500.0,
+    3750.0,
+    4000.0,
+    4250.0,
+    4500.0,
+    4750.0,
+    5000.0,
+    5250.0,
+    5500.0,
+    5750.0,
+    6000.0,
+    6250.0,
+]
 MLCAPE_LEGEND_COLORS = [
-    "#f3f6f7",
-    "#d5efe4",
-    "#9de39c",
-    "#57c96b",
-    "#e7e35a",
-    "#ffbb4d",
-    "#ff8c37",
-    "#f45b2d",
-    "#d9362d",
-    "#a52b66",
-    "#6e1d88",
+    "#1f2379",
+    "#2530b5",
+    "#2f43ff",
+    "#3858ff",
+    "#3f6cff",
+    "#4c8af6",
+    "#5eadef",
+    "#68cce7",
+    "#6ddfe1",
+    "#69f1cf",
+    "#64f0a7",
+    "#72f27b",
+    "#93f55e",
+    "#b7fb4e",
+    "#d7ff45",
+    "#f1fd3b",
+    "#ffd52d",
+    "#ffb21f",
+    "#ff9518",
+    "#ff7813",
+    "#ff5b0e",
+    "#ff3008",
+    "#ff1906",
+    "#ee0904",
+    "#cf0000",
 ]
 MLCAPE_COLOR_ANCHORS = list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS))
-MLCAPE_RANGE = (0.0, 5000.0)
+MLCAPE_RANGE = (0.0, 6250.0)
 
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
