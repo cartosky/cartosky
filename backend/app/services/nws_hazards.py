@@ -413,10 +413,10 @@ def fetch_active_alerts_geojson(
     api_base: str = NWS_API_BASE,
 ) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/alerts/active"
-    return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds)
+    return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=True)
 
 
-def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float) -> dict[str, Any]:
+def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: bool) -> dict[str, Any]:
     last_error: Exception | None = None
     with httpx.Client(timeout=float(timeout_seconds), follow_redirects=True, headers={
         "User-Agent": NWS_USER_AGENT,
@@ -424,12 +424,14 @@ def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float) -> dict[str, 
     }) as client:
         for attempt in range(1 + NWS_HAZARDS_MAX_RETRIES):
             if attempt > 0:
-                logger.info("NWS Hazards retry attempt %d for %s", attempt, url)
+                if log_retries:
+                    logger.info("NWS Hazards retry attempt %d for %s", attempt, url)
                 time.sleep(NWS_HAZARDS_RETRY_BACKOFF_SECONDS)
             try:
                 response = client.get(url)
             except httpx.TimeoutException as exc:
-                logger.warning("NWS Hazards request timeout: %s (attempt %d)", url, attempt + 1)
+                if log_retries:
+                    logger.warning("NWS Hazards request timeout: %s (attempt %d)", url, attempt + 1)
                 last_error = exc
                 continue
             except httpx.RequestError as exc:
@@ -439,7 +441,8 @@ def _fetch_geojson_with_retry(*, url: str, timeout_seconds: float) -> dict[str, 
                 return response.json()
 
             if response.status_code in NWS_HAZARDS_RETRYABLE_STATUS_CODES:
-                logger.warning("NWS Hazards HTTP %d from %s (attempt %d)", response.status_code, url, attempt + 1)
+                if log_retries:
+                    logger.warning("NWS Hazards HTTP %d from %s (attempt %d)", response.status_code, url, attempt + 1)
                 last_error = NWSHazardsError(f"NWS Hazards upstream HTTP {response.status_code}")
                 continue
 
@@ -455,9 +458,9 @@ def _load_zone_reference_cached(zone_code: str, api_base: str, timeout_seconds: 
         return None
     url = f"{api_base.rstrip('/')}/zones/forecast/{normalized_zone}"
     try:
-        payload = _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds)
-    except NWSHazardsError:
-        logger.warning("NWS Hazards zone geometry lookup failed for %s", normalized_zone)
+        payload = _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=False)
+    except NWSHazardsError as exc:
+        logger.warning("NWS Hazards zone geometry lookup failed for %s: %s", normalized_zone, exc)
         return None
     geometry = payload.get("geometry")
     props = payload.get("properties") if isinstance(payload, dict) else None
