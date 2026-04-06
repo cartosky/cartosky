@@ -82,6 +82,13 @@ export default function Home() {
         forecast: "Days 1-3",
         notes: "Convective outlooks",
       },
+      {
+        key: "NWS Hazards",
+        modelId: "nws_hazards",
+        update: "Every 1-2 minutes",
+        forecast: "Active only",
+        notes: "County + zone alerts",
+      },
     ],
     []
   );

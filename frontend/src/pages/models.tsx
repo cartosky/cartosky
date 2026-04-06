@@ -240,6 +240,30 @@ export default function Models() {
           { k: "Horizon", v: "Day 1-3 convective outlooks" },
         ],
       },
+      {
+        id: "nws_hazards",
+        name: "NWS Hazards",
+        oneLiner: "Active NWS watches, warnings, advisories, and statements rendered as county-first vector fills with alert-geometry fallback for marine and zone-based products.",
+        pills: ["CONUS", "Active only", "1-2 minute refresh"],
+        bestFor: [
+          "Fast inspection of current county-based warnings, watches, and advisories",
+          "Tracking overlapping local hazards without leaving the viewer",
+          "Seeing marine and zone-based alerts alongside county alerts in one layer",
+        ],
+        limitations: [
+          "Current-state product only; no historical playback in v1",
+          "Counties show the highest-priority active hazard color when multiple alerts overlap",
+          "Marine and other non-county alerts render from alert geometry rather than a dedicated zone tileset",
+        ],
+        notes: [
+          "Backed by the live weather.gov alerts feed and normalized into a latest-only vector bundle for viewer performance.",
+        ],
+        specs: [
+          { k: "Domain", v: "CONUS + supported marine/coastal zones" },
+          { k: "Cadence", v: "Near-real-time poll" },
+          { k: "Horizon", v: "Currently active alerts" },
+        ],
+      },
     ],
     []
   );
