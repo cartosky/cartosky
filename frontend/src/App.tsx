@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle, Eye, MapPin, Moon, Send, SlidersHorizontal, Sun } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, buildMapStyle, type BasemapMode } from "@/components/map-canvas";
+import { MapCanvas, buildMapStyle } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import { WeatherToolbar } from "@/components/weather-toolbar";
@@ -11,11 +11,8 @@ import {
   fetchAnchorFeatureCollection,
   type CapabilitiesResponse,
   type CapabilityModel,
-  type CapabilityVariable,
   type FrameRow,
   type GridManifestResponse,
-  type LegendMeta,
-  type ModelDefaultFrameSelection,
   type RegionPreset,
   type RunManifestResponse,
   fetchManifest,
@@ -27,7 +24,6 @@ import {
   fetchSampleBatch,
   readCapabilityDefaultFrameSelection,
   readCapabilityLatestOnly,
-  readCapabilityRenderSubstrates,
   readCapabilitySupportsSampling,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
@@ -43,8 +39,6 @@ import {
   API_ORIGIN,
   isDeferredNonCriticalBootstrapEnabled,
   MAP_VIEW_DEFAULTS,
-  OVERLAY_DEFAULT_OPACITY,
-  type WeatherSubstrate,
 } from "@/lib/config";
 import { buildRunOptions, formatRunLabel, latestRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
@@ -53,19 +47,62 @@ import {
   frameIssueTime,
   frameValidTime,
   formatIssuedTimeISO,
-  formatObservedCompactTime,
-  formatValidTime,
   observedSourceStatusFromAvailability,
   runIdToIso,
-  validDayLabel,
-  type TimeAxisMode,
 } from "@/lib/time-axis";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
+import { useDisplaySettings } from "@/lib/use-display-settings";
+import { useFrameStatusBadge } from "@/lib/use-frame-status-badge";
+import { usePageVisibility } from "@/lib/use-page-visibility";
+import { usePermalinkSync } from "@/lib/use-permalink-sync";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 
-import { detectViewerLayoutMode, useViewerLayoutMode } from "@/lib/viewer-layout";
+import { useViewerLayoutMode } from "@/lib/viewer-layout";
+import {
+  // Constants
+  AUTOPLAY_TICK_MS,
+  AUTOPLAY_READY_AHEAD,
+  AUTOPLAY_SKIP_WINDOW,
+  AUTOPLAY_STALL_SKIP_MS,
+  GRID_PLAY_START_AHEAD_FRAMES,
+  GRID_PLAY_STALL_MS,
+  VARIABLE_SWITCH_TIMEOUT_MS,
+  // Pure helpers
+  viewportSignatureFromState,
+  areStringArraysEqual,
+  withUpdatedLatestRun,
+  pickPreferred,
+  makeRegionLabel,
+  buildFallbackSharePayload,
+  toNumberOrNull,
+  normalizeModelRows,
+  normalizeCapabilityVarRows,
+  capabilityVarsForManifest,
+  makeVariableOptions,
+  resolveManifestFrames,
+  mergeManifestRowsWithPrevious,
+  extractLegendMeta,
+  nearestFrame,
+  selectableFramesForVariable,
+  resolveForecastHour,
+  buildLegend,
+  buildVectorLayerUrl,
+  emptyScrubPhase0aSnapshot,
+  // Types
+  type NewRunNoticeState,
+  type Option,
+  type VariableOption,
+  type VariableEntry,
+  type PendingLoopStartMetric,
+  type PendingVariableSwitchMetric,
+  type VariableSwitchState,
+  type ScrubCommitIntent,
+  type ScrubPhase0aSnapshot,
+  type ForecastHourChangeReason,
+  type AnchorBatchRequestContext,
+} from "@/lib/app-utils";
 
 const TwfShareModal = lazy(() =>
   import("@/components/twf-share-modal").then((module) => ({ default: module.TwfShareModal }))
@@ -76,679 +113,6 @@ const NwsCityModal = lazy(() =>
 const MapLegend = lazy(() =>
   import("@/components/map-legend").then((module) => ({ default: module.MapLegend }))
 );
-
-const AUTOPLAY_TICK_MS = 250;
-const AUTOPLAY_READY_AHEAD = 2;
-const AUTOPLAY_SKIP_WINDOW = 8;
-/** Stall time before the loop attempts to skip ahead to a ready frame. */
-const AUTOPLAY_STALL_SKIP_MS = 500;
-const GRID_PLAY_START_AHEAD_FRAMES = 2;
-const GRID_PLAY_STALL_MS = 1500;
-const FRAME_STATUS_BADGE_MS = 900;
-const READY_URL_TTL_MS = 30_000;
-const READY_URL_LIMIT = 160;
-const INFLIGHT_FRAME_TTL_MS = 12_000;
-const PRELOAD_START_RATIO = 0.7;
-const PRELOAD_STALL_MS = 8000;
-const FRAME_MAX_RETRIES = 3;
-const FRAME_HARD_DEADLINE_MS = 30_000;
-const FRAME_RETRY_BASE_MS = 1200;
-const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
-const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
-const PERMALINK_SYNC_DEBOUNCE_MS = 200;
-
-function viewportSignatureFromState(view: { lat: number; lon: number; z: number }): string {
-  const zoomBucket = Math.round(view.z * 2) / 2;
-  const latBucket = Math.round(view.lat * 4) / 4;
-  const lonBucket = Math.round(view.lon * 4) / 4;
-  return `${zoomBucket}|${latBucket}|${lonBucket}`;
-}
-
-type NewRunNoticeState = {
-  model: string;
-  previousRunId: string;
-  latestRunId: string;
-};
-
-function areStringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function withUpdatedLatestRun(
-  capabilities: CapabilitiesResponse | null,
-  modelId: string,
-  latestRunId: string | null,
-  publishedRuns?: string[]
-): CapabilitiesResponse | null {
-  if (!capabilities) {
-    return capabilities;
-  }
-  const currentAvailability = capabilities.availability?.[modelId];
-  if (!currentAvailability) {
-    return capabilities;
-  }
-  const nextPublishedRuns = publishedRuns ?? currentAvailability.published_runs ?? [];
-  const latestUnchanged = currentAvailability.latest_run === latestRunId;
-  const runsUnchanged = areStringArraysEqual(currentAvailability.published_runs ?? [], nextPublishedRuns);
-  if (latestUnchanged && runsUnchanged) {
-    return capabilities;
-  }
-  return {
-    ...capabilities,
-    availability: {
-      ...capabilities.availability,
-      [modelId]: {
-        ...currentAvailability,
-        latest_run: latestRunId,
-        published_runs: [...nextPublishedRuns],
-      },
-    },
-  };
-}
-
-type AnchorBatchRequestContext = {
-  selectionKey: string;
-  generation: number;
-  model: string;
-  run: string;
-  variable: string;
-  baseCollection: AnchorFeatureCollection;
-  points: Array<{ id: string; lat: number; lon: number }>;
-  deferToLatest: boolean;
-};
-
-type Option = {
-  value: string;
-  label: string;
-};
-
-type VariableOption = Option & {
-  group: string | null;
-};
-
-type VariableEntry = {
-  id: string;
-  displayName?: string;
-  order?: number | null;
-  defaultFh?: number | null;
-  buildable?: boolean;
-  kind?: string | null;
-  displayResamplingOverride?: string | null;
-  group?: string | null;
-  renderSubstrates?: WeatherSubstrate[];
-};
-
-type ModelEntry = {
-  id: string;
-  displayName?: string;
-  order?: number | null;
-};
-
-type PendingLoopStartMetric = {
-  startedAt: number;
-};
-
-type PendingVariableSwitchMetric = {
-  toVariableId: string;
-  expectedSelectionKey: string;
-};
-
-type VariableSwitchState = {
-  fromVariable: string;
-  toVariable: string;
-  startedAt: number;
-  visualState: "holding_old" | "warming_new" | "promoting_new";
-};
-
-type ScrubCommitIntent = {
-  hour: number;
-  direction: 1 | -1 | 0;
-  startedAt: number;
-};
-
-type ScrubPhase0aSnapshot = {
-  liveStartedAt: number | null;
-  liveEventCount: number;
-  supersededCount: number;
-  lastRequestedHour: number | null;
-};
-
-function emptyScrubPhase0aSnapshot(): ScrubPhase0aSnapshot {
-  return {
-    liveStartedAt: null,
-    liveEventCount: 0,
-    supersededCount: 0,
-    lastRequestedHour: null,
-  };
-}
-
-type ForecastHourChangeReason = "standard" | "scrub-live" | "scrub-commit";
-
-const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
-const MODEL_ORDER_BY_ID: Record<string, number> = {
-  hrrr: 0,
-  nam: 1,
-  nbm: 2,
-  gfs: 3,
-  spc: 4,
-};
-
-function readBasemapModePreference(): BasemapMode {
-  if (typeof window === "undefined") {
-    return "light";
-  }
-  try {
-    const stored = window.localStorage.getItem(BASEMAP_MODE_STORAGE_KEY);
-    return stored === "dark" ? "dark" : "light";
-  } catch {
-    return "light";
-  }
-}
-
-function writeBasemapModePreference(mode: BasemapMode): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(BASEMAP_MODE_STORAGE_KEY, mode);
-  } catch {
-    // Ignore storage errors.
-  }
-}
-
-function pickPreferred(values: string[], preferred: string): string {
-  if (values.includes(preferred)) {
-    return preferred;
-  }
-  return values[0] ?? "";
-}
-
-function makeRegionLabel(id: string, preset?: RegionPreset): string {
-  return preset?.label ?? id.toUpperCase();
-}
-
-function makeVariableLabel(id: string, preferredLabel?: string | null): string {
-  if (preferredLabel && preferredLabel.trim()) {
-    return preferredLabel.trim();
-  }
-  return id;
-}
-
-function buildFallbackSharePayload(params: {
-  modelLabel: string;
-  runLabel: string;
-  variableLabel: string;
-  forecastHour: number;
-  timeAxisMode: TimeAxisMode;
-  validTimeISO?: string | null;
-  permalink: string;
-}): SharePayload {
-  const timeLabel = params.timeAxisMode === "observed"
-    ? (params.validTimeISO ? `Observed ${formatObservedCompactTime(params.validTimeISO) ?? params.validTimeISO}` : "Observed time n/a")
-    : params.timeAxisMode === "valid"
-      ? (params.validTimeISO ? `${validDayLabel(params.forecastHour)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}` : validDayLabel(params.forecastHour))
-      : (Number.isFinite(params.forecastHour)
-        ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
-        : "FH n/a");
-  const summary = [params.modelLabel, params.runLabel, timeLabel, params.variableLabel]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join(" • ");
-  return {
-    permalink: params.permalink,
-    summary: summary || "CartoSky viewer share",
-    detailsSummary: "",
-  };
-}
-
-function toNumberOrNull(value: unknown): number | null {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function variableDefaultFh(entry?: CapabilityVariable | null): number | null {
-  const defaultFh = toNumberOrNull(entry?.default_fh);
-  if (defaultFh !== null) {
-    return defaultFh;
-  }
-  const minFh = toNumberOrNull(entry?.constraints?.min_fh);
-  if (minFh !== null) {
-    return minFh;
-  }
-  return null;
-}
-
-function modelOrderById(id: string): number | null {
-  const normalized = id.trim().toLowerCase();
-  return Number.isFinite(MODEL_ORDER_BY_ID[normalized]) ? MODEL_ORDER_BY_ID[normalized] : null;
-}
-
-function normalizeModelRows(
-  capabilities: CapabilitiesResponse | null | undefined,
-  modelIds: string[]
-): ModelEntry[] {
-  if (!capabilities?.model_catalog || modelIds.length === 0) {
-    return [];
-  }
-
-  const normalized: ModelEntry[] = [];
-  for (const id of modelIds) {
-    const normalizedId = String(id).trim();
-    const capability = capabilities.model_catalog[normalizedId];
-    if (!normalizedId || !capability) {
-      continue;
-    }
-    normalized.push({
-      id: normalizedId,
-      displayName: capability.name?.trim() || undefined,
-      order: modelOrderById(normalizedId),
-    });
-  }
-
-  return normalized.sort((a, b) => {
-    const aOrder = Number.isFinite(a.order) ? Number(a.order) : Number.POSITIVE_INFINITY;
-    const bOrder = Number.isFinite(b.order) ? Number(b.order) : Number.POSITIVE_INFINITY;
-    if (aOrder !== bOrder) {
-      return aOrder - bOrder;
-    }
-    return a.id.localeCompare(b.id);
-  });
-}
-
-function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | undefined): VariableEntry[] {
-  if (!modelCapability?.variables) {
-    return [];
-  }
-  const normalized: VariableEntry[] = Object.entries(modelCapability.variables)
-    .map(([id, entry]) => ({
-      id: String(id).trim(),
-      displayName: entry.display_name?.trim() || undefined,
-      order: toNumberOrNull(entry.order),
-      defaultFh: variableDefaultFh(entry),
-      buildable: entry.buildable !== false,
-      kind: typeof entry.kind === "string" ? entry.kind : null,
-      displayResamplingOverride:
-        typeof entry.display_resampling_override === "string" ? entry.display_resampling_override : null,
-      group: typeof entry.group === "string" ? entry.group : null,
-      renderSubstrates: readCapabilityRenderSubstrates(entry),
-    }))
-    .filter((entry) => Boolean(entry.id) && entry.buildable);
-
-  return normalized.sort((a, b) => {
-    const aOrder = Number.isFinite(a.order) ? Number(a.order) : Number.POSITIVE_INFINITY;
-    const bOrder = Number.isFinite(b.order) ? Number(b.order) : Number.POSITIVE_INFINITY;
-    if (aOrder !== bOrder) {
-      return aOrder - bOrder;
-    }
-    return a.id.localeCompare(b.id);
-  });
-}
-
-function capabilityVarsForManifest(
-  manifestVars: RunManifestResponse["variables"] | null | undefined,
-  capabilityVars: VariableEntry[]
-): VariableEntry[] {
-  if (!manifestVars) {
-    return capabilityVars;
-  }
-  const manifestKeys = Object.keys(manifestVars);
-  if (manifestKeys.length === 0) {
-    return [];
-  }
-  const manifestSet = new Set(manifestKeys);
-  const known = capabilityVars.filter((entry) => manifestSet.has(entry.id));
-  const knownSet = new Set(known.map((entry) => entry.id));
-  const extras = normalizeManifestVarRows(manifestVars).filter((entry) => !knownSet.has(entry.id));
-  return [...known, ...extras];
-}
-
-function normalizeManifestVarRows(
-  variables: RunManifestResponse["variables"] | null | undefined
-): VariableEntry[] {
-  if (!variables) {
-    return [];
-  }
-  const normalized: VariableEntry[] = [];
-  for (const [id, entry] of Object.entries(variables)) {
-    const normalizedId = String(id ?? "").trim();
-    if (!normalizedId) {
-      continue;
-    }
-    const displayName = entry?.display_name ?? entry?.name ?? entry?.label;
-    normalized.push({ id: normalizedId, displayName: displayName?.trim() || undefined });
-  }
-  return normalized;
-}
-
-function makeVariableOptions(entries: VariableEntry[]): VariableOption[] {
-  return entries.map((entry) => ({
-    value: entry.id,
-    label: makeVariableLabel(entry.id, entry.displayName),
-    group: entry.group ?? null,
-  }));
-}
-
-function resolveManifestFrames(
-  manifest: RunManifestResponse | null | undefined,
-  varKey: string
-): { rows: FrameRow[]; hasFrameList: boolean } {
-  if (!manifest || !varKey) {
-    return { rows: [], hasFrameList: false };
-  }
-  const varEntry = manifest.variables?.[varKey];
-  if (!varEntry || !Array.isArray(varEntry.frames)) {
-    return { rows: [], hasFrameList: false };
-  }
-
-  const rows: FrameRow[] = [];
-  for (const frame of varEntry.frames) {
-    const fh = Number(frame?.fh);
-    if (!Number.isFinite(fh)) {
-      continue;
-    }
-    rows.push({
-      fh,
-      has_cog: false,
-      run: manifest.run,
-      valid_time: typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : undefined,
-      meta:
-        typeof frame?.valid_time === "string" && frame.valid_time.trim()
-          ? { meta: { valid_time: frame.valid_time.trim() } }
-          : undefined,
-    });
-  }
-  rows.sort((a, b) => Number(a.fh) - Number(b.fh));
-  return { rows, hasFrameList: true };
-}
-
-function mergeManifestRowsWithPrevious(
-  manifestRows: FrameRow[],
-  previousRows: FrameRow[],
-  allowCarryForward = true
-): FrameRow[] {
-  if (!allowCarryForward || manifestRows.length === 0 || previousRows.length === 0) {
-    return manifestRows;
-  }
-
-  const previousByHour = new Map<number, FrameRow>();
-  for (const row of previousRows) {
-    const fh = Number(row.fh);
-    if (Number.isFinite(fh)) {
-      previousByHour.set(fh, row);
-    }
-  }
-
-  return manifestRows.map((row) => {
-    const previous = previousByHour.get(Number(row.fh));
-    if (!previous) {
-      return row;
-    }
-    return {
-      ...row,
-      meta: row.meta ?? previous.meta,
-    };
-  });
-}
-
-function extractLegendMeta(row: FrameRow | null | undefined): LegendMeta | null {
-  const rawMeta = row?.meta?.meta ?? null;
-  if (!rawMeta) return null;
-  const nested = (rawMeta as { meta?: LegendMeta | null }).meta;
-  return nested ?? (rawMeta as LegendMeta);
-}
-
-function nearestFrame(frames: number[], current: number): number {
-  if (frames.length === 0) return 0;
-  if (frames.includes(current)) return current;
-  return frames.reduce((nearest, value) => {
-    const nearestDelta = Math.abs(nearest - current);
-    const valueDelta = Math.abs(value - current);
-    return valueDelta < nearestDelta ? value : nearest;
-  }, frames[0]);
-}
-
-function selectableFramesForVariable(frames: number[], preferredFh: number | null | undefined): number[] {
-  if (frames.length === 0) {
-    return frames;
-  }
-  if (!Number.isFinite(preferredFh)) {
-    return frames;
-  }
-  const minimumFh = Number(preferredFh);
-  const filtered = frames.filter((fh) => fh >= minimumFh);
-  return filtered.length > 0 ? filtered : frames;
-}
-
-function preferredInitialFrame(
-  frames: number[],
-  preferredFh: number | null | undefined,
-  defaultFrameSelection: ModelDefaultFrameSelection = "first"
-): number {
-  if (frames.length === 0) {
-    return 0;
-  }
-  if (!Number.isFinite(preferredFh)) {
-    return defaultFrameSelection === "latest" ? frames[frames.length - 1] : frames[0];
-  }
-  return nearestFrame(frames, Number(preferredFh));
-}
-
-function resolveForecastHour(
-  frames: number[],
-  current: number,
-  preferredFh: number | null | undefined,
-  defaultFrameSelection: ModelDefaultFrameSelection = "first"
-): number {
-  const selectableFrames = selectableFramesForVariable(frames, preferredFh);
-  if (selectableFrames.length === 0) {
-    return 0;
-  }
-  if (Number.isFinite(current)) {
-    return nearestFrame(selectableFrames, current);
-  }
-  return preferredInitialFrame(selectableFrames, preferredFh, defaultFrameSelection);
-}
-
-function getEffectiveZoom(zoom: number): number {
-  const dpr = typeof window === "undefined" ? 1 : Math.max(1, window.devicePixelRatio || 1);
-  return zoom + Math.log2(dpr);
-}
-
-function isPrecipPtypeLegendMeta(
-  meta: LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string }
-): boolean {
-  const kind = String(meta.kind ?? "").toLowerCase();
-  const id = String(meta.var_key ?? meta.spec_key ?? meta.id ?? meta.var ?? "").toLowerCase();
-  return kind.includes("precip_ptype") || id === "precip_ptype";
-}
-
-function withPrecipRateUnits(title: string, units?: string): string {
-  const resolvedUnits = (units ?? "").trim();
-  if (!resolvedUnits) {
-    return title;
-  }
-  const lowerTitle = title.toLowerCase();
-  const lowerUnits = resolvedUnits.toLowerCase();
-  if (lowerTitle.includes(`(${lowerUnits})`)) {
-    return title;
-  }
-  return `${title} (${resolvedUnits})`;
-}
-
-function normalizeLegendUnits(
-  units: string | undefined,
-  meta: LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string }
-): string | undefined {
-  const resolved = (units ?? "").trim();
-  if (resolved.toLowerCase() !== "index") {
-    return units;
-  }
-  const id = String(meta.var_key ?? meta.spec_key ?? meta.id ?? meta.var ?? "").toLowerCase();
-  if (id === "radar_ptype" || id === "mrms_radar_ptype") {
-    return "dBZ";
-  }
-  return units;
-}
-
-function buildLegend(meta: LegendMeta | null | undefined, opacity: number): LegendPayload | null {
-  if (!meta) {
-    return null;
-  }
-  const metaWithIds = meta as LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string };
-  const isPrecipPtype = isPrecipPtypeLegendMeta(metaWithIds);
-  const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
-  const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
-    ? "Legend"
-    : rawTitle;
-  const title = isPrecipPtype ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
-  const units = normalizeLegendUnits(meta.units, metaWithIds);
-  const legendMetadata = {
-    kind: metaWithIds.kind,
-    id: metaWithIds.var_key ?? metaWithIds.spec_key ?? metaWithIds.id ?? metaWithIds.var,
-    ptype_breaks: metaWithIds.ptype_breaks,
-    ptype_order: metaWithIds.ptype_order,
-    bins_per_ptype: metaWithIds.bins_per_ptype,
-  };
-
-  if (Array.isArray(meta.legend_entries) && meta.legend_entries.length > 0) {
-    const entries = meta.legend_entries
-      .map((entry) => ({
-        value: Number(entry.value),
-        color: String(entry.color ?? "").trim(),
-        label: typeof entry.label === "string" ? entry.label.trim() : undefined,
-      }))
-      .filter((entry) => Number.isFinite(entry.value) && entry.color);
-    if (entries.length > 0) {
-      return {
-        title,
-        units,
-        entries,
-        opacity,
-        ...legendMetadata,
-      };
-    }
-  }
-
-  // V3 sidecar format: meta.legend.stops = [[value, color], ...]
-  const resolvedStops = meta.legend_stops ?? meta.legend?.stops;
-  if (Array.isArray(resolvedStops) && resolvedStops.length > 0) {
-    const entries = resolvedStops
-      .map(([value, color]) => ({ value: Number(value), color }))
-      .filter((entry) => Number.isFinite(entry.value));
-    if (entries.length === 0) {
-      return null;
-    }
-    return {
-      title,
-      units,
-      entries,
-      opacity,
-      ...legendMetadata,
-    };
-  }
-
-  const hasPtypeSegments =
-    Array.isArray(meta.ptype_order) && Boolean(meta.ptype_breaks) && Boolean(meta.ptype_levels);
-
-  if (
-    Array.isArray(meta.colors) &&
-    meta.colors.length > 1 &&
-    Array.isArray(meta.range) &&
-    meta.range.length === 2 &&
-    !hasPtypeSegments
-  ) {
-    const [min, max] = meta.range;
-    const entries = meta.colors.map((color, index) => {
-      const denom = Math.max(1, meta.colors!.length - 1);
-      const value = min + ((max - min) * index) / denom;
-      return { value, color };
-    });
-    return {
-      title,
-      units,
-      entries,
-      opacity,
-      ...legendMetadata,
-    };
-  }
-
-  if (Array.isArray(meta.colors) && meta.colors.length > 0) {
-    const entries: Array<{ value: number; color: string }> = [];
-
-    if (Array.isArray(meta.ptype_order) && meta.ptype_breaks && meta.ptype_levels) {
-      for (const ptype of meta.ptype_order) {
-        const ptypeBreak = meta.ptype_breaks[ptype];
-        const ptypeLevels = meta.ptype_levels[ptype];
-        if (!ptypeBreak || !Array.isArray(ptypeLevels)) {
-          continue;
-        }
-        const offset = Number(ptypeBreak.offset);
-        const count = Number(ptypeBreak.count);
-        if (!Number.isFinite(offset) || !Number.isFinite(count) || offset < 0 || count <= 0) {
-          continue;
-        }
-        const maxItems = Math.min(count, ptypeLevels.length, meta.colors.length - offset);
-        for (let index = 0; index < maxItems; index += 1) {
-          const value = Number(ptypeLevels[index]);
-          const color = meta.colors[offset + index];
-          if (!Number.isFinite(value) || !color) {
-            continue;
-          }
-          entries.push({ value, color });
-        }
-      }
-    }
-
-    if (entries.length === 0 && Array.isArray(meta.levels) && meta.levels.length > 0) {
-      const maxItems = Math.min(meta.levels.length, meta.colors.length);
-      for (let index = 0; index < maxItems; index += 1) {
-        const value = Number(meta.levels[index]);
-        const color = meta.colors[index];
-        if (!Number.isFinite(value) || !color) {
-          continue;
-        }
-        entries.push({ value, color });
-      }
-    }
-
-    if (entries.length > 0) {
-      return {
-        title,
-        units,
-        entries,
-        opacity,
-        ...legendMetadata,
-      };
-    }
-  }
-
-  return null;
-}
-
-function buildVectorLayerUrl(params: {
-  apiRoot: string;
-  model: string;
-  run: string | null | undefined;
-  variable: string;
-  frame: FrameRow | null | undefined;
-  layerKey?: string;
-}): string | null {
-  const resolvedRun = String(params.run ?? "").trim();
-  const layerKey = String(params.layerKey ?? "primary").trim();
-  const fh = Number(params.frame?.fh);
-  if (!resolvedRun || !Number.isFinite(fh) || !layerKey) {
-    return null;
-  }
-  return `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
-}
 
 export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
@@ -806,17 +170,15 @@ export default function App() {
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
   const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
-  const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
-  const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
-  const [pointLabelsEnabled, setPointLabelsEnabled] = useState(true);
-  const [zoomControlsVisible, setZoomControlsVisible] = useState(false);
-  const [legendVisible, setLegendVisible] = useState(() =>
-    typeof window === "undefined" ? true : detectViewerLayoutMode() === "desktop"
-  );
-  const [displayPanelOpen, setDisplayPanelOpen] = useState(false);
-  const [isPageVisible, setIsPageVisible] = useState(() =>
-    typeof document === "undefined" ? true : !document.hidden
-  );
+  const {
+    basemapMode, setBasemapMode,
+    pointLabelsEnabled, setPointLabelsEnabled,
+    zoomControlsVisible, setZoomControlsVisible,
+    legendVisible, setLegendVisible,
+    displayPanelOpen, setDisplayPanelOpen,
+    opacity, setOpacity,
+  } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
+  const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -831,7 +193,7 @@ export default function App() {
     summary: "CartoSky viewer share",
     detailsSummary: "",
   });
-  const [frameStatusMessage, setFrameStatusMessage] = useState<string | null>(null);
+  const { frameStatusMessage, showTransientFrameStatus, clearFrameStatusTimer } = useFrameStatusBadge();
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
@@ -862,7 +224,6 @@ export default function App() {
     return variableSwitchState.visualState !== "promoting_new";
   }, [variableSwitchState, variable]);
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
-  const [permalinkHydrated, setPermalinkHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
   const selectionEpochRef = useRef(selectionEpoch);
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
@@ -871,7 +232,6 @@ export default function App() {
   const scrubRafRef = useRef<number | null>(null);
   const pendingScrubHourRef = useRef<number | null>(null);
   const scrubPhase0aRef = useRef<ScrubPhase0aSnapshot>(emptyScrubPhase0aSnapshot());
-  const frameStatusTimerRef = useRef<number | null>(null);
   const forecastHourRef = useRef(forecastHour);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const runsLoadedForModelRef = useRef<string>("");
@@ -898,9 +258,6 @@ export default function App() {
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
   const targetForecastHourRef = useRef(targetForecastHour);
-  const permalinkHydratedRef = useRef(false);
-  const lastSyncedPermalinkSearchRef = useRef("");
-  const suppressNextUrlSyncRef = useRef(true);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
   const anchorSelectionKeyRef = useRef("");
@@ -911,31 +268,6 @@ export default function App() {
   const anchorBatchLastAppliedHourRef = useRef<number | null>(null);
   const anchorBatchLastAppliedSelectionKeyRef = useRef("");
   const anchorBatchContextRef = useRef<AnchorBatchRequestContext | null>(null);
-  const wasCompactViewportRef = useRef<boolean>(viewerLayoutMode !== "desktop");
-
-  useEffect(() => {
-    writeBasemapModePreference(basemapMode);
-  }, [basemapMode]);
-
-  useEffect(() => {
-    setLegendVisible((current) => {
-      if (viewerLayoutMode !== "desktop") {
-        wasCompactViewportRef.current = true;
-        return false;
-      }
-
-      const next = wasCompactViewportRef.current ? true : current;
-      wasCompactViewportRef.current = false;
-      return next;
-    });
-  }, [viewerLayoutMode]);
-
-  useEffect(() => {
-    if (isDesktopViewerLayout || !displayPanelOpen) {
-      return;
-    }
-    setDisplayPanelOpen(false);
-  }, [displayPanelOpen, isDesktopViewerLayout]);
 
   const modelCatalog = capabilities?.model_catalog ?? {};
   const selectedModelCapability: CapabilityModel | null = model ? modelCatalog[model] ?? null : null;
@@ -1609,18 +941,6 @@ export default function App() {
     };
   }, [isMapReady, region, regionPresets]);
 
-  useEffect(() => {
-    if (permalinkHydratedRef.current || !bootstrapHydrated || !mapViewHydratedRef.current) {
-      return;
-    }
-    permalinkHydratedRef.current = true;
-    suppressNextUrlSyncRef.current = true;
-    setPermalinkHydrated(true);
-    if (typeof window !== "undefined") {
-      lastSyncedPermalinkSearchRef.current = window.location.search;
-    }
-  }, [bootstrapHydrated, mapViewTick]);
-
   const visibleGridOverlayHour = useMemo(() => {
     if (!isGridLowMidActive) {
       return null;
@@ -1827,25 +1147,6 @@ export default function App() {
     setVariableSwitchState(null);
     return true;
   }, [loadedFramesKey, variable]);
-
-  const clearFrameStatusTimer = useCallback(() => {
-    if (frameStatusTimerRef.current !== null) {
-      window.clearTimeout(frameStatusTimerRef.current);
-      frameStatusTimerRef.current = null;
-    }
-    setFrameStatusMessage(null);
-  }, []);
-
-  const showTransientFrameStatus = useCallback((message: string) => {
-    setFrameStatusMessage(message);
-    if (frameStatusTimerRef.current !== null) {
-      window.clearTimeout(frameStatusTimerRef.current);
-    }
-    frameStatusTimerRef.current = window.setTimeout(() => {
-      frameStatusTimerRef.current = null;
-      setFrameStatusMessage(null);
-    }, FRAME_STATUS_BADGE_MS);
-  }, []);
 
   useEffect(() => {
     requestGenerationRef.current += 1;
@@ -2543,17 +1844,6 @@ export default function App() {
     variable,
     visibleOverlayHour,
   ]);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      setIsPageVisible(!document.hidden);
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, []);
 
   useEffect(() => {
     if (!selectedModelLatestOnly || run === "latest") {
@@ -3524,57 +2814,17 @@ export default function App() {
     controlsIsPlaying,
   ]);
 
-  useEffect(() => {
-    if (!permalinkHydrated || typeof window === "undefined") {
-      return;
-    }
-    if (suppressNextUrlSyncRef.current) {
-      suppressNextUrlSyncRef.current = false;
-      lastSyncedPermalinkSearchRef.current = window.location.search;
-      return;
-    }
-
-    let cancelled = false;
-    const timeoutId = window.setTimeout(() => {
-      void import("@/lib/permalink").then(({ buildPermalinkSearch, replaceUrlQuery }) => {
-        if (cancelled) {
-          return;
-        }
-        const mapView = mapViewRef.current;
-        const search = buildPermalinkSearch({
-          model: model || undefined,
-          run: run || undefined,
-          var: variable || undefined,
-          fh: Number.isFinite(resolvedForecastHourPermalink)
-            ? Number(resolvedForecastHourPermalink)
-            : undefined,
-          region: region || undefined,
-          lat: mapView.lat,
-          lon: mapView.lon,
-          z: mapView.z,
-        });
-        if (search === lastSyncedPermalinkSearchRef.current || search === window.location.search) {
-          lastSyncedPermalinkSearchRef.current = search;
-          return;
-        }
-        replaceUrlQuery(search);
-        lastSyncedPermalinkSearchRef.current = search;
-      });
-    }, PERMALINK_SYNC_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    permalinkHydrated,
+  usePermalinkSync({
+    bootstrapHydrated,
+    mapViewHydratedRef,
+    mapViewTick,
+    mapViewRef,
     model,
     run,
     variable,
     resolvedForecastHourPermalink,
     region,
-    mapViewTick,
-  ]);
+  });
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
