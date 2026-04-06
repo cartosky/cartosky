@@ -170,6 +170,30 @@ export default function Variables() {
         ],
       },
       {
+        id: "mucape",
+        name: "Most-Unstable CAPE",
+        oneLiner: "Buoyant energy for the most unstable parcel in the lower troposphere, highlighting elevated or concentrated instability reservoirs.",
+        pills: ["255-0 mb layer", "J/kg", "Continuous"],
+        definition:
+          "Most-unstable CAPE estimates the positive buoyant energy associated with the most unstable parcel found within the lower troposphere. It is useful when instability is not well represented by a simple mixed boundary-layer parcel, especially in elevated setups.",
+        bestFor: [
+          "Identifying elevated instability above shallow stable layers",
+          "Comparing whether severe potential is rooted near the surface or in a deeper unstable layer",
+          "Highlighting environments where nocturnal or elevated convection can persist",
+        ],
+        interpretation: [
+          "MUCAPE often exceeds MLCAPE in elevated regimes, so treat it as a signal of available instability rather than guaranteed surface-based storm intensity.",
+          "Compare MUCAPE with MLCAPE, surface-based fields, inhibition, and forcing to understand storm rooting depth.",
+        ],
+        limitations: [
+          "Large MUCAPE can occur in strongly capped or elevated environments where storms never ingest that parcel source region efficiently.",
+          "Different models may define the sampled unstable layer differently enough that direct run-to-run comparisons still need caution.",
+        ],
+        notes: [
+          "Uses the same CAPE color ramp as MLCAPE so threshold interpretation stays visually consistent across instability variants.",
+        ],
+      },
+      {
         id: "qpf",
         name: "Total Precipitation (QPF)",
         oneLiner: "Accumulated liquid-equivalent precipitation over the forecast period.",

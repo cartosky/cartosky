@@ -94,6 +94,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "J/kg",
     },
+    ("hrrr", "mucape"): {
+        "scale": 1.0,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "J/kg",
+    },
     ("hrrr", "wspd10m"): {
         "scale": 0.1,
         "offset": 0.0,
@@ -149,6 +155,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "F",
     },
     ("gfs", "mlcape"): {
+        "scale": 1.0,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "J/kg",
+    },
+    ("gfs", "mucape"): {
         "scale": 1.0,
         "offset": 0.0,
         "nodata": 65535,

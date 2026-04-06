@@ -46,6 +46,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "dp2m",
         "tmp850",
         "mlcape",
+        "mucape",
         "snowfall_total",
         "snowfall_kuchera_total",
         "precip_total",
@@ -120,6 +121,18 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["color_map_id"] == "mlcape"
     assert mlcape["display_resampling_override"] is None
 
+    mucape = payload["variables"]["mucape"]
+    assert mucape["var_key"] == "mucape"
+    assert mucape["buildable"] is True
+    assert mucape["derived"] is False
+    assert mucape["kind"] == "continuous"
+    assert mucape["units"] == "J/kg"
+    assert mucape["display_name"] == "Most-Unstable CAPE"
+    assert mucape["order"] == 5
+    assert mucape["group"] == "Instability"
+    assert mucape["color_map_id"] == "mlcape"
+    assert mucape["display_resampling_override"] is None
+
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
@@ -152,3 +165,23 @@ def test_hrrr_mlcape_selector_and_alias_invariants() -> None:
     }
     assert mlcape_spec.selectors.hints["upstream_var"] == "mlcape"
     assert mlcape_spec.selectors.hints["cape_layer"] == "90-0 mb above ground"
+
+
+def test_hrrr_mucape_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("mucape") == "mucape"
+
+    mucape_spec = HRRR_MODEL.get_var("mucape")
+    assert mucape_spec is not None
+    assert mucape_spec.primary is True
+    assert mucape_spec.derived is False
+    assert mucape_spec.kind == "continuous"
+    assert mucape_spec.units == "J/kg"
+    assert mucape_spec.selectors.search == [":CAPE:255-0 mb above ground:"]
+    assert mucape_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "pressureFromGroundLayer",
+        "topLevel": "0",
+        "bottomLevel": "255",
+    }
+    assert mucape_spec.selectors.hints["upstream_var"] == "mucape"
+    assert mucape_spec.selectors.hints["cape_layer"] == "255-0 mb above ground"

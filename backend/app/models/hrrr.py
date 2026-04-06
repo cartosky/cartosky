@@ -29,6 +29,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "precip_total"
         if normalized == "mlcape":
             return "mlcape"
+        if normalized == "mucape":
+            return "mucape"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
             return "snowfall_total"
         if normalized == "snowfall_kuchera_total":
@@ -185,6 +187,28 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "cf_var": "cape",
                 "short_name": "cape",
                 "cape_layer": "90-0 mb above ground",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="J/kg",
+    ),
+    "mucape": VarSpec(
+        id="mucape",
+        name="Most-Unstable CAPE",
+        selectors=VarSelectors(
+            search=[":CAPE:255-0 mb above ground:"],
+            filter_by_keys={
+                "shortName": "cape",
+                "typeOfLevel": "pressureFromGroundLayer",
+                "topLevel": "0",
+                "bottomLevel": "255",
+            },
+            hints={
+                "upstream_var": "mucape",
+                "cf_var": "cape",
+                "short_name": "cape",
+                "cape_layer": "255-0 mb above ground",
             },
         ),
         primary=True,
@@ -435,6 +459,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "mlcape": "mlcape",
+    "mucape": "mlcape",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
     "precip_total": "precip_total",
@@ -457,11 +482,12 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 2,
     "tmp850": 3,
     "mlcape": 4,
-    "precip_total": 5,
-    "snowfall_total": 6,
-    "wspd10m": 7,
-    "wgst10m": 8,
-    "snowfall_kuchera_total": 9,
+    "mucape": 5,
+    "precip_total": 6,
+    "snowfall_total": 7,
+    "wspd10m": 8,
+    "wgst10m": 9,
+    "snowfall_kuchera_total": 10,
 }
 
 HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -470,6 +496,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "mlcape": "Instability",
+    "mucape": "Instability",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
