@@ -2047,7 +2047,7 @@ def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int =
         device_key = str(row["device_type"] or "unknown").strip() or "unknown"
         cache_key = "unknown"
         webgl_key = "unknown"
-        encoding_key = "identity"
+        encoding_key = "unknown"
         payload_key = "unknown"
         meta_json = row["meta_json"]
         if isinstance(meta_json, str) and meta_json.strip():

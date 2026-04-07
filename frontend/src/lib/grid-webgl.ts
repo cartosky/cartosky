@@ -1368,6 +1368,10 @@ export class GridWebglLayerController {
         const contentLengthBytes = parseContentLengthHeader(response);
         const responseDiagnosticMeta = {
           ...diagnosticMeta,
+          cf_cache_status: response.headers.get("CF-Cache-Status")?.trim() || null,
+          server_timing: response.headers.get("Server-Timing")?.trim() || null,
+          cache_control: response.headers.get("Cache-Control")?.trim() || null,
+          age: response.headers.get("Age")?.trim() || null,
           content_encoding: response.headers.get("Content-Encoding")?.trim() || null,
           content_length_bytes: contentLengthBytes,
         };

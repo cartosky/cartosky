@@ -447,6 +447,34 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
             "meta": {"cf_cache_status": "MISS", "webgl_backend": "webgl2", "content_encoding": "br", "content_length_bytes": 8480000, "payload_bytes": 8480000},
         },
         {
+            "metric_name": "grid_binary_array_buffer_duration",
+            "metric_value": 880.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-4b",
+            "model_id": "mrms",
+            "variable_id": "reflectivity",
+            "run_id": "latest",
+            "device_type": "desktop",
+            "viewport_bucket": "lg",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "MISS", "webgl_backend": "webgl2", "content_encoding": "br", "content_length_bytes": 8480000, "payload_bytes": 8480000},
+        },
+        {
+            "metric_name": "grid_binary_array_buffer_duration",
+            "metric_value": 155.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-4c",
+            "model_id": "gfs",
+            "variable_id": "tmp2m",
+            "run_id": "latest",
+            "device_type": "desktop",
+            "viewport_bucket": "lg",
+            "page": "/viewer",
+            "meta": {"cf_cache_status": "HIT", "webgl_backend": "webgl2", "content_length_bytes": 248000},
+        },
+        {
             "metric_name": "grid_texture_upload_duration",
             "metric_value": 42.0,
             "metric_unit": "ms",
@@ -513,6 +541,14 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
     assert grid_metric["by_webgl_backend"][0]["key"] == "webgl2"
     assert grid_metric["by_content_encoding"][0]["key"] == "br"
     assert grid_metric["by_payload_size_bucket"][0]["key"] == "8MB-16MB"
+
+    array_buffer_metric = next(item for item in body["metrics"] if item["metric_name"] == "grid_binary_array_buffer_duration")
+    assert array_buffer_metric["label"] == "Grid ArrayBuffer"
+    assert array_buffer_metric["summary"]["count"] == 2
+    array_buffer_cache_keys = {item["key"] for item in array_buffer_metric["by_cf_cache_status"]}
+    assert array_buffer_cache_keys == {"HIT", "MISS"}
+    array_buffer_encoding_keys = {item["key"] for item in array_buffer_metric["by_content_encoding"]}
+    assert array_buffer_encoding_keys == {"br", "unknown"}
 
     upload_metric = next(item for item in body["metrics"] if item["metric_name"] == "grid_texture_upload_duration")
     assert upload_metric["label"] == "Grid Texture Upload"
