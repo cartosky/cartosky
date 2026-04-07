@@ -2474,6 +2474,7 @@ def _derive_precip_total_cumulative(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    frame_start = time.perf_counter()
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
     use_inventory_resolution = (
@@ -2494,6 +2495,50 @@ def _derive_precip_total_cumulative(
         resampling=resampling,
     )
 
+    active_step_fhs = list(step_fhs)
+    reused_prev_cumulative = False
+    base_fh: int | None = None
+    base_cumulative_kgm2: np.ndarray | None = None
+    base_crs: rasterio.crs.CRS | None = None
+    base_transform: rasterio.transform.Affine | None = None
+    first_step_expected_start_fh: int | None = None
+    initial_apcp_cumulative: tuple[
+        np.ndarray,
+        np.ndarray,
+        rasterio.crs.CRS,
+        rasterio.transform.Affine,
+        int,
+    ] | None = None
+
+    if len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+            scale_divisor=0.03937007874015748,
+        )
+        if prior is not None:
+            prior_data, prior_crs, prior_transform = prior
+            active_step_fhs = [int(step_fhs[-1])]
+            reused_prev_cumulative = True
+            base_fh = prev_fh
+            base_cumulative_kgm2 = prior_data.astype(np.float32, copy=False)
+            base_crs = prior_crs
+            base_transform = prior_transform
+            if use_inventory_resolution:
+                first_step_expected_start_fh = prev_fh
+                initial_apcp_cumulative = (
+                    prior_data.astype(np.float32, copy=False),
+                    np.isfinite(prior_data),
+                    prior_crs,
+                    prior_transform,
+                    prev_fh,
+                )
+
     if not use_inventory_resolution:
         _prefetch_components_parallel(
             [
@@ -2503,7 +2548,7 @@ def _derive_precip_total_cumulative(
                     warped=use_warped, target_region=target_region,
                     target_grid_id=target_grid_id, resampling=resampling,
                 )
-                for sfh in step_fhs
+                for sfh in active_step_fhs
             ],
             ctx,
             label=f"precip_total fh{fh:03d}",
@@ -2526,31 +2571,134 @@ def _derive_precip_total_cumulative(
             step_valid = np.asarray(apcp_valid_hint, dtype=bool)
         return step_clean, step_valid
 
-    cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
-        model_id=model_id,
-        var_key=var_key,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        step_fhs=step_fhs,
-        model_plugin=model_plugin,
-        ctx=ctx,
-        apcp_component=apcp_component,
-        apcp_product=None,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-        use_inventory_resolution=use_inventory_resolution,
-        process_step=_process_step,
-        error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
-    )
+    try:
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            first_step_expected_start_fh=first_step_expected_start_fh,
+            initial_apcp_cumulative=initial_apcp_cumulative,
+        )
+    except ValueError as exc:
+        if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
+            raise
+        logger.warning(
+            "%s incremental APCP state unusable at fh=%03d; retrying full rebuild reason=\"%s\"",
+            var_key,
+            fh,
+            str(exc).replace('"', "'"),
+        )
+        active_step_fhs = list(step_fhs)
+        reused_prev_cumulative = False
+        base_fh = None
+        base_cumulative_kgm2 = None
+        base_crs = None
+        base_transform = None
+        first_step_expected_start_fh = None
+        initial_apcp_cumulative = None
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+        )
+
+    if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
+        shape_match = base_cumulative_kgm2.shape == cumulative_kgm2.shape
+        crs_match = base_crs == src_crs
+        transform_match = base_transform == src_transform
+        if not (shape_match and crs_match and transform_match):
+            if reused_prev_cumulative:
+                logger.warning(
+                    "%s incremental base-grid mismatch at fh=%03d; retrying full rebuild "
+                    "(shape_match=%s crs_match=%s transform_match=%s)",
+                    var_key,
+                    fh,
+                    shape_match,
+                    crs_match,
+                    transform_match,
+                )
+                cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+                    model_id=model_id,
+                    var_key=var_key,
+                    product=product,
+                    run_date=run_date,
+                    fh=fh,
+                    step_fhs=list(step_fhs),
+                    model_plugin=model_plugin,
+                    ctx=ctx,
+                    apcp_component=apcp_component,
+                    apcp_product=None,
+                    use_warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    use_inventory_resolution=use_inventory_resolution,
+                    process_step=_process_step,
+                    error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+                )
+                active_step_fhs = list(step_fhs)
+                reused_prev_cumulative = False
+                base_fh = None
+                base_cumulative_kgm2 = None
+                base_crs = None
+                base_transform = None
+            else:
+                raise ValueError(
+                    f"Precip incremental base-grid mismatch for {model_id}/{var_key} fh{fh:03d}"
+                )
+        if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
+            base_valid = np.isfinite(base_cumulative_kgm2)
+            base_clean = np.where(base_valid, base_cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+            current_valid = np.isfinite(cumulative_kgm2)
+            current_clean = np.where(current_valid, cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+            cumulative_kgm2 = (base_clean + current_clean).astype(np.float32, copy=False)
+            cumulative_kgm2 = np.where(base_valid | current_valid, cumulative_kgm2, np.nan).astype(np.float32, copy=False)
 
     cumulative_inches = convert_units(
         cumulative_kgm2,
         var_key=var_key,
         model_id=model_id,
         var_capability=var_capability,
+    )
+    logger.info(
+        "%s incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s base_fh=%s compute_ms=%d",
+        var_key,
+        model_id,
+        _run_id_from_date(run_date),
+        fh,
+        len(step_fhs),
+        len(active_step_fhs),
+        "true" if reused_prev_cumulative else "false",
+        f"{base_fh:03d}" if base_fh is not None else "none",
+        int((time.perf_counter() - frame_start) * 1000),
     )
     _kuchera_store_cumulative_cache(
         model_id=model_id,
