@@ -29,6 +29,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "precip_total"
         if normalized == "mlcape":
             return "mlcape"
+        if normalized == "sbcape":
+            return "sbcape"
         if normalized == "mucape":
             return "mucape"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
@@ -170,6 +172,26 @@ HRRR_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="C",
+    ),
+    "sbcape": VarSpec(
+        id="sbcape",
+        name="Surface-Based CAPE",
+        selectors=VarSelectors(
+            search=[":CAPE:surface:"],
+            filter_by_keys={
+                "shortName": "cape",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "sbcape",
+                "cf_var": "cape",
+                "short_name": "cape",
+                "cape_layer": "surface",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="J/kg",
     ),
     "mlcape": VarSpec(
         id="mlcape",
@@ -458,6 +480,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
     "snowfall_total": "snowfall_total",
@@ -481,13 +504,14 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "tmp850": 3,
-    "mlcape": 4,
-    "mucape": 5,
-    "precip_total": 6,
-    "snowfall_total": 7,
-    "wspd10m": 8,
-    "wgst10m": 9,
-    "snowfall_kuchera_total": 10,
+    "sbcape": 4,
+    "mlcape": 5,
+    "mucape": 6,
+    "precip_total": 7,
+    "snowfall_total": 8,
+    "wspd10m": 9,
+    "wgst10m": 10,
+    "snowfall_kuchera_total": 11,
 }
 
 HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -495,6 +519,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
     "precip_total": "Precipitation",

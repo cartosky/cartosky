@@ -31,6 +31,7 @@ def test_nam_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "sbcape",
         "mlcape",
         "mucape",
         "wspd10m",
@@ -86,6 +87,17 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["display_name"] == "850mb Temp"
     assert tmp850["order"] == 3
 
+    sbcape = payload["variables"]["sbcape"]
+    assert sbcape["buildable"] is True
+    assert sbcape["derived"] is False
+    assert sbcape["kind"] == "continuous"
+    assert sbcape["units"] == "J/kg"
+    assert sbcape["display_name"] == "Surface-Based CAPE"
+    assert sbcape["group"] == "Instability"
+    assert sbcape["color_map_id"] == "mlcape"
+    assert sbcape["order"] == 4
+    assert sbcape["display_resampling_override"] is None
+
     mlcape = payload["variables"]["mlcape"]
     assert mlcape["buildable"] is True
     assert mlcape["derived"] is False
@@ -94,7 +106,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
-    assert mlcape["order"] == 4
+    assert mlcape["order"] == 5
     assert mlcape["display_resampling_override"] is None
 
     mucape = payload["variables"]["mucape"]
@@ -105,7 +117,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["display_name"] == "Most-Unstable CAPE"
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
-    assert mucape["order"] == 5
+    assert mucape["order"] == 6
     assert mucape["display_resampling_override"] is None
 
     wspd10m = payload["variables"]["wspd10m"]
@@ -115,7 +127,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wspd10m["kind"] == "continuous"
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 8
+    assert wspd10m["order"] == 9
 
     wgst10m = payload["variables"]["wgst10m"]
     assert wgst10m["buildable"] is True
@@ -123,7 +135,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["kind"] == "continuous"
     assert wgst10m["units"] == "mph"
     assert wgst10m["display_name"] == "10m Wind Gust"
-    assert wgst10m["order"] == 9
+    assert wgst10m["order"] == 10
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
@@ -134,7 +146,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 1
     assert precip_total["constraints"] == {"min_fh": 1}
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 6
+    assert precip_total["order"] == 7
     assert precip_total["display_resampling_override"] is None
 
     snowfall_total = payload["variables"]["snowfall_total"]
@@ -146,7 +158,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["default_fh"] == 1
     assert snowfall_total["constraints"] == {"min_fh": 1}
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
-    assert snowfall_total["order"] == 7
+    assert snowfall_total["order"] == 8
     assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
@@ -158,7 +170,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["default_fh"] == 1
     assert snowfall_kuchera_total["constraints"] == {"min_fh": 1}
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
-    assert snowfall_kuchera_total["order"] == 10
+    assert snowfall_kuchera_total["order"] == 11
 
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
@@ -213,6 +225,7 @@ def test_nam_aliases_normalize() -> None:
     assert NAM_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert NAM_MODEL.normalize_var_id("t850") == "tmp850"
     assert NAM_MODEL.normalize_var_id("temp850") == "tmp850"
+    assert NAM_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert NAM_MODEL.normalize_var_id("mlcape") == "mlcape"
     assert NAM_MODEL.normalize_var_id("mucape") == "mucape"
     assert NAM_MODEL.normalize_var_id("wgst10m") == "wgst10m"
@@ -234,6 +247,22 @@ def test_nam_aliases_normalize() -> None:
     assert NAM_MODEL.normalize_var_id("10si") == "10si"
     assert NAM_MODEL.normalize_var_id("wind10m") == "10si"
     assert NAM_MODEL.normalize_var_id("wspd10m") == "wspd10m"
+
+
+def test_nam_sbcape_selector_invariants() -> None:
+    sbcape_spec = NAM_MODEL.get_var("sbcape")
+    assert sbcape_spec is not None
+    assert sbcape_spec.primary is True
+    assert sbcape_spec.derived is False
+    assert sbcape_spec.kind == "continuous"
+    assert sbcape_spec.units == "J/kg"
+    assert sbcape_spec.selectors.search == [":CAPE:surface:"]
+    assert sbcape_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "surface",
+    }
+    assert sbcape_spec.selectors.hints["upstream_var"] == "sbcape"
+    assert sbcape_spec.selectors.hints["cape_layer"] == "surface"
 
 
 def test_nam_mlcape_selector_invariants() -> None:

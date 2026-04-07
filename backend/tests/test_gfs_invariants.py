@@ -33,6 +33,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "sbcape",
         "mlcape",
         "mucape",
         "wspd10m",
@@ -64,7 +65,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_ptype["derived"] is True
     assert precip_ptype["derive_strategy_id"] == "precip_ptype_blend"
     assert precip_ptype["units"] == "in/hr"
-    assert precip_ptype["order"] == 10
+    assert precip_ptype["order"] == 11
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
@@ -73,7 +74,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["kind"] == "continuous"
     assert precip_total["constraints"]["min_fh"] == 3
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 6
+    assert precip_total["order"] == 7
     assert precip_total["display_resampling_override"] is None
 
     tmp850 = payload["variables"]["tmp850"]
@@ -97,6 +98,17 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["display_name"] == "Surface Temp"
     assert tmp2m["order"] == 1
 
+    sbcape = payload["variables"]["sbcape"]
+    assert sbcape["buildable"] is True
+    assert sbcape["derived"] is False
+    assert sbcape["kind"] == "continuous"
+    assert sbcape["units"] == "J/kg"
+    assert sbcape["display_name"] == "Surface-Based CAPE"
+    assert sbcape["group"] == "Instability"
+    assert sbcape["color_map_id"] == "mlcape"
+    assert sbcape["order"] == 4
+    assert sbcape["display_resampling_override"] is None
+
     mlcape = payload["variables"]["mlcape"]
     assert mlcape["buildable"] is True
     assert mlcape["derived"] is False
@@ -105,7 +117,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
-    assert mlcape["order"] == 4
+    assert mlcape["order"] == 5
     assert mlcape["display_resampling_override"] is None
 
     mucape = payload["variables"]["mucape"]
@@ -116,7 +128,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["display_name"] == "Most-Unstable CAPE"
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
-    assert mucape["order"] == 5
+    assert mucape["order"] == 6
     assert mucape["display_resampling_override"] is None
 
     wgst10m = payload["variables"]["wgst10m"]
@@ -124,14 +136,14 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["derived"] is False
     assert wgst10m["units"] == "mph"
     assert wgst10m["display_name"] == "10m Wind Gust"
-    assert wgst10m["order"] == 9
+    assert wgst10m["order"] == 10
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["buildable"] is True
     assert wspd10m["derived"] is True
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 8
+    assert wspd10m["order"] == 9
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -141,7 +153,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["constraints"]["min_fh"] == 3
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
-    assert snowfall_total["order"] == 7
+    assert snowfall_total["order"] == 8
     assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
@@ -152,7 +164,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["constraints"]["min_fh"] == 3
     assert snowfall_kuchera_total["default_fh"] == 6
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
-    assert snowfall_kuchera_total["order"] == 13
+    assert snowfall_kuchera_total["order"] == 14
 
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
@@ -168,11 +180,25 @@ def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert GFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert GFS_MODEL.normalize_var_id("t850mb") == "tmp850"
+    assert GFS_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert GFS_MODEL.normalize_var_id("mlcape") == "mlcape"
     assert GFS_MODEL.normalize_var_id("mucape") == "mucape"
     assert GFS_MODEL.normalize_var_id("wgst10m") == "wgst10m"
     assert GFS_MODEL.normalize_var_id("gust") == "wgst10m"
     assert GFS_MODEL.normalize_var_id("gust10m") == "wgst10m"
+
+
+def test_gfs_sbcape_selector_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("sbcape")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "J/kg"
+    assert var_spec.selectors.search == [":CAPE:surface:"]
+    assert var_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "surface",
+    }
 
 
 def test_gfs_mlcape_selector_invariants() -> None:

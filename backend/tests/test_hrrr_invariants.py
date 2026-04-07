@@ -45,6 +45,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "sbcape",
         "mlcape",
         "mucape",
         "snowfall_total",
@@ -109,6 +110,18 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["display_resampling_override"] is None
     assert tmp2m["render_substrates"] == ["grid"]
 
+    sbcape = payload["variables"]["sbcape"]
+    assert sbcape["var_key"] == "sbcape"
+    assert sbcape["buildable"] is True
+    assert sbcape["derived"] is False
+    assert sbcape["kind"] == "continuous"
+    assert sbcape["units"] == "J/kg"
+    assert sbcape["display_name"] == "Surface-Based CAPE"
+    assert sbcape["order"] == 4
+    assert sbcape["group"] == "Instability"
+    assert sbcape["color_map_id"] == "mlcape"
+    assert sbcape["display_resampling_override"] is None
+
     mlcape = payload["variables"]["mlcape"]
     assert mlcape["var_key"] == "mlcape"
     assert mlcape["buildable"] is True
@@ -116,7 +129,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["kind"] == "continuous"
     assert mlcape["units"] == "J/kg"
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
-    assert mlcape["order"] == 4
+    assert mlcape["order"] == 5
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
     assert mlcape["display_resampling_override"] is None
@@ -128,7 +141,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["kind"] == "continuous"
     assert mucape["units"] == "J/kg"
     assert mucape["display_name"] == "Most-Unstable CAPE"
-    assert mucape["order"] == 5
+    assert mucape["order"] == 6
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
     assert mucape["display_resampling_override"] is None
@@ -145,6 +158,24 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["buildable"] is True
     assert snowfall_kuchera_total["derived"] is True
     assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
+
+
+def test_hrrr_sbcape_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("sbcape") == "sbcape"
+
+    sbcape_spec = HRRR_MODEL.get_var("sbcape")
+    assert sbcape_spec is not None
+    assert sbcape_spec.primary is True
+    assert sbcape_spec.derived is False
+    assert sbcape_spec.kind == "continuous"
+    assert sbcape_spec.units == "J/kg"
+    assert sbcape_spec.selectors.search == [":CAPE:surface:"]
+    assert sbcape_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "surface",
+    }
+    assert sbcape_spec.selectors.hints["upstream_var"] == "sbcape"
+    assert sbcape_spec.selectors.hints["cape_layer"] == "surface"
 
 
 def test_hrrr_mlcape_selector_and_alias_invariants() -> None:

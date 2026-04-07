@@ -146,6 +146,30 @@ export default function Variables() {
         limitations: ["Pressure levels can intersect terrain; values may be masked or behave oddly in complex terrain."],
       },
       {
+        id: "sbcape",
+        name: "Surface-Based CAPE",
+        oneLiner: "Buoyant energy for a surface parcel, emphasizing instability that is directly rooted at the ground.",
+        pills: ["Surface parcel", "J/kg", "Continuous"],
+        definition:
+          "Surface-based CAPE estimates the positive buoyant energy a parcel lifted directly from the surface would have. It is the most direct CAPE flavor for environments where storms are expected to ingest near-surface air instead of elevated source layers.",
+        bestFor: [
+          "Comparing whether instability is actually surface-rooted instead of elevated",
+          "Highlighting warm-sector environments where surface heating and moisture can support surface-based convection",
+          "Cross-checking MLCAPE and MUCAPE when assessing severe-weather potential tied to the boundary layer",
+        ],
+        interpretation: [
+          "SBCAPE is usually the most relevant CAPE flavor when storms are surface-based, but it still needs forcing, inhibition, and shear context.",
+          "Large SBCAPE alone does not guarantee initiation if the cap holds or lift never materializes.",
+        ],
+        limitations: [
+          "Surface parcel fields can be noisy or overly sensitive to shallow temperature and dew point biases near the ground.",
+          "Elevated convection can still thrive when SBCAPE is modest but MUCAPE remains large above a stable surface layer.",
+        ],
+        notes: [
+          "Uses the same CAPE color ramp as MLCAPE and MUCAPE so instability thresholds stay visually consistent across parcel choices.",
+        ],
+      },
+      {
         id: "mlcape",
         name: "Mixed-Layer CAPE",
         oneLiner: "Buoyant energy available to a mixed boundary-layer parcel, used to gauge convective instability.",

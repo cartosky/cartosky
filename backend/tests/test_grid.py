@@ -467,6 +467,52 @@ def test_build_grid_for_run_supports_gfs_mlcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
+def test_build_grid_for_run_supports_gfs_sbcape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260330_12z"
+    var = "sbcape"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
+    assert frame_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 1750
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 4100
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["grid"]["scale"] == 1.0
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "J/kg"
+
+
 def test_build_grid_for_run_supports_gfs_mucape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -842,6 +888,52 @@ def test_build_grid_for_run_supports_hrrr_mlcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
+def test_build_grid_for_run_supports_hrrr_sbcape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "hrrr"
+    run_id = "20260330_12z"
+    var = "sbcape"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
+    assert frame_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 1750
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 4100
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["grid"]["scale"] == 1.0
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "J/kg"
+
+
 def test_build_grid_for_run_supports_hrrr_mucape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1043,6 +1135,52 @@ def test_build_grid_for_run_supports_nam_mlcape(
     assert encoded[0, 1] == 1250
     assert encoded[1, 0] == 65535
     assert encoded[1, 1] == 3200
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["grid"]["scale"] == 1.0
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "J/kg"
+
+
+def test_build_grid_for_run_supports_nam_sbcape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "nam"
+    run_id = "20260330_12z"
+    var = "sbcape"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    manifest_path = artifacts_dir / "manifest.json"
+    assert frame_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 1750
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 4100
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
