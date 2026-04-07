@@ -13,6 +13,9 @@ WorkingDirectory=/opt/cartosky/backend
 EnvironmentFile=-/etc/cartosky/scheduler.env
 Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.scheduler --model hrrr
+Nice=10
+CPUWeight=50
+IOWeight=50
 Restart=always
 RestartSec=5
 StandardOutput=journal
