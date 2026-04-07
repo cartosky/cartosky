@@ -284,6 +284,12 @@ def _priority_normalized(priority: str) -> str:
     return str(priority).strip().lower()
 
 
+def _quiet_herbie_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    quiet_kwargs = dict(kwargs)
+    quiet_kwargs.setdefault("verbose", False)
+    return quiet_kwargs
+
+
 def _is_prs_aws_priority(*, priority: str, product: str) -> bool:
     return _priority_normalized(priority) == "aws" and str(product).strip().lower() == "prs"
 
@@ -918,7 +924,7 @@ def inventory_lines_for_pattern(
         if _idx_negative_cache_remaining(cache_key) > 0:
             priority_idx += 1
             continue
-        run_kwargs = dict(kwargs)
+        run_kwargs = _quiet_herbie_kwargs(kwargs)
         run_kwargs["priority"] = priority
         inv_reason = "unknown"
         try:
@@ -1016,7 +1022,7 @@ def product_hour_has_any_idx(
         if _idx_negative_cache_remaining(cache_key) > 0:
             continue
         all_cached_missing = False
-        run_kwargs = dict(kwargs)
+        run_kwargs = _quiet_herbie_kwargs(kwargs)
         run_kwargs["priority"] = priority
         try:
             H = Herbie(herbie_date, **run_kwargs)
@@ -1809,7 +1815,7 @@ def fetch_variable(
         force_nomads_after_prs_idx_lag = False
 
         for attempt_idx in range(1, attempts_for_priority + 1):
-            run_kwargs = dict(kwargs)
+            run_kwargs = _quiet_herbie_kwargs(kwargs)
             run_kwargs["priority"] = priority
             try:
                 H = Herbie(herbie_date, **run_kwargs)

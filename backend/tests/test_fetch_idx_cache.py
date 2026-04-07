@@ -407,6 +407,32 @@ def test_inventory_cache_reuses_idx_for_multiple_patterns(monkeypatch: pytest.Mo
     assert metrics["timers_ms"].get("idx_parse_ms", {}).get("count", 0) >= 2
 
 
+def test_herbie_construction_defaults_to_quiet_verbose_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_verbose: list[object] = []
+
+    class _FakeHerbie:
+        def __init__(self, *args, **kwargs):
+            del args
+            seen_verbose.append(kwargs.get("verbose"))
+            self.idx = None
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            model_id="hrrr",
+            product="sfc",
+            search_pattern=":TMP:2 m above ground:",
+            run_date=datetime(2026, 3, 5, 17, 0),
+            fh=13,
+            herbie_kwargs={"priority": "aws"},
+        )
+
+    assert seen_verbose == [False]
+
+
 def test_inventory_cache_dedupes_inflight_idx_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
     index_df = pd.DataFrame(
         [
