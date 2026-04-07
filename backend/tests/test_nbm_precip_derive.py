@@ -195,6 +195,76 @@ def test_precip_total_incremental_reuses_prior_cumulative_for_gfs_late_step(monk
     np.testing.assert_allclose(data, np.full((2, 2), expected_inches, dtype=np.float32), rtol=1e-6, atol=1e-6)
 
 
+def test_precip_total_gfs_late_cadence_uses_exact_6hour_step_windows(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    fetch_patterns: list[str] = []
+
+    def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        fetch_patterns.append(f"{int(fh)}:{pattern}")
+        data_by_pattern = {
+            ":APCP:surface:306-312 hour acc fcst:$": np.full((2, 2), 6.0, dtype=np.float32),
+            ":APCP:surface:312-318 hour acc fcst:$": np.full((2, 2), 6.0, dtype=np.float32),
+        }
+        data = data_by_pattern[pattern]
+        meta = {
+            "inventory_line": pattern[:-1],
+            "search_pattern": pattern,
+            "fh": int(fh),
+        }
+        if return_meta:
+            return data, crs, transform, meta
+        return data, crs, transform
+
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        return {318: [":APCP:surface:312-318 hour acc fcst:"]}[int(fh)]
+
+    def _fake_prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key, scale_divisor=0.03937007874015748):
+        del model_id, run_date, ctx, grid_cache_key, scale_divisor
+        if str(var_key) == "precip_total" and int(fh) == 312:
+            return np.full((2, 2), 6.0, dtype=np.float32), crs, transform
+        return None
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _fake_prior_loader)
+    monkeypatch.setattr(derive_module, "_fetch_component", lambda **kwargs: (_ for _ in ()).throw(AssertionError("selector fallback should not be used")))
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "3",
+                "step_transition_fh": "240",
+                "step_hours_after_fh": "6",
+            }
+        )
+    )
+    var_capability = SimpleNamespace(conversion="kgm2_to_in")
+
+    data, out_crs, out_transform = derive_module._derive_precip_total_cumulative(
+        model_id="gfs",
+        var_key="precip_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 7, 12, 0),
+        fh=318,
+        var_spec_model=var_spec_model,
+        var_capability=var_capability,
+        model_plugin=object(),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert fetch_patterns == [
+        "318::APCP:surface:312-318 hour acc fcst:$",
+    ]
+    expected_inches = 12.0 * 0.03937007874015748
+    np.testing.assert_allclose(data, np.full((2, 2), expected_inches, dtype=np.float32), rtol=1e-6, atol=1e-6)
+
+
 def test_precip_total_inventory_prefers_gfs_cumulative_over_overlap_window(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

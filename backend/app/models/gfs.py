@@ -508,6 +508,8 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "apcp_component": "apcp_step",
                 "step_hours": "3",
+                "step_transition_fh": "240",
+                "step_hours_after_fh": "6",
             },
         ),
         derived=True,

@@ -255,6 +255,16 @@ def test_gfs_snowfall_total_search_patterns_include_upstream_fallback() -> None:
     assert var_spec.selectors.hints["snow_interval_sample_mode"] == "three_point"
 
 
+def test_gfs_precip_total_mixed_cadence_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("precip_total")
+    assert var_spec is not None
+    assert var_spec.derived is True
+    assert var_spec.derive == "precip_total_cumulative"
+    assert var_spec.selectors.hints["step_hours"] == "3"
+    assert var_spec.selectors.hints["step_transition_fh"] == "240"
+    assert var_spec.selectors.hints["step_hours_after_fh"] == "6"
+
+
 def test_gfs_kuchera_profile_mode_invariants() -> None:
     var_spec = GFS_MODEL.get_var("snowfall_kuchera_total")
     assert var_spec is not None
