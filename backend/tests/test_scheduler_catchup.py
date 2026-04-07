@@ -589,6 +589,32 @@ def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
     assert (published_run / "mlcape" / "fh000.json").read_text() == "staged mlcape"
 
 
+def test_promote_run_tolerates_same_inode_recopy_during_progress_publish(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "hrrr"
+    run_id = "20260407_16z"
+    stage_tmp2m = data_root / "staging" / model / run_id / "tmp2m"
+    stage_mlcape = data_root / "staging" / model / run_id / "mlcape"
+
+    stage_tmp2m.mkdir(parents=True, exist_ok=True)
+    (stage_tmp2m / "fh014.json").write_text("stage tmp2m")
+
+    scheduler_module._promote_run(data_root, model, run_id)
+
+    published_file = data_root / "published" / model / run_id / "tmp2m" / "fh014.json"
+    stage_file = stage_tmp2m / "fh014.json"
+    assert published_file.stat().st_ino == stage_file.stat().st_ino
+
+    stage_mlcape.mkdir(parents=True, exist_ok=True)
+    (stage_mlcape / "fh014.json").write_text("stage mlcape")
+
+    scheduler_module._promote_run(data_root, model, run_id)
+
+    published_run = data_root / "published" / model / run_id
+    assert (published_run / "tmp2m" / "fh014.json").read_text() == "stage tmp2m"
+    assert (published_run / "mlcape" / "fh014.json").read_text() == "stage mlcape"
+
+
 def test_scheduler_model_lock_blocks_second_runner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

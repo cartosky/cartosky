@@ -824,6 +824,13 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 
 def _copy_or_link_file(src: str, dst: str) -> str:
+    if os.path.exists(dst):
+        try:
+            if os.path.samefile(src, dst):
+                return dst
+        except OSError:
+            pass
+        os.unlink(dst)
     try:
         os.link(src, dst)
     except OSError:
