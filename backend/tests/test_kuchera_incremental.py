@@ -211,6 +211,92 @@ def test_incremental_does_not_recompute_full_history_when_prev_exists(monkeypatc
     assert "computed_steps=1" in caplog.text
 
 
+def test_incremental_prefetches_profile_temps_for_active_subset(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    apcp_by_fh = {
+        1: np.full((2, 2), 0.5, dtype=np.float32),
+        2: np.full((2, 2), 0.5, dtype=np.float32),
+        3: np.full((2, 2), 0.5, dtype=np.float32),
+    }
+    prefetched: list[tuple[int, str, str]] = []
+
+    def _fake_prefetch(tasks, ctx, *, label=""):
+        del ctx, label
+        prefetched.extend((int(task.fh), str(task.product), str(task.var_key)) for task in tasks)
+        return len(tasks)
+
+    inventory_by_fh = {
+        int(step_fh): f":APCP:surface:{int(step_fh) - 1}-{int(step_fh)} hour acc fcst:"
+        for step_fh in [1, 2, 3]
+    }
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        step_fh = int(fh)
+        if pattern.startswith(":APCP:surface:"):
+            data = apcp_by_fh[step_fh]
+            meta = {"inventory_line": pattern, "search_pattern": pattern}
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            data = np.full((2, 2), -12.0, dtype=np.float32)
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":TMP:700 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            data = np.full((2, 2), -10.0, dtype=np.float32)
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        raise AssertionError(f"unexpected pattern: {pattern}")
+
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, var_key, ctx, grid_cache_key
+        if int(fh) == 2:
+            return np.full((2, 2), 1.0 / 0.03937007874015748, dtype=np.float32), crs, transform
+        return None
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [inventory_by_fh[int(fh)]],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [1, 2, 3],
+    )
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
+    monkeypatch.setattr(derive_module, "_prefetch_components_parallel", _fake_prefetch)
+
+    ctx = derive_module.FetchContext(coverage="conus")
+    derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 5, 17, 0),
+        fh=3,
+        var_spec_model=_var_spec(),
+        var_capability=None,
+        model_plugin=_Plugin(),
+        ctx=ctx,
+    )
+
+    assert prefetched == [
+        (3, "sfc", "tmp850"),
+        (3, "sfc", "tmp700"),
+    ]
+
+
 def test_incremental_recovery_uses_bounded_window_when_prev_missing(monkeypatch, caplog) -> None:
     apcp_by_fh = {
         1: np.array([[0.4, 0.2], [0.1, 0.0]], dtype=np.float32),

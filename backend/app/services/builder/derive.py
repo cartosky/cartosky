@@ -3343,6 +3343,66 @@ def _derive_snowfall_kuchera_total_cumulative(
                 base_cumulative, base_crs, base_transform = prior
                 base_fh = anchor_fh
 
+        _prefetch_tasks: list[_PrefetchTask] = []
+        for _prefetch_step_fh in subset_step_fhs:
+            for _level_hpa in profile_levels_hpa:
+                _prefetch_tasks.append(_PrefetchTask(
+                    model_id=model_id,
+                    product=resolved_profile_product,
+                    run_date=run_date,
+                    fh=int(_prefetch_step_fh),
+                    model_plugin=model_plugin,
+                    var_key=f"tmp{int(_level_hpa)}",
+                    warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                ))
+            if use_surface_temp_cap:
+                _prefetch_tasks.append(_PrefetchTask(
+                    model_id=model_id,
+                    product=resolved_surface_temp_product,
+                    run_date=run_date,
+                    fh=int(_prefetch_step_fh),
+                    model_plugin=model_plugin,
+                    var_key="tmp2m",
+                    warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                ))
+            if use_sfc_pressure_mask:
+                _prefetch_tasks.append(_PrefetchTask(
+                    model_id=model_id,
+                    product=resolved_sfc_pressure_product,
+                    run_date=run_date,
+                    fh=int(_prefetch_step_fh),
+                    model_plugin=model_plugin,
+                    var_key="pres_sfc",
+                    warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                ))
+            if use_ptype_gate:
+                _ptype_step_len, _ptype_sample_fhs = ptype_interval_plan.get(int(_prefetch_step_fh), (0, [int(_prefetch_step_fh)]))
+                del _ptype_step_len
+                for _ptype_sample_fh in _ptype_sample_fhs:
+                    _prefetch_tasks.append(_PrefetchTask(
+                        model_id=model_id,
+                        product=str(ptype_product),
+                        run_date=run_date,
+                        fh=int(_ptype_sample_fh),
+                        model_plugin=model_plugin,
+                        var_key="csnow",
+                        warped=use_warped,
+                        target_region=target_region,
+                        target_grid_id=target_grid_id,
+                        resampling=resampling,
+                    ))
+        _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"kuchera fh{fh:03d}")
+        del _prefetch_tasks
+
         cum_diff_state = _ApcpCumDiffState()
         subset_cumulative: np.ndarray | None = None
         subset_valid_mask: np.ndarray | None = None
