@@ -37,6 +37,7 @@ class NBMPlugin(BaseModelPlugin):
             "tmp2m": "tmp2m",
             "t2m": "tmp2m",
             "2t": "tmp2m",
+            "sbcape": "sbcape",
             "precip_total": "precip_total",
             "total_precip": "precip_total",
             "apcp": "precip_total",
@@ -136,6 +137,26 @@ NBM_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="F",
+    ),
+    "sbcape": VarSpec(
+        id="sbcape",
+        name="Surface-Based CAPE",
+        selectors=VarSelectors(
+            search=[":CAPE:surface:"],
+            filter_by_keys={
+                "shortName": "cape",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "sbcape",
+                "cf_var": "cape",
+                "short_name": "cape",
+                "cape_layer": "surface",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="J/kg",
     ),
     "10u": VarSpec(
         id="10u",
@@ -278,6 +299,7 @@ NBM_VARS: dict[str, VarSpec] = {
 
 NBM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
+    "sbcape": "mlcape",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
     "wspd10m": "wspd10m",
@@ -290,13 +312,15 @@ NBM_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
 
 NBM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
-    "precip_total": 2,
-    "snowfall_total": 3,
-    "wspd10m": 4,
+    "sbcape": 2,
+    "precip_total": 3,
+    "snowfall_total": 4,
+    "wspd10m": 5,
 }
 
 NBM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
+    "sbcape": "Instability",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "wspd10m": "Wind",

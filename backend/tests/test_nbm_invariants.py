@@ -47,6 +47,7 @@ def test_nbm_buildable_var_set_and_defaults_invariants() -> None:
     }
     assert buildable_var_keys == {
         "tmp2m",
+        "sbcape",
         "precip_total",
         "snowfall_total",
         "wspd10m",
@@ -88,6 +89,17 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["display_name"] == "Surface Temp"
     assert tmp2m["order"] == 1
 
+    sbcape = payload["variables"]["sbcape"]
+    assert sbcape["buildable"] is True
+    assert sbcape["derived"] is False
+    assert sbcape["kind"] == "continuous"
+    assert sbcape["units"] == "J/kg"
+    assert sbcape["display_name"] == "Surface-Based CAPE"
+    assert sbcape["group"] == "Instability"
+    assert sbcape["color_map_id"] == "mlcape"
+    assert sbcape["order"] == 2
+    assert sbcape["display_resampling_override"] is None
+
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
     assert precip_total["derived"] is True
@@ -97,8 +109,8 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 6
     assert precip_total["constraints"] == {"min_fh": 6}
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 2
-    assert precip_total["display_resampling_override"] == "nearest"
+    assert precip_total["order"] == 3
+    assert precip_total["display_resampling_override"] is None
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -109,8 +121,8 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["constraints"] == {"min_fh": 6}
     assert snowfall_total["display_name"] == "Total Snowfall"
-    assert snowfall_total["order"] == 3
-    assert snowfall_total["display_resampling_override"] == "nearest"
+    assert snowfall_total["order"] == 4
+    assert snowfall_total["display_resampling_override"] is None
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["buildable"] is True
@@ -119,7 +131,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert wspd10m["kind"] == "continuous"
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 4
+    assert wspd10m["order"] == 5
 
     u10 = payload["variables"]["10u"]
     assert u10["buildable"] is False
@@ -169,6 +181,7 @@ def test_nbm_aliases_normalize() -> None:
     assert NBM_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert NBM_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert NBM_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert NBM_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert NBM_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert NBM_MODEL.normalize_var_id("apcp") == "precip_total"
     assert NBM_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -180,3 +193,19 @@ def test_nbm_aliases_normalize() -> None:
     assert NBM_MODEL.normalize_var_id("10si") == "10si"
     assert NBM_MODEL.normalize_var_id("u10") == "10u"
     assert NBM_MODEL.normalize_var_id("v10") == "10v"
+
+
+def test_nbm_sbcape_selector_invariants() -> None:
+    sbcape_spec = NBM_MODEL.get_var("sbcape")
+    assert sbcape_spec is not None
+    assert sbcape_spec.primary is True
+    assert sbcape_spec.derived is False
+    assert sbcape_spec.kind == "continuous"
+    assert sbcape_spec.units == "J/kg"
+    assert sbcape_spec.selectors.search == [":CAPE:surface:"]
+    assert sbcape_spec.selectors.filter_by_keys == {
+        "shortName": "cape",
+        "typeOfLevel": "surface",
+    }
+    assert sbcape_spec.selectors.hints["upstream_var"] == "sbcape"
+    assert sbcape_spec.selectors.hints["cape_layer"] == "surface"
