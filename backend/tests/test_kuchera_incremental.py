@@ -431,9 +431,13 @@ def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) 
         lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
     )
 
+    prior_precip_fh2 = apcp_cumulative[2].astype(np.float32, copy=False)
+
     def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
-        del model_id, run_date, var_key, ctx, grid_cache_key
+        del model_id, run_date, ctx, grid_cache_key
         if int(fh) == 2:
+            if str(var_key) == "precip_total":
+                return prior_precip_fh2, crs, transform
             return fh2_internal, crs, transform
         return None
 
@@ -454,14 +458,14 @@ def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) 
     np.testing.assert_allclose(incremental_data, full_data, rtol=1e-5, atol=1e-5)
 
 
-def test_incremental_reuse_with_late_cumulative_apcp_rebuilds_from_start(monkeypatch, caplog) -> None:
+def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypatch, caplog) -> None:
     """Regression: cumulative APCP that appears after a step window in an
-    incremental subset must trigger a full-history rebuild.
+    incremental subset should reuse the carried precip baseline, not rebuild.
 
-    Scenario:
-      - Rebuild window selects subset [fh3, fh4] with base anchored at fh2.
-      - fh3 inventory is step (2-3), fh4 inventory is cumulative (0-4).
-      - If we only difference against the subset state, fh4 is overcounted.
+        Scenario:
+            - Rebuild window selects subset [fh3, fh4] with base anchored at fh2.
+            - fh3 inventory is step (2-3), fh4 inventory is cumulative (0-4).
+            - The carried precip_total baseline at fh2 should let the subset stay incremental.
     """
 
     crs = CRS.from_epsg(4326)
@@ -536,9 +540,13 @@ def test_incremental_reuse_with_late_cumulative_apcp_rebuilds_from_start(monkeyp
             return (tmp_700, crs, transform, meta) if return_meta else (tmp_700, crs, transform)
         raise AssertionError(f"unexpected pattern: {pattern}")
 
+    prior_precip_fh2 = apcp_cumulative[2].astype(np.float32, copy=False)
+
     def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
-        del model_id, run_date, var_key, ctx, grid_cache_key
+        del model_id, run_date, ctx, grid_cache_key
         if int(fh) == 2:
+            if str(var_key) == "precip_total":
+                return prior_precip_fh2, crs, transform
             return fh2_internal, crs, transform
         return None
 
@@ -568,5 +576,7 @@ def test_incremental_reuse_with_late_cumulative_apcp_rebuilds_from_start(monkeyp
         )
 
     np.testing.assert_allclose(incremental_data, full_data, rtol=1e-5, atol=1e-5)
-    assert 1 in apcp_calls and 2 in apcp_calls
-    assert "cumulative_apcp_requires_full_rebuild" in caplog.text
+    assert apcp_calls == [3, 4]
+    assert "cumulative_apcp_requires_full_rebuild" not in caplog.text
+    assert "base_fh=002" in caplog.text
+    assert "computed_steps=2" in caplog.text

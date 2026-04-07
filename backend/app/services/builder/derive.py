@@ -3280,7 +3280,47 @@ def _derive_snowfall_kuchera_total_cumulative(
     base_cumulative: np.ndarray | None = None
     base_crs: rasterio.crs.CRS | None = None
     base_transform: rasterio.transform.Affine | None = None
+    first_step_expected_start_fh: int | None = None
+    initial_apcp_cumulative: tuple[
+        np.ndarray,
+        np.ndarray,
+        rasterio.crs.CRS,
+        rasterio.transform.Affine,
+        int,
+    ] | None = None
     start_index = max(0, len(step_fhs) - rebuild_window_steps)
+
+    def _load_prior_apcp_seed(
+        seed_fh: int,
+        *,
+        reference_data: np.ndarray | None,
+        reference_crs: rasterio.crs.CRS | None,
+        reference_transform: rasterio.transform.Affine | None,
+    ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, int] | None:
+        prior_precip = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key="precip_total",
+            fh=int(seed_fh),
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+        )
+        if prior_precip is None:
+            return None
+        prior_precip_data, prior_precip_crs, prior_precip_transform = prior_precip
+        if reference_data is not None:
+            same_shape = prior_precip_data.shape == reference_data.shape
+            same_crs = prior_precip_crs == reference_crs
+            same_transform = prior_precip_transform == reference_transform
+            if not (same_shape and same_crs and same_transform):
+                return None
+        return (
+            prior_precip_data.astype(np.float32, copy=False),
+            np.isfinite(prior_precip_data),
+            prior_precip_crs,
+            prior_precip_transform,
+            int(seed_fh),
+        )
 
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
@@ -3297,6 +3337,14 @@ def _derive_snowfall_kuchera_total_cumulative(
             base_fh = prev_fh
             start_index = len(step_fhs) - 1
             reused_prev_cumulative = True
+            initial_apcp_cumulative = _load_prior_apcp_seed(
+                prev_fh,
+                reference_data=base_cumulative,
+                reference_crs=base_crs,
+                reference_transform=base_transform,
+            )
+            if initial_apcp_cumulative is not None:
+                first_step_expected_start_fh = prev_fh
 
     if base_cumulative is None and start_index > 0:
         anchor_fh = int(step_fhs[start_index - 1])
@@ -3314,6 +3362,14 @@ def _derive_snowfall_kuchera_total_cumulative(
         else:
             base_cumulative, base_crs, base_transform = prior
             base_fh = anchor_fh
+            initial_apcp_cumulative = _load_prior_apcp_seed(
+                anchor_fh,
+                reference_data=base_cumulative,
+                reference_crs=base_crs,
+                reference_transform=base_transform,
+            )
+            if initial_apcp_cumulative is not None:
+                first_step_expected_start_fh = anchor_fh
 
     steps_processed = 0
     while True:
@@ -3338,10 +3394,19 @@ def _derive_snowfall_kuchera_total_cumulative(
                     base_crs = None
                     base_transform = None
                     base_fh = None
+                    first_step_expected_start_fh = None
+                    initial_apcp_cumulative = None
                     reused_prev_cumulative = False
                     continue
                 base_cumulative, base_crs, base_transform = prior
                 base_fh = anchor_fh
+                initial_apcp_cumulative = _load_prior_apcp_seed(
+                    anchor_fh,
+                    reference_data=base_cumulative,
+                    reference_crs=base_crs,
+                    reference_transform=base_transform,
+                )
+                first_step_expected_start_fh = anchor_fh if initial_apcp_cumulative is not None else None
 
         _prefetch_tasks: list[_PrefetchTask] = []
         for _prefetch_step_fh in subset_step_fhs:
@@ -3404,6 +3469,19 @@ def _derive_snowfall_kuchera_total_cumulative(
         del _prefetch_tasks
 
         cum_diff_state = _ApcpCumDiffState()
+        if initial_apcp_cumulative is not None:
+            (
+                seed_data,
+                seed_valid,
+                seed_crs,
+                seed_transform,
+                seed_fh,
+            ) = initial_apcp_cumulative
+            cum_diff_state.consumed_sum = np.asarray(seed_data, dtype=np.float32)
+            cum_diff_state.consumed_sum_valid = np.asarray(seed_valid, dtype=bool)
+            cum_diff_state.consumed_sum_crs = seed_crs
+            cum_diff_state.consumed_sum_transform = seed_transform
+            cum_diff_state.consumed_through_fh = int(seed_fh)
         subset_cumulative: np.ndarray | None = None
         subset_valid_mask: np.ndarray | None = None
         subset_crs: rasterio.crs.CRS | None = None
@@ -3435,11 +3513,10 @@ def _derive_snowfall_kuchera_total_cumulative(
             if int(step_fh) == int(fh):
                 current_step_fetch_counts["apcp"] = current_step_fetch_counts.get("apcp", 0) + 1
 
-            # Incremental reuse only has APCP differencing state for the current
-            # subset. Any history-dependent APCP window within that subset
-            # needs a full history rebuild to avoid subtracting against a stale
-            # baseline or missing intra-bucket state.
-            if step_apcp_mode != "exact_step" and start_index > 0:
+            # Without a carried APCP cumulative baseline, history-dependent
+            # APCP windows inside an incremental subset can overcount by
+            # subtracting against an empty or stale state.
+            if step_apcp_mode != "exact_step" and start_index > 0 and initial_apcp_cumulative is None:
                 requires_full_history_rebuild = True
                 rebuild_trigger_step_fh = int(step_fh)
                 break
