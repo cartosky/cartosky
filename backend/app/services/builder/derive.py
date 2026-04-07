@@ -996,7 +996,7 @@ def _kuchera_frozen_fraction_for_step(
     ctx: FetchContext | None,
     expected_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, bool, int]:
-    component_keys = ("csnow", "crain", "cicep", "cfrzr")
+    component_keys = ("csnow",)
     fetch_count = 0
     resolved_sample_fhs = list(sample_fhs or [int(step_fh)])
     sample_frozen_fracs: list[np.ndarray] = []
@@ -1037,9 +1037,6 @@ def _kuchera_frozen_fraction_for_step(
             continue
 
         csnow_prob = _normalize_ptype_probability(fetched["csnow"])
-        _ = _normalize_ptype_probability(fetched["crain"])
-        _ = _normalize_ptype_probability(fetched["cicep"])
-        _ = _normalize_ptype_probability(fetched["cfrzr"])
         sample_frozen_fracs.append(csnow_prob.astype(np.float32, copy=False))
 
     if not sample_frozen_fracs:

@@ -338,19 +338,6 @@ def test_kuchera_ptype_gate_filters_interval_samples_to_step_cadence(monkeypatch
             sample = zeros if sample_fh == 0 else ones
             meta = {"inventory_line": "", "search_pattern": pattern}
             return (sample, crs, transform, meta) if return_meta else (sample, crs, transform)
-        if pattern == ":CRAIN:surface:":
-            seen_ptype_fhs.append(("crain", sample_fh))
-            sample = ones if sample_fh == 0 else zeros
-            meta = {"inventory_line": "", "search_pattern": pattern}
-            return (sample, crs, transform, meta) if return_meta else (sample, crs, transform)
-        if pattern == ":CICEP:surface:":
-            seen_ptype_fhs.append(("cicep", sample_fh))
-            meta = {"inventory_line": "", "search_pattern": pattern}
-            return (zeros, crs, transform, meta) if return_meta else (zeros, crs, transform)
-        if pattern == ":CFRZR:surface:":
-            seen_ptype_fhs.append(("cfrzr", sample_fh))
-            meta = {"inventory_line": "", "search_pattern": pattern}
-            return (zeros, crs, transform, meta) if return_meta else (zeros, crs, transform)
         raise AssertionError(f"unexpected search pattern: {pattern}")
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
@@ -379,8 +366,7 @@ def test_kuchera_ptype_gate_filters_interval_samples_to_step_cadence(monkeypatch
         model_plugin=_Plugin(),
     )
 
-    assert all(sample_fh in {0, 6} for _, sample_fh in seen_ptype_fhs)
-    assert not any(sample_fh == 3 for _, sample_fh in seen_ptype_fhs)
+    assert seen_ptype_fhs == [("csnow", 0), ("csnow", 6)]
 
     ratio = derive_module._compute_kuchera_slr(
         levels_hpa=[850],
