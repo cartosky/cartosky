@@ -112,7 +112,9 @@ def _run_case(
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
     )
     monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", prior_loader)
 
@@ -428,7 +430,9 @@ def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) 
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
     )
 
     prior_precip_fh2 = apcp_cumulative[2].astype(np.float32, copy=False)
@@ -559,7 +563,9 @@ def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypat
     monkeypatch.setattr(
         derive_module,
         "_resolve_cumulative_step_fhs",
-        lambda *, hints, fh, run_date=None, default_step_hours=6: list(step_fhs),
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
     )
     monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
 
@@ -580,3 +586,135 @@ def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypat
     assert "cumulative_apcp_requires_full_rebuild" not in caplog.text
     assert "base_fh=002" in caplog.text
     assert "computed_steps=2" in caplog.text
+
+
+def test_incremental_overlap_apcp_uses_seeded_prior_exact_window(monkeypatch, caplog) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    tmp_850 = np.full((2, 2), -12.0, dtype=np.float32)
+    tmp_700 = np.full((2, 2), -10.0, dtype=np.float32)
+    step_fhs = [1, 2, 3, 4, 5]
+    apcp_calls: list[str] = []
+
+    apcp_step = {
+        1: np.full((2, 2), 1.0, dtype=np.float32),
+        2: np.full((2, 2), 2.0, dtype=np.float32),
+        3: np.full((2, 2), 3.0, dtype=np.float32),
+        4: np.full((2, 2), 4.0, dtype=np.float32),
+        5: np.full((2, 2), 5.0, dtype=np.float32),
+    }
+    apcp_window_total = {
+        1: apcp_step[1],
+        2: apcp_step[1] + apcp_step[2],
+        3: apcp_step[1] + apcp_step[2] + apcp_step[3],
+        4: apcp_step[4],
+        5: apcp_step[4] + apcp_step[5],
+    }
+    inventory_by_fh = {
+        1: ":APCP:surface:0-1 hour acc fcst:",
+        2: ":APCP:surface:0-2 hour acc fcst:",
+        3: ":APCP:surface:0-3 hour acc fcst:",
+        4: ":APCP:surface:3-4 hour acc fcst:",
+        5: ":APCP:surface:3-5 hour acc fcst:",
+    }
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        step_fh = int(fh)
+        if pattern.startswith(":APCP:surface:"):
+            apcp_calls.append(f"{step_fh}:{pattern}")
+            data = apcp_window_total[step_fh]
+            meta = {"inventory_line": inventory_by_fh[step_fh], "search_pattern": pattern}
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_850, crs, transform, meta) if return_meta else (tmp_850, crs, transform)
+        if pattern == ":TMP:700 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_700, crs, transform, meta) if return_meta else (tmp_700, crs, transform)
+        raise AssertionError(f"unexpected pattern: {pattern}")
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [inventory_by_fh[int(fh)]],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
+    )
+    monkeypatch.setattr(derive_module, "_prefetch_components_parallel", lambda tasks, ctx, *, label="": 0)
+
+    no_prior = lambda **kwargs: None
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", no_prior)
+    full_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="nam",
+        var_key="snowfall_kuchera_total",
+        product="conusnest.hiresf",
+        run_date=datetime(2026, 4, 7, 18, 0),
+        fh=5,
+        var_spec_model=_var_spec(rebuild_window_steps=1),
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+
+    fh4_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="nam",
+        var_key="snowfall_kuchera_total",
+        product="conusnest.hiresf",
+        run_date=datetime(2026, 4, 7, 18, 0),
+        fh=4,
+        var_spec_model=_var_spec(rebuild_window_steps=5),
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+    fh4_internal = (fh4_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
+    prior_precip_fh4 = (
+        apcp_step[1] + apcp_step[2] + apcp_step[3] + apcp_step[4]
+    ).astype(np.float32, copy=False)
+
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, ctx, grid_cache_key
+        if int(fh) == 4:
+            if str(var_key) == "precip_total":
+                return prior_precip_fh4, crs, transform
+            return fh4_internal, crs, transform
+        return None
+
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
+    apcp_calls.clear()
+
+    with caplog.at_level("INFO"):
+        recovered_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+            model_id="nam",
+            var_key="snowfall_kuchera_total",
+            product="conusnest.hiresf",
+            run_date=datetime(2026, 4, 7, 18, 0),
+            fh=5,
+            var_spec_model=_var_spec(rebuild_window_steps=1),
+            var_capability=None,
+            model_plugin=_Plugin(),
+        )
+
+    np.testing.assert_allclose(recovered_data, full_data, rtol=1e-5, atol=1e-5)
+    assert apcp_calls == [
+        "5::APCP:surface:3-5 hour acc fcst:$",
+        "4::APCP:surface:3-4 hour acc fcst:$",
+    ]
+    assert "retrying full rebuild" not in caplog.text
+    assert "computed_steps=1" in caplog.text
+    assert "reused_prev_cumulative=true" in caplog.text

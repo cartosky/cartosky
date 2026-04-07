@@ -1529,6 +1529,118 @@ def _reconstruct_overlap_prior_sum(
     return reconstructed_sum, reconstructed_valid, reconstructed_crs, reconstructed_transform
 
 
+def _seed_overlap_prior_exact_step(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    apcp_component: str,
+    apcp_product: str | None,
+    use_warped: bool,
+    target_grid_id: str,
+    resampling: str,
+    start_fh: int,
+    through_fh: int,
+    cum_diff_state: _ApcpCumDiffState,
+) -> bool:
+    if through_fh <= start_fh:
+        return False
+
+    resolved_apcp_product = str(apcp_product or product)
+    search_pattern = _apcp_exact_window_pattern(start_fh, through_fh)
+    resolved_apcp_cache_key = _resolved_apcp_cache_key(
+        model_id=model_id,
+        product=resolved_apcp_product,
+        run_date=run_date,
+        step_fh=through_fh,
+        model_plugin=model_plugin,
+        apcp_component=apcp_component,
+        expected_start_fh=start_fh,
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        ctx=ctx,
+    )
+
+    step_data: np.ndarray | None = None
+    step_crs: rasterio.crs.CRS | None = None
+    step_transform: rasterio.transform.Affine | None = None
+    apcp_meta: dict[str, Any] = {}
+
+    if ctx is not None and resolved_apcp_cache_key is not None:
+        resolved_cache = getattr(ctx, "resolved_apcp_cache", None)
+        if isinstance(resolved_cache, dict):
+            cached = resolved_cache.get(resolved_apcp_cache_key)
+            if cached is not None:
+                step_data, step_crs, step_transform, cached_meta = cached
+                apcp_meta = dict(cached_meta)
+
+    if step_data is None or step_crs is None or step_transform is None:
+        try:
+            step_data, step_crs, step_transform, apcp_meta = fetch_variable(
+                model_id=model_id,
+                product=resolved_apcp_product,
+                search_pattern=search_pattern,
+                run_date=run_date,
+                fh=int(through_fh),
+                herbie_kwargs={"priority": _kuchera_primary_herbie_priority()},
+                return_meta=True,
+            )
+        except Exception:
+            return False
+
+    inventory_line = str((apcp_meta or {}).get("inventory_line", search_pattern[:-1])).strip()
+    mode = _classify_apcp_mode_for_kuchera(
+        inventory_line=inventory_line,
+        step_fh=int(through_fh),
+        expected_start_fh=int(start_fh),
+    )
+    if mode != "exact_step":
+        return False
+
+    step_valid = np.isfinite(step_data) & (step_data >= 0.0)
+    step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32, copy=False)
+
+    cum_diff_state.bucket_start_fh = int(start_fh)
+    cum_diff_state.bucket_cumulative_sum = step_clean.copy()
+    cum_diff_state.bucket_cumulative_valid = step_valid.copy()
+    cum_diff_state.bucket_cumulative_crs = step_crs
+    cum_diff_state.bucket_cumulative_transform = step_transform
+    cum_diff_state.bucket_through_fh = int(through_fh)
+    cum_diff_state.recent_exact_steps[int(through_fh)] = (
+        step_clean.copy(),
+        step_valid.copy(),
+        step_crs,
+        step_transform,
+    )
+    prune_before_fh = int(through_fh) - 12
+    for prior_fh in list(cum_diff_state.recent_exact_steps.keys()):
+        if int(prior_fh) < prune_before_fh:
+            cum_diff_state.recent_exact_steps.pop(int(prior_fh), None)
+
+    if ctx is not None and resolved_apcp_cache_key is not None:
+        resolved_cache = getattr(ctx, "resolved_apcp_cache", None)
+        if not isinstance(resolved_cache, dict):
+            resolved_cache = {}
+            setattr(ctx, "resolved_apcp_cache", resolved_cache)
+        cache_meta = dict(apcp_meta)
+        cache_meta["selected_mode"] = "exact_step"
+        cache_meta["selected_window"] = f"{int(start_fh)}-{int(through_fh)}"
+        cache_meta["exact_guess_used"] = True
+        cache_meta["inventory_selected"] = True
+        cache_meta["search_pattern"] = str((cache_meta or {}).get("search_pattern", search_pattern))
+        resolved_cache[resolved_apcp_cache_key] = (
+            step_clean,
+            step_crs,
+            step_transform,
+            cache_meta,
+        )
+
+    return True
+
+
 def _resolve_apcp_step_data(
     *,
     step_fh: int,
@@ -1888,6 +2000,32 @@ def _resolve_apcp_step_data(
                 start_fh=int(window[0]),
                 through_fh=int(expected_start_fh),
             )
+            if (
+                reconstructed is None
+                and int(expected_start_fh) > int(window[0])
+                and int(cum_diff_state.consumed_through_fh) >= int(expected_start_fh)
+            ):
+                seeded = _seed_overlap_prior_exact_step(
+                    model_id=model_id,
+                    product=product,
+                    run_date=run_date,
+                    model_plugin=model_plugin,
+                    ctx=ctx,
+                    apcp_component=apcp_component,
+                    apcp_product=apcp_product,
+                    use_warped=use_warped,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    start_fh=int(window[0]),
+                    through_fh=int(expected_start_fh),
+                    cum_diff_state=cum_diff_state,
+                )
+                if seeded:
+                    reconstructed = _reconstruct_overlap_prior_sum(
+                        cum_diff_state=cum_diff_state,
+                        start_fh=int(window[0]),
+                        through_fh=int(expected_start_fh),
+                    )
             if reconstructed is not None:
                 prior_sum, prior_valid, prior_crs, prior_transform = reconstructed
                 same_shape = apcp_cum_clean.shape == prior_sum.shape
@@ -3491,23 +3629,35 @@ def _derive_snowfall_kuchera_total_cumulative(
         steps_processed = 0
 
         for local_step_index, step_fh in enumerate(subset_step_fhs):
-            step_apcp_data, apcp_valid, step_crs, step_transform, step_apcp_mode = _resolve_apcp_step_data(
-                step_fh=step_fh,
-                step_index=start_index + local_step_index,
-                step_fhs=step_fhs,
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                model_plugin=model_plugin,
-                ctx=ctx,
-                apcp_component=apcp_component,
-                apcp_product=apcp_product,
-                use_warped=use_warped,
-                target_region=target_region,
-                target_grid_id=target_grid_id,
-                resampling=resampling,
-                cum_diff_state=cum_diff_state,
-            )
+            try:
+                step_apcp_data, apcp_valid, step_crs, step_transform, step_apcp_mode = _resolve_apcp_step_data(
+                    step_fh=step_fh,
+                    step_index=start_index + local_step_index,
+                    step_fhs=step_fhs,
+                    model_id=model_id,
+                    product=product,
+                    run_date=run_date,
+                    model_plugin=model_plugin,
+                    ctx=ctx,
+                    apcp_component=apcp_component,
+                    apcp_product=apcp_product,
+                    use_warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    cum_diff_state=cum_diff_state,
+                )
+            except ValueError as exc:
+                if start_index > 0 and _is_apcp_incremental_rebuild_retryable_error(exc):
+                    logger.warning(
+                        "kuchera_incremental apcp incremental state unusable at fh=%03d; retrying full rebuild reason=\"%s\"",
+                        fh,
+                        str(exc).replace('"', "'"),
+                    )
+                    requires_full_history_rebuild = True
+                    rebuild_trigger_step_fh = int(step_fh)
+                    break
+                raise
             apcp_cumulative_fallback_used = apcp_cumulative_fallback_used or step_apcp_mode != "exact_step"
             steps_processed += 1
             if int(step_fh) == int(fh):
@@ -3796,6 +3946,8 @@ def _derive_snowfall_kuchera_total_cumulative(
             base_transform = None
             base_fh = None
             reused_prev_cumulative = False
+            first_step_expected_start_fh = None
+            initial_apcp_cumulative = None
             continue
 
         if subset_cumulative is None or subset_valid_mask is None or subset_crs is None or subset_transform is None:
