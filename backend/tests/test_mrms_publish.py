@@ -650,3 +650,57 @@ def test_publish_mrms_bundle_reuse_only_cycle_preserves_mrms_radar_ptype(
     assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.val.cog.tif").is_file()
     assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh000.json").is_file()
     assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.json").is_file()
+
+
+def test_reuse_mrms_frame_writes_grids_without_generic_value_cog_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
+
+    values = np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32)
+    ptype_values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    refl_path = tmp_path / "published" / "mrms" / "20260327_1206z" / "reflectivity" / "fh000.val.cog.tif"
+    ptype_path = tmp_path / "published" / "mrms" / "20260327_1206z" / "mrms_radar_ptype" / "fh000.val.cog.tif"
+    _write_test_value_raster(refl_path, values)
+    _write_test_value_raster(ptype_path, ptype_values)
+
+    frame = mrms_publish.MRMSPublishedFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        source_valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        value_path=refl_path,
+        sidecar={"valid_time": "2026-03-27T12:00:00Z"},
+        ptype_value_path=ptype_path,
+        ptype_sidecar={"valid_time": "2026-03-27T12:00:00Z"},
+    )
+
+    generic_helper_calls: list[tuple[str, int]] = []
+    written_grid_calls: list[tuple[str, int, tuple[int, int]]] = []
+
+    def _fail_generic_helper(**kwargs):
+        generic_helper_calls.append((str(kwargs["var"]), int(kwargs["fh"])))
+        raise AssertionError("generic value-cog grid helper should not be used during MRMS reuse")
+
+    def _capture_grid_write(**kwargs):
+        written_grid_calls.append(
+            (str(kwargs["var"]), int(kwargs["fh"]), np.asarray(kwargs["values"]).shape)
+        )
+        return [{"level": 0, "fh": int(kwargs["fh"])}]
+
+    monkeypatch.setattr(mrms_publish, "write_grid_frame_from_value_cog_for_run_root", _fail_generic_helper, raising=False)
+    monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _capture_grid_write)
+
+    has_ptype = mrms_publish.reuse_mrms_frame(
+        data_root=tmp_path,
+        run_id="20260327_1208z",
+        forecast_hour=0,
+        frame=frame,
+    )
+
+    assert has_ptype is True
+    assert generic_helper_calls == []
+    assert written_grid_calls == [
+        ("reflectivity", 0, (2, 3)),
+        ("mrms_radar_ptype", 0, (2, 3)),
+    ]

@@ -274,12 +274,6 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
     return selected
 
 
-def _read_value_cog(path: Path) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    with rasterio.open(path) as ds:
-        data = ds.read(1).astype(np.float32, copy=False)
-        return data, ds.crs, ds.transform
-
-
 def _cumulative_cache_grid_key(
     *,
     use_warped: bool,

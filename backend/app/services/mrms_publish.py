@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rasterio
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
@@ -35,7 +36,6 @@ from app.services.publish_utils import (
 from app.services.grid import (
     build_grid_manifests_for_run_root,
     write_grid_frames_for_run_root,
-    write_grid_frame_from_value_cog_for_run_root,
 )
 from app.services.run_ids import format_run_id
 
@@ -479,13 +479,16 @@ def reuse_mrms_frame(
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
     if grid_build_enabled():
-        write_grid_frame_from_value_cog_for_run_root(
-            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-            model=MRMS_MODEL_ID,
-            var=MRMS_VARIABLE_ID,
-            fh=int(forecast_hour),
-            value_cog_path=value_path,
-        )
+        with rasterio.open(value_path) as ds:
+            write_grid_frames_for_run_root(
+                run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                model=MRMS_MODEL_ID,
+                var=MRMS_VARIABLE_ID,
+                fh=int(forecast_hour),
+                values=ds.read(1).astype(np.float32, copy=False),
+                transform=ds.transform,
+                projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+            )
 
     # Reuse paired mrms_radar_ptype artifacts if they exist
     has_ptype = False
@@ -509,13 +512,16 @@ def reuse_mrms_frame(
                 ptype_sc["source_metadata"] = ptype_source_metadata
             write_json_atomic(ptype_sidecar_path, ptype_sc)
             if grid_build_enabled():
-                write_grid_frame_from_value_cog_for_run_root(
-                    run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                    model=MRMS_MODEL_ID,
-                    var=MRMS_RADAR_PTYPE_VARIABLE_ID,
-                    fh=int(forecast_hour),
-                    value_cog_path=ptype_value_path,
-                )
+                with rasterio.open(ptype_value_path) as ds:
+                    write_grid_frames_for_run_root(
+                        run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                        model=MRMS_MODEL_ID,
+                        var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                        fh=int(forecast_hour),
+                        values=ds.read(1).astype(np.float32, copy=False),
+                        transform=ds.transform,
+                        projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+                    )
             has_ptype = True
         except Exception:
             logger.warning(
