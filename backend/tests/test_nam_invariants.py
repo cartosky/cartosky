@@ -249,6 +249,17 @@ def test_nam_aliases_normalize() -> None:
     assert NAM_MODEL.normalize_var_id("wspd10m") == "wspd10m"
 
 
+def test_nam_kuchera_profile_mode_invariants() -> None:
+    var_spec = NAM_MODEL.get_var("snowfall_kuchera_total")
+    assert var_spec is not None
+    assert var_spec.derived is True
+    assert var_spec.derive == "snowfall_kuchera_total_cumulative"
+    assert var_spec.selectors.hints["kuchera_profile_mode"] == "simplified"
+    assert var_spec.selectors.hints["kuchera_levels_hpa"] == "925,850,700,600"
+    assert var_spec.selectors.hints["kuchera_require_rh"] == "false"
+    assert var_spec.selectors.hints["kuchera_min_levels"] == "4"
+
+
 def test_nam_sbcape_selector_invariants() -> None:
     sbcape_spec = NAM_MODEL.get_var("sbcape")
     assert sbcape_spec is not None

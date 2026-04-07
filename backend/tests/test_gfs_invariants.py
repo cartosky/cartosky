@@ -253,3 +253,14 @@ def test_gfs_snowfall_total_search_patterns_include_upstream_fallback() -> None:
     assert var_spec.selectors.hints["step_hours_after_fh"] == "6"
     assert var_spec.selectors.hints["snow_mask_threshold"] == "0.5"
     assert var_spec.selectors.hints["snow_interval_sample_mode"] == "three_point"
+
+
+def test_gfs_kuchera_profile_mode_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("snowfall_kuchera_total")
+    assert var_spec is not None
+    assert var_spec.derived is True
+    assert var_spec.derive == "snowfall_kuchera_total_cumulative"
+    assert var_spec.selectors.hints["kuchera_profile_mode"] == "simplified"
+    assert var_spec.selectors.hints["kuchera_levels_hpa"] == "925,850,700,600"
+    assert var_spec.selectors.hints["kuchera_require_rh"] == "false"
+    assert var_spec.selectors.hints["kuchera_min_levels"] == "4"

@@ -8,6 +8,10 @@ This note captures the current operational profile-level choice for
 - Shared default Kuchera level set remains `925,850,700,600,500`.
 - HRRR currently runs Kuchera in simplified mode with the configured level set
   `925,850,700,600`.
+- GFS currently runs Kuchera in simplified mode with the configured level set
+  `925,850,700,600`.
+- NAM currently runs Kuchera in simplified mode with the configured level set
+  `925,850,700,600`.
 - HRRR also applies a narrow surface-temperature SLR cap in near-freezing
   setups to keep warm-edge ratios from running too high.
 - Simplified mode is still capped at four temperature-profile fetches per step.
@@ -23,10 +27,10 @@ This note captures the current operational profile-level choice for
 
 ## Rollout Guidance For GFS And NAM
 
-- If a model is enabled with the full Kuchera profile, start from the shared
-  default set `925,850,700,600,500`.
-- If a model needs simplified-mode performance, prefer evaluating
+- If simplified-mode verification stays acceptable, keep evaluating
   `925,850,700,600` before falling back to `850,700,600,500`.
+- If a model later needs the full Kuchera profile for quality reasons, start
+  from the shared default set `925,850,700,600,500` and re-measure runtime.
 - The main reason is operational: keeping `925 mb` in the simplified set helps
   detect shallow warm layers without increasing the number of temperature
   fetches.
