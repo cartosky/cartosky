@@ -80,6 +80,10 @@ class FetchContext:
         tuple[str, str, str, int, str, str, str, str],
         dict[str, Any],
     ] = field(default_factory=dict)
+    resolved_apcp_cache: dict[
+        tuple[str, str, str, int, str, str, int, str, str],
+        tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]],
+    ] = field(default_factory=dict)
     derive_quality: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
     warp_stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
@@ -787,6 +791,52 @@ def _prefetch_sequential(
 def _resolve_component_cache_identity(model_plugin: Any, var_key: str) -> tuple[str, str]:
     normalized_var_key, selectors = _resolve_component_var(model_plugin, var_key)
     return normalized_var_key, _selector_fingerprint(selectors)
+
+
+def _resolved_apcp_cache_key(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    step_fh: int,
+    model_plugin: Any,
+    apcp_component: str,
+    expected_start_fh: int,
+    use_warped: bool,
+    target_grid_id: str,
+    resampling: str,
+    ctx: FetchContext | None,
+) -> tuple[str, str, str, int, str, str, int, str, str] | None:
+    try:
+        apcp_cache_var_key, apcp_selector_fingerprint = _resolve_component_cache_identity(
+            model_plugin,
+            apcp_component,
+        )
+    except Exception:
+        return None
+
+    run_date_utc = (
+        run_date.astimezone(timezone.utc)
+        if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    )
+    if use_warped:
+        scope_primary = str(target_grid_id)
+        scope_secondary = str(resampling)
+    else:
+        scope_primary = str(getattr(ctx, "coverage", "")) if ctx is not None else ""
+        scope_secondary = str(getattr(model_plugin, "coverage", ""))
+
+    return (
+        str(model_id),
+        str(product),
+        run_date_utc.isoformat(),
+        int(step_fh),
+        str(apcp_cache_var_key),
+        str(apcp_selector_fingerprint),
+        int(expected_start_fh),
+        scope_primary,
+        scope_secondary,
+    )
 
 
 def _parse_apcp_accum_window_hours(inventory_line: str | None) -> tuple[int, int] | None:
@@ -1532,9 +1582,38 @@ def _resolve_apcp_step_data(
     apcp_fetch_resolved = False
     selected_mode = "invalid"
     inventory_choice_mode = "invalid"
+    resolved_apcp_cache_key = _resolved_apcp_cache_key(
+        model_id=model_id,
+        product=resolved_apcp_product,
+        run_date=run_date,
+        step_fh=step_fh,
+        model_plugin=model_plugin,
+        apcp_component=apcp_component,
+        expected_start_fh=expected_start_fh,
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        ctx=ctx,
+    )
+
+    if ctx is not None and resolved_apcp_cache_key is not None:
+        resolved_cache = getattr(ctx, "resolved_apcp_cache", None)
+        if isinstance(resolved_cache, dict):
+            cached = resolved_cache.get(resolved_apcp_cache_key)
+            if cached is not None:
+                apcp_step, step_crs, step_transform, cached_meta = cached
+                apcp_meta = dict(cached_meta)
+                apcp_search_pattern = str((apcp_meta or {}).get("search_pattern", "")).strip() or apcp_search_pattern
+                selected_window = str((apcp_meta or {}).get("selected_window", selected_window))
+                exact_guess_used = bool((apcp_meta or {}).get("exact_guess_used", False))
+                inventory_selected = bool((apcp_meta or {}).get("inventory_selected", False))
+                selector_fallback_used = True
+                selector_reason = "shared_apcp_cache_hit"
+                selected_mode = str((apcp_meta or {}).get("selected_mode", "invalid"))
+                apcp_fetch_resolved = True
 
     # 1. Check FetchContext cache.
-    if ctx is not None:
+    if not apcp_fetch_resolved and ctx is not None:
         run_date_utc = (
             run_date.astimezone(timezone.utc)
             if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
@@ -1707,6 +1786,30 @@ def _resolve_apcp_step_data(
         selector_fallback_used = True
         if selector_reason == "none":
             selector_reason = "selector_regex_fallback"
+
+    if (
+        ctx is not None
+        and resolved_apcp_cache_key is not None
+        and apcp_fetch_resolved
+        and apcp_step is not None
+        and step_crs is not None
+        and step_transform is not None
+    ):
+        resolved_cache = getattr(ctx, "resolved_apcp_cache", None)
+        if not isinstance(resolved_cache, dict):
+            resolved_cache = {}
+            setattr(ctx, "resolved_apcp_cache", resolved_cache)
+        cache_meta = dict(apcp_meta)
+        cache_meta["selected_mode"] = selected_mode
+        cache_meta["selected_window"] = selected_window
+        cache_meta["exact_guess_used"] = exact_guess_used
+        cache_meta["inventory_selected"] = inventory_selected
+        resolved_cache[resolved_apcp_cache_key] = (
+            apcp_step.astype(np.float32, copy=False),
+            step_crs,
+            step_transform,
+            cache_meta,
+        )
 
     # 4. Classify mode and apply cumulative differencing.
     assert apcp_step is not None  # guaranteed set by steps 1/2/3 above

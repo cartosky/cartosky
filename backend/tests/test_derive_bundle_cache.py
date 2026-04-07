@@ -163,8 +163,8 @@ def test_derive_bundle_reuses_fetch_and_warp_cache(monkeypatch) -> None:
         (":CSNOW:surface:", 2),
     }
     expected_inventory_precip_steps = {
-        (":APCP:surface:0-1 hour acc fcst$", 1),
-        (":APCP:surface:0-2 hour acc fcst$", 2),
+        (":APCP:surface:0-1 hour acc fcst:$", 1),
+        (":APCP:surface:0-2 hour acc fcst:$", 2),
     }
     assert expected_component_steps.issubset(set(fetch_calls))
     assert expected_inventory_precip_steps.issubset(set(fetch_calls))
@@ -335,3 +335,139 @@ def test_derive_bundle_reuses_apcp_warp_cache_with_kuchera(monkeypatch) -> None:
     )
     assert np.isfinite(snowfall_kuchera_data).all()
     assert float(np.nanmean(snowfall_kuchera_data)) > expected_snowfall_10to1_inches
+
+
+def test_derive_bundle_reuses_inventory_resolved_apcp_across_derived_variables(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    plugin = _FakePlugin()
+    fetch_calls: list[tuple[str, int]] = []
+
+    value_by_key: dict[tuple[str, int], float] = {
+        (":APCP:surface:0-1 hour acc fcst:$", 1): 1.0,
+        (":APCP:surface:0-2 hour acc fcst:$", 2): 3.0,
+        (":CSNOW:surface:", 0): 1.0,
+        (":CSNOW:surface:", 1): 1.0,
+        (":CSNOW:surface:", 2): 1.0,
+        (":TMP:850 mb:", 1): -12.0,
+        (":TMP:700 mb:", 1): -10.0,
+        (":TMP:850 mb:", 2): -12.0,
+        (":TMP:700 mb:", 2): -10.0,
+    }
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        key = (str(search_pattern), int(fh))
+        fetch_calls.append(key)
+        value = value_by_key[key]
+        data = np.full((2, 2), value, dtype=np.float32)
+        inventory_line = str(search_pattern[:-1]) if str(search_pattern).endswith("$") else str(search_pattern)
+        meta = {"inventory_line": inventory_line, "search_pattern": str(search_pattern), "fh": int(fh)}
+        if return_meta:
+            return data, crs, transform, meta
+        return data, crs, transform
+
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        return {
+            1: [":APCP:surface:0-1 hour acc fcst:"],
+            2: [":APCP:surface:0-2 hour acc fcst:"],
+        }[int(fh)]
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
+
+    precip_spec = SimpleNamespace(
+        derive="precip_total_cumulative",
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+            }
+        ),
+    )
+    snowfall_spec = SimpleNamespace(
+        derive="snowfall_total_10to1_cumulative",
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "snow_component": "csnow",
+                "step_hours": "1",
+                "slr": "10",
+                "min_step_lwe_kgm2": "0.01",
+            }
+        ),
+    )
+    kuchera_spec = SimpleNamespace(
+        derive="snowfall_kuchera_total_cumulative",
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "step_hours": "1",
+                "kuchera_levels_hpa": "850,700",
+                "kuchera_profile_mode": "simplified",
+            }
+        ),
+    )
+    fetch_ctx = derive_module.FetchContext(coverage="conus")
+
+    precip_data, _, _ = derive_module.derive_variable(
+        model_id="gfs",
+        var_key="precip_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 3, 4, 0, 0),
+        fh=2,
+        var_spec_model=precip_spec,
+        var_capability=SimpleNamespace(conversion="kgm2_to_in"),
+        model_plugin=plugin,
+        fetch_ctx=fetch_ctx,
+    )
+    snowfall_data, _, _ = derive_module.derive_variable(
+        model_id="gfs",
+        var_key="snowfall_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 3, 4, 0, 0),
+        fh=2,
+        var_spec_model=snowfall_spec,
+        var_capability=None,
+        model_plugin=plugin,
+        fetch_ctx=fetch_ctx,
+    )
+    kuchera_data, _, _ = derive_module.derive_variable(
+        model_id="gfs",
+        var_key="snowfall_kuchera_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 3, 4, 0, 0),
+        fh=2,
+        var_spec_model=kuchera_spec,
+        var_capability=None,
+        model_plugin=plugin,
+        fetch_ctx=fetch_ctx,
+    )
+
+    assert fetch_calls.count((":APCP:surface:0-1 hour acc fcst:$", 1)) == 1
+    assert fetch_calls.count((":APCP:surface:0-2 hour acc fcst:$", 2)) == 1
+    assert np.isfinite(kuchera_data).all()
+    np.testing.assert_allclose(
+        precip_data,
+        np.full((2, 2), 3.0 * 0.03937007874015748, dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        snowfall_data,
+        np.full((2, 2), 3.0 * 0.03937007874015748 * 10.0, dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+        equal_nan=True,
+    )
