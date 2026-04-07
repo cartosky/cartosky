@@ -297,14 +297,22 @@ def test_build_grid_for_run_supports_wind_family_targets(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_gfs_snowfall_total(
+@pytest.mark.parametrize(
+    ("var", "expected_color_map_id"),
+    [
+        ("snowfall_total", "snowfall_total"),
+        ("snowfall_kuchera_total", "snowfall_total"),
+    ],
+)
+def test_build_grid_for_run_supports_gfs_snowfall_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    var: str,
+    expected_color_map_id: str,
 ) -> None:
     data_root = tmp_path / "data"
     model = "gfs"
     run_id = "20260330_12z"
-    var = "snowfall_total"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
     _write_value_cog(var_dir / "fh000.val.cog.tif", values)
@@ -338,7 +346,7 @@ def test_build_grid_for_run_supports_gfs_snowfall_total(
     assert frame_meta["display_prep"]["id"] == "gfs_snowfall_total_display_v1"
 
     manifest = json.loads(manifest_path.read_text())
-    assert manifest["palette"]["color_map_id"] == "snowfall_total"
+    assert manifest["palette"]["color_map_id"] == expected_color_map_id
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
@@ -672,6 +680,7 @@ def test_build_grid_for_run_supports_hrrr_accumulation_targets(
     [
         ("precip_total", "precip_total"),
         ("snowfall_total", "snowfall_total"),
+        ("snowfall_kuchera_total", "snowfall_total"),
     ],
 )
 def test_build_grid_for_run_supports_nam_accumulation_targets(

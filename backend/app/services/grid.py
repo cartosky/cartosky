@@ -208,6 +208,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "in",
     },
+    ("gfs", "snowfall_kuchera_total"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
     ("nam", "tmp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -269,6 +275,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "in",
     },
     ("nam", "snowfall_total"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    ("nam", "snowfall_kuchera_total"): {
         "scale": 0.1,
         "offset": 0.0,
         "nodata": 65535,
