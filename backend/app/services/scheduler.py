@@ -823,6 +823,14 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
+def _copy_or_link_file(src: str, dst: str) -> str:
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+    return dst
+
+
 def _write_latest_pointer(data_root: Path, model: str, run_id: str) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
@@ -1003,10 +1011,10 @@ def _promote_run(data_root: Path, model: str, run_id: str) -> None:
         raise SchedulerConfigError(f"Cannot clear temporary promotion dir: {tmp_run}")
 
     if published_run.exists():
-        shutil.copytree(published_run, tmp_run)
-        shutil.copytree(stage_run, tmp_run, dirs_exist_ok=True)
+        shutil.copytree(published_run, tmp_run, copy_function=_copy_or_link_file)
+        shutil.copytree(stage_run, tmp_run, dirs_exist_ok=True, copy_function=_copy_or_link_file)
     else:
-        shutil.copytree(stage_run, tmp_run)
+        shutil.copytree(stage_run, tmp_run, copy_function=_copy_or_link_file)
 
     if published_run.exists():
         shutil.rmtree(published_run, ignore_errors=True)
