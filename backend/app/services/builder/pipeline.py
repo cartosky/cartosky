@@ -818,7 +818,6 @@ def build_frame(
     contour_geojson_path: Path | None = None
     grid_frame_path: Path | None = None
     grid_frame_meta_path: Path | None = None
-    contour_sidecar: dict[str, Any] | None = None
     frame_quality = "full"
     frame_quality_flags: list[str] = []
 
@@ -965,53 +964,6 @@ def build_frame(
             downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
         )
 
-        # --- Step 5b: Optional contour extraction (tmp2m only) ---
-        if var_key == "tmp2m":
-            contour_rel_path = f"contours/{fh_str}.iso32.geojson"
-            contour_geojson_path = staging_dir / contour_rel_path
-            try:
-                build_iso_contour_geojson(
-                    value_data=warped_data,
-                    value_transform=dst_transform,
-                    out_geojson_path=staging_dir / contour_rel_path,
-                    level=32.0,
-                    srs="EPSG:4326",
-                )
-                contour_sidecar = {
-                    "iso32f": {
-                        "format": "geojson",
-                        "path": contour_rel_path,
-                        "srs": "EPSG:4326",
-                        "level": 32.0,
-                    }
-                }
-                logger.info(
-                    "Contour generated: %s/%s/%s/%s/%s -> %s",
-                    model,
-                    region,
-                    run_id,
-                    var_key,
-                    fh_str,
-                    contour_geojson_path,
-                )
-            except Exception as exc:
-                stdout = getattr(exc, "stdout", None)
-                stderr = getattr(exc, "stderr", None)
-                logger.warning(
-                    "Contour generation failed (continuing): %s/%s/%s/%s/%s -> %s | %s | stdout=%r stderr=%r",
-                    model,
-                    region,
-                    run_id,
-                    var_key,
-                    fh_str,
-                    contour_geojson_path,
-                    exc,
-                    stdout,
-                    stderr,
-                )
-                contour_geojson_path = None
-                contour_sidecar = None
-
         # --- Step 6: Validate (Gates 1 & 2) ---
         logger.info("Step 6/6: Validating artifacts")
         _, grid_m = get_grid_params(model, region)
@@ -1047,7 +999,6 @@ def build_frame(
             colorize_meta=colorize_meta,
             var_spec=var_spec_colormap,
             var_spec_model=var_spec_model,
-            contours=contour_sidecar,
             value_downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
             quality=frame_quality,
             quality_flags=frame_quality_flags,
