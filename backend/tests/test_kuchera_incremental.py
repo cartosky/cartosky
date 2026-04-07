@@ -588,6 +588,105 @@ def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypat
     assert "computed_steps=2" in caplog.text
 
 
+def test_snow10to1_incremental_reuses_prior_overlap_bucket_window(monkeypatch, caplog) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    step_fhs = [1, 2, 3, 4, 5, 6]
+    apcp_calls: list[str] = []
+    csnow_calls: list[int] = []
+
+    apcp_data = {
+        1: np.full((2, 2), 1.0, dtype=np.float32),
+        2: np.full((2, 2), 2.0, dtype=np.float32),
+        3: np.full((2, 2), 3.0, dtype=np.float32),
+        4: np.full((2, 2), 1.0, dtype=np.float32),
+        5: np.full((2, 2), 3.0, dtype=np.float32),
+        6: np.full((2, 2), 6.0, dtype=np.float32),
+    }
+    inventory_by_fh = {
+        1: ":APCP:surface:0-1 hour acc fcst:",
+        2: ":APCP:surface:0-2 hour acc fcst:",
+        3: ":APCP:surface:0-3 hour acc fcst:",
+        4: ":APCP:surface:3-4 hour acc fcst:",
+        5: ":APCP:surface:3-5 hour acc fcst:",
+        6: ":APCP:surface:3-6 hour acc fcst:",
+    }
+
+    def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        step_fh = int(fh)
+        if pattern.startswith(":APCP:surface:"):
+            apcp_calls.append(f"{step_fh}:{pattern}")
+            data = apcp_data[step_fh]
+            meta = {"inventory_line": inventory_by_fh[step_fh], "search_pattern": pattern}
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        raise AssertionError(f"unexpected pattern: {pattern}")
+
+    def _fake_fetch_step_component(**kwargs):
+        step_fh = int(kwargs["step_fh"])
+        var_key = str(kwargs["var_key"])
+        if var_key == "csnow":
+            csnow_calls.append(step_fh)
+            return np.ones((2, 2), dtype=np.float32), crs, transform
+        raise AssertionError(f"unexpected var_key: {var_key}")
+
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None, scale_divisor=0.03937007874015748):
+        del model_id, run_date, ctx, grid_cache_key, scale_divisor
+        if int(fh) == 5:
+            return np.full((2, 2), 6.0, dtype=np.float32), crs, transform
+        return None
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [inventory_by_fh[int(fh)]],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)],
+    )
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step",
+                "snow_component": "csnow",
+                "step_hours": "1",
+            }
+        )
+    )
+
+    with caplog.at_level("INFO"):
+        data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
+            model_id="nam",
+            var_key="snowfall_total",
+            product="conusnest.hiresf",
+            run_date=datetime(2026, 4, 7, 18, 0),
+            fh=6,
+            var_spec_model=var_spec_model,
+            var_capability=None,
+            model_plugin=object(),
+        )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert apcp_calls == [
+        "6::APCP:surface:3-6 hour acc fcst:$",
+        "5::APCP:surface:3-5 hour acc fcst:$",
+    ]
+    assert csnow_calls == [5, 6]
+    assert "retrying full rebuild" not in caplog.text
+    assert "computed_steps=1" in caplog.text
+    assert "reused_prev_cumulative=true" in caplog.text
+    expected_inches = np.full((2, 2), 9.0 * 0.03937007874015748 * 10.0, dtype=np.float32)
+    np.testing.assert_allclose(data, expected_inches, rtol=1e-6, atol=1e-6)
+
+
 def test_incremental_overlap_apcp_uses_seeded_prior_exact_window(monkeypatch, caplog) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

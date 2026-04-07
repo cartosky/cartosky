@@ -1529,7 +1529,7 @@ def _reconstruct_overlap_prior_sum(
     return reconstructed_sum, reconstructed_valid, reconstructed_crs, reconstructed_transform
 
 
-def _seed_overlap_prior_exact_step(
+def _seed_overlap_prior_bucket_window(
     *,
     model_id: str,
     product: str,
@@ -1544,9 +1544,9 @@ def _seed_overlap_prior_exact_step(
     start_fh: int,
     through_fh: int,
     cum_diff_state: _ApcpCumDiffState,
-) -> bool:
+) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS | None, rasterio.transform.Affine | None] | None:
     if through_fh <= start_fh:
-        return False
+        return None
 
     resolved_apcp_product = str(apcp_product or product)
     search_pattern = _apcp_exact_window_pattern(start_fh, through_fh)
@@ -1589,16 +1589,12 @@ def _seed_overlap_prior_exact_step(
                 return_meta=True,
             )
         except Exception:
-            return False
+            return None
 
     inventory_line = str((apcp_meta or {}).get("inventory_line", search_pattern[:-1])).strip()
-    mode = _classify_apcp_mode_for_kuchera(
-        inventory_line=inventory_line,
-        step_fh=int(through_fh),
-        expected_start_fh=int(start_fh),
-    )
-    if mode != "exact_step":
-        return False
+    window = _parse_apcp_accum_window_hours(inventory_line)
+    if window is None or int(window[0]) != int(start_fh) or int(window[1]) != int(through_fh):
+        return None
 
     step_valid = np.isfinite(step_data) & (step_data >= 0.0)
     step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32, copy=False)
@@ -1609,16 +1605,18 @@ def _seed_overlap_prior_exact_step(
     cum_diff_state.bucket_cumulative_crs = step_crs
     cum_diff_state.bucket_cumulative_transform = step_transform
     cum_diff_state.bucket_through_fh = int(through_fh)
-    cum_diff_state.recent_exact_steps[int(through_fh)] = (
-        step_clean.copy(),
-        step_valid.copy(),
-        step_crs,
-        step_transform,
-    )
-    prune_before_fh = int(through_fh) - 12
-    for prior_fh in list(cum_diff_state.recent_exact_steps.keys()):
-        if int(prior_fh) < prune_before_fh:
-            cum_diff_state.recent_exact_steps.pop(int(prior_fh), None)
+
+    if int(through_fh) == int(start_fh) + 1:
+        cum_diff_state.recent_exact_steps[int(through_fh)] = (
+            step_clean.copy(),
+            step_valid.copy(),
+            step_crs,
+            step_transform,
+        )
+        prune_before_fh = int(through_fh) - 12
+        for prior_fh in list(cum_diff_state.recent_exact_steps.keys()):
+            if int(prior_fh) < prune_before_fh:
+                cum_diff_state.recent_exact_steps.pop(int(prior_fh), None)
 
     if ctx is not None and resolved_apcp_cache_key is not None:
         resolved_cache = getattr(ctx, "resolved_apcp_cache", None)
@@ -1626,7 +1624,7 @@ def _seed_overlap_prior_exact_step(
             resolved_cache = {}
             setattr(ctx, "resolved_apcp_cache", resolved_cache)
         cache_meta = dict(apcp_meta)
-        cache_meta["selected_mode"] = "exact_step"
+        cache_meta["selected_mode"] = "exact_step" if int(through_fh) == int(start_fh) + 1 else "overlap_window"
         cache_meta["selected_window"] = f"{int(start_fh)}-{int(through_fh)}"
         cache_meta["exact_guess_used"] = True
         cache_meta["inventory_selected"] = True
@@ -1638,7 +1636,7 @@ def _seed_overlap_prior_exact_step(
             cache_meta,
         )
 
-    return True
+    return step_clean, step_valid, step_crs, step_transform
 
 
 def _resolve_apcp_step_data(
@@ -2005,7 +2003,7 @@ def _resolve_apcp_step_data(
                 and int(expected_start_fh) > int(window[0])
                 and int(cum_diff_state.consumed_through_fh) >= int(expected_start_fh)
             ):
-                seeded = _seed_overlap_prior_exact_step(
+                seeded_prior = _seed_overlap_prior_bucket_window(
                     model_id=model_id,
                     product=product,
                     run_date=run_date,
@@ -2020,12 +2018,8 @@ def _resolve_apcp_step_data(
                     through_fh=int(expected_start_fh),
                     cum_diff_state=cum_diff_state,
                 )
-                if seeded:
-                    reconstructed = _reconstruct_overlap_prior_sum(
-                        cum_diff_state=cum_diff_state,
-                        start_fh=int(window[0]),
-                        through_fh=int(expected_start_fh),
-                    )
+                if seeded_prior is not None:
+                    reconstructed = seeded_prior
             if reconstructed is not None:
                 prior_sum, prior_valid, prior_crs, prior_transform = reconstructed
                 same_shape = apcp_cum_clean.shape == prior_sum.shape
