@@ -13,14 +13,18 @@ class GridDisplayPrepConfig:
     upscale_factor: int = 1
     smooth_sigma: float | None = None
     preserve_zero_support: bool = False
+    support_min_value: float | None = None
+    support_coverage_threshold: float = 1e-3
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
     ("gfs", "precip_total"): GridDisplayPrepConfig(
-        id="gfs_precip_total_display_v1",
+        id="gfs_precip_total_display_v2",
         upscale_factor=3,
         smooth_sigma=None,
         preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.5,
     ),
     ("gfs", "snowfall_total"): GridDisplayPrepConfig(
         id="gfs_snowfall_total_display_v1",
@@ -35,10 +39,12 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         preserve_zero_support=True,
     ),
     ("nbm", "precip_total"): GridDisplayPrepConfig(
-        id="nbm_precip_total_display_v1",
+        id="nbm_precip_total_display_v2",
         upscale_factor=3,
         smooth_sigma=None,
         preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.5,
     ),
     ("nbm", "snowfall_total"): GridDisplayPrepConfig(
         id="nbm_snowfall_total_display_v1",
@@ -91,7 +97,11 @@ def prepare_grid_display_values(
 
     prepared = values_f32
     finite_mask = np.isfinite(prepared)
-    positive_mask = finite_mask & (prepared > 0.0)
+    support_min_value = config.support_min_value
+    if support_min_value is None:
+        support_mask = finite_mask & (prepared > 0.0)
+    else:
+        support_mask = finite_mask & (prepared >= float(support_min_value))
 
     factor = max(1, int(config.upscale_factor))
     if factor > 1:
@@ -109,15 +119,16 @@ def prepare_grid_display_values(
             mode="nearest",
             prefilter=False,
         ) > 0.5
-        positive_support = zoom(
-            positive_mask.astype(np.float32, copy=False),
+        support_coverage = zoom(
+            support_mask.astype(np.float32, copy=False),
             zoom=(factor, factor),
             order=1,
             mode="nearest",
             prefilter=False,
-        ) > 1e-3
+        ).astype(np.float32, copy=False)
+        positive_support = support_coverage >= float(config.support_coverage_threshold)
     else:
-        positive_support = positive_mask
+        positive_support = support_mask
 
     prepared = np.where(finite_mask, prepared, np.nan).astype(np.float32, copy=False)
 

@@ -405,7 +405,7 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     frame_meta = json.loads(frame_meta_path.read_text())
     assert frame_meta["width"] == values.shape[1] * 3
     assert frame_meta["height"] == values.shape[0] * 3
-    assert frame_meta["display_prep"]["id"] == "gfs_precip_total_display_v1"
+    assert frame_meta["display_prep"]["id"] == "gfs_precip_total_display_v2"
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "precip_total"
@@ -414,7 +414,7 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     assert manifest["grid"]["units"] == "in"
     assert manifest["grid"]["width"] == values.shape[1] * 3
     assert manifest["grid"]["height"] == values.shape[0] * 3
-    assert manifest["display_prep"]["id"] == "gfs_precip_total_display_v1"
+    assert manifest["display_prep"]["id"] == "gfs_precip_total_display_v2"
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
         manifest["grid"]["height"],
@@ -830,7 +830,7 @@ def test_build_grid_for_run_supports_nbm_accumulation_targets(
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
 
-    expected_prep_id = "nbm_precip_total_display_v1" if var == "precip_total" else "nbm_snowfall_total_display_v1"
+    expected_prep_id = "nbm_precip_total_display_v2" if var == "precip_total" else "nbm_snowfall_total_display_v1"
     assert frame_meta_path.is_file()
     frame_meta = json.loads(frame_meta_path.read_text())
     assert frame_meta["width"] == values.shape[1] * 3
