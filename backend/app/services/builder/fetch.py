@@ -767,20 +767,27 @@ def _inventory_filter(index_df: Any, search_pattern: str) -> Any | None:
         return None
 
     pattern = str(search_pattern)
-    regex_mode = True
+    compiled_pattern: re.Pattern[str] | None = None
     try:
-        re.compile(pattern)
+        compiled_pattern = re.compile(pattern)
     except re.error:
-        regex_mode = False
+        compiled_pattern = None
 
     try:
         for col in _INVENTORY_SEARCH_COLUMNS:
             if col in index_df.columns:
                 series = index_df[col].astype(str)
-                if regex_mode:
-                    mask = series.str.contains(pattern, regex=True, na=False)
-                else:
-                    mask = series.str.contains(pattern, regex=False, na=False)
+                # Treat inventory selectors as literal strings first so GRIB labels
+                # containing regex metacharacters like parentheses still match.
+                mask = series.str.contains(pattern, regex=False, na=False)
+                subset = index_df.loc[mask]
+                if len(subset) > 0:
+                    return subset
+
+                if compiled_pattern is None:
+                    continue
+
+                mask = series.str.contains(compiled_pattern.pattern, regex=True, na=False)
                 subset = index_df.loc[mask]
                 if len(subset) > 0:
                     return subset

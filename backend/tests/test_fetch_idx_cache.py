@@ -93,6 +93,48 @@ def test_no_idx_negative_cache_skips_repeated_herbie_calls_within_ttl(monkeypatc
     assert _FakeHerbie.calls == 2
 
 
+def test_inventory_filter_matches_literal_parentheses_before_regex_fallback() -> None:
+    index_df = pd.DataFrame(
+        [
+            {
+                "search_this": ":PWAT:entire atmosphere (considered as a single layer):anl:",
+                "start_byte": 0,
+                "end_byte": 100,
+            }
+        ]
+    )
+
+    subset = fetch_module._inventory_filter(
+        index_df,
+        ":PWAT:entire atmosphere (considered as a single layer):",
+    )
+
+    assert subset is not None
+    assert len(subset) == 1
+    assert str(subset.iloc[0]["search_this"]).startswith(":PWAT:entire atmosphere")
+
+
+def test_inventory_filter_preserves_regex_matching_for_windowed_patterns() -> None:
+    index_df = pd.DataFrame(
+        [
+            {
+                "search_this": ":APCP:surface:0-1 hour acc fcst:",
+                "start_byte": 0,
+                "end_byte": 100,
+            }
+        ]
+    )
+
+    subset = fetch_module._inventory_filter(
+        index_df,
+        r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$",
+    )
+
+    assert subset is not None
+    assert len(subset) == 1
+    assert str(subset.iloc[0]["search_this"]) == ":APCP:surface:0-1 hour acc fcst:"
+
+
 def test_prs_idx_missing_switches_to_nomads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     pattern = ":TMP:850 mb:"
 
