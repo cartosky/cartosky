@@ -146,6 +146,28 @@ export default function Variables() {
         limitations: ["Pressure levels can intersect terrain; values may be masked or behave oddly in complex terrain."],
       },
       {
+        id: "vort500",
+        name: "500 mb Heights & Vorticity",
+        oneLiner: "500 mb absolute vorticity shaded beneath 500 mb height contours for synoptic-scale pattern diagnosis.",
+        pills: ["500 mb", "10^-5 s^-1 + m", "Continuous + contours"],
+        definition:
+          "This product shades 500 mb absolute vorticity while overlaying 500 mb geopotential height contours. Together they help diagnose troughs, shortwaves, vort maxima, and the broader mid-level pattern driving ascent and storm evolution.",
+        bestFor: [
+          "Tracking shortwaves and mid-level energy maxima",
+          "Comparing trough/ridge structure and timing",
+          "Finding areas where stronger mid-level forcing overlaps moisture and instability",
+        ],
+        interpretation: [
+          "Use the vorticity shading to find compact lobes of stronger spin, then use the height contours to place them within the larger synoptic pattern.",
+          "A strong vort max matters most where it is translating into downstream ascent, so pair it with moisture and instability fields rather than treating it in isolation.",
+        ],
+        limitations: [
+          "This is a pressure-level field, so terrain-intersecting areas and very small-scale features are not the focus of the product.",
+          "Absolute vorticity includes the Coriolis contribution, so values are not directly interchangeable with a relative-vorticity display from another source.",
+        ],
+        notes: ["Current implementation uses 60 m height contours over the vorticity fill."],
+      },
+      {
         id: "pwat",
         name: "Precipitable Water",
         oneLiner: "Total column moisture, expressed as the liquid water depth that would result if all vapor condensed.",

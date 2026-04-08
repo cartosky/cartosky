@@ -426,6 +426,37 @@ TMP850_COLOR_ANCHORS = [
 ]
 TMP850_RANGE = (-40.0, 40.0)
 
+VORT500_LEGEND_STOPS = [
+    (0.5, "#ffffff"),
+    (1.0, "#dddddd"),
+    (1.5, "#bdbdbd"),
+    (2.0, "#9e9e9e"),
+    (3.0, "#6fc9c4"),
+    (4.0, "#2ed6d4"),
+    (5.0, "#00d16f"),
+    (6.0, "#58df00"),
+    (8.0, "#b5e400"),
+    (10.0, "#fff100"),
+    (12.0, "#ffd100"),
+    (14.0, "#ffb000"),
+    (16.0, "#ff8a00"),
+    (18.0, "#ff6200"),
+    (20.0, "#ff3b00"),
+    (22.0, "#e62a00"),
+    (25.0, "#c31900"),
+    (30.0, "#9f0f00"),
+    (35.0, "#8f1a56"),
+    (40.0, "#9d2494"),
+    (45.0, "#ba2de1"),
+    (50.0, "#db3cf3"),
+    (55.0, "#ee54f7"),
+    (60.0, "#f58bfa"),
+    (85.0, "#ffd2f9"),
+]
+VORT500_COLOR_ANCHORS = list(VORT500_LEGEND_STOPS)
+VORT500_COLORS = [color for _, color in VORT500_LEGEND_STOPS]
+VORT500_RANGE = (0.0, 85.0)
+
 # Palette/LUT catalog keyed by color_map_id.
 # Variable identity/metadata lives in model plugin capabilities.
 COLOR_MAP_SPECS: dict[str, dict] = {
@@ -549,6 +580,18 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP850_COLOR_ANCHORS,
         "display_name": "850mb Temperature",
         "legend_title": "850mb Temperature (°C)",
+    },
+    "vort500": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "10^-5 s^-1",
+        "range": VORT500_RANGE,
+        "anchors": VORT500_COLOR_ANCHORS,
+        "colors": VORT500_COLORS,
+        "display_name": "500mb Heights & Vorticity",
+        "legend_title": "500mb Absolute Vorticity (10^-5 s^-1)",
+        "legend_stops": VORT500_LEGEND_STOPS,
+        "transparent_below_min": 0.5,
     },
     "mlcape": {
         "type": "continuous",

@@ -18,6 +18,7 @@ import {
   fetchManifest,
   fetchCapabilities,
   fetchFrames,
+  buildContourUrl,
   fetchGridManifest,
   fetchRegionPresets,
   fetchRuns,
@@ -961,8 +962,26 @@ export default function App() {
   // keep its paint settings in effect until the new variable is promoting.
   const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
   const contourGeoJsonUrl = useMemo(() => {
-    return null;
-  }, []);
+    if (!model || !displayedOverlayVariable || !currentFrame || !resolvedRunForRequests) {
+      return null;
+    }
+    const meta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
+    const contours = meta?.contours;
+    if (!contours || typeof contours !== "object") {
+      return null;
+    }
+    const contourKey = Object.keys(contours)[0];
+    if (!contourKey) {
+      return null;
+    }
+    return buildContourUrl({
+      model,
+      run: resolvedRunForRequests,
+      varKey: displayedOverlayVariable,
+      fh: Number(currentFrame.fh),
+      key: contourKey,
+    });
+  }, [currentFrame, displayedOverlayVariable, frameRows, model, resolvedRunForRequests]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;

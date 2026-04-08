@@ -90,6 +90,124 @@ def _prepare_display_data_for_colorize(
     return warped_data
 
 
+def _safe_float_hint(hints: dict[str, Any], key: str) -> float | None:
+    raw = hints.get(key)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if np.isfinite(value) else None
+
+
+def _build_contour_metadata_for_variable(
+    *,
+    model: str,
+    run_date: datetime,
+    fh: int,
+    product: str,
+    var_key: str,
+    region: str,
+    model_plugin: Any,
+    var_spec_model: Any,
+    dst_transform: Any,
+    staging_dir: Path,
+    fetch_ctx: FetchContext | None,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    selectors = getattr(var_spec_model, "selectors", None)
+    hints = getattr(selectors, "hints", {}) if selectors is not None else {}
+    if not isinstance(hints, dict):
+        return None, None
+
+    contour_component = str(hints.get("contour_component") or "").strip()
+    if not contour_component:
+        return None, None
+
+    contour_interval = _safe_float_hint(hints, "contour_interval")
+    if contour_interval is None or contour_interval <= 0.0:
+        return None, None
+
+    contour_key = str(hints.get("contour_key") or "contour").strip() or "contour"
+    contour_label = str(hints.get("contour_label") or contour_key).strip() or contour_key
+    contour_start = _safe_float_hint(hints, "contour_start")
+    contour_end = _safe_float_hint(hints, "contour_end")
+    contour_product = str(hints.get("contour_product") or product).strip() or product
+
+    component_spec = _resolve_model_var_spec(model, contour_component, model_plugin)
+    component_patterns = _get_search_patterns(component_spec)
+    component_data = None
+    src_crs = None
+    src_transform = None
+    last_exc: Exception | None = None
+    for search_pattern in component_patterns:
+        try:
+            component_data, src_crs, src_transform = fetch_variable(
+                model_id=model,
+                product=contour_product,
+                search_pattern=search_pattern,
+                run_date=run_date,
+                fh=fh,
+                bundle_fetch_cache=getattr(fetch_ctx, "bundle_fetch_cache", None),
+            )
+            break
+        except (HerbieTransientUnavailableError, RuntimeError) as exc:
+            last_exc = exc
+            continue
+    if component_data is None or src_crs is None or src_transform is None:
+        if last_exc is not None:
+            raise last_exc
+        return None, None
+    warped_component, _ = warp_to_target_grid(
+        component_data,
+        src_crs,
+        src_transform,
+        model=model,
+        region=region,
+        resampling="bilinear",
+        src_nodata=None,
+        dst_nodata=float("nan"),
+    )
+    finite = warped_component[np.isfinite(warped_component)]
+    if finite.size == 0:
+        return None, None
+
+    data_min = float(np.nanmin(finite))
+    data_max = float(np.nanmax(finite))
+    level_min = contour_start if contour_start is not None else np.ceil(data_min / contour_interval) * contour_interval
+    level_max = contour_end if contour_end is not None else np.floor(data_max / contour_interval) * contour_interval
+    if not np.isfinite(level_min) or not np.isfinite(level_max) or level_max < level_min:
+        return None, None
+
+    levels: list[float] = []
+    level = level_min
+    while level <= level_max + (contour_interval * 0.25):
+        levels.append(float(round(level, 6)))
+        level += contour_interval
+    if not levels:
+        return None, None
+
+    contours_dir = staging_dir / "contours"
+    contour_path = contours_dir / f"fh{fh:03d}_{contour_key}.geojson"
+    build_iso_contour_geojson(
+        value_data=warped_component,
+        value_transform=dst_transform,
+        out_geojson_path=contour_path,
+        levels=levels,
+    )
+    metadata = {
+        contour_key: {
+            "format": "geojson",
+            "path": str(contour_path.relative_to(staging_dir)).replace("\\", "/"),
+            "srs": "EPSG:4326",
+            "level": contour_interval,
+            "levels": levels,
+            "label": contour_label,
+        }
+    }
+    return metadata, contours_dir
+
+
 # ---------------------------------------------------------------------------
 # Gate 1: structural validation (in-process via rasterio)
 # ---------------------------------------------------------------------------
@@ -367,7 +485,8 @@ def build_iso_contour_geojson(
     value_data: np.ndarray,
     value_transform: Any,
     out_geojson_path: Path,
-    level: float,
+    level: float | None = None,
+    levels: list[float] | tuple[float, ...] | None = None,
     srs: str = "EPSG:4326",
 ) -> None:
     """Generate iso-contour GeoJSON from a full-resolution value grid.
@@ -421,18 +540,24 @@ def build_iso_contour_geojson(
             text=True,
         )
 
+        contour_levels = [float(item) for item in (levels or []) if np.isfinite(float(item))]
+        if not contour_levels:
+            if level is None:
+                raise ValueError("build_iso_contour_geojson requires level or levels")
+            contour_levels = [float(level)]
+
+        contour_cmd = [
+            gdal_contour_bin,
+            "-a",
+            "value",
+            "-f",
+            "GeoJSON",
+        ]
+        for contour_level in contour_levels:
+            contour_cmd.extend(["-fl", str(contour_level)])
+        contour_cmd.extend([str(tmp_path), str(out_geojson_path)])
         subprocess.run(
-            [
-                gdal_contour_bin,
-                "-fl",
-                str(float(level)),
-                "-a",
-                "value",
-                "-f",
-                "GeoJSON",
-                str(tmp_path),
-                str(out_geojson_path),
-            ],
+            contour_cmd,
             check=True,
             capture_output=True,
             text=True,
@@ -948,6 +1073,20 @@ def build_frame(
             _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
             return None
 
+        contours_meta, contour_geojson_path = _build_contour_metadata_for_variable(
+            model=model,
+            run_date=run_date,
+            fh=fh,
+            product=product,
+            var_key=var_key,
+            region=region,
+            model_plugin=resolved_plugin,
+            var_spec_model=var_spec_model,
+            dst_transform=dst_transform,
+            staging_dir=staging_dir,
+            fetch_ctx=local_fetch_ctx,
+        )
+
         # --- Write sidecar JSON ---
         sidecar = build_sidecar_json(
             model=model,
@@ -958,6 +1097,7 @@ def build_frame(
             colorize_meta=colorize_meta,
             var_spec=var_spec_colormap,
             var_spec_model=var_spec_model,
+            contours=contours_meta,
             value_downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
             quality=frame_quality,
             quality_flags=frame_quality_flags,
@@ -1143,9 +1283,18 @@ def _write_json_atomic(path: Path, data: dict) -> None:
 def _cleanup_artifacts(*paths: Path | None) -> None:
     """Remove artifact files that failed validation."""
     for p in paths:
-        if p is not None and p.exists():
+        if p is None or not p.exists():
+            continue
+        if p.is_dir():
+            for child in sorted(p.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            p.rmdir()
+        else:
             p.unlink()
-            logger.debug("Cleaned up: %s", p)
+        logger.debug("Cleaned up: %s", p)
 
 
 def _file_size_str(path: Path) -> str:
