@@ -381,7 +381,6 @@ def test_radar_ptype_display_prep_preserves_indexed_classes():
 
     var_spec = {
         "type": "indexed",
-        "display_smoothing_sigma": 0.8,
     }
     display_data = _prepare_display_data_for_colorize(radar_idx, var_spec)
 

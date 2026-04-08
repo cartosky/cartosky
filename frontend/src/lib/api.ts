@@ -199,6 +199,7 @@ export type GridManifestPalette = {
   color_map_id?: string | null;
   kind?: string | null;
   power_norm_gamma?: number | null;
+  display_resampling?: string | null;
   transparent_below_min?: number | null;
   transparent_zero?: boolean | null;
 };

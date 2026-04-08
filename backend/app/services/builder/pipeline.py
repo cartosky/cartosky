@@ -32,7 +32,6 @@ from typing import Any
 
 import numpy as np
 import rasterio
-from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
 from app.config import grid_build_enabled
 from app.services.builder.cog_writer import (
@@ -67,29 +66,6 @@ VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
 
-def _smooth_display_data(data: np.ndarray, sigma: float) -> np.ndarray:
-    if sigma <= 0.0:
-        return data
-
-    finite_mask = np.isfinite(data)
-    if not finite_mask.any():
-        return data
-
-    data_filled = np.where(finite_mask, data, 0.0).astype(np.float32, copy=False)
-    weight = np.where(finite_mask, 1.0, 0.0).astype(np.float32, copy=False)
-
-    # truncate=3.0 matches the old kernel radius of ceil(3*sigma).
-    # mode='nearest' matches the old np.pad(..., mode='edge') boundary handling.
-    num = gaussian_filter(data_filled, sigma=sigma, mode='nearest', truncate=3.0)
-    den = gaussian_filter(weight, sigma=sigma, mode='nearest', truncate=3.0)
-
-    valid_den = den > 1e-6
-    smoothed = np.full(num.shape, np.nan, dtype=np.float32)
-    np.divide(num, den, out=smoothed, where=valid_den)
-    smoothed[~finite_mask] = np.nan
-    return smoothed
-
-
 def _warp_resampling_for_variable(*, model_id: str | None, var_key: str | None, kind: str | None) -> str:
     """Return warp resampling method for a variable.
 
@@ -110,31 +86,8 @@ def _prepare_display_data_for_colorize(
     model_id: str | None = None,
     var_key: str | None = None,
 ) -> np.ndarray:
-    kind = str(var_spec.get("type") or "").strip().lower()
-    if kind in {"discrete", "indexed", "categorical"}:
-        return warped_data
-
-    # Step 1 visual-fidelity guardrail:
-    # For selected low-resolution GFS continuous products, avoid adding
-    # post-warp Gaussian smoothing so warp resampling is the only blur source.
-    model_norm = str(model_id or "").strip().lower()
-    var_norm = str(var_key or "").strip().lower()
-    if model_norm == "gfs" and var_norm in {"tmp2m", "dp2m", "tmp850", "wspd10m", "wgst10m", "qpf6h", "pwat"}:
-        return warped_data
-
-    if resampling_name_for_kind(model_id=model_norm, var_key=var_norm, kind=kind) == "nearest":
-        return warped_data
-
-    sigma_raw = var_spec.get("display_smoothing_sigma")
-    if sigma_raw is None:
-        return warped_data
-    try:
-        sigma = float(sigma_raw)
-    except (TypeError, ValueError):
-        return warped_data
-    if sigma <= 0.0:
-        return warped_data
-    return _smooth_display_data(warped_data, sigma)
+    _ = (var_spec, model_id, var_key)
+    return warped_data
 
 
 # ---------------------------------------------------------------------------
