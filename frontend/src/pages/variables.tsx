@@ -106,6 +106,28 @@ export default function Variables() {
         limitations: ["Shallow mixing and surface flux biases can shift dew points by a few degrees."],
       },
       {
+        id: "wspd850",
+        name: "850mb Heights + Winds",
+        oneLiner: "850 mb wind speed shaded beneath 850 mb height contours for low-level jet and warm-advection pattern diagnosis.",
+        pills: ["850 mb", "mph + m", "Continuous + contours"],
+        definition:
+          "This product shades 850 mb wind speed while overlaying 850 mb geopotential height contours. Together they help diagnose low-level jet structure, warm-advection corridors, moisture transport, and frontal-zone evolution.",
+        bestFor: [
+          "Finding low-level jet cores and stronger warm-advection corridors",
+          "Comparing frontal-zone placement with stronger low-level flow",
+          "Tracking moisture-transport pathways into severe or heavy-rain setups",
+        ],
+        interpretation: [
+          "Use the wind-speed shading to find stronger low-level flow maxima, then use the height contours to place that flow within the broader synoptic pattern.",
+          "A stronger 850 mb wind maximum matters most where it overlaps moisture and instability, so pair it with dew point, CAPE, and precipitation fields rather than using it alone.",
+        ],
+        limitations: [
+          "This is an above-ground pressure-level product, so local terrain effects and shallow surface decoupling are not represented directly.",
+          "Wind speed alone does not show directional shear or exact moisture quality, so additional fields are still needed for full low-level kinematic analysis.",
+        ],
+        notes: ["Current implementation uses 30 m height contours over the 850 mb wind-speed fill."],
+      },
+      {
         id: "wspd10m",
         name: "10m Wind Speed",
         oneLiner: "Sustained wind speed at 10 meters above ground.",

@@ -33,6 +33,8 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "wspd850",
+        "vort500",
         "sbcape",
         "mlcape",
         "mucape",
@@ -66,7 +68,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_ptype["derived"] is True
     assert precip_ptype["derive_strategy_id"] == "precip_ptype_blend"
     assert precip_ptype["units"] == "in/hr"
-    assert precip_ptype["order"] == 12
+    assert precip_ptype["order"] == 14
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
@@ -75,7 +77,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["kind"] == "continuous"
     assert precip_total["constraints"]["min_fh"] == 3
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 8
+    assert precip_total["order"] == 10
     assert precip_total["display_resampling_override"] is None
 
     tmp850 = payload["variables"]["tmp850"]
@@ -84,6 +86,29 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["units"] == "C"
     assert tmp850["display_name"] == "850mb Temp"
     assert tmp850["order"] == 3
+
+    wspd850 = payload["variables"]["wspd850"]
+    assert wspd850["buildable"] is True
+    assert wspd850["derived"] is True
+    assert wspd850["derive_strategy_id"] == "wspd10m"
+    assert wspd850["kind"] == "continuous"
+    assert wspd850["units"] == "mph"
+    assert wspd850["display_name"] == "850mb Heights + Winds"
+    assert wspd850["group"] == "Wind"
+    assert wspd850["color_map_id"] == "wspd850"
+    assert wspd850["order"] == 4
+    assert wspd850["display_resampling_override"] is None
+
+    vort500 = payload["variables"]["vort500"]
+    assert vort500["buildable"] is True
+    assert vort500["derived"] is False
+    assert vort500["kind"] == "continuous"
+    assert vort500["units"] == "10^-5 s^-1"
+    assert vort500["display_name"] == "500mb Absolute Vorticity"
+    assert vort500["group"] == "Dynamics"
+    assert vort500["color_map_id"] == "vort500"
+    assert vort500["order"] == 5
+    assert vort500["display_resampling_override"] is None
 
     dp2m = payload["variables"]["dp2m"]
     assert dp2m["buildable"] is True
@@ -107,7 +132,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert sbcape["display_name"] == "Surface-Based CAPE"
     assert sbcape["group"] == "Instability"
     assert sbcape["color_map_id"] == "mlcape"
-    assert sbcape["order"] == 4
+    assert sbcape["order"] == 6
     assert sbcape["display_resampling_override"] is None
 
     mlcape = payload["variables"]["mlcape"]
@@ -118,7 +143,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
-    assert mlcape["order"] == 5
+    assert mlcape["order"] == 7
     assert mlcape["display_resampling_override"] is None
 
     mucape = payload["variables"]["mucape"]
@@ -129,7 +154,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["display_name"] == "Most-Unstable CAPE"
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
-    assert mucape["order"] == 6
+    assert mucape["order"] == 8
     assert mucape["display_resampling_override"] is None
 
     pwat = payload["variables"]["pwat"]
@@ -140,7 +165,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["display_name"] == "Precipitable Water"
     assert pwat["group"] == "Moisture"
     assert pwat["color_map_id"] == "pwat"
-    assert pwat["order"] == 7
+    assert pwat["order"] == 9
     assert pwat["display_resampling_override"] is None
 
     wgst10m = payload["variables"]["wgst10m"]
@@ -148,14 +173,14 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["derived"] is False
     assert wgst10m["units"] == "mph"
     assert wgst10m["display_name"] == "10m Wind Gust"
-    assert wgst10m["order"] == 11
+    assert wgst10m["order"] == 13
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["buildable"] is True
     assert wspd10m["derived"] is True
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 10
+    assert wspd10m["order"] == 12
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -165,7 +190,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["constraints"]["min_fh"] == 3
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
-    assert snowfall_total["order"] == 9
+    assert snowfall_total["order"] == 11
     assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
@@ -176,7 +201,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["constraints"]["min_fh"] == 3
     assert snowfall_kuchera_total["default_fh"] == 6
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
-    assert snowfall_kuchera_total["order"] == 15
+    assert snowfall_kuchera_total["order"] == 17
 
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
@@ -194,6 +219,8 @@ def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert GFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert GFS_MODEL.normalize_var_id("t850mb") == "tmp850"
+    assert GFS_MODEL.normalize_var_id("wspd850") == "wspd850"
+    assert GFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
     assert GFS_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert GFS_MODEL.normalize_var_id("mlcape") == "mlcape"
     assert GFS_MODEL.normalize_var_id("mucape") == "mucape"
@@ -256,6 +283,51 @@ def test_gfs_pwat_selector_invariants() -> None:
     assert var_spec.selectors.filter_by_keys == {
         "shortName": "pwat",
         "typeOfLevel": "atmosphereSingleLayer",
+    }
+
+
+def test_gfs_wspd850_uses_850mb_components_and_height_contours() -> None:
+    var_spec = GFS_MODEL.get_var("wspd850")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "wspd10m"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "mph"
+    assert var_spec.selectors.search == []
+    assert var_spec.selectors.hints["u_component"] == "u850"
+    assert var_spec.selectors.hints["v_component"] == "v850"
+    assert var_spec.selectors.hints["contour_component"] == "hgt850"
+    assert var_spec.selectors.hints["contour_interval"] == "30"
+    assert var_spec.selectors.hints["contour_key"] == "height_850mb"
+
+
+def test_gfs_850mb_component_selectors_invariants() -> None:
+    hgt_spec = GFS_MODEL.get_var("hgt850")
+    assert hgt_spec is not None
+    assert hgt_spec.selectors.search == [":HGT:850 mb:"]
+    assert hgt_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+
+    u_spec = GFS_MODEL.get_var("u850")
+    assert u_spec is not None
+    assert u_spec.selectors.search == [":UGRD:850 mb:"]
+    assert u_spec.selectors.filter_by_keys == {
+        "shortName": "ugrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+
+    v_spec = GFS_MODEL.get_var("v850")
+    assert v_spec is not None
+    assert v_spec.selectors.search == [":VGRD:850 mb:"]
+    assert v_spec.selectors.filter_by_keys == {
+        "shortName": "vgrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
     }
 
 

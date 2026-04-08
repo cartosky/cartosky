@@ -613,6 +613,14 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "10m Wind Speed",
         "legend_title": "Wind Speed (mph)",
     },
+    "wspd850": {
+        "type": "continuous",
+        "units": "mph",
+        "range": WSPD10M_RANGE,
+        "anchors": WSPD10M_COLOR_ANCHORS,
+        "display_name": "850mb Heights & Winds",
+        "legend_title": "850mb Wind Speed (mph)",
+    },
     "wgst10m": {
         "type": "continuous",
         "units": "mph",

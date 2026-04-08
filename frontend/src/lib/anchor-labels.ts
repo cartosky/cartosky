@@ -52,6 +52,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   dpt2m: { mode: "always" },
   dewpoint2m: { mode: "always" },
   dewpoint: { mode: "always" },
+  wspd850: { mode: "hidden" },
   wspd10m: { mode: "always" },
   wgst10m: { mode: "always" },
   sbcape: { mode: "active-only", threshold: 100 },
