@@ -476,7 +476,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": QPF6H_LEGEND_STOPS,
         "allow_dry_frame": True,
         "transparent_below_min": 0.01,
-        "display_smoothing_sigma": 0.6,
     },
     "qpf6h": {
         "type": "continuous",
@@ -498,7 +497,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": PWAT_LEGEND_STOPS,
         "allow_dry_frame": True,
         "transparent_below_min": 0.05,
-        "display_smoothing_sigma": 0.7,
     },
     "precip_ptype": {
         "type": "indexed",
@@ -523,7 +521,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Total Snowfall (in)",
         "allow_dry_frame": True,
         "transparent_below_min": 0.1,
-        # "display_smoothing_sigma": 0.6,
     },
     "tmp2m": {
         "type": "continuous",
@@ -532,7 +529,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP2M_F_COLOR_ANCHORS,
         "display_name": "2m Temperature",
         "legend_title": "Temperature (°F)",
-        "display_smoothing_sigma": 0.8,
     },
     "dp2m": {
         "type": "continuous",
@@ -541,7 +537,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP2M_F_COLOR_ANCHORS,
         "display_name": "2m Dew Point",
         "legend_title": "Dew Point (°F)",
-        "display_smoothing_sigma": 0.8,
     },
     "tmp850": {
         "type": "continuous",
@@ -560,7 +555,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Mixed-Layer CAPE (J/kg)",
         "legend_stops": list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS)),
         "transparent_below_min": 25.0,
-        "display_smoothing_sigma": 0.8,
     },
     "wspd10m": {
         "type": "continuous",
@@ -569,7 +563,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "10m Wind Speed",
         "legend_title": "Wind Speed (mph)",
-        "display_smoothing_sigma": 0.8,
     },
     "wgst10m": {
         "type": "continuous",
@@ -578,7 +571,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "10m Wind Gust",
         "legend_title": "Wind Gust (mph)",
-        "display_smoothing_sigma": 0.8,
     },
     "refc": {
         "type": "discrete",

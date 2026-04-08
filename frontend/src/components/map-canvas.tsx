@@ -104,52 +104,12 @@ type GridPaintSettings = {
   brightnessMax: number;
 };
 
-const OVERLAY_RASTER_CONTRAST = 0.11;
-const OVERLAY_RASTER_SATURATION = 0.11;
-const OVERLAY_RASTER_BRIGHTNESS_MIN = 0.02;
-const OVERLAY_RASTER_BRIGHTNESS_MAX = 0.98;
-const OVERLAY_RASTER_DARK_CONTRAST = 0.14;
-const OVERLAY_RASTER_DARK_SATURATION = 0.14;
-const OVERLAY_RASTER_DARK_BRIGHTNESS_MIN = 0.06;
-const OVERLAY_RASTER_DARK_BRIGHTNESS_MAX = 1;
-const OVERLAY_RASTER_DARK_GRAY_BOOST_CONTRAST = 0.2;
-const OVERLAY_RASTER_DARK_GRAY_BOOST_SATURATION = 0.16;
-const OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MIN = 0.1;
-const OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MAX = 1;
-const GRAY_LOW_END_VARIABLES = new Set(["precip_total", "snowfall_total", "qpf6h", "pwat", "wspd10m", "wgst10m"]);
-
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
-  if (basemapMode === "dark") {
-    if (variable && GRAY_LOW_END_VARIABLES.has(variable)) {
-      return {
-        contrast: OVERLAY_RASTER_DARK_GRAY_BOOST_CONTRAST,
-        saturation: OVERLAY_RASTER_DARK_GRAY_BOOST_SATURATION,
-        brightnessMin: OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MIN,
-        brightnessMax: OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MAX,
-      };
-    }
-    return {
-      contrast: OVERLAY_RASTER_DARK_CONTRAST,
-      saturation: OVERLAY_RASTER_DARK_SATURATION,
-      brightnessMin: OVERLAY_RASTER_DARK_BRIGHTNESS_MIN,
-      brightnessMax: OVERLAY_RASTER_DARK_BRIGHTNESS_MAX,
-    };
-  }
-
-  if (variable === "wspd10m" || variable === "wgst10m") {
-    return {
-      contrast: 0,
-      saturation: 0,
-      brightnessMin: 0,
-      brightnessMax: 1,
-    };
-  }
-
   return {
-    contrast: OVERLAY_RASTER_CONTRAST,
-    saturation: OVERLAY_RASTER_SATURATION,
-    brightnessMin: OVERLAY_RASTER_BRIGHTNESS_MIN,
-    brightnessMax: OVERLAY_RASTER_BRIGHTNESS_MAX,
+    contrast: 0,
+    saturation: 0,
+    brightnessMin: 0,
+    brightnessMax: 1,
   };
 }
 

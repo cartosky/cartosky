@@ -4,56 +4,35 @@ from app.services.builder.colorize import float_to_rgba
 from app.services.builder.pipeline import _prepare_display_data_for_colorize, _warp_resampling_for_variable
 
 
-def test_gfs_continuous_vars_skip_display_smoothing() -> None:
+def test_continuous_vars_without_display_smoothing_remain_passthrough() -> None:
     data = np.zeros((9, 9), dtype=np.float32)
     data[4, 4] = 100.0
-    spec = {"type": "continuous", "display_smoothing_sigma": 0.8}
+    spec = {"type": "continuous"}
 
-    for var_key in ("tmp2m", "dp2m", "tmp850", "wspd10m", "wgst10m", "qpf6h"):
+    for model_id, var_key in (
+        ("gfs", "tmp2m"),
+        ("gfs", "dp2m"),
+        ("gfs", "tmp850"),
+        ("gfs", "wspd10m"),
+        ("gfs", "wgst10m"),
+        ("gfs", "qpf6h"),
+        ("gfs", "precip_total"),
+        ("gfs", "snowfall_total"),
+        ("gfs", "pwat"),
+        ("hrrr", "tmp2m"),
+    ):
         display = _prepare_display_data_for_colorize(
             data,
             spec,
-            model_id="gfs",
+            model_id=model_id,
             var_key=var_key,
         )
         np.testing.assert_array_equal(display, data)
 
 
-def test_gfs_total_precip_and_snowfall_apply_display_smoothing() -> None:
-    data = np.zeros((9, 9), dtype=np.float32)
-    data[4, 4] = 100.0
-    spec = {"type": "continuous", "display_smoothing_sigma": 0.6}
-
-    for var_key in ("precip_total", "snowfall_total"):
-        display = _prepare_display_data_for_colorize(
-            data,
-            spec,
-            model_id="gfs",
-            var_key=var_key,
-        )
-        assert not np.array_equal(display, data)
-        assert 0.0 < float(display[4, 4]) < 100.0
-
-
-def test_non_gfs_continuous_still_applies_display_smoothing() -> None:
-    data = np.zeros((9, 9), dtype=np.float32)
-    data[4, 4] = 100.0
-    spec = {"type": "continuous", "display_smoothing_sigma": 0.8}
-
-    display = _prepare_display_data_for_colorize(
-        data,
-        spec,
-        model_id="hrrr",
-        var_key="tmp2m",
-    )
-
-    assert not np.array_equal(display, data)
-    assert 0.0 < float(display[4, 4]) < 100.0
-
-
 def test_discrete_kind_remains_passthrough() -> None:
     data = np.arange(16, dtype=np.float32).reshape(4, 4)
-    spec = {"type": "indexed", "display_smoothing_sigma": 0.8}
+    spec = {"type": "indexed"}
 
     display = _prepare_display_data_for_colorize(
         data,
