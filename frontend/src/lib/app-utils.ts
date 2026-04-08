@@ -319,8 +319,9 @@ export function makeRegionLabel(id: string, preset?: RegionPreset): string {
 const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
   td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
+  tmp850: { group: "UPPER AIR", order: 31 },
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
-  wgust10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
+  wgst10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
   precip_ptype: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
   qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
@@ -335,6 +336,35 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
 
 function variableUiOverride(id: string): VariableUiOverride | null {
   return VARIABLE_UI_OVERRIDES[id] ?? null;
+}
+
+function canonicalVariableGroup(id: string, group?: string | null): string | null {
+  const override = variableUiOverride(id);
+  if (override?.group !== undefined) {
+    return override.group;
+  }
+
+  const normalizedGroup = group?.trim().toLowerCase();
+  switch (normalizedGroup) {
+    case "surface":
+      return "SURFACE";
+    case "temperature":
+    case "wind":
+      return "SURFACE";
+    case "precipitation":
+    case "radar & precipitation type":
+    case "moisture":
+    case "radar":
+      return "PRECIPITATION";
+    case "severe":
+    case "instability":
+      return "SEVERE";
+    case "upper air":
+    case "dynamics":
+      return "UPPER AIR";
+    default:
+      return null;
+  }
 }
 
 export function makeVariableLabel(id: string, preferredLabel?: string | null): string {
@@ -501,7 +531,7 @@ export function makeVariableOptions(entries: VariableEntry[]): VariableOption[] 
       return {
         value: entry.id,
         label: makeVariableLabel(entry.id, entry.displayName),
-        group: override?.group !== undefined ? override.group : (entry.group ?? null),
+        group: canonicalVariableGroup(entry.id, entry.group),
         sortOrder: typeof override?.order === "number" ? override.order : (1000 + index),
       };
     })
