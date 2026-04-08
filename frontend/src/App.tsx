@@ -957,15 +957,21 @@ export default function App() {
   }, [forecastHour, isGridLowMidActive, resolvedGridDisplayHour, visibleGridFrameHour]);
   const mapForecastHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
   const visibleOverlayHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
+  const visibleOverlayFrame = useMemo(() => {
+    if (Number.isFinite(visibleOverlayHour)) {
+      return frameByHour.get(Number(visibleOverlayHour)) ?? null;
+    }
+    return currentFrame;
+  }, [currentFrame, frameByHour, visibleOverlayHour]);
 
   // During a variable switch the old variable's imagery is still on screen;
   // keep its paint settings in effect until the new variable is promoting.
   const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
   const contourGeoJsonUrl = useMemo(() => {
-    if (!model || !displayedOverlayVariable || !currentFrame || !resolvedRunForRequests) {
+    if (!model || !displayedOverlayVariable || !visibleOverlayFrame || !resolvedRunForRequests) {
       return null;
     }
-    const meta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
+    const meta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
     const contours = meta?.contours;
     if (!contours || typeof contours !== "object") {
       return null;
@@ -978,10 +984,10 @@ export default function App() {
       model,
       run: resolvedRunForRequests,
       varKey: displayedOverlayVariable,
-      fh: Number(currentFrame.fh),
+      fh: Number(visibleOverlayFrame.fh),
       key: contourKey,
     });
-  }, [currentFrame, displayedOverlayVariable, frameRows, model, resolvedRunForRequests]);
+  }, [displayedOverlayVariable, frameRows, model, resolvedRunForRequests, visibleOverlayFrame]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;
