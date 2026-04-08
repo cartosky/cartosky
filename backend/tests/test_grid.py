@@ -722,6 +722,8 @@ def test_build_grid_for_run_supports_hrrr_accumulation_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
+    if expected_color_map_id == "snowfall_total":
+        assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
@@ -780,6 +782,8 @@ def test_build_grid_for_run_supports_nam_accumulation_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
+    if expected_color_map_id == "snowfall_total":
+        assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
@@ -832,6 +836,8 @@ def test_build_grid_for_run_supports_nbm_accumulation_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
+    if expected_color_map_id == "snowfall_total":
+        assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"

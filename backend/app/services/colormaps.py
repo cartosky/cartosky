@@ -516,6 +516,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "snowfall_total": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "in",
         "range": SNOWFALL_TOTAL_RANGE,
         "anchors": SNOWFALL_TOTAL_COLOR_ANCHORS,
