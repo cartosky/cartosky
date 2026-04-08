@@ -15,6 +15,7 @@ class GridDisplayPrepConfig:
     preserve_zero_support: bool = False
     support_min_value: float | None = None
     support_coverage_threshold: float = 1e-3
+    categorical_nearest: bool = False
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
@@ -57,6 +58,16 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         upscale_factor=1,
         smooth_sigma=0.45,
         preserve_zero_support=False,
+    ),
+    ("hrrr", "radar_ptype"): GridDisplayPrepConfig(
+        id="hrrr_radar_ptype_display_v1",
+        upscale_factor=3,
+        categorical_nearest=True,
+    ),
+    ("nam", "radar_ptype"): GridDisplayPrepConfig(
+        id="nam_radar_ptype_display_v1",
+        upscale_factor=3,
+        categorical_nearest=True,
     ),
 }
 
@@ -105,10 +116,11 @@ def prepare_grid_display_values(
 
     factor = max(1, int(config.upscale_factor))
     if factor > 1:
+        value_order = 0 if config.categorical_nearest else 1
         prepared = zoom(
             np.where(finite_mask, prepared, 0.0).astype(np.float32, copy=False),
             zoom=(factor, factor),
-            order=1,
+            order=value_order,
             mode="nearest",
             prefilter=False,
         ).astype(np.float32, copy=False)
@@ -147,4 +159,6 @@ def prepare_grid_display_values(
         "upscale_factor": factor,
         "smooth_sigma": sigma,
     }
+    if config.categorical_nearest:
+        prep_meta["categorical_nearest"] = True
     return prepared, prep_meta
