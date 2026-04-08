@@ -65,6 +65,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   cref: { mode: "active-only", threshold: 15 },
   reflectivity: { mode: "active-only", threshold: 15 },
   radar_reflectivity: { mode: "active-only", threshold: 15 },
+  vort500: { mode: "hidden" },
   radar_ptype: { mode: "hidden" },
   mrms_radar_ptype: { mode: "hidden" },
 });

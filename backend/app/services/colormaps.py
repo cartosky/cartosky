@@ -592,6 +592,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "500mb Absolute Vorticity (10^-5 s^-1)",
         "legend_stops": VORT500_LEGEND_STOPS,
         "transparent_below_min": 0.5,
+        "physical": False,
     },
     "mlcape": {
         "type": "continuous",
