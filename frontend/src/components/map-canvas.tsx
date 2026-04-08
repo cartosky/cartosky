@@ -1149,6 +1149,11 @@ export function MapCanvas({
       return;
     }
 
+    // Do not leave the previous hour's contours on screen while the next
+    // contour GeoJSON is still loading; that makes fast scrubs look misaligned
+    // even when the raster overlay has already advanced.
+    source.setData(EMPTY_FEATURE_COLLECTION as any);
+
     const controller = new AbortController();
     contourAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
