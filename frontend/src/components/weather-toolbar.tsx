@@ -161,7 +161,7 @@ function ToolbarSelect(props: {
 
   let content: ReactNode;
   if (grouped) {
-    const GROUP_ORDER = ["Radar & Precipitation Type", "Temperature", "Precipitation", "Wind"];
+    const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR"];
     const groups = new Map<string, Option[]>();
     const ungrouped: Option[] = [];
     for (const opt of options) {

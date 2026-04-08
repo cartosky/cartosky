@@ -70,8 +70,102 @@ export default function Variables() {
   const variables: VariableDef[] = useMemo(
     () => [
       {
+        id: "tmp2m",
+        name: "Surface Temp",
+        oneLiner: "Air temperature at ~2 meters above ground level.",
+        pills: ["2m AGL", "°F/°C", "Continuous"],
+        definition:
+          "2m temperature represents near-surface air temperature, commonly used for impacts, thermal gradients, and boundary placement.",
+        bestFor: [
+          "Thermal gradients and boundary location",
+          "Air mass identification",
+          "Surface impact timing (freeze line, melting line context)",
+        ],
+        interpretation: [
+          "2m temperature is not pavement temperature and can lag/lead in shallow cold pools.",
+          "Compare with dew point and wind to understand mixing and temperature recovery.",
+        ],
+        limitations: ["Local microclimates and terrain effects may not be captured at coarser resolution."],
+      },
+      {
+        id: "td2m",
+        name: "Surface Dew Point",
+        oneLiner: "Near-surface moisture proxy; strongly tied to instability and fog/stratus potential.",
+        pills: ["2m AGL", "°F/°C", "Continuous"],
+        definition:
+          "2m dew point represents the moisture content of the near-surface air mass and is a key driver of instability, cloud bases, and low-level saturation.",
+        bestFor: [
+          "Moisture advection and dryline placement",
+          "Assessing low-level saturation (fog/stratus potential)",
+          "Context for instability (in combination with temperature)",
+        ],
+        interpretation: [
+          "Sharp dew point gradients often mark boundaries even when temperature gradients are weak.",
+          "A rising dew point with increasing wind often signals effective moisture transport.",
+        ],
+        limitations: ["Shallow mixing and surface flux biases can shift dew points by a few degrees."],
+      },
+      {
+        id: "wspd10m",
+        name: "10m Wind Speed",
+        oneLiner: "Sustained wind speed at 10 meters above ground.",
+        pills: ["10m AGL", "mph/kt", "Continuous"],
+        definition:
+          "10m wind speed represents sustained near-surface wind magnitude. Useful for gradient winds, mixing regimes, and impact planning.",
+        bestFor: [
+          "Gradient wind events and wind advisories context",
+          "Identifying wind maxima in tight pressure gradients",
+          "Blowing snow potential (with snow cover + temps)",
+        ],
+        interpretation: [
+          "Model 10m winds depend on boundary layer scheme and surface roughness assumptions.",
+          "Compare with gusts to gauge mixing and turbulence potential.",
+        ],
+        limitations: ["Local terrain/channeling and urban roughness may be under-resolved."],
+      },
+      {
+        id: "wgust10m",
+        name: "10m Wind Gusts",
+        oneLiner: "Peak gust potential at 10 meters above ground.",
+        pills: ["10m AGL", "mph/kt", "Continuous"],
+        definition:
+          "10m wind gust is a modeled estimate of peak gusts driven by turbulence/mixing and momentum transfer. It often highlights impact potential better than sustained wind alone.",
+        bestFor: [
+          "Impact-level wind potential (trees, power, travel)",
+          "Identifying corridor/gradient maxima",
+          "Assessing mixing behind fronts or within dry slots",
+        ],
+        interpretation: [
+          "Gust algorithms vary; treat as guidance, not a guarantee.",
+          "High gusts often correlate with steep low-level lapse rates and strong flow aloft.",
+        ],
+        limitations: ["Convective gusts and downbursts are not reliably captured outside convection-permitting scenarios."],
+      },
+      {
+        id: "precip_ptype",
+        name: "Precip Type & Intensity",
+        oneLiner: "Precipitation type categories combined with intensity bins for quick winter-weather diagnosis.",
+        pills: ["Derived", "ptype + intensity", "Categorical"],
+        definition:
+          "This product blends modeled precipitation type with intensity classes so you can quickly see not just what is falling, but how strongly the model is producing it.",
+        bestFor: [
+          "Quick winter-weather overview without interpreting multiple separate fields",
+          "Finding transitions between rain, snow, sleet, and freezing rain",
+          "Spotting where modeled precip rates intensify within the precip shield",
+        ],
+        interpretation: [
+          "Treat type boundaries as approximate because shallow thermal-profile changes can shift category edges quickly.",
+          "Use this as a fast situational-awareness field, then sanity-check with temperature profiles and snowfall/QPF products.",
+        ],
+        limitations: [
+          "Categorical p-type output can look noisy around marginal thermal zones.",
+          "Intensity buckets are model-derived guidance, not direct observed precipitation rates.",
+        ],
+        notes: ["Categorical precipitation products should stay nearest-neighbor when resampled so class edges remain crisp."],
+      },
+      {
         id: "refl_ptype",
-        name: "Composite Reflectivity + P-type",
+        name: "Composite Reflectivity + Ptype",
         oneLiner: "Simulated composite reflectivity with a precipitation-type overlay.",
         pills: ["Derived", "dBZ + classes", "Categorical overlay"],
         definition:
@@ -92,180 +186,8 @@ export default function Variables() {
         notes: ["Categorical overlays should remain crisp; resampling should be nearest-neighbor."],
       },
       {
-        id: "tmp2m",
-        name: "Surface Temperature (2m)",
-        oneLiner: "Air temperature at ~2 meters above ground level.",
-        pills: ["2m AGL", "°F/°C", "Continuous"],
-        definition:
-          "2m temperature represents near-surface air temperature, commonly used for impacts, thermal gradients, and boundary placement.",
-        bestFor: [
-          "Thermal gradients and boundary location",
-          "Air mass identification",
-          "Surface impact timing (freeze line, melting line context)",
-        ],
-        interpretation: [
-          "2m temperature is not pavement temperature and can lag/lead in shallow cold pools.",
-          "Compare with dew point and wind to understand mixing and temperature recovery.",
-        ],
-        limitations: ["Local microclimates and terrain effects may not be captured at coarser resolution."],
-      },
-      {
-        id: "td2m",
-        name: "Surface Dew Point (2m)",
-        oneLiner: "Near-surface moisture proxy; strongly tied to instability and fog/stratus potential.",
-        pills: ["2m AGL", "°F/°C", "Continuous"],
-        definition:
-          "2m dew point represents the moisture content of the near-surface air mass and is a key driver of instability, cloud bases, and low-level saturation.",
-        bestFor: [
-          "Moisture advection and dryline placement",
-          "Assessing low-level saturation (fog/stratus potential)",
-          "Context for instability (in combination with temperature)",
-        ],
-        interpretation: [
-          "Sharp dew point gradients often mark boundaries even when temperature gradients are weak.",
-          "A rising dew point with increasing wind often signals effective moisture transport.",
-        ],
-        limitations: ["Shallow mixing and surface flux biases can shift dew points by a few degrees."],
-      },
-      {
-        id: "tmp850",
-        name: "850 mb Temperature",
-        oneLiner: "Lower-tropospheric thermal field used for warm noses and airmass diagnosis.",
-        pills: ["~1.5 km AGL", "°F/°C", "Continuous"],
-        definition:
-          "850 mb temperature is a pressure-level temperature field useful for diagnosing warm advection, thermal ridges, and elevated warm noses relevant to precipitation type.",
-        bestFor: [
-          "Warm nose detection (freezing rain / sleet potential)",
-          "Thermal advection patterns",
-          "Comparing low-level thickness/thermal structure across models",
-        ],
-        interpretation: [
-          "850 mb can be above/below terrain in high elevations—interpret carefully in mountains.",
-          "Use with surface temperature/dew point to infer vertical profile impacts.",
-        ],
-        limitations: ["Pressure levels can intersect terrain; values may be masked or behave oddly in complex terrain."],
-      },
-      {
-        id: "vort500",
-        name: "500 mb Heights & Vorticity",
-        oneLiner: "500 mb absolute vorticity shaded beneath 500 mb height contours for synoptic-scale pattern diagnosis.",
-        pills: ["500 mb", "10^-5 s^-1 + m", "Continuous + contours"],
-        definition:
-          "This product shades 500 mb absolute vorticity while overlaying 500 mb geopotential height contours. Together they help diagnose troughs, shortwaves, vort maxima, and the broader mid-level pattern driving ascent and storm evolution.",
-        bestFor: [
-          "Tracking shortwaves and mid-level energy maxima",
-          "Comparing trough/ridge structure and timing",
-          "Finding areas where stronger mid-level forcing overlaps moisture and instability",
-        ],
-        interpretation: [
-          "Use the vorticity shading to find compact lobes of stronger spin, then use the height contours to place them within the larger synoptic pattern.",
-          "A strong vort max matters most where it is translating into downstream ascent, so pair it with moisture and instability fields rather than treating it in isolation.",
-        ],
-        limitations: [
-          "This is a pressure-level field, so terrain-intersecting areas and very small-scale features are not the focus of the product.",
-          "Absolute vorticity includes the Coriolis contribution, so values are not directly interchangeable with a relative-vorticity display from another source.",
-        ],
-        notes: ["Current implementation uses 60 m height contours over the vorticity fill."],
-      },
-      {
-        id: "pwat",
-        name: "Precipitable Water",
-        oneLiner: "Total column moisture, expressed as the liquid water depth that would result if all vapor condensed.",
-        pills: ["Entire column", "in/mm", "Continuous"],
-        definition:
-          "Precipitable water measures the integrated moisture content through the atmospheric column. Higher values generally support heavier rain rates and more efficient warm-rain processes when lift and instability are present.",
-        bestFor: [
-          "Finding deep moisture plumes feeding heavy rain or tropical air masses",
-          "Identifying moisture gradients along drylines, fronts, and atmospheric-river style corridors",
-          "Comparing whether a setup is moisture-limited or primed for efficient rainfall production",
-        ],
-        interpretation: [
-          "PWAT is a moisture field, not a rainfall forecast, so it needs forcing and storm coverage context before implying totals or flash-flood risk.",
-          "Anomalously high PWAT usually matters more than the raw value alone because climatologically impressive moisture varies by region and season.",
-        ],
-        limitations: [
-          "High PWAT can coexist with weak lift or strong capping, producing little precipitation despite a moisture-rich column.",
-          "It does not tell you where within the column the moisture is concentrated, so pair it with sounding-level fields when p-type or cloud-depth structure matters.",
-        ],
-        notes: [
-          "Rendered with an inches-based palette similar to the classic PWAT ramp so low-end dry air stays muted and richer tropical moisture stands out quickly.",
-        ],
-      },
-      {
-        id: "sbcape",
-        name: "Surface-Based CAPE",
-        oneLiner: "Buoyant energy for a surface parcel, emphasizing instability that is directly rooted at the ground.",
-        pills: ["Surface parcel", "J/kg", "Continuous"],
-        definition:
-          "Surface-based CAPE estimates the positive buoyant energy a parcel lifted directly from the surface would have. It is the most direct CAPE flavor for environments where storms are expected to ingest near-surface air instead of elevated source layers.",
-        bestFor: [
-          "Comparing whether instability is actually surface-rooted instead of elevated",
-          "Highlighting warm-sector environments where surface heating and moisture can support surface-based convection",
-          "Cross-checking MLCAPE and MUCAPE when assessing severe-weather potential tied to the boundary layer",
-        ],
-        interpretation: [
-          "SBCAPE is usually the most relevant CAPE flavor when storms are surface-based, but it still needs forcing, inhibition, and shear context.",
-          "Large SBCAPE alone does not guarantee initiation if the cap holds or lift never materializes.",
-        ],
-        limitations: [
-          "Surface parcel fields can be noisy or overly sensitive to shallow temperature and dew point biases near the ground.",
-          "Elevated convection can still thrive when SBCAPE is modest but MUCAPE remains large above a stable surface layer.",
-        ],
-        notes: [
-          "Uses the same CAPE color ramp as MLCAPE and MUCAPE so instability thresholds stay visually consistent across parcel choices.",
-        ],
-      },
-      {
-        id: "mlcape",
-        name: "Mixed-Layer CAPE",
-        oneLiner: "Buoyant energy available to a mixed boundary-layer parcel, used to gauge convective instability.",
-        pills: ["90-0 mb mixed layer", "J/kg", "Continuous"],
-        definition:
-          "Mixed-layer CAPE estimates the positive buoyant energy a representative mixed parcel in the lowest part of the atmosphere would have if lifted. It is one of the cleaner broad-brush instability fields for warm-season convective setups.",
-        bestFor: [
-          "Locating corridors of greater convective instability",
-          "Comparing overlap of moisture, heating, and forcing before severe storms",
-          "Filtering environments where storm coverage could rapidly increase if inhibition weakens",
-        ],
-        interpretation: [
-          "Higher CAPE does not guarantee storms or severity; shear, forcing, inhibition, and storm mode still matter.",
-          "Use CAPE with dew point, lapse rates, hodographs, and convective initiation signals rather than in isolation.",
-        ],
-        limitations: [
-          "CAPE can look impressive in capped regimes where storms never initiate.",
-          "Coarser guidance may smooth narrow instability axes or under-resolve outflow and mesoscale boundaries.",
-        ],
-        notes: [
-          "Displayed as a continuous field, but the legend should still emphasize standard severe-weather threshold bands.",
-        ],
-      },
-      {
-        id: "mucape",
-        name: "Most-Unstable CAPE",
-        oneLiner: "Buoyant energy for the most unstable parcel in the lower troposphere, highlighting elevated or concentrated instability reservoirs.",
-        pills: ["255-0 mb layer", "J/kg", "Continuous"],
-        definition:
-          "Most-unstable CAPE estimates the positive buoyant energy associated with the most unstable parcel found within the lower troposphere. It is useful when instability is not well represented by a simple mixed boundary-layer parcel, especially in elevated setups.",
-        bestFor: [
-          "Identifying elevated instability above shallow stable layers",
-          "Comparing whether severe potential is rooted near the surface or in a deeper unstable layer",
-          "Highlighting environments where nocturnal or elevated convection can persist",
-        ],
-        interpretation: [
-          "MUCAPE often exceeds MLCAPE in elevated regimes, so treat it as a signal of available instability rather than guaranteed surface-based storm intensity.",
-          "Compare MUCAPE with MLCAPE, surface-based fields, inhibition, and forcing to understand storm rooting depth.",
-        ],
-        limitations: [
-          "Large MUCAPE can occur in strongly capped or elevated environments where storms never ingest that parcel source region efficiently.",
-          "Different models may define the sampled unstable layer differently enough that direct run-to-run comparisons still need caution.",
-        ],
-        notes: [
-          "Uses the same CAPE color ramp as MLCAPE so threshold interpretation stays visually consistent across instability variants.",
-        ],
-      },
-      {
         id: "qpf",
-        name: "Total Precipitation (QPF)",
+        name: "Total Precip (QPF)",
         oneLiner: "Accumulated liquid-equivalent precipitation over the forecast period.",
         pills: ["Accumulation", "in/mm", "Continuous"],
         definition:
@@ -304,7 +226,7 @@ export default function Variables() {
       },
       {
         id: "snowkuchera",
-        name: "Total Snowfall (Kuchera SLR)",
+        name: "Total Snowfall (Kuchera)",
         oneLiner: "Snow accumulation derived from QPF using a temperature-dependent Kuchera snow-liquid ratio.",
         pills: ["Derived", "Kuchera SLR", "Accumulation"],
         definition:
@@ -327,40 +249,122 @@ export default function Variables() {
         ],
       },
       {
-        id: "wspd10m",
-        name: "10m Wind Speed",
-        oneLiner: "Sustained wind speed at 10 meters above ground.",
-        pills: ["10m AGL", "mph/kt", "Continuous"],
+        id: "pwat",
+        name: "Precipitable Water",
+        oneLiner: "Total column moisture, expressed as the liquid water depth that would result if all vapor condensed.",
+        pills: ["Entire column", "in/mm", "Continuous"],
         definition:
-          "10m wind speed represents sustained near-surface wind magnitude. Useful for gradient winds, mixing regimes, and impact planning.",
+          "Precipitable water measures the integrated moisture content through the atmospheric column. Higher values generally support heavier rain rates and more efficient warm-rain processes when lift and instability are present.",
         bestFor: [
-          "Gradient wind events and wind advisories context",
-          "Identifying wind maxima in tight pressure gradients",
-          "Blowing snow potential (with snow cover + temps)",
+          "Finding deep moisture plumes feeding heavy rain or tropical air masses",
+          "Identifying moisture gradients along drylines, fronts, and atmospheric-river style corridors",
+          "Comparing whether a setup is moisture-limited or primed for efficient rainfall production",
         ],
         interpretation: [
-          "Model 10m winds depend on boundary layer scheme and surface roughness assumptions.",
-          "Compare with gusts to gauge mixing and turbulence potential.",
+          "PWAT is a moisture field, not a rainfall forecast, so it needs forcing and storm coverage context before implying totals or flash-flood risk.",
+          "Anomalously high PWAT usually matters more than the raw value alone because climatologically impressive moisture varies by region and season.",
         ],
-        limitations: ["Local terrain/channeling and urban roughness may be under-resolved."],
+        limitations: [
+          "High PWAT can coexist with weak lift or strong capping, producing little precipitation despite a moisture-rich column.",
+          "It does not tell you where within the column the moisture is concentrated, so pair it with sounding-level fields when p-type or cloud-depth structure matters.",
+        ],
+        notes: [
+          "Rendered with an inches-based palette similar to the classic PWAT ramp so low-end dry air stays muted and richer tropical moisture stands out quickly.",
+        ],
       },
       {
-        id: "wgust10m",
-        name: "10m Wind Gust",
-        oneLiner: "Peak gust potential at 10 meters above ground.",
-        pills: ["10m AGL", "mph/kt", "Continuous"],
+        id: "mucape",
+        name: "Most-Unstable CAPE",
+        oneLiner: "Buoyant energy for the most unstable parcel in the lower troposphere, highlighting elevated or concentrated instability reservoirs.",
+        pills: ["255-0 mb layer", "J/kg", "Continuous"],
         definition:
-          "10m wind gust is a modeled estimate of peak gusts driven by turbulence/mixing and momentum transfer. It often highlights impact potential better than sustained wind alone.",
+          "Most-unstable CAPE estimates the positive buoyant energy associated with the most unstable parcel found within the lower troposphere. It is useful when instability is not well represented by a simple mixed boundary-layer parcel, especially in elevated setups.",
         bestFor: [
-          "Impact-level wind potential (trees, power, travel)",
-          "Identifying corridor/gradient maxima",
-          "Assessing mixing behind fronts or within dry slots",
+          "Identifying elevated instability above shallow stable layers",
+          "Comparing whether severe potential is rooted near the surface or in a deeper unstable layer",
+          "Highlighting environments where nocturnal or elevated convection can persist",
         ],
         interpretation: [
-          "Gust algorithms vary; treat as guidance, not a guarantee.",
-          "High gusts often correlate with steep low-level lapse rates and strong flow aloft.",
+          "MUCAPE often exceeds MLCAPE in elevated regimes, so treat it as a signal of available instability rather than guaranteed surface-based storm intensity.",
+          "Compare MUCAPE with MLCAPE, surface-based fields, inhibition, and forcing to understand storm rooting depth.",
         ],
-        limitations: ["Convective gusts and downbursts are not reliably captured outside convection-permitting scenarios."],
+        limitations: [
+          "Large MUCAPE can occur in strongly capped or elevated environments where storms never ingest that parcel source region efficiently.",
+          "Different models may define the sampled unstable layer differently enough that direct run-to-run comparisons still need caution.",
+        ],
+        notes: [
+          "Uses the same CAPE color ramp as MLCAPE so threshold interpretation stays visually consistent across instability variants.",
+        ],
+      },
+      {
+        id: "mlcape",
+        name: "Mixed-Layer CAPE",
+        oneLiner: "Buoyant energy available to a mixed boundary-layer parcel, used to gauge convective instability.",
+        pills: ["90-0 mb mixed layer", "J/kg", "Continuous"],
+        definition:
+          "Mixed-layer CAPE estimates the positive buoyant energy a representative mixed parcel in the lowest part of the atmosphere would have if lifted. It is one of the cleaner broad-brush instability fields for warm-season convective setups.",
+        bestFor: [
+          "Locating corridors of greater convective instability",
+          "Comparing overlap of moisture, heating, and forcing before severe storms",
+          "Filtering environments where storm coverage could rapidly increase if inhibition weakens",
+        ],
+        interpretation: [
+          "Higher CAPE does not guarantee storms or severity; shear, forcing, inhibition, and storm mode still matter.",
+          "Use CAPE with dew point, lapse rates, hodographs, and convective initiation signals rather than in isolation.",
+        ],
+        limitations: [
+          "CAPE can look impressive in capped regimes where storms never initiate.",
+          "Coarser guidance may smooth narrow instability axes or under-resolve outflow and mesoscale boundaries.",
+        ],
+        notes: [
+          "Displayed as a continuous field, but the legend should still emphasize standard severe-weather threshold bands.",
+        ],
+      },
+      {
+        id: "sbcape",
+        name: "Surface-Based CAPE",
+        oneLiner: "Buoyant energy for a surface parcel, emphasizing instability that is directly rooted at the ground.",
+        pills: ["Surface parcel", "J/kg", "Continuous"],
+        definition:
+          "Surface-based CAPE estimates the positive buoyant energy a parcel lifted directly from the surface would have. It is the most direct CAPE flavor for environments where storms are expected to ingest near-surface air instead of elevated source layers.",
+        bestFor: [
+          "Comparing whether instability is actually surface-rooted instead of elevated",
+          "Highlighting warm-sector environments where surface heating and moisture can support surface-based convection",
+          "Cross-checking MLCAPE and MUCAPE when assessing severe-weather potential tied to the boundary layer",
+        ],
+        interpretation: [
+          "SBCAPE is usually the most relevant CAPE flavor when storms are surface-based, but it still needs forcing, inhibition, and shear context.",
+          "Large SBCAPE alone does not guarantee initiation if the cap holds or lift never materializes.",
+        ],
+        limitations: [
+          "Surface parcel fields can be noisy or overly sensitive to shallow temperature and dew point biases near the ground.",
+          "Elevated convection can still thrive when SBCAPE is modest but MUCAPE remains large above a stable surface layer.",
+        ],
+        notes: [
+          "Uses the same CAPE color ramp as MLCAPE and MUCAPE so instability thresholds stay visually consistent across parcel choices.",
+        ],
+      },
+      {
+        id: "vort500",
+        name: "500mb Heights + Vorticity",
+        oneLiner: "500 mb absolute vorticity shaded beneath 500 mb height contours for synoptic-scale pattern diagnosis.",
+        pills: ["500 mb", "10^-5 s^-1 + m", "Continuous + contours"],
+        definition:
+          "This product shades 500 mb absolute vorticity while overlaying 500 mb geopotential height contours. Together they help diagnose troughs, shortwaves, vort maxima, and the broader mid-level pattern driving ascent and storm evolution.",
+        bestFor: [
+          "Tracking shortwaves and mid-level energy maxima",
+          "Comparing trough/ridge structure and timing",
+          "Finding areas where stronger mid-level forcing overlaps moisture and instability",
+        ],
+        interpretation: [
+          "Use the vorticity shading to find compact lobes of stronger spin, then use the height contours to place them within the larger synoptic pattern.",
+          "A strong vort max matters most where it is translating into downstream ascent, so pair it with moisture and instability fields rather than treating it in isolation.",
+        ],
+        limitations: [
+          "This is a pressure-level field, so terrain-intersecting areas and very small-scale features are not the focus of the product.",
+          "Absolute vorticity includes the Coriolis contribution, so values are not directly interchangeable with a relative-vorticity display from another source.",
+        ],
+        notes: ["Current implementation uses 60 m height contours over the vorticity fill."],
       },
     ],
     []

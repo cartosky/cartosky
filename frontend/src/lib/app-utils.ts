@@ -92,6 +92,12 @@ export type VariableEntry = {
   renderSubstrates?: WeatherSubstrate[];
 };
 
+type VariableUiOverride = {
+  label?: string;
+  group?: string | null;
+  order?: number;
+};
+
 export type ModelEntry = {
   id: string;
   displayName?: string;
@@ -310,7 +316,32 @@ export function makeRegionLabel(id: string, preset?: RegionPreset): string {
   return preset?.label ?? id.toUpperCase();
 }
 
+const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
+  tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
+  td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
+  wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
+  wgust10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
+  precip_ptype: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
+  radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
+  qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
+  snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
+  snowkuchera: { label: "Total Snowfall (Kuchera)", group: "PRECIPITATION", order: 14 },
+  pwat: { label: "Precipitable Water", group: "PRECIPITATION", order: 15 },
+  mucape: { label: "Most-Unstable CAPE", group: "SEVERE", order: 20 },
+  mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
+  sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
+  vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 30 },
+};
+
+function variableUiOverride(id: string): VariableUiOverride | null {
+  return VARIABLE_UI_OVERRIDES[id] ?? null;
+}
+
 export function makeVariableLabel(id: string, preferredLabel?: string | null): string {
+  const override = variableUiOverride(id);
+  if (override?.label) {
+    return override.label;
+  }
   if (preferredLabel && preferredLabel.trim()) {
     return preferredLabel.trim();
   }
@@ -464,11 +495,23 @@ export function normalizeManifestVarRows(
 }
 
 export function makeVariableOptions(entries: VariableEntry[]): VariableOption[] {
-  return entries.map((entry) => ({
-    value: entry.id,
-    label: makeVariableLabel(entry.id, entry.displayName),
-    group: entry.group ?? null,
-  }));
+  return entries
+    .map((entry, index) => {
+      const override = variableUiOverride(entry.id);
+      return {
+        value: entry.id,
+        label: makeVariableLabel(entry.id, entry.displayName),
+        group: override?.group !== undefined ? override.group : (entry.group ?? null),
+        sortOrder: typeof override?.order === "number" ? override.order : (1000 + index),
+      };
+    })
+    .sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) {
+        return a.sortOrder - b.sortOrder;
+      }
+      return a.label.localeCompare(b.label);
+    })
+    .map(({ sortOrder: _sortOrder, ...option }) => option);
 }
 
 export function resolveManifestFrames(
