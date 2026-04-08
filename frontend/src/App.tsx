@@ -988,6 +988,40 @@ export default function App() {
       key: contourKey,
     });
   }, [displayedOverlayVariable, frameRows, model, resolvedRunForRequests, visibleOverlayFrame]);
+  const contourPrefetchUrls = useMemo(() => {
+    if (!model || !displayedOverlayVariable || frameRows.length <= 1 || !resolvedRunForRequests) {
+      return [] as string[];
+    }
+    const currentHour = Number.isFinite(visibleOverlayHour) ? Number(visibleOverlayHour) : Number(visibleOverlayFrame?.fh);
+    const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
+    const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
+    const candidateRows = pivotIndex >= 0
+      ? orderedRows.filter((_, index) => Math.abs(index - pivotIndex) === 1)
+      : orderedRows.slice(1, 3);
+    const urls: string[] = [];
+    for (const row of candidateRows) {
+      const meta = extractLegendMeta(row);
+      const contours = meta?.contours;
+      if (!contours || typeof contours !== "object") {
+        continue;
+      }
+      const contourKey = Object.keys(contours)[0];
+      if (!contourKey) {
+        continue;
+      }
+      const url = buildContourUrl({
+        model,
+        run: resolvedRunForRequests,
+        varKey: displayedOverlayVariable,
+        fh: Number(row.fh),
+        key: contourKey,
+      });
+      if (url && url !== contourGeoJsonUrl && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+    return urls;
+  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;
@@ -2909,8 +2943,9 @@ export default function App() {
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
-          contourGeoJsonUrl={contourGeoJsonUrl}
-          vectorGeoJsonUrl={vectorGeoJsonUrl}
+            contourGeoJsonUrl={contourGeoJsonUrl}
+            contourPrefetchUrls={contourPrefetchUrls}
+            vectorGeoJsonUrl={vectorGeoJsonUrl}
           vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}
           pointLabelsEnabled={pointLabelsEnabled}

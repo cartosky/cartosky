@@ -577,6 +577,7 @@ type MapCanvasProps = {
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
   contourGeoJsonUrl?: string | null;
+  contourPrefetchUrls?: string[];
   vectorGeoJsonUrl?: string | null;
   vectorPrefetchUrls?: string[];
   anchorGeoJson?: AnchorFeatureCollection | null;
@@ -612,6 +613,7 @@ export function MapCanvas({
   gridLegend = null,
   gridActive = false,
   contourGeoJsonUrl,
+  contourPrefetchUrls = [],
   vectorGeoJsonUrl,
   vectorPrefetchUrls = [],
   anchorGeoJson = null,
@@ -1210,6 +1212,62 @@ export function MapCanvas({
       }
     };
   }, [basemapMode, contourGeoJsonUrl, isLoaded]);
+
+  useEffect(() => {
+    if (!isLoaded || contourPrefetchUrls.length === 0) {
+      return;
+    }
+
+    const normalizedActiveUrl = String(contourGeoJsonUrl ?? "").trim();
+    if (normalizedActiveUrl && !contourCacheRef.current.has(normalizedActiveUrl)) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const startPrefetchTimer = window.setTimeout(() => {
+      for (const rawUrl of contourPrefetchUrls) {
+        const normalizedUrl = String(rawUrl ?? "").trim();
+        if (!normalizedUrl || contourCacheRef.current.has(normalizedUrl)) {
+          continue;
+        }
+
+        void fetch(normalizedUrl, {
+          credentials: "omit",
+          signal: controller.signal,
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`Contour prefetch failed: ${response.status}`);
+            }
+            return (await response.json()) as GeoJSON.FeatureCollection;
+          })
+          .then((payload) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            contourCacheRef.current.set(normalizedUrl, payload);
+            while (contourCacheRef.current.size > 24) {
+              const oldestKey = contourCacheRef.current.keys().next().value;
+              if (!oldestKey) {
+                break;
+              }
+              contourCacheRef.current.delete(oldestKey);
+            }
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            console.warn("[map] contour prefetch failed", { contourGeoJsonUrl: normalizedUrl, error });
+          });
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(startPrefetchTimer);
+      controller.abort();
+    };
+  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
