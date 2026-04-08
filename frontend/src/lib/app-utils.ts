@@ -318,8 +318,9 @@ export function makeRegionLabel(id: string, preset?: RegionPreset): string {
 
 const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
+  dp2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
   td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
-  tmp850: { group: "UPPER AIR", order: 31 },
+  tmp850: { group: "UPPER AIR", order: 30 },
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
   wgst10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
   precip_ptype: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
@@ -331,7 +332,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   mucape: { label: "Most-Unstable CAPE", group: "SEVERE", order: 20 },
   mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
-  vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 30 },
+  vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 31 },
 };
 
 function variableUiOverride(id: string): VariableUiOverride | null {
