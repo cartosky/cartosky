@@ -62,6 +62,9 @@ class GFSPlugin(BaseModelPlugin):
             "sbcape": "sbcape",
             "mucape": "mucape",
             "mlcape": "mlcape",
+            "pwat": "pwat",
+            "precipitable_water": "pwat",
+            "precipitablewater": "pwat",
             "refc": "refc",
             "cref": "refc",
             "wspd10m": "wspd10m",
@@ -296,6 +299,25 @@ GFS_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="J/kg",
+    ),
+    "pwat": VarSpec(
+        id="pwat",
+        name="Precipitable Water",
+        selectors=VarSelectors(
+            search=[":PWAT:entire atmosphere (considered as a single layer):"],
+            filter_by_keys={
+                "shortName": "pwat",
+                "typeOfLevel": "atmosphereSingleLayer",
+            },
+            hints={
+                "upstream_var": "pwat",
+                "cf_var": "pwat",
+                "short_name": "pwat",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
     ),
     **{
         f"tmp{level}": _gfs_tmp_level_component(level)
@@ -581,6 +603,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
+    "pwat": "pwat",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "refc": "refc",
@@ -606,14 +629,15 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "sbcape": 4,
     "mlcape": 5,
     "mucape": 6,
-    "precip_total": 7,
-    "snowfall_total": 8,
-    "wspd10m": 9,
-    "wgst10m": 10,
-    "precip_ptype": 11,
-    "refc": 12,
-    "qpf6h": 13,
-    "snowfall_kuchera_total": 14,
+    "pwat": 7,
+    "precip_total": 8,
+    "snowfall_total": 9,
+    "wspd10m": 10,
+    "wgst10m": 11,
+    "precip_ptype": 12,
+    "refc": 13,
+    "qpf6h": 14,
+    "snowfall_kuchera_total": 15,
 }
 
 GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -623,6 +647,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
+    "pwat": "Moisture",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
@@ -636,6 +661,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
 GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
     "precip_total": "kgm2_to_in",

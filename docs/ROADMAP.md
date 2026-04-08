@@ -472,6 +472,7 @@ Business
 
 ## RoadMap Condensed
 **PHASE 1 - Immediate Value (retain + attract users)**
+- [X] Refactor backend/frontend pipeline to more performative option
 - [X] Add radar
 - [X] Add obs, NWS forecasts, AFDs for cities
 - [X] Add SPC outlooks/products

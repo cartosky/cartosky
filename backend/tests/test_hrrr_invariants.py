@@ -48,6 +48,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "sbcape",
         "mlcape",
         "mucape",
+        "pwat",
         "snowfall_total",
         "snowfall_kuchera_total",
         "precip_total",
@@ -146,6 +147,18 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["color_map_id"] == "mlcape"
     assert mucape["display_resampling_override"] is None
 
+    pwat = payload["variables"]["pwat"]
+    assert pwat["var_key"] == "pwat"
+    assert pwat["buildable"] is True
+    assert pwat["derived"] is False
+    assert pwat["kind"] == "continuous"
+    assert pwat["units"] == "in"
+    assert pwat["display_name"] == "Precipitable Water"
+    assert pwat["order"] == 7
+    assert pwat["group"] == "Moisture"
+    assert pwat["color_map_id"] == "pwat"
+    assert pwat["display_resampling_override"] is None
+
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
@@ -216,3 +229,20 @@ def test_hrrr_mucape_selector_and_alias_invariants() -> None:
     }
     assert mucape_spec.selectors.hints["upstream_var"] == "mucape"
     assert mucape_spec.selectors.hints["cape_layer"] == "255-0 mb above ground"
+
+
+def test_hrrr_pwat_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("pwat") == "pwat"
+    assert HRRR_MODEL.normalize_var_id("precipitable_water") == "pwat"
+
+    pwat_spec = HRRR_MODEL.get_var("pwat")
+    assert pwat_spec is not None
+    assert pwat_spec.primary is True
+    assert pwat_spec.derived is False
+    assert pwat_spec.kind == "continuous"
+    assert pwat_spec.units == "in"
+    assert pwat_spec.selectors.search == [":PWAT:entire atmosphere (considered as a single layer):"]
+    assert pwat_spec.selectors.filter_by_keys == {
+        "shortName": "pwat",
+        "typeOfLevel": "atmosphereSingleLayer",
+    }

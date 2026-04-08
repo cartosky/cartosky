@@ -36,6 +36,7 @@ const VARIABLE_SPECIAL_CASES: Record<string, string> = {
   mrms_radar_ptype: "Radar & precip type",
   precip_ptype: "Precip type",
   qpf: "QPF",
+  pwat: "Precipitable water",
   tmp2m: "2m temperature",
 };
 

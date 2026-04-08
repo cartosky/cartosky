@@ -57,6 +57,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   sbcape: { mode: "active-only", threshold: 100 },
   mlcape: { mode: "active-only", threshold: 100 },
   mucape: { mode: "active-only", threshold: 100 },
+  pwat: { mode: "active-only", threshold: 0.2 },
   precip_total: { mode: "active-only", threshold: 0.01 },
   snowfall_total: { mode: "active-only", threshold: 0.1 },
   snowfall_kuchera_total: { mode: "active-only", threshold: 0.1 },

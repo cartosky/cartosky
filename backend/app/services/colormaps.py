@@ -328,6 +328,27 @@ WSPD10M_RANGE = (0.0, 100.0)
 QPF6H_LEGEND_STOPS = list(zip(precip_levels, precip_colors))
 PRECIP_TOTAL_COLOR_ANCHORS = list(zip(precip_levels, precip_colors))
 
+PWAT_LEGEND_STOPS = [
+    (0.0, "#5c5746"),
+    (0.2, "#8a7c58"),
+    (0.4, "#7b8847"),
+    (0.6, "#61a44d"),
+    (0.8, "#4db77f"),
+    (1.0, "#3ca9b8"),
+    (1.2, "#357fc8"),
+    (1.4, "#4b65c7"),
+    (1.6, "#6d58b7"),
+    (1.8, "#8c4d9e"),
+    (2.0, "#9b5c75"),
+    (2.2, "#7b6648"),
+    (2.4, "#4d7a36"),
+    (2.6, "#2f6d30"),
+    (2.8, "#114f23"),
+    (3.0, "#063915"),
+]
+PWAT_COLOR_ANCHORS = list(PWAT_LEGEND_STOPS)
+PWAT_COLORS = [color for _, color in PWAT_LEGEND_STOPS]
+
 MLCAPE_LEGEND_LEVELS = [
     250.0,
     500.0,
@@ -466,6 +487,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "6-hr Precip",
         "legend_title": "6-hr Precip (in)",
         "legend_stops": QPF6H_LEGEND_STOPS,
+    },
+    "pwat": {
+        "type": "continuous",
+        "units": "in",
+        "range": (0.0, 3.0),
+        "anchors": PWAT_COLOR_ANCHORS,
+        "colors": PWAT_COLORS,
+        "display_name": "Precipitable Water",
+        "legend_title": "Precipitable Water (in)",
+        "legend_stops": PWAT_LEGEND_STOPS,
+        "allow_dry_frame": True,
+        "transparent_below_min": 0.05,
+        "display_smoothing_sigma": 0.7,
     },
     "precip_ptype": {
         "type": "indexed",

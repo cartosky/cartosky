@@ -106,6 +106,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "J/kg",
     },
+    ("hrrr", "pwat"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
     ("hrrr", "wspd10m"): {
         "scale": 0.1,
         "offset": 0.0,
@@ -178,6 +184,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "J/kg",
     },
+    ("gfs", "pwat"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
     ("gfs", "wspd10m"): {
         "scale": 0.1,
         "offset": 0.0,
@@ -249,6 +261,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "offset": 0.0,
         "nodata": 65535,
         "units": "J/kg",
+    },
+    ("nam", "pwat"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
     },
     ("nam", "wspd10m"): {
         "scale": 0.1,

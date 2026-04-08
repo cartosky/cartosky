@@ -33,6 +33,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "sbcape"
         if normalized == "mucape":
             return "mucape"
+        if normalized in {"pwat", "precipitable_water", "precipitablewater"}:
+            return "pwat"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
             return "snowfall_total"
         if normalized == "snowfall_kuchera_total":
@@ -236,6 +238,25 @@ HRRR_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="J/kg",
+    ),
+    "pwat": VarSpec(
+        id="pwat",
+        name="Precipitable Water",
+        selectors=VarSelectors(
+            search=[":PWAT:entire atmosphere (considered as a single layer):"],
+            filter_by_keys={
+                "shortName": "pwat",
+                "typeOfLevel": "atmosphereSingleLayer",
+            },
+            hints={
+                "upstream_var": "pwat",
+                "cf_var": "pwat",
+                "short_name": "pwat",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
     ),
     **{
         f"tmp{level}": _hrrr_tmp_level_component(level)
@@ -483,6 +504,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
+    "pwat": "pwat",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
     "precip_total": "precip_total",
@@ -507,11 +529,12 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "sbcape": 4,
     "mlcape": 5,
     "mucape": 6,
-    "precip_total": 7,
-    "snowfall_total": 8,
-    "wspd10m": 9,
-    "wgst10m": 10,
-    "snowfall_kuchera_total": 11,
+    "pwat": 7,
+    "precip_total": 8,
+    "snowfall_total": 9,
+    "wspd10m": 10,
+    "wgst10m": 11,
+    "snowfall_kuchera_total": 12,
 }
 
 HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -522,6 +545,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
+    "pwat": "Moisture",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
@@ -532,6 +556,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
 HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
     "snowfall_total": "m_to_in",

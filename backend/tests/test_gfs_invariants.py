@@ -36,6 +36,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "sbcape",
         "mlcape",
         "mucape",
+        "pwat",
         "wspd10m",
         "wgst10m",
         "precip_ptype",
@@ -65,7 +66,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_ptype["derived"] is True
     assert precip_ptype["derive_strategy_id"] == "precip_ptype_blend"
     assert precip_ptype["units"] == "in/hr"
-    assert precip_ptype["order"] == 11
+    assert precip_ptype["order"] == 12
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
@@ -74,7 +75,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["kind"] == "continuous"
     assert precip_total["constraints"]["min_fh"] == 3
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 7
+    assert precip_total["order"] == 8
     assert precip_total["display_resampling_override"] is None
 
     tmp850 = payload["variables"]["tmp850"]
@@ -131,19 +132,30 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["order"] == 6
     assert mucape["display_resampling_override"] is None
 
+    pwat = payload["variables"]["pwat"]
+    assert pwat["buildable"] is True
+    assert pwat["derived"] is False
+    assert pwat["kind"] == "continuous"
+    assert pwat["units"] == "in"
+    assert pwat["display_name"] == "Precipitable Water"
+    assert pwat["group"] == "Moisture"
+    assert pwat["color_map_id"] == "pwat"
+    assert pwat["order"] == 7
+    assert pwat["display_resampling_override"] is None
+
     wgst10m = payload["variables"]["wgst10m"]
     assert wgst10m["buildable"] is True
     assert wgst10m["derived"] is False
     assert wgst10m["units"] == "mph"
     assert wgst10m["display_name"] == "10m Wind Gust"
-    assert wgst10m["order"] == 10
+    assert wgst10m["order"] == 11
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["buildable"] is True
     assert wspd10m["derived"] is True
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 9
+    assert wspd10m["order"] == 10
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["buildable"] is True
@@ -153,7 +165,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["constraints"]["min_fh"] == 3
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
-    assert snowfall_total["order"] == 8
+    assert snowfall_total["order"] == 9
     assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
@@ -164,7 +176,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["constraints"]["min_fh"] == 3
     assert snowfall_kuchera_total["default_fh"] == 6
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
-    assert snowfall_kuchera_total["order"] == 14
+    assert snowfall_kuchera_total["order"] == 15
 
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
@@ -174,6 +186,8 @@ def test_gfs_precip_total_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GFS_MODEL.normalize_var_id("qpf") == "precip_total"
     assert GFS_MODEL.normalize_var_id("total_precip") == "precip_total"
+    assert GFS_MODEL.normalize_var_id("pwat") == "pwat"
+    assert GFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
 
 
 def test_gfs_temp850_and_gust_aliases_normalize() -> None:
@@ -228,6 +242,20 @@ def test_gfs_mucape_selector_invariants() -> None:
         "typeOfLevel": "pressureFromGroundLayer",
         "topLevel": "0",
         "bottomLevel": "255",
+    }
+
+
+def test_gfs_pwat_selector_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("pwat")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is False
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "in"
+    assert var_spec.selectors.search == [":PWAT:entire atmosphere (considered as a single layer):"]
+    assert var_spec.selectors.filter_by_keys == {
+        "shortName": "pwat",
+        "typeOfLevel": "atmosphereSingleLayer",
     }
 
 

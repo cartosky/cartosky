@@ -55,6 +55,9 @@ class NAMPlugin(BaseModelPlugin):
             "sbcape": "sbcape",
             "mlcape": "mlcape",
             "mucape": "mucape",
+            "pwat": "pwat",
+            "precipitable_water": "pwat",
+            "precipitablewater": "pwat",
             "wgst10m": "wgst10m",
             "gust10m": "wgst10m",
             "10m_gust": "wgst10m",
@@ -279,6 +282,25 @@ NAM_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="J/kg",
+    ),
+    "pwat": VarSpec(
+        id="pwat",
+        name="Precipitable Water",
+        selectors=VarSelectors(
+            search=[":PWAT:entire atmosphere (considered as a single layer):"],
+            filter_by_keys={
+                "shortName": "pwat",
+                "typeOfLevel": "atmosphereSingleLayer",
+            },
+            hints={
+                "upstream_var": "pwat",
+                "cf_var": "pwat",
+                "short_name": "pwat",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
     ),
     **{
         f"tmp{level}": _nam_tmp_level_component(level)
@@ -551,6 +573,7 @@ NAM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
+    "pwat": "pwat",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "precip_total": "precip_total",
@@ -574,11 +597,12 @@ NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "sbcape": 4,
     "mlcape": 5,
     "mucape": 6,
-    "precip_total": 7,
-    "snowfall_total": 8,
-    "wspd10m": 9,
-    "wgst10m": 10,
-    "snowfall_kuchera_total": 11,
+    "pwat": 7,
+    "precip_total": 8,
+    "snowfall_total": 9,
+    "wspd10m": 10,
+    "wgst10m": 11,
+    "snowfall_kuchera_total": 12,
 }
 
 NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -589,6 +613,7 @@ NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
+    "pwat": "Moisture",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
@@ -599,6 +624,7 @@ NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
 NAM_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
     "precip_total": "kgm2_to_in",

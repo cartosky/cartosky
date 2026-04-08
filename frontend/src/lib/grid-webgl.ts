@@ -26,6 +26,7 @@ const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
   ["precip_total", 0.01],
   ["snowfall_total", 0.1],
+  ["pwat", 0.05],
 ]);
 
 export type GridFrameVisiblePayload = {

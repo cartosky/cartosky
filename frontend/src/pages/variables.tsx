@@ -146,6 +146,30 @@ export default function Variables() {
         limitations: ["Pressure levels can intersect terrain; values may be masked or behave oddly in complex terrain."],
       },
       {
+        id: "pwat",
+        name: "Precipitable Water",
+        oneLiner: "Total column moisture, expressed as the liquid water depth that would result if all vapor condensed.",
+        pills: ["Entire column", "in/mm", "Continuous"],
+        definition:
+          "Precipitable water measures the integrated moisture content through the atmospheric column. Higher values generally support heavier rain rates and more efficient warm-rain processes when lift and instability are present.",
+        bestFor: [
+          "Finding deep moisture plumes feeding heavy rain or tropical air masses",
+          "Identifying moisture gradients along drylines, fronts, and atmospheric-river style corridors",
+          "Comparing whether a setup is moisture-limited or primed for efficient rainfall production",
+        ],
+        interpretation: [
+          "PWAT is a moisture field, not a rainfall forecast, so it needs forcing and storm coverage context before implying totals or flash-flood risk.",
+          "Anomalously high PWAT usually matters more than the raw value alone because climatologically impressive moisture varies by region and season.",
+        ],
+        limitations: [
+          "High PWAT can coexist with weak lift or strong capping, producing little precipitation despite a moisture-rich column.",
+          "It does not tell you where within the column the moisture is concentrated, so pair it with sounding-level fields when p-type or cloud-depth structure matters.",
+        ],
+        notes: [
+          "Rendered with an inches-based palette similar to the classic PWAT ramp so low-end dry air stays muted and richer tropical moisture stands out quickly.",
+        ],
+      },
+      {
         id: "sbcape",
         name: "Surface-Based CAPE",
         oneLiner: "Buoyant energy for a surface parcel, emphasizing instability that is directly rooted at the ground.",
@@ -439,7 +463,7 @@ export default function Variables() {
           <div className="space-y-3 text-sm text-white/75">
             <div className="text-[11px] uppercase tracking-wider text-white/55">Candidates</div>
             <div className="text-white/80">
-              MSLP, 500 mb heights, CIN and additional CAPE variants, PWAT, 700 mb RH, visibility, freezing rain accretion (where supported),
+              MSLP, 500 mb heights, CIN and additional CAPE variants, 700 mb RH, visibility, freezing rain accretion (where supported),
               and additional precip-type variants.
             </div>
           </div>

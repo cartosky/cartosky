@@ -2274,6 +2274,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     # Legacy var-key fallback path
     "tmp2m": _celsius_to_fahrenheit,
     "dp2m": _celsius_to_fahrenheit,
+    "pwat": _kgm2_to_inches,
     "wspd10m": _ms_to_mph,
     "wgst10m": _ms_to_mph,
     "snowfall_total": _meters_to_inches,

@@ -116,7 +116,7 @@ const OVERLAY_RASTER_DARK_GRAY_BOOST_CONTRAST = 0.2;
 const OVERLAY_RASTER_DARK_GRAY_BOOST_SATURATION = 0.16;
 const OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MIN = 0.1;
 const OVERLAY_RASTER_DARK_GRAY_BOOST_BRIGHTNESS_MAX = 1;
-const GRAY_LOW_END_VARIABLES = new Set(["precip_total", "snowfall_total", "qpf6h", "wspd10m", "wgst10m"]);
+const GRAY_LOW_END_VARIABLES = new Set(["precip_total", "snowfall_total", "qpf6h", "pwat", "wspd10m", "wgst10m"]);
 
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
   if (basemapMode === "dark") {
