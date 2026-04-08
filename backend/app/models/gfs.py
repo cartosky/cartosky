@@ -735,6 +735,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
 GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "vort500": "s-1_to_1e5s-1",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
