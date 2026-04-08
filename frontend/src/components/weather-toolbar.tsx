@@ -14,6 +14,7 @@ import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
+import type { GroupedOption } from "@/lib/app-utils";
 import {
   Select,
   SelectContent,
@@ -32,6 +33,8 @@ type Option = {
 type VariableOption = Option & {
   group: string | null;
 };
+
+type SelectGroupedOption = GroupedOption | VariableOption;
 
 function spcVariableToolbarLabel(option: VariableOption): string {
   switch (option.value) {
@@ -58,7 +61,7 @@ type WeatherToolbarProps = {
   variable: string;
   onVariableChange: (value: string) => void;
   regions: Option[];
-  models: Option[];
+  models: GroupedOption[];
   runs: Option[];
   variables: VariableOption[];
   disabled?: boolean;
@@ -127,7 +130,7 @@ function ToolbarSelect(props: {
   icon: ComponentType<{ className?: string }>;
   value: string;
   onValueChange: (value: string) => void;
-  options: (Option | VariableOption)[];
+  options: (Option | SelectGroupedOption)[];
   disabled?: boolean;
   placeholder: string;
   grouped?: boolean;
@@ -161,7 +164,7 @@ function ToolbarSelect(props: {
 
   let content: ReactNode;
   if (grouped) {
-    const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR"];
+    const GROUP_ORDER = ["MODELS", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR"];
     const groups = new Map<string, Option[]>();
     const ungrouped: Option[] = [];
     for (const opt of options) {
@@ -415,6 +418,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               options={models}
               disabled={disabled}
               placeholder="Model"
+              grouped
               hideLabel
               triggerClassName="min-w-[118px] max-w-[118px] rounded-full border-white/10 bg-white/8 px-3"
             />
@@ -543,6 +547,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 options={models}
                 disabled={disabled}
                 placeholder="Model"
+                grouped
               />
 
               <ToolbarSelect

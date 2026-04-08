@@ -76,9 +76,11 @@ export type Option = {
   label: string;
 };
 
-export type VariableOption = Option & {
+export type GroupedOption = Option & {
   group: string | null;
 };
+
+export type VariableOption = GroupedOption;
 
 export type VariableEntry = {
   id: string;
@@ -93,6 +95,12 @@ export type VariableEntry = {
 };
 
 type VariableUiOverride = {
+  label?: string;
+  group?: string | null;
+  order?: number;
+};
+
+type ModelUiOverride = {
   label?: string;
   group?: string | null;
   order?: number;
@@ -335,8 +343,22 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 31 },
 };
 
+const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
+  hrrr: { label: "HRRR", group: "MODELS", order: 0 },
+  nam: { label: "NAM", group: "MODELS", order: 1 },
+  gfs: { label: "GFS", group: "MODELS", order: 2 },
+  nbm: { label: "NBM", group: "MODELS", order: 3 },
+  mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
+  nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 11 },
+  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 12 },
+};
+
 function variableUiOverride(id: string): VariableUiOverride | null {
   return VARIABLE_UI_OVERRIDES[id] ?? null;
+}
+
+function modelUiOverride(id: string): ModelUiOverride | null {
+  return MODEL_UI_OVERRIDES[id] ?? null;
 }
 
 function canonicalVariableGroup(id: string, group?: string | null): string | null {
@@ -451,12 +473,29 @@ export function normalizeModelRows(
   }
 
   return normalized.sort((a, b) => {
-    const aOrder = Number.isFinite(a.order) ? Number(a.order) : Number.POSITIVE_INFINITY;
-    const bOrder = Number.isFinite(b.order) ? Number(b.order) : Number.POSITIVE_INFINITY;
+    const aOverride = modelUiOverride(a.id);
+    const bOverride = modelUiOverride(b.id);
+    const aOrder = typeof aOverride?.order === "number"
+      ? aOverride.order
+      : (Number.isFinite(a.order) ? Number(a.order) : Number.POSITIVE_INFINITY);
+    const bOrder = typeof bOverride?.order === "number"
+      ? bOverride.order
+      : (Number.isFinite(b.order) ? Number(b.order) : Number.POSITIVE_INFINITY);
     if (aOrder !== bOrder) {
       return aOrder - bOrder;
     }
     return a.id.localeCompare(b.id);
+  });
+}
+
+export function makeModelOptions(entries: ModelEntry[]): GroupedOption[] {
+  return entries.map((entry) => {
+    const override = modelUiOverride(entry.id);
+    return {
+      value: entry.id,
+      label: override?.label ?? entry.displayName ?? entry.id,
+      group: override?.group ?? null,
+    };
   });
 }
 

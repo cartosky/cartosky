@@ -79,6 +79,7 @@ import {
   makeRegionLabel,
   buildFallbackSharePayload,
   toNumberOrNull,
+  makeModelOptions,
   normalizeModelRows,
   normalizeCapabilityVarRows,
   capabilityVarsForManifest,
@@ -94,6 +95,7 @@ import {
   emptyScrubPhase0aSnapshot,
   // Types
   type NewRunNoticeState,
+  type GroupedOption,
   type Option,
   type VariableOption,
   type VariableEntry,
@@ -136,7 +138,7 @@ export default function App() {
     return null;
   }, [initialPermalink]);
   const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
-  const [models, setModels] = useState<Option[]>([]);
+  const [models, setModels] = useState<GroupedOption[]>([]);
   const [regions, setRegions] = useState<Option[]>([]);
   const [runs, setRuns] = useState<string[]>([]);
   const [variables, setVariables] = useState<VariableOption[]>([]);
@@ -1472,10 +1474,7 @@ export default function App() {
         const nextModel = requestedModel && orderedVisibleModelIds.includes(requestedModel)
           ? requestedModel
           : (preferredDefaultModel || availableModelId || orderedVisibleModelIds[0] || "");
-        const modelOptions = modelRows.map((entry) => ({
-          value: entry.id,
-          label: entry.displayName || entry.id,
-        }));
+        const modelOptions = makeModelOptions(modelRows);
         setModels(modelOptions);
         setModel(nextModel);
 
