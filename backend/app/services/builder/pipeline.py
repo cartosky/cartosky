@@ -497,6 +497,11 @@ def _build_legend(
         return {"type": "gradient", "stops": stops}
 
     else:  # discrete / indexed
+        legend_stops = var_spec.get("legend_stops") or colorize_meta.get("legend_stops")
+        if legend_stops:
+            stops = [[float(v), c] for v, c in legend_stops]
+            return {"type": "discrete", "stops": stops}
+
         levels = var_spec.get("levels", colorize_meta.get("levels", []))
         colors = var_spec.get("colors", colorize_meta.get("colors", []))
 
