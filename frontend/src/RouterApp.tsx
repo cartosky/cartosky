@@ -7,7 +7,6 @@ import AdminLayout from "./layouts/AdminLayout";
 const Home = lazy(() => import("./pages/home"));
 const Models = lazy(() => import("./pages/models"));
 const Variables = lazy(() => import("./pages/variables"));
-const Status = lazy(() => import("./pages/status"));
 const Login = lazy(() => import("./pages/login"));
 const AdminOverview = lazy(() => import("./pages/admin/overview"));
 const AdminAnalytics = lazy(() => import("./pages/admin/analytics"));
@@ -27,7 +26,6 @@ export default function RouterApp() {
         <Route path="/" element={withSuspense(<Home />)} />
         <Route path="/models" element={withSuspense(<Models />)} />
         <Route path="/variables" element={withSuspense(<Variables />)} />
-        <Route path="/status" element={withSuspense(<Status />)} />
         <Route path="/login" element={withSuspense(<Login />)} />
       </Route>
 

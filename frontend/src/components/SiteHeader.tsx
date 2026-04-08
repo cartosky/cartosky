@@ -132,7 +132,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             <NavItem to="/viewer" label="Viewer" />
             <NavItem to="/models" label="Models" />
             <NavItem to="/variables" label="Variables" />
-            <NavItem to="/status" label="Status" />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <NavLink
               to="/login"
@@ -223,12 +222,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <NavItem
                   to="/variables"
                   label="Variables"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-white/90 hover:text-white"
-                />
-                <NavItem
-                  to="/status"
-                  label="Status"
                   onClick={() => setMobileMenuOpen(false)}
                   className="text-white/90 hover:text-white"
                 />

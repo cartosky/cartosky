@@ -291,12 +291,6 @@ export default function Models() {
             >
               Launch Viewer
             </Link>
-            <Link
-              to="/status"
-              className="rounded-lg bg-black/20 px-4 py-2.5 text-sm font-medium text-white hover:bg-black/30 border border-white/15"
-            >
-              System Status
-            </Link>
           </div>
         </div>
       </section>
