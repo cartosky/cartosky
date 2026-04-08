@@ -326,6 +326,16 @@ def test_nam_mucape_selector_invariants() -> None:
     assert mucape_spec.selectors.hints["cape_layer"] == "255-0 mb above ground"
 
 
+def test_nam_wspd10m_uses_vector_components_only() -> None:
+    wspd_spec = NAM_MODEL.get_var("wspd10m")
+    assert wspd_spec is not None
+    assert wspd_spec.derived is True
+    assert wspd_spec.derive == "wspd10m"
+    assert wspd_spec.selectors.hints["u_component"] == "10u"
+    assert wspd_spec.selectors.hints["v_component"] == "10v"
+    assert "speed_component" not in wspd_spec.selectors.hints
+
+
 def test_nam_pwat_selector_invariants() -> None:
     pwat_spec = NAM_MODEL.get_var("pwat")
     assert pwat_spec is not None

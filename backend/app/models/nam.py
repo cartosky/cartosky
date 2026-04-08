@@ -533,7 +533,6 @@ NAM_VARS: dict[str, VarSpec] = {
             hints={
                 "u_component": "10u",
                 "v_component": "10v",
-                "speed_component": "10si",
             },
         ),
         derived=True,
