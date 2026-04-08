@@ -467,6 +467,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "precip_total": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "in",
         "range": (0.0, 25.0),
         "anchors": PRECIP_TOTAL_COLOR_ANCHORS,
@@ -479,6 +480,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "qpf6h": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "in",
         "range": (0.0, 6.0),
         "colors": precip_colors,

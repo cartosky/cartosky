@@ -41,3 +41,25 @@ def test_build_sidecar_writes_degraded_quality_flags() -> None:
 
     assert sidecar["quality"] == "degraded"
     assert sidecar["quality_flags"] == ["slr_fallback_10to1", "apcp_cumulative_fallback"]
+
+
+def test_build_sidecar_can_override_display_kind_for_precip() -> None:
+    sidecar = pipeline_module.build_sidecar_json(
+        model="gfs",
+        run_id="20260408_06z",
+        var_id="precip_total",
+        fh=6,
+        run_date=datetime(2026, 4, 8, 6, tzinfo=timezone.utc),
+        colorize_meta={"kind": "continuous", "units": "in", "min": 0.0, "max": 25.0},
+        var_spec={
+            "type": "continuous",
+            "display_palette_kind": "discrete",
+            "range": [0.0, 25.0],
+            "colors": ["#000000", "#ffffff"],
+            "legend_stops": [(0.01, "#111111"), (0.1, "#222222")],
+        },
+    )
+
+    assert sidecar["kind"] == "discrete"
+    assert sidecar["legend"]["type"] == "discrete"
+    assert sidecar["legend"]["stops"] == [[0.01, "#111111"], [0.1, "#222222"]]

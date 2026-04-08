@@ -146,7 +146,8 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     manifest = json.loads(manifest_path.read_text())
     assert manifest["subtype"] == "grid"
     assert manifest["grid"]["dtype"] == "uint16"
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
@@ -228,7 +229,7 @@ def test_build_grid_for_run_supports_temperature_family_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == var
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == 0.01
     assert manifest["grid"]["offset"] == -100.0
     assert manifest["grid"]["units"] == "F"
     assert manifest["grid"]["width"] == values.shape[1]
@@ -289,7 +290,7 @@ def test_build_grid_for_run_supports_wind_family_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == var
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == 0.01
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "mph"
     assert manifest["grid"]["width"] == values.shape[1]
@@ -347,7 +348,8 @@ def test_build_grid_for_run_supports_gfs_snowfall_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
     assert manifest["grid"]["width"] == values.shape[1] * 3

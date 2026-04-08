@@ -317,10 +317,11 @@ def build_sidecar_json(
     model_units = getattr(var_spec_model, "units", None) if var_spec_model is not None else None
 
     kind = colorize_meta.get("kind") or model_kind or var_spec.get("type", "continuous")
+    display_kind = var_spec.get("display_palette_kind") or kind
     units = model_units or colorize_meta.get("units") or var_spec.get("units", "")
 
     # Build legend
-    legend = _build_legend(kind, var_spec, colorize_meta)
+    legend = _build_legend(str(display_kind), var_spec, colorize_meta)
 
     sidecar: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
@@ -330,7 +331,7 @@ def build_sidecar_json(
         "fh": fh,
         "valid_time": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "units": _format_units(units),
-        "kind": kind,
+        "kind": display_kind,
         "min": colorize_meta.get("min"),
         "max": colorize_meta.get("max"),
         "legend": legend,

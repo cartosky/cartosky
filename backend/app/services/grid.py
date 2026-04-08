@@ -131,7 +131,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "dBZ",
     },
     ("hrrr", "precip_total"): {
-        "scale": 0.1,
+        "scale": 0.01,
         "offset": 0.0,
         "nodata": 65535,
         "units": "in",
@@ -203,7 +203,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "mph",
     },
     ("gfs", "precip_total"): {
-        "scale": 0.1,
+        "scale": 0.01,
         "offset": 0.0,
         "nodata": 65535,
         "units": "in",
@@ -287,7 +287,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "dBZ",
     },
     ("nam", "precip_total"): {
-        "scale": 0.1,
+        "scale": 0.01,
         "offset": 0.0,
         "nodata": 65535,
         "units": "in",
@@ -323,7 +323,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "mph",
     },
     ("nbm", "precip_total"): {
-        "scale": 0.1,
+        "scale": 0.01,
         "offset": 0.0,
         "nodata": 65535,
         "units": "in",
@@ -752,7 +752,7 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
             spec = get_color_map_spec(color_map_id)
         except KeyError:
             spec = {}
-        spec_type = str(spec.get("type") or "").strip()
+        spec_type = str(spec.get("display_palette_kind") or spec.get("type") or "").strip()
         if spec_type:
             palette["kind"] = spec_type
         gamma = spec.get("power_norm_gamma")
