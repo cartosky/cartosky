@@ -490,6 +490,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "pwat": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "in",
         "range": (0.0, 3.0),
         "anchors": PWAT_COLOR_ANCHORS,

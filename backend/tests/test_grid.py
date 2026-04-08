@@ -519,6 +519,7 @@ def test_build_grid_for_run_supports_pwat(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "pwat"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 0.01
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
