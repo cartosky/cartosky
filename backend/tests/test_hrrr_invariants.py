@@ -45,6 +45,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "wspd850",
         "sbcape",
         "mlcape",
         "mucape",
@@ -111,6 +112,18 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["display_resampling_override"] is None
     assert tmp2m["render_substrates"] == ["grid"]
 
+    wspd850 = payload["variables"]["wspd850"]
+    assert wspd850["buildable"] is True
+    assert wspd850["derived"] is True
+    assert wspd850["derive_strategy_id"] == "wspd10m"
+    assert wspd850["kind"] == "continuous"
+    assert wspd850["units"] == "mph"
+    assert wspd850["display_name"] == "850mb Heights + Winds"
+    assert wspd850["order"] == 4
+    assert wspd850["group"] == "Wind"
+    assert wspd850["color_map_id"] == "wspd850"
+    assert wspd850["display_resampling_override"] is None
+
     sbcape = payload["variables"]["sbcape"]
     assert sbcape["var_key"] == "sbcape"
     assert sbcape["buildable"] is True
@@ -118,7 +131,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert sbcape["kind"] == "continuous"
     assert sbcape["units"] == "J/kg"
     assert sbcape["display_name"] == "Surface-Based CAPE"
-    assert sbcape["order"] == 4
+    assert sbcape["order"] == 6
     assert sbcape["group"] == "Instability"
     assert sbcape["color_map_id"] == "mlcape"
     assert sbcape["display_resampling_override"] is None
@@ -130,7 +143,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["kind"] == "continuous"
     assert mlcape["units"] == "J/kg"
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
-    assert mlcape["order"] == 5
+    assert mlcape["order"] == 7
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
     assert mlcape["display_resampling_override"] is None
@@ -142,7 +155,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["kind"] == "continuous"
     assert mucape["units"] == "J/kg"
     assert mucape["display_name"] == "Most-Unstable CAPE"
-    assert mucape["order"] == 6
+    assert mucape["order"] == 8
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
     assert mucape["display_resampling_override"] is None
@@ -154,7 +167,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["kind"] == "continuous"
     assert pwat["units"] == "in"
     assert pwat["display_name"] == "Precipitable Water"
-    assert pwat["order"] == 7
+    assert pwat["order"] == 9
     assert pwat["group"] == "Moisture"
     assert pwat["color_map_id"] == "pwat"
     assert pwat["display_resampling_override"] is None
@@ -246,3 +259,15 @@ def test_hrrr_pwat_selector_and_alias_invariants() -> None:
         "shortName": "pwat",
         "typeOfLevel": "atmosphereSingleLayer",
     }
+
+
+def test_hrrr_wspd850_uses_850mb_components_and_height_contours() -> None:
+    wspd_spec = HRRR_MODEL.get_var("wspd850")
+    assert wspd_spec is not None
+    assert wspd_spec.derived is True
+    assert wspd_spec.derive == "wspd10m"
+    assert wspd_spec.selectors.hints["u_component"] == "u850"
+    assert wspd_spec.selectors.hints["v_component"] == "v850"
+    assert wspd_spec.selectors.hints["contour_component"] == "hgt850"
+    assert wspd_spec.selectors.hints["contour_key"] == "height_850mb"
+    assert wspd_spec.selectors.hints["contour_product"] == "prs"
