@@ -329,22 +329,21 @@ QPF6H_LEGEND_STOPS = list(zip(precip_levels, precip_colors))
 PRECIP_TOTAL_COLOR_ANCHORS = list(zip(precip_levels, precip_colors))
 
 PWAT_LEGEND_STOPS = [
-    (0.0, "#5c5746"),
-    (0.2, "#8a7c58"),
-    (0.4, "#7b8847"),
-    (0.6, "#61a44d"),
-    (0.8, "#4db77f"),
-    (1.0, "#3ca9b8"),
-    (1.2, "#357fc8"),
-    (1.4, "#4b65c7"),
-    (1.6, "#6d58b7"),
-    (1.8, "#8c4d9e"),
-    (2.0, "#9b5c75"),
-    (2.2, "#7b6648"),
-    (2.4, "#4d7a36"),
-    (2.6, "#2f6d30"),
-    (2.8, "#114f23"),
-    (3.0, "#063915"),
+    (0.0, "#3b321d"),
+    (0.2, "#686048"),
+    (0.4, "#a9a38a"),
+    (0.6, "#74aa73"),
+    (0.8, "#74aa73"),
+    (1.0, "#569aa5"),
+    (1.2, "#366369"),
+    (1.4, "#1a3233"),
+    (1.6, "#4a457d"),
+    (1.8, "#332965"),
+    (2.0, "#6d3d69"),
+    (2.2, "#83526f"),
+    (2.4, "#9b6776"),
+    (2.6, "#d1a998"),
+    (2.8, "#e6cfb8"),
 ]
 PWAT_COLOR_ANCHORS = list(PWAT_LEGEND_STOPS)
 PWAT_COLORS = [color for _, color in PWAT_LEGEND_STOPS]
