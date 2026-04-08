@@ -996,8 +996,11 @@ export default function App() {
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
     const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
     const candidateRows = pivotIndex >= 0
-      ? orderedRows.filter((_, index) => Math.abs(index - pivotIndex) === 1)
-      : orderedRows.slice(1, 3);
+      ? orderedRows.filter((_, index) => {
+          const distance = Math.abs(index - pivotIndex);
+          return distance >= 1 && distance <= 2;
+        })
+      : orderedRows.slice(1, 5);
     const urls: string[] = [];
     for (const row of candidateRows) {
       const meta = extractLegendMeta(row);
