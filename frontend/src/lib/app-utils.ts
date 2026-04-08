@@ -52,6 +52,9 @@ export const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
 export const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 
 export const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
+export const LEGEND_VISIBILITY_STORAGE_KEY = "twf.map.legend_visible";
+export const POINT_LABELS_STORAGE_KEY = "twf.map.point_labels_enabled";
+export const ZOOM_CONTROLS_STORAGE_KEY = "twf.map.zoom_controls_visible";
 export const MODEL_ORDER_BY_ID: Record<string, number> = {
   hrrr: 0,
   nam: 1,
@@ -220,6 +223,80 @@ export function writeBasemapModePreference(mode: BasemapMode): void {
   } catch {
     // Ignore storage errors.
   }
+}
+
+export function readLegendVisibilityPreference(): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = window.localStorage.getItem(LEGEND_VISIBILITY_STORAGE_KEY);
+    if (stored === "true") {
+      return true;
+    }
+    if (stored === "false") {
+      return false;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLegendVisibilityPreference(visible: boolean): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LEGEND_VISIBILITY_STORAGE_KEY, String(visible));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function readBooleanPreference(key: string, fallback: boolean): boolean {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored === "true") {
+      return true;
+    }
+    if (stored === "false") {
+      return false;
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeBooleanPreference(key: string, value: boolean): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+export function readPointLabelsPreference(): boolean {
+  return readBooleanPreference(POINT_LABELS_STORAGE_KEY, true);
+}
+
+export function writePointLabelsPreference(enabled: boolean): void {
+  writeBooleanPreference(POINT_LABELS_STORAGE_KEY, enabled);
+}
+
+export function readZoomControlsPreference(): boolean {
+  return readBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, false);
+}
+
+export function writeZoomControlsPreference(visible: boolean): void {
+  writeBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, visible);
 }
 
 export function pickPreferred(values: string[], preferred: string): string {

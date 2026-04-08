@@ -477,7 +477,7 @@ Business
 - [X] Add SPC outlooks/products
 - [X] Add NWS hazards per county
 - [ ] Add selected new variables
-- [ ] Add Kuchera to NAM and GFS
+- [X] Add Kuchera to NAM and GFS
 - [ ] Add selected new models
 - [ ] Add groups/titles in dropdown
 - [ ] Redesign frontend
