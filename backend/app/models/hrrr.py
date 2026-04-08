@@ -41,6 +41,10 @@ class HRRRPlugin(BaseModelPlugin):
             return "snowfall_kuchera_total"
         if normalized in {"tmp850", "t850", "t850mb", "temp850", "temp850mb"}:
             return "tmp850"
+        if normalized in {"vort500", "500vort", "500_vort", "500mb_vort", "500mb_vorticity", "500_vorticity", "absv500", "avor500"}:
+            return "vort500"
+        if normalized in {"hgt500", "z500", "500hgt", "500_height", "500mb_height", "500mb_heights", "500_heights"}:
+            return "hgt500"
         if normalized in {"10u", "u10"}:
             return "10u"
         if normalized in {"10v", "v10"}:
@@ -121,6 +125,58 @@ def _hrrr_rh_level_component(level_hpa: int) -> VarSpec:
     )
 
 
+def _hrrr_hgt_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"hgt{level}",
+        name=f"{level}mb Height",
+        selectors=VarSelectors(
+            search=[f":HGT:{level} mb:"],
+            filter_by_keys={
+                "shortName": "gh",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"gh{level}",
+                "cf_var": "gh",
+                "short_name": "gh",
+            },
+        ),
+    )
+
+
+def _hrrr_absv_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"vort{level}",
+        name=f"{level}mb Absolute Vorticity",
+        selectors=VarSelectors(
+            search=[f":ABSV:{level} mb:"],
+            filter_by_keys={
+                "shortName": "absv",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"absv{level}",
+                "cf_var": "absv",
+                "short_name": "absv",
+                "contour_component": f"hgt{level}",
+                "contour_interval": "60",
+                "contour_start": "4800",
+                "contour_end": "6240",
+                "contour_key": "height_500mb",
+                "contour_label": f"{level} mb Height",
+                "contour_product": "prs",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="10^-5 s^-1",
+    )
+
+
 HRRR_VARS: dict[str, VarSpec] = {
     "tmp2m": VarSpec(
         id="tmp2m",
@@ -175,6 +231,7 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    "vort500": _hrrr_absv_level_component(500),
     "sbcape": VarSpec(
         id="sbcape",
         name="Surface-Based CAPE",
@@ -258,6 +315,10 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    **{
+        f"hgt{level}": _hrrr_hgt_level_component(level)
+        for level in (500,)
+    },
     **{
         f"tmp{level}": _hrrr_tmp_level_component(level)
         for level in (925, 700, 600, 500)
@@ -501,6 +562,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "vort500": "vort500",
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
@@ -526,15 +588,16 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "tmp850": 3,
-    "sbcape": 4,
-    "mlcape": 5,
-    "mucape": 6,
-    "pwat": 7,
-    "precip_total": 8,
-    "snowfall_total": 9,
-    "wspd10m": 10,
-    "wgst10m": 11,
-    "snowfall_kuchera_total": 12,
+    "vort500": 4,
+    "sbcape": 5,
+    "mlcape": 6,
+    "mucape": 7,
+    "pwat": 8,
+    "precip_total": 9,
+    "snowfall_total": 10,
+    "wspd10m": 11,
+    "wgst10m": 12,
+    "snowfall_kuchera_total": 13,
 }
 
 HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -542,6 +605,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "vort500": "Dynamics",
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
@@ -556,6 +620,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
 HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "vort500": "s-1_to_1e5s-1",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",

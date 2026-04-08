@@ -52,6 +52,21 @@ class NAMPlugin(BaseModelPlugin):
             "t850mb": "tmp850",
             "temp850": "tmp850",
             "temp850mb": "tmp850",
+            "vort500": "vort500",
+            "500vort": "vort500",
+            "500_vort": "vort500",
+            "500mb_vort": "vort500",
+            "500mb_vorticity": "vort500",
+            "500_vorticity": "vort500",
+            "absv500": "vort500",
+            "avor500": "vort500",
+            "hgt500": "hgt500",
+            "z500": "hgt500",
+            "500hgt": "hgt500",
+            "500_height": "hgt500",
+            "500mb_height": "hgt500",
+            "500mb_heights": "hgt500",
+            "500_heights": "hgt500",
             "sbcape": "sbcape",
             "mlcape": "mlcape",
             "mucape": "mucape",
@@ -160,6 +175,57 @@ def _nam_rh_level_component(level_hpa: int) -> VarSpec:
     )
 
 
+def _nam_hgt_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"hgt{level}",
+        name=f"{level}mb Height",
+        selectors=VarSelectors(
+            search=[f":HGT:{level} mb:"],
+            filter_by_keys={
+                "shortName": "gh",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"gh{level}",
+                "cf_var": "gh",
+                "short_name": "gh",
+            },
+        ),
+    )
+
+
+def _nam_absv_level_component(level_hpa: int) -> VarSpec:
+    level = int(level_hpa)
+    return VarSpec(
+        id=f"vort{level}",
+        name=f"{level}mb Absolute Vorticity",
+        selectors=VarSelectors(
+            search=[f":ABSV:{level} mb:"],
+            filter_by_keys={
+                "shortName": "absv",
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"absv{level}",
+                "cf_var": "absv",
+                "short_name": "absv",
+                "contour_component": f"hgt{level}",
+                "contour_interval": "60",
+                "contour_start": "4800",
+                "contour_end": "6240",
+                "contour_key": "height_500mb",
+                "contour_label": f"{level} mb Height",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="10^-5 s^-1",
+    )
+
+
 NAM_VARS: dict[str, VarSpec] = {
     "tmp2m": VarSpec(
         id="tmp2m",
@@ -219,6 +285,7 @@ NAM_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    "vort500": _nam_absv_level_component(500),
     "sbcape": VarSpec(
         id="sbcape",
         name="Surface-Based CAPE",
@@ -302,6 +369,10 @@ NAM_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    **{
+        f"hgt{level}": _nam_hgt_level_component(level)
+        for level in (500,)
+    },
     **{
         f"tmp{level}": _nam_tmp_level_component(level)
         for level in (925, 700, 600, 500)
@@ -569,6 +640,7 @@ NAM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "vort500": "vort500",
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
@@ -593,15 +665,16 @@ NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "tmp850": 3,
-    "sbcape": 4,
-    "mlcape": 5,
-    "mucape": 6,
-    "pwat": 7,
-    "precip_total": 8,
-    "snowfall_total": 9,
-    "wspd10m": 10,
-    "wgst10m": 11,
-    "snowfall_kuchera_total": 12,
+    "vort500": 4,
+    "sbcape": 5,
+    "mlcape": 6,
+    "mucape": 7,
+    "pwat": 8,
+    "precip_total": 9,
+    "snowfall_total": 10,
+    "wspd10m": 11,
+    "wgst10m": 12,
+    "snowfall_kuchera_total": 13,
 }
 
 NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -609,6 +682,7 @@ NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "vort500": "Dynamics",
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
@@ -623,6 +697,7 @@ NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
 NAM_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "vort500": "s-1_to_1e5s-1",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
