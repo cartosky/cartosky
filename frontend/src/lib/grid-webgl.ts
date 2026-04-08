@@ -366,11 +366,6 @@ function categoricalPaletteForManifest(manifest: GridManifestResponse | null): b
   return kind === "indexed" || kind === "categorical";
 }
 
-function continuousDisplayResamplingForManifest(manifest: GridManifestResponse | null): "nearest" | "bilinear" {
-  const override = String(manifest?.palette?.display_resampling ?? "").trim().toLowerCase();
-  return override === "bilinear" ? "bilinear" : "nearest";
-}
-
 function isObservedGridManifest(manifest: GridManifestResponse | null): boolean {
   return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
 }
@@ -610,7 +605,6 @@ type ProgramBindings = {
   dataEncodingLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
   categoricalLocation: WebGLUniformLocation | null;
-  continuousBilinearLocation: WebGLUniformLocation | null;
   transparentZeroLocation: WebGLUniformLocation | null;
   contrastFactorLocation: WebGLUniformLocation | null;
   saturationFactorLocation: WebGLUniformLocation | null;
@@ -891,7 +885,6 @@ export class GridWebglLayerController {
       uniform float u_dataEncoding;
       uniform vec2 u_texSize;
       uniform float u_categorical;
-      uniform float u_continuousBilinear;
       uniform float u_transparentZero;
       uniform float u_contrastFactor;
       uniform float u_saturationFactor;
@@ -1033,31 +1026,14 @@ export class GridWebglLayerController {
         return texture2D(u_lut, vec2(t, 0.5));
       }
 
-      vec4 sampleContinuousNearest(sampler2D tex, vec2 uv) {
-        float decoded = decodeSample(texture2D(tex, uv));
-        if (decoded <= -1e29 || decoded <= u_transparentBelowMin) {
-          return vec4(0.0, 0.0, 0.0, 0.0);
-        }
-        float denom = max(0.000001, u_valueMax - u_valueMin);
-        float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
-        if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
-          t = pow(t, u_powerNormGamma);
-        }
-        return texture2D(u_lut, vec2(t, 0.5));
-      }
-
       void main() {
         vec4 current = u_categorical > 0.5
           ? sampleCategorical(u_data, v_texCoord)
-          : (u_continuousBilinear > 0.5
-            ? sampleBilinear(u_data, v_texCoord)
-            : sampleContinuousNearest(u_data, v_texCoord));
+          : sampleBilinear(u_data, v_texCoord);
         vec4 previous = u_hasPrevious > 0.5
           ? (u_categorical > 0.5
             ? sampleCategorical(u_prevData, v_texCoord)
-            : (u_continuousBilinear > 0.5
-              ? sampleBilinear(u_prevData, v_texCoord)
-              : sampleContinuousNearest(u_prevData, v_texCoord)))
+            : sampleBilinear(u_prevData, v_texCoord))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
         if (mixed.a <= 0.0) {
@@ -1108,7 +1084,6 @@ export class GridWebglLayerController {
       dataEncodingLocation: gl.getUniformLocation(this.program, "u_dataEncoding"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
-      continuousBilinearLocation: gl.getUniformLocation(this.program, "u_continuousBilinear"),
       transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
       contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
@@ -1624,10 +1599,6 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
     gl.uniform1f(bindings.dataEncodingLocation, resolveGridDtype(grid.dtype) === "uint16" ? 1 : 0);
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
-    gl.uniform1f(
-      bindings.continuousBilinearLocation,
-      continuousDisplayResamplingForManifest(this.manifest) === "bilinear" ? 1 : 0,
-    );
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,

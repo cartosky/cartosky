@@ -18,7 +18,7 @@ from scipy.ndimage import zoom as ndimage_zoom
 from ..config import grid_supported_pair
 from .colormaps import get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
-from .render_resampling import display_resampling_override, resampling_name_for_kind, variable_color_map_id
+from .render_resampling import resampling_name_for_kind, variable_color_map_id
 
 logger = logging.getLogger(__name__)
 
@@ -770,9 +770,6 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
         transparent_zero = spec.get("transparent_zero")
         if isinstance(transparent_zero, bool):
             palette["transparent_zero"] = transparent_zero
-    display_resampling = display_resampling_override(model, var)
-    if display_resampling:
-        palette["display_resampling"] = display_resampling
     return palette
 
 
