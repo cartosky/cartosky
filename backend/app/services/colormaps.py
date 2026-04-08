@@ -551,6 +551,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "mlcape": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "J/kg",
         "range": MLCAPE_RANGE,
         "anchors": MLCAPE_COLOR_ANCHORS,

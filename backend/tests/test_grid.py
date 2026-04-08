@@ -472,6 +472,7 @@ def test_build_grid_for_run_supports_gfs_mlcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -568,6 +569,7 @@ def test_build_grid_for_run_supports_gfs_sbcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -614,6 +616,7 @@ def test_build_grid_for_run_supports_gfs_mucape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -896,6 +899,7 @@ def test_build_grid_for_run_supports_nbm_sbcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -990,6 +994,7 @@ def test_build_grid_for_run_supports_hrrr_mlcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -1036,6 +1041,7 @@ def test_build_grid_for_run_supports_hrrr_sbcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -1082,6 +1088,7 @@ def test_build_grid_for_run_supports_hrrr_mucape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -1245,6 +1252,7 @@ def test_build_grid_for_run_supports_nam_mlcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -1291,6 +1299,7 @@ def test_build_grid_for_run_supports_nam_sbcape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
@@ -1337,6 +1346,7 @@ def test_build_grid_for_run_supports_nam_mucape(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mlcape"
+    assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "J/kg"
