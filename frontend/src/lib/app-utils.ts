@@ -328,7 +328,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
   snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
   snowkuchera: { label: "Total Snowfall (Kuchera)", group: "PRECIPITATION", order: 14 },
-  pwat: { label: "Precipitable Water", group: "PRECIPITATION", order: 15 },
+  pwat: { label: "Precipitable Water", group: "PRECIPITATION", order: 9999 },
   mucape: { label: "Most-Unstable CAPE", group: "SEVERE", order: 20 },
   mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
