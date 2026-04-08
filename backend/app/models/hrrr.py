@@ -141,6 +141,7 @@ def _hrrr_hgt_level_component(level_hpa: int) -> VarSpec:
                 "upstream_var": f"gh{level}",
                 "cf_var": "gh",
                 "short_name": "gh",
+                "product": "prs",
             },
         ),
     )
@@ -162,6 +163,7 @@ def _hrrr_absv_level_component(level_hpa: int) -> VarSpec:
                 "upstream_var": f"absv{level}",
                 "cf_var": "absv",
                 "short_name": "absv",
+                "product": "prs",
                 "contour_component": f"hgt{level}",
                 "contour_interval": "60",
                 "contour_start": "4800",

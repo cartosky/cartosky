@@ -881,6 +881,11 @@ def build_frame(
         or var_spec_colormap.get("type", "continuous")
     )
     kind_normalized = str(kind).strip().lower() or "continuous"
+    selectors = getattr(var_spec_model, "selectors", None)
+    hints = getattr(selectors, "hints", {}) if selectors is not None else {}
+    if not isinstance(hints, dict):
+        hints = {}
+    source_product = str(hints.get("product") or product).strip() or product
     warp_resampling = _warp_resampling_for_variable(
         model_id=model,
         var_key=var_key,
@@ -911,7 +916,7 @@ def build_frame(
             run_date=run_date,
             fh=fh,
             var_key=var_key,
-            required_products=required_products,
+            required_products=[source_product],
             readiness_cache=readiness_cache,
         )
         if getattr(var_spec_model, "derived", False):
@@ -964,7 +969,7 @@ def build_frame(
                 try:
                     raw_data, src_crs, src_transform = fetch_variable(  # type: ignore[misc]
                         model_id=model,
-                        product=product,
+                        product=source_product,
                         search_pattern=search_pattern,
                         run_date=run_date,
                         fh=fh,
