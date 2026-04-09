@@ -192,6 +192,7 @@ def _build_contour_metadata_for_variable(
     build_iso_contour_geojson(
         value_data=warped_component,
         value_transform=dst_transform,
+        value_crs="EPSG:3857",
         out_geojson_path=contour_path,
         levels=levels,
     )
@@ -513,6 +514,7 @@ def build_iso_contour_geojson(
     *,
     value_data: np.ndarray,
     value_transform: Any,
+    value_crs: str = "EPSG:3857",
     out_geojson_path: Path,
     level: float | None = None,
     levels: list[float] | tuple[float, ...] | None = None,
@@ -520,7 +522,7 @@ def build_iso_contour_geojson(
 ) -> None:
     """Generate iso-contour GeoJSON from a full-resolution value grid.
 
-    Writes a temporary in-memory-source GTiff (EPSG:3857) from the provided
+    Writes a temporary in-memory-source GTiff from the provided
     array/transform, then warps/contours via GDAL CLI. This avoids depending
     on the on-disk hover value COG resolution.
     """
@@ -546,7 +548,7 @@ def build_iso_contour_geojson(
             width=value_f32.shape[1],
             count=1,
             dtype="float32",
-            crs="EPSG:3857",
+            crs=value_crs,
             transform=value_transform,
             nodata=float("nan"),
         ) as src_ds:
