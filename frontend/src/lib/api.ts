@@ -219,6 +219,7 @@ export type GridManifestResponse = {
   grid: GridManifestGrid;
   palette?: GridManifestPalette;
   display_name?: string;
+  legend?: { type?: string; stops?: LegendStops };
   composite_mode?: string | null;
   composite_layers?: GridManifestCompositeLayer[];
   lods: GridManifestLod[];

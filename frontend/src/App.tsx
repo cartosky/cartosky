@@ -805,6 +805,7 @@ export default function App() {
             ...(typeof manifest.palette?.kind === "string" ? { kind: manifest.palette.kind } : {}),
             ...(typeof manifest.grid?.units === "string" ? { units: manifest.grid.units } : {}),
             ...(typeof manifest.display_name === "string" ? { display_name: manifest.display_name } : {}),
+            ...(manifest.legend ? { legend: manifest.legend } : {}),
             var_key: manifest.var,
           }
         : null;

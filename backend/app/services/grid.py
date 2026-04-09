@@ -902,6 +902,8 @@ def _build_manifest_for_var_from_run_root(
     units = str(packing.get("units") or "")
     display_prep: dict[str, Any] | None = None
     valid_time_by_fh: dict[int, str] = {}
+    manifest_display_name: str | None = None
+    manifest_legend: dict[str, Any] | None = None
     lod_entries: dict[int, dict[str, Any]] = {}
 
     for sidecar_path in sorted(var_dir.glob("fh*.json")):
@@ -918,6 +920,14 @@ def _build_manifest_for_var_from_run_root(
             continue
         if not units:
             units = str(sidecar.get("units") or units or "")
+        if manifest_display_name is None:
+            display_name = sidecar.get("display_name")
+            if isinstance(display_name, str) and display_name.strip():
+                manifest_display_name = display_name.strip()
+        if manifest_legend is None:
+            legend = sidecar.get("legend")
+            if isinstance(legend, dict):
+                manifest_legend = dict(legend)
         valid_time = sidecar.get("valid_time")
         if isinstance(valid_time, str) and valid_time.strip():
             valid_time_by_fh[fh] = valid_time.strip()
@@ -1034,6 +1044,10 @@ def _build_manifest_for_var_from_run_root(
         "palette": _build_palette_block(model, var),
         "lods": manifest_lods,
     }
+    if manifest_display_name:
+        manifest["display_name"] = manifest_display_name
+    if manifest_legend:
+        manifest["legend"] = manifest_legend
     composite_meta = _read_composite_sidecar_metadata(run_root, var)
     if composite_meta:
         manifest.update(composite_meta)

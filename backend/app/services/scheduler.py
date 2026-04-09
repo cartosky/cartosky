@@ -318,29 +318,18 @@ def _resolve_vars_to_schedule(plugin, requested: list[str]) -> list[str]:
     return _dedupe_preserve_order(resolved)
 
 
-def _expand_companion_vars(plugin: Any, var_ids: list[str]) -> list[str]:
-    expanded: list[str] = []
-    seen: set[str] = set()
-
-    def _append(var_id: str) -> None:
-        normalized = plugin.normalize_var_id(var_id)
-        if normalized in seen:
-            return
-        seen.add(normalized)
-        expanded.append(normalized)
-
+def _companion_vars_for_var(plugin: Any, var_id: str) -> list[str]:
     full_catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", {}) or {}
-    for var_id in var_ids:
-        _append(var_id)
-        capability = full_catalog.get(plugin.normalize_var_id(var_id)) if isinstance(full_catalog, dict) else None
-        frontend = getattr(capability, "frontend", {}) if capability is not None else {}
-        companion_vars = frontend.get("companion_vars") if isinstance(frontend, dict) else None
-        if not isinstance(companion_vars, list):
-            continue
-        for companion_var in companion_vars:
-            if isinstance(companion_var, str) and companion_var.strip():
-                _append(companion_var)
-    return expanded
+    capability = full_catalog.get(plugin.normalize_var_id(var_id)) if isinstance(full_catalog, dict) else None
+    frontend = getattr(capability, "frontend", {}) if capability is not None else {}
+    companion_vars = frontend.get("companion_vars") if isinstance(frontend, dict) else None
+    if not isinstance(companion_vars, list):
+        return []
+    resolved: list[str] = []
+    for companion_var in companion_vars:
+        if isinstance(companion_var, str) and companion_var.strip():
+            resolved.append(plugin.normalize_var_id(companion_var))
+    return resolved
 
 
 def _probe_search_pattern(plugin: Any, probe_var: str) -> str:
@@ -490,6 +479,15 @@ def _resolve_run_dt(run_arg: str | None, *, plugin: Any, probe_var: str | None) 
 
 def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: int) -> list[tuple[str, int]]:
     targets: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+
+    def _append_target(var_id: str, fh: int) -> None:
+        key = (plugin.normalize_var_id(var_id), int(fh))
+        if key in seen:
+            return
+        seen.add(key)
+        targets.append(key)
+
     for var_id in vars_to_build:
         fhs = (
             list(plugin.scheduled_fhs_for_var(var_id, cycle_hour))
@@ -497,7 +495,10 @@ def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: i
             else [int(fh) for fh in plugin.target_fhs(cycle_hour)]
         )
         for fh in fhs:
-            targets.append((var_id, int(fh)))
+            normalized_var = plugin.normalize_var_id(var_id)
+            _append_target(normalized_var, int(fh))
+            for companion_var in _companion_vars_for_var(plugin, normalized_var):
+                _append_target(companion_var, int(fh))
     return targets
 
 
@@ -752,9 +753,9 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     normalize = getattr(plugin, "normalize_var_id", None)
     normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
     if normalized == "precip_total":
-        return True
+        return False
     if normalized == "snowfall_total" or normalized.startswith("snowfall_"):
-        return True
+        return False
 
     capability = plugin.get_var_capability(normalized) if hasattr(plugin, "get_var_capability") else None
     var_spec = plugin.get_var(normalized) if hasattr(plugin, "get_var") else None
@@ -764,8 +765,8 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     )
     derive_kind_str = str(derive_kind or "").strip().lower()
     if derive_kind_str == "precip_total_cumulative":
-        return True
-    return "snowfall" in derive_kind_str
+        return False
+    return False
 
 
 def _build_bundle(
@@ -1640,7 +1641,6 @@ def run_scheduler(
         )
 
     normalized_vars = _resolve_vars_to_schedule(plugin, vars_to_build)
-    normalized_vars = _expand_companion_vars(plugin, normalized_vars)
     if not normalized_vars:
         raise SchedulerConfigError("No schedulable vars resolved")
 
