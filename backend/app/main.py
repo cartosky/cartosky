@@ -2728,6 +2728,56 @@ def _sample_payload(
     }
 
 
+def _ptype_intensity_sample_label(
+    *,
+    var: str,
+    value: float | None,
+    sidecar: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if str(var).strip().lower() != "ptype_intensity" or value is None or not isinstance(sidecar, dict):
+        return None, None
+
+    if not np.isfinite(value):
+        return None, None
+
+    ptype_order = sidecar.get("ptype_order")
+    ptype_breaks = sidecar.get("ptype_breaks")
+    ptype_levels = sidecar.get("ptype_levels")
+    if not isinstance(ptype_order, list) or not isinstance(ptype_breaks, dict) or not isinstance(ptype_levels, dict):
+        return None, None
+
+    index = int(round(float(value)))
+    if index < 0:
+        return None, None
+
+    for raw_code in ptype_order:
+        code = str(raw_code)
+        raw_breaks = ptype_breaks.get(code)
+        raw_levels = ptype_levels.get(code)
+        if not isinstance(raw_breaks, dict) or not isinstance(raw_levels, list):
+            continue
+        try:
+            offset = int(raw_breaks.get("offset"))
+            count = int(raw_breaks.get("count"))
+        except (TypeError, ValueError):
+            continue
+        if count <= 0 or index < offset or index >= offset + count:
+            continue
+
+        family = code.capitalize()
+        local_idx = index - offset
+        lower = float(raw_levels[max(0, min(local_idx, len(raw_levels) - 1))])
+        upper: float | None = None
+        if local_idx + 1 < len(raw_levels):
+            upper = float(raw_levels[local_idx + 1])
+
+        if upper is None:
+            return family, f">= {lower:.2f} in/hr"
+        return family, f"{lower:.2f}-{upper:.2f} in/hr"
+
+    return None, None
+
+
 # ---------------------------------------------------------------------------
 # NWS Anchor City Weather
 # ---------------------------------------------------------------------------

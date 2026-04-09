@@ -2592,6 +2592,104 @@ def _derive_precip_ptype_blend(
     return indexed, src_crs, src_transform
 
 
+def _derive_ptype_intensity_gfs(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del model_id, var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    prate_id = hints.get("prate_component", "prate")
+    rain_id = hints.get("rain_component", "crain")
+    snow_id = hints.get("snow_component", "csnow")
+    sleet_id = hints.get("sleet_component", "cicep")
+    frzr_id = hints.get("frzr_component", "cfrzr")
+
+    prate, src_crs, src_transform = _fetch_component(
+        model_id="gfs",
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=prate_id,
+        ctx=ctx,
+    )
+    rain, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+
+    prate_inhr = np.where(
+        np.isfinite(prate),
+        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
+        np.nan,
+    ).astype(np.float32)
+
+    rain_gate = np.where(np.isfinite(rain), rain > 0, False)
+    snow_gate = np.where(np.isfinite(snow), snow > 0, False)
+    ice_gate = np.where(np.isfinite(sleet), sleet > 0, False) | np.where(np.isfinite(frzr), frzr > 0, False)
+
+    winter_strength = np.maximum(
+        np.where(np.isfinite(sleet), sleet, 0.0).astype(np.float32, copy=False),
+        np.where(np.isfinite(frzr), frzr, 0.0).astype(np.float32, copy=False),
+    )
+    stack_for_pick = np.stack(
+        [
+            np.where(np.isfinite(rain), rain, 0.0).astype(np.float32, copy=False),
+            np.where(np.isfinite(snow), snow, 0.0).astype(np.float32, copy=False),
+            winter_strength,
+        ],
+        axis=0,
+    )
+    mask_max = np.nanmax(stack_for_pick, axis=0)
+    ptype_idx = np.argmax(stack_for_pick, axis=0).astype(np.int32)
+    ptype_codes = np.array(["rain", "snow", "ice"])
+    ptype = ptype_codes[ptype_idx]
+
+    type_levels = {
+        "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
+        "snow": np.asarray([0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
+        "ice": np.asarray([0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
+    }
+    type_breaks = {
+        "rain": {"offset": 0, "count": 16},
+        "snow": {"offset": 16, "count": 10},
+        "ice": {"offset": 26, "count": 17},
+    }
+    min_visible = {"rain": 0.01, "snow": 0.10, "ice": 0.05}
+    gate_map = {"rain": rain_gate, "snow": snow_gate, "ice": ice_gate}
+
+    indexed = np.full(prate_inhr.shape, np.nan, dtype=np.float32)
+    for code in ("rain", "snow", "ice"):
+        levels = type_levels[code]
+        offset = int(type_breaks[code]["offset"])
+        count = int(type_breaks[code]["count"])
+        selector = (
+            (ptype == code)
+            & np.isfinite(prate_inhr)
+            & (prate_inhr >= float(min_visible[code]))
+            & gate_map[code]
+            & np.isfinite(mask_max)
+            & (mask_max > 0)
+        )
+        if not np.any(selector):
+            continue
+        local_bin = np.digitize(prate_inhr[selector], levels, right=False) - 1
+        local_bin = np.clip(local_bin, 0, count - 1)
+        indexed[selector] = (offset + local_bin).astype(np.float32)
+
+    return indexed, src_crs, src_transform
+
+
 def _derive_precip_total_cumulative(
     *,
     model_id: str,
