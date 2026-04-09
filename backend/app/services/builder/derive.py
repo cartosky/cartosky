@@ -999,6 +999,58 @@ def _normalize_ptype_probability(data: np.ndarray) -> np.ndarray:
     return normalized
 
 
+def _ptype_intensity_family_rates(
+    *,
+    prate: np.ndarray,
+    rain: np.ndarray,
+    snow: np.ndarray,
+    sleet: np.ndarray,
+    frzr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split total precip rate into display-family intensity planes.
+
+    GFS precip-type fields are often categorical overlaps rather than true
+    probabilities. We still treat them as relative family weights so mixed-phase
+    areas can express snow/ice intensity without letting rain always consume the
+    full rate.
+    """
+    prate_inhr = np.where(
+        np.isfinite(prate),
+        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
+        np.nan,
+    ).astype(np.float32)
+
+    rain_prob = _normalize_ptype_probability(rain)
+    snow_prob = _normalize_ptype_probability(snow)
+    sleet_prob = _normalize_ptype_probability(sleet)
+    frzr_prob = _normalize_ptype_probability(frzr)
+    ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
+
+    frozen_signal = np.maximum(snow_prob, ice_prob).astype(np.float32, copy=False)
+    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.75 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
+        np.float32,
+        copy=False,
+    )
+    rain_score = np.clip(rain_score, 0.0, 1.0).astype(np.float32, copy=False)
+    snow_score = np.nan_to_num(snow_prob, nan=0.0).astype(np.float32, copy=False)
+    ice_score = np.nan_to_num(ice_prob, nan=0.0).astype(np.float32, copy=False)
+
+    score_sum = (rain_score + snow_score + ice_score).astype(np.float32, copy=False)
+    finite_prate = np.isfinite(prate_inhr)
+    rain_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
+    snow_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
+    ice_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
+    valid = finite_prate & (score_sum > 0.0)
+    if np.any(valid):
+        rain_rate[valid] = prate_inhr[valid] * rain_score[valid] / score_sum[valid]
+        snow_rate[valid] = prate_inhr[valid] * snow_score[valid] / score_sum[valid]
+        ice_rate[valid] = prate_inhr[valid] * ice_score[valid] / score_sum[valid]
+    rain_rate[~finite_prate] = np.nan
+    snow_rate[~finite_prate] = np.nan
+    ice_rate[~finite_prate] = np.nan
+    return prate_inhr, rain_rate, snow_rate, ice_rate
+
+
 def _apply_kuchera_ptype_gate(apcp_step: np.ndarray, frozen_frac: np.ndarray) -> np.ndarray:
     if apcp_step.shape != frozen_frac.shape:
         raise ValueError(f"kuchera ptype gate shape mismatch: {apcp_step.shape} != {frozen_frac.shape}")
@@ -2606,7 +2658,7 @@ def _derive_ptype_intensity_gfs(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del model_id, var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     prate_id = hints.get("prate_component", "prate")
     rain_id = hints.get("rain_component", "crain")
@@ -2615,7 +2667,7 @@ def _derive_ptype_intensity_gfs(
     frzr_id = hints.get("frzr_component", "cfrzr")
 
     prate, src_crs, src_transform = _fetch_component(
-        model_id="gfs",
+        model_id=model_id,
         product=product,
         run_date=run_date,
         fh=fh,
@@ -2623,28 +2675,29 @@ def _derive_ptype_intensity_gfs(
         var_key=prate_id,
         ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
-    snow, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
-    sleet, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
-    frzr, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
 
-    prate_inhr = np.where(
-        np.isfinite(prate),
-        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
-        np.nan,
-    ).astype(np.float32)
+    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
+        prate=prate,
+        rain=rain,
+        snow=snow,
+        sleet=sleet,
+        frzr=frzr,
+    )
 
-    rain_gate = np.where(np.isfinite(rain), rain > 0, False)
-    snow_gate = np.where(np.isfinite(snow), snow > 0, False)
-    ice_gate = np.where(np.isfinite(sleet), sleet > 0, False) | np.where(np.isfinite(frzr), frzr > 0, False)
-
-    has_any_ptype = rain_gate | snow_gate | ice_gate
-    ptype = np.full(prate_inhr.shape, "", dtype="<U4")
-    # Favor winter families when categorical masks overlap. The GFS ptype
-    # components are boolean gates, not continuous confidence scores.
-    ptype[ice_gate] = "ice"
-    ptype[snow_gate] = "snow"
-    ptype[rain_gate & ~snow_gate & ~ice_gate] = "rain"
+    family_rate_by_code = {
+        "rain": rain_rate,
+        "snow": snow_rate,
+        "ice": ice_rate,
+    }
+    family_stack = np.stack([ice_rate, snow_rate, rain_rate], axis=0).astype(np.float32, copy=False)
+    family_idx = np.argmax(np.nan_to_num(family_stack, nan=-1.0), axis=0).astype(np.int32)
+    family_codes = np.array(["ice", "snow", "rain"])
+    ptype = family_codes[family_idx]
+    has_any_ptype = np.isfinite(rain_rate) & ((np.nan_to_num(rain_rate, nan=0.0) > 0.0) | (np.nan_to_num(snow_rate, nan=0.0) > 0.0) | (np.nan_to_num(ice_rate, nan=0.0) > 0.0))
 
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
@@ -2657,23 +2710,22 @@ def _derive_ptype_intensity_gfs(
         "ice": {"offset": 26, "count": 17},
     }
     min_visible = {"rain": 0.01, "snow": 0.10, "ice": 0.05}
-    gate_map = {"rain": rain_gate, "snow": snow_gate, "ice": ice_gate}
 
-    indexed = np.full(prate_inhr.shape, np.nan, dtype=np.float32)
+    indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
     for code in ("rain", "snow", "ice"):
         levels = type_levels[code]
         offset = int(type_breaks[code]["offset"])
         count = int(type_breaks[code]["count"])
+        family_rate = family_rate_by_code[code]
         selector = (
             (ptype == code)
-            & np.isfinite(prate_inhr)
-            & (prate_inhr >= float(min_visible[code]))
-            & gate_map[code]
+            & np.isfinite(family_rate)
+            & (family_rate >= float(min_visible[code]))
             & has_any_ptype
         )
         if not np.any(selector):
             continue
-        local_bin = np.digitize(prate_inhr[selector], levels, right=False) - 1
+        local_bin = np.digitize(family_rate[selector], levels, right=False) - 1
         local_bin = np.clip(local_bin, 0, count - 1)
         indexed[selector] = (offset + local_bin).astype(np.float32)
 
@@ -2694,7 +2746,7 @@ def _derive_ptype_intensity_component(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del model_id, var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     component = str(hints.get("ptype_component") or "").strip().lower()
     prate_id = hints.get("prate_component", "prate")
@@ -2704,7 +2756,7 @@ def _derive_ptype_intensity_component(
     frzr_id = hints.get("frzr_component", "cfrzr")
 
     prate, src_crs, src_transform = _fetch_component(
-        model_id="gfs",
+        model_id=model_id,
         product=product,
         run_date=run_date,
         fh=fh,
@@ -2712,35 +2764,29 @@ def _derive_ptype_intensity_component(
         var_key=prate_id,
         ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
-    snow, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
-    sleet, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
-    frzr, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
 
-    prate_inhr = np.where(
-        np.isfinite(prate),
-        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
-        np.nan,
-    ).astype(np.float32)
+    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
+        prate=prate,
+        rain=rain,
+        snow=snow,
+        sleet=sleet,
+        frzr=frzr,
+    )
 
-    rain_gate = np.where(np.isfinite(rain), rain > 0, False)
-    snow_gate = np.where(np.isfinite(snow), snow > 0, False)
-    ice_gate = np.where(np.isfinite(sleet), sleet > 0, False) | np.where(np.isfinite(frzr), frzr > 0, False)
-
-    if component == "rain":
-        gate = rain_gate & ~snow_gate & ~ice_gate
-    elif component == "snow":
-        gate = snow_gate & ~ice_gate
-    elif component == "ice":
-        gate = ice_gate
-    else:
-        gate = np.zeros(prate_inhr.shape, dtype=bool)
-
-    values = np.zeros(prate_inhr.shape, dtype=np.float32)
-    finite_prate = np.isfinite(prate_inhr)
-    values[gate & finite_prate] = prate_inhr[gate & finite_prate]
-    values[~finite_prate] = np.nan
-    return values, src_crs, src_transform
+    component_values = {
+        "rain": rain_rate,
+        "snow": snow_rate,
+        "ice": ice_rate,
+    }
+    values = component_values.get(component)
+    if values is None:
+        values = np.zeros(prate.shape, dtype=np.float32)
+        values[~np.isfinite(prate)] = np.nan
+    return values.astype(np.float32, copy=False), src_crs, src_transform
 
 
 def _derive_precip_total_cumulative(
