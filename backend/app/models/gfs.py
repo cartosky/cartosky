@@ -626,7 +626,7 @@ GFS_VARS: dict[str, VarSpec] = {
                 "contour_conversion": "pressure_pa_to_hpa",
                 "companion_vars": "ptype_intensity_rain,ptype_intensity_snow,ptype_intensity_ice",
                 "composite_mode": "max_alpha_stack",
-                "composite_layers": "rain:ptype_intensity_rain;snow:ptype_intensity_snow;ice:ptype_intensity_ice",
+                "composite_layers": "ice:ptype_intensity_ice;snow:ptype_intensity_snow;rain:ptype_intensity_rain",
             },
         ),
         primary=True,

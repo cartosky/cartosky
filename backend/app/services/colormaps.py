@@ -153,8 +153,8 @@ GFS_PTYPE_INTENSITY_COLORS = {
         "#fbab48", "#fd943f",
     ],
     "snow": [
-        "#ffffff", "#ebf1ff", "#d7e3ff", "#c3d4ff", "#b0c6ff", "#9cb8ff", "#88aaff",
-        "#749cff", "#608eff", "#4d80ff",
+        "#eef6ff", "#d7e8ff", "#bdd7ff", "#a0c4ff", "#7eb0ff", "#5e9cff", "#4289ff",
+        "#2f74f0", "#1d5dd8", "#0d47bf",
     ],
     "ice": [
         "#fff7f3", "#fde0dd", "#fcc5c0", "#faa3a0", "#f768a1", "#ea4b9a", "#dd3497",
