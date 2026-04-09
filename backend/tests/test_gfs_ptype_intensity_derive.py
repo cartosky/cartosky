@@ -90,7 +90,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     assert snow_values[0, 1] > rain_values[0, 1]
     assert snow_values[0, 2] > rain_values[0, 2]
     assert np.all((rain_values + ice_values) <= expected_total_rate)
-    np.testing.assert_allclose(snow_values, expected_total_rate * 2.0, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(snow_values, expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
     assert np.count_nonzero(rain_values[0] > 0.0) + np.count_nonzero(snow_values[0] > 0.0) + np.count_nonzero(ice_values[0] > 0.0) == 3
 
 
@@ -185,7 +185,7 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
     )
 
     expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    assert snow_values[0, 0] == expected_total_rate * 2.0
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
     assert rain_values[0, 0] == 0.0
     assert 16.0 <= indexed[0, 0] <= 25.0
 
@@ -221,7 +221,7 @@ def test_ptype_intensity_snow_component_uses_display_boost(monkeypatch) -> None:
     )
 
     expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    assert snow_values[0, 0] == expected_total_rate * 2.0
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
 
 
 def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(monkeypatch) -> None:
@@ -333,7 +333,7 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
     )
 
     expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    assert snow_values[0, 0] == expected_total_rate * 2.0
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
     assert rain_values[0, 0] == 0.0
     assert 16.0 <= indexed[0, 0] <= 25.0
 

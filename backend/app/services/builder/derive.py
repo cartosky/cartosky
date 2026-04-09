@@ -2847,6 +2847,11 @@ def _derive_ptype_intensity_gfs(
     ptype = family_codes[family_idx]
     has_any_ptype = np.isfinite(rain_rate) & ((np.nan_to_num(rain_rate, nan=0.0) > 0.0) | (np.nan_to_num(snow_rate, nan=0.0) > 0.0) | (np.nan_to_num(ice_rate, nan=0.0) > 0.0))
 
+    # The snow family uses snowfall-equivalent display bins, not liquid-equivalent
+    # precip rate bins. A simple fixed 10:1 conversion is enough to put snow into
+    # the same visual domain as the competitor's blue ramp without changing family
+    # coverage or requiring a more complex profile-derived SLR.
+    snow_display_slr = np.float32(10.0)
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
         "snow": np.asarray([0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
@@ -2867,7 +2872,7 @@ def _derive_ptype_intensity_gfs(
         family_rate = family_rate_by_code[code]
         display_rate = family_rate
         if code == "snow":
-            display_rate = (2.0 * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
+            display_rate = (snow_display_slr * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
         selector = (
             (ptype == code)
             & np.isfinite(family_rate)
@@ -2950,7 +2955,8 @@ def _derive_ptype_intensity_component(
         values = np.zeros(prate.shape, dtype=np.float32)
         values[~np.isfinite(prate)] = np.nan
     elif component == "snow":
-        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
+        # Companion snow layer is rendered with snowfall-equivalent intensity.
+        values = (10.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
         values[~np.isfinite(prate)] = np.nan
     return values.astype(np.float32, copy=False), src_crs, src_transform
 
