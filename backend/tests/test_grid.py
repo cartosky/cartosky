@@ -680,6 +680,65 @@ def test_build_grid_for_run_supports_gfs_precip_ptype(
     assert manifest["grid"]["units"] == "index"
 
 
+def test_build_grid_for_run_supports_gfs_ptype_intensity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260330_12z"
+    var = "ptype_intensity"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 16.0], [np.nan, 42.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "in/hr", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
+    assert frame_path.is_file()
+    assert frame_meta_path.is_file()
+    assert manifest_path.is_file()
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "ptype_intensity"
+    assert manifest["palette"]["kind"] == "indexed"
+    assert manifest["grid"]["scale"] == 1.0
+    assert manifest["grid"]["offset"] == 0.0
+    assert manifest["grid"]["units"] == "index"
+    assert manifest["grid"]["width"] == values.shape[1] * 3
+    assert manifest["grid"]["height"] == values.shape[0] * 3
+    assert manifest["display_prep"]["id"] == "gfs_ptype_intensity_display_v1"
+
+    frame_meta = json.loads(frame_meta_path.read_text())
+    assert frame_meta["display_prep"]["id"] == "gfs_ptype_intensity_display_v1"
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+        manifest["grid"]["height"],
+        manifest["grid"]["width"],
+    )
+    assert encoded.shape == (values.shape[0] * 3, values.shape[1] * 3)
+    assert int(encoded[0, 0]) == 0
+    assert int(encoded[0, 3]) == 16
+    assert int(encoded[3, 3]) == 42
+    assert np.count_nonzero(encoded == 65535) > 0
+
+
 @pytest.mark.parametrize(
     ("var", "expected_color_map_id"),
     [

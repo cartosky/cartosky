@@ -70,6 +70,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   vort500: { mode: "hidden" },
   radar_ptype: { mode: "hidden" },
   mrms_radar_ptype: { mode: "hidden" },
+  ptype_intensity: { mode: "hidden" },
 });
 
 function isObject(value: unknown): value is Record<string, unknown> {

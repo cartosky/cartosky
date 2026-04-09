@@ -334,6 +334,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
   wgst10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
   precip_ptype: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
+  ptype_intensity: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
   qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
   snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
@@ -717,7 +718,7 @@ export function isPrecipPtypeLegendMeta(
 ): boolean {
   const kind = String(meta.kind ?? "").toLowerCase();
   const id = String(meta.var_key ?? meta.spec_key ?? meta.id ?? meta.var ?? "").toLowerCase();
-  return kind.includes("precip_ptype") || id === "precip_ptype";
+  return kind.includes("precip_ptype") || id === "precip_ptype" || id === "ptype_intensity";
 }
 
 export function withPrecipRateUnits(title: string, units?: string): string {

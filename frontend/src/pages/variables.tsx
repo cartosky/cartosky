@@ -208,6 +208,28 @@ export default function Variables() {
         notes: ["Categorical precipitation products should stay nearest-neighbor when resampled so class edges remain crisp."],
       },
       {
+        id: "ptype_intensity",
+        name: "Precip Type & Intensity",
+        oneLiner: "GFS-only precipitation type shading with competitor-style rain, snow, and ice intensity families plus pressure contours.",
+        pills: ["Derived", "GFS only", "ptype + intensity"],
+        definition:
+          "This GFS-only product collapses winter precipitation into rain, snow, and ice display families while preserving intensity bins tuned for quick operational pattern recognition.",
+        bestFor: [
+          "Fast diagnosis of rain/snow/ice placement in synoptic precipitation shields",
+          "Comparing winter-weather axis placement against total QPF and snowfall products",
+          "Seeing pressure-pattern context alongside the precipitation field",
+        ],
+        interpretation: [
+          "The display is optimized for readability, so sleet and freezing rain are consolidated into an ice family.",
+          "Use it as a situational-awareness field, then verify marginal zones with profiles, temperatures, and accumulation products.",
+        ],
+        limitations: [
+          "Type boundaries still depend on categorical model output and can shift quickly near marginal thermodynamic zones.",
+          "The ice family is a display simplification rather than a pure physical precipitation-type diagnosis.",
+        ],
+        notes: ["Uses nearest-neighbor categorical display prep and MSLP contours for a cleaner synoptic presentation."],
+      },
+      {
         id: "refl_ptype",
         name: "Composite Reflectivity + Ptype",
         oneLiner: "Simulated composite reflectivity with a precipitation-type overlay.",

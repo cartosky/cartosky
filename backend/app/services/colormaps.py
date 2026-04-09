@@ -140,6 +140,81 @@ def _build_precip_ptype_flat_palette() -> tuple[
     PRECIP_PTYPE_LEVELS_BY_TYPE,
 ) = _build_precip_ptype_flat_palette()
 
+GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
+GFS_PTYPE_INTENSITY_BINS = {
+    "rain": [0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0],
+    "snow": [0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
+    "ice": [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0],
+}
+GFS_PTYPE_INTENSITY_COLORS = {
+    "rain": [
+        "#b4e6b7", "#9ed1a0", "#89be8a", "#74ab76", "#609961", "#4d864d", "#407f45",
+        "#34783c", "#277134", "#1c6a2b", "#126324", "#f5f166", "#f7d95b", "#f9c252",
+        "#fbab48", "#fd943f",
+    ],
+    "snow": [
+        "#f7fbff", "#e8f1fb", "#d8e6f7", "#c6daf2", "#b1cdec", "#9bc0e7", "#84b1e1",
+        "#6ba0da", "#4f8cd2", "#3374c2",
+    ],
+    "ice": [
+        "#fff7f3", "#fde0dd", "#fcc5c0", "#faa3a0", "#f768a1", "#ea4b9a", "#dd3497",
+        "#c4298e", "#ae017e", "#930086", "#7a0177", "#67006b", "#550061", "#49006a",
+        "#3d0052", "#2d0044", "#1a0033",
+    ],
+}
+GFS_PTYPE_INTENSITY_LABELS = {
+    "rain": "Rain",
+    "snow": "Snow",
+    "ice": "Ice",
+}
+
+
+def _build_gfs_ptype_intensity_flat_palette() -> tuple[
+    list[float],
+    list[str],
+    dict[str, dict[str, int]],
+    dict[str, list[float]],
+    list[dict[str, object]],
+]:
+    levels: list[float] = []
+    colors: list[str] = []
+    breaks: dict[str, dict[str, int]] = {}
+    levels_by_type: dict[str, list[float]] = {}
+    legend_entries: list[dict[str, object]] = []
+    offset = 0
+    for key in GFS_PTYPE_INTENSITY_ORDER:
+        bins = list(GFS_PTYPE_INTENSITY_BINS[key])
+        type_colors = list(GFS_PTYPE_INTENSITY_COLORS[key])
+        type_levels = bins[: len(type_colors)]
+        count = min(len(type_colors), len(type_levels))
+        if count <= 0:
+            continue
+        levels.extend(type_levels[:count])
+        colors.extend(type_colors[:count])
+        breaks[key] = {
+            "offset": offset,
+            "count": count,
+        }
+        levels_by_type[key] = type_levels[:count]
+        legend_entries.append(
+            {
+                "value": float(type_levels[0]),
+                "color": str(type_colors[0]),
+                "label": str(GFS_PTYPE_INTENSITY_LABELS[key]),
+            }
+        )
+        offset += count
+    return levels, colors, breaks, levels_by_type, legend_entries
+
+
+(
+    GFS_PTYPE_INTENSITY_LEVELS,
+    GFS_PTYPE_INTENSITY_COLORS_FLAT,
+    GFS_PTYPE_INTENSITY_BREAKS,
+    GFS_PTYPE_INTENSITY_LEVELS_BY_TYPE,
+    GFS_PTYPE_INTENSITY_LEGEND_ENTRIES,
+) = _build_gfs_ptype_intensity_flat_palette()
+
 # Radar reflectivity configuration with dBZ levels and colors for each precipitation type
 RADAR_CONFIG = {
     "rain": {
@@ -576,6 +651,21 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "ptype_order": list(PRECIP_PTYPE_ORDER),
         "ptype_breaks": PRECIP_PTYPE_BREAKS,
         "ptype_levels": PRECIP_PTYPE_LEVELS_BY_TYPE,
+    },
+    "ptype_intensity": {
+        "type": "indexed",
+        "units": "in/hr",
+        "transparent_zero": True,
+        "levels": GFS_PTYPE_INTENSITY_LEVELS,
+        "colors": GFS_PTYPE_INTENSITY_COLORS_FLAT,
+        "range": (0.0, 3.0),
+        "bins_per_ptype": 0,
+        "display_name": "Precipitation Type & Intensity",
+        "legend_title": "Precipitation Type",
+        "legend_entries": GFS_PTYPE_INTENSITY_LEGEND_ENTRIES,
+        "ptype_order": list(GFS_PTYPE_INTENSITY_ORDER),
+        "ptype_breaks": GFS_PTYPE_INTENSITY_BREAKS,
+        "ptype_levels": GFS_PTYPE_INTENSITY_LEVELS_BY_TYPE,
     },
     "snowfall_total": {
         "type": "continuous",

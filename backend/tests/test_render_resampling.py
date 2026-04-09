@@ -58,6 +58,16 @@ def test_discrete_kind_maps_to_nearest(monkeypatch):
     assert render_resampling.rasterio_resampling_for_loop(model_id="gfs", var_key="precip_ptype").name == "nearest"
 
 
+def test_gfs_ptype_intensity_maps_to_nearest(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {"ptype_intensity": SimpleNamespace(kind="indexed", color_map_id="ptype_intensity")},
+    )
+
+    assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="ptype_intensity") == "nearest"
+    assert render_resampling.rasterio_resampling_for_loop(model_id="gfs", var_key="ptype_intensity").name == "nearest"
+
+
 def test_radar_ptype_keeps_crisp_backend_loop_resampling(monkeypatch):
     _set_capabilities(
         monkeypatch,

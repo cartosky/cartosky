@@ -63,6 +63,7 @@ export type SampleTooltipState = {
   kind: "sample";
   value: number;
   units: string;
+  label?: string;
   x: number;
   y: number;
 } | {
@@ -146,7 +147,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           if (!isTooltipVisibleSample(ctx, cached)) {
             setTooltip(null);
           } else {
-            setTooltip({ kind: "sample", value: cached.value, units: cached.units, x, y });
+            setTooltip({ kind: "sample", value: cached.value, units: cached.units, label: cached.label, x, y });
           }
           return;
         }
@@ -171,7 +172,7 @@ export function useSampleTooltip(ctx: SampleContext) {
               setTooltip(null);
               return;
             }
-            setTooltip({ kind: "sample", value: result.value, units: result.units, x, y });
+            setTooltip({ kind: "sample", value: result.value, units: result.units, label: result.label, x, y });
           })
           .catch((error) => {
             // Silently drop errors — don't flash error state for hover

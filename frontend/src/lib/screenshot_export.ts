@@ -385,7 +385,7 @@ function isRadarPtypeLegend(legend: LegendPayload): boolean {
 function isPrecipPtypeLegend(legend: LegendPayload): boolean {
   const kind = legend.kind?.toLowerCase() ?? "";
   const id = legend.id?.toLowerCase() ?? "";
-  return kind.includes("precip_ptype") || id === "precip_ptype";
+  return kind.includes("precip_ptype") || id === "precip_ptype" || id === "ptype_intensity";
 }
 
 function groupRadarEntries(legend: LegendPayload): RadarLegendGroup[] {

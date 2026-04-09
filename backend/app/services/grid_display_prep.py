@@ -69,6 +69,11 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         upscale_factor=3,
         categorical_nearest=True,
     ),
+    ("gfs", "ptype_intensity"): GridDisplayPrepConfig(
+        id="gfs_ptype_intensity_display_v1",
+        upscale_factor=3,
+        categorical_nearest=True,
+    ),
 }
 
 

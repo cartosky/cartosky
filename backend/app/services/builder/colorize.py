@@ -252,6 +252,7 @@ _META_PASSTHROUGH_KEYS = (
     "display_name",
     "legend_title",
     "legend_stops",
+    "legend_entries",
     "power_norm_gamma",
     "ptype_order",
     "ptype_breaks",

@@ -78,3 +78,24 @@ def test_hrrr_radar_ptype_display_prep_upscales_categorically() -> None:
     np.testing.assert_array_equal(prepared[:3, 3:], np.ones((3, 3), dtype=np.float32))
     np.testing.assert_array_equal(prepared[3:, :3], np.full((3, 3), 2.0, dtype=np.float32))
     np.testing.assert_array_equal(prepared[3:, 3:], np.full((3, 3), 9.0, dtype=np.float32))
+
+
+def test_gfs_ptype_intensity_display_prep_upscales_categorically() -> None:
+    values = np.array(
+        [
+            [0.0, 16.0],
+            [26.0, 42.0],
+        ],
+        dtype=np.float32,
+    )
+
+    prepared, meta = prepare_grid_display_values(model="gfs", var="ptype_intensity", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "gfs_ptype_intensity_display_v1"
+    assert meta["categorical_nearest"] is True
+    assert prepared.shape == (6, 6)
+    np.testing.assert_array_equal(prepared[:3, :3], np.zeros((3, 3), dtype=np.float32))
+    np.testing.assert_array_equal(prepared[:3, 3:], np.full((3, 3), 16.0, dtype=np.float32))
+    np.testing.assert_array_equal(prepared[3:, :3], np.full((3, 3), 26.0, dtype=np.float32))
+    np.testing.assert_array_equal(prepared[3:, 3:], np.full((3, 3), 42.0, dtype=np.float32))

@@ -3574,6 +3574,11 @@ def sample(
             valid_time=valid_time,
             no_data=no_data,
         )
+        label, desc = _ptype_intensity_sample_label(var=var, value=value, sidecar=sidecar)
+        if label:
+            payload["label"] = label
+        if desc:
+            payload["desc"] = desc
 
         with _sample_lock:
             _sample_cache[key] = (time.monotonic() + SAMPLE_CACHE_TTL_SECONDS, payload)

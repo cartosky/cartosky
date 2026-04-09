@@ -43,6 +43,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "wspd10m",
         "wgst10m",
         "precip_ptype",
+        "ptype_intensity",
         "precip_total",
         "snowfall_total",
         "snowfall_kuchera_total",
@@ -70,6 +71,15 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_ptype["derive_strategy_id"] == "precip_ptype_blend"
     assert precip_ptype["units"] == "in/hr"
     assert precip_ptype["order"] == 14
+
+    ptype_intensity = payload["variables"]["ptype_intensity"]
+    assert ptype_intensity["buildable"] is True
+    assert ptype_intensity["derived"] is True
+    assert ptype_intensity["derive_strategy_id"] == "ptype_intensity_gfs"
+    assert ptype_intensity["units"] == "in/hr"
+    assert ptype_intensity["kind"] == "indexed"
+    assert ptype_intensity["color_map_id"] == "ptype_intensity"
+    assert ptype_intensity["order"] == 15
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True

@@ -4105,6 +4105,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         output_var_key="precip_ptype",
         execute=_derive_precip_ptype_blend,
     ),
+    "ptype_intensity_gfs": DeriveStrategy(
+        id="ptype_intensity_gfs",
+        required_inputs=("prate", "crain", "csnow", "cicep", "cfrzr"),
+        output_var_key="ptype_intensity",
+        execute=_derive_ptype_intensity_gfs,
+    ),
     "precip_total_cumulative": DeriveStrategy(
         id="precip_total_cumulative",
         required_inputs=("apcp_step",),

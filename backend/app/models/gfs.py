@@ -606,6 +606,32 @@ GFS_VARS: dict[str, VarSpec] = {
         units="in/hr",
         normalize_units="in/hr",
     ),
+    "ptype_intensity": VarSpec(
+        id="ptype_intensity",
+        name="Precipitation Type & Intensity",
+        selectors=VarSelectors(
+            hints={
+                "display_kind": "ptype_intensity",
+                "prate_component": "prate",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+                "contour_component": "prmsl",
+                "contour_interval": "4",
+                "contour_start": "960",
+                "contour_end": "1048",
+                "contour_key": "mslp",
+                "contour_label": "Mean Sea-Level Pressure",
+            },
+        ),
+        primary=True,
+        derived=True,
+        derive="ptype_intensity_gfs",
+        kind="indexed",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
     "crain": VarSpec(
         id="crain",
         name="Categorical Rain",
@@ -663,6 +689,21 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "upstream_var": "cfrzr",
                 "short_name": "cfrzr",
+            },
+        ),
+    ),
+    "prmsl": VarSpec(
+        id="prmsl",
+        name="Mean Sea-Level Pressure",
+        selectors=VarSelectors(
+            search=[r":PRMSL:mean sea level:"],
+            filter_by_keys={
+                "typeOfLevel": "meanSea",
+                "shortName": "prmsl",
+            },
+            hints={
+                "upstream_var": "prmsl",
+                "short_name": "prmsl",
             },
         ),
     ),
@@ -771,6 +812,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "wgst10m": "wgst10m",
     "refc": "refc",
     "precip_ptype": "precip_ptype",
+    "ptype_intensity": "ptype_intensity",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
@@ -779,6 +821,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 
 GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_ptype": 6,
+    "ptype_intensity": 6,
     "precip_total": 6,
     "snowfall_total": 6,
     "snowfall_kuchera_total": 6,
@@ -801,6 +844,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "wspd10m": 12,
     "wgst10m": 13,
     "precip_ptype": 14,
+    "ptype_intensity": 15,
     "refc": 15,
     "qpf6h": 16,
     "snowfall_kuchera_total": 17,
@@ -821,6 +865,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
     "qpf6h": "Precipitation",
+    "ptype_intensity": "Radar & Precipitation Type",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
     "precip_ptype": "Radar & Precipitation Type",

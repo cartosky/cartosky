@@ -3009,9 +3009,9 @@ export default function App() {
               left: activeTooltip.x + 14,
               top: activeTooltip.y - 32,
             }}
-          >
+            >
             {activeTooltip.kind === "sample"
-              ? `${activeTooltip.value.toFixed(1)} ${activeTooltip.units}`
+              ? (activeTooltip.label?.trim() || `${activeTooltip.value.toFixed(1)} ${activeTooltip.units}`)
               : activeTooltip.label}
           </div>
         )}
