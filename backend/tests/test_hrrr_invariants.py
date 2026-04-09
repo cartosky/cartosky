@@ -117,7 +117,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["derived"] is True
     assert wspd850["derive_strategy_id"] == "wspd10m"
     assert wspd850["kind"] == "continuous"
-    assert wspd850["units"] == "mph"
+    assert wspd850["units"] == "kt"
     assert wspd850["display_name"] == "850mb Heights + Winds"
     assert wspd850["order"] == 4
     assert wspd850["group"] == "Wind"

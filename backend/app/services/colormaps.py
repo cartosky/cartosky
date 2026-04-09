@@ -647,11 +647,11 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "wspd850": {
         "type": "continuous",
-        "units": "mph",
-        "range": WSPD10M_RANGE,
-        "anchors": WSPD10M_COLOR_ANCHORS,
+        "units": "kt",
+        "range": WSPD300_RANGE,
+        "anchors": WSPD300_COLOR_ANCHORS,
         "display_name": "850mb Heights & Winds",
-        "legend_title": "850mb Wind Speed (mph)",
+        "legend_title": "850mb Wind Speed (kt)",
     },
     "wspd300": {
         "type": "continuous",

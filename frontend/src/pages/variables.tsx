@@ -109,7 +109,7 @@ export default function Variables() {
         id: "wspd850",
         name: "850mb Heights + Winds",
         oneLiner: "850 mb wind speed shaded beneath 850 mb height contours for low-level jet and warm-advection pattern diagnosis.",
-        pills: ["850 mb", "mph + m", "Continuous + contours"],
+        pills: ["850 mb", "kt + m", "Continuous + contours"],
         definition:
           "This product shades 850 mb wind speed while overlaying 850 mb geopotential height contours. Together they help diagnose low-level jet structure, warm-advection corridors, moisture transport, and frontal-zone evolution.",
         bestFor: [

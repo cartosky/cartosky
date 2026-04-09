@@ -93,7 +93,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["derived"] is True
     assert wspd850["derive_strategy_id"] == "wspd10m"
     assert wspd850["kind"] == "continuous"
-    assert wspd850["units"] == "mph"
+    assert wspd850["units"] == "kt"
     assert wspd850["display_name"] == "850mb Heights + Winds"
     assert wspd850["group"] == "Wind"
     assert wspd850["color_map_id"] == "wspd850"
@@ -308,7 +308,7 @@ def test_gfs_wspd850_uses_850mb_components_and_height_contours() -> None:
     assert var_spec.derived is True
     assert var_spec.derive == "wspd10m"
     assert var_spec.kind == "continuous"
-    assert var_spec.units == "mph"
+    assert var_spec.units == "kt"
     assert var_spec.selectors.search == []
     assert var_spec.selectors.hints["u_component"] == "u850"
     assert var_spec.selectors.hints["v_component"] == "v850"

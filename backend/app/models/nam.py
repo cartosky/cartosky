@@ -337,7 +337,7 @@ NAM_VARS: dict[str, VarSpec] = {
         derived=True,
         derive="wspd10m",
         kind="continuous",
-        units="mph",
+        units="kt",
     ),
     "vort500": _nam_absv_level_component(500),
     "sbcape": VarSpec(
@@ -762,7 +762,7 @@ NAM_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
     "vort500": "s-1_to_1e5s-1",
-    "wspd850": "ms_to_mph",
+    "wspd850": "ms_to_kt",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
