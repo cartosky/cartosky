@@ -722,6 +722,10 @@ export function isPrecipPtypeLegendMeta(
 }
 
 export function withPrecipRateUnits(title: string, units?: string): string {
+  const normalizedTitle = title.trim().toLowerCase();
+  if (normalizedTitle === "legend") {
+    return "Precip Type & Intensity";
+  }
   const resolvedUnits = (units ?? "").trim();
   if (!resolvedUnits) {
     return title;

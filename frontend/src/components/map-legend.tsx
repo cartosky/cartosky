@@ -68,6 +68,7 @@ function radarGroupLabelForCode(code: string, index: number): string {
   if (normalized === "rain") return "Rain";
   if (normalized === "snow") return "Snow";
   if (normalized === "sleet") return "Sleet";
+  if (normalized === "ice") return "Ice";
   if (normalized === "frzr") return "Freezing Rain";
   return RADAR_GROUP_LABELS[index] ?? `Type ${index + 1}`;
 }

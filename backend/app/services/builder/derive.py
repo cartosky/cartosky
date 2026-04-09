@@ -2638,22 +2638,13 @@ def _derive_ptype_intensity_gfs(
     snow_gate = np.where(np.isfinite(snow), snow > 0, False)
     ice_gate = np.where(np.isfinite(sleet), sleet > 0, False) | np.where(np.isfinite(frzr), frzr > 0, False)
 
-    winter_strength = np.maximum(
-        np.where(np.isfinite(sleet), sleet, 0.0).astype(np.float32, copy=False),
-        np.where(np.isfinite(frzr), frzr, 0.0).astype(np.float32, copy=False),
-    )
-    stack_for_pick = np.stack(
-        [
-            np.where(np.isfinite(rain), rain, 0.0).astype(np.float32, copy=False),
-            np.where(np.isfinite(snow), snow, 0.0).astype(np.float32, copy=False),
-            winter_strength,
-        ],
-        axis=0,
-    )
-    mask_max = np.nanmax(stack_for_pick, axis=0)
-    ptype_idx = np.argmax(stack_for_pick, axis=0).astype(np.int32)
-    ptype_codes = np.array(["rain", "snow", "ice"])
-    ptype = ptype_codes[ptype_idx]
+    has_any_ptype = rain_gate | snow_gate | ice_gate
+    ptype = np.full(prate_inhr.shape, "", dtype="<U4")
+    # Favor winter families when categorical masks overlap. The GFS ptype
+    # components are boolean gates, not continuous confidence scores.
+    ptype[ice_gate] = "ice"
+    ptype[snow_gate] = "snow"
+    ptype[rain_gate & ~snow_gate & ~ice_gate] = "rain"
 
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
@@ -2678,8 +2669,7 @@ def _derive_ptype_intensity_gfs(
             & np.isfinite(prate_inhr)
             & (prate_inhr >= float(min_visible[code]))
             & gate_map[code]
-            & np.isfinite(mask_max)
-            & (mask_max > 0)
+            & has_any_ptype
         )
         if not np.any(selector):
             continue
