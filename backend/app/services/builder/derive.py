@@ -2949,6 +2949,9 @@ def _derive_ptype_intensity_component(
     if values is None:
         values = np.zeros(prate.shape, dtype=np.float32)
         values[~np.isfinite(prate)] = np.nan
+    elif component == "snow":
+        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
+        values[~np.isfinite(prate)] = np.nan
     return values.astype(np.float32, copy=False), src_crs, src_transform
 
 
