@@ -1056,8 +1056,8 @@ export default function App() {
     if (!model || !displayedOverlayVariable || !visibleOverlayFrame || !resolvedRunForRequests) {
       return null;
     }
-    const meta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
-    const contours = meta?.contours;
+    const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
+    const contours = gridManifest?.contours ?? frameMeta?.contours;
     if (!contours || typeof contours !== "object") {
       return null;
     }
@@ -1072,7 +1072,7 @@ export default function App() {
       fh: Number(visibleOverlayFrame.fh),
       key: contourKey,
     });
-  }, [displayedOverlayVariable, frameRows, model, resolvedRunForRequests, visibleOverlayFrame]);
+  }, [displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame]);
   const contourPrefetchUrls = useMemo(() => {
     if (!model || !displayedOverlayVariable || frameRows.length <= 1 || !resolvedRunForRequests) {
       return [] as string[];
@@ -1089,7 +1089,7 @@ export default function App() {
     const urls: string[] = [];
     for (const row of candidateRows) {
       const meta = extractLegendMeta(row);
-      const contours = meta?.contours;
+      const contours = gridManifest?.contours ?? meta?.contours;
       if (!contours || typeof contours !== "object") {
         continue;
       }
@@ -1109,7 +1109,7 @@ export default function App() {
       }
     }
     return urls;
-  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;

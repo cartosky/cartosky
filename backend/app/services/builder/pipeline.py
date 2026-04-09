@@ -306,6 +306,7 @@ def check_value_sanity(
     val_path: Path,
     var_spec: dict[str, Any],
     var_spec_model: Any | None = None,
+    var_capability: Any | None = None,
 ) -> bool:
     """Sanity-check pixel statistics of the produced value artifact."""
     ok = True
@@ -319,7 +320,10 @@ def check_value_sanity(
     }
     is_non_physical_units = model_units is None or var_spec.get("units") is None
     is_non_physical_flag = var_spec.get("physical") is False
-    allow_dry_frame = bool(var_spec.get("allow_dry_frame", False))
+    capability_frontend = getattr(var_capability, "frontend", {}) if var_capability is not None else {}
+    allow_dry_frame = bool(var_spec.get("allow_dry_frame", False)) or bool(
+        capability_frontend.get("allow_dry_frame") if isinstance(capability_frontend, dict) else False
+    )
     skip_physical_range_checks = is_non_physical_kind or is_non_physical_units or is_non_physical_flag
     is_categorical_ptype = spec_type in {"discrete", "indexed"} and bool(var_spec.get("ptype_breaks"))
 
@@ -1098,6 +1102,7 @@ def build_frame(
             val_path,
             var_spec_colormap,
             var_spec_model=var_spec_model,
+            var_capability=var_capability,
         ):
             logger.error("Value sanity failed — rejecting frame")
             _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)

@@ -984,6 +984,7 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         frontend["composite_layers"] = str(hints.get("composite_layers") or "").strip()
     if str(var_key).startswith("ptype_intensity_"):
         frontend["internal_only"] = True
+        frontend["allow_dry_frame"] = True
         is_buildable = False
         constraints["internal_only"] = 1
     return VariableCapability(

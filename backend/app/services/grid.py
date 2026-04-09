@@ -904,6 +904,7 @@ def _build_manifest_for_var_from_run_root(
     valid_time_by_fh: dict[int, str] = {}
     manifest_display_name: str | None = None
     manifest_legend: dict[str, Any] | None = None
+    manifest_contours: dict[str, Any] | None = None
     lod_entries: dict[int, dict[str, Any]] = {}
 
     for sidecar_path in sorted(var_dir.glob("fh*.json")):
@@ -928,6 +929,10 @@ def _build_manifest_for_var_from_run_root(
             legend = sidecar.get("legend")
             if isinstance(legend, dict):
                 manifest_legend = dict(legend)
+        if manifest_contours is None:
+            contours = sidecar.get("contours")
+            if isinstance(contours, dict):
+                manifest_contours = dict(contours)
         valid_time = sidecar.get("valid_time")
         if isinstance(valid_time, str) and valid_time.strip():
             valid_time_by_fh[fh] = valid_time.strip()
@@ -1048,6 +1053,8 @@ def _build_manifest_for_var_from_run_root(
         manifest["display_name"] = manifest_display_name
     if manifest_legend:
         manifest["legend"] = manifest_legend
+    if manifest_contours:
+        manifest["contours"] = manifest_contours
     composite_meta = _read_composite_sidecar_metadata(run_root, var)
     if composite_meta:
         manifest.update(composite_meta)
