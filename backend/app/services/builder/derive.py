@@ -2961,14 +2961,14 @@ def _derive_ptype_intensity_gfs(
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
         "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
-        "ice": np.asarray([0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
+        "ice": np.asarray([0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
     }
     type_breaks = {
         "rain": {"offset": 0, "count": 16},
         "snow": {"offset": 16, "count": 10},
-        "ice": {"offset": 26, "count": 17},
+        "ice": {"offset": 26, "count": 18},
     }
-    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.05}
+    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.01}
 
     indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
     for code in ("rain", "snow", "ice"):
