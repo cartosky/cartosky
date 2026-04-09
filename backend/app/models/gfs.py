@@ -130,15 +130,6 @@ class GFSPlugin(BaseModelPlugin):
         }
         return _aliases.get(normalized, normalized)
 
-    def get_var_capability(self, var_key: str) -> VariableCapability | None:
-        capability = super().get_var_capability(var_key)
-        if capability is None:
-            return None
-        frontend = getattr(capability, "frontend", {}) or {}
-        if bool(frontend.get("internal_only")):
-            return None
-        return capability
-
 
 # ---------------------------------------------------------------------------
 # Region definitions
