@@ -999,6 +999,102 @@ def _normalize_ptype_probability(data: np.ndarray) -> np.ndarray:
     return normalized
 
 
+def _ptype_intensity_temp_signal(temp_c: np.ndarray | None, *, cold_at_c: float, warm_at_c: float) -> tuple[np.ndarray, np.ndarray]:
+    if temp_c is None:
+        empty = np.zeros((1, 1), dtype=np.float32)
+        return empty, empty
+    values = np.asarray(temp_c, dtype=np.float32)
+    finite = np.isfinite(values)
+    cold = np.zeros(values.shape, dtype=np.float32)
+    warm = np.zeros(values.shape, dtype=np.float32)
+    cold_span = max(float(warm_at_c) - float(cold_at_c), 1e-6)
+    warm_span = cold_span
+    if np.any(finite):
+        cold[finite] = np.clip((float(warm_at_c) - values[finite]) / cold_span, 0.0, 1.0)
+        warm[finite] = np.clip((values[finite] - float(cold_at_c)) / warm_span, 0.0, 1.0)
+    return cold.astype(np.float32, copy=False), warm.astype(np.float32, copy=False)
+
+
+def _ptype_intensity_fetch_optional_component(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    var_key: str | None,
+    ctx: FetchContext | None,
+) -> np.ndarray | None:
+    candidate = str(var_key or "").strip()
+    if not candidate:
+        return None
+    try:
+        data, _, _ = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=candidate,
+            ctx=ctx,
+        )
+    except Exception:
+        logger.debug("ptype_intensity optional component unavailable: model=%s var=%s fh=%03d", model_id, candidate, fh)
+        return None
+    return np.asarray(data, dtype=np.float32)
+
+
+def _ptype_intensity_thermal_fields(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    hints: dict[str, Any],
+    expected_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    temp2m = _ptype_intensity_fetch_optional_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=str(hints.get("surface_temp_component") or "tmp2m"),
+        ctx=ctx,
+    )
+    temp850 = _ptype_intensity_fetch_optional_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=str(hints.get("mid_temp_component") or "tmp850"),
+        ctx=ctx,
+    )
+
+    cold_fields: list[np.ndarray] = []
+    warm_fields: list[np.ndarray] = []
+    for values, cold_at_c, warm_at_c in (
+        (temp2m, -1.0, 2.0),
+        (temp850, -4.0, 1.0),
+    ):
+        if values is None or values.shape != expected_shape:
+            continue
+        cold, warm = _ptype_intensity_temp_signal(values, cold_at_c=cold_at_c, warm_at_c=warm_at_c)
+        cold_fields.append(cold)
+        warm_fields.append(warm)
+
+    if not cold_fields:
+        zeros = np.zeros(expected_shape, dtype=np.float32)
+        return zeros, zeros
+
+    cold_profile = np.mean(np.stack(cold_fields, axis=0), axis=0).astype(np.float32, copy=False)
+    warm_profile = np.mean(np.stack(warm_fields, axis=0), axis=0).astype(np.float32, copy=False)
+    return cold_profile, warm_profile
+
+
 def _ptype_intensity_family_rates(
     *,
     prate: np.ndarray,
@@ -1006,6 +1102,8 @@ def _ptype_intensity_family_rates(
     snow: np.ndarray,
     sleet: np.ndarray,
     frzr: np.ndarray,
+    cold_profile: np.ndarray | None = None,
+    warm_profile: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Split total precip rate into display-family intensity planes.
 
@@ -1026,14 +1124,26 @@ def _ptype_intensity_family_rates(
     frzr_prob = _normalize_ptype_probability(frzr)
     ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
 
-    frozen_signal = np.maximum(snow_prob, ice_prob).astype(np.float32, copy=False)
-    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.75 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
+    cold_signal = np.zeros(prate_inhr.shape, dtype=np.float32)
+    warm_signal = np.zeros(prate_inhr.shape, dtype=np.float32)
+    if cold_profile is not None and cold_profile.shape == prate_inhr.shape:
+        cold_signal = np.clip(np.nan_to_num(cold_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+    if warm_profile is not None and warm_profile.shape == prate_inhr.shape:
+        warm_signal = np.clip(np.nan_to_num(warm_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+
+    precip_signal = np.maximum(np.maximum(rain_prob, snow_prob), ice_prob).astype(np.float32, copy=False)
+    snow_thermal_boost = (0.45 * cold_signal * precip_signal).astype(np.float32, copy=False)
+    ice_surface_lock = np.clip(cold_signal - 0.35 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
+    ice_thermal_boost = (0.30 * warm_signal * ice_surface_lock * precip_signal).astype(np.float32, copy=False)
+
+    snow_score = np.maximum(np.nan_to_num(snow_prob, nan=0.0), snow_thermal_boost).astype(np.float32, copy=False)
+    ice_score = np.maximum(np.nan_to_num(ice_prob, nan=0.0), ice_thermal_boost).astype(np.float32, copy=False)
+    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), 0.8 * cold_signal).astype(np.float32, copy=False)
+    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.8 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
         np.float32,
         copy=False,
     )
     rain_score = np.clip(rain_score, 0.0, 1.0).astype(np.float32, copy=False)
-    snow_score = np.nan_to_num(snow_prob, nan=0.0).astype(np.float32, copy=False)
-    ice_score = np.nan_to_num(ice_prob, nan=0.0).astype(np.float32, copy=False)
 
     score_sum = (rain_score + snow_score + ice_score).astype(np.float32, copy=False)
     finite_prate = np.isfinite(prate_inhr)
@@ -2679,6 +2789,16 @@ def _derive_ptype_intensity_gfs(
     snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
     sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
     frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    cold_profile, warm_profile = _ptype_intensity_thermal_fields(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+    )
 
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
         prate=prate,
@@ -2686,6 +2806,8 @@ def _derive_ptype_intensity_gfs(
         snow=snow,
         sleet=sleet,
         frzr=frzr,
+        cold_profile=cold_profile,
+        warm_profile=warm_profile,
     )
 
     family_rate_by_code = {
@@ -2768,6 +2890,16 @@ def _derive_ptype_intensity_component(
     snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
     sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
     frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    cold_profile, warm_profile = _ptype_intensity_thermal_fields(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+    )
 
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
         prate=prate,
@@ -2775,6 +2907,8 @@ def _derive_ptype_intensity_component(
         snow=snow,
         sleet=sleet,
         frzr=frzr,
+        cold_profile=cold_profile,
+        warm_profile=warm_profile,
     )
 
     component_values = {

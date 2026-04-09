@@ -556,13 +556,13 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
-      ...buildVectorBufferLayers(),
       {
         id: "twf-labels",
         type: "raster",
         source: "twf-labels",
         paint: labelPaint,
       },
+      ...buildVectorBufferLayers(),
     ],
   };
 }
