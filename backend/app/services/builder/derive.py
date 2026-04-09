@@ -1076,22 +1076,25 @@ def _ptype_intensity_thermal_fields(
 
     cold_fields: list[np.ndarray] = []
     warm_fields: list[np.ndarray] = []
-    for values, cold_at_c, warm_at_c in (
-        (temp2m, -1.0, 2.0),
-        (temp850, -4.0, 1.0),
+    thermal_weights: list[float] = []
+    for values, cold_at_c, warm_at_c, weight in (
+        (temp2m, -1.0, 2.0, 0.35),
+        (temp850, -4.0, 1.0, 0.65),
     ):
         if values is None or values.shape != expected_shape:
             continue
         cold, warm = _ptype_intensity_temp_signal(values, cold_at_c=cold_at_c, warm_at_c=warm_at_c)
         cold_fields.append(cold)
         warm_fields.append(warm)
+        thermal_weights.append(float(weight))
 
     if not cold_fields:
         zeros = np.zeros(expected_shape, dtype=np.float32)
         return zeros, zeros
 
-    cold_profile = np.mean(np.stack(cold_fields, axis=0), axis=0).astype(np.float32, copy=False)
-    warm_profile = np.mean(np.stack(warm_fields, axis=0), axis=0).astype(np.float32, copy=False)
+    weights = np.asarray(thermal_weights, dtype=np.float32)
+    cold_profile = np.average(np.stack(cold_fields, axis=0), axis=0, weights=weights).astype(np.float32, copy=False)
+    warm_profile = np.average(np.stack(warm_fields, axis=0), axis=0, weights=weights).astype(np.float32, copy=False)
     return cold_profile, warm_profile
 
 
@@ -1137,14 +1140,18 @@ def _ptype_intensity_family_rates(
         np.float32,
         copy=False,
     )
-    snow_thermal_boost = (0.75 * cold_signal * effective_precip_signal).astype(np.float32, copy=False)
+    thermal_snow_share = np.clip(1.35 * cold_signal - 0.25 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
+    snow_thermal_boost = np.maximum(0.75 * cold_signal, thermal_snow_share * effective_precip_signal).astype(
+        np.float32,
+        copy=False,
+    )
     ice_surface_lock = np.clip(cold_signal - 0.35 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
     ice_thermal_boost = (0.30 * warm_signal * ice_surface_lock * precip_signal).astype(np.float32, copy=False)
 
     snow_score = np.maximum(np.nan_to_num(snow_prob, nan=0.0), snow_thermal_boost).astype(np.float32, copy=False)
     ice_score = np.maximum(np.nan_to_num(ice_prob, nan=0.0), ice_thermal_boost).astype(np.float32, copy=False)
-    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), 0.9 * cold_signal).astype(np.float32, copy=False)
-    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.9 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
+    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), thermal_snow_share).astype(np.float32, copy=False)
+    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.95 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
         np.float32,
         copy=False,
     )
@@ -1167,11 +1174,13 @@ def _ptype_intensity_family_rates(
     rain_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
     snow_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
     ice_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
-    valid = finite_prate & (score_sum > 0.0)
+    valid = finite_prate & positive_precip & (score_sum > 0.0)
     if np.any(valid):
-        rain_rate[valid] = prate_inhr[valid] * rain_score[valid] / score_sum[valid]
-        snow_rate[valid] = prate_inhr[valid] * snow_score[valid] / score_sum[valid]
-        ice_rate[valid] = prate_inhr[valid] * ice_score[valid] / score_sum[valid]
+        family_stack = np.stack([rain_score, snow_score, ice_score], axis=0).astype(np.float32, copy=False)
+        family_idx = np.argmax(family_stack, axis=0)
+        rain_rate[valid & (family_idx == 0)] = prate_inhr[valid & (family_idx == 0)]
+        snow_rate[valid & (family_idx == 1)] = prate_inhr[valid & (family_idx == 1)]
+        ice_rate[valid & (family_idx == 2)] = prate_inhr[valid & (family_idx == 2)]
     rain_rate[~finite_prate] = np.nan
     snow_rate[~finite_prate] = np.nan
     ice_rate[~finite_prate] = np.nan

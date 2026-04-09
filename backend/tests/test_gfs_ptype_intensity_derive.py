@@ -90,6 +90,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     assert snow_values[0, 1] > rain_values[0, 1]
     assert snow_values[0, 2] > rain_values[0, 2]
     np.testing.assert_allclose(rain_values + snow_values + ice_values, expected_total_rate, rtol=1e-5, atol=1e-5)
+    assert np.count_nonzero(rain_values[0] > 0.0) + np.count_nonzero(snow_values[0] > 0.0) + np.count_nonzero(ice_values[0] > 0.0) == 3
 
 
 def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatch) -> None:
@@ -129,7 +130,7 @@ def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatc
 
     assert 16.0 <= indexed[0, 0] <= 25.0
     assert 16.0 <= indexed[0, 1] <= 25.0
-    assert 26.0 <= indexed[0, 2] <= 42.0
+    assert 16.0 <= indexed[0, 2] <= 25.0
 
 
 def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypatch) -> None:
@@ -182,7 +183,9 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         model_plugin=object(),
     )
 
-    assert snow_values[0, 0] > rain_values[0, 0]
+    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
+    assert snow_values[0, 0] == expected_total_rate
+    assert rain_values[0, 0] == 0.0
     assert 16.0 <= indexed[0, 0] <= 25.0
 
 
@@ -255,6 +258,62 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         "cfrzr": np.array([[0.0]], dtype=np.float32),
         "tmp2m": np.array([[-3.0]], dtype=np.float32),
         "tmp850": np.array([[-6.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        return component_data[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    snow_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_snow",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("snow"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    rain_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_rain",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("rain"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
+    assert snow_values[0, 0] == expected_total_rate
+    assert rain_values[0, 0] == 0.0
+    assert 16.0 <= indexed[0, 0] <= 25.0
+
+
+def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "prate": np.array([[10.0]], dtype=np.float32),
+        "crain": np.array([[1.0]], dtype=np.float32),
+        "csnow": np.array([[0.0]], dtype=np.float32),
+        "cicep": np.array([[0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0]], dtype=np.float32),
+        "tmp2m": np.array([[0.5]], dtype=np.float32),
+        "tmp850": np.array([[-7.0]], dtype=np.float32),
     }
 
     def _fake_fetch_component(**kwargs):
