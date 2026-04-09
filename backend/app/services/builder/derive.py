@@ -2849,7 +2849,7 @@ def _derive_ptype_intensity_gfs(
 
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
-        "snow": np.asarray([0.01, 0.03, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.50, 0.75, 1.0], dtype=np.float32),
+        "snow": np.asarray([0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
         "ice": np.asarray([0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
     }
     type_breaks = {
@@ -2865,6 +2865,9 @@ def _derive_ptype_intensity_gfs(
         offset = int(type_breaks[code]["offset"])
         count = int(type_breaks[code]["count"])
         family_rate = family_rate_by_code[code]
+        display_rate = family_rate
+        if code == "snow":
+            display_rate = (2.0 * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
         selector = (
             (ptype == code)
             & np.isfinite(family_rate)
@@ -2873,7 +2876,7 @@ def _derive_ptype_intensity_gfs(
         )
         if not np.any(selector):
             continue
-        local_bin = np.digitize(family_rate[selector], levels, right=False) - 1
+        local_bin = np.digitize(display_rate[selector], levels, right=False) - 1
         local_bin = np.clip(local_bin, 0, count - 1)
         indexed[selector] = (offset + local_bin).astype(np.float32)
 
