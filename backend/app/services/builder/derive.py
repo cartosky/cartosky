@@ -1223,9 +1223,11 @@ def _ptype_intensity_family_rates(
     ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
 
     # --- Priority-based family assignment (ice > snow > rain) ---------------
-    # Thresholds mirror the competitor: ice >= 0.05, snow > 0, rain >= 0.01.
-    # Using very small thresholds so that any nonzero model signal wins.
-    ice_thresh = np.float32(0.05)
+    # GFS categorical masks are binary (0 or 1).  Any nonzero mask means the
+    # model predicts that ptype.  Use a small threshold so even slightly-
+    # interpolated or normalized values are captured.  Priority ordering
+    # already prevents lower-priority types from stealing pixels.
+    ice_thresh = np.float32(0.01)
     snow_thresh = np.float32(0.01)
     rain_thresh = np.float32(0.01)
 
@@ -2931,7 +2933,20 @@ def _derive_ptype_intensity_gfs(
         expected_shape=prate.shape,
     )
     if intensity_rate is None:
-        intensity_rate = prate
+        # prate is instantaneous (kg/m²/s).  Convert to approximate step-
+        # equivalent inches so the fallback is in the same units as the
+        # APCP-derived path.  Assume a 3-hour window (the default GFS cadence
+        # for most of the forecast range).
+        #   kg/m²/s → kg/m² over 3 h  = prate × 10800
+        #   kg/m²   → inches           = × 0.03937
+        step_seconds = np.float32(3.0 * 3600.0)
+        inch_scale = np.float32(0.03937007874015748)
+        prate_arr = np.asarray(prate, dtype=np.float32)
+        intensity_rate = np.where(
+            np.isfinite(prate_arr) & (prate_arr >= 0.0),
+            prate_arr * step_seconds * inch_scale,
+            np.nan,
+        ).astype(np.float32, copy=False)
 
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
         intensity=intensity_rate,
@@ -3052,7 +3067,17 @@ def _derive_ptype_intensity_component(
         expected_shape=prate.shape,
     )
     if intensity_rate is None:
-        intensity_rate = prate
+        # prate is instantaneous (kg/m²/s).  Convert to approximate step-
+        # equivalent inches so the fallback is in the same units as the
+        # APCP-derived path.  Assume a 3-hour window.
+        step_seconds = np.float32(3.0 * 3600.0)
+        inch_scale = np.float32(0.03937007874015748)
+        prate_arr = np.asarray(prate, dtype=np.float32)
+        intensity_rate = np.where(
+            np.isfinite(prate_arr) & (prate_arr >= 0.0),
+            prate_arr * step_seconds * inch_scale,
+            np.nan,
+        ).astype(np.float32, copy=False)
 
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
         intensity=intensity_rate,
