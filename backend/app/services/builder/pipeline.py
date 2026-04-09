@@ -183,6 +183,14 @@ def _build_contour_metadata_for_variable(
 
     data_min = float(np.nanmin(finite))
     data_max = float(np.nanmax(finite))
+    logger.info(
+        "Contour source range: model=%s var=%s key=%s min=%.3f max=%.3f",
+        model,
+        var_key,
+        contour_key,
+        data_min,
+        data_max,
+    )
     level_min = contour_start if contour_start is not None else np.ceil(data_min / contour_interval) * contour_interval
     level_max = contour_end if contour_end is not None else np.floor(data_max / contour_interval) * contour_interval
     if not np.isfinite(level_min) or not np.isfinite(level_max) or level_max < level_min:

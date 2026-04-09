@@ -2278,6 +2278,11 @@ def _per_second_to_1e5_per_second(data: np.ndarray) -> np.ndarray:
     return data * 100000.0
 
 
+def _pa_to_hpa(data: np.ndarray) -> np.ndarray:
+    """Convert Pascals to hectopascals, preserving NaN."""
+    return data / 100.0
+
+
 # Registry: conversion-key -> converter function.
 # Variables not listed here need no conversion (GRIB units match spec units).
 # NOTE: GDAL's GRIB driver applies GRIB_NORMALIZE_UNITS=YES by default,
@@ -2290,6 +2295,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "m_to_in": _meters_to_inches,
     "kgm2_to_in": _kgm2_to_inches,
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,
+    "pressure_pa_to_hpa": _pa_to_hpa,
     # Legacy var-key fallback path
     "tmp2m": _celsius_to_fahrenheit,
     "dp2m": _celsius_to_fahrenheit,
