@@ -303,8 +303,8 @@ def test_snowfall_derive_reuses_prior_cumulative_for_final_gfs_step(monkeypatch,
             6: [":APCP:surface:0-6 hour acc fcst:"],
         }[int(fh)]
 
-    def _fake_prior_cumulative(*, model_id, run_date, var_key, fh, ctx, scale_divisor=0.03937007874015748):
-        del model_id, run_date, ctx, scale_divisor
+    def _fake_prior_cumulative(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None, scale_divisor=0.03937007874015748):
+        del model_id, run_date, ctx, grid_cache_key, scale_divisor
         if int(fh) != 3:
             return None
         if str(var_key) == "snowfall_total":
@@ -394,8 +394,8 @@ def test_snowfall_derive_reuses_prior_cumulative_across_gfs_late_cadence_transit
             246: [":APCP:surface:240-246 hour acc fcst:"],
         }[int(fh)]
 
-    def _fake_prior_cumulative(*, model_id, run_date, var_key, fh, ctx, scale_divisor=0.03937007874015748):
-        del model_id, run_date, ctx, scale_divisor
+    def _fake_prior_cumulative(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None, scale_divisor=0.03937007874015748):
+        del model_id, run_date, ctx, grid_cache_key, scale_divisor
         if int(fh) != 240:
             return None
         if str(var_key) == "snowfall_total":

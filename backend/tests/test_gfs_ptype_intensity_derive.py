@@ -19,6 +19,8 @@ from app.services.builder import derive as derive_module
 def _ptype_var_spec(component: str | None = None) -> SimpleNamespace:
     hints = {
         "prate_component": "prate",
+        "apcp_component": "apcp_step",
+        "step_hours": "6",
         "rain_component": "crain",
         "snow_component": "csnow",
         "sleet_component": "cicep",
@@ -34,6 +36,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
         "crain": np.array([[1.0, 1.0, 0.2]], dtype=np.float32),
         "csnow": np.array([[1.0, 0.9, 1.0]], dtype=np.float32),
         "cicep": np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
@@ -85,12 +88,12 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     assert snow_values.dtype == np.float32
     assert ice_values.dtype == np.float32
 
-    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
+    expected_total_rate = np.float32(10.0 * 0.03937007874015748)
     assert snow_values[0, 0] > rain_values[0, 0]
     assert snow_values[0, 1] > rain_values[0, 1]
     assert snow_values[0, 2] > rain_values[0, 2]
     assert np.all((rain_values + ice_values) <= expected_total_rate)
-    np.testing.assert_allclose(snow_values, expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
+    np.testing.assert_allclose(snow_values, expected_total_rate * 2.0, rtol=1e-5, atol=1e-5)
     assert np.count_nonzero(rain_values[0] > 0.0) + np.count_nonzero(snow_values[0] > 0.0) + np.count_nonzero(ice_values[0] > 0.0) == 3
 
 
@@ -99,6 +102,7 @@ def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatc
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
         "crain": np.array([[1.0, 1.0, 0.3]], dtype=np.float32),
         "csnow": np.array([[1.0, 0.9, 1.0]], dtype=np.float32),
         "cicep": np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
@@ -139,6 +143,7 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0]], dtype=np.float32),
         "crain": np.array([[1.0]], dtype=np.float32),
         "csnow": np.array([[0.0]], dtype=np.float32),
         "cicep": np.array([[0.0]], dtype=np.float32),
@@ -184,8 +189,8 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         model_plugin=object(),
     )
 
-    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
+    expected_total_rate = np.float32(10.0 * 0.03937007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 2.0, rtol=1e-5, atol=1e-5)
     assert rain_values[0, 0] == 0.0
     assert 16.0 <= indexed[0, 0] <= 25.0
 
@@ -195,6 +200,7 @@ def test_ptype_intensity_snow_component_uses_display_boost(monkeypatch) -> None:
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0]], dtype=np.float32),
         "crain": np.array([[0.0]], dtype=np.float32),
         "csnow": np.array([[1.0]], dtype=np.float32),
         "cicep": np.array([[0.0]], dtype=np.float32),
@@ -220,8 +226,8 @@ def test_ptype_intensity_snow_component_uses_display_boost(monkeypatch) -> None:
         model_plugin=object(),
     )
 
-    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
+    expected_total_rate = np.float32(10.0 * 0.03937007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 2.0, rtol=1e-5, atol=1e-5)
 
 
 def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(monkeypatch) -> None:
@@ -229,6 +235,7 @@ def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(mon
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0, 10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0, 10.0]], dtype=np.float32),
         "crain": np.array([[0.0, 0.0]], dtype=np.float32),
         "csnow": np.array([[0.0, 0.0]], dtype=np.float32),
         "cicep": np.array([[0.0, 0.0]], dtype=np.float32),
@@ -287,6 +294,7 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0]], dtype=np.float32),
         "crain": np.array([[1.0]], dtype=np.float32),
         "csnow": np.array([[0.1]], dtype=np.float32),
         "cicep": np.array([[0.0]], dtype=np.float32),
@@ -332,8 +340,8 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         model_plugin=object(),
     )
 
-    expected_total_rate = np.float32(10.0 * 3600.0 * 0.03937007874015748)
-    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 10.0, rtol=1e-5, atol=1e-4)
+    expected_total_rate = np.float32(10.0 * 0.03937007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_total_rate * 2.0, rtol=1e-5, atol=1e-5)
     assert rain_values[0, 0] == 0.0
     assert 16.0 <= indexed[0, 0] <= 25.0
 
@@ -343,6 +351,7 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
     transform = Affine.identity()
     component_data = {
         "prate": np.array([[10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0]], dtype=np.float32),
         "crain": np.array([[1.0]], dtype=np.float32),
         "csnow": np.array([[0.0]], dtype=np.float32),
         "cicep": np.array([[0.0]], dtype=np.float32),
@@ -389,4 +398,55 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
     )
 
     assert snow_values[0, 0] > rain_values[0, 0]
+
+
+def test_ptype_intensity_prefers_shared_apcp_step_intensity_over_prate(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "prate": np.array([[20.0]], dtype=np.float32),
+        "apcp_step": np.array([[5.0]], dtype=np.float32),
+        "crain": np.array([[0.0]], dtype=np.float32),
+        "csnow": np.array([[1.0]], dtype=np.float32),
+        "cicep": np.array([[0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0]], dtype=np.float32),
+        "tmp2m": np.array([[-4.0]], dtype=np.float32),
+        "tmp850": np.array([[-7.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        return component_data[var_key], crs, transform
+
+    def _fake_step_intensity(**kwargs):
+        expected_shape = tuple(kwargs["expected_shape"])
+        assert expected_shape == (1, 1)
+        return np.array([[5.0 * 0.03937007874015748]], dtype=np.float32)
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(derive_module, "_ptype_intensity_fetch_step_intensity", _fake_step_intensity)
+
+    snow_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_snow",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("snow"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    expected_step_rate = np.float32(5.0 * 0.03937007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_step_rate * 2.0, rtol=1e-5, atol=1e-5)
     assert 16.0 <= indexed[0, 0] <= 25.0

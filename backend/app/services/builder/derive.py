@@ -1098,9 +1098,98 @@ def _ptype_intensity_thermal_fields(
     return cold_profile, warm_profile
 
 
+def _ptype_intensity_fetch_step_intensity(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    hints: dict[str, Any],
+    expected_shape: tuple[int, ...],
+) -> np.ndarray | None:
+    apcp_component = str(hints.get("apcp_component") or "apcp_step").strip() or "apcp_step"
+    apcp_product = str(hints.get("apcp_product") or product).strip() or product
+    inch_scale = np.float32(0.03937007874015748)
+
+    def _direct_component_step_inches() -> np.ndarray | None:
+        try:
+            apcp_step_data, _, _ = _fetch_component(
+                model_id=model_id,
+                product=apcp_product,
+                run_date=run_date,
+                fh=fh,
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                ctx=ctx,
+            )
+        except Exception:
+            return None
+        if tuple(np.shape(apcp_step_data)) != tuple(expected_shape):
+            return None
+        apcp_step_values = np.asarray(apcp_step_data, dtype=np.float32)
+        apcp_valid = np.isfinite(apcp_step_values) & (apcp_step_values >= 0.0)
+        step_inches = (apcp_step_values * inch_scale).astype(np.float32, copy=False)
+        return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
+
+    if ctx is None:
+        return _direct_component_step_inches()
+
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    if not step_fhs:
+        return _direct_component_step_inches()
+
+    try:
+        step_index = step_fhs.index(int(fh))
+    except ValueError:
+        return _direct_component_step_inches()
+
+    cum_diff_state = _ApcpCumDiffState()
+    try:
+        step_apcp_data, apcp_valid, _, _, _ = _resolve_apcp_step_data(
+            step_fh=int(fh),
+            step_index=int(step_index),
+            step_fhs=step_fhs,
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=apcp_product,
+            use_warped=False,
+            target_region="",
+            target_grid_id="",
+            resampling="",
+            cum_diff_state=cum_diff_state,
+        )
+    except Exception:
+        logger.debug(
+            "ptype_intensity APCP step resolution fallback: model=%s var=%s fh=%03d",
+            model_id,
+            apcp_component,
+            fh,
+            exc_info=True,
+        )
+        return _direct_component_step_inches()
+    if step_apcp_data.shape != expected_shape:
+        return _direct_component_step_inches()
+
+    # APCP step is an accumulation over the frame window in kg/m^2. Convert it
+    # directly to liquid-equivalent inches for display intensity. The competitor
+    # ptype map behaves more like a step-amount depiction than an instantaneous
+    # rate field, which is why PRATE-based intensity looked uniformly washed out.
+    step_inches = (np.asarray(step_apcp_data, dtype=np.float32) * inch_scale).astype(
+        np.float32,
+        copy=False,
+    )
+    return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
+
+
 def _ptype_intensity_family_rates(
     *,
-    prate: np.ndarray,
+    intensity: np.ndarray,
     rain: np.ndarray,
     snow: np.ndarray,
     sleet: np.ndarray,
@@ -1108,16 +1197,16 @@ def _ptype_intensity_family_rates(
     cold_profile: np.ndarray | None = None,
     warm_profile: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Split total precip rate into display-family intensity planes.
+    """Split total precip intensity into display-family intensity planes.
 
     GFS precip-type fields are often categorical overlaps rather than true
     probabilities. We still treat them as relative family weights so mixed-phase
     areas can express snow/ice intensity without letting rain always consume the
     full rate.
     """
-    prate_inhr = np.where(
-        np.isfinite(prate),
-        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
+    base_intensity = np.where(
+        np.isfinite(intensity),
+        np.maximum(intensity, 0.0),
         np.nan,
     ).astype(np.float32)
 
@@ -1127,15 +1216,15 @@ def _ptype_intensity_family_rates(
     frzr_prob = _normalize_ptype_probability(frzr)
     ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
 
-    cold_signal = np.zeros(prate_inhr.shape, dtype=np.float32)
-    warm_signal = np.zeros(prate_inhr.shape, dtype=np.float32)
-    if cold_profile is not None and cold_profile.shape == prate_inhr.shape:
+    cold_signal = np.zeros(base_intensity.shape, dtype=np.float32)
+    warm_signal = np.zeros(base_intensity.shape, dtype=np.float32)
+    if cold_profile is not None and cold_profile.shape == base_intensity.shape:
         cold_signal = np.clip(np.nan_to_num(cold_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
-    if warm_profile is not None and warm_profile.shape == prate_inhr.shape:
+    if warm_profile is not None and warm_profile.shape == base_intensity.shape:
         warm_signal = np.clip(np.nan_to_num(warm_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
 
     precip_signal = np.maximum(np.maximum(rain_prob, snow_prob), ice_prob).astype(np.float32, copy=False)
-    positive_precip = np.isfinite(prate_inhr) & (prate_inhr >= 0.01)
+    positive_precip = np.isfinite(base_intensity) & (base_intensity >= 0.01)
     effective_precip_signal = np.where(positive_precip, np.maximum(precip_signal, 0.35), precip_signal).astype(
         np.float32,
         copy=False,
@@ -1170,21 +1259,21 @@ def _ptype_intensity_family_rates(
         rain_score[missing_ptype_signal] = fallback_rain
 
     score_sum = (rain_score + snow_score + ice_score).astype(np.float32, copy=False)
-    finite_prate = np.isfinite(prate_inhr)
-    rain_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
-    snow_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
-    ice_rate = np.zeros(prate_inhr.shape, dtype=np.float32)
-    valid = finite_prate & positive_precip & (score_sum > 0.0)
+    finite_intensity = np.isfinite(base_intensity)
+    rain_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    snow_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    ice_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    valid = finite_intensity & positive_precip & (score_sum > 0.0)
     if np.any(valid):
         family_stack = np.stack([rain_score, snow_score, ice_score], axis=0).astype(np.float32, copy=False)
         family_idx = np.argmax(family_stack, axis=0)
-        rain_rate[valid & (family_idx == 0)] = prate_inhr[valid & (family_idx == 0)]
-        snow_rate[valid & (family_idx == 1)] = prate_inhr[valid & (family_idx == 1)]
-        ice_rate[valid & (family_idx == 2)] = prate_inhr[valid & (family_idx == 2)]
-    rain_rate[~finite_prate] = np.nan
-    snow_rate[~finite_prate] = np.nan
-    ice_rate[~finite_prate] = np.nan
-    return prate_inhr, rain_rate, snow_rate, ice_rate
+        rain_rate[valid & (family_idx == 0)] = base_intensity[valid & (family_idx == 0)]
+        snow_rate[valid & (family_idx == 1)] = base_intensity[valid & (family_idx == 1)]
+        ice_rate[valid & (family_idx == 2)] = base_intensity[valid & (family_idx == 2)]
+    rain_rate[~finite_intensity] = np.nan
+    snow_rate[~finite_intensity] = np.nan
+    ice_rate[~finite_intensity] = np.nan
+    return base_intensity, rain_rate, snow_rate, ice_rate
 
 
 def _apply_kuchera_ptype_gate(apcp_step: np.ndarray, frozen_frac: np.ndarray) -> np.ndarray:
@@ -2826,8 +2915,21 @@ def _derive_ptype_intensity_gfs(
         expected_shape=prate.shape,
     )
 
+    intensity_rate = _ptype_intensity_fetch_step_intensity(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+    )
+    if intensity_rate is None:
+        intensity_rate = prate
+
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
-        prate=prate,
+        intensity=intensity_rate,
         rain=rain,
         snow=snow,
         sleet=sleet,
@@ -2847,11 +2949,10 @@ def _derive_ptype_intensity_gfs(
     ptype = family_codes[family_idx]
     has_any_ptype = np.isfinite(rain_rate) & ((np.nan_to_num(rain_rate, nan=0.0) > 0.0) | (np.nan_to_num(snow_rate, nan=0.0) > 0.0) | (np.nan_to_num(ice_rate, nan=0.0) > 0.0))
 
-    # The snow family uses snowfall-equivalent display bins, not liquid-equivalent
-    # precip rate bins. A simple fixed 10:1 conversion is enough to put snow into
-    # the same visual domain as the competitor's blue ramp without changing family
-    # coverage or requiring a more complex profile-derived SLR.
-    snow_display_slr = np.float32(10.0)
+    # The competitor's ptype snow shading is slightly amplified relative to the
+    # liquid-equivalent step accumulation base. Keep that as a modest display-only
+    # bias rather than a large arbitrary boost.
+    snow_display_boost = np.float32(2.0)
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
         "snow": np.asarray([0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
@@ -2872,7 +2973,7 @@ def _derive_ptype_intensity_gfs(
         family_rate = family_rate_by_code[code]
         display_rate = family_rate
         if code == "snow":
-            display_rate = (snow_display_slr * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
+            display_rate = (snow_display_boost * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
         selector = (
             (ptype == code)
             & np.isfinite(family_rate)
@@ -2935,8 +3036,21 @@ def _derive_ptype_intensity_component(
         expected_shape=prate.shape,
     )
 
+    intensity_rate = _ptype_intensity_fetch_step_intensity(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+    )
+    if intensity_rate is None:
+        intensity_rate = prate
+
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
-        prate=prate,
+        intensity=intensity_rate,
         rain=rain,
         snow=snow,
         sleet=sleet,
@@ -2955,8 +3069,7 @@ def _derive_ptype_intensity_component(
         values = np.zeros(prate.shape, dtype=np.float32)
         values[~np.isfinite(prate)] = np.nan
     elif component == "snow":
-        # Companion snow layer is rendered with snowfall-equivalent intensity.
-        values = (10.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
+        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
         values[~np.isfinite(prate)] = np.nan
     return values.astype(np.float32, copy=False), src_crs, src_transform
 
@@ -4476,13 +4589,13 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
     ),
     "ptype_intensity_gfs": DeriveStrategy(
         id="ptype_intensity_gfs",
-        required_inputs=("prate", "crain", "csnow", "cicep", "cfrzr"),
+        required_inputs=("prate", "apcp_step", "crain", "csnow", "cicep", "cfrzr"),
         output_var_key="ptype_intensity",
         execute=_derive_ptype_intensity_gfs,
     ),
     "ptype_intensity_component": DeriveStrategy(
         id="ptype_intensity_component",
-        required_inputs=("prate", "crain", "csnow", "cicep", "cfrzr"),
+        required_inputs=("prate", "apcp_step", "crain", "csnow", "cicep", "cfrzr"),
         output_var_key=None,
         execute=_derive_ptype_intensity_component,
     ),
