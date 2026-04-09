@@ -2736,7 +2736,10 @@ def _derive_ptype_intensity_component(
     else:
         gate = np.zeros(prate_inhr.shape, dtype=bool)
 
-    values = np.where(gate & np.isfinite(prate_inhr), prate_inhr, np.nan).astype(np.float32)
+    values = np.zeros(prate_inhr.shape, dtype=np.float32)
+    finite_prate = np.isfinite(prate_inhr)
+    values[gate & finite_prate] = prate_inhr[gate & finite_prate]
+    values[~finite_prate] = np.nan
     return values, src_crs, src_transform
 
 
