@@ -45,6 +45,30 @@ class HRRRPlugin(BaseModelPlugin):
             return "vort500"
         if normalized in {"hgt500", "z500", "500hgt", "500_height", "500mb_height", "500mb_heights", "500_heights"}:
             return "hgt500"
+        if normalized in {
+            "wspd850",
+            "wind850",
+            "850wind",
+            "850mbwind",
+            "850mbwinds",
+            "850_wind",
+            "850_winds",
+            "850mb_heights_winds",
+            "850_heights_winds",
+        }:
+            return "wspd850"
+        if normalized in {
+            "wspd300",
+            "wind300",
+            "300wind",
+            "300mbwind",
+            "300mbwinds",
+            "300_wind",
+            "300_winds",
+            "300mb_heights_winds",
+            "300_heights_winds",
+        }:
+            return "wspd300"
         if normalized in {"10u", "u10"}:
             return "10u"
         if normalized in {"10v", "v10"}:
@@ -280,6 +304,26 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="kt",
     ),
+    "wspd300": VarSpec(
+        id="wspd300",
+        name="300mb Heights + Winds",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "u300",
+                "v_component": "v300",
+                "contour_component": "hgt300",
+                "contour_interval": "120",
+                "contour_key": "height_300mb",
+                "contour_label": "300 mb Height",
+                "contour_product": "prs",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="wspd10m",
+        kind="continuous",
+        units="kt",
+    ),
     "vort500": _hrrr_absv_level_component(500),
     "sbcape": VarSpec(
         id="sbcape",
@@ -366,14 +410,14 @@ HRRR_VARS: dict[str, VarSpec] = {
     ),
     **{
         f"hgt{level}": _hrrr_hgt_level_component(level)
-        for level in (850, 500)
+        for level in (300, 850, 500)
     },
     **{
         f"{component}{level}": _hrrr_uv_level_component(
             "UGRD" if component == "u" else "VGRD",
             level,
         )
-        for component, level in (("u", 850), ("v", 850))
+        for component, level in (("u", 300), ("v", 300), ("u", 850), ("v", 850))
     },
     **{
         f"tmp{level}": _hrrr_tmp_level_component(level)
@@ -619,6 +663,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "wspd850": "wspd850",
+    "wspd300": "wspd300",
     "vort500": "vort500",
     "sbcape": "mlcape",
     "mlcape": "mlcape",
@@ -646,6 +691,7 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 2,
     "tmp850": 3,
     "wspd850": 4,
+    "wspd300": 15,
     "vort500": 5,
     "sbcape": 6,
     "mlcape": 7,
@@ -664,6 +710,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "wspd850": "Wind",
+    "wspd300": "Wind",
     "vort500": "Dynamics",
     "sbcape": "Instability",
     "mlcape": "Instability",
@@ -681,6 +728,7 @@ HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "c_to_f",
     "vort500": "s-1_to_1e5s-1",
     "wspd850": "ms_to_kt",
+    "wspd300": "ms_to_kt",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",

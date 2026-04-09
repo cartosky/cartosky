@@ -46,6 +46,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "dp2m",
         "tmp850",
         "wspd850",
+        "wspd300",
         "sbcape",
         "mlcape",
         "mucape",
@@ -123,6 +124,18 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["group"] == "Wind"
     assert wspd850["color_map_id"] == "wspd850"
     assert wspd850["display_resampling_override"] is None
+
+    wspd300 = payload["variables"]["wspd300"]
+    assert wspd300["buildable"] is True
+    assert wspd300["derived"] is True
+    assert wspd300["derive_strategy_id"] == "wspd10m"
+    assert wspd300["kind"] == "continuous"
+    assert wspd300["units"] == "kt"
+    assert wspd300["display_name"] == "300mb Heights + Winds"
+    assert wspd300["order"] == 15
+    assert wspd300["group"] == "Wind"
+    assert wspd300["color_map_id"] == "wspd300"
+    assert wspd300["display_resampling_override"] is None
 
     sbcape = payload["variables"]["sbcape"]
     assert sbcape["var_key"] == "sbcape"
@@ -247,6 +260,8 @@ def test_hrrr_mucape_selector_and_alias_invariants() -> None:
 def test_hrrr_pwat_selector_and_alias_invariants() -> None:
     assert HRRR_MODEL.normalize_var_id("pwat") == "pwat"
     assert HRRR_MODEL.normalize_var_id("precipitable_water") == "pwat"
+    assert HRRR_MODEL.normalize_var_id("wspd300") == "wspd300"
+    assert HRRR_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
 
     pwat_spec = HRRR_MODEL.get_var("pwat")
     assert pwat_spec is not None
@@ -270,4 +285,16 @@ def test_hrrr_wspd850_uses_850mb_components_and_height_contours() -> None:
     assert wspd_spec.selectors.hints["v_component"] == "v850"
     assert wspd_spec.selectors.hints["contour_component"] == "hgt850"
     assert wspd_spec.selectors.hints["contour_key"] == "height_850mb"
+    assert wspd_spec.selectors.hints["contour_product"] == "prs"
+
+
+def test_hrrr_wspd300_uses_300mb_components_and_height_contours() -> None:
+    wspd_spec = HRRR_MODEL.get_var("wspd300")
+    assert wspd_spec is not None
+    assert wspd_spec.derived is True
+    assert wspd_spec.derive == "wspd10m"
+    assert wspd_spec.selectors.hints["u_component"] == "u300"
+    assert wspd_spec.selectors.hints["v_component"] == "v300"
+    assert wspd_spec.selectors.hints["contour_component"] == "hgt300"
+    assert wspd_spec.selectors.hints["contour_key"] == "height_300mb"
     assert wspd_spec.selectors.hints["contour_product"] == "prs"

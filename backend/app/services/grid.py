@@ -160,6 +160,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "kt",
     },
+    ("hrrr", "wspd300"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "kt",
+    },
     ("gfs", "tmp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -311,6 +317,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "mph",
     },
     ("nam", "wspd850"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "kt",
+    },
+    ("nam", "wspd300"): {
         "scale": 0.1,
         "offset": 0.0,
         "nodata": 65535,

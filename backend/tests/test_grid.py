@@ -243,6 +243,7 @@ def test_build_grid_for_run_supports_temperature_family_targets(
     ("model", "var"),
     [
         ("hrrr", "wspd850"),
+        ("hrrr", "wspd300"),
         ("hrrr", "wspd10m"),
         ("hrrr", "wgst10m"),
         ("gfs", "wspd850"),
@@ -250,6 +251,7 @@ def test_build_grid_for_run_supports_temperature_family_targets(
         ("gfs", "wspd10m"),
         ("gfs", "wgst10m"),
         ("nam", "wspd850"),
+        ("nam", "wspd300"),
         ("nam", "wspd10m"),
         ("nam", "wgst10m"),
         ("nbm", "wspd10m"),
