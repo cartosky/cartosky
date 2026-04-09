@@ -1109,81 +1109,42 @@ def _ptype_intensity_fetch_step_intensity(
     hints: dict[str, Any],
     expected_shape: tuple[int, ...],
 ) -> np.ndarray | None:
+    """Fetch the per-step APCP accumulation for ptype intensity display.
+
+    Unlike cumulative derivations (precip_total, snowfall) which iterate over
+    *all* forecast hours and can difference cumulative APCP records against
+    previously-consumed sums, ptype_intensity builds only a *single* forecast
+    hour per call.  Using ``_resolve_apcp_step_data`` with a fresh
+    ``_ApcpCumDiffState`` is incorrect here: when the inventory returns a
+    cumulative ``0-N hour acc`` record, there is no prior sum to subtract, so
+    the entire cumulative value would be used as the step intensity — wildly
+    inflating coverage at later forecast hours.
+
+    Instead we fetch the ``apcp_step`` VarSpec component directly.  Its
+    selector regex (``:[0-9]+-[0-9]+ hour acc``) matches step-window records
+    (e.g. ``81-84 hour acc``), which is exactly what we need.
+    """
     apcp_component = str(hints.get("apcp_component") or "apcp_step").strip() or "apcp_step"
     apcp_product = str(hints.get("apcp_product") or product).strip() or product
     inch_scale = np.float32(0.03937007874015748)
 
-    def _direct_component_step_inches() -> np.ndarray | None:
-        try:
-            apcp_step_data, _, _ = _fetch_component(
-                model_id=model_id,
-                product=apcp_product,
-                run_date=run_date,
-                fh=fh,
-                model_plugin=model_plugin,
-                var_key=apcp_component,
-                ctx=ctx,
-            )
-        except Exception:
-            return None
-        if tuple(np.shape(apcp_step_data)) != tuple(expected_shape):
-            return None
-        apcp_step_values = np.asarray(apcp_step_data, dtype=np.float32)
-        apcp_valid = np.isfinite(apcp_step_values) & (apcp_step_values >= 0.0)
-        step_inches = (apcp_step_values * inch_scale).astype(np.float32, copy=False)
-        return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
-
-    if ctx is None:
-        return _direct_component_step_inches()
-
-    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
-    if not step_fhs:
-        return _direct_component_step_inches()
-
     try:
-        step_index = step_fhs.index(int(fh))
-    except ValueError:
-        return _direct_component_step_inches()
-
-    cum_diff_state = _ApcpCumDiffState()
-    try:
-        step_apcp_data, apcp_valid, _, _, _ = _resolve_apcp_step_data(
-            step_fh=int(fh),
-            step_index=int(step_index),
-            step_fhs=step_fhs,
+        apcp_step_data, _, _ = _fetch_component(
             model_id=model_id,
-            product=product,
+            product=apcp_product,
             run_date=run_date,
+            fh=fh,
             model_plugin=model_plugin,
+            var_key=apcp_component,
             ctx=ctx,
-            apcp_component=apcp_component,
-            apcp_product=apcp_product,
-            use_warped=False,
-            target_region="",
-            target_grid_id="",
-            resampling="",
-            cum_diff_state=cum_diff_state,
         )
     except Exception:
-        logger.debug(
-            "ptype_intensity APCP step resolution fallback: model=%s var=%s fh=%03d",
-            model_id,
-            apcp_component,
-            fh,
-            exc_info=True,
-        )
-        return _direct_component_step_inches()
-    if step_apcp_data.shape != expected_shape:
-        return _direct_component_step_inches()
-
-    # APCP step is an accumulation over the frame window in kg/m^2. Convert it
-    # directly to liquid-equivalent inches for display intensity. The competitor
-    # ptype map behaves more like a step-amount depiction than an instantaneous
-    # rate field, which is why PRATE-based intensity looked uniformly washed out.
-    step_inches = (np.asarray(step_apcp_data, dtype=np.float32) * inch_scale).astype(
-        np.float32,
-        copy=False,
-    )
+        return None
+    if tuple(np.shape(apcp_step_data)) != tuple(expected_shape):
+        return None
+    apcp_step_values = np.asarray(apcp_step_data, dtype=np.float32)
+    apcp_valid = np.isfinite(apcp_step_values) & (apcp_step_values >= 0.0)
+    step_inches = (apcp_step_values * inch_scale).astype(np.float32, copy=False)
     return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
 
 
