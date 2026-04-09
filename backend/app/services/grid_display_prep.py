@@ -87,16 +87,16 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         upscale_factor=3,
         smooth_sigma=None,
         preserve_zero_support=True,
-        support_min_value=0.10,
-        support_coverage_threshold=0.25,
+        support_min_value=0.01,
+        support_coverage_threshold=0.1,
     ),
     ("gfs", "ptype_intensity_ice"): GridDisplayPrepConfig(
         id="gfs_ptype_intensity_component_display_v1",
         upscale_factor=3,
         smooth_sigma=None,
         preserve_zero_support=True,
-        support_min_value=0.05,
-        support_coverage_threshold=0.25,
+        support_min_value=0.01,
+        support_coverage_threshold=0.1,
     ),
 }
 

@@ -688,8 +688,9 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "colors": list(GFS_PTYPE_INTENSITY_COLORS["snow"]),
         "display_name": "Snow",
         "legend_title": "Snow",
-        "transparent_below_min": 0.10,
+        "transparent_below_min": 0.01,
         "display_resampling_override": "bilinear",
+        "allow_dry_frame": True,
     },
     "ptype_intensity_ice": {
         "type": "continuous",
@@ -700,8 +701,9 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "colors": list(GFS_PTYPE_INTENSITY_COLORS["ice"]),
         "display_name": "Ice",
         "legend_title": "Ice",
-        "transparent_below_min": 0.05,
+        "transparent_below_min": 0.01,
         "display_resampling_override": "bilinear",
+        "allow_dry_frame": True,
     },
     "snowfall_total": {
         "type": "continuous",

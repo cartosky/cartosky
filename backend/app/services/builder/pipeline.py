@@ -593,6 +593,24 @@ def build_iso_contour_geojson(
             capture_output=True,
             text=True,
         )
+        try:
+            payload = json.loads(out_geojson_path.read_text())
+            features = payload.get("features") if isinstance(payload, dict) else None
+            feature_count = len(features) if isinstance(features, list) else 0
+            logger.info(
+                "Contour GeoJSON generated: path=%s features=%d levels=%s",
+                out_geojson_path,
+                feature_count,
+                contour_levels,
+            )
+            if feature_count == 0:
+                logger.warning(
+                    "Contour GeoJSON empty: path=%s levels=%s",
+                    out_geojson_path,
+                    contour_levels,
+                )
+        except Exception:
+            logger.warning("Unable to inspect contour GeoJSON output: %s", out_geojson_path)
     finally:
         if src_path is not None:
             try:
