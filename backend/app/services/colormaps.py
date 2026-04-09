@@ -143,7 +143,7 @@ def _build_precip_ptype_flat_palette() -> tuple[
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
     "rain": [0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0],
-    "snow": [0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
+    "snow": [0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
     "ice": [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0],
 }
 GFS_PTYPE_INTENSITY_COLORS = {
@@ -153,8 +153,8 @@ GFS_PTYPE_INTENSITY_COLORS = {
         "#fbab48", "#fd943f",
     ],
     "snow": [
-        "#eef6ff", "#d7e8ff", "#bdd7ff", "#a0c4ff", "#7eb0ff", "#5e9cff", "#4289ff",
-        "#2f74f0", "#1d5dd8", "#0d47bf",
+        "#bdd7ff", "#a0c4ff", "#7eb0ff", "#5e9cff", "#4289ff", "#3478f6", "#2f74f0",
+        "#1d5dd8", "#1550cc", "#0d47bf",
     ],
     "ice": [
         "#fff7f3", "#fde0dd", "#fcc5c0", "#faa3a0", "#f768a1", "#ea4b9a", "#dd3497",

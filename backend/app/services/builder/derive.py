@@ -1240,7 +1240,14 @@ def _ptype_intensity_family_rates(
     snow_score = np.maximum(np.nan_to_num(snow_prob, nan=0.0), snow_thermal_boost).astype(np.float32, copy=False)
     ice_score = np.maximum(np.nan_to_num(ice_prob, nan=0.0), ice_thermal_boost).astype(np.float32, copy=False)
     frozen_signal = np.maximum(np.maximum(snow_score, ice_score), thermal_snow_share).astype(np.float32, copy=False)
-    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.95 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
+    # Suppress rain aggressively when there is any frozen signal.  The old
+    # linear factor ``1 - 0.95*f`` left rain_score ≈ 0.525 when f=0.5 and
+    # rain_prob=1.0, which was enough to beat a moderate snow_score via argmax.
+    # A squared suppression drives rain toward zero much faster in mixed-phase
+    # zones so that snow/ice win the argmax where temperatures support them.
+    frozen_clipped = np.clip(np.nan_to_num(frozen_signal, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+    rain_suppression = np.square(1.0 - frozen_clipped).astype(np.float32, copy=False)
+    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * rain_suppression).astype(
         np.float32,
         copy=False,
     )
@@ -2955,7 +2962,7 @@ def _derive_ptype_intensity_gfs(
     snow_display_boost = np.float32(2.0)
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
-        "snow": np.asarray([0.10, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
+        "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
         "ice": np.asarray([0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
     }
     type_breaks = {

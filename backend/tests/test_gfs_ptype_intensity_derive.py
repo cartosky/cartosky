@@ -450,3 +450,64 @@ def test_ptype_intensity_prefers_shared_apcp_step_intensity_over_prate(monkeypat
     expected_step_rate = np.float32(5.0 * 0.03937007874015748)
     np.testing.assert_allclose(snow_values[0, 0], expected_step_rate * 2.0, rtol=1e-5, atol=1e-5)
     assert 16.0 <= indexed[0, 0] <= 25.0
+
+
+def test_ptype_intensity_moderate_cold_with_full_rain_mask_prefers_snow(monkeypatch) -> None:
+    """Regression: crain=1.0 with moderate cold temps (surface near 0C, 850mb
+    cold) must still classify as snow. Before the squared rain suppression fix,
+    the linear damping left rain_score > snow_score in this scenario."""
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "prate": np.array([[10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0]], dtype=np.float32),
+        "crain": np.array([[1.0]], dtype=np.float32),
+        "csnow": np.array([[0.5]], dtype=np.float32),
+        "cicep": np.array([[0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0]], dtype=np.float32),
+        # Surface near freezing, 850mb solidly cold — typical CA Sierra scenario
+        "tmp2m": np.array([[0.0]], dtype=np.float32),
+        "tmp850": np.array([[-5.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        return component_data[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    snow_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_snow",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("snow"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    rain_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_rain",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("rain"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    # Snow must win — indexed should fall in the snow palette range (16-25)
+    assert 16.0 <= indexed[0, 0] <= 25.0, f"Expected snow index 16-25, got {indexed[0, 0]}"
+    assert snow_values[0, 0] > 0.0
+    assert rain_values[0, 0] == 0.0
