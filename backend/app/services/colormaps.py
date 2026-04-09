@@ -325,6 +325,22 @@ WSPD10M_COLOR_ANCHORS = [
 ]
 WSPD10M_RANGE = (0.0, 100.0)
 
+WSPD300_COLOR_ANCHORS = [
+    *WSPD10M_COLOR_ANCHORS,
+    (110, "#8c184f"),
+    (120, "#a21e62"),
+    (130, "#b82876"),
+    (140, "#cd378b"),
+    (150, "#df52a6"),
+    (160, "#ec77bf"),
+    (170, "#f59bd3"),
+    (180, "#f9bcdf"),
+    (190, "#fccee8"),
+    (200, "#fde0f0"),
+    (220, "#fff3fb"),
+]
+WSPD300_RANGE = (0.0, 220.0)
+
 QPF6H_LEGEND_STOPS = list(zip(precip_levels, precip_colors))
 PRECIP_TOTAL_COLOR_ANCHORS = list(zip(precip_levels, precip_colors))
 
@@ -620,6 +636,14 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "850mb Heights & Winds",
         "legend_title": "850mb Wind Speed (mph)",
+    },
+    "wspd300": {
+        "type": "continuous",
+        "units": "mph",
+        "range": WSPD300_RANGE,
+        "anchors": WSPD300_COLOR_ANCHORS,
+        "display_name": "300mb Heights & Winds",
+        "legend_title": "300mb Wind Speed (mph)",
     },
     "wgst10m": {
         "type": "continuous",

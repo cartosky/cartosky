@@ -246,6 +246,7 @@ def test_build_grid_for_run_supports_temperature_family_targets(
         ("hrrr", "wspd10m"),
         ("hrrr", "wgst10m"),
         ("gfs", "wspd850"),
+        ("gfs", "wspd300"),
         ("gfs", "wspd10m"),
         ("gfs", "wgst10m"),
         ("nam", "wspd850"),

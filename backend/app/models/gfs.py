@@ -68,6 +68,15 @@ class GFSPlugin(BaseModelPlugin):
             "850_winds": "wspd850",
             "850mb_heights_winds": "wspd850",
             "850_heights_winds": "wspd850",
+            "wspd300": "wspd300",
+            "wind300": "wspd300",
+            "300wind": "wspd300",
+            "300mbwind": "wspd300",
+            "300mbwinds": "wspd300",
+            "300_wind": "wspd300",
+            "300_winds": "wspd300",
+            "300mb_heights_winds": "wspd300",
+            "300_heights_winds": "wspd300",
             "vort500": "vort500",
             "500vort": "vort500",
             "500_vort": "vort500",
@@ -358,6 +367,25 @@ GFS_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="mph",
     ),
+    "wspd300": VarSpec(
+        id="wspd300",
+        name="300mb Heights + Winds",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "u300",
+                "v_component": "v300",
+                "contour_component": "hgt300",
+                "contour_interval": "120",
+                "contour_key": "height_300mb",
+                "contour_label": "300 mb Height",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="wspd10m",
+        kind="continuous",
+        units="mph",
+    ),
     "vort500": _gfs_absv_level_component(500),
     "sbcape": VarSpec(
         id="sbcape",
@@ -444,12 +472,12 @@ GFS_VARS: dict[str, VarSpec] = {
     ),
     **{
         f"hgt{level}": _gfs_hgt_level_component(level)
-        for level in (500, 850)
+        for level in (300, 500, 850)
     },
     **{
         f"{axis}{level}": _gfs_wind_level_component(axis, level)
         for axis in ("u", "v")
-        for level in (850,)
+        for level in (300, 850)
     },
     **{
         f"tmp{level}": _gfs_tmp_level_component(level)
@@ -733,6 +761,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "wspd850": "wspd850",
+    "wspd300": "wspd300",
     "vort500": "vort500",
     "sbcape": "mlcape",
     "mlcape": "mlcape",
@@ -761,6 +790,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 2,
     "tmp850": 3,
     "wspd850": 4,
+    "wspd300": 18,
     "vort500": 5,
     "sbcape": 6,
     "mlcape": 7,
@@ -781,6 +811,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "wspd850": "Wind",
+    "wspd300": "Wind",
     "vort500": "Dynamics",
     "sbcape": "Instability",
     "mlcape": "Instability",
@@ -801,6 +832,7 @@ GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "c_to_f",
     "vort500": "s-1_to_1e5s-1",
     "wspd850": "ms_to_mph",
+    "wspd300": "ms_to_mph",
     "pwat": "kgm2_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",

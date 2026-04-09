@@ -128,6 +128,28 @@ export default function Variables() {
         notes: ["Current implementation uses 30 m height contours over the 850 mb wind-speed fill."],
       },
       {
+        id: "wspd300",
+        name: "300mb Heights + Winds",
+        oneLiner: "300 mb wind speed shaded beneath 300 mb height contours for jet-stream structure and upper-level forcing diagnosis.",
+        pills: ["300 mb", "mph + m", "Continuous + contours"],
+        definition:
+          "This product shades 300 mb wind speed while overlaying 300 mb geopotential height contours. Together they help diagnose jet streaks, upper-level flow orientation, and where stronger upper support may overlap lower-level moisture and instability.",
+        bestFor: [
+          "Locating jet streak cores and broader upper-level speed maxima",
+          "Comparing upper-level support with lower-level moisture and instability fields",
+          "Tracking the orientation and evolution of the larger-scale jet pattern",
+        ],
+        interpretation: [
+          "The shaded field highlights jet intensity, while the height contours keep that speed max anchored within the larger synoptic pattern.",
+          "Strong 300 mb flow matters most where it overlaps favorable lift, moisture, and storm-scale ingredients, so pair it with lower-level kinematic and thermodynamic fields.",
+        ],
+        limitations: [
+          "This is an upper-level pressure surface and does not describe surface impacts directly.",
+          "Wind speed alone does not show divergence or exact jet-quadrant forcing without broader pattern context.",
+        ],
+        notes: ["Current implementation uses 120 m height contours over the 300 mb wind-speed fill."],
+      },
+      {
         id: "wspd10m",
         name: "10m Wind Speed",
         oneLiner: "Sustained wind speed at 10 meters above ground.",

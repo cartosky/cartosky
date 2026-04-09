@@ -34,6 +34,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "dp2m",
         "tmp850",
         "wspd850",
+        "wspd300",
         "vort500",
         "sbcape",
         "mlcape",
@@ -98,6 +99,18 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["color_map_id"] == "wspd850"
     assert wspd850["order"] == 4
     assert wspd850["display_resampling_override"] is None
+
+    wspd300 = payload["variables"]["wspd300"]
+    assert wspd300["buildable"] is True
+    assert wspd300["derived"] is True
+    assert wspd300["derive_strategy_id"] == "wspd10m"
+    assert wspd300["kind"] == "continuous"
+    assert wspd300["units"] == "mph"
+    assert wspd300["display_name"] == "300mb Heights + Winds"
+    assert wspd300["group"] == "Wind"
+    assert wspd300["color_map_id"] == "wspd300"
+    assert wspd300["order"] == 18
+    assert wspd300["display_resampling_override"] is None
 
     vort500 = payload["variables"]["vort500"]
     assert vort500["buildable"] is True
@@ -221,6 +234,8 @@ def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("t850mb") == "tmp850"
     assert GFS_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert GFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
+    assert GFS_MODEL.normalize_var_id("wspd300") == "wspd300"
+    assert GFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert GFS_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert GFS_MODEL.normalize_var_id("mlcape") == "mlcape"
     assert GFS_MODEL.normalize_var_id("mucape") == "mucape"
@@ -302,6 +317,22 @@ def test_gfs_wspd850_uses_850mb_components_and_height_contours() -> None:
     assert var_spec.selectors.hints["contour_key"] == "height_850mb"
 
 
+def test_gfs_wspd300_uses_300mb_components_and_height_contours() -> None:
+    var_spec = GFS_MODEL.get_var("wspd300")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "wspd10m"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "mph"
+    assert var_spec.selectors.search == []
+    assert var_spec.selectors.hints["u_component"] == "u300"
+    assert var_spec.selectors.hints["v_component"] == "v300"
+    assert var_spec.selectors.hints["contour_component"] == "hgt300"
+    assert var_spec.selectors.hints["contour_interval"] == "120"
+    assert var_spec.selectors.hints["contour_key"] == "height_300mb"
+
+
 def test_gfs_850mb_component_selectors_invariants() -> None:
     hgt_spec = GFS_MODEL.get_var("hgt850")
     assert hgt_spec is not None
@@ -328,6 +359,35 @@ def test_gfs_850mb_component_selectors_invariants() -> None:
         "shortName": "vgrd",
         "typeOfLevel": "isobaricInhPa",
         "level": "850",
+    }
+
+
+def test_gfs_300mb_component_selectors_invariants() -> None:
+    hgt_spec = GFS_MODEL.get_var("hgt300")
+    assert hgt_spec is not None
+    assert hgt_spec.selectors.search == [":HGT:300 mb:"]
+    assert hgt_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+
+    u_spec = GFS_MODEL.get_var("u300")
+    assert u_spec is not None
+    assert u_spec.selectors.search == [":UGRD:300 mb:"]
+    assert u_spec.selectors.filter_by_keys == {
+        "shortName": "ugrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+
+    v_spec = GFS_MODEL.get_var("v300")
+    assert v_spec is not None
+    assert v_spec.selectors.search == [":VGRD:300 mb:"]
+    assert v_spec.selectors.filter_by_keys == {
+        "shortName": "vgrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
     }
 
 
