@@ -623,6 +623,7 @@ GFS_VARS: dict[str, VarSpec] = {
                 "contour_end": "1048",
                 "contour_key": "mslp",
                 "contour_label": "Mean Sea-Level Pressure",
+                "contour_conversion": "pressure_pa_to_hpa",
                 "companion_vars": "ptype_intensity_rain,ptype_intensity_snow,ptype_intensity_ice",
                 "composite_mode": "max_alpha_stack",
                 "composite_layers": "rain:ptype_intensity_rain;snow:ptype_intensity_snow;ice:ptype_intensity_ice",

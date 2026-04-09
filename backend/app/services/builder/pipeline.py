@@ -133,6 +133,7 @@ def _build_contour_metadata_for_variable(
     contour_start = _safe_float_hint(hints, "contour_start")
     contour_end = _safe_float_hint(hints, "contour_end")
     contour_product = str(hints.get("contour_product") or product).strip() or product
+    contour_conversion = str(hints.get("contour_conversion") or "").strip()
 
     component_spec = _resolve_model_var_spec(model, contour_component, model_plugin)
     component_patterns = _get_search_patterns(component_spec)
@@ -168,6 +169,14 @@ def _build_contour_metadata_for_variable(
         src_nodata=None,
         dst_nodata=float("nan"),
     )
+    if contour_conversion:
+        contour_capability = type("_ContourCapability", (), {"conversion": contour_conversion})()
+        warped_component = convert_units(
+            warped_component,
+            contour_component,
+            model_id=model,
+            var_capability=contour_capability,
+        )
     finite = warped_component[np.isfinite(warped_component)]
     if finite.size == 0:
         return None, None
