@@ -131,7 +131,7 @@ export default function Variables() {
         id: "wspd300",
         name: "300mb Heights + Winds",
         oneLiner: "300 mb wind speed shaded beneath 300 mb height contours for jet-stream structure and upper-level forcing diagnosis.",
-        pills: ["300 mb", "mph + m", "Continuous + contours"],
+        pills: ["300 mb", "kt + m", "Continuous + contours"],
         definition:
           "This product shades 300 mb wind speed while overlaying 300 mb geopotential height contours. Together they help diagnose jet streaks, upper-level flow orientation, and where stronger upper support may overlap lower-level moisture and instability.",
         bestFor: [

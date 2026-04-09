@@ -2255,6 +2255,11 @@ def _ms_to_mph(data: np.ndarray) -> np.ndarray:
     return data * 2.23694
 
 
+def _ms_to_kt(data: np.ndarray) -> np.ndarray:
+    """Convert m/s → knots, preserving NaN."""
+    return data * 1.943844
+
+
 def _meters_to_inches(data: np.ndarray) -> np.ndarray:
     """Convert meters → inches, preserving NaN."""
     return data * 39.37007874015748
@@ -2281,6 +2286,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     # Conversion IDs for capability metadata
     "c_to_f": _celsius_to_fahrenheit,
     "ms_to_mph": _ms_to_mph,
+    "ms_to_kt": _ms_to_kt,
     "m_to_in": _meters_to_inches,
     "kgm2_to_in": _kgm2_to_inches,
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,

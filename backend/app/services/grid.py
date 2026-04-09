@@ -188,7 +188,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": 0.0,
         "nodata": 65535,
-        "units": "mph",
+        "units": "kt",
     },
     ("gfs", "vort500"): {
         "scale": 0.1,

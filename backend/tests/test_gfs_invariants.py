@@ -105,7 +105,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["derived"] is True
     assert wspd300["derive_strategy_id"] == "wspd10m"
     assert wspd300["kind"] == "continuous"
-    assert wspd300["units"] == "mph"
+    assert wspd300["units"] == "kt"
     assert wspd300["display_name"] == "300mb Heights + Winds"
     assert wspd300["group"] == "Wind"
     assert wspd300["color_map_id"] == "wspd300"
@@ -324,7 +324,7 @@ def test_gfs_wspd300_uses_300mb_components_and_height_contours() -> None:
     assert var_spec.derived is True
     assert var_spec.derive == "wspd10m"
     assert var_spec.kind == "continuous"
-    assert var_spec.units == "mph"
+    assert var_spec.units == "kt"
     assert var_spec.selectors.search == []
     assert var_spec.selectors.hints["u_component"] == "u300"
     assert var_spec.selectors.hints["v_component"] == "v300"
