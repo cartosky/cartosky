@@ -1132,23 +1132,27 @@ def _ptype_intensity_family_rates(
         warm_signal = np.clip(np.nan_to_num(warm_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
 
     precip_signal = np.maximum(np.maximum(rain_prob, snow_prob), ice_prob).astype(np.float32, copy=False)
-    snow_thermal_boost = (0.45 * cold_signal * precip_signal).astype(np.float32, copy=False)
+    positive_precip = np.isfinite(prate_inhr) & (prate_inhr >= 0.01)
+    effective_precip_signal = np.where(positive_precip, np.maximum(precip_signal, 0.35), precip_signal).astype(
+        np.float32,
+        copy=False,
+    )
+    snow_thermal_boost = (0.75 * cold_signal * effective_precip_signal).astype(np.float32, copy=False)
     ice_surface_lock = np.clip(cold_signal - 0.35 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
     ice_thermal_boost = (0.30 * warm_signal * ice_surface_lock * precip_signal).astype(np.float32, copy=False)
 
     snow_score = np.maximum(np.nan_to_num(snow_prob, nan=0.0), snow_thermal_boost).astype(np.float32, copy=False)
     ice_score = np.maximum(np.nan_to_num(ice_prob, nan=0.0), ice_thermal_boost).astype(np.float32, copy=False)
-    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), 0.8 * cold_signal).astype(np.float32, copy=False)
-    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.8 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
+    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), 0.9 * cold_signal).astype(np.float32, copy=False)
+    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * (1.0 - 0.9 * np.nan_to_num(frozen_signal, nan=0.0))).astype(
         np.float32,
         copy=False,
     )
     rain_score = np.clip(rain_score, 0.0, 1.0).astype(np.float32, copy=False)
 
-    positive_precip = np.isfinite(prate_inhr) & (prate_inhr >= 0.01)
     missing_ptype_signal = positive_precip & (precip_signal <= 0.0)
     if np.any(missing_ptype_signal):
-        fallback_snow = np.clip(0.75 * cold_signal[missing_ptype_signal], 0.0, 1.0).astype(np.float32, copy=False)
+        fallback_snow = np.clip(0.90 * cold_signal[missing_ptype_signal], 0.0, 1.0).astype(np.float32, copy=False)
         fallback_ice = np.clip(0.6 * warm_signal[missing_ptype_signal] * ice_surface_lock[missing_ptype_signal], 0.0, 1.0).astype(
             np.float32,
             copy=False,
@@ -2844,7 +2848,7 @@ def _derive_ptype_intensity_gfs(
         "snow": {"offset": 16, "count": 10},
         "ice": {"offset": 26, "count": 17},
     }
-    min_visible = {"rain": 0.01, "snow": 0.10, "ice": 0.05}
+    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.05}
 
     indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
     for code in ("rain", "snow", "ice"):
