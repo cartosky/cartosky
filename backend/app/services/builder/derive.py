@@ -1145,6 +1145,19 @@ def _ptype_intensity_family_rates(
     )
     rain_score = np.clip(rain_score, 0.0, 1.0).astype(np.float32, copy=False)
 
+    positive_precip = np.isfinite(prate_inhr) & (prate_inhr >= 0.01)
+    missing_ptype_signal = positive_precip & (precip_signal <= 0.0)
+    if np.any(missing_ptype_signal):
+        fallback_snow = np.clip(0.75 * cold_signal[missing_ptype_signal], 0.0, 1.0).astype(np.float32, copy=False)
+        fallback_ice = np.clip(0.6 * warm_signal[missing_ptype_signal] * ice_surface_lock[missing_ptype_signal], 0.0, 1.0).astype(
+            np.float32,
+            copy=False,
+        )
+        fallback_rain = np.clip(1.0 - np.maximum(fallback_snow, fallback_ice), 0.0, 1.0).astype(np.float32, copy=False)
+        snow_score[missing_ptype_signal] = fallback_snow
+        ice_score[missing_ptype_signal] = fallback_ice
+        rain_score[missing_ptype_signal] = fallback_rain
+
     score_sum = (rain_score + snow_score + ice_score).astype(np.float32, copy=False)
     finite_prate = np.isfinite(prate_inhr)
     rain_rate = np.zeros(prate_inhr.shape, dtype=np.float32)

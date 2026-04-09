@@ -184,3 +184,61 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
 
     assert snow_values[0, 0] > rain_values[0, 0]
     assert 16.0 <= indexed[0, 0] <= 25.0
+
+
+def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "prate": np.array([[10.0, 10.0]], dtype=np.float32),
+        "crain": np.array([[0.0, 0.0]], dtype=np.float32),
+        "csnow": np.array([[0.0, 0.0]], dtype=np.float32),
+        "cicep": np.array([[0.0, 0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0, 0.0]], dtype=np.float32),
+        "tmp2m": np.array([[3.0, -3.0]], dtype=np.float32),
+        "tmp850": np.array([[2.0, -6.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        return component_data[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    rain_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_rain",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("rain"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+    snow_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_snow",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("snow"),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert np.isfinite(indexed[0, 0])
+    assert np.isfinite(indexed[0, 1])
+    assert 0.0 <= indexed[0, 0] <= 15.0
+    assert 16.0 <= indexed[0, 1] <= 25.0
+    assert rain_values[0, 0] > 0.0
+    assert snow_values[0, 1] > 0.0
