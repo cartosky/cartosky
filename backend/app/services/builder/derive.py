@@ -1199,10 +1199,16 @@ def _ptype_intensity_family_rates(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Split total precip intensity into display-family intensity planes.
 
-    GFS precip-type fields are often categorical overlaps rather than true
-    probabilities. We still treat them as relative family weights so mixed-phase
-    areas can express snow/ice intensity without letting rain always consume the
-    full rate.
+    Uses priority-based selection matching how the competitor renders ptype:
+    **ice > snow > rain**.  If the model's categorical mask for a higher-priority
+    family is set above a small threshold the pixel belongs to that family
+    regardless of what lower-priority masks say.  GFS routinely sets both
+    ``crain=1`` and ``csnow=1`` in snow regions, so argmax-of-scores approaches
+    systematically misclassify these as rain.
+
+    Thermal profiles are only used as a **fallback** when *all* categorical masks
+    are zero but valid precipitation exists (e.g. early GFS hours where ptype
+    masks haven't spun up yet).
     """
     base_intensity = np.where(
         np.isfinite(intensity),
@@ -1216,67 +1222,59 @@ def _ptype_intensity_family_rates(
     frzr_prob = _normalize_ptype_probability(frzr)
     ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
 
-    cold_signal = np.zeros(base_intensity.shape, dtype=np.float32)
-    warm_signal = np.zeros(base_intensity.shape, dtype=np.float32)
-    if cold_profile is not None and cold_profile.shape == base_intensity.shape:
-        cold_signal = np.clip(np.nan_to_num(cold_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
-    if warm_profile is not None and warm_profile.shape == base_intensity.shape:
-        warm_signal = np.clip(np.nan_to_num(warm_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+    # --- Priority-based family assignment (ice > snow > rain) ---------------
+    # Thresholds mirror the competitor: ice >= 0.05, snow > 0, rain >= 0.01.
+    # Using very small thresholds so that any nonzero model signal wins.
+    ice_thresh = np.float32(0.05)
+    snow_thresh = np.float32(0.01)
+    rain_thresh = np.float32(0.01)
 
-    precip_signal = np.maximum(np.maximum(rain_prob, snow_prob), ice_prob).astype(np.float32, copy=False)
+    is_ice = ice_prob >= ice_thresh
+    is_snow = (~is_ice) & (snow_prob >= snow_thresh)
+    is_rain = (~is_ice) & (~is_snow) & (rain_prob >= rain_thresh)
+
+    # --- Thermal fallback for pixels with precip but no categorical signal ---
     positive_precip = np.isfinite(base_intensity) & (base_intensity >= 0.01)
-    effective_precip_signal = np.where(positive_precip, np.maximum(precip_signal, 0.35), precip_signal).astype(
-        np.float32,
-        copy=False,
-    )
-    thermal_snow_share = np.clip(1.35 * cold_signal - 0.25 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
-    snow_thermal_boost = np.maximum(0.75 * cold_signal, thermal_snow_share * effective_precip_signal).astype(
-        np.float32,
-        copy=False,
-    )
-    ice_surface_lock = np.clip(cold_signal - 0.35 * warm_signal, 0.0, 1.0).astype(np.float32, copy=False)
-    ice_thermal_boost = (0.30 * warm_signal * ice_surface_lock * precip_signal).astype(np.float32, copy=False)
+    has_any_mask = (rain_prob >= rain_thresh) | (snow_prob >= snow_thresh) | (ice_prob >= ice_thresh)
+    needs_fallback = positive_precip & (~has_any_mask)
 
-    snow_score = np.maximum(np.nan_to_num(snow_prob, nan=0.0), snow_thermal_boost).astype(np.float32, copy=False)
-    ice_score = np.maximum(np.nan_to_num(ice_prob, nan=0.0), ice_thermal_boost).astype(np.float32, copy=False)
-    frozen_signal = np.maximum(np.maximum(snow_score, ice_score), thermal_snow_share).astype(np.float32, copy=False)
-    # Suppress rain aggressively when there is any frozen signal.  The old
-    # linear factor ``1 - 0.95*f`` left rain_score ≈ 0.525 when f=0.5 and
-    # rain_prob=1.0, which was enough to beat a moderate snow_score via argmax.
-    # A squared suppression drives rain toward zero much faster in mixed-phase
-    # zones so that snow/ice win the argmax where temperatures support them.
-    frozen_clipped = np.clip(np.nan_to_num(frozen_signal, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
-    rain_suppression = np.square(1.0 - frozen_clipped).astype(np.float32, copy=False)
-    rain_score = (np.nan_to_num(rain_prob, nan=0.0) * rain_suppression).astype(
-        np.float32,
-        copy=False,
-    )
-    rain_score = np.clip(rain_score, 0.0, 1.0).astype(np.float32, copy=False)
+    if np.any(needs_fallback):
+        cold_signal = np.zeros(base_intensity.shape, dtype=np.float32)
+        warm_signal = np.zeros(base_intensity.shape, dtype=np.float32)
+        if cold_profile is not None and cold_profile.shape == base_intensity.shape:
+            cold_signal = np.clip(np.nan_to_num(cold_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+        if warm_profile is not None and warm_profile.shape == base_intensity.shape:
+            warm_signal = np.clip(np.nan_to_num(warm_profile, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
 
-    missing_ptype_signal = positive_precip & (precip_signal <= 0.0)
-    if np.any(missing_ptype_signal):
-        fallback_snow = np.clip(0.90 * cold_signal[missing_ptype_signal], 0.0, 1.0).astype(np.float32, copy=False)
-        fallback_ice = np.clip(0.6 * warm_signal[missing_ptype_signal] * ice_surface_lock[missing_ptype_signal], 0.0, 1.0).astype(
-            np.float32,
-            copy=False,
-        )
-        fallback_rain = np.clip(1.0 - np.maximum(fallback_snow, fallback_ice), 0.0, 1.0).astype(np.float32, copy=False)
-        snow_score[missing_ptype_signal] = fallback_snow
-        ice_score[missing_ptype_signal] = fallback_ice
-        rain_score[missing_ptype_signal] = fallback_rain
+        fb_cold = cold_signal[needs_fallback]
+        fb_warm = warm_signal[needs_fallback]
+        # Strong cold → snow, moderate warm with some cold → ice, else rain
+        fb_snow = fb_cold >= 0.5
+        fb_ice = (~fb_snow) & (fb_warm >= 0.3) & (fb_cold >= 0.2)
+        fb_rain = (~fb_snow) & (~fb_ice)
 
-    score_sum = (rain_score + snow_score + ice_score).astype(np.float32, copy=False)
+        # Apply fallback assignments
+        fallback_indices = np.where(needs_fallback)
+        snow_fallback_mask = np.zeros(base_intensity.shape, dtype=bool)
+        ice_fallback_mask = np.zeros(base_intensity.shape, dtype=bool)
+        rain_fallback_mask = np.zeros(base_intensity.shape, dtype=bool)
+        snow_fallback_mask[fallback_indices] = fb_snow
+        ice_fallback_mask[fallback_indices] = fb_ice
+        rain_fallback_mask[fallback_indices] = fb_rain
+
+        is_snow = is_snow | snow_fallback_mask
+        is_ice = is_ice | ice_fallback_mask
+        is_rain = is_rain | rain_fallback_mask
+
+    # --- Assign full intensity to the winning family -----------------------
     finite_intensity = np.isfinite(base_intensity)
     rain_rate = np.zeros(base_intensity.shape, dtype=np.float32)
     snow_rate = np.zeros(base_intensity.shape, dtype=np.float32)
     ice_rate = np.zeros(base_intensity.shape, dtype=np.float32)
-    valid = finite_intensity & positive_precip & (score_sum > 0.0)
-    if np.any(valid):
-        family_stack = np.stack([rain_score, snow_score, ice_score], axis=0).astype(np.float32, copy=False)
-        family_idx = np.argmax(family_stack, axis=0)
-        rain_rate[valid & (family_idx == 0)] = base_intensity[valid & (family_idx == 0)]
-        snow_rate[valid & (family_idx == 1)] = base_intensity[valid & (family_idx == 1)]
-        ice_rate[valid & (family_idx == 2)] = base_intensity[valid & (family_idx == 2)]
+    valid = finite_intensity & positive_precip
+    rain_rate[valid & is_rain] = base_intensity[valid & is_rain]
+    snow_rate[valid & is_snow] = base_intensity[valid & is_snow]
+    ice_rate[valid & is_ice] = base_intensity[valid & is_ice]
     rain_rate[~finite_intensity] = np.nan
     snow_rate[~finite_intensity] = np.nan
     ice_rate[~finite_intensity] = np.nan
