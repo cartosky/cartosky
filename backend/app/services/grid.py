@@ -256,6 +256,24 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "index",
     },
+    ("gfs", "ptype_intensity_rain"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
+    ("gfs", "ptype_intensity_snow"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
+    ("gfs", "ptype_intensity_ice"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
     ("gfs", "snowfall_total"): {
         "scale": 0.1,
         "offset": 0.0,
@@ -833,6 +851,29 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
     return palette
 
 
+def _read_composite_sidecar_metadata(run_root: Path, var: str) -> dict[str, Any]:
+    var_dir = Path(run_root) / var
+    if not var_dir.is_dir():
+        return {}
+    for sidecar_path in sorted(var_dir.glob("fh*.json")):
+        try:
+            sidecar = json.loads(sidecar_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        composite_layers = sidecar.get("composite_layers")
+        if not isinstance(composite_layers, list) or not composite_layers:
+            continue
+        payload: dict[str, Any] = {"composite_layers": composite_layers}
+        composite_mode = sidecar.get("composite_mode")
+        if isinstance(composite_mode, str) and composite_mode.strip():
+            payload["composite_mode"] = composite_mode.strip()
+        display_name = sidecar.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            payload["display_name"] = display_name.strip()
+        return payload
+    return {}
+
+
 def _build_manifest_for_var_from_run_root(
     *,
     run_root: Path,
@@ -993,6 +1034,9 @@ def _build_manifest_for_var_from_run_root(
         "palette": _build_palette_block(model, var),
         "lods": manifest_lods,
     }
+    composite_meta = _read_composite_sidecar_metadata(run_root, var)
+    if composite_meta:
+        manifest.update(composite_meta)
     if display_prep:
         manifest["display_prep"] = display_prep
     write_json_atomic(grid_manifest_path_for_run_root(run_root, var), manifest)

@@ -130,6 +130,15 @@ class GFSPlugin(BaseModelPlugin):
         }
         return _aliases.get(normalized, normalized)
 
+    def get_var_capability(self, var_key: str) -> VariableCapability | None:
+        capability = super().get_var_capability(var_key)
+        if capability is None:
+            return None
+        frontend = getattr(capability, "frontend", {}) or {}
+        if bool(frontend.get("internal_only")):
+            return None
+        return capability
+
 
 # ---------------------------------------------------------------------------
 # Region definitions
@@ -623,12 +632,72 @@ GFS_VARS: dict[str, VarSpec] = {
                 "contour_end": "1048",
                 "contour_key": "mslp",
                 "contour_label": "Mean Sea-Level Pressure",
+                "companion_vars": "ptype_intensity_rain,ptype_intensity_snow,ptype_intensity_ice",
+                "composite_mode": "max_alpha_stack",
+                "composite_layers": "rain:ptype_intensity_rain;snow:ptype_intensity_snow;ice:ptype_intensity_ice",
             },
         ),
         primary=True,
         derived=True,
         derive="ptype_intensity_gfs",
         kind="indexed",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_rain": VarSpec(
+        id="ptype_intensity_rain",
+        name="Precipitation Type Intensity Rain",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "rain",
+                "prate_component": "prate",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component",
+        kind="continuous",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_snow": VarSpec(
+        id="ptype_intensity_snow",
+        name="Precipitation Type Intensity Snow",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "snow",
+                "prate_component": "prate",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component",
+        kind="continuous",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_ice": VarSpec(
+        id="ptype_intensity_ice",
+        name="Precipitation Type Intensity Ice",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "ice",
+                "prate_component": "prate",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component",
+        kind="continuous",
         units="in/hr",
         normalize_units="in/hr",
     ),
@@ -813,6 +882,9 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "refc": "refc",
     "precip_ptype": "precip_ptype",
     "ptype_intensity": "ptype_intensity",
+    "ptype_intensity_rain": "ptype_intensity_rain",
+    "ptype_intensity_snow": "ptype_intensity_snow",
+    "ptype_intensity_ice": "ptype_intensity_ice",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
@@ -822,6 +894,9 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_ptype": 6,
     "ptype_intensity": 6,
+    "ptype_intensity_rain": 6,
+    "ptype_intensity_snow": 6,
+    "ptype_intensity_ice": 6,
     "precip_total": 6,
     "snowfall_total": 6,
     "snowfall_kuchera_total": 6,
@@ -903,6 +978,23 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
     is_buildable = bool(var_spec.primary or var_spec.derived)
+    hints = getattr(getattr(var_spec, "selectors", None), "hints", {}) or {}
+    frontend: dict[str, object] = {}
+    constraints = dict(GFS_CONSTRAINTS_BY_VAR_KEY.get(var_key, {}))
+    if str(hints.get("companion_vars") or "").strip():
+        frontend["companion_vars"] = [
+            item.strip()
+            for item in str(hints.get("companion_vars") or "").split(",")
+            if item.strip()
+        ]
+    if str(hints.get("composite_mode") or "").strip():
+        frontend["composite_mode"] = str(hints.get("composite_mode") or "").strip()
+    if str(hints.get("composite_layers") or "").strip():
+        frontend["composite_layers"] = str(hints.get("composite_layers") or "").strip()
+    if str(var_key).startswith("ptype_intensity_"):
+        frontend["internal_only"] = True
+        is_buildable = False
+        constraints["internal_only"] = 1
     return VariableCapability(
         var_key=var_key,
         name=var_spec.name,
@@ -920,7 +1012,8 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         order=GFS_ORDER_BY_VAR_KEY.get(var_key),
         group=GFS_GROUP_BY_VAR_KEY.get(var_key),
         conversion=GFS_CONVERSION_BY_VAR_KEY.get(var_key),
-        constraints=dict(GFS_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),
+        constraints=constraints,
+        frontend=frontend,
     )
 
 

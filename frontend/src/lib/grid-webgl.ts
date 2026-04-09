@@ -613,6 +613,7 @@ type ProgramBindings = {
 };
 
 export class GridWebglLayerController {
+  private readonly layerId: string;
   private readonly frameCacheBudgetBytes = resolveFrameCacheBudgetBytes();
   private readonly textureCacheBudgetBytes = resolveTextureCacheBudgetBytes();
   private map: maplibregl.Map | null = null;
@@ -670,6 +671,10 @@ export class GridWebglLayerController {
   private transitionDurationMs = 0;
   private quadSignature: string | null = null;
 
+  constructor(layerId = GRID_WEBGL_LAYER_ID) {
+    this.layerId = layerId;
+  }
+
   private buildDiagnosticMeta(frameUrl: string): Record<string, unknown> {
     const selectedLod = this.resolveSelectedLod();
     return {
@@ -701,7 +706,7 @@ export class GridWebglLayerController {
 
   createLayer(): maplibregl.CustomLayerInterface {
     return {
-      id: GRID_WEBGL_LAYER_ID,
+      id: this.layerId,
       type: "custom",
       renderingMode: "2d",
       onAdd: (map, gl) => {
@@ -726,7 +731,7 @@ export class GridWebglLayerController {
   }
 
   ensureAttached(map: maplibregl.Map, beforeId?: string) {
-    if (map.getLayer(GRID_WEBGL_LAYER_ID)) {
+    if (map.getLayer(this.layerId)) {
       return;
     }
     const resolvedBeforeId = beforeId && map.getLayer(beforeId) ? beforeId : undefined;
@@ -810,8 +815,8 @@ export class GridWebglLayerController {
 
   remove(map?: maplibregl.Map | null) {
     const target = map ?? this.map;
-    if (target?.getLayer(GRID_WEBGL_LAYER_ID)) {
-      target.removeLayer(GRID_WEBGL_LAYER_ID);
+    if (target?.getLayer(this.layerId)) {
+      target.removeLayer(this.layerId);
     }
     this.disposeGlResources();
   }

@@ -100,6 +100,12 @@ def write_run_manifest(
                 if var_spec is not None and getattr(var_spec, "name", None):
                     display_name = str(getattr(var_spec, "name"))
 
+            full_capability_catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", {}) or {}
+            raw_capability = full_capability_catalog.get(var_id) if isinstance(full_capability_catalog, dict) else None
+            raw_frontend = getattr(raw_capability, "frontend", {}) if raw_capability is not None else {}
+            if isinstance(raw_frontend, dict) and bool(raw_frontend.get("internal_only")):
+                continue
+
         for fh in expected_fhs:
             sidecar_path = data_root / "published" / model / run_id / var_id / f"fh{fh:03d}.json"
             if not sidecar_path.exists():

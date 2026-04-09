@@ -2680,6 +2680,66 @@ def _derive_ptype_intensity_gfs(
     return indexed, src_crs, src_transform
 
 
+def _derive_ptype_intensity_component(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del model_id, var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    component = str(hints.get("ptype_component") or "").strip().lower()
+    prate_id = hints.get("prate_component", "prate")
+    rain_id = hints.get("rain_component", "crain")
+    snow_id = hints.get("snow_component", "csnow")
+    sleet_id = hints.get("sleet_component", "cicep")
+    frzr_id = hints.get("frzr_component", "cfrzr")
+
+    prate, src_crs, src_transform = _fetch_component(
+        model_id="gfs",
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=prate_id,
+        ctx=ctx,
+    )
+    rain, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
+    snow, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
+    sleet, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
+    frzr, _, _ = _fetch_component(model_id="gfs", product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+
+    prate_inhr = np.where(
+        np.isfinite(prate),
+        np.maximum(prate, 0.0) * 3600.0 * 0.03937007874015748,
+        np.nan,
+    ).astype(np.float32)
+
+    rain_gate = np.where(np.isfinite(rain), rain > 0, False)
+    snow_gate = np.where(np.isfinite(snow), snow > 0, False)
+    ice_gate = np.where(np.isfinite(sleet), sleet > 0, False) | np.where(np.isfinite(frzr), frzr > 0, False)
+
+    if component == "rain":
+        gate = rain_gate & ~snow_gate & ~ice_gate
+    elif component == "snow":
+        gate = snow_gate & ~ice_gate
+    elif component == "ice":
+        gate = ice_gate
+    else:
+        gate = np.zeros(prate_inhr.shape, dtype=bool)
+
+    values = np.where(gate & np.isfinite(prate_inhr), prate_inhr, np.nan).astype(np.float32)
+    return values, src_crs, src_transform
+
+
 def _derive_precip_total_cumulative(
     *,
     model_id: str,
@@ -4198,6 +4258,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("prate", "crain", "csnow", "cicep", "cfrzr"),
         output_var_key="ptype_intensity",
         execute=_derive_ptype_intensity_gfs,
+    ),
+    "ptype_intensity_component": DeriveStrategy(
+        id="ptype_intensity_component",
+        required_inputs=("prate", "crain", "csnow", "cicep", "cfrzr"),
+        output_var_key=None,
+        execute=_derive_ptype_intensity_component,
     ),
     "precip_total_cumulative": DeriveStrategy(
         id="precip_total_cumulative",

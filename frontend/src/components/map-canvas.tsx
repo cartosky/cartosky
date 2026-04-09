@@ -571,6 +571,13 @@ type MapCanvasProps = {
   selectionKey: string;
   selectionEpoch: number;
   gridManifest?: GridManifestResponse | null;
+  compositeGridLayers?: Array<{
+    id: string;
+    manifest: GridManifestResponse | null;
+    frameUrl: string | null;
+    frameHour: number | null;
+    legend: LegendPayload | null;
+  }>;
   gridLodLevel?: number | null;
   gridFrameUrl?: string | null;
   gridFrameHour?: number | null;
@@ -607,6 +614,7 @@ export function MapCanvas({
   selectionKey,
   selectionEpoch,
   gridManifest = null,
+  compositeGridLayers = [],
   gridLodLevel = null,
   gridFrameUrl = null,
   gridFrameHour = null,
@@ -644,6 +652,7 @@ export function MapCanvas({
   if (!gridWebglControllerRef.current) {
     gridWebglControllerRef.current = new GridWebglLayerController();
   }
+  const compositeGridControllersRef = useRef<Map<string, GridWebglLayerController>>(new Map());
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
@@ -850,7 +859,7 @@ export function MapCanvas({
     return urls;
   }, [apiRoot, gridFrameHour, gridFrameUrl, gridLodLevel, gridManifest, mode]);
   const shouldUseGridController = Boolean(
-    gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0
+    gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0 || compositeGridLayers.length > 0
   );
 
   const clearAnchorMarkers = useCallback(() => {
@@ -1010,6 +1019,11 @@ export function MapCanvas({
     if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
     }
+    for (const layerId of compositeGridControllersRef.current.keys()) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
     if (map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(COASTLINE_LAYER_ID, "twf-labels");
     }
@@ -1091,6 +1105,10 @@ export function MapCanvas({
       map.off("error", handleMapError as any);
       clearAnchorMarkers();
       gridWebglControllerRef.current?.remove(map);
+      for (const controller of compositeGridControllersRef.current.values()) {
+        controller.remove(map);
+      }
+      compositeGridControllersRef.current.clear();
       map.remove();
       mapRef.current = null;
       setIsLoaded(false);
@@ -1111,6 +1129,9 @@ export function MapCanvas({
     const onStyleData = () => {
       if (shouldUseGridController) {
         controller?.ensureAttached(map, COASTLINE_LAYER_ID);
+        for (const compositeController of compositeGridControllersRef.current.values()) {
+          compositeController.ensureAttached(map, COASTLINE_LAYER_ID);
+        }
       }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
       enforceLayerOrder(map);
@@ -1547,6 +1568,10 @@ export function MapCanvas({
 
     if (!shouldUseGridController) {
       controller.remove(map);
+      for (const compositeController of compositeGridControllersRef.current.values()) {
+        compositeController.remove(map);
+      }
+      compositeGridControllersRef.current.clear();
       return;
     }
 
@@ -1569,8 +1594,47 @@ export function MapCanvas({
       onFrameEvicted: onGridFrameEvicted,
       isAnimating,
     });
+
+    const activeCompositeLayerIds = new Set<string>();
+    for (const layer of compositeGridLayers) {
+      const layerId = `${GRID_WEBGL_LAYER_ID}-${layer.id}`;
+      activeCompositeLayerIds.add(layerId);
+      let compositeController = compositeGridControllersRef.current.get(layerId);
+      if (!compositeController) {
+        compositeController = new GridWebglLayerController(layerId);
+        compositeGridControllersRef.current.set(layerId, compositeController);
+      }
+      compositeController.ensureAttached(map, COASTLINE_LAYER_ID);
+      compositeController.update({
+        active: Boolean(gridActive && layer.manifest && layer.frameUrl),
+        manifest: layer.manifest,
+        lodLevel: gridLodLevel,
+        frameUrl: layer.frameUrl,
+        frameHour: layer.frameHour,
+        legend: layer.legend,
+        opacity,
+        overlayFadeOutZoom,
+        selectionEpoch,
+        selectionKey: `${selectionKey}:${layer.id}`,
+        prefetchUrls: [],
+        rasterPaint: getGridPaintSettings(variable, basemapMode),
+        onFrameVisible: onGridFrameVisible,
+        onFrameReady: onGridFrameReady,
+        onFrameEvicted: onGridFrameEvicted,
+        isAnimating,
+      });
+    }
+
+    for (const [layerId, compositeController] of compositeGridControllersRef.current.entries()) {
+      if (activeCompositeLayerIds.has(layerId)) {
+        continue;
+      }
+      compositeController.remove(map);
+      compositeGridControllersRef.current.delete(layerId);
+    }
   }, [
     basemapMode,
+    compositeGridLayers,
     gridActive,
     gridFrameHour,
     gridFrameUrl,

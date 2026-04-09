@@ -145,6 +145,7 @@ export default function App() {
   const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
+  const [compositeGridManifests, setCompositeGridManifests] = useState<Record<string, GridManifestResponse | null>>({});
   const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
   // Keep the last non-null resolved grid run so that selectionKey stays stable
   // while the next manifest probe is in-flight ("pending-grid" → real-id
@@ -577,11 +578,13 @@ export default function App() {
           if (result.status === "fulfilled" && result.value.manifest) {
             setResolvedGridLatestRunId(result.value.candidateRun);
             setGridManifest(result.value.manifest);
+            setCompositeGridManifests({});
             return;
           }
         }
         setResolvedGridLatestRunId(null);
         setGridManifest(null);
+        setCompositeGridManifests({});
         return;
       }
 
@@ -590,6 +593,7 @@ export default function App() {
         return;
       }
       setGridManifest(manifest);
+      setCompositeGridManifests({});
     };
 
     void resolveManifest().catch(() => {
@@ -600,6 +604,7 @@ export default function App() {
         setResolvedGridLatestRunId(null);
       }
       setGridManifest(null);
+      setCompositeGridManifests({});
     });
 
     return () => {
@@ -618,6 +623,7 @@ export default function App() {
     telemetryRunId,
     variable,
   ]);
+
   // Clock tick (30s) so the observed-source freshness badge re-evaluates as
   // real time passes, rather than staying frozen on the initial server value.
   const [freshnessTickMs, setFreshnessTickMs] = useState(() => Date.now());
@@ -686,6 +692,37 @@ export default function App() {
     }
     return selectGridManifestLod(gridManifest, mapZoom);
   }, [gridManifest, mapZoom]);
+  const compositeLayerSpecs = useMemo(() => {
+    return Array.isArray(gridManifest?.composite_layers)
+      ? gridManifest.composite_layers.filter((layer) => Boolean(layer?.id) && Boolean(layer?.var))
+      : [];
+  }, [gridManifest]);
+  useEffect(() => {
+    if (!model || !resolvedRunForRequests || compositeLayerSpecs.length === 0) {
+      setCompositeGridManifests({});
+      return;
+    }
+    const controller = new AbortController();
+    void Promise.all(
+      compositeLayerSpecs.map(async (layer) => {
+        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, { signal: controller.signal });
+        return [layer.id, manifest] as const;
+      })
+    ).then((entries) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setCompositeGridManifests(Object.fromEntries(entries));
+    }).catch(() => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setCompositeGridManifests({});
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [compositeLayerSpecs, model, resolvedRunForRequests]);
   const gridFrameByHour = useMemo(() => {
     const map = new Map<number, NonNullable<typeof selectedGridLod>["frames"][number]>();
     const frames = Array.isArray(selectedGridLod?.frames) ? selectedGridLod.frames : [];
@@ -735,6 +772,51 @@ export default function App() {
     }
     return gridFrameByHour.get(Number(resolvedGridDisplayHour)) ?? null;
   }, [gridFrameByHour, resolvedGridDisplayHour]);
+  const compositeGridLayers = useMemo(() => {
+    if (!Number.isFinite(resolvedGridDisplayHour) || compositeLayerSpecs.length === 0) {
+      return [] as Array<{
+        id: string;
+        manifest: GridManifestResponse | null;
+        frameUrl: string | null;
+        frameHour: number | null;
+        legend: LegendPayload | null;
+      }>;
+    }
+    const targetHour = Number(resolvedGridDisplayHour);
+    return compositeLayerSpecs.map((layer) => {
+      const manifest = compositeGridManifests[layer.id] ?? null;
+      const selectedLod = selectGridManifestLod(manifest, mapZoom);
+      const frames = Array.isArray(selectedLod?.frames) ? selectedLod.frames : [];
+      const frameHours = frames
+        .map((entry) => Number(entry?.fh))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      const resolvedHour = frameHours.length > 0 ? nearestFrame(frameHours, targetHour) : null;
+      const frame = Number.isFinite(resolvedHour)
+        ? frames.find((entry) => Number(entry?.fh) === Number(resolvedHour)) ?? null
+        : null;
+      const frameUrl = frame?.url
+        ? (/^https?:\/\//i.test(frame.url)
+            ? frame.url
+            : `${apiRoot}${frame.url.startsWith("/") ? "" : "/"}${frame.url}`)
+        : null;
+      const legendMeta = manifest
+        ? {
+            ...(typeof manifest.palette?.kind === "string" ? { kind: manifest.palette.kind } : {}),
+            ...(typeof manifest.grid?.units === "string" ? { units: manifest.grid.units } : {}),
+            ...(typeof manifest.display_name === "string" ? { display_name: manifest.display_name } : {}),
+            var_key: manifest.var,
+          }
+        : null;
+      return {
+        id: layer.id,
+        manifest,
+        frameUrl,
+        frameHour: Number.isFinite(resolvedHour) ? Number(resolvedHour) : null,
+        legend: buildLegend(legendMeta, opacity),
+      };
+    }).filter((layer) => layer.manifest && layer.frameUrl);
+  }, [apiRoot, compositeGridManifests, compositeLayerSpecs, mapZoom, opacity, resolvedGridDisplayHour]);
   const activeGridFrameUrl = useMemo(() => {
     const frameUrl = activeGridFrame?.url;
     if (!frameUrl) {
@@ -883,9 +965,9 @@ export default function App() {
       && selectedGridLod
       && Array.isArray(gridManifest.bbox)
       && gridManifest.bbox.length === 4
-      && presentedGridFrameUrl
+      && (presentedGridFrameUrl || compositeGridLayers.length > 0)
     );
-  }, [gridManifest, presentedGridFrameUrl, selectedGridLod]);
+  }, [compositeGridLayers.length, gridManifest, presentedGridFrameUrl, selectedGridLod]);
   const isGridPlayable = useMemo(() => {
     return canUseGridPlayback;
   }, [canUseGridPlayback]);
@@ -2940,8 +3022,9 @@ export default function App() {
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
+          compositeGridLayers={isGridLowMidActive ? compositeGridLayers : []}
           gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
-          gridFrameUrl={isGridLowMidActive ? presentedGridFrameUrl : null}
+          gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}

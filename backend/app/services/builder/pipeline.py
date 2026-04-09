@@ -459,6 +459,9 @@ def build_sidecar_json(
             if item
         ],
     }
+    display_name = colorize_meta.get("display_name") or var_spec.get("display_name") or getattr(var_spec_model, "name", None)
+    if isinstance(display_name, str) and display_name.strip():
+        sidecar["display_name"] = display_name.strip()
 
     if region:
         sidecar["region"] = region
@@ -473,6 +476,28 @@ def build_sidecar_json(
             value = var_spec.get(key)
         if value is not None:
             sidecar[key] = value
+
+    selectors = getattr(var_spec_model, "selectors", None) if var_spec_model is not None else None
+    hints = getattr(selectors, "hints", {}) if selectors is not None else {}
+    if isinstance(hints, dict):
+        composite_layers_raw = str(hints.get("composite_layers") or "").strip()
+        composite_mode = str(hints.get("composite_mode") or "").strip()
+        if composite_layers_raw:
+            composite_layers: list[dict[str, str]] = []
+            for item in composite_layers_raw.split(";"):
+                token = item.strip()
+                if not token or ":" not in token:
+                    continue
+                layer_id, component_var = token.split(":", 1)
+                layer_id = layer_id.strip()
+                component_var = component_var.strip()
+                if not layer_id or not component_var:
+                    continue
+                composite_layers.append({"id": layer_id, "var": component_var})
+            if composite_layers:
+                sidecar["composite_layers"] = composite_layers
+                if composite_mode:
+                    sidecar["composite_mode"] = composite_mode
 
     if contours:
         sidecar["contours"] = contours

@@ -318,6 +318,31 @@ def _resolve_vars_to_schedule(plugin, requested: list[str]) -> list[str]:
     return _dedupe_preserve_order(resolved)
 
 
+def _expand_companion_vars(plugin: Any, var_ids: list[str]) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def _append(var_id: str) -> None:
+        normalized = plugin.normalize_var_id(var_id)
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        expanded.append(normalized)
+
+    full_catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", {}) or {}
+    for var_id in var_ids:
+        _append(var_id)
+        capability = full_catalog.get(plugin.normalize_var_id(var_id)) if isinstance(full_catalog, dict) else None
+        frontend = getattr(capability, "frontend", {}) if capability is not None else {}
+        companion_vars = frontend.get("companion_vars") if isinstance(frontend, dict) else None
+        if not isinstance(companion_vars, list):
+            continue
+        for companion_var in companion_vars:
+            if isinstance(companion_var, str) and companion_var.strip():
+                _append(companion_var)
+    return expanded
+
+
 def _probe_search_pattern(plugin: Any, probe_var: str) -> str:
     probe_var_key = plugin.normalize_var_id(probe_var)
     probe_capability = plugin.get_var_capability(probe_var_key)
@@ -1129,6 +1154,12 @@ def _write_run_manifest(
                 if var_spec is not None and getattr(var_spec, "name", None):
                     display_name = str(getattr(var_spec, "name"))
 
+            full_capability_catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", {}) or {}
+            raw_capability = full_capability_catalog.get(var_id) if isinstance(full_capability_catalog, dict) else None
+            raw_frontend = getattr(raw_capability, "frontend", {}) if raw_capability is not None else {}
+            if isinstance(raw_frontend, dict) and bool(raw_frontend.get("internal_only")):
+                continue
+
         for fh in expected_fhs:
             sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh)
             if not sidecar_path.exists():
@@ -1609,6 +1640,7 @@ def run_scheduler(
         )
 
     normalized_vars = _resolve_vars_to_schedule(plugin, vars_to_build)
+    normalized_vars = _expand_companion_vars(plugin, normalized_vars)
     if not normalized_vars:
         raise SchedulerConfigError("No schedulable vars resolved")
 

@@ -203,6 +203,11 @@ export type GridManifestPalette = {
   transparent_zero?: boolean | null;
 };
 
+export type GridManifestCompositeLayer = {
+  id: string;
+  var: string;
+};
+
 export type GridManifestResponse = {
   manifest_version: number;
   subtype: WeatherSubstrate | string;
@@ -213,6 +218,9 @@ export type GridManifestResponse = {
   bbox?: [number, number, number, number];
   grid: GridManifestGrid;
   palette?: GridManifestPalette;
+  display_name?: string;
+  composite_mode?: string | null;
+  composite_layers?: GridManifestCompositeLayer[];
   lods: GridManifestLod[];
 };
 
