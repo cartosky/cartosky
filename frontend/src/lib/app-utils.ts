@@ -560,6 +560,9 @@ export function normalizeManifestVarRows(
     if (!normalizedId) {
       continue;
     }
+    if (normalizedId === "precip_ptype") {
+      continue;
+    }
     const displayName = entry?.display_name ?? entry?.name ?? entry?.label;
     normalized.push({ id: normalizedId, displayName: displayName?.trim() || undefined });
   }
