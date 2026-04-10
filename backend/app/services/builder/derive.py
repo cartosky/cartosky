@@ -1098,6 +1098,37 @@ def _ptype_intensity_thermal_fields(
     return cold_profile, warm_profile
 
 
+def _ptype_intensity_expected_start_fh(fh: int, hints: dict[str, Any]) -> int:
+    """Compute the expected APCP window start for *fh* given cadence hints.
+
+    For GFS ``step_hours=3, step_transition_fh=240, step_hours_after_fh=6``:
+      - fh  84 → expected_start = 81  (84 − 3)
+      - fh 246 → expected_start = 240 (246 − 6)
+    """
+    try:
+        step_hours = max(1, int(hints.get("step_hours", 3)))
+    except (TypeError, ValueError):
+        step_hours = 3
+    try:
+        step_transition_fh = int(hints["step_transition_fh"])
+    except (KeyError, TypeError, ValueError):
+        step_transition_fh = None
+    try:
+        step_hours_after = int(hints["step_hours_after_fh"])
+    except (KeyError, TypeError, ValueError):
+        step_hours_after = None
+
+    if (
+        step_transition_fh is not None
+        and step_hours_after is not None
+        and fh > step_transition_fh
+    ):
+        cadence = max(1, step_hours_after)
+    else:
+        cadence = step_hours
+    return max(0, fh - cadence)
+
+
 def _ptype_intensity_fetch_step_intensity(
     *,
     model_id: str,
@@ -1111,41 +1142,59 @@ def _ptype_intensity_fetch_step_intensity(
 ) -> np.ndarray | None:
     """Fetch the per-step APCP accumulation for ptype intensity display.
 
-    Unlike cumulative derivations (precip_total, snowfall) which iterate over
-    *all* forecast hours and can difference cumulative APCP records against
-    previously-consumed sums, ptype_intensity builds only a *single* forecast
-    hour per call.  Using ``_resolve_apcp_step_data`` with a fresh
-    ``_ApcpCumDiffState`` is incorrect here: when the inventory returns a
-    cumulative ``0-N hour acc`` record, there is no prior sum to subtract, so
-    the entire cumulative value would be used as the step intensity — wildly
-    inflating coverage at later forecast hours.
+    Uses inventory-driven APCP resolution (the same mechanism as
+    ``precip_total`` and ``snowfall_total``) to select the correct GRIB
+    message.  The ``apcp_step`` VarSpec regex matches **both** step records
+    (e.g. ``81-84 hour acc``) and cumulative records (``0-84 hour acc``);
+    reading band 1 from a multi-message file picks whichever appears first
+    in the GRIB — usually the cumulative record, which inflates intensity.
 
-    Instead we fetch the ``apcp_step`` VarSpec component directly.  Its
-    selector regex (``:[0-9]+-[0-9]+ hour acc``) matches step-window records
-    (e.g. ``81-84 hour acc``), which is exactly what we need.
+    ``_resolve_apcp_step_data`` inspects the Herbie inventory and builds a
+    targeted search pattern for the exact step window (e.g.
+    ``:APCP:surface:81-84 hour acc fcst:$``), fetching only that record.
+    For GFS fh ≤ 240 step records always exist alongside cumulative ones,
+    and after fh 240 only step records are published, so the inventory path
+    always finds the correct exact-step record without needing cumulative
+    differencing state.
     """
     apcp_component = str(hints.get("apcp_component") or "apcp_step").strip() or "apcp_step"
-    apcp_product = str(hints.get("apcp_product") or product).strip() or product
+    apcp_product: str | None = hints.get("apcp_product")
+    if apcp_product is not None:
+        apcp_product = str(apcp_product).strip() or None
     inch_scale = np.float32(0.03937007874015748)
 
+    expected_start_fh = _ptype_intensity_expected_start_fh(fh, hints)
+
     try:
-        apcp_step_data, _, _ = _fetch_component(
+        cum_diff_state = _ApcpCumDiffState()
+        step_data, apcp_valid, step_crs, step_transform, apcp_mode = _resolve_apcp_step_data(
+            step_fh=fh,
+            step_index=0,
+            step_fhs=[fh],
             model_id=model_id,
-            product=apcp_product,
+            product=product,
             run_date=run_date,
-            fh=fh,
             model_plugin=model_plugin,
-            var_key=apcp_component,
             ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=apcp_product,
+            use_warped=False,
+            target_region="",
+            target_grid_id="",
+            resampling="",
+            cum_diff_state=cum_diff_state,
+            expected_start_fh_override=expected_start_fh,
         )
     except Exception:
         return None
-    if tuple(np.shape(apcp_step_data)) != tuple(expected_shape):
+
+    if tuple(np.shape(step_data)) != tuple(expected_shape):
         return None
-    apcp_step_values = np.asarray(apcp_step_data, dtype=np.float32)
-    apcp_valid = np.isfinite(apcp_step_values) & (apcp_step_values >= 0.0)
-    step_inches = (apcp_step_values * inch_scale).astype(np.float32, copy=False)
-    return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
+
+    step_values = np.asarray(step_data, dtype=np.float32)
+    apcp_valid_mask = np.asarray(apcp_valid, dtype=bool)
+    step_inches = (step_values * inch_scale).astype(np.float32, copy=False)
+    return np.where(apcp_valid_mask, step_inches, np.nan).astype(np.float32, copy=False)
 
 
 def _ptype_intensity_family_rates(

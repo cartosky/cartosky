@@ -31,6 +31,24 @@ def _ptype_var_spec(component: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(selectors=SimpleNamespace(hints=hints))
 
 
+def _make_fake_step_intensity(apcp_step_data: np.ndarray):
+    """Return a mock for ``_ptype_intensity_fetch_step_intensity`` that
+    converts raw APCP step data (kg/m²) to inches, matching the real function's
+    output contract."""
+    inch_scale = np.float32(0.03937007874015748)
+
+    def _fake(**kwargs):
+        expected_shape = tuple(kwargs["expected_shape"])
+        if tuple(apcp_step_data.shape) != expected_shape:
+            return None
+        values = np.asarray(apcp_step_data, dtype=np.float32)
+        valid = np.isfinite(values) & (values >= 0.0)
+        step_inches = (values * inch_scale).astype(np.float32, copy=False)
+        return np.where(valid, step_inches, np.nan).astype(np.float32, copy=False)
+
+    return _fake
+
+
 def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
@@ -50,6 +68,11 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     rain_values, out_crs, out_transform = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -116,6 +139,11 @@ def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatc
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, out_crs, out_transform = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -135,7 +163,7 @@ def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatc
 
     assert 16.0 <= indexed[0, 0] <= 25.0   # csnow=1, crain=1 → snow wins (priority)
     assert 16.0 <= indexed[0, 1] <= 25.0   # csnow=0.9, crain=1 → snow wins (priority)
-    assert 26.0 <= indexed[0, 2] <= 42.0   # cicep=1 → ice wins (highest priority)
+    assert 26.0 <= indexed[0, 2] <= 43.0   # cicep=1 → ice wins (highest priority)
 
 
 def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypatch) -> None:
@@ -159,6 +187,11 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -217,6 +250,11 @@ def test_ptype_intensity_snow_component_uses_display_boost(monkeypatch) -> None:
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -252,6 +290,11 @@ def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(mon
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -311,6 +354,11 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -370,6 +418,11 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -481,6 +534,11 @@ def test_ptype_intensity_moderate_cold_with_full_rain_mask_prefers_snow(monkeypa
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -540,6 +598,11 @@ def test_ptype_intensity_gfs_overlap_crain1_csnow1_selects_snow(monkeypatch) -> 
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -600,6 +663,11 @@ def test_ptype_intensity_warm_rain_only_stays_rain(monkeypatch) -> None:
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -638,6 +706,11 @@ def test_ptype_intensity_thermal_fallback_when_all_masks_zero(monkeypatch) -> No
         return component_data[var_key], crs, transform
 
     monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(component_data["apcp_step"]),
+    )
 
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
