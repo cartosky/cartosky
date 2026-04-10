@@ -301,10 +301,11 @@ export default function App() {
     && variable
     && (selectedCapabilityVarMap.has(variable) || manifestVarIds.has(variable))
   );
+  const selectedVariableCapability = variable ? selectedModelCapability?.variables?.[variable] : undefined;
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelSupportsSampling = readCapabilitySupportsSampling(selectedModelCapability);
-  const selectedModelConstraints = (selectedModelCapability?.constraints ?? {}) as Record<string, unknown>;
+  const selectedVariableConstraints = (selectedVariableCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectionCapabilitiesResolved = Boolean(variable) && selectedCapabilityVarMap.has(variable);
@@ -318,13 +319,13 @@ export default function App() {
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
   const overlayFadeOutZoom = useMemo(() => {
-    const start = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_start);
-    const end = toNumberOrNull(selectedModelConstraints.overlay_fade_out_zoom_end);
+    const start = toNumberOrNull(selectedVariableConstraints.overlay_fade_out_zoom_start);
+    const end = toNumberOrNull(selectedVariableConstraints.overlay_fade_out_zoom_end);
     if (start === null || end === null || end <= start) {
       return null;
     }
     return { start, end };
-  }, [selectedModelConstraints.overlay_fade_out_zoom_start, selectedModelConstraints.overlay_fade_out_zoom_end]);
+  }, [selectedVariableConstraints.overlay_fade_out_zoom_start, selectedVariableConstraints.overlay_fade_out_zoom_end]);
 
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
