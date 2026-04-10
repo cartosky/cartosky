@@ -2541,7 +2541,7 @@ export default function App() {
   }) => {
     if (
       (payload.selectionEpoch !== undefined && payload.selectionEpoch !== selectionEpochRef.current)
-      || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey)
+      || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey && !payload.selectionKey.startsWith(`${selectionKey}:`))
     ) {
       return;
     }
