@@ -1003,9 +1003,6 @@ export function MapCanvas({
     if (map.getLayer(LAKE_MASK_LAYER_ID) && firstVectorFillLayerId) {
       map.moveLayer(LAKE_MASK_LAYER_ID, firstVectorFillLayerId);
     }
-    if (map.getLayer(CONTOUR_LAYER_ID)) {
-      map.moveLayer(CONTOUR_LAYER_ID, "twf-labels");
-    }
     for (const layerId of VECTOR_FILL_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
@@ -1023,6 +1020,9 @@ export function MapCanvas({
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
+    }
+    if (map.getLayer(CONTOUR_LAYER_ID)) {
+      map.moveLayer(CONTOUR_LAYER_ID, map.getLayer(COASTLINE_LAYER_ID) ? COASTLINE_LAYER_ID : "twf-labels");
     }
     if (map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(COASTLINE_LAYER_ID, "twf-labels");
