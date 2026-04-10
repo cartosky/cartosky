@@ -328,7 +328,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
   dp2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
   td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
-  tmp850: { group: "UPPER AIR", order: 30 },
+  tmp850: { label: "850mb Temp", group: "UPPER AIR", order: 30 },
   wspd850: { label: "850mb Heights + Winds", group: "UPPER AIR", order: 31 },
   wspd300: { label: "300mb Heights + Winds", group: "UPPER AIR", order: 32 },
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
