@@ -633,53 +633,6 @@ def test_build_grid_for_run_supports_gfs_mucape(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_gfs_precip_ptype(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    data_root = tmp_path / "data"
-    model = "gfs"
-    run_id = "20260330_12z"
-    var = "precip_ptype"
-    var_dir = data_root / "published" / model / run_id / var
-    values = np.array([[0.0, 2.0], [np.nan, 9.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
-    (var_dir / "fh000.json").write_text(
-        json.dumps({"fh": 0, "units": "in/hr", "valid_time": "2026-03-30T12:00:00Z"})
-    )
-
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
-        model=model,
-        run=run_id,
-        workers=1,
-        variables=(var,),
-    )
-
-    assert ok == 1
-    assert fail == 0
-    assert manifest_ok == 1
-
-    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
-    frame_path = artifacts_dir / "fh000.l0.u16.bin"
-    manifest_path = artifacts_dir / "manifest.json"
-    assert frame_path.is_file()
-    assert manifest_path.is_file()
-
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
-    assert encoded[0, 0] == 0
-    assert encoded[0, 1] == 2
-    assert encoded[1, 0] == 65535
-    assert encoded[1, 1] == 9
-
-    manifest = json.loads(manifest_path.read_text())
-    assert manifest["palette"]["color_map_id"] == "precip_ptype"
-    assert manifest["palette"]["kind"] == "indexed"
-    assert manifest["grid"]["scale"] == 1.0
-    assert manifest["grid"]["offset"] == 0.0
-    assert manifest["grid"]["units"] == "index"
-
-
 def test_build_grid_for_run_supports_gfs_ptype_intensity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -197,7 +197,7 @@ def _colorize_discrete(
 
 # ---------------------------------------------------------------------------
 # Indexed: pre-computed palette index → LUT → RGBA
-# Used for composite products (radar_ptype, precip_ptype) where the derive
+# Used for composite products (radar_ptype, ptype_intensity) where the derive
 # step produces an integer palette index, NOT a physical value to be binned.
 # ---------------------------------------------------------------------------
 
@@ -311,7 +311,7 @@ def _build_meta(
             else:
                 meta[key] = val
 
-    # Include range for discrete/indexed vars that have one (e.g. precip_ptype)
+    # Include range for discrete/indexed vars that have one (e.g. ptype_intensity)
     if kind in ("discrete", "indexed") and "range" in spec:
         range_vals = spec["range"]
         if isinstance(range_vals, (list, tuple)) and len(range_vals) == 2:

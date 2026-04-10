@@ -48,16 +48,6 @@ def test_continuous_kind_maps_to_bilinear(monkeypatch):
     }
 
 
-def test_discrete_kind_maps_to_nearest(monkeypatch):
-    _set_capabilities(
-        monkeypatch,
-        {"precip_ptype": SimpleNamespace(kind="indexed", color_map_id="precip_ptype")},
-    )
-
-    assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="precip_ptype") == "nearest"
-    assert render_resampling.rasterio_resampling_for_loop(model_id="gfs", var_key="precip_ptype").name == "nearest"
-
-
 def test_gfs_ptype_intensity_maps_to_nearest(monkeypatch):
     _set_capabilities(
         monkeypatch,
@@ -186,7 +176,6 @@ def test_gfs_continuous_loops_use_larger_widths(monkeypatch):
             "snowfall_kuchera_total": SimpleNamespace(kind="continuous", color_map_id="snowfall_total"),
             "precip_total": SimpleNamespace(kind="continuous", color_map_id="precip_total"),
             "tmp2m": SimpleNamespace(kind="continuous", color_map_id="tmp2m"),
-            "precip_ptype": SimpleNamespace(kind="indexed", color_map_id="precip_ptype"),
         },
     )
 
@@ -216,13 +205,6 @@ def test_gfs_continuous_loops_use_larger_widths(monkeypatch):
         tier=1,
         default_width=2400,
     ) == 3400
-
-    assert render_resampling.loop_fixed_width_for_tier(
-        model_id="gfs",
-        var_key="precip_ptype",
-        tier=0,
-        default_width=1600,
-    ) == 1600
 
 
 def test_radar_ptype_uses_larger_tier0_loop_budget(monkeypatch):

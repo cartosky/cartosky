@@ -42,7 +42,6 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "pwat",
         "wspd10m",
         "wgst10m",
-        "precip_ptype",
         "ptype_intensity",
         "precip_total",
         "snowfall_total",
@@ -64,13 +63,6 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert capabilities is not None
     payload = _serialize_model_capability("gfs", capabilities)
     assert payload["constraints"]["supports_sampling"] is True
-
-    precip_ptype = payload["variables"]["precip_ptype"]
-    assert precip_ptype["buildable"] is True
-    assert precip_ptype["derived"] is True
-    assert precip_ptype["derive_strategy_id"] == "precip_ptype_blend"
-    assert precip_ptype["units"] == "in/hr"
-    assert precip_ptype["order"] == 14
 
     ptype_intensity = payload["variables"]["ptype_intensity"]
     assert ptype_intensity["buildable"] is True

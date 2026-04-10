@@ -46,7 +46,7 @@ type RadarLegendGroup = {
   entries: LegendEntry[];
 };
 
-type PrecipPtypeLegendRow = {
+type PtypeIntensityLegendRow = {
   label: string;
   min: number;
   max: number;
@@ -104,10 +104,9 @@ function isRadarPtypeLegend(legend: LegendPayload): boolean {
   );
 }
 
-function isPrecipPtypeLegend(legend: LegendPayload): boolean {
-  const kind = legend.kind?.toLowerCase() ?? "";
+function isPtypeIntensityLegend(legend: LegendPayload): boolean {
   const id = legend.id?.toLowerCase() ?? "";
-  return kind.includes("precip_ptype") || id === "precip_ptype" || id === "ptype_intensity";
+  return id === "ptype_intensity";
 }
 
 function isCategoricalLegend(legend: LegendPayload): boolean {
@@ -251,18 +250,18 @@ function groupRadarEntries(
   return fallbackGroups;
 }
 
-function groupPrecipPtypeRows(
+function groupPtypeIntensityRows(
   entries: LegendEntry[],
   ptypeBreaks?: Record<string, { offset: number; count: number }>,
   ptypeOrder?: string[]
-): PrecipPtypeLegendRow[] {
+): PtypeIntensityLegendRow[] {
   if (!ptypeBreaks) return [];
   const orderedTypes = (Array.isArray(ptypeOrder) && ptypeOrder.length > 0 ? ptypeOrder : []).filter(
     (ptype) => ptypeBreaks[ptype]
   );
   if (orderedTypes.length === 0) return [];
 
-  const rows: PrecipPtypeLegendRow[] = [];
+  const rows: PtypeIntensityLegendRow[] = [];
   for (let index = 0; index < orderedTypes.length; index += 1) {
     const ptype = orderedTypes[index];
     const boundary = ptypeBreaks[ptype];
@@ -382,16 +381,16 @@ export function MapLegend({
   }
 
   const opacityPercent = Math.round(legend.opacity * 100);
-  const precipPtypeRows = isPrecipPtypeLegend(legend)
-    ? groupPrecipPtypeRows(legend.entries, legend.ptype_breaks, legend.ptype_order)
+  const ptypeIntensityRows = isPtypeIntensityLegend(legend)
+    ? groupPtypeIntensityRows(legend.entries, legend.ptype_breaks, legend.ptype_order)
     : [];
-  const showPrecipPtypeRows = precipPtypeRows.length > 0;
+  const showPtypeIntensityRows = ptypeIntensityRows.length > 0;
   const groupedRadarEntries = isRadarPtypeLegend(legend)
     ? groupRadarEntries(legend.entries, legend.ptype_breaks, legend.ptype_order)
     : [];
   const showGroupedRadar = groupedRadarEntries.length > 0;
   const showDenseLegend =
-    !showPrecipPtypeRows &&
+    !showPtypeIntensityRows &&
     !showGroupedRadar &&
     !isCategoricalLegend(legend) &&
     legend.entries.length > DENSE_LEGEND_THRESHOLD;
@@ -402,7 +401,7 @@ export function MapLegend({
       ref={containerRef}
       className={cn(
         "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
-        showPrecipPtypeRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
+        showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
       )}
       role="complementary"
@@ -441,8 +440,8 @@ export function MapLegend({
         <div className="overflow-hidden">
           <div key={fadeKey} className="flex flex-col gap-1.5 px-1.5 py-1.5 animate-in fade-in duration-200">
             <div className={cn(showDenseLegend ? "" : "legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth")}>
-              {showPrecipPtypeRows
-                ? precipPtypeRows.map((row, rowIndex) => (
+              {showPtypeIntensityRows
+                ? ptypeIntensityRows.map((row, rowIndex) => (
                     <div
                       key={`precip-row-${row.label}-${rowIndex}`}
                       className={cn(rowIndex > 0 ? "mt-2 border-t border-border/20 pt-2" : "")}

@@ -38,7 +38,7 @@ def test_discrete_kind_remains_passthrough() -> None:
         data,
         spec,
         model_id="gfs",
-        var_key="precip_ptype",
+        var_key="ptype_intensity",
     )
     np.testing.assert_array_equal(display, data)
 

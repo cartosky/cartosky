@@ -122,7 +122,6 @@ class GFSPlugin(BaseModelPlugin):
             "snow10": "snowfall_total",
             "total_snow": "snowfall_total",
             "totalsnow": "snowfall_total",
-            "precip_ptype": "precip_ptype",
             "crain": "crain",
             "csnow": "csnow",
             "cicep": "cicep",
@@ -585,27 +584,6 @@ GFS_VARS: dict[str, VarSpec] = {
             },
         ),
     ),
-    # ── Derived: precip type (Phase 2) ──────────────────────────────────────
-    "precip_ptype": VarSpec(
-        id="precip_ptype",
-        name="Precipitation Intensity + Type",
-        selectors=VarSelectors(
-            hints={
-                "display_kind": "precip_ptype",
-                "prate_component": "prate",
-                "rain_component": "crain",
-                "snow_component": "csnow",
-                "sleet_component": "cicep",
-                "frzr_component": "cfrzr",
-            },
-        ),
-        primary=True,
-        derived=True,
-        derive="precip_ptype_blend",
-        kind="discrete",
-        units="in/hr",
-        normalize_units="in/hr",
-    ),
     "ptype_intensity": VarSpec(
         id="ptype_intensity",
         name="Precipitation Type & Intensity",
@@ -888,7 +866,6 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "refc": "refc",
-    "precip_ptype": "precip_ptype",
     "ptype_intensity": "ptype_intensity",
     "ptype_intensity_rain": "ptype_intensity_rain",
     "ptype_intensity_snow": "ptype_intensity_snow",
@@ -900,7 +877,6 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 }
 
 GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
-    "precip_ptype": 6,
     "ptype_intensity": 6,
     "ptype_intensity_rain": 6,
     "ptype_intensity_snow": 6,
@@ -926,7 +902,6 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "snowfall_total": 11,
     "wspd10m": 12,
     "wgst10m": 13,
-    "precip_ptype": 14,
     "ptype_intensity": 15,
     "refc": 15,
     "qpf6h": 16,
@@ -951,7 +926,6 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "ptype_intensity": "Radar & Precipitation Type",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
-    "precip_ptype": "Radar & Precipitation Type",
     "refc": "Radar & Precipitation Type",
 }
 

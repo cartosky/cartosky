@@ -186,28 +186,6 @@ export default function Variables() {
         limitations: ["Convective gusts and downbursts are not reliably captured outside convection-permitting scenarios."],
       },
       {
-        id: "precip_ptype",
-        name: "Precip Type & Intensity",
-        oneLiner: "Precipitation type categories combined with intensity bins for quick winter-weather diagnosis.",
-        pills: ["Derived", "ptype + intensity", "Categorical"],
-        definition:
-          "This product blends modeled precipitation type with intensity classes so you can quickly see not just what is falling, but how strongly the model is producing it.",
-        bestFor: [
-          "Quick winter-weather overview without interpreting multiple separate fields",
-          "Finding transitions between rain, snow, sleet, and freezing rain",
-          "Spotting where modeled precip rates intensify within the precip shield",
-        ],
-        interpretation: [
-          "Treat type boundaries as approximate because shallow thermal-profile changes can shift category edges quickly.",
-          "Use this as a fast situational-awareness field, then sanity-check with temperature profiles and snowfall/QPF products.",
-        ],
-        limitations: [
-          "Categorical p-type output can look noisy around marginal thermal zones.",
-          "Intensity buckets are model-derived guidance, not direct observed precipitation rates.",
-        ],
-        notes: ["Categorical precipitation products should stay nearest-neighbor when resampled so class edges remain crisp."],
-      },
-      {
         id: "ptype_intensity",
         name: "Precip Type & Intensity",
         oneLiner: "GFS-only precipitation type shading with competitor-style rain, snow, and ice intensity families plus pressure contours.",

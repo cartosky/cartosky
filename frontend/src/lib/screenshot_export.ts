@@ -334,7 +334,7 @@ type RadarLegendGroup = {
   label: string;
   entries: LegendEntry[];
 };
-type PrecipPtypeLegendRow = {
+type PtypeIntensityLegendRow = {
   label: string;
   min: number;
   max: number;
@@ -383,10 +383,9 @@ function isRadarPtypeLegend(legend: LegendPayload): boolean {
   );
 }
 
-function isPrecipPtypeLegend(legend: LegendPayload): boolean {
-  const kind = legend.kind?.toLowerCase() ?? "";
+function isPtypeIntensityLegend(legend: LegendPayload): boolean {
   const id = legend.id?.toLowerCase() ?? "";
-  return kind.includes("precip_ptype") || id === "precip_ptype" || id === "ptype_intensity";
+  return id === "ptype_intensity";
 }
 
 function groupRadarEntries(legend: LegendPayload): RadarLegendGroup[] {
@@ -441,13 +440,13 @@ function groupRadarEntries(legend: LegendPayload): RadarLegendGroup[] {
   return fallbackGroups;
 }
 
-function groupPrecipPtypeRows(legend: LegendPayload): PrecipPtypeLegendRow[] {
+function groupPtypeIntensityRows(legend: LegendPayload): PtypeIntensityLegendRow[] {
   if (!legend.ptype_breaks) return [];
   const orderedTypes = (Array.isArray(legend.ptype_order) && legend.ptype_order.length > 0 ? legend.ptype_order : [])
     .filter((ptype) => legend.ptype_breaks?.[ptype]);
   if (orderedTypes.length === 0) return [];
 
-  const rows: PrecipPtypeLegendRow[] = [];
+  const rows: PtypeIntensityLegendRow[] = [];
   for (let index = 0; index < orderedTypes.length; index += 1) {
     const ptype = orderedTypes[index];
     const boundary = legend.ptype_breaks[ptype];
@@ -530,7 +529,7 @@ function drawBottomLegend(
   bottomPadding: number
 ): void {
   const outerPadding = 18;
-  const isPrecip = isPrecipPtypeLegend(legend);
+  const isPrecip = isPtypeIntensityLegend(legend);
   const isRadar = isRadarPtypeLegend(legend);
   const isCompactWidth = width <= 720;
   const bandHeight = isPrecip || isRadar ? (isCompactWidth ? 112 : 60) : 54;
@@ -546,7 +545,7 @@ function drawBottomLegend(
   drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12);
 
   if (isPrecip) {
-    const rows = groupPrecipPtypeRows(legend);
+    const rows = groupPtypeIntensityRows(legend);
     if (rows.length > 0) {
       if (isCompactWidth) {
         const columns = 2;

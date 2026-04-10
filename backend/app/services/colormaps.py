@@ -52,20 +52,6 @@ PRECIP_CONFIG = {
     },
 }
 
-PRECIP_PTYPE_ORDER = ("frzr", "sleet", "snow", "rain")
-PRECIP_PTYPE_BINS_PER_TYPE = 64
-PRECIP_PTYPE_RANGE = (
-    0.0,
-    float(
-        max(
-            max(PRECIP_CONFIG["rain"]["levels"]),
-            max(PRECIP_CONFIG["snow"]["levels"]),
-            max(PRECIP_CONFIG["sleet"]["levels"]),
-            max(PRECIP_CONFIG["frzr"]["levels"]),
-        )
-    ),
-)
-
 
 def _hex_to_rgb(hex_color: str) -> np.ndarray:
     hex_str = hex_color.strip().lstrip("#")
@@ -99,46 +85,6 @@ def _expand_hex_ramp(colors_hex: list[str], n: int) -> list[str]:
     b = np.interp(target_positions, stop_positions, anchors[:, 2])
     return [_rgb_to_hex(np.array([rr, gg, bb], dtype=np.float64)) for rr, gg, bb in zip(r, g, b)]
 
-
-def _build_precip_ptype_flat_palette() -> tuple[
-    list[float],
-    list[str],
-    dict[str, dict[str, int]],
-    dict[str, list[float]],
-]:
-    colors: list[str] = []
-    breaks: dict[str, dict[str, int]] = {}
-    levels_by_type: dict[str, list[float]] = {}
-    for idx, key in enumerate(PRECIP_PTYPE_ORDER):
-        cfg = PRECIP_CONFIG[key]
-        type_colors = _expand_hex_ramp(list(cfg["colors"]), PRECIP_PTYPE_BINS_PER_TYPE)
-        offset = idx * PRECIP_PTYPE_BINS_PER_TYPE
-        colors.extend(type_colors)
-        breaks[key] = {
-            "offset": offset,
-            "count": PRECIP_PTYPE_BINS_PER_TYPE,
-        }
-        levels_by_type[key] = np.linspace(
-            PRECIP_PTYPE_RANGE[0],
-            PRECIP_PTYPE_RANGE[1],
-            num=PRECIP_PTYPE_BINS_PER_TYPE,
-            dtype=float,
-        ).tolist()
-    levels = np.linspace(
-        PRECIP_PTYPE_RANGE[0],
-        PRECIP_PTYPE_RANGE[1],
-        num=len(colors),
-        dtype=float,
-    ).tolist()
-    return levels, colors, breaks, levels_by_type
-
-
-(
-    PRECIP_PTYPE_LEVELS,
-    PRECIP_PTYPE_COLORS,
-    PRECIP_PTYPE_BREAKS,
-    PRECIP_PTYPE_LEVELS_BY_TYPE,
-) = _build_precip_ptype_flat_palette()
 
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
@@ -638,19 +584,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": PWAT_LEGEND_STOPS,
         "allow_dry_frame": True,
         "transparent_below_min": 0.05,
-    },
-    "precip_ptype": {
-        "type": "indexed",
-        "units": "in/hr",
-        "levels": PRECIP_PTYPE_LEVELS,
-        "colors": PRECIP_PTYPE_COLORS,
-        "range": PRECIP_PTYPE_RANGE,
-        "bins_per_ptype": PRECIP_PTYPE_BINS_PER_TYPE,
-        "display_name": "Precipitation Intensity",
-        "legend_title": "Precipitation Rate (in/hr)",
-        "ptype_order": list(PRECIP_PTYPE_ORDER),
-        "ptype_breaks": PRECIP_PTYPE_BREAKS,
-        "ptype_levels": PRECIP_PTYPE_LEVELS_BY_TYPE,
     },
     "ptype_intensity": {
         "type": "indexed",

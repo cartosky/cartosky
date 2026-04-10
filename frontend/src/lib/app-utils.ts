@@ -333,7 +333,6 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   wspd300: { label: "300mb Heights + Winds", group: "UPPER AIR", order: 32 },
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
   wgst10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
-  precip_ptype: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   ptype_intensity: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
   qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
@@ -713,12 +712,11 @@ export function getEffectiveZoom(zoom: number): number {
   return zoom + Math.log2(dpr);
 }
 
-export function isPrecipPtypeLegendMeta(
+export function isPtypeIntensityLegendMeta(
   meta: LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string }
 ): boolean {
-  const kind = String(meta.kind ?? "").toLowerCase();
   const id = String(meta.var_key ?? meta.spec_key ?? meta.id ?? meta.var ?? "").toLowerCase();
-  return kind.includes("precip_ptype") || id === "precip_ptype" || id === "ptype_intensity";
+  return id === "ptype_intensity";
 }
 
 export function withPrecipRateUnits(title: string, units?: string): string {
@@ -758,12 +756,12 @@ export function buildLegend(meta: LegendMeta | null | undefined, opacity: number
     return null;
   }
   const metaWithIds = meta as LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string };
-  const isPrecipPtype = isPrecipPtypeLegendMeta(metaWithIds);
+  const isPtypeIntensity = isPtypeIntensityLegendMeta(metaWithIds);
   const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
   const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
     ? "Legend"
     : rawTitle;
-  const title = isPrecipPtype ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
+  const title = isPtypeIntensity ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
   const units = normalizeLegendUnits(meta.units, metaWithIds);
   const legendMetadata = {
     kind: metaWithIds.kind,
