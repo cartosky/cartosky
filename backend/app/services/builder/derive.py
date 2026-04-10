@@ -1098,37 +1098,6 @@ def _ptype_intensity_thermal_fields(
     return cold_profile, warm_profile
 
 
-def _ptype_intensity_expected_start_fh(fh: int, hints: dict[str, Any]) -> int:
-    """Compute the expected APCP window start for *fh* given cadence hints.
-
-    For GFS ``step_hours=3, step_transition_fh=240, step_hours_after_fh=6``:
-      - fh  84 → expected_start = 81  (84 − 3)
-      - fh 246 → expected_start = 240 (246 − 6)
-    """
-    try:
-        step_hours = max(1, int(hints.get("step_hours", 3)))
-    except (TypeError, ValueError):
-        step_hours = 3
-    try:
-        step_transition_fh = int(hints["step_transition_fh"])
-    except (KeyError, TypeError, ValueError):
-        step_transition_fh = None
-    try:
-        step_hours_after = int(hints["step_hours_after_fh"])
-    except (KeyError, TypeError, ValueError):
-        step_hours_after = None
-
-    if (
-        step_transition_fh is not None
-        and step_hours_after is not None
-        and fh > step_transition_fh
-    ):
-        cadence = max(1, step_hours_after)
-    else:
-        cadence = step_hours
-    return max(0, fh - cadence)
-
-
 def _ptype_intensity_fetch_step_intensity(
     *,
     model_id: str,
@@ -1142,59 +1111,156 @@ def _ptype_intensity_fetch_step_intensity(
 ) -> np.ndarray | None:
     """Fetch the per-step APCP accumulation for ptype intensity display.
 
-    Uses inventory-driven APCP resolution (the same mechanism as
-    ``precip_total`` and ``snowfall_total``) to select the correct GRIB
-    message.  The ``apcp_step`` VarSpec regex matches **both** step records
-    (e.g. ``81-84 hour acc``) and cumulative records (``0-84 hour acc``);
-    reading band 1 from a multi-message file picks whichever appears first
-    in the GRIB — usually the cumulative record, which inflates intensity.
+    GFS publishes APCP in 6-hour accumulation buckets.  At 6-hour boundary
+    forecast hours (6, 12, 18, …, 72, 78, …) the only step record covers
+    the full 6-hour bucket (e.g. ``66-72 hour acc``); at intermediate hours
+    (9, 15, 21, …, 75, …) a shorter step record exists (e.g. ``72-75 hour
+    acc``).  A cumulative ``0-N`` record may also exist.
 
-    ``_resolve_apcp_step_data`` inspects the Herbie inventory and builds a
-    targeted search pattern for the exact step window (e.g.
-    ``:APCP:surface:81-84 hour acc fcst:$``), fetching only that record.
-    For GFS fh ≤ 240 step records always exist alongside cumulative ones,
-    and after fh 240 only step records are published, so the inventory path
-    always finds the correct exact-step record without needing cumulative
-    differencing state.
+    Strategy:
+      1. Query the Herbie inventory for all APCP:surface records at *fh*.
+      2. Parse each record's accumulation window.  Keep only windows that
+         end at *fh* and do **not** start at 0 (i.e. skip cumulative).
+      3. Among those, pick the **narrowest** window (shortest duration)
+         — this is the actual step/bucket record.
+      4. Fetch that specific record using its exact inventory search pattern.
+      5. Normalise to a 3-hour equivalent by dividing by the step's duration
+         in hours and multiplying by 3, so that 6-hour boundary values are
+         comparable to 3-hour step values.
+
+    Falls back to ``None`` (triggering the prate fallback in the caller)
+    if the inventory is unavailable or no non-cumulative record is found.
     """
-    apcp_component = str(hints.get("apcp_component") or "apcp_step").strip() or "apcp_step"
     apcp_product: str | None = hints.get("apcp_product")
     if apcp_product is not None:
         apcp_product = str(apcp_product).strip() or None
+    resolved_product = str(apcp_product or product)
     inch_scale = np.float32(0.03937007874015748)
+    nominal_step_hours = np.float32(3.0)
 
-    expected_start_fh = _ptype_intensity_expected_start_fh(fh, hints)
+    # --- inventory lookup ---
+    inventory_lines = _kuchera_inventory_lines(
+        model_id=model_id,
+        product=resolved_product,
+        run_date=run_date,
+        fh=fh,
+        search_pattern=":APCP:surface:",
+    )
+    if not inventory_lines:
+        logger.debug(
+            "ptype_intensity APCP inventory empty: model=%s fh=%03d",
+            model_id, fh,
+        )
+        return None
 
+    # --- select the best non-cumulative step record ---
+    best_line: str | None = None
+    best_start: int | None = None
+    best_duration: int | None = None
+    for line in inventory_lines:
+        if _is_probabilistic_apcp_inventory_line(line):
+            continue
+        window = _parse_apcp_accum_window_hours(line)
+        if window is None:
+            continue
+        start_hour, end_hour = window
+        if int(end_hour) != int(fh):
+            continue
+        if int(start_hour) == 0 and int(fh) > 0:
+            # Skip cumulative 0-N records.
+            continue
+        duration = int(end_hour) - int(start_hour)
+        if duration <= 0:
+            continue
+        if best_duration is None or duration < best_duration:
+            best_line = line
+            best_start = int(start_hour)
+            best_duration = duration
+
+    # Special case: fh ≤ first bucket boundary — the only record may start
+    # at 0 (e.g. FH 3: ``0-3 hour acc`` is both cumulative and the first
+    # step).  Accept it.
+    if best_line is None:
+        for line in inventory_lines:
+            if _is_probabilistic_apcp_inventory_line(line):
+                continue
+            window = _parse_apcp_accum_window_hours(line)
+            if window is None:
+                continue
+            start_hour, end_hour = window
+            if int(end_hour) != int(fh):
+                continue
+            if int(start_hour) != 0:
+                continue
+            duration = int(end_hour) - int(start_hour)
+            if duration <= 0:
+                continue
+            if best_duration is None or duration < best_duration:
+                best_line = line
+                best_start = int(start_hour)
+                best_duration = duration
+
+    if best_line is None or best_duration is None:
+        logger.debug(
+            "ptype_intensity APCP no suitable step record: model=%s fh=%03d lines=%s",
+            model_id, fh, inventory_lines,
+        )
+        return None
+
+    search_pattern = _apcp_inventory_search_pattern(best_line)
+    if not search_pattern:
+        return None
+
+    # --- fetch the selected record ---
     try:
-        cum_diff_state = _ApcpCumDiffState()
-        step_data, apcp_valid, step_crs, step_transform, apcp_mode = _resolve_apcp_step_data(
-            step_fh=fh,
-            step_index=0,
-            step_fhs=[fh],
+        fetch_kwargs: dict[str, Any] = {}
+        if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
+            fetch_kwargs["bundle_fetch_cache"] = getattr(ctx, "bundle_fetch_cache")
+        step_data, step_crs, step_transform, step_meta = fetch_variable(
             model_id=model_id,
-            product=product,
+            product=resolved_product,
+            search_pattern=search_pattern,
             run_date=run_date,
-            model_plugin=model_plugin,
-            ctx=ctx,
-            apcp_component=apcp_component,
-            apcp_product=apcp_product,
-            use_warped=False,
-            target_region="",
-            target_grid_id="",
-            resampling="",
-            cum_diff_state=cum_diff_state,
-            expected_start_fh_override=expected_start_fh,
+            fh=fh,
+            **fetch_kwargs,
+            return_meta=True,
         )
     except Exception:
+        logger.debug(
+            "ptype_intensity APCP fetch failed: model=%s fh=%03d pattern=%s",
+            model_id, fh, search_pattern,
+            exc_info=True,
+        )
         return None
 
     if tuple(np.shape(step_data)) != tuple(expected_shape):
         return None
 
     step_values = np.asarray(step_data, dtype=np.float32)
-    apcp_valid_mask = np.asarray(apcp_valid, dtype=bool)
+    apcp_valid = np.isfinite(step_values) & (step_values >= 0.0)
+
+    # Convert kg/m² → inches.
     step_inches = (step_values * inch_scale).astype(np.float32, copy=False)
-    return np.where(apcp_valid_mask, step_inches, np.nan).astype(np.float32, copy=False)
+
+    # Normalise to a 3-hour equivalent so that 6-hour bucket values are
+    # comparable to 3-hour step values in the display bins.
+    actual_hours = np.float32(max(1, best_duration))
+    if actual_hours != nominal_step_hours:
+        step_inches = (step_inches * (nominal_step_hours / actual_hours)).astype(
+            np.float32, copy=False,
+        )
+        logger.info(
+            "ptype_intensity APCP normalised %d-hour step to %.0f-hour equivalent: "
+            "model=%s fh=%03d window=%d-%d",
+            best_duration, float(nominal_step_hours),
+            model_id, fh, best_start, fh,
+        )
+
+    logger.info(
+        "ptype_intensity APCP step: model=%s fh=%03d window=%d-%d duration=%dh pattern=%s",
+        model_id, fh, best_start, fh, best_duration, search_pattern,
+    )
+    return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
 
 
 def _ptype_intensity_family_rates(
