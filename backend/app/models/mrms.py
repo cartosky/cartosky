@@ -69,7 +69,7 @@ MRMS_VARS: dict[str, VarSpec] = {
     ),
     "mrms_radar_ptype": VarSpec(
         id="mrms_radar_ptype",
-        name="Reflectivity + Precip Type",
+        name="Reflectivity + Ptype",
         selectors=VarSelectors(
             hints={
                 "display_kind": "radar_ptype",

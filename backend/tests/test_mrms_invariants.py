@@ -69,7 +69,7 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert mrms_radar_ptype["derived"] is False
     assert mrms_radar_ptype["kind"] == "discrete"
     assert mrms_radar_ptype["units"] == "dBZ"
-    assert mrms_radar_ptype["display_name"] == "Reflectivity + Precip Type"
+    assert mrms_radar_ptype["display_name"] == "Reflectivity + Ptype"
     assert mrms_radar_ptype["order"] == 1
     assert mrms_radar_ptype["group"] == "Radar"
     assert mrms_radar_ptype["color_map_id"] == "mrms_radar_ptype"

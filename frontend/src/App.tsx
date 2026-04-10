@@ -2592,6 +2592,7 @@ export default function App() {
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
+    setVariable("");
     setModel(nextModel);
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
