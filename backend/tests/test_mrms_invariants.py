@@ -24,7 +24,7 @@ def test_mrms_buildable_var_set_and_defaults_invariants() -> None:
     }
     assert buildable_var_keys == {"reflectivity", "mrms_radar_ptype"}
 
-    assert capabilities.ui_defaults["default_var_key"] == "reflectivity"
+    assert capabilities.ui_defaults["default_var_key"] == "mrms_radar_ptype"
     assert capabilities.ui_defaults["default_run"] == "latest"
     assert capabilities.ui_defaults["default_frame_selection"] == "latest"
     assert capabilities.ui_constraints["time_axis_mode"] == "observed"
@@ -45,7 +45,7 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert payload["name"] == "Radar"
     assert payload["product"] == "obs"
     assert payload["canonical_region"] == "conus"
-    assert payload["defaults"]["default_var_key"] == "reflectivity"
+    assert payload["defaults"]["default_var_key"] == "mrms_radar_ptype"
     assert payload["defaults"]["default_run"] == "latest"
     assert payload["defaults"]["default_frame_selection"] == "latest"
     assert payload["constraints"]["time_axis_mode"] == "observed"
