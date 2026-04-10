@@ -194,6 +194,13 @@ function setLayerVisibility(map: maplibregl.Map, id: string, visible: boolean) {
   map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
 }
 
+function gridOverlayBeforeLayerId(map: maplibregl.Map): string {
+  if (map.getLayer(CONTOUR_LAYER_ID)) {
+    return CONTOUR_LAYER_ID;
+  }
+  return COASTLINE_LAYER_ID;
+}
+
 function buildVectorBufferLayers(): LayerSpecification[] {
   return [0, 1].flatMap((bufferIndex) => {
     const sourceId = VECTOR_SOURCE_IDS[bufferIndex as 0 | 1];
@@ -1128,9 +1135,9 @@ export function MapCanvas({
     const controller = gridWebglControllerRef.current;
     const onStyleData = () => {
       if (shouldUseGridController) {
-        controller?.ensureAttached(map, COASTLINE_LAYER_ID);
+        controller?.ensureAttached(map, gridOverlayBeforeLayerId(map));
         for (const compositeController of compositeGridControllersRef.current.values()) {
-          compositeController.ensureAttached(map, COASTLINE_LAYER_ID);
+          compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
         }
       }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
@@ -1575,7 +1582,7 @@ export function MapCanvas({
       return;
     }
 
-    controller.ensureAttached(map, COASTLINE_LAYER_ID);
+    controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
     controller.update({
       active: Boolean(gridActive && gridManifest && gridFrameUrl),
       manifest: gridManifest,
@@ -1604,7 +1611,7 @@ export function MapCanvas({
         compositeController = new GridWebglLayerController(layerId);
         compositeGridControllersRef.current.set(layerId, compositeController);
       }
-      compositeController.ensureAttached(map, COASTLINE_LAYER_ID);
+      compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
       compositeController.update({
         active: Boolean(gridActive && layer.manifest && layer.frameUrl),
         manifest: layer.manifest,
