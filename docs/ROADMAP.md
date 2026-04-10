@@ -477,12 +477,15 @@ Business
 - [X] Add obs, NWS forecasts, AFDs for cities
 - [X] Add SPC outlooks/products
 - [X] Add NWS hazards per county
-- [ ] Add selected new variables
+- [X] Add selected new core variables
 - [X] Add Kuchera to NAM and GFS
-- [ ] Add selected new models
-- [ ] Add groups/titles in dropdown
+- [ ] Add selected new core models
 - [ ] Redesign frontend
+- [ ] Add selected new secondary variables
+- [X] Add groups/titles in dropdown
+- [ ] Expand to North America domain for certain variables
 - [ ] Add lightweight feedback collection/ability
+- [ ] Beta polish and consistency pass
 
 **LAUNCH PUBLIC BETA TO TWF**
 * Can users check radar?
