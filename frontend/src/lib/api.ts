@@ -203,6 +203,13 @@ export type GridManifestPalette = {
   transparent_zero?: boolean | null;
 };
 
+export type GridManifestDisplayPrep = {
+  id?: string;
+  upscale_factor?: number | null;
+  smooth_sigma?: number | null;
+  categorical_nearest?: boolean | null;
+};
+
 export type GridManifestCompositeLayer = {
   id: string;
   var: string;
@@ -218,6 +225,7 @@ export type GridManifestResponse = {
   bbox?: [number, number, number, number];
   grid: GridManifestGrid;
   palette?: GridManifestPalette;
+  display_prep?: GridManifestDisplayPrep | null;
   display_name?: string;
   legend?: { type?: string; stops?: LegendStops };
   contours?: Record<

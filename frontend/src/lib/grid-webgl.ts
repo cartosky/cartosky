@@ -366,6 +366,10 @@ function categoricalPaletteForManifest(manifest: GridManifestResponse | null): b
   return kind === "indexed" || kind === "categorical";
 }
 
+function categoricalNearestForManifest(manifest: GridManifestResponse | null): boolean {
+  return Boolean(manifest?.display_prep?.categorical_nearest);
+}
+
 function isObservedGridManifest(manifest: GridManifestResponse | null): boolean {
   return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
 }
@@ -605,6 +609,7 @@ type ProgramBindings = {
   dataEncodingLocation: WebGLUniformLocation | null;
   texSizeLocation: WebGLUniformLocation | null;
   categoricalLocation: WebGLUniformLocation | null;
+  categoricalNearestLocation: WebGLUniformLocation | null;
   transparentZeroLocation: WebGLUniformLocation | null;
   contrastFactorLocation: WebGLUniformLocation | null;
   saturationFactorLocation: WebGLUniformLocation | null;
@@ -890,6 +895,7 @@ export class GridWebglLayerController {
       uniform float u_dataEncoding;
       uniform vec2 u_texSize;
       uniform float u_categorical;
+      uniform float u_categoricalNearest;
       uniform float u_transparentZero;
       uniform float u_contrastFactor;
       uniform float u_saturationFactor;
@@ -968,8 +974,14 @@ export class GridWebglLayerController {
           t = pow(t, u_powerNormGamma);
         }
 
-        float alphaWeight = (bw00 + bw10 + bw01 + bw11) /
-                            max(0.000001, (1.0 - f.x) * (1.0 - f.y) + f.x * (1.0 - f.y) + (1.0 - f.x) * f.y + f.x * f.y);
+        float alphaWeight = 1.0;
+        if (u_transparentBelowMin > -1e20) {
+          float sw00 = v00 > u_transparentBelowMin ? bw00 : 0.0;
+          float sw10 = v10 > u_transparentBelowMin ? bw10 : 0.0;
+          float sw01 = v01 > u_transparentBelowMin ? bw01 : 0.0;
+          float sw11 = v11 > u_transparentBelowMin ? bw11 : 0.0;
+          alphaWeight = (sw00 + sw10 + sw01 + sw11) / wSum;
+        }
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
         return vec4(color.rgb, color.a * alphaWeight);
       }
@@ -1031,13 +1043,30 @@ export class GridWebglLayerController {
         return texture2D(u_lut, vec2(t, 0.5));
       }
 
+      vec4 sampleCategoricalNearest(sampler2D tex, vec2 uv) {
+        float decoded = decodeSample(texture2D(tex, uv));
+        if (decoded <= -1e29) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        if (u_transparentZero > 0.5 && decoded < 0.5) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        float denom = max(1.0, u_valueMax - u_valueMin + 1.0);
+        float t = clamp((floor(decoded + 0.5) - u_valueMin + 0.5) / denom, 0.0, 1.0);
+        return texture2D(u_lut, vec2(t, 0.5));
+      }
+
       void main() {
         vec4 current = u_categorical > 0.5
-          ? sampleCategorical(u_data, v_texCoord)
+          ? (u_categoricalNearest > 0.5
+            ? sampleCategoricalNearest(u_data, v_texCoord)
+            : sampleCategorical(u_data, v_texCoord))
           : sampleBilinear(u_data, v_texCoord);
         vec4 previous = u_hasPrevious > 0.5
           ? (u_categorical > 0.5
-            ? sampleCategorical(u_prevData, v_texCoord)
+            ? (u_categoricalNearest > 0.5
+              ? sampleCategoricalNearest(u_prevData, v_texCoord)
+              : sampleCategorical(u_prevData, v_texCoord))
             : sampleBilinear(u_prevData, v_texCoord))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
@@ -1089,6 +1118,7 @@ export class GridWebglLayerController {
       dataEncodingLocation: gl.getUniformLocation(this.program, "u_dataEncoding"),
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
+      categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
       transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
       contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
@@ -1604,6 +1634,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.powerNormGammaLocation, powerNormGammaForManifest(this.manifest));
     gl.uniform1f(bindings.dataEncodingLocation, resolveGridDtype(grid.dtype) === "uint16" ? 1 : 0);
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
+    gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
