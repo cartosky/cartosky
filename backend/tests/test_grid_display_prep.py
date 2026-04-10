@@ -25,6 +25,9 @@ def test_gfs_precip_total_display_prep_uses_threshold_aware_support_mask() -> No
 
     assert meta is not None
     assert meta["id"] == "gfs_precip_total_display_v2"
+    assert meta["preserve_zero_support"] is True
+    assert meta["support_min_value"] == 0.01
+    assert meta["support_coverage_threshold"] == 0.5
     assert prepared.shape == (6, 6)
     assert prepared.dtype == np.float32
     assert int(np.count_nonzero(prepared > 0.0)) == 6

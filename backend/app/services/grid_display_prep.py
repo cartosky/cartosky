@@ -188,6 +188,12 @@ def prepare_grid_display_values(
         "upscale_factor": factor,
         "smooth_sigma": sigma,
     }
+    if config.preserve_zero_support:
+        prep_meta["preserve_zero_support"] = True
+    if support_min_value is not None:
+        prep_meta["support_min_value"] = float(support_min_value)
+    if factor > 1 and config.preserve_zero_support:
+        prep_meta["support_coverage_threshold"] = float(config.support_coverage_threshold)
     if config.categorical_nearest:
         prep_meta["categorical_nearest"] = True
     return prepared, prep_meta

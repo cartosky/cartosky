@@ -416,6 +416,9 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     assert frame_meta["width"] == values.shape[1] * 3
     assert frame_meta["height"] == values.shape[0] * 3
     assert frame_meta["display_prep"]["id"] == "gfs_precip_total_display_v2"
+    assert frame_meta["display_prep"]["preserve_zero_support"] is True
+    assert frame_meta["display_prep"]["support_min_value"] == 0.01
+    assert frame_meta["display_prep"]["support_coverage_threshold"] == 0.5
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "precip_total"
@@ -425,6 +428,9 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     assert manifest["grid"]["width"] == values.shape[1] * 3
     assert manifest["grid"]["height"] == values.shape[0] * 3
     assert manifest["display_prep"]["id"] == "gfs_precip_total_display_v2"
+    assert manifest["display_prep"]["preserve_zero_support"] is True
+    assert manifest["display_prep"]["support_min_value"] == 0.01
+    assert manifest["display_prep"]["support_coverage_threshold"] == 0.5
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
         manifest["grid"]["height"],
@@ -677,9 +683,11 @@ def test_build_grid_for_run_supports_gfs_ptype_intensity(
     assert manifest["grid"]["width"] == values.shape[1] * 3
     assert manifest["grid"]["height"] == values.shape[0] * 3
     assert manifest["display_prep"]["id"] == "gfs_ptype_intensity_display_v1"
+    assert manifest["display_prep"]["categorical_nearest"] is True
 
     frame_meta = json.loads(frame_meta_path.read_text())
     assert frame_meta["display_prep"]["id"] == "gfs_ptype_intensity_display_v1"
+    assert frame_meta["display_prep"]["categorical_nearest"] is True
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
         manifest["grid"]["height"],

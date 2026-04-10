@@ -370,6 +370,14 @@ function categoricalNearestForManifest(manifest: GridManifestResponse | null): b
   return Boolean(manifest?.display_prep?.categorical_nearest);
 }
 
+function supportCoverageThresholdForManifest(manifest: GridManifestResponse | null): number {
+  const threshold = Number(manifest?.display_prep?.support_coverage_threshold);
+  if (Number.isFinite(threshold)) {
+    return Math.max(0, Math.min(1, threshold));
+  }
+  return 0;
+}
+
 function isObservedGridManifest(manifest: GridManifestResponse | null): boolean {
   return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
 }
@@ -610,6 +618,7 @@ type ProgramBindings = {
   texSizeLocation: WebGLUniformLocation | null;
   categoricalLocation: WebGLUniformLocation | null;
   categoricalNearestLocation: WebGLUniformLocation | null;
+  supportCoverageThresholdLocation: WebGLUniformLocation | null;
   transparentZeroLocation: WebGLUniformLocation | null;
   contrastFactorLocation: WebGLUniformLocation | null;
   saturationFactorLocation: WebGLUniformLocation | null;
@@ -896,6 +905,7 @@ export class GridWebglLayerController {
       uniform vec2 u_texSize;
       uniform float u_categorical;
       uniform float u_categoricalNearest;
+      uniform float u_supportCoverageThreshold;
       uniform float u_transparentZero;
       uniform float u_contrastFactor;
       uniform float u_saturationFactor;
@@ -974,16 +984,18 @@ export class GridWebglLayerController {
           t = pow(t, u_powerNormGamma);
         }
 
-        float alphaWeight = 1.0;
-        if (u_transparentBelowMin > -1e20) {
+        if (u_transparentBelowMin > -1e20 && u_supportCoverageThreshold > 0.0) {
           float sw00 = v00 > u_transparentBelowMin ? bw00 : 0.0;
           float sw10 = v10 > u_transparentBelowMin ? bw10 : 0.0;
           float sw01 = v01 > u_transparentBelowMin ? bw01 : 0.0;
           float sw11 = v11 > u_transparentBelowMin ? bw11 : 0.0;
-          alphaWeight = (sw00 + sw10 + sw01 + sw11) / wSum;
+          float supportCoverage = (sw00 + sw10 + sw01 + sw11) / wSum;
+          if (supportCoverage < u_supportCoverageThreshold) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
         }
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
-        return vec4(color.rgb, color.a * alphaWeight);
+        return color;
       }
 
       float categoricalVisibleWeight(float decoded) {
@@ -1119,6 +1131,7 @@ export class GridWebglLayerController {
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
+      supportCoverageThresholdLocation: gl.getUniformLocation(this.program, "u_supportCoverageThreshold"),
       transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
       contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
@@ -1635,6 +1648,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.dataEncodingLocation, resolveGridDtype(grid.dtype) === "uint16" ? 1 : 0);
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
+    gl.uniform1f(bindings.supportCoverageThresholdLocation, supportCoverageThresholdForManifest(this.manifest));
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
