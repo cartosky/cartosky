@@ -28,6 +28,19 @@ function formatValue(value: number): string {
   return value.toFixed(1);
 }
 
+function formatLegendTitle(title: string, units?: string): string {
+  const resolvedUnits = (units ?? "").trim();
+  if (!resolvedUnits) {
+    return title;
+  }
+  const lowerTitle = title.trim().toLowerCase();
+  const lowerUnits = resolvedUnits.toLowerCase();
+  if (lowerTitle.includes(`(${lowerUnits})`)) {
+    return title;
+  }
+  return `${title} (${resolvedUnits})`;
+}
+
 function UnavailablePlaceholder() {
   return (
     <div className="flex items-center gap-1.5 rounded-xl glass px-2.5 py-2">
@@ -423,9 +436,9 @@ export function MapLegend({
         aria-expanded={!collapsed}
         aria-controls="legend-body"
       >
-        <span className="block min-w-0 text-sm font-semibold tracking-tight text-foreground/95">
-          {legend.units ? `${legend.title} (${legend.units})` : legend.title}
-        </span>
+          <span className="block min-w-0 text-sm font-semibold tracking-tight text-foreground/95">
+            {formatLegendTitle(legend.title, legend.units)}
+          </span>
         {collapsed ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150" />
         ) : (
