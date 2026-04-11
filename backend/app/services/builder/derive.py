@@ -1530,15 +1530,23 @@ def _fetch_component(
     last_exc: Exception | None = None
     for search_pattern in selectors.search:
         try:
+            request = model_plugin.herbie_request(
+                product=product,
+                var_key=normalized_var_key,
+                run_date=run_date,
+                fh=fh,
+                search_pattern=search_pattern,
+            )
             fetch_kwargs: dict[str, Any] = {}
             if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
                 fetch_kwargs["bundle_fetch_cache"] = getattr(ctx, "bundle_fetch_cache")
             fetch_result = fetch_variable(
                 model_id=model_id,
-                product=product,
+                product=request.product,
                 search_pattern=search_pattern,
                 run_date=run_date,
                 fh=fh,
+                herbie_kwargs=getattr(request, "herbie_kwargs", None),
                 **fetch_kwargs,
                 return_meta=True,
             )

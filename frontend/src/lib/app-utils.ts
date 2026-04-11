@@ -60,7 +60,8 @@ export const MODEL_ORDER_BY_ID: Record<string, number> = {
   nam: 1,
   nbm: 2,
   gfs: 3,
-  spc: 4,
+  ecmwf: 4,
+  spc: 5,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -350,6 +351,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   nam: { label: "NAM", group: "MODELS", order: 1 },
   gfs: { label: "GFS", group: "MODELS", order: 2 },
   nbm: { label: "NBM", group: "MODELS", order: 3 },
+  ecmwf: { label: "ECMWF", group: "MODELS", order: 4 },
   mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 11 },
   spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 12 },

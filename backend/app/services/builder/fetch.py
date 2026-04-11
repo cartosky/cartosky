@@ -270,7 +270,12 @@ def _env_value(name: str | tuple[str, ...], default: str = "") -> str:
 
 def _priority_candidates(herbie_kwargs: dict[str, Any] | None) -> list[str]:
     if herbie_kwargs and herbie_kwargs.get("priority"):
-        return [str(herbie_kwargs["priority"]).strip()]
+        raw_priority = herbie_kwargs["priority"]
+        if isinstance(raw_priority, (list, tuple)):
+            parsed = [str(item).strip().lower() for item in raw_priority if str(item).strip()]
+            if parsed:
+                return parsed
+        return [str(raw_priority).strip().lower()]
 
     raw = _env_value(ENV_HERBIE_PRIORITY)
     if raw:

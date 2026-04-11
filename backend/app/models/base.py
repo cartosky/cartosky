@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
@@ -129,6 +130,13 @@ class ModelCapabilities:
                 )
 
 
+@dataclass(frozen=True)
+class HerbieRequest:
+    model: str
+    product: str
+    herbie_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
 class ModelPlugin(Protocol):
     @property
     def id(self) -> str: ...
@@ -171,6 +179,17 @@ class ModelPlugin(Protocol):
         ...
 
     def ensure_latest_cycles(self, keep_cycles: int, *, cache_dir: Path | None = None) -> dict[str, int]:
+        ...
+
+    def herbie_request(
+        self,
+        *,
+        product: str | None = None,
+        var_key: str | None = None,
+        run_date: datetime | None = None,
+        fh: int | None = None,
+        search_pattern: str | None = None,
+    ) -> HerbieRequest:
         ...
 
 
@@ -255,6 +274,32 @@ class BaseModelPlugin:
 
     def normalize_var_id(self, var_id: str) -> str:
         return var_id
+
+    def herbie_request(
+        self,
+        *,
+        product: str | None = None,
+        var_key: str | None = None,
+        run_date: datetime | None = None,
+        fh: int | None = None,
+        search_pattern: str | None = None,
+    ) -> HerbieRequest:
+        del var_key, run_date, fh, search_pattern
+        herbie_kwargs: dict[str, Any] = {}
+        priority_raw = self.run_discovery_config().get("source_priority")
+        if isinstance(priority_raw, str):
+            parsed = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
+            if parsed:
+                herbie_kwargs["priority"] = parsed
+        elif isinstance(priority_raw, Sequence) and not isinstance(priority_raw, (str, bytes)):
+            parsed = [str(item).strip().lower() for item in priority_raw if str(item).strip()]
+            if parsed:
+                herbie_kwargs["priority"] = parsed
+        return HerbieRequest(
+            model=self.id,
+            product=str(product or self.product),
+            herbie_kwargs=herbie_kwargs,
+        )
 
     def select_dataarray(self, ds: object, var_id: str) -> object:
         raise NotImplementedError("select_dataarray is not implemented for this model")

@@ -356,22 +356,37 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
     from herbie.core import Herbie
 
     search_pattern = _probe_search_pattern(plugin, probe_var)
-    priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
-    priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
+    probe_var_key = plugin.normalize_var_id(probe_var)
+    request = plugin.herbie_request(
+        product=getattr(plugin, "product", "sfc"),
+        var_key=probe_var_key,
+        run_date=run_dt,
+        fh=0,
+        search_pattern=search_pattern,
+    )
+    request_kwargs = dict(getattr(request, "herbie_kwargs", {}) or {})
+    raw_priorities = request_kwargs.pop("priority", None)
+    if isinstance(raw_priorities, (list, tuple)):
+        priorities = [str(item).strip().lower() for item in raw_priorities if str(item).strip()]
+    elif raw_priorities:
+        priorities = [str(raw_priorities).strip().lower()]
+    else:
+        priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
+        priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
     if not priorities:
         priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
 
     herbie_date = run_dt.replace(tzinfo=None) if run_dt.tzinfo else run_dt
-    probe_var_key = plugin.normalize_var_id(probe_var)
     last_exc: Exception | None = None
     for priority in priorities:
         try:
             H = Herbie(
                 herbie_date,
-                model=plugin.id,
-                product=getattr(plugin, "product", "sfc"),
+                model=request.model,
+                product=request.product,
                 fxx=0,
                 priority=priority,
+                **request_kwargs,
             )
             inventory = H.inventory(search_pattern)
             if inventory is not None and len(inventory) > 0:
@@ -649,12 +664,20 @@ def _component_precheck_available(
 
     for pattern in search_patterns:
         try:
+            request = plugin.herbie_request(
+                product=product,
+                var_key=var_key,
+                run_date=run_dt,
+                fh=int(fh),
+                search_pattern=str(pattern),
+            )
             fetch_variable(
                 model_id=model_id,
-                product=product,
+                product=request.product,
                 search_pattern=str(pattern),
                 run_date=run_dt,
                 fh=int(fh),
+                herbie_kwargs=getattr(request, "herbie_kwargs", None),
             )
             return True
         except (HerbieTransientUnavailableError, RuntimeError, ValueError):

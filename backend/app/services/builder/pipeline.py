@@ -143,12 +143,20 @@ def _build_contour_metadata_for_variable(
     last_exc: Exception | None = None
     for search_pattern in component_patterns:
         try:
+            contour_request = model_plugin.herbie_request(
+                product=contour_product,
+                var_key=contour_component,
+                run_date=run_date,
+                fh=fh,
+                search_pattern=search_pattern,
+            )
             component_data, src_crs, src_transform = fetch_variable(
                 model_id=model,
-                product=contour_product,
+                product=contour_request.product,
                 search_pattern=search_pattern,
                 run_date=run_date,
                 fh=fh,
+                herbie_kwargs=getattr(contour_request, "herbie_kwargs", None),
                 bundle_fetch_cache=getattr(fetch_ctx, "bundle_fetch_cache", None),
             )
             break
@@ -812,6 +820,7 @@ def _required_products_for_var(
 def _ensure_products_ready(
     *,
     model: str,
+    model_plugin: Any,
     run_date: datetime,
     fh: int,
     var_key: str,
@@ -820,19 +829,30 @@ def _ensure_products_ready(
 ) -> None:
     missing_products: list[str] = []
     for product_name in required_products:
-        if readiness_cache is not None and product_name in readiness_cache:
+        request = model_plugin.herbie_request(
+            product=product_name,
+            var_key=var_key,
+            run_date=run_date,
+            fh=fh,
+        )
+        readiness_key = f"{request.model}|{request.product}"
+        if readiness_cache is not None and readiness_key in readiness_cache:
+            ready = bool(readiness_cache[readiness_key])
+        elif readiness_cache is not None and product_name in readiness_cache:
             ready = bool(readiness_cache[product_name])
         else:
             ready = product_hour_has_any_idx(
                 model_id=model,
-                product=product_name,
+                product=request.product,
                 run_date=run_date,
                 fh=fh,
+                herbie_kwargs=getattr(request, "herbie_kwargs", None),
             )
             if readiness_cache is not None:
                 readiness_cache[product_name] = bool(ready)
+                readiness_cache[readiness_key] = bool(ready)
         if not ready:
-            missing_products.append(product_name)
+            missing_products.append(request.product)
 
     if missing_products:
         run_id = _run_id_from_date(run_date)
@@ -979,6 +999,7 @@ def build_frame(
     try:
         _ensure_products_ready(
             model=model,
+            model_plugin=resolved_plugin,
             run_date=run_date,
             fh=fh,
             var_key=var_key,
@@ -1033,12 +1054,20 @@ def build_frame(
             src_transform = None
             for pattern_idx, search_pattern in enumerate(search_patterns, start=1):
                 try:
+                    source_request = resolved_plugin.herbie_request(
+                        product=source_product,
+                        var_key=var_key,
+                        run_date=run_date,
+                        fh=fh,
+                        search_pattern=search_pattern,
+                    )
                     raw_data, src_crs, src_transform = fetch_variable(  # type: ignore[misc]
                         model_id=model,
-                        product=source_product,
+                        product=source_request.product,
                         search_pattern=search_pattern,
                         run_date=run_date,
                         fh=fh,
+                        herbie_kwargs=getattr(source_request, "herbie_kwargs", None),
                         bundle_fetch_cache=getattr(local_fetch_ctx, "bundle_fetch_cache", None),
                     )
                     if pattern_idx > 1:

@@ -49,6 +49,12 @@ try:
 except ImportError as exc:
     logger.warning("NWS Hazards plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .ecmwf import ECMWF_MODEL
+    MODEL_REGISTRY[ECMWF_MODEL.id] = ECMWF_MODEL
+except ImportError as exc:
+    logger.warning("ECMWF plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)
