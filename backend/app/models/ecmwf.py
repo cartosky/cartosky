@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-  - `tmp2m` only
+    - `tmp2m`, `dp2m`
   - realtime publishing only
 
 Herbie wiring:
@@ -37,6 +37,12 @@ class ECMWFPlugin(BaseModelPlugin):
             "tm2m": "tmp2m",
             "t2m": "tmp2m",
             "2t": "tmp2m",
+            "dp2m": "dp2m",
+            "d2m": "dp2m",
+            "2d": "dp2m",
+            "dpt2m": "dp2m",
+            "dewpoint2m": "dp2m",
+            "dewpoint": "dp2m",
         }
         return aliases.get(normalized, normalized)
 
@@ -97,27 +103,51 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="F",
     ),
+    "dp2m": VarSpec(
+        id="dp2m",
+        name="Surface Dew Point",
+        selectors=VarSelectors(
+            search=[":2d:"],
+            filter_by_keys={
+                "shortName": "2d",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "d2m",
+                "cf_var": "d2m",
+                "short_name": "2d",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="F",
+    ),
 }
 
 
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
+    "dp2m": "dp2m",
 }
 
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
+    "dp2m": 0,
 }
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
+    "dp2m": 2,
 }
 
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
+    "dp2m": "Temperature",
 }
 
 ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
+    "dp2m": "c_to_f",
 }
 
 

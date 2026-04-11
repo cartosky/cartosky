@@ -35,6 +35,10 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("tm2m") == "tmp2m"
     assert ECMWF_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert ECMWF_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert ECMWF_MODEL.normalize_var_id("dp2m") == "dp2m"
+    assert ECMWF_MODEL.normalize_var_id("d2m") == "dp2m"
+    assert ECMWF_MODEL.normalize_var_id("2d") == "dp2m"
+    assert ECMWF_MODEL.normalize_var_id("dewpoint") == "dp2m"
 
     request = ECMWF_MODEL.herbie_request(product="oper", var_key="tmp2m")
     assert request.model == "ifs"
@@ -51,7 +55,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -85,3 +89,16 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["default_fh"] == 0
     assert tmp2m["render_substrates"] == ["grid"]
+
+    dp2m = payload["variables"]["dp2m"]
+    assert dp2m["var_key"] == "dp2m"
+    assert dp2m["display_name"] == "Surface Dew Point"
+    assert dp2m["kind"] == "continuous"
+    assert dp2m["units"] == "F"
+    assert dp2m["buildable"] is True
+    assert dp2m["derived"] is False
+    assert dp2m["color_map_id"] == "dp2m"
+    assert dp2m["order"] == 2
+    assert dp2m["group"] == "Temperature"
+    assert dp2m["default_fh"] == 0
+    assert dp2m["render_substrates"] == ["grid"]
