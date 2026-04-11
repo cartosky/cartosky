@@ -39,6 +39,12 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("d2m") == "dp2m"
     assert ECMWF_MODEL.normalize_var_id("2d") == "dp2m"
     assert ECMWF_MODEL.normalize_var_id("dewpoint") == "dp2m"
+    assert ECMWF_MODEL.normalize_var_id("wspd10m") == "wspd10m"
+    assert ECMWF_MODEL.normalize_var_id("wind10m") == "wspd10m"
+    assert ECMWF_MODEL.normalize_var_id("10u") == "10u"
+    assert ECMWF_MODEL.normalize_var_id("u10") == "10u"
+    assert ECMWF_MODEL.normalize_var_id("10v") == "10v"
+    assert ECMWF_MODEL.normalize_var_id("v10") == "10v"
 
     request = ECMWF_MODEL.herbie_request(product="oper", var_key="tmp2m")
     assert request.model == "ifs"
@@ -55,7 +61,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -102,3 +108,16 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["group"] == "Temperature"
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
+
+    wspd10m = payload["variables"]["wspd10m"]
+    assert wspd10m["var_key"] == "wspd10m"
+    assert wspd10m["display_name"] == "10m Wind Speed"
+    assert wspd10m["kind"] == "continuous"
+    assert wspd10m["units"] == "mph"
+    assert wspd10m["buildable"] is True
+    assert wspd10m["derived"] is True
+    assert wspd10m["color_map_id"] == "wspd10m"
+    assert wspd10m["order"] == 12
+    assert wspd10m["group"] == "Wind"
+    assert wspd10m["default_fh"] == 0
+    assert wspd10m["render_substrates"] == ["grid"]

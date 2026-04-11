@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-    - `tmp2m`, `dp2m`
+    - `tmp2m`, `dp2m`, `wspd10m`
   - realtime publishing only
 
 Herbie wiring:
@@ -43,6 +43,13 @@ class ECMWFPlugin(BaseModelPlugin):
             "dpt2m": "dp2m",
             "dewpoint2m": "dp2m",
             "dewpoint": "dp2m",
+            "wspd10m": "wspd10m",
+            "wind10m": "wspd10m",
+            "10mwind": "wspd10m",
+            "10u": "10u",
+            "u10": "10u",
+            "10v": "10v",
+            "v10": "10v",
         }
         return aliases.get(normalized, normalized)
 
@@ -122,32 +129,83 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="F",
     ),
+    "10u": VarSpec(
+        id="10u",
+        name="10m U Wind",
+        selectors=VarSelectors(
+            search=[":10u:"],
+            filter_by_keys={
+                "shortName": "10u",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "10u",
+                "cf_var": "u10",
+                "short_name": "10u",
+            },
+        ),
+    ),
+    "10v": VarSpec(
+        id="10v",
+        name="10m V Wind",
+        selectors=VarSelectors(
+            search=[":10v:"],
+            filter_by_keys={
+                "shortName": "10v",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "10v",
+                "cf_var": "v10",
+                "short_name": "10v",
+            },
+        ),
+    ),
+    "wspd10m": VarSpec(
+        id="wspd10m",
+        name="10m Wind Speed",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "10u",
+                "v_component": "10v",
+            }
+        ),
+        derived=True,
+        derive="wspd10m",
+        kind="continuous",
+        units="mph",
+    ),
 }
 
 
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
+    "wspd10m": "wspd10m",
 }
 
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
+    "wspd10m": 0,
 }
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
+    "wspd10m": 12,
 }
 
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
+    "wspd10m": "Wind",
 }
 
 ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "wspd10m": "ms_to_mph",
 }
 
 
