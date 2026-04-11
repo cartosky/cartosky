@@ -136,5 +136,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["color_map_id"] == "wgst10m"
     assert wgst10m["order"] == 13
     assert wgst10m["group"] == "Wind"
-    assert wgst10m["default_fh"] == 0
+    assert wgst10m["default_fh"] == 3
+    assert wgst10m["constraints"] == {"min_fh": 3}
     assert wgst10m["render_substrates"] == ["grid"]

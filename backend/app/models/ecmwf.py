@@ -212,7 +212,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
     "wspd10m": 0,
-    "wgst10m": 0,
+    "wgst10m": 3,
 }
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
@@ -236,6 +236,12 @@ ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "wgst10m": "ms_to_mph",
 }
 
+ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
+    "wgst10m": {
+        "min_fh": 3,
+    },
+}
+
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
     return VariableCapability(
@@ -255,6 +261,7 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         order=ECMWF_ORDER_BY_VAR_KEY.get(var_key),
         group=ECMWF_GROUP_BY_VAR_KEY.get(var_key),
         conversion=ECMWF_CONVERSION_BY_VAR_KEY.get(var_key),
+        constraints=dict(ECMWF_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),
     )
 
 
