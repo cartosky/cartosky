@@ -63,7 +63,7 @@ class ECMWFPlugin(BaseModelPlugin):
         )
 
 
-ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 241, 6))
+ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
 
 ECMWF_REGIONS: dict[str, RegionSpec] = {

@@ -25,7 +25,7 @@ def test_ecmwf_run_discovery_invariants() -> None:
 
 
 def test_ecmwf_target_fhs_invariants() -> None:
-    expected = list(range(0, 145, 3)) + list(range(150, 241, 6))
+    expected = list(range(0, 145, 3)) + list(range(150, 361, 6))
     assert ECMWF_MODEL.target_fhs(0) == expected
     assert ECMWF_MODEL.target_fhs(12) == expected
 
