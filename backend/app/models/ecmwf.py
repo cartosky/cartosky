@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-    - `tmp2m`, `dp2m`, `wspd10m`
+        - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`
   - realtime publishing only
 
 Herbie wiring:
@@ -46,6 +46,11 @@ class ECMWFPlugin(BaseModelPlugin):
             "wspd10m": "wspd10m",
             "wind10m": "wspd10m",
             "10mwind": "wspd10m",
+            "wgst10m": "wgst10m",
+            "gust10m": "wgst10m",
+            "10m_gust": "wgst10m",
+            "gust": "wgst10m",
+            "wind_gust": "wgst10m",
             "10u": "10u",
             "u10": "10u",
             "10v": "10v",
@@ -175,6 +180,24 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="mph",
     ),
+    "wgst10m": VarSpec(
+        id="wgst10m",
+        name="10m Wind Gust",
+        selectors=VarSelectors(
+            search=[":10fg:"],
+            filter_by_keys={
+                "shortName": "10fg",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "10fg",
+                "short_name": "10fg",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="mph",
+    ),
 }
 
 
@@ -182,30 +205,35 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "wspd10m": "wspd10m",
+    "wgst10m": "wgst10m",
 }
 
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
     "wspd10m": 0,
+    "wgst10m": 0,
 }
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "wspd10m": 12,
+    "wgst10m": 13,
 }
 
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "wspd10m": "Wind",
+    "wgst10m": "Wind",
 }
 
 ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
     "wspd10m": "ms_to_mph",
+    "wgst10m": "ms_to_mph",
 }
 
 
