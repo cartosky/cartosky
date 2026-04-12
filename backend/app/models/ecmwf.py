@@ -184,9 +184,8 @@ ECMWF_VARS: dict[str, VarSpec] = {
         id="wgst10m",
         name="10m Wind Gust",
         selectors=VarSelectors(
-            search=[":10fg:"],
+            search=[":10fg:", ":10fg3:"],
             filter_by_keys={
-                "shortName": "10fg",
                 "typeOfLevel": "surface",
             },
             hints={
