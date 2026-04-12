@@ -192,6 +192,16 @@ class ModelPlugin(Protocol):
     ) -> HerbieRequest:
         ...
 
+    def search_patterns_for_var(
+        self,
+        *,
+        var_key: str,
+        fh: int | None = None,
+        product: str | None = None,
+        var_spec: VarSpec | None = None,
+    ) -> list[str]:
+        ...
+
 
 @dataclass(frozen=True)
 class BaseModelPlugin:
@@ -300,6 +310,22 @@ class BaseModelPlugin:
             product=str(product or self.product),
             herbie_kwargs=herbie_kwargs,
         )
+
+    def search_patterns_for_var(
+        self,
+        *,
+        var_key: str,
+        fh: int | None = None,
+        product: str | None = None,
+        var_spec: VarSpec | None = None,
+    ) -> list[str]:
+        del fh, product
+        spec = var_spec or self.get_var(var_key)
+        selectors = getattr(spec, "selectors", None)
+        if selectors is None:
+            return []
+        search_list = getattr(selectors, "search", [])
+        return [str(pattern) for pattern in search_list if str(pattern).strip()]
 
     def select_dataarray(self, ds: object, var_id: str) -> object:
         raise NotImplementedError("select_dataarray is not implemented for this model")

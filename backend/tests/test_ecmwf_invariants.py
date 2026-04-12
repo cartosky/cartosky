@@ -77,6 +77,9 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     gust_spec = ECMWF_MODEL.get_var("wgst10m")
     assert gust_spec is not None
     assert gust_spec.selectors.search == [":10fg:", ":10fg3:"]
+    assert ECMWF_MODEL.search_patterns_for_var(var_key="wgst10m", fh=90) == [":10fg:", ":10fg3:"]
+    assert ECMWF_MODEL.search_patterns_for_var(var_key="wgst10m", fh=93) == [":10fg3:", ":10fg:"]
+    assert ECMWF_MODEL.search_patterns_for_var(var_key="wgst10m", fh=150) == [":10fg:", ":10fg3:"]
 
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:

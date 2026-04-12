@@ -136,7 +136,13 @@ def _build_contour_metadata_for_variable(
     contour_conversion = str(hints.get("contour_conversion") or "").strip()
 
     component_spec = _resolve_model_var_spec(model, contour_component, model_plugin)
-    component_patterns = _get_search_patterns(component_spec)
+    component_patterns = _get_search_patterns(
+        component_spec,
+        model_plugin=model_plugin,
+        var_key=contour_component,
+        fh=fh,
+        product=contour_product,
+    )
     component_data = None
     src_crs = None
     src_transform = None
@@ -759,12 +765,28 @@ def _format_units(units: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _get_search_patterns(var_spec_model: Any) -> list[str]:
+def _get_search_patterns(
+    var_spec_model: Any,
+    *,
+    model_plugin: Any | None = None,
+    var_key: str | None = None,
+    fh: int | None = None,
+    product: str | None = None,
+) -> list[str]:
     """Extract Herbie search patterns from a model VarSpec.
 
     The VarSpec.selectors.search list contains GRIB index patterns.
     Patterns are tried in order.
     """
+    if model_plugin is not None and isinstance(var_key, str) and var_key.strip():
+        resolved = model_plugin.search_patterns_for_var(
+            var_key=var_key,
+            fh=fh,
+            product=product,
+            var_spec=var_spec_model,
+        )
+        if resolved:
+            return [str(pattern) for pattern in resolved if str(pattern).strip()]
     selectors = getattr(var_spec_model, "selectors", None)
     if selectors is None:
         raise ValueError("VarSpec has no selectors")
@@ -977,7 +999,13 @@ def build_frame(
         var_key=var_key,
         kind=kind_normalized,
     )
-    search_patterns = None if getattr(var_spec_model, "derived", False) else _get_search_patterns(var_spec_model)
+    search_patterns = None if getattr(var_spec_model, "derived", False) else _get_search_patterns(
+        var_spec_model,
+        model_plugin=resolved_plugin,
+        var_key=var_key,
+        fh=fh,
+        product=source_product,
+    )
     required_products = _required_products_for_var(
         default_product=product,
         var_spec_model=var_spec_model,

@@ -1527,8 +1527,17 @@ def _fetch_component(
             return cached[0], cached[1], cached[2], cached_meta
         return cached
 
+    search_patterns = model_plugin.search_patterns_for_var(
+        var_key=normalized_var_key,
+        fh=fh,
+        product=product,
+        var_spec=getattr(model_plugin, "get_var", lambda _key: None)(normalized_var_key),
+    )
+    if not search_patterns:
+        search_patterns = [str(pattern) for pattern in selectors.search if str(pattern).strip()]
+
     last_exc: Exception | None = None
-    for search_pattern in selectors.search:
+    for search_pattern in search_patterns:
         try:
             request = model_plugin.herbie_request(
                 product=product,

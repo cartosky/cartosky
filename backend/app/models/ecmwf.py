@@ -80,6 +80,29 @@ class ECMWFPlugin(BaseModelPlugin):
             herbie_kwargs=dict(base_request.herbie_kwargs),
         )
 
+    def search_patterns_for_var(
+        self,
+        *,
+        var_key: str,
+        fh: int | None = None,
+        product: str | None = None,
+        var_spec: VarSpec | None = None,
+    ) -> list[str]:
+        patterns = super().search_patterns_for_var(
+            var_key=var_key,
+            fh=fh,
+            product=product,
+            var_spec=var_spec,
+        )
+        if var_key != "wgst10m" or fh is None:
+            return patterns
+        preferred = [":10fg3:", ":10fg:"] if 93 <= int(fh) <= 144 else [":10fg:", ":10fg3:"]
+        ordered: list[str] = []
+        for pattern in preferred + patterns:
+            if pattern and pattern not in ordered:
+                ordered.append(pattern)
+        return ordered
+
 
 ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 361, 6))
 
