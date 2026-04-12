@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-        - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`
+      - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`
   - realtime publishing only
 
 Herbie wiring:
@@ -43,6 +43,11 @@ class ECMWFPlugin(BaseModelPlugin):
             "dpt2m": "dp2m",
             "dewpoint2m": "dp2m",
             "dewpoint": "dp2m",
+            "precip_total": "precip_total",
+            "total_precip": "precip_total",
+            "apcp": "precip_total",
+            "qpf": "precip_total",
+            "total_qpf": "precip_total",
             "wspd10m": "wspd10m",
             "wind10m": "wspd10m",
             "10mwind": "wspd10m",
@@ -157,6 +162,24 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="F",
     ),
+    "precip_total": VarSpec(
+        id="precip_total",
+        name="Total Precip",
+        selectors=VarSelectors(
+            search=[":tp:sfc:", ":tp:"],
+            filter_by_keys={
+                "shortName": "tp",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "tp",
+                "short_name": "tp",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
+    ),
     "10u": VarSpec(
         id="10u",
         name="10m U Wind",
@@ -226,6 +249,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
+    "precip_total": "precip_total",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
 }
@@ -233,6 +257,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
+    "precip_total": 3,
     "wspd10m": 0,
     "wgst10m": 3,
 }
@@ -240,6 +265,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
+    "precip_total": 10,
     "wspd10m": 12,
     "wgst10m": 13,
 }
@@ -247,6 +273,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
+    "precip_total": "Precipitation",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
 }
@@ -254,11 +281,15 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
 ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
+    "precip_total": "m_to_in",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
 }
 
 ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
+    "precip_total": {
+        "min_fh": 3,
+    },
     "wgst10m": {
         "min_fh": 3,
     },
