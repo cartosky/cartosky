@@ -389,20 +389,6 @@ export default function Home() {
         />
         <div
           aria-hidden="true"
-          className="absolute inset-0 opacity-16"
-          style={{
-            backgroundImage: `
-              repeating-linear-gradient(
-                108deg,
-                transparent 0 16px,
-                rgba(125,211,252,0.03) 16px 17px,
-                transparent 17px 34px
-              )
-            `,
-          }}
-        />
-        <div
-          aria-hidden="true"
           className="absolute inset-0 opacity-20"
           style={{
             backgroundImage:
