@@ -47,9 +47,8 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const isAppVariant = variant === "app";
   const isMarketingVariant = variant === "marketing";
   const showAppNav = isAppVariant && location.pathname !== "/viewer";
-  const hideInlineAuthOnMobile = variant === "marketing" && location.pathname === "/";
   const logoClassName = isMarketingVariant
-    ? "block h-14 w-auto max-w-none"
+    ? "block h-12 w-auto max-w-none"
     : "block h-12 w-auto max-w-none";
   const accountLabel = twfStatus.linked ? twfStatus.display_name : "Login";
   const accountPhotoUrl = twfStatus.linked ? twfStatus.photo_url : null;
@@ -115,12 +114,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-[60] border-b border-white/10 bg-black/35 backdrop-blur-2xl">
+    <header className="sticky top-0 z-[60] border-b border-white/8 bg-[#08111f]/78 backdrop-blur-2xl">
       <div
         className={
           isAppVariant
             ? "flex h-14 items-center gap-3 px-4 md:px-5"
-            : "mx-auto flex h-16 max-w-6xl items-center gap-3 md:gap-6 px-5 md:px-8"
+            : "mx-auto flex h-16 max-w-6xl items-center gap-3 px-5 md:gap-6 md:px-8"
         }
       >
         <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">
@@ -129,13 +128,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
-            <NavItem to="/viewer" label="Viewer" />
             <NavItem to="/models" label="Models" />
             <NavItem to="/variables" label="Variables" />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <NavLink
               to="/login"
-              className="ml-1 rounded-md border border-white/20 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-3 py-2 text-sm text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition-all duration-150 hover:brightness-110"
+              className="ml-2 rounded-lg px-3 py-2 text-sm text-white/72 transition duration-150 hover:text-white"
             >
               <span className="inline-flex items-center gap-2">
                 {accountPhotoUrl ? (
@@ -143,6 +141,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 ) : null}
                 <span>{accountLabel}</span>
               </span>
+            </NavLink>
+            <NavLink
+              to="/viewer"
+              className="ml-1 inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3.5 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)] transition duration-150 hover:brightness-105"
+            >
+              Viewer
             </NavLink>
           </nav>
         ) : null}
@@ -156,6 +160,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <div className="ml-auto flex items-center gap-2 md:hidden" ref={menuRef}>
+          <NavLink
+            to="/viewer"
+            className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)]"
+          >
+            Viewer
+          </NavLink>
           <button
             type="button"
             className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white hover:bg-white/10"
@@ -171,34 +181,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
               <span className="block h-0.5 w-4 rounded bg-current" />
             </span>
           </button>
-
-          {variant === "marketing" ? (
-            <>
-              <NavLink
-                to="/login"
-                className={[
-                  "rounded-md border border-white/20 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-3 py-2 text-sm text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition-all duration-150 hover:brightness-110",
-                  hideInlineAuthOnMobile ? "hidden md:inline-flex" : "",
-                ].join(" ")}
-              >
-                <span className="inline-flex items-center gap-2">
-                  {accountPhotoUrl ? (
-                    <img src={accountPhotoUrl} alt="" className="h-5 w-5 rounded-full object-cover" />
-                  ) : null}
-                  <span>{accountLabel}</span>
-                </span>
-              </NavLink>
-              <NavLink
-                to="/login"
-                className={[
-                  "rounded-md bg-emerald-400/20 border border-emerald-300/25 px-3 py-2 text-sm font-medium text-emerald-50 hover:bg-emerald-400/25",
-                  hideInlineAuthOnMobile ? "hidden md:inline-flex" : "",
-                ].join(" ")}
-              >
-                Sign Up
-              </NavLink>
-            </>
-          ) : null}
 
           {mobileMenuOpen ? (
             <nav
@@ -237,12 +219,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <NavItem
                   to="/login"
                   label={accountLabel}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-white/90 hover:text-white"
-                />
-                <NavItem
-                  to="/login"
-                  label="Sign Up"
                   onClick={() => setMobileMenuOpen(false)}
                   className="text-white/90 hover:text-white"
                 />

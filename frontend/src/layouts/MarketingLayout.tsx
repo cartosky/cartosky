@@ -4,29 +4,24 @@ import SiteFooter from "../components/SiteFooter";
 
 export default function MarketingLayout() {
   return (
-    <div className="relative min-h-svh text-white overflow-hidden">
-      {/* Background */}
+    <div className="relative min-h-svh overflow-hidden bg-[#07111f] text-white">
       <div
         aria-hidden="true"
         className="absolute md:fixed inset-0 -z-10"
         style={{
           backgroundImage: `
-            radial-gradient(1200px 700px at 20% 20%, rgba(120,160,255,0.14), transparent 55%),
-            radial-gradient(900px 600px at 80% 30%, rgba(120,255,210,0.08), transparent 60%),
-            linear-gradient(to bottom, rgba(8,10,16,0.74), rgba(8,10,16,0.92)),
-            url(/assets/hero-space.webp)
+            radial-gradient(900px 520px at 50% 0%, rgba(34,211,238,0.08), transparent 60%),
+            radial-gradient(800px 600px at 12% 78%, rgba(37,99,235,0.08), transparent 65%),
+            linear-gradient(180deg, rgba(7,17,31,1), rgba(8,18,34,1))
           `,
-          backgroundSize: "cover",
+          backgroundSize: "auto",
           backgroundPosition: "center",
         }}
       />
-      {/* Vignette */}
       <div
         aria-hidden="true"
         className="absolute md:fixed inset-0 -z-10 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(0,0,0,0.55)_100%)]"
       />
-      {/* Optional subtle noise (add /public/assets/noise.png if you want) */}
-      {/* <div aria-hidden="true" className="absolute md:fixed inset-0 -z-10 pointer-events-none opacity-[0.06] mix-blend-overlay bg-[url(/assets/noise.png)]" /> */}
 
       <SiteHeader variant="marketing" />
 
