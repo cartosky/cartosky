@@ -48,6 +48,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("gust10m") == "wgst10m"
     assert ECMWF_MODEL.normalize_var_id("10m_gust") == "wgst10m"
     assert ECMWF_MODEL.normalize_var_id("gust") == "wgst10m"
+    assert ECMWF_MODEL.normalize_var_id("mucape") == "mucape"
+    assert ECMWF_MODEL.normalize_var_id("most_unstable_cape") == "mucape"
     assert ECMWF_MODEL.normalize_var_id("10u") == "10u"
     assert ECMWF_MODEL.normalize_var_id("u10") == "10u"
     assert ECMWF_MODEL.normalize_var_id("10v") == "10v"
@@ -68,7 +70,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "wspd10m", "wgst10m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "wspd10m", "wgst10m", "mucape"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -87,6 +89,10 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     precip_spec = ECMWF_MODEL.get_var("precip_total")
     assert precip_spec is not None
     assert precip_spec.selectors.search == [":tp:sfc:", ":tp:"]
+
+    mucape_spec = ECMWF_MODEL.get_var("mucape")
+    assert mucape_spec is not None
+    assert mucape_spec.selectors.search == [":mucape:sfc:", ":mucape:"]
 
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
@@ -166,3 +172,16 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["default_fh"] == 3
     assert wgst10m["constraints"] == {"min_fh": 3}
     assert wgst10m["render_substrates"] == ["grid"]
+
+    mucape = payload["variables"]["mucape"]
+    assert mucape["var_key"] == "mucape"
+    assert mucape["display_name"] == "Most-Unstable CAPE"
+    assert mucape["kind"] == "continuous"
+    assert mucape["units"] == "J/kg"
+    assert mucape["buildable"] is True
+    assert mucape["derived"] is False
+    assert mucape["color_map_id"] == "mlcape"
+    assert mucape["order"] == 20
+    assert mucape["group"] == "Instability"
+    assert mucape["default_fh"] == 0
+    assert mucape["render_substrates"] == ["grid"]

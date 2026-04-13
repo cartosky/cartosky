@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-      - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`
+    - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `mucape`
   - realtime publishing only
 
 Herbie wiring:
@@ -56,6 +56,9 @@ class ECMWFPlugin(BaseModelPlugin):
             "10m_gust": "wgst10m",
             "gust": "wgst10m",
             "wind_gust": "wgst10m",
+            "mucape": "mucape",
+            "most_unstable_cape": "mucape",
+            "mostunstablecape": "mucape",
             "10u": "10u",
             "u10": "10u",
             "10v": "10v",
@@ -243,6 +246,26 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="mph",
     ),
+    "mucape": VarSpec(
+        id="mucape",
+        name="Most-Unstable CAPE",
+        selectors=VarSelectors(
+            search=[":mucape:sfc:", ":mucape:"],
+            filter_by_keys={
+                "shortName": "mucape",
+                "typeOfLevel": "mostUnstableParcel",
+            },
+            hints={
+                "upstream_var": "mucape",
+                "cf_var": "cape",
+                "short_name": "mucape",
+                "cape_layer": "most unstable parcel",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="J/kg",
+    ),
 }
 
 
@@ -252,6 +275,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "precip_total": "precip_total",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
+    "mucape": "mlcape",
 }
 
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
@@ -260,6 +284,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_total": 3,
     "wspd10m": 0,
     "wgst10m": 3,
+    "mucape": 0,
 }
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
@@ -268,6 +293,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "precip_total": 10,
     "wspd10m": 12,
     "wgst10m": 13,
+    "mucape": 20,
 }
 
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
@@ -276,6 +302,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "precip_total": "Precipitation",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
+    "mucape": "Instability",
 }
 
 ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
