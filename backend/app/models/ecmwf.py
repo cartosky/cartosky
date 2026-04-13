@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from .kuchera import kuchera_hint_overrides
 from .base import (
     BaseModelPlugin,
     HerbieRequest,
@@ -54,6 +55,8 @@ class ECMWFPlugin(BaseModelPlugin):
             "snow_10to1": "snowfall_total",
             "total_snow": "snowfall_total",
             "totalsnow": "snowfall_total",
+            "snowfall_kuchera_total": "snowfall_kuchera_total",
+            "snowkuchera": "snowfall_kuchera_total",
             "wspd10m": "wspd10m",
             "wind10m": "wspd10m",
             "10mwind": "wspd10m",
@@ -207,6 +210,156 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    "snowfall_kuchera_total": VarSpec(
+        id="snowfall_kuchera_total",
+        name="Total Snowfall (Kuchera)",
+        selectors=VarSelectors(
+            hints={
+                "kuchera_lwe_component": "sf",
+                "kuchera_lwe_component_scale": "1000",
+                "step_hours": "3",
+                "step_transition_fh": "144",
+                "step_hours_after_fh": "6",
+                "kuchera_profile_mode": "simplified",
+                "kuchera_use_surface_temp_cap": "true",
+                "kuchera_surface_temp_cap_cold_f": "30",
+                "kuchera_surface_temp_cap_warm_f": "34",
+                "kuchera_surface_temp_cap_cold_ratio": "18",
+                "kuchera_surface_temp_cap_warm_ratio": "10",
+                "kuchera_use_sfc_pressure_mask": "true",
+                **kuchera_hint_overrides(levels_hpa=(925, 850, 700, 600), require_rh=False),
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="snowfall_kuchera_total_cumulative",
+        kind="continuous",
+        units="in",
+    ),
+    "sf": VarSpec(
+        id="sf",
+        name="Snowfall Water Equivalent",
+        selectors=VarSelectors(
+            search=[":sf:sfc:", ":sf:"],
+            filter_by_keys={
+                "shortName": "sf",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "sf",
+                "short_name": "sf",
+            },
+        ),
+        kind="continuous",
+        units="m",
+    ),
+    "tmp925": VarSpec(
+        id="tmp925",
+        name="925mb Temp",
+        selectors=VarSelectors(
+            search=[":t:925:pl:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+            },
+            hints={
+                "upstream_var": "t925",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+        kind="continuous",
+        units="C",
+    ),
+    "tmp850": VarSpec(
+        id="tmp850",
+        name="850mb Temp",
+        selectors=VarSelectors(
+            search=[":t:850:pl:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+            },
+            hints={
+                "upstream_var": "t850",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+        kind="continuous",
+        units="C",
+    ),
+    "tmp700": VarSpec(
+        id="tmp700",
+        name="700mb Temp",
+        selectors=VarSelectors(
+            search=[":t:700:pl:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+            },
+            hints={
+                "upstream_var": "t700",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+        kind="continuous",
+        units="C",
+    ),
+    "tmp600": VarSpec(
+        id="tmp600",
+        name="600mb Temp",
+        selectors=VarSelectors(
+            search=[":t:600:pl:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+            },
+            hints={
+                "upstream_var": "t600",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+        kind="continuous",
+        units="C",
+    ),
+    "tmp500": VarSpec(
+        id="tmp500",
+        name="500mb Temp",
+        selectors=VarSelectors(
+            search=[":t:500:pl:"],
+            filter_by_keys={
+                "shortName": "t",
+                "typeOfLevel": "isobaricInhPa",
+            },
+            hints={
+                "upstream_var": "t500",
+                "cf_var": "t",
+                "short_name": "t",
+            },
+        ),
+        kind="continuous",
+        units="C",
+    ),
+    "pres_sfc": VarSpec(
+        id="pres_sfc",
+        name="Surface Pressure",
+        selectors=VarSelectors(
+            search=[":sp:sfc:"],
+            filter_by_keys={
+                "shortName": "sp",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "sp",
+                "short_name": "sp",
+            },
+        ),
+        kind="continuous",
+        units="Pa",
+    ),
     "10u": VarSpec(
         id="10u",
         name="10m U Wind",
@@ -298,6 +451,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "precip_total": "precip_total",
     "snowfall_total": "snowfall_total",
+    "snowfall_kuchera_total": "snowfall_total",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "mucape": "mlcape",
@@ -308,6 +462,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 0,
     "precip_total": 3,
     "snowfall_total": 3,
+    "snowfall_kuchera_total": 3,
     "wspd10m": 0,
     "wgst10m": 3,
     "mucape": 0,
@@ -318,6 +473,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 2,
     "precip_total": 10,
     "snowfall_total": 11,
+    "snowfall_kuchera_total": 14,
     "wspd10m": 12,
     "wgst10m": 13,
     "mucape": 20,
@@ -328,6 +484,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
+    "snowfall_kuchera_total": "Precipitation",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
     "mucape": "Instability",
@@ -347,6 +504,9 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 3,
     },
     "snowfall_total": {
+        "min_fh": 3,
+    },
+    "snowfall_kuchera_total": {
         "min_fh": 3,
     },
     "wgst10m": {

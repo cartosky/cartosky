@@ -46,6 +46,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("snow10") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("total_snow") == "snowfall_total"
+    assert ECMWF_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
+    assert ECMWF_MODEL.normalize_var_id("snowkuchera") == "snowfall_kuchera_total"
     assert ECMWF_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wgst10m") == "wgst10m"
@@ -74,7 +76,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "wspd10m", "wgst10m", "mucape"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -97,6 +99,12 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     snowfall_spec = ECMWF_MODEL.get_var("snowfall_total")
     assert snowfall_spec is not None
     assert snowfall_spec.selectors.search == [":sf:sfc:", ":sf:"]
+
+    snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
+    assert snowfall_kuchera_spec is not None
+    assert snowfall_kuchera_spec.derive == "snowfall_kuchera_total_cumulative"
+    assert snowfall_kuchera_spec.selectors.hints["kuchera_lwe_component"] == "sf"
+    assert snowfall_kuchera_spec.selectors.hints["kuchera_profile_mode"] == "simplified"
 
     mucape_spec = ECMWF_MODEL.get_var("mucape")
     assert mucape_spec is not None
@@ -167,6 +175,21 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["default_fh"] == 3
     assert snowfall_total["constraints"] == {"min_fh": 3}
     assert snowfall_total["render_substrates"] == ["grid"]
+
+    snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
+    assert snowfall_kuchera_total["var_key"] == "snowfall_kuchera_total"
+    assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
+    assert snowfall_kuchera_total["kind"] == "continuous"
+    assert snowfall_kuchera_total["units"] == "in"
+    assert snowfall_kuchera_total["buildable"] is True
+    assert snowfall_kuchera_total["derived"] is True
+    assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
+    assert snowfall_kuchera_total["color_map_id"] == "snowfall_total"
+    assert snowfall_kuchera_total["order"] == 14
+    assert snowfall_kuchera_total["group"] == "Precipitation"
+    assert snowfall_kuchera_total["default_fh"] == 3
+    assert snowfall_kuchera_total["constraints"] == {"min_fh": 3}
+    assert snowfall_kuchera_total["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

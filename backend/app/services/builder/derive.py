@@ -2029,6 +2029,8 @@ def _resolve_apcp_step_data(
     resampling: str,
     cum_diff_state: _ApcpCumDiffState,
     expected_start_fh_override: int | None = None,
+    force_cumulative_from_zero: bool = False,
+    skip_inventory_window_selection: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, str]:
     """Resolve per-step APCP data with inventory-driven window selection.
 
@@ -2129,6 +2131,8 @@ def _resolve_apcp_step_data(
                         step_fh=step_fh,
                         expected_start_fh=expected_start_fh,
                     )
+                    if cached_mode == "invalid" and force_cumulative_from_zero:
+                        cached_mode = "cumulative_from_zero"
                     if cached_mode != "invalid":
                         _record_warp_stat(ctx, "hits")
                         apcp_step, step_crs, step_transform = cached
@@ -2158,6 +2162,8 @@ def _resolve_apcp_step_data(
                         step_fh=step_fh,
                         expected_start_fh=expected_start_fh,
                     )
+                    if cached_mode == "invalid" and force_cumulative_from_zero:
+                        cached_mode = "cumulative_from_zero"
                     if cached_mode != "invalid":
                         _record_fetch_stat(ctx, "hits")
                         apcp_step, step_crs, step_transform = cached
@@ -2169,7 +2175,7 @@ def _resolve_apcp_step_data(
                         apcp_fetch_resolved = True
 
     # 2. Inventory-driven APCP selection.
-    if not apcp_fetch_resolved:
+    if not apcp_fetch_resolved and not skip_inventory_window_selection:
         inventory_lines = _kuchera_inventory_lines(
             model_id=model_id,
             product=resolved_apcp_product,
@@ -2306,6 +2312,8 @@ def _resolve_apcp_step_data(
     )
     if apcp_mode == "invalid" and selected_mode != "invalid":
         apcp_mode = selected_mode
+    if apcp_mode == "invalid" and force_cumulative_from_zero:
+        apcp_mode = "cumulative_from_zero"
 
     step_apcp_data = apcp_cum_clean
     apcp_valid = apcp_valid_raw
@@ -3756,7 +3764,16 @@ def _derive_snowfall_kuchera_total_cumulative(
     del var_capability
     frame_start = time.perf_counter()
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
-    apcp_component = str(hints.get("apcp_component", "apcp_step"))
+    kuchera_lwe_component_raw = str(hints.get("kuchera_lwe_component", "")).strip()
+    use_direct_cumulative_lwe = bool(kuchera_lwe_component_raw)
+    apcp_component = str(kuchera_lwe_component_raw or hints.get("apcp_component", "apcp_step"))
+    kuchera_lwe_component_scale_raw = hints.get("kuchera_lwe_component_scale", "1")
+    try:
+        kuchera_lwe_component_scale = float(kuchera_lwe_component_scale_raw)
+    except (TypeError, ValueError):
+        kuchera_lwe_component_scale = 1.0
+    if kuchera_lwe_component_scale <= 0.0:
+        kuchera_lwe_component_scale = 1.0
     apcp_product_raw = str(hints.get("kuchera_apcp_product", "")).strip()
     apcp_product = apcp_product_raw or None
     profile_product_raw = str(hints.get("kuchera_profile_product", "")).strip()
@@ -3955,6 +3972,40 @@ def _derive_snowfall_kuchera_total_cumulative(
         reference_crs: rasterio.crs.CRS | None,
         reference_transform: rasterio.transform.Affine | None,
     ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, int] | None:
+        if use_direct_cumulative_lwe:
+            try:
+                prior_source, prior_source_crs, prior_source_transform = _fetch_step_component(
+                    model_id=model_id,
+                    product=str(apcp_product or product),
+                    run_date=run_date,
+                    step_fh=int(seed_fh),
+                    model_plugin=model_plugin,
+                    var_key=apcp_component,
+                    use_warped=use_warped,
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    ctx=ctx,
+                )
+            except Exception:
+                return None
+            prior_source_data = np.asarray(prior_source, dtype=np.float32)
+            if kuchera_lwe_component_scale != 1.0:
+                prior_source_data = (prior_source_data * np.float32(kuchera_lwe_component_scale)).astype(np.float32, copy=False)
+            prior_source_valid = np.isfinite(prior_source_data) & (prior_source_data >= 0.0)
+            if reference_data is not None:
+                same_shape = prior_source_data.shape == reference_data.shape
+                same_crs = prior_source_crs == reference_crs
+                same_transform = prior_source_transform == reference_transform
+                if not (same_shape and same_crs and same_transform):
+                    return None
+            return (
+                np.where(prior_source_valid, prior_source_data, 0.0).astype(np.float32, copy=False),
+                prior_source_valid,
+                prior_source_crs,
+                prior_source_transform,
+                int(seed_fh),
+            )
         prior_precip = _kuchera_load_prior_cumulative(
             model_id=model_id,
             run_date=run_date,
@@ -4166,6 +4217,8 @@ def _derive_snowfall_kuchera_total_cumulative(
                     target_grid_id=target_grid_id,
                     resampling=resampling,
                     cum_diff_state=cum_diff_state,
+                    force_cumulative_from_zero=use_direct_cumulative_lwe,
+                    skip_inventory_window_selection=use_direct_cumulative_lwe,
                 )
             except ValueError as exc:
                 if start_index > 0 and _is_apcp_incremental_rebuild_retryable_error(exc):
@@ -4182,6 +4235,9 @@ def _derive_snowfall_kuchera_total_cumulative(
             steps_processed += 1
             if int(step_fh) == int(fh):
                 current_step_fetch_counts["apcp"] = current_step_fetch_counts.get("apcp", 0) + 1
+
+            if kuchera_lwe_component_scale != 1.0:
+                step_apcp_data = (step_apcp_data * np.float32(kuchera_lwe_component_scale)).astype(np.float32, copy=False)
 
             # Without a carried APCP cumulative baseline, history-dependent
             # APCP windows inside an incremental subset can overcount by
