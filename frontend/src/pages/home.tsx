@@ -14,6 +14,8 @@ import {
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
 
+const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf"] as const;
+
 function formatRunLabel(runId?: string | null): string {
   if (!runId) {
     return "Latest";
@@ -45,7 +47,7 @@ function formatRunLabel(runId?: string | null): string {
 
 function SectionEyebrow({ children }: { children: ReactNode }) {
   return (
-    <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.26em] text-cyan-200/70">
+    <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-cyan-200/70">
       <span className="h-px w-7 bg-cyan-300/45" />
       <span>{children}</span>
     </div>
@@ -138,48 +140,98 @@ function ViewerPreview({
             <div className="relative h-full w-full overflow-hidden">
               <div
                 aria-hidden="true"
-                className="absolute inset-0 opacity-[0.92]"
+                className="absolute inset-0 bg-[linear-gradient(180deg,#1d3557_0%,#102338_100%)]"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-[9%_8%_12%_8%] opacity-[0.92]"
                 style={{
                   backgroundImage: `
-                    radial-gradient(circle at 50% 55%, rgba(194, 234, 255, 0.16), transparent 0 20%),
-                    radial-gradient(circle at 53% 48%, rgba(52, 211, 153, 0.18), transparent 0 15%),
-                    radial-gradient(circle at 57% 56%, rgba(244, 114, 182, 0.16), transparent 0 11%),
-                    linear-gradient(180deg, rgba(227,240,229,0.88), rgba(158,177,158,0.84)),
-                    linear-gradient(135deg, rgba(17,24,39,0.20), rgba(17,24,39,0.04))
+                    linear-gradient(180deg, rgba(226,236,224,0.92), rgba(165,178,157,0.86))
+                  `,
+                  clipPath:
+                    "polygon(7% 26%, 13% 13%, 24% 9%, 35% 14%, 42% 17%, 48% 26%, 58% 30%, 71% 27%, 86% 34%, 92% 43%, 89% 57%, 83% 72%, 74% 78%, 67% 88%, 58% 89%, 49% 84%, 42% 87%, 31% 82%, 22% 75%, 15% 64%, 10% 49%)",
+                  boxShadow: "inset 0 0 0 1px rgba(17,24,39,0.12)",
+                }}
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-[18%_28%_42%_52%] rounded-[40%] bg-[#102338]/70 blur-[1px]"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-[34%_20%_36%_63%] rounded-[45%] bg-[#102338]/78 blur-[1px]"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 opacity-[0.72]"
+                style={{
+                  backgroundImage: `
+                    linear-gradient(93deg, transparent 0 14%, rgba(9, 21, 39, 0.55) 14.1% 14.5%, transparent 14.6% 100%),
+                    linear-gradient(122deg, transparent 0 44%, rgba(9, 21, 39, 0.46) 44.1% 44.45%, transparent 44.55% 100%),
+                    linear-gradient(166deg, transparent 0 59%, rgba(9, 21, 39, 0.42) 59.1% 59.45%, transparent 59.55% 100%),
+                    linear-gradient(180deg, transparent 0 72%, rgba(255, 255, 255, 0.08) 72.1% 72.4%, transparent 72.5% 100%)
                   `,
                 }}
               />
               <div
                 aria-hidden="true"
-                className="absolute inset-0 opacity-70"
-                style={{
-                  backgroundImage: `
-                    linear-gradient(93deg, transparent 0 14%, rgba(9, 21, 39, 0.65) 14.1% 14.5%, transparent 14.6% 100%),
-                    linear-gradient(122deg, transparent 0 44%, rgba(9, 21, 39, 0.55) 44.1% 44.45%, transparent 44.55% 100%),
-                    linear-gradient(166deg, transparent 0 59%, rgba(9, 21, 39, 0.5) 59.1% 59.45%, transparent 59.55% 100%),
-                    linear-gradient(180deg, transparent 0 72%, rgba(255, 255, 255, 0.12) 72.1% 72.4%, transparent 72.5% 100%)
-                  `,
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-70"
+                className="absolute inset-0 opacity-80"
                 style={{
                   backgroundImage: `
                     repeating-linear-gradient(
-                      116deg,
-                      transparent 0 13px,
-                      rgba(34,211,238,0.14) 13px 15px,
-                      transparent 15px 31px
+                      108deg,
+                      transparent 0 15px,
+                      rgba(34,211,238,0.16) 15px 17px,
+                      transparent 17px 36px
                     )
                   `,
                 }}
               />
+              <div className="absolute left-4 top-1/2 z-10 hidden -translate-y-1/2 rounded-2xl border border-white/10 bg-slate-950/55 p-2 backdrop-blur-sm lg:block">
+                <div className="flex h-36 flex-col justify-between">
+                  <div className="h-2 w-2 rounded-full bg-sky-100" />
+                  <div className="h-2 w-2 rounded-full bg-cyan-200" />
+                  <div className="h-2 w-2 rounded-full bg-cyan-400" />
+                  <div className="h-2 w-2 rounded-full bg-emerald-300" />
+                  <div className="h-2 w-2 rounded-full bg-fuchsia-300" />
+                </div>
+              </div>
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 opacity-65"
+                style={{
+                  backgroundImage:
+                    "radial-gradient(circle at 54% 54%, rgba(244,114,182,0.20), transparent 0 10%), radial-gradient(circle at 52% 58%, rgba(34,197,94,0.18), transparent 0 12%)",
+                }}
+              />
+              <div className="absolute left-[19%] top-[27%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
+                <span className="h-2 w-2 rounded-full bg-white/70" />
+                Seattle
+              </div>
+              <div className="absolute left-[47%] top-[33%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
+                <span className="h-2 w-2 rounded-full bg-white/70" />
+                Minneapolis
+              </div>
+              <div className="absolute left-[58%] top-[46%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
+                <span className="h-2 w-2 rounded-full bg-cyan-200" />
+                Chicago
+              </div>
+              <div className="absolute left-[68%] top-[62%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
+                <span className="h-2 w-2 rounded-full bg-white/70" />
+                Atlanta
+              </div>
               <div className="absolute left-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
                 HRRR · CONUS · 2m Temp
               </div>
               <div className="absolute right-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
                 Valid 18Z
+              </div>
+              <div className="absolute bottom-4 left-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
+                Surface layer
+              </div>
+              <div className="absolute bottom-4 right-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
+                Smooth playback
               </div>
             </div>
           </div>
@@ -257,7 +309,7 @@ function ProductCard({
           <p className="mt-3 max-w-md text-sm leading-7 text-white/70">{description}</p>
         </div>
         <div className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-cyan-100/90">
-          <span>Viewer-ready workflow</span>
+          <span>Operational workflow</span>
           <ArrowRight className="h-4 w-4" />
         </div>
       </div>
@@ -301,24 +353,26 @@ export default function Home() {
   }, []);
 
   const homepageStats = useMemo(() => {
-    const supportedModelCount = capabilities?.supported_models.length ?? 6;
-    const availabilityEntries = Object.values(capabilities?.availability ?? {});
-    const activeFeedCount = availabilityEntries.filter((entry) => entry.latest_run && entry.usable !== false).length;
-    const variableCount = Object.values(capabilities?.model_catalog ?? {}).reduce((count, model) => {
-      return count + Object.keys(model.variables ?? {}).length;
-    }, 0);
+    const modelCatalog = capabilities?.model_catalog ?? {};
+    const coreModels = CORE_MODEL_IDS.filter((modelId) => Boolean(modelCatalog[modelId]));
+    const coreVariableCounts = coreModels.map((modelId) => Object.keys(modelCatalog[modelId]?.variables ?? {}).length);
+    const averageCoreVariableCount = coreVariableCounts.length > 0
+      ? Math.round(coreVariableCounts.reduce((sum, count) => sum + count, 0) / coreVariableCounts.length)
+      : 15;
+    const hrrrRunLabel = formatRunLabel(capabilities?.availability?.hrrr?.latest_run);
+    const gfsRunLabel = formatRunLabel(capabilities?.availability?.gfs?.latest_run);
 
     return {
-      supportedModelCount,
-      activeFeedCount,
-      variableCount,
-      hrrrRunLabel: formatRunLabel(capabilities?.availability?.hrrr?.latest_run),
-      gfsRunLabel: formatRunLabel(capabilities?.availability?.gfs?.latest_run),
+      coreModelCount: coreModels.length || 5,
+      averageCoreVariableCount,
+      hrrrRunLabel,
+      gfsRunLabel,
+      freshnessDetail: `HRRR ${hrrrRunLabel} · GFS ${gfsRunLabel}`,
     };
   }, [capabilities]);
 
   return (
-    <div className="-mx-5 -mt-12 space-y-0 text-white md:-mx-8 md:-mt-16">
+    <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
       <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-10 pt-28 md:px-8 md:pb-14 md:pt-32">
         <div
           aria-hidden="true"
@@ -340,12 +394,12 @@ export default function Home() {
           style={{
             backgroundImage: `
               repeating-radial-gradient(
-                circle at 72% 22%,
+                circle at 74% 20%,
                 rgba(103,232,249,0.14) 0 2px,
                 transparent 2px 26px
               ),
               repeating-linear-gradient(
-                108deg,
+                112deg,
                 transparent 0 12px,
                 rgba(103,232,249,0.05) 12px 13px,
                 transparent 13px 28px
@@ -353,42 +407,84 @@ export default function Home() {
             `,
           }}
         />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-25"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 30% 32%, rgba(255,255,255,0.18), transparent 0 8%), radial-gradient(circle at 66% 64%, rgba(255,255,255,0.10), transparent 0 5%)",
+          }}
+        />
 
-        <div className="relative mx-auto flex min-h-[calc(100svh-8rem)] max-w-5xl flex-col items-center justify-center text-center">
-          <SectionEyebrow>System Active</SectionEyebrow>
-          <h1 className="mt-7 max-w-4xl text-balance text-5xl font-semibold tracking-tight text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] md:text-7xl md:leading-[1.02]">
-            Serious weather guidance,
-            <br />
-            <span className="bg-[linear-gradient(180deg,#e9fbff_0%,#91dcff_48%,#58bee9_100%)] bg-clip-text italic text-transparent">
-              clearly rendered.
-            </span>
-          </h1>
-          <p className="mt-7 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg">
-            Model data built for technical analysis, with a cleaner interface for switching models,
-            scrubbing time, and staying oriented.
-          </p>
+        <div className="relative mx-auto grid min-h-[calc(100svh-8rem)] max-w-6xl items-center gap-14 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-10">
+          <div className="max-w-4xl text-center lg:text-left">
+            <SectionEyebrow>Viewer First</SectionEyebrow>
+            <h1 className="mt-8 max-w-4xl text-balance text-5xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] md:text-7xl md:leading-[0.98]">
+              Serious weather guidance,
+              <br />
+              <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic tracking-[-0.03em] text-cyan-200">
+                clearly rendered.
+              </span>
+            </h1>
+            <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
+              Model data built for technical analysis, with a cleaner interface for switching models,
+              scrubbing time, and staying oriented through the latest cycle.
+            </p>
 
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              to="/viewer"
-              className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.22)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
-            >
-              Open Viewer
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/models"
-              className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/25 px-5 py-3 text-sm font-semibold text-white/88 backdrop-blur-sm transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
-            >
-              View Models
-            </Link>
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+              <Link
+                to="/viewer"
+                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.22)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
+              >
+                Open Viewer
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/models"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/25 px-5 py-3 text-sm font-semibold text-white/88 backdrop-blur-sm transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
+              >
+                View Models
+              </Link>
+            </div>
           </div>
 
-          <div className="mt-20 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/38">
-            System active
+          <div className="relative hidden lg:block">
+            <div className="absolute -left-6 top-10 h-28 w-px bg-gradient-to-b from-transparent via-cyan-200/35 to-transparent" />
+            <div className="rounded-[1.8rem] border border-white/10 bg-slate-950/24 p-6 shadow-[0_28px_70px_rgba(0,0,0,0.24)] backdrop-blur-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.26em] text-white/42">Current Desk</div>
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">HRRR</div>
+                    <div className="mt-1 text-xs text-white/52">Storm-scale short range</div>
+                  </div>
+                  <div className="text-sm font-medium text-cyan-100">{homepageStats.hrrrRunLabel}</div>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">GFS</div>
+                    <div className="mt-1 text-xs text-white/52">Global pattern guidance</div>
+                  </div>
+                  <div className="text-sm font-medium text-cyan-100">{homepageStats.gfsRunLabel}</div>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Core Workflow</div>
+                    <div className="mt-1 text-xs text-white/52">Models, time, variables, freshness</div>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-medium text-emerald-100">
+                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                    Ready
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="mt-2 h-6 w-6 rounded-full border border-white/12 bg-white/[0.03] text-white/40">
-            <div className="flex h-full items-center justify-center text-base leading-none">⌄</div>
+
+          <div className="mt-10 flex justify-center lg:col-span-2 lg:mt-0">
+            <div className="h-6 w-6 rounded-full border border-white/12 bg-white/[0.03] text-white/40">
+              <div className="flex h-full items-center justify-center text-base leading-none">⌄</div>
+            </div>
           </div>
         </div>
       </section>
@@ -397,23 +493,23 @@ export default function Home() {
         <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-4 md:py-5">
           <ProofItem
             label="Models"
-            value={`${homepageStats.supportedModelCount}+ supported`}
-            detail="CONUS, regional, and global guidance in one workflow."
+            value={`${homepageStats.coreModelCount} core models`}
+            detail="HRRR, NAM, GFS, NBM, and ECMWF in one workflow."
           />
           <ProofItem
             label="Products"
-            value={`${homepageStats.variableCount}+ tracked`}
+            value={`~${homepageStats.averageCoreVariableCount} per model`}
             detail="Surface, severe, winter, hydro, and upper-air fields."
           />
           <ProofItem
             label="Freshness"
-            value={`${homepageStats.activeFeedCount || 1} active feeds`}
-            detail={`HRRR ${homepageStats.hrrrRunLabel}`}
+            value="Run status stays visible"
+            detail={homepageStats.freshnessDetail}
           />
           <ProofItem
             label="Update Cycles"
             value="Hourly to 6-hourly"
-            detail={`GFS ${homepageStats.gfsRunLabel}`}
+            detail="Viewer context stays tied to the latest available cycle."
           />
         </div>
       </section>
@@ -491,8 +587,8 @@ export default function Home() {
             Viewer-ready workflows for winter and severe weather.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-8 text-white/64">
-            The homepage should feel current with the season, but the product story stays grounded in
-            real forecast analysis rather than abstract “weather tech” branding.
+            Move from core surface fields into the forecast products that matter most when the setup
+            turns seasonal, high-impact, or time-sensitive.
           </p>
 
           <div className="mt-12 grid gap-6 lg:grid-cols-2">
