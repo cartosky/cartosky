@@ -379,40 +379,39 @@ export default function Home() {
           className="absolute inset-0 opacity-95"
           style={{
             backgroundImage: `
-              radial-gradient(circle at 50% 36%, rgba(56,189,248,0.12), transparent 0 26%),
-              radial-gradient(circle at 24% 80%, rgba(20,184,166,0.10), transparent 0 22%),
-              linear-gradient(180deg, rgba(7,17,31,0.64), rgba(7,17,31,0.9)),
-              url(/assets/hero-space.webp)
+              linear-gradient(90deg, rgba(6,12,24,0.94) 0%, rgba(6,12,24,0.82) 30%, rgba(6,12,24,0.46) 58%, rgba(6,12,24,0.62) 100%),
+              linear-gradient(180deg, rgba(7,17,31,0.72), rgba(7,17,31,0.92)),
+              url(/assets/hero-image.png)
             `,
-            backgroundSize: "auto, auto, auto, cover",
-            backgroundPosition: "center",
+            backgroundSize: "auto, auto, cover",
+            backgroundPosition: "center, center, center right",
           }}
         />
         <div
           aria-hidden="true"
-          className="absolute inset-0 opacity-45"
+          className="absolute inset-0 opacity-40"
           style={{
             backgroundImage: `
               repeating-radial-gradient(
-                circle at 74% 20%,
-                rgba(103,232,249,0.14) 0 2px,
-                transparent 2px 26px
+                circle at 78% 52%,
+                rgba(147,197,253,0.10) 0 2px,
+                transparent 2px 30px
               ),
               repeating-linear-gradient(
-                112deg,
-                transparent 0 12px,
-                rgba(103,232,249,0.05) 12px 13px,
-                transparent 13px 28px
+                108deg,
+                transparent 0 16px,
+                rgba(125,211,252,0.04) 16px 17px,
+                transparent 17px 34px
               )
             `,
           }}
         />
         <div
           aria-hidden="true"
-          className="absolute inset-0 opacity-25"
+          className="absolute inset-0 opacity-20"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 30% 32%, rgba(255,255,255,0.18), transparent 0 8%), radial-gradient(circle at 66% 64%, rgba(255,255,255,0.10), transparent 0 5%)",
+              "radial-gradient(circle at 24% 34%, rgba(255,255,255,0.12), transparent 0 10%), radial-gradient(circle at 70% 56%, rgba(125,211,252,0.14), transparent 0 10%)",
           }}
         />
 
