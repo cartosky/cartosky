@@ -554,6 +554,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
     },
     run_discovery={
         "probe_var_key": "tmp2m",
+        "probe_fhs": [0, 3],
         "probe_enabled": True,
         "probe_attempts": 4,
         "cycle_cadence_hours": 12,

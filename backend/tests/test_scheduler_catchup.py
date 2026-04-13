@@ -20,6 +20,9 @@ class _FakePlugin:
     id = "hrrr"
     capabilities = None
 
+    def normalize_var_id(self, var_id: str) -> str:
+        return str(var_id)
+
     def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
         del var_key, cycle_hour
         return [0, 1, 2, 3, 4]
@@ -41,6 +44,33 @@ class _FakeCapabilityPlugin(_FakePlugin):
 
     def normalize_var_id(self, var_id: str) -> str:
         return str(var_id).strip().lower()
+
+
+class _FakeProbePlugin:
+    id = "ecmwf"
+    product = "oper"
+
+    def normalize_var_id(self, var_id: str) -> str:
+        return str(var_id).strip().lower()
+
+    def get_var_capability(self, var_key: str):
+        del var_key
+        return None
+
+    def get_var(self, var_key: str):
+        if var_key != "tmp2m":
+            return None
+        return types.SimpleNamespace(selectors=types.SimpleNamespace(search=[":2t:"]))
+
+    def run_discovery_config(self) -> dict[str, object]:
+        return {
+            "probe_fhs": [0, 3],
+            "source_priority": ["azure", "aws"],
+        }
+
+    def herbie_request(self, *, product=None, var_key=None, run_date=None, fh=None, search_pattern=None):
+        del var_key, run_date, search_pattern
+        return types.SimpleNamespace(model="ifs", product=product or self.product, herbie_kwargs={"priority": ["azure", "aws"]})
 
 
 def test_parse_vars_or_auto_supports_auto_tokens() -> None:
@@ -112,8 +142,43 @@ def test_main_parses_explicit_env_vars_when_present(
     assert captured["vars_to_build"] == ["tmp2m", "mlcape"]
 
 
+def test_probe_run_exists_checks_multiple_probe_fhs(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_fxxs: list[tuple[int, str]] = []
+
+    class _FakeHerbie:
+        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
+            del run_dt, model, product, kwargs
+            self.fxx = int(fxx)
+            self.priority = str(priority)
+
+        def inventory(self, pattern: str):
+            seen_fxxs.append((self.fxx, self.priority))
+            if self.fxx == 3 and self.priority == "azure" and pattern == ":2t:":
+                return [object()]
+            return []
+
+    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+
+    found = scheduler_module._probe_run_exists(
+        plugin=_FakeProbePlugin(),
+        run_dt=datetime(2026, 4, 13, 12, tzinfo=timezone.utc),
+        probe_var="tmp2m",
+    )
+
+    assert found is True
+    assert seen_fxxs == [(0, "azure"), (0, "aws"), (3, "azure")]
+
+
+def test_resolve_probe_fhs_defaults_to_zero() -> None:
+    plugin = types.SimpleNamespace(run_discovery_config=lambda: {})
+    assert scheduler_module._resolve_probe_fhs(plugin) == [0]
+
+
 class _FakeGFSPlugin:
     id = "gfs"
+
+    def normalize_var_id(self, var_id: str) -> str:
+        return str(var_id)
 
     def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
         del var_key, cycle_hour

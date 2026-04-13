@@ -16,6 +16,7 @@ def test_ecmwf_run_discovery_invariants() -> None:
     assert capabilities is not None
     assert capabilities.run_discovery == {
         "probe_var_key": "tmp2m",
+        "probe_fhs": [0, 3],
         "probe_enabled": True,
         "probe_attempts": 4,
         "cycle_cadence_hours": 12,

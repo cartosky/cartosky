@@ -352,62 +352,83 @@ def _probe_search_pattern(plugin: Any, probe_var: str) -> str:
     return str(searches[0])
 
 
+def _resolve_probe_fhs(plugin: Any) -> list[int]:
+    run_discovery = plugin.run_discovery_config()
+    raw_probe_fhs = run_discovery.get("probe_fhs")
+    if isinstance(raw_probe_fhs, (list, tuple)):
+        resolved: list[int] = []
+        for value in raw_probe_fhs:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed < 0:
+                continue
+            resolved.append(parsed)
+        if resolved:
+            return resolved
+    return [0]
+
+
 def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
     from herbie.core import Herbie
 
     search_pattern = _probe_search_pattern(plugin, probe_var)
     probe_var_key = plugin.normalize_var_id(probe_var)
-    request = plugin.herbie_request(
-        product=getattr(plugin, "product", "sfc"),
-        var_key=probe_var_key,
-        run_date=run_dt,
-        fh=0,
-        search_pattern=search_pattern,
-    )
-    request_kwargs = dict(getattr(request, "herbie_kwargs", {}) or {})
-    raw_priorities = request_kwargs.pop("priority", None)
-    if isinstance(raw_priorities, (list, tuple)):
-        priorities = [str(item).strip().lower() for item in raw_priorities if str(item).strip()]
-    elif raw_priorities:
-        priorities = [str(raw_priorities).strip().lower()]
-    else:
-        priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
-        priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
-    if not priorities:
-        priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
-
     herbie_date = run_dt.replace(tzinfo=None) if run_dt.tzinfo else run_dt
     last_exc: Exception | None = None
-    for priority in priorities:
-        try:
-            H = Herbie(
-                herbie_date,
-                model=request.model,
-                product=request.product,
-                fxx=0,
-                priority=priority,
-                **request_kwargs,
-            )
-            inventory = H.inventory(search_pattern)
-            if inventory is not None and len(inventory) > 0:
-                logger.info(
-                    "Run probe success: model=%s run=%s probe_var=%s priority=%s",
-                    plugin.id,
-                    _run_id_from_dt(run_dt),
-                    probe_var_key,
-                    priority,
+    probe_fhs = _resolve_probe_fhs(plugin)
+    for probe_fh in probe_fhs:
+        request = plugin.herbie_request(
+            product=getattr(plugin, "product", "sfc"),
+            var_key=probe_var_key,
+            run_date=run_dt,
+            fh=probe_fh,
+            search_pattern=search_pattern,
+        )
+        request_kwargs = dict(getattr(request, "herbie_kwargs", {}) or {})
+        raw_priorities = request_kwargs.pop("priority", None)
+        if isinstance(raw_priorities, (list, tuple)):
+            priorities = [str(item).strip().lower() for item in raw_priorities if str(item).strip()]
+        elif raw_priorities:
+            priorities = [str(raw_priorities).strip().lower()]
+        else:
+            priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
+            priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
+        if not priorities:
+            priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
+
+        for priority in priorities:
+            try:
+                H = Herbie(
+                    herbie_date,
+                    model=request.model,
+                    product=request.product,
+                    fxx=probe_fh,
+                    priority=priority,
+                    **request_kwargs,
                 )
-                return True
-        except Exception as exc:
-            last_exc = exc
-            continue
+                inventory = H.inventory(search_pattern)
+                if inventory is not None and len(inventory) > 0:
+                    logger.info(
+                        "Run probe success: model=%s run=%s probe_var=%s fh=%s priority=%s",
+                        plugin.id,
+                        _run_id_from_dt(run_dt),
+                        probe_var_key,
+                        probe_fh,
+                        priority,
+                    )
+                    return True
+            except Exception as exc:
+                last_exc = exc
+                continue
 
     logger.info(
-        "Run probe miss: model=%s run=%s probe_var=%s priorities=%s (%s)",
+        "Run probe miss: model=%s run=%s probe_var=%s fhs=%s (%s)",
         plugin.id,
         _run_id_from_dt(run_dt),
         probe_var_key,
-        priorities,
+        probe_fhs,
         last_exc,
     )
     return False

@@ -66,3 +66,4 @@ extract_colorbar.py
 /.vscode/
 /.idea/
 /.playwright-mcp/
+/.opencode/

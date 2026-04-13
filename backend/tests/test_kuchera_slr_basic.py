@@ -375,3 +375,103 @@ def test_kuchera_can_use_direct_cumulative_sf_source(monkeypatch) -> None:
     assert out_crs == crs
     assert out_transform == transform
     np.testing.assert_allclose(data, expected, rtol=0.0, atol=1e-5)
+
+
+def test_kuchera_direct_cumulative_sf_ignores_prior_cumulative_cache(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    sf_cumulative = {
+        3: np.full((1, 1), 0.01, dtype=np.float32),
+        6: np.full((1, 1), 0.03, dtype=np.float32),
+    }
+    temp_850 = np.full((1, 1), -12.0, dtype=np.float32)
+    temp_700 = np.full((1, 1), -10.0, dtype=np.float32)
+
+    class _Plugin:
+        def normalize_var_id(self, var_key: str) -> str:
+            return str(var_key)
+
+        def get_var_capability(self, var_key: str):
+            del var_key
+            return None
+
+        def get_var(self, var_key: str):
+            by_var = {
+                "sf": [":sf:sfc:"],
+                "tmp850": [":t:850:pl:"],
+                "tmp700": [":t:700:pl:"],
+            }
+            search = by_var.get(str(var_key))
+            if search is None:
+                return None
+            return SimpleNamespace(
+                selectors=SimpleNamespace(search=search, filter_by_keys={}, hints={})
+            )
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        step_fh = int(kwargs["step_fh"])
+        return_meta = bool(kwargs.get("return_meta", False))
+        if var_key == "sf":
+            data = sf_cumulative[step_fh]
+        elif var_key == "tmp850":
+            data = temp_850
+        elif var_key == "tmp700":
+            data = temp_700
+        else:
+            raise AssertionError(f"unexpected component {var_key}")
+        if return_meta:
+            return data, crs, transform, {"inventory_line": f":{var_key}:"}
+        return data, crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+    monkeypatch.setattr(derive_module, "_prefetch_components_parallel", lambda tasks, ctx, *, label="": len(tasks))
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [step_fh for step_fh in [3, 6] if step_fh <= int(fh)],
+    )
+
+    def _bogus_prior_loader(**kwargs):
+        del kwargs
+        return np.full((1, 1), 9999.0, dtype=np.float32), crs, transform
+
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _bogus_prior_loader)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "kuchera_lwe_component": "sf",
+                "kuchera_lwe_component_scale": "1000",
+                "step_hours": "3",
+                "kuchera_levels_hpa": "850,700",
+                "kuchera_profile_mode": "simplified",
+                "kuchera_use_ptype_gate": "false",
+            }
+        )
+    )
+
+    data, out_crs, out_transform = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="ecmwf",
+        var_key="snowfall_kuchera_total",
+        product="oper",
+        run_date=datetime(2026, 4, 13, 0, 0),
+        fh=6,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=_Plugin(),
+    )
+
+    expected_ratio = derive_module._compute_kuchera_slr(
+        levels_hpa=[850, 700],
+        temp_stack_c=[temp_850, temp_700],
+    )
+    expected = (
+        np.full((1, 1), 30.0, dtype=np.float32)
+        * expected_ratio
+        * np.float32(0.03937007874015748)
+    ).astype(np.float32)
+
+    assert out_crs == crs
+    assert out_transform == transform
+    np.testing.assert_allclose(data, expected, rtol=0.0, atol=1e-5)
