@@ -104,6 +104,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert snowfall_kuchera_spec is not None
     assert snowfall_kuchera_spec.derive == "snowfall_kuchera_total_cumulative"
     assert snowfall_kuchera_spec.selectors.hints["kuchera_lwe_component"] == "sf"
+    assert snowfall_kuchera_spec.selectors.hints["cumulative_cache_version"] == "ecmwf_sf_v2"
     assert snowfall_kuchera_spec.selectors.hints["kuchera_profile_mode"] == "simplified"
 
     mucape_spec = ECMWF_MODEL.get_var("mucape")

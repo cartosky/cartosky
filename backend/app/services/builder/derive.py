@@ -278,10 +278,16 @@ def _cumulative_cache_grid_key(
     use_warped: bool,
     target_grid_id: str,
     resampling: str,
+    cache_version: str | None = None,
 ) -> str:
     if use_warped:
-        return f"warped:{str(target_grid_id).strip()}:{str(resampling).strip()}"
-    return "native"
+        base_key = f"warped:{str(target_grid_id).strip()}:{str(resampling).strip()}"
+    else:
+        base_key = "native"
+    resolved_cache_version = str(cache_version or "").strip()
+    if resolved_cache_version:
+        return f"{base_key}:v={resolved_cache_version}"
+    return base_key
 
 
 def _kuchera_cumulative_cache_file_path(
@@ -3429,6 +3435,7 @@ def _derive_snowfall_total_10to1_cumulative(
         str(model_id).strip().lower() in {"gfs", "nam"}
         and str(apcp_component).strip() == "apcp_step"
     )
+    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     cadence_sample_fhs: set[int] | None = None
     snow_inches_scale = 0.03937007874015748 * slr
 
@@ -3497,6 +3504,7 @@ def _derive_snowfall_total_10to1_cumulative(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
+        cache_version=cache_version,
     )
 
     if len(step_fhs) >= 2:
@@ -3903,10 +3911,12 @@ def _derive_snowfall_kuchera_total_cumulative(
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
+    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     cumulative_cache_grid_key = _cumulative_cache_grid_key(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
+        cache_version=cache_version,
     )
 
     resolved_profile_product = str(profile_product or product)

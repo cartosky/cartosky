@@ -217,6 +217,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
             hints={
                 "kuchera_lwe_component": "sf",
                 "kuchera_lwe_component_scale": "1000",
+                "cumulative_cache_version": "ecmwf_sf_v2",
                 "step_hours": "3",
                 "step_transition_fh": "144",
                 "step_hours_after_fh": "6",
