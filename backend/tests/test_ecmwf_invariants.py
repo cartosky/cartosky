@@ -42,6 +42,10 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("apcp") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("qpf") == "precip_total"
+    assert ECMWF_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
+    assert ECMWF_MODEL.normalize_var_id("asnow") == "snowfall_total"
+    assert ECMWF_MODEL.normalize_var_id("snow10") == "snowfall_total"
+    assert ECMWF_MODEL.normalize_var_id("total_snow") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wgst10m") == "wgst10m"
@@ -70,7 +74,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "wspd10m", "wgst10m", "mucape"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "wspd10m", "wgst10m", "mucape"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -89,6 +93,10 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     precip_spec = ECMWF_MODEL.get_var("precip_total")
     assert precip_spec is not None
     assert precip_spec.selectors.search == [":tp:sfc:", ":tp:"]
+
+    snowfall_spec = ECMWF_MODEL.get_var("snowfall_total")
+    assert snowfall_spec is not None
+    assert snowfall_spec.selectors.search == [":sf:sfc:", ":sf:"]
 
     mucape_spec = ECMWF_MODEL.get_var("mucape")
     assert mucape_spec is not None
@@ -145,6 +153,20 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 3
     assert precip_total["constraints"] == {"min_fh": 3}
     assert precip_total["render_substrates"] == ["grid"]
+
+    snowfall_total = payload["variables"]["snowfall_total"]
+    assert snowfall_total["var_key"] == "snowfall_total"
+    assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
+    assert snowfall_total["kind"] == "continuous"
+    assert snowfall_total["units"] == "in"
+    assert snowfall_total["buildable"] is True
+    assert snowfall_total["derived"] is False
+    assert snowfall_total["color_map_id"] == "snowfall_total"
+    assert snowfall_total["order"] == 11
+    assert snowfall_total["group"] == "Precipitation"
+    assert snowfall_total["default_fh"] == 3
+    assert snowfall_total["constraints"] == {"min_fh": 3}
+    assert snowfall_total["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

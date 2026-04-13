@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-    - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `mucape`
+        - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `mucape`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
@@ -48,6 +48,12 @@ class ECMWFPlugin(BaseModelPlugin):
             "apcp": "precip_total",
             "qpf": "precip_total",
             "total_qpf": "precip_total",
+            "snowfall_total": "snowfall_total",
+            "asnow": "snowfall_total",
+            "snow10": "snowfall_total",
+            "snow_10to1": "snowfall_total",
+            "total_snow": "snowfall_total",
+            "totalsnow": "snowfall_total",
             "wspd10m": "wspd10m",
             "wind10m": "wspd10m",
             "10mwind": "wspd10m",
@@ -183,6 +189,24 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    "snowfall_total": VarSpec(
+        id="snowfall_total",
+        name="Total Snowfall (10:1)",
+        selectors=VarSelectors(
+            search=[":sf:sfc:", ":sf:"],
+            filter_by_keys={
+                "shortName": "sf",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "sf",
+                "short_name": "sf",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
+    ),
     "10u": VarSpec(
         id="10u",
         name="10m U Wind",
@@ -273,6 +297,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "precip_total": "precip_total",
+    "snowfall_total": "snowfall_total",
     "wspd10m": "wspd10m",
     "wgst10m": "wgst10m",
     "mucape": "mlcape",
@@ -282,6 +307,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
     "precip_total": 3,
+    "snowfall_total": 3,
     "wspd10m": 0,
     "wgst10m": 3,
     "mucape": 0,
@@ -291,6 +317,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
     "precip_total": 10,
+    "snowfall_total": 11,
     "wspd10m": 12,
     "wgst10m": 13,
     "mucape": 20,
@@ -300,6 +327,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "precip_total": "Precipitation",
+    "snowfall_total": "Precipitation",
     "wspd10m": "Wind",
     "wgst10m": "Wind",
     "mucape": "Instability",
@@ -309,12 +337,16 @@ ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
     "precip_total": "m_to_in",
+    "snowfall_total": "m_swe_to_in_10to1",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
 }
 
 ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
     "precip_total": {
+        "min_fh": 3,
+    },
+    "snowfall_total": {
         "min_fh": 3,
     },
     "wgst10m": {
