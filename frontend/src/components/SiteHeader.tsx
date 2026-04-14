@@ -29,6 +29,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { MapLegend } from "@/components/map-legend";
 import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { GroupedOption } from "@/lib/app-utils";
 
@@ -274,7 +275,7 @@ function NavbarSelect(props: {
             : ""
         )}
       >
-        <span className="truncate whitespace-nowrap pr-1">{selectedLabel}</span>
+        <span className="whitespace-nowrap pr-1">{selectedLabel}</span>
       </SelectTrigger>
       <SelectContent>{resolvedContent}</SelectContent>
     </Select>
@@ -320,6 +321,8 @@ function DisplayRow({
 function ViewerNavDesktop() {
   const toolbar = useViewerToolbar();
   const settingsRef = useRef<HTMLDivElement>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
+  const [legendPanelOpen, setLegendPanelOpen] = useState(false);
 
   useEffect(() => {
     if (!toolbar?.displayPanelOpen) return;
@@ -341,6 +344,26 @@ function ViewerNavDesktop() {
     };
   }, [toolbar?.displayPanelOpen]);
 
+  useEffect(() => {
+    if (!legendPanelOpen) return;
+    function onPointerDown(e: MouseEvent | TouchEvent) {
+      if (!(e.target instanceof Node)) return;
+      if (legendRef.current?.contains(e.target)) return;
+      setLegendPanelOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setLegendPanelOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [legendPanelOpen]);
+
   if (!toolbar) return null;
 
   const {
@@ -351,7 +374,7 @@ function ViewerNavDesktop() {
     sourceStatusTone, onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible, onLegendVisibleChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange,
+    zoomControlsVisible, onZoomControlsVisibleChange, legend,
   } = toolbar;
 
   const displayVariables = useMemo(
@@ -383,7 +406,7 @@ function ViewerNavDesktop() {
           disabled={disabled}
           placeholder="Variable"
           grouped
-          minWidth="min-w-[148px] max-w-[210px]"
+          minWidth="min-w-[148px] max-w-[280px]"
         />
         <NavbarSelect
           value={model}
@@ -419,6 +442,36 @@ function ViewerNavDesktop() {
           placeholder="Region"
           minWidth="min-w-[80px] max-w-[130px]"
         />
+
+        {/* Legend button */}
+        <div className="relative shrink-0" ref={legendRef}>
+          <button
+            type="button"
+            onClick={() => setLegendPanelOpen((v) => !v)}
+            aria-expanded={legendPanelOpen}
+            title="Legend"
+            aria-label="Legend"
+            className={cn(
+              "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150",
+              legendPanelOpen
+                ? "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100"
+                : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+            )}
+          >
+            <Layers className="h-3.5 w-3.5" />
+          </button>
+
+          {legendPanelOpen ? createPortal(
+            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.95] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+              <MapLegend
+                legend={legend}
+                onOpacityChange={onOpacityChange}
+                showOpacityControl={true}
+                displayPanelOpen={displayPanelOpen}
+              />
+            </div>
+          , document.body) : null}
+        </div>
 
         {/* Divider — cyan tint to match marketing accent language */}
         <div className="mx-1.5 h-5 w-px bg-cyan-300/20" />
@@ -898,7 +951,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-[60] border-b border-white/[0.07] bg-[#07111f]/90 backdrop-blur-2xl">
+    <header className="sticky top-0 z-[60] border-b border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_2px_12px_rgba(0,0,0,0.35),inset_0_-1px_0_rgba(100,180,255,0.05)] backdrop-blur-md">
       <div
         className={
           isAppVariant

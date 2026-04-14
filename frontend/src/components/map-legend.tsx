@@ -413,7 +413,7 @@ export function MapLegend({
     <div
       ref={containerRef}
       className={cn(
-        "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/28 shadow-[0_6px_22px_rgba(0,0,0,0.24)] transition-all duration-200",
+        "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md transition-all duration-200",
         showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
         isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[7.75rem]"
       )}

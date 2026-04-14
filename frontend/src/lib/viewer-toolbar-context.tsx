@@ -3,6 +3,7 @@ import type { BasemapMode } from "@/components/map-canvas";
 import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { GroupedOption } from "@/lib/app-utils";
+import type { LegendPayload } from "@/components/map-legend";
 
 type Option = { value: string; label: string };
 type VariableOption = Option & { group: string | null };
@@ -46,6 +47,8 @@ export type ViewerToolbarProps = {
   // Display panel open state
   displayPanelOpen: boolean;
   onDisplayPanelOpenChange: (next: boolean) => void;
+  // Legend
+  legend: LegendPayload | null;
   // Share
   onShare?: () => void;
   // Layout

@@ -27,11 +27,11 @@
 
   /* Normal glass: legend, menus, tooltips, map controls */
   .glass {
-    background-color: rgba(0, 0, 0, 0.38);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(16px) saturate(1.8);
-    -webkit-backdrop-filter: blur(16px) saturate(1.8);
+    background-color: rgba(4, 16, 30, 0.82);
+    border: 1px solid rgba(26, 58, 92, 0.6);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(100, 180, 255, 0.08);
+    backdrop-filter: blur(12px) saturate(1.6);
+    -webkit-backdrop-filter: blur(12px) saturate(1.6);
   }
 
   /* Strong glass: toolbar + bottom controls */

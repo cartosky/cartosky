@@ -115,9 +115,6 @@ const TwfShareModal = lazy(() =>
 const NwsCityModal = lazy(() =>
   import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
 );
-const MapLegend = lazy(() =>
-  import("@/components/map-legend").then((module) => ({ default: module.MapLegend }))
-);
 
 export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
@@ -3019,6 +3016,7 @@ export default function App() {
     onZoomControlsVisibleChange: setZoomControlsVisible,
     displayPanelOpen,
     onDisplayPanelOpenChange: setDisplayPanelOpen,
+    legend,
     onShare: handleOpenShareModal,
     layoutMode: viewerLayoutMode,
   }), [
@@ -3027,7 +3025,7 @@ export default function App() {
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
-    displayPanelOpen, handleOpenShareModal, viewerLayoutMode,
+    displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour,
   ]);
 
@@ -3124,17 +3122,6 @@ export default function App() {
             {error}
           </div>
         )}
-
-        {legendVisible ? (
-          <Suspense fallback={null}>
-            <MapLegend
-              legend={legend}
-              onOpacityChange={setOpacity}
-              showOpacityControl={false}
-              displayPanelOpen={displayPanelOpen}
-            />
-          </Suspense>
-        ) : null}
 
         <BottomForecastControls
           forecastHour={forecastHour}
