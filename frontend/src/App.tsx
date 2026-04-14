@@ -2816,6 +2816,16 @@ export default function App() {
     const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
     const selectedRunCompact = selectedRunLabel.replace(/^Latest\s*\((.*)\)$/, "$1");
     const viewingOlderRun = run !== "latest" && run !== latestRun;
+    const viewingLatestRun = !viewingOlderRun;
+    const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
+      ? runManifest.variables?.[variable]?.frames ?? []
+      : [];
+    const expectedVariableFrameCount = manifestVariableFrames.length > 0 ? manifestVariableFrames.length : null;
+    const readyRows = frameRows.filter((row) => row?.has_cog === true);
+    const readyVariableFrameCount = readyRows.length;
+    const latestReadyForecastHour = readyRows.length > 0
+      ? Math.max(...readyRows.map((row) => Number(row.fh)).filter(Number.isFinite))
+      : null;
 
     const targetFrameCount = Number.isFinite(selectedModelAvailability?.target_frame_count)
       ? Math.max(0, Number(selectedModelAvailability?.target_frame_count))
@@ -2828,19 +2838,38 @@ export default function App() {
       : [];
     const selectedVariableReady = variable ? readyVars.includes(variable) : true;
     const latestRunComplete =
-      selectedModelAvailability?.latest_run_ready === true
+      viewingLatestRun && expectedVariableFrameCount !== null
+        ? readyVariableFrameCount >= expectedVariableFrameCount && readyVariableFrameCount > 0
+        : selectedModelAvailability?.latest_run_ready === true
       || (
         targetFrameCount !== null
         && readyFrameCount !== null
         && readyFrameCount >= targetFrameCount
       );
 
+    if (
+      viewingLatestRun
+      && latestReadyForecastHour !== null
+      && expectedVariableFrameCount !== null
+      && readyVariableFrameCount < expectedVariableFrameCount
+    ) {
+      return {
+        label: `${latestLabel} · FH ${latestReadyForecastHour}`,
+        description: `Latest ${latestLabel} is still ingesting for ${selectedVariableLabel}. ${readyVariableFrameCount} of ${expectedVariableFrameCount} forecast hours are currently ready, through forecast hour ${latestReadyForecastHour}.`,
+        tone: "delayed" as const,
+      };
+    }
+
     if (!latestRunComplete || !selectedVariableReady) {
       const progressLabel = targetFrameCount !== null && readyFrameCount !== null
         ? `${readyFrameCount}/${targetFrameCount} hrs`
+        : latestReadyForecastHour !== null
+          ? `FH ${latestReadyForecastHour}`
         : "Ingesting";
       let description = targetFrameCount !== null && readyFrameCount !== null
         ? `Latest ${latestLabel} is still ingesting. ${readyFrameCount} of ${targetFrameCount} forecast hours are currently available.`
+        : latestReadyForecastHour !== null
+          ? `Latest ${latestLabel} is still ingesting and is currently available through forecast hour ${latestReadyForecastHour}.`
         : `Latest ${latestLabel} is still ingesting.`;
       if (!selectedVariableReady) {
         description += ` ${selectedVariableLabel} is not fully ready on the latest run yet.`;
@@ -2870,7 +2899,9 @@ export default function App() {
     };
   }, [
     latestRunId,
+    frameRows,
     run,
+    runManifest,
     selectedModelAvailability,
     selectedRunLabel,
     selectedTimeAxisMode,
