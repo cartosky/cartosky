@@ -57,6 +57,10 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("gust") == "wgst10m"
     assert ECMWF_MODEL.normalize_var_id("mucape") == "mucape"
     assert ECMWF_MODEL.normalize_var_id("most_unstable_cape") == "mucape"
+    assert ECMWF_MODEL.normalize_var_id("pwat") == "pwat"
+    assert ECMWF_MODEL.normalize_var_id("precipitable_water") == "pwat"
+    assert ECMWF_MODEL.normalize_var_id("precipitablewater") == "pwat"
+    assert ECMWF_MODEL.normalize_var_id("tcwv") == "pwat"
     assert ECMWF_MODEL.normalize_var_id("10u") == "10u"
     assert ECMWF_MODEL.normalize_var_id("u10") == "10u"
     assert ECMWF_MODEL.normalize_var_id("10v") == "10v"
@@ -77,7 +81,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -111,6 +115,18 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     mucape_spec = ECMWF_MODEL.get_var("mucape")
     assert mucape_spec is not None
     assert mucape_spec.selectors.search == [":mucape:sfc:", ":mucape:"]
+
+    pwat_spec = ECMWF_MODEL.get_var("pwat")
+    assert pwat_spec is not None
+    assert pwat_spec.primary is True
+    assert pwat_spec.derived is False
+    assert pwat_spec.kind == "continuous"
+    assert pwat_spec.units == "in"
+    assert pwat_spec.selectors.search == [":tcwv:"]
+    assert pwat_spec.selectors.filter_by_keys == {
+        "shortName": "tcwv",
+        "typeOfLevel": "atmosphereSingleLayer",
+    }
 
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
@@ -163,6 +179,19 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 3
     assert precip_total["constraints"] == {"min_fh": 3}
     assert precip_total["render_substrates"] == ["grid"]
+
+    pwat = payload["variables"]["pwat"]
+    assert pwat["var_key"] == "pwat"
+    assert pwat["display_name"] == "Precipitable Water"
+    assert pwat["kind"] == "continuous"
+    assert pwat["units"] == "in"
+    assert pwat["buildable"] is True
+    assert pwat["derived"] is False
+    assert pwat["color_map_id"] == "pwat"
+    assert pwat["order"] == 9
+    assert pwat["group"] == "Moisture"
+    assert pwat["default_fh"] == 0
+    assert pwat["render_substrates"] == ["grid"]
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["var_key"] == "snowfall_total"
