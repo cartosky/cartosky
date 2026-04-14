@@ -145,16 +145,6 @@ function formatRunLabel(runId?: string | null): string {
   return `${timeLabel} (${dateLabel})`;
 }
 
-function StatBlock({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="border-white/8 px-5 py-5 first:pl-0 last:pr-0 md:border-l md:first:border-l-0 md:px-7">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/45">{label}</div>
-      <div className="mt-2 text-sm font-semibold text-white md:text-base">{value}</div>
-      <div className="mt-1 text-sm text-white/55">{detail}</div>
-    </div>
-  );
-}
-
 function DetailList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
@@ -350,26 +340,6 @@ export default function Models() {
         </div>
       </section>
 
-      <section className="border-b border-white/8 bg-[#091423] px-5 md:px-8">
-        <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-3 md:py-5">
-          <StatBlock
-            label="Core Lineup"
-            value={`${modelState.coreModels.length || 5} main model families`}
-            detail="HRRR, GFS, NAM, NBM, and ECMWF drive the core analysis workflow."
-          />
-          <StatBlock
-            label="Specialty Layers"
-            value={`${modelState.specialtyModels.length} live support layers`}
-            detail="Official outlooks, hazards, and observed products sit beside the deterministic guidance."
-          />
-          <StatBlock
-            label="Product Depth"
-            value={`${modelState.totalCoreVariables || 0} core product entries`}
-            detail="Catalog counts reflect current live support, not padded marketing totals."
-          />
-        </div>
-      </section>
-
       <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-start gap-4">
@@ -381,10 +351,6 @@ export default function Models() {
               <h2 className="mt-4 text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
                 The guidance that anchors the viewer.
               </h2>
-              <p className="mt-5 max-w-3xl text-base leading-8 text-white/64">
-                These are the main numerical guidance sources CartoSky is organized around today. The page stays tied
-                to the live catalog so the counts and support status reflect what is actually in the product.
-              </p>
             </div>
           </div>
 
@@ -412,10 +378,6 @@ export default function Models() {
               <h2 className="mt-4 text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
                 Official and observed context belongs in the same workflow.
               </h2>
-              <p className="mt-5 max-w-3xl text-base leading-8 text-white/64">
-                CartoSky is not only deterministic model guidance. These live layers give you official severe outlooks,
-                active hazard state, and observed radar-style context without leaving the map.
-              </p>
             </div>
           </div>
 

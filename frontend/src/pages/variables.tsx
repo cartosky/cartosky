@@ -259,16 +259,6 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
   );
 }
 
-function StatBlock({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="border-white/8 px-5 py-5 first:pl-0 last:pr-0 md:border-l md:first:border-l-0 md:px-7">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/45">{label}</div>
-      <div className="mt-2 text-sm font-semibold text-white md:text-base">{value}</div>
-      <div className="mt-1 text-sm text-white/55">{detail}</div>
-    </div>
-  );
-}
-
 function DetailList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
@@ -298,7 +288,37 @@ type VariableSummary = {
   limitations: string[];
 };
 
-const GROUP_ORDER = ["Temperature", "Wind", "Moisture", "Precipitation", "Instability", "Dynamics", "Radar & Precipitation Type", "Official Layers", "Other"] as const;
+const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR", "OBSERVATIONS"] as const;
+const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
+  tmp2m: "SURFACE",
+  dp2m: "SURFACE",
+  td2m: "SURFACE",
+  wspd10m: "SURFACE",
+  wgst10m: "SURFACE",
+  tmp850: "UPPER AIR",
+  wspd850: "UPPER AIR",
+  wspd300: "UPPER AIR",
+  vort500: "UPPER AIR",
+  sbcape: "SEVERE",
+  mlcape: "SEVERE",
+  mucape: "SEVERE",
+  pwat: "PRECIPITATION",
+  precip_total: "PRECIPITATION",
+  qpf: "PRECIPITATION",
+  snowfall_total: "PRECIPITATION",
+  snow10to1: "PRECIPITATION",
+  snowfall_kuchera_total: "PRECIPITATION",
+  snowkuchera: "PRECIPITATION",
+  ptype_intensity: "PRECIPITATION",
+  radar_ptype: "PRECIPITATION",
+  convective: "OBSERVATIONS",
+  tornado: "OBSERVATIONS",
+  wind: "OBSERVATIONS",
+  hail: "OBSERVATIONS",
+  active: "OBSERVATIONS",
+  reflectivity: "OBSERVATIONS",
+  mrms_radar_ptype: "OBSERVATIONS",
+};
 
 function groupSortKey(group: string): number {
   const index = GROUP_ORDER.indexOf(group as (typeof GROUP_ORDER)[number]);
@@ -306,11 +326,39 @@ function groupSortKey(group: string): number {
 }
 
 function groupIcon(group: string) {
-  if (group === "Temperature" || group === "Instability") return <Flame className="h-5 w-5" />;
-  if (group === "Wind") return <Wind className="h-5 w-5" />;
-  if (group === "Moisture" || group === "Precipitation") return <Droplets className="h-5 w-5" />;
-  if (group === "Radar & Precipitation Type") return <Snowflake className="h-5 w-5" />;
+  if (group === "SURFACE" || group === "SEVERE") return <Flame className="h-5 w-5" />;
+  if (group === "UPPER AIR") return <Wind className="h-5 w-5" />;
+  if (group === "PRECIPITATION") return <Droplets className="h-5 w-5" />;
+  if (group === "OBSERVATIONS") return <Snowflake className="h-5 w-5" />;
   return <Layers3 className="h-5 w-5" />;
+}
+
+function canonicalViewerGroup(varKey: string, backendGroup?: string | null): string {
+  const mapped = VIEWER_GROUP_BY_VARIABLE[varKey];
+  if (mapped) return mapped;
+
+  const normalized = backendGroup?.trim().toLowerCase();
+  switch (normalized) {
+    case "surface":
+    case "temperature":
+    case "wind":
+      return "SURFACE";
+    case "precipitation":
+    case "moisture":
+    case "radar & precipitation type":
+    case "radar":
+      return "PRECIPITATION";
+    case "severe":
+    case "instability":
+      return "SEVERE";
+    case "upper air":
+    case "dynamics":
+      return "UPPER AIR";
+    case "observations":
+      return "OBSERVATIONS";
+    default:
+      return "OBSERVATIONS";
+  }
 }
 
 export default function Variables() {
@@ -354,12 +402,7 @@ export default function Variables() {
       .map(([varKey, variable]) => {
         const reference = VARIABLE_REFERENCE[varKey];
         const displayName = variable.display_name?.trim() || varKey;
-        const group =
-          displayName.startsWith("SPC ")
-            ? "Official Layers"
-            : displayName.includes("Hazard") || displayName.includes("Reflectivity") && varKey.startsWith("mrms")
-              ? "Official Layers"
-              : variable.group?.trim() || "Other";
+        const group = canonicalViewerGroup(varKey, variable.group);
 
         return {
           id: varKey,
@@ -442,26 +485,6 @@ export default function Variables() {
         </div>
       </section>
 
-      <section className="border-b border-white/8 bg-[#091423] px-5 md:px-8">
-        <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-3 md:py-5">
-          <StatBlock
-            label="Library"
-            value={`${variableState.variables.length || 0} supported entries`}
-            detail="Pulled from the live capabilities catalog instead of a stale manual count."
-          />
-          <StatBlock
-            label="Groups"
-            value={`${variableState.groupNames.length || 0} workflow buckets`}
-            detail="Temperature, wind, moisture, precipitation, instability, and more."
-          />
-          <StatBlock
-            label="Coverage"
-            value="Model-dependent support"
-            detail="Each row shows exactly which current models or layers carry that field."
-          />
-        </div>
-      </section>
-
       <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
         <div className="mx-auto max-w-6xl">
           {variableState.groupNames.map((groupName) => (
@@ -473,13 +496,8 @@ export default function Variables() {
                 <div>
                   <SectionEyebrow>{groupName}</SectionEyebrow>
                   <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
-                    {groupName === "Official Layers" ? "Official and observed context" : `${groupName} products`}
+                    {groupName}
                   </h2>
-                  <p className="mt-4 max-w-3xl text-base leading-8 text-white/64">
-                    {groupName === "Official Layers"
-                      ? "These layers give you official or observed context inside the same CartoSky workflow."
-                      : "Reference fields and derived products in this group, with support kept in sync with the current live catalog."}
-                  </p>
                 </div>
               </div>
 
