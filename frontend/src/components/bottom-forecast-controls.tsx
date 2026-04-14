@@ -235,7 +235,7 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col overflow-hidden border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08),inset_0_0_0_1px_rgba(100,180,255,0.03)] backdrop-blur-2xl",
+            "pointer-events-auto relative flex flex-col",
             isDesktopLayout
               ? "w-full max-w-[42rem] gap-1.5 rounded-2xl px-4 py-3"
               : isTabletTouchLayout
@@ -243,7 +243,17 @@ export function BottomForecastControls({
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
           )}
         >
-          <div className={isDesktopLayout ? "hidden" : "block"}>
+          {/* Blur layer isolated on its own compositor layer — never repaints during slider drag */}
+          <div
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute inset-0 border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-2xl",
+              isDesktopLayout ? "rounded-2xl" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
+            )}
+            style={{ willChange: "transform" }}
+          />
+          {/* Content sits above the blur layer */}
+          <div className={cn("relative z-10", isDesktopLayout ? "hidden" : "block")}>
             <div className={cn("flex items-start justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0">
                 {validTime ? (
@@ -334,7 +344,7 @@ export function BottomForecastControls({
             </div>
           </div>
 
-            <div className={isDesktopLayout ? "flex items-center gap-3" : "hidden"}>
+            <div className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
               <div className="flex shrink-0 items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
