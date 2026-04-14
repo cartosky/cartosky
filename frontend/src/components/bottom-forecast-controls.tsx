@@ -235,9 +235,9 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.08] bg-[#07111f]/[0.92] shadow-[0_8px_32px_rgba(0,0,0,0.55),0_2px_8px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl",
+            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.13] bg-[#07111f]/[0.88] shadow-[0_8px_40px_rgba(0,0,0,0.65),0_2px_12px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-2xl",
             isDesktopLayout
-              ? "w-full max-w-[42rem] gap-2 rounded-[1.8rem] p-6"
+              ? "w-full max-w-[42rem] gap-1.5 rounded-2xl px-4 py-3"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -334,7 +334,7 @@ export function BottomForecastControls({
             </div>
           </div>
 
-            <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
+            <div className={isDesktopLayout ? "flex items-center gap-3" : "hidden"}>
               <div className="flex shrink-0 items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -344,16 +344,16 @@ export function BottomForecastControls({
                       disabled={disabled || !hasFrames || playDisabled}
                       aria-label={isPlaying ? "Pause animation" : "Play animation"}
                       className={cn(
-                        "flex h-11 w-11 items-center justify-center rounded-2xl border transition-all duration-150 disabled:opacity-50",
+                        "flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
                         isPlaying
-                          ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm"
-                          : "bg-slate-950/35 text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm hover:text-white"
+                          ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                          : "bg-white/[0.06] text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:text-white hover:bg-white/[0.1]"
                       )}
                     >
                       {isPlaying ? (
-                        <Pause className="h-5 w-5" />
+                        <Pause className="h-4 w-4" />
                       ) : (
-                        <Play className="h-5 w-5 translate-x-[1px]" />
+                        <Play className="h-4 w-4 translate-x-[1px]" />
                       )}
                     </button>
                   </TooltipTrigger>
@@ -363,17 +363,17 @@ export function BottomForecastControls({
                 </Tooltip>
               </div>
 
-              <div className="flex flex-1 flex-col gap-3">
-                <div className="flex items-center justify-between px-1">
-                  <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.26em] text-white/42">
-                    <Clock className="h-3 w-3" />
+              <div className="flex flex-1 flex-col gap-1">
+                <div className="flex items-center justify-between px-0.5">
+                  <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.26em] text-white/40">
+                    <Clock className="h-2.5 w-2.5" />
                     {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
                   </span>
-                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium tracking-[0.1em] text-white/90 transition-all duration-150">
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
                     {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
                   </span>
                 </div>
-                <div className="px-1">
+                <div className="px-0.5">
                   <Slider
                     value={[sliderIndex]}
                     onValueChange={([value]) => {
@@ -398,12 +398,12 @@ export function BottomForecastControls({
                     max={Math.max(0, availableFrames.length - 1)}
                     step={1}
                     disabled={disabled || isPlaying || !hasFrames}
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-300 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4 [&>*:nth-child(2)]:border-2 [&>*:nth-child(2)]:border-slate-950 [&>*:nth-child(2)]:bg-cyan-200 [&>*:nth-child(2)]:shadow-[0_0_16px_rgba(103,232,249,0.45)]"
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-300 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200 [&>*:nth-child(2)]:h-3.5 [&>*:nth-child(2)]:w-3.5 [&>*:nth-child(2)]:border-2 [&>*:nth-child(2)]:border-slate-900 [&>*:nth-child(2)]:bg-white [&>*:nth-child(2)]:shadow-[0_0_10px_rgba(103,232,249,0.5)]"
                   />
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-col items-end gap-1 pl-6 sm:min-w-[200px]">
+              <div className="flex shrink-0 flex-col items-end gap-0.5 pl-3 sm:min-w-[160px]">
                 {transientStatus ? (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[10px] text-amber-100">
                     <AlertCircle className="h-3 w-3" />
@@ -412,10 +412,10 @@ export function BottomForecastControls({
                 ) : null}
                 {validTime ? (
                   <>
-                    <span className="text-[14px] font-semibold tracking-tight text-white transition-all duration-200">
+                    <span className="text-[12px] font-semibold tracking-tight text-white transition-all duration-200">
                       {validTime.primary}
                     </span>
-                    <span className="mt-0.5 text-[12px] font-medium text-cyan-100 transition-all duration-200">
+                    <span className="text-[10px] font-medium text-cyan-200/80 transition-all duration-200">
                       {validTime.secondary}
                     </span>
                   </>
