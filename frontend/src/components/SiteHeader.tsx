@@ -73,7 +73,80 @@ function SourceStatusBadge({
   );
 }
 
-// ─── Compact toolbar select ───────────────────────────────────────────────────
+// ─── Run / data freshness status badge ───────────────────────────────────────
+/**
+ * Shows a trust signal for the currently selected run.
+ * - Observed products (radar, etc.): delegates to SourceStatusBadge.
+ * - Forecast products: shows whether we're on the current cycle, whether a
+ *   newer run is available, or whether data is still loading.
+ */
+function RunStatusBadge({
+  // Observed source status (radar / satellite products)
+  sourceStatusLabel,
+  sourceStatusDescription,
+  sourceStatusTone,
+  // Forecast run state
+  hasNewerRunAvailable,
+  latestAvailableRunLabel,
+  runSelectionLocked,
+  disabled,
+  onViewLatestRun,
+}: {
+  sourceStatusLabel?: string | null;
+  sourceStatusDescription?: string | null;
+  sourceStatusTone?: ObservedSourceStatusTone | null;
+  hasNewerRunAvailable?: boolean;
+  latestAvailableRunLabel?: string | null;
+  runSelectionLocked?: boolean;
+  disabled?: boolean;
+  onViewLatestRun?: () => void;
+}) {
+  // Observed product — use existing tone badge
+  if (sourceStatusLabel) {
+    return (
+      <SourceStatusBadge
+        label={sourceStatusLabel}
+        description={sourceStatusDescription}
+        tone={sourceStatusTone}
+      />
+    );
+  }
+
+  // Data still loading — no badge yet
+  if (disabled) return null;
+
+  // Newer run is available and user is not locked to latest
+  if (!runSelectionLocked && hasNewerRunAvailable) {
+    const label = latestAvailableRunLabel ? `${latestAvailableRunLabel} ready` : "New run ready";
+    return (
+      <button
+        type="button"
+        onClick={onViewLatestRun}
+        title="A newer model run is available — click to update"
+        className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/28 bg-amber-300/[0.09] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-amber-300/[0.15]"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+        {label}
+      </button>
+    );
+  }
+
+  // Current cycle — green pulse
+  return (
+    <div
+      title="Viewing the current model run cycle"
+      className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/22 bg-emerald-300/[0.07] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100"
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-300" />
+      </span>
+      Current
+    </div>
+  );
+}
+
+
 const GROUP_ORDER = ["MODELS", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR"];
 
 function spcVariableLabel(option: VariableOption): string {
@@ -295,7 +368,7 @@ function ViewerNavDesktop() {
 
   return (
     /* flex-1 so this fills all space after the logo; spacer pushes controls to the right */
-    <div className="flex flex-1 items-center overflow-hidden">
+    <div className="flex flex-1 items-center">
       {/* Flex spacer — pushes everything to the right */}
       <div className="flex-1" />
 
@@ -346,17 +419,20 @@ function ViewerNavDesktop() {
           minWidth="min-w-[80px] max-w-[130px]"
         />
 
-        {/* Divider */}
-        <div className="mx-1.5 h-5 w-px bg-white/12" />
+        {/* Divider — cyan tint to match marketing accent language */}
+        <div className="mx-1.5 h-5 w-px bg-cyan-300/20" />
 
-        {/* Source status + share + settings */}
-        {sourceStatusLabel ? (
-          <SourceStatusBadge
-            label={sourceStatusLabel}
-            description={sourceStatusDescription}
-            tone={sourceStatusTone}
-          />
-        ) : null}
+        {/* Run / data freshness trust badge */}
+        <RunStatusBadge
+          sourceStatusLabel={sourceStatusLabel}
+          sourceStatusDescription={sourceStatusDescription}
+          sourceStatusTone={sourceStatusTone}
+          hasNewerRunAvailable={hasNewerRunAvailable}
+          latestAvailableRunLabel={latestAvailableRunLabel}
+          runSelectionLocked={runSelectionLocked}
+          disabled={disabled}
+          onViewLatestRun={onViewLatestRun}
+        />
 
         {onShare ? (
           <button
