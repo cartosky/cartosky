@@ -235,12 +235,12 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col overflow-hidden border border-white/10 border-t-white/20 bg-gradient-to-b from-[#07111f]/50 to-[#07111f]/30 shadow-[0_16px_48px_rgba(0,0,0,0.5)] backdrop-blur-2xl",
+            "pointer-events-auto flex flex-col overflow-hidden border border-white/10 bg-slate-950/24 shadow-[0_28px_70px_rgba(0,0,0,0.24)] backdrop-blur-sm",
             isDesktopLayout
-              ? "w-full max-w-[42rem] gap-2 rounded-[1.35rem] px-3 py-2 sm:px-3.5 sm:py-2.5"
+              ? "w-full max-w-[42rem] gap-2 rounded-[1.8rem] p-6"
               : isTabletTouchLayout
-                ? "w-[min(90vw,560px)] gap-1.5 rounded-xl px-2.5 py-2"
-                : "w-full max-w-3xl gap-2 rounded-[1.2rem] px-3 py-2.5 sm:px-3.5 sm:py-2.5"
+                ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
+                : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
           )}
         >
           <div className={isDesktopLayout ? "hidden" : "block"}>
@@ -344,16 +344,16 @@ export function BottomForecastControls({
                       disabled={disabled || !hasFrames || playDisabled}
                       aria-label={isPlaying ? "Pause animation" : "Play animation"}
                       className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 transition-all duration-150 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100",
+                        "flex h-11 w-11 items-center justify-center rounded-2xl border transition-all duration-150 disabled:opacity-50",
                         isPlaying
-                          ? "bg-cyan-300/[0.12] text-cyan-200 border-cyan-300/30"
-                          : "bg-white/[0.05] text-white/80 hover:bg-white/[0.09] hover:text-white"
+                          ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm"
+                          : "bg-slate-950/35 text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm hover:text-white"
                       )}
                     >
                       {isPlaying ? (
-                        <Pause className="h-4 w-4" />
+                        <Pause className="h-5 w-5" />
                       ) : (
-                        <Play className="h-4 w-4 translate-x-[1px]" />
+                        <Play className="h-5 w-5 translate-x-[1px]" />
                       )}
                     </button>
                   </TooltipTrigger>
@@ -363,45 +363,47 @@ export function BottomForecastControls({
                 </Tooltip>
               </div>
 
-              <div className="flex flex-1 flex-col gap-1.5">
+              <div className="flex flex-1 flex-col gap-3">
                 <div className="flex items-center justify-between px-1">
-                  <span className="flex items-center gap-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.2em] text-cyan-300/60">
+                  <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.26em] text-white/42">
                     <Clock className="h-3 w-3" />
                     {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
                   </span>
-                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium tracking-tight text-white/90 transition-all duration-150">
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium tracking-[0.1em] text-white/90 transition-all duration-150">
                     {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
                   </span>
                 </div>
-                <Slider
-                  value={[sliderIndex]}
-                  onValueChange={([value]) => {
-                    const next = availableFrames[Math.round(value ?? 0)];
-                    if (Number.isFinite(next)) {
-                      if (!isScrubbing) {
-                        setIsScrubbing(true);
+                <div className="px-1">
+                  <Slider
+                    value={[sliderIndex]}
+                    onValueChange={([value]) => {
+                      const next = availableFrames[Math.round(value ?? 0)];
+                      if (Number.isFinite(next)) {
+                        if (!isScrubbing) {
+                          setIsScrubbing(true);
+                        }
+                        setPreviewHour(next);
+                        emitForecastHour(next, false);
                       }
-                      setPreviewHour(next);
-                      emitForecastHour(next, false);
-                    }
-                  }}
-                  onValueCommit={([value]) => {
-                    const next = availableFrames[Math.round(value ?? 0)];
-                    if (Number.isFinite(next)) {
-                      setPreviewHour(null);
-                      setIsScrubbing(false);
-                      emitForecastHour(next, true);
-                    }
-                  }}
-                  min={0}
-                  max={Math.max(0, availableFrames.length - 1)}
-                  step={1}
-                  disabled={disabled || isPlaying || !hasFrames}
-                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-cyan-300 [&>*:first-child>*:first-child]:shadow-[0_0_12px_rgba(35,196,255,0.4)] [&>*:nth-child(2)]:h-[22px] [&>*:nth-child(2)]:w-[22px] [&>*:nth-child(2)]:border-slate-800 [&>*:nth-child(2)]:bg-cyan-100 [&>*:nth-child(2)]:shadow-[0_0_16px_rgba(35,196,255,0.5)]"
-                />
-            </div>
+                    }}
+                    onValueCommit={([value]) => {
+                      const next = availableFrames[Math.round(value ?? 0)];
+                      if (Number.isFinite(next)) {
+                        setPreviewHour(null);
+                        setIsScrubbing(false);
+                        emitForecastHour(next, true);
+                      }
+                    }}
+                    min={0}
+                    max={Math.max(0, availableFrames.length - 1)}
+                    step={1}
+                    disabled={disabled || isPlaying || !hasFrames}
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-300 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4 [&>*:nth-child(2)]:border-2 [&>*:nth-child(2)]:border-slate-950 [&>*:nth-child(2)]:bg-cyan-200 [&>*:nth-child(2)]:shadow-[0_0_16px_rgba(103,232,249,0.45)]"
+                  />
+                </div>
+              </div>
 
-              <div className="flex shrink-0 flex-col items-end gap-0.5 border-l border-white/10 pl-5 sm:min-w-[220px]">
+              <div className="flex shrink-0 flex-col items-end gap-1 pl-6 sm:min-w-[200px]">
                 {transientStatus ? (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[10px] text-amber-100">
                     <AlertCircle className="h-3 w-3" />
@@ -410,10 +412,10 @@ export function BottomForecastControls({
                 ) : null}
                 {validTime ? (
                   <>
-                    <span className="text-[13px] font-semibold leading-tight tracking-tight text-white transition-all duration-200">
+                    <span className="text-[14px] font-semibold tracking-tight text-white transition-all duration-200">
                       {validTime.primary}
                     </span>
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em] text-white/50 transition-all duration-200">
+                    <span className="mt-0.5 text-[12px] font-medium text-cyan-100 transition-all duration-200">
                       {validTime.secondary}
                     </span>
                   </>
