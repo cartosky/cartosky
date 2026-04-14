@@ -193,7 +193,7 @@ function NavbarSelect(props: {
     >
       <SelectTrigger
         className={cn(
-          "h-8 border-white/[0.09] bg-white/[0.05] px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
+          "h-8 rounded-xl border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
           minWidth,
           highlightState
             ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.12]"
@@ -335,7 +335,7 @@ function ViewerNavDesktop() {
               : null
           }
           onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-          minWidth="min-w-[110px] max-w-[170px]"
+          minWidth="min-w-[130px] max-w-[210px]"
         />
         <NavbarSelect
           value={region}
@@ -364,14 +364,14 @@ function ViewerNavDesktop() {
             onClick={onShare}
             title="Share"
             aria-label="Share"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
           >
             <Send className="h-3.5 w-3.5" />
           </button>
         ) : null}
 
         {/* Settings / Display panel */}
-        <div className="relative" ref={settingsRef}>
+        <div className="relative shrink-0" ref={settingsRef}>
           <button
             type="button"
             onClick={() => onDisplayPanelOpenChange(!displayPanelOpen)}
@@ -379,7 +379,7 @@ function ViewerNavDesktop() {
             title="Display settings"
             aria-label="Display settings"
             className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-150",
+              "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150",
               displayPanelOpen
                 ? "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100"
                 : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
@@ -814,7 +814,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-[60] border-b border-white/[0.07] bg-[#06101e]/82 backdrop-blur-2xl">
+    <header className="sticky top-0 z-[60] border-b border-white/[0.07] bg-[#07111f]/90 backdrop-blur-2xl">
       <div
         className={
           isAppVariant
