@@ -465,7 +465,7 @@ function ViewerNavDesktop() {
           </button>
 
           {displayPanelOpen ? (
-            <div className="absolute right-0 top-[calc(100%+0.6rem)] z-[70] w-[232px] overflow-hidden rounded-2xl border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+            <div className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl">
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
                 <div>
@@ -567,6 +567,7 @@ function ViewerNavMobile() {
     runSelectionLocked, sourceStatusLabel, sourceStatusDescription, sourceStatusTone,
     onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
+    zoomControlsVisible, onZoomControlsVisibleChange,
   } = toolbar;
 
   const displayVariables = model === "spc"
@@ -743,6 +744,12 @@ function ViewerNavMobile() {
                     icon={Eye}
                     checked={legendVisible}
                     onToggle={() => onLegendVisibleChange(!legendVisible)}
+                  />
+                  <DisplayRow
+                    label="Zoom Controls"
+                    icon={SlidersHorizontal}
+                    checked={zoomControlsVisible}
+                    onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
                   />
                   <button
                     type="button"
