@@ -64,7 +64,7 @@ function SourceStatusBadge({
     <div
       title={description ?? label}
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
+        "inline-flex items-center rounded-full border px-2.5 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
         sourceStatusBadgeClass(tone)
       )}
     >
@@ -173,9 +173,9 @@ function NavbarSelect(props: {
           onClick={() => { setOpen(false); onMenuAction(); }}
           className="flex w-full flex-col items-start rounded-md px-3 py-2 text-left transition-colors duration-150 hover:bg-white/10"
         >
-          <span className="text-xs font-semibold text-emerald-50">{menuActionLabel}</span>
+          <span className="text-xs font-semibold text-cyan-100">{menuActionLabel}</span>
           {menuActionDescription ? (
-            <span className="mt-0.5 text-[11px] text-emerald-100/72">{menuActionDescription}</span>
+            <span className="mt-0.5 text-[11px] text-cyan-100/60">{menuActionDescription}</span>
           ) : null}
         </button>
         <SelectSeparator className="my-1 bg-white/10" />
@@ -193,10 +193,10 @@ function NavbarSelect(props: {
     >
       <SelectTrigger
         className={cn(
-          "h-8 border-white/10 bg-white/[0.06] px-2.5 text-[12px] font-medium text-white shadow-none transition-all duration-150 hover:border-white/20 hover:bg-white/[0.10] focus:ring-0 [&>span]:line-clamp-none",
+          "h-8 border-white/[0.09] bg-white/[0.05] px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
           minWidth,
           highlightState
-            ? "border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-50 hover:bg-emerald-300/[0.11]"
+            ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.12]"
             : ""
         )}
       >
@@ -227,15 +227,15 @@ function DisplayRow({
       className={cn(
         "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
         checked
-          ? "border-[#354d42] bg-[rgba(53,77,66,0.22)] text-white hover:bg-[rgba(53,77,66,0.3)]"
-          : "border-white/10 bg-black/18 text-white/88 hover:bg-black/28"
+          ? "border-cyan-300/20 bg-cyan-300/[0.07] text-white hover:bg-cyan-300/[0.11]"
+          : "border-white/10 bg-white/[0.04] text-white/82 hover:bg-white/[0.07]"
       )}
     >
       <div className="flex items-center gap-2 text-sm font-semibold text-white">
         <Icon className="h-4 w-4 text-white/72" />
         {label}
       </div>
-      <span className={cn("text-xs font-semibold", checked ? "text-[#98c9b2]" : "text-white/42")}>
+      <span className={cn("font-['IBM_Plex_Mono',monospace] text-[10px] font-medium", checked ? "text-cyan-300/90" : "text-white/38")}>
         {checked ? "On" : "Off"}
       </span>
     </button>
@@ -294,9 +294,14 @@ function ViewerNavDesktop() {
   }, [hasNewerRunAvailable, runs]);
 
   return (
-    <div className="flex flex-1 items-center gap-2 overflow-hidden">
-      {/* Primary selectors */}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+    /* flex-1 so this fills all space after the logo; spacer pushes controls to the right */
+    <div className="flex flex-1 items-center overflow-hidden">
+      {/* Flex spacer — pushes everything to the right */}
+      <div className="flex-1" />
+
+      {/* Controls group: selectors + divider + icons — all right-aligned */}
+      <div className="flex shrink-0 items-center gap-1.5">
+        {/* Primary selectors */}
         <NavbarSelect
           value={variable}
           onValueChange={onVariableChange}
@@ -340,10 +345,11 @@ function ViewerNavDesktop() {
           placeholder="Region"
           minWidth="min-w-[80px] max-w-[130px]"
         />
-      </div>
 
-      {/* Right group: source status + share + settings */}
-      <div className="flex shrink-0 items-center gap-1.5 border-l border-white/8 pl-2">
+        {/* Divider */}
+        <div className="mx-1.5 h-5 w-px bg-white/12" />
+
+        {/* Source status + share + settings */}
         {sourceStatusLabel ? (
           <SourceStatusBadge
             label={sourceStatusLabel}
@@ -358,7 +364,7 @@ function ViewerNavDesktop() {
             onClick={onShare}
             title="Share"
             aria-label="Share"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/72 transition-all duration-150 hover:border-white/20 hover:bg-white/[0.10] hover:text-white"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
           >
             <Send className="h-3.5 w-3.5" />
           </button>
@@ -375,31 +381,34 @@ function ViewerNavDesktop() {
             className={cn(
               "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-150",
               displayPanelOpen
-                ? "border-white/20 bg-white/12 text-white"
-                : "border-white/10 bg-white/[0.05] text-white/72 hover:border-white/20 hover:bg-white/[0.10] hover:text-white"
+                ? "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100"
+                : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
             )}
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
 
           {displayPanelOpen ? (
-            <div className="glass absolute right-0 top-[calc(100%+0.5rem)] z-[70] w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.3)]">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="absolute right-0 top-[calc(100%+0.6rem)] z-[70] w-[232px] overflow-hidden rounded-2xl border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+              {/* Panel header */}
+              <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Display</div>
-                  <div className="pt-0.5 text-xs text-white/62">Map overlays and reference aids.</div>
+                  <div className="font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.22em] text-cyan-300/60">
+                    Display
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-white/52">Map overlays &amp; reference aids</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => onDisplayPanelOpenChange(false)}
-                  className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-white/40 hover:text-white/80"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-white/32 transition-colors hover:text-white/72"
                   aria-label="Close display panel"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5 px-3 py-3">
                 <DisplayRow
                   label="City Labels"
                   icon={MapPin}
@@ -421,23 +430,25 @@ function ViewerNavDesktop() {
                 <button
                   type="button"
                   onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07]"
                 >
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
                     {basemapMode === "dark"
-                      ? <Moon className="h-4 w-4 text-white/72" />
-                      : <Sun className="h-4 w-4 text-white/72" />}
+                      ? <Moon className="h-4 w-4 text-white/60" />
+                      : <Sun className="h-4 w-4 text-white/60" />}
                     Basemap
                   </div>
-                  <span className="text-xs font-semibold text-[#98c9b2]">
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
                     {basemapMode === "dark" ? "Dark" : "Light"}
                   </span>
                 </button>
 
-                <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
-                  <div className="mb-1 flex items-center justify-between">
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2">
+                  <div className="mb-2 flex items-center justify-between">
                     <span className="text-sm font-semibold text-white">Opacity</span>
-                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
+                      {Math.round(opacity * 100)}%
+                    </span>
                   </div>
                   <Slider
                     value={[Math.round(opacity * 100)]}
@@ -445,17 +456,17 @@ function ViewerNavDesktop() {
                     min={0}
                     max={100}
                     step={1}
-                    className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
+                    className="w-full [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/12 [&>*:nth-child(2)]:h-3.5 [&>*:nth-child(2)]:w-3.5 [&>*:nth-child(2)]:border-slate-700 [&>*:nth-child(2)]:bg-cyan-200"
                   />
                 </div>
 
-                <div className="border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/42">
+                <div className="border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/32">
                   Maps:{" "}
-                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-white/70">MapLibre</a>
-                  {" "}|{" "}
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-white/70">OSM</a>
-                  {" "}|{" "}
-                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-white/70">CARTO</a>
+                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">MapLibre</a>
+                  {" "}·{" "}
+                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">OSM</a>
+                  {" "}·{" "}
+                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">CARTO</a>
                 </div>
               </div>
             </div>
@@ -803,7 +814,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-[60] border-b border-white/8 bg-[#08111f]/78 backdrop-blur-2xl">
+    <header className="sticky top-0 z-[60] border-b border-white/[0.07] bg-[#06101e]/82 backdrop-blur-2xl">
       <div
         className={
           isAppVariant
