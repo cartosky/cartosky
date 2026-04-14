@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Boxes,
@@ -464,7 +465,7 @@ function ViewerNavDesktop() {
             <Settings className="h-3.5 w-3.5" />
           </button>
 
-          {displayPanelOpen ? (
+          {displayPanelOpen ? createPortal(
             <div className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl">
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
@@ -546,7 +547,7 @@ function ViewerNavDesktop() {
                 </div>
               </div>
             </div>
-          ) : null}
+          , document.body) : null}
         </div>
       </div>
     </div>
@@ -628,7 +629,7 @@ function ViewerNavMobile() {
       </div>
 
       {/* Slide-up sheet */}
-      {sheetOpen ? (
+      {sheetOpen ? createPortal(
         <>
           {/* Backdrop */}
           <div
@@ -793,7 +794,7 @@ function ViewerNavMobile() {
             </div>
           </div>
         </>
-      ) : null}
+      , document.body) : null}
     </>
   );
 }

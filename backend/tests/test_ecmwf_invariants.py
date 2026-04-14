@@ -45,6 +45,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("temp850") == "tmp850"
     assert ECMWF_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert ECMWF_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
+    assert ECMWF_MODEL.normalize_var_id("wspd300") == "wspd300"
+    assert ECMWF_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("apcp") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -89,7 +91,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -134,6 +136,20 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd850_spec.selectors.hints["contour_component"] == "hgt850"
     assert wspd850_spec.selectors.hints["contour_interval"] == "30"
     assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
+
+    wspd300_spec = ECMWF_MODEL.get_var("wspd300")
+    assert wspd300_spec is not None
+    assert wspd300_spec.primary is True
+    assert wspd300_spec.derived is True
+    assert wspd300_spec.derive == "wspd10m"
+    assert wspd300_spec.kind == "continuous"
+    assert wspd300_spec.units == "kt"
+    assert wspd300_spec.selectors.search == []
+    assert wspd300_spec.selectors.hints["u_component"] == "u300"
+    assert wspd300_spec.selectors.hints["v_component"] == "v300"
+    assert wspd300_spec.selectors.hints["contour_component"] == "hgt300"
+    assert wspd300_spec.selectors.hints["contour_interval"] == "120"
+    assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
 
     snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
     assert snowfall_kuchera_spec is not None
@@ -200,6 +216,33 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         "level": "850",
     }
 
+    hgt300_spec = ECMWF_MODEL.get_var("hgt300")
+    assert hgt300_spec is not None
+    assert hgt300_spec.selectors.search == [":gh:300:"]
+    assert hgt300_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+
+    u300_spec = ECMWF_MODEL.get_var("u300")
+    assert u300_spec is not None
+    assert u300_spec.selectors.search == [":u:300:"]
+    assert u300_spec.selectors.filter_by_keys == {
+        "shortName": "u",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+
+    v300_spec = ECMWF_MODEL.get_var("v300")
+    assert v300_spec is not None
+    assert v300_spec.selectors.search == [":v:300:"]
+    assert v300_spec.selectors.filter_by_keys == {
+        "shortName": "v",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     capabilities = ECMWF_MODEL.capabilities
@@ -264,6 +307,20 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["group"] == "Wind"
     assert wspd850["default_fh"] == 0
     assert wspd850["render_substrates"] == ["grid"]
+
+    wspd300 = payload["variables"]["wspd300"]
+    assert wspd300["var_key"] == "wspd300"
+    assert wspd300["display_name"] == "300mb Heights + Winds"
+    assert wspd300["kind"] == "continuous"
+    assert wspd300["units"] == "kt"
+    assert wspd300["buildable"] is True
+    assert wspd300["derived"] is True
+    assert wspd300["derive_strategy_id"] == "wspd10m"
+    assert wspd300["color_map_id"] == "wspd300"
+    assert wspd300["order"] == 18
+    assert wspd300["group"] == "Wind"
+    assert wspd300["default_fh"] == 0
+    assert wspd300["render_substrates"] == ["grid"]
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"

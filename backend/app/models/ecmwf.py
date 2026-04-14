@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-      - `tmp2m`, `dp2m`, `tmp850`, `wspd10m`, `wspd850`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
+            - `tmp2m`, `dp2m`, `tmp850`, `wspd10m`, `wspd850`, `wspd300`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
@@ -58,6 +58,15 @@ class ECMWFPlugin(BaseModelPlugin):
             "850_winds": "wspd850",
             "850mb_heights_winds": "wspd850",
             "850_heights_winds": "wspd850",
+            "wspd300": "wspd300",
+            "wind300": "wspd300",
+            "300wind": "wspd300",
+            "300mbwind": "wspd300",
+            "300mbwinds": "wspd300",
+            "300_wind": "wspd300",
+            "300_winds": "wspd300",
+            "300mb_heights_winds": "wspd300",
+            "300_heights_winds": "wspd300",
             "precip_total": "precip_total",
             "total_precip": "precip_total",
             "apcp": "precip_total",
@@ -435,6 +444,25 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="kt",
     ),
+    "wspd300": VarSpec(
+        id="wspd300",
+        name="300mb Heights + Winds",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "u300",
+                "v_component": "v300",
+                "contour_component": "hgt300",
+                "contour_interval": "120",
+                "contour_key": "height_300mb",
+                "contour_label": "300 mb Height",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="wspd10m",
+        kind="continuous",
+        units="kt",
+    ),
     "tmp700": VarSpec(
         id="tmp700",
         name="700mb Temp",
@@ -606,6 +634,57 @@ ECMWF_VARS: dict[str, VarSpec] = {
             },
         ),
     ),
+    "u300": VarSpec(
+        id="u300",
+        name="300mb U Wind",
+        selectors=VarSelectors(
+            search=[":u:300:"],
+            filter_by_keys={
+                "shortName": "u",
+                "typeOfLevel": "isobaricInhPa",
+                "level": "300",
+            },
+            hints={
+                "upstream_var": "u300",
+                "cf_var": "u",
+                "short_name": "u",
+            },
+        ),
+    ),
+    "v300": VarSpec(
+        id="v300",
+        name="300mb V Wind",
+        selectors=VarSelectors(
+            search=[":v:300:"],
+            filter_by_keys={
+                "shortName": "v",
+                "typeOfLevel": "isobaricInhPa",
+                "level": "300",
+            },
+            hints={
+                "upstream_var": "v300",
+                "cf_var": "v",
+                "short_name": "v",
+            },
+        ),
+    ),
+    "hgt300": VarSpec(
+        id="hgt300",
+        name="300mb Height",
+        selectors=VarSelectors(
+            search=[":gh:300:"],
+            filter_by_keys={
+                "shortName": "gh",
+                "typeOfLevel": "isobaricInhPa",
+                "level": "300",
+            },
+            hints={
+                "upstream_var": "gh300",
+                "cf_var": "gh",
+                "short_name": "gh",
+            },
+        ),
+    ),
     "wspd10m": VarSpec(
         id="wspd10m",
         name="10m Wind Speed",
@@ -684,6 +763,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "wspd850": "wspd850",
+    "wspd300": "wspd300",
     "precip_total": "precip_total",
     "ptype_intensity": "ptype_intensity",
     "ptype_intensity_rain": "ptype_intensity_rain",
@@ -702,6 +782,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 0,
     "tmp850": 0,
     "wspd850": 0,
+    "wspd300": 0,
     "precip_total": 3,
     "ptype_intensity": 6,
     "ptype_intensity_rain": 6,
@@ -727,6 +808,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "ptype_intensity": 15,
     "wspd10m": 12,
     "wgst10m": 13,
+    "wspd300": 18,
     "mucape": 20,
 }
 
@@ -735,6 +817,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "wspd850": "Wind",
+    "wspd300": "Wind",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
     "ptype_intensity": "Precipitation",
@@ -749,6 +832,7 @@ ECMWF_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
     "wspd850": "ms_to_kt",
+    "wspd300": "ms_to_kt",
     "precip_total": "m_to_in",
     "pwat": "kgm2_to_in",
     "snowfall_total": "m_swe_to_in_10to1",
