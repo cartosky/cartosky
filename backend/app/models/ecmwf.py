@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-    - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `mucape`, `pwat`, `snowfall_total`
+        - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
@@ -73,10 +73,15 @@ class ECMWFPlugin(BaseModelPlugin):
             "precipitablewater": "pwat",
             "tcwv": "pwat",
             "total_column_water_vapor": "pwat",
+            "ptype_intensity": "ptype_intensity",
+            "precip_ptype": "ptype_intensity",
+            "ptype": "ptype_intensity",
+            "ptypeintensity": "ptype_intensity",
             "10u": "10u",
             "u10": "10u",
             "10v": "10v",
             "v10": "10v",
+            "msl": "msl",
         }
         return aliases.get(normalized, normalized)
 
@@ -196,6 +201,105 @@ ECMWF_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="in",
+    ),
+    "ptype_intensity": VarSpec(
+        id="ptype_intensity",
+        name="Precipitation Type & Intensity",
+        selectors=VarSelectors(
+            hints={
+                "display_kind": "ptype_intensity",
+                "precip_component": "precip_total",
+                "snow_component": "sf",
+                "surface_temp_component": "tmp2m",
+                "low_temp_component": "tmp925",
+                "mid_temp_component": "tmp850",
+                "step_hours": "3",
+                "step_transition_fh": "144",
+                "step_hours_after_fh": "6",
+                "contour_component": "msl",
+                "contour_interval": "4",
+                "contour_start": "960",
+                "contour_end": "1048",
+                "contour_key": "mslp",
+                "contour_label": "Mean Sea-Level Pressure",
+                "contour_conversion": "pressure_pa_to_hpa",
+                "companion_vars": "ptype_intensity_rain,ptype_intensity_snow,ptype_intensity_ice",
+                "composite_mode": "max_alpha_stack",
+                "composite_layers": "ice:ptype_intensity_ice;snow:ptype_intensity_snow;rain:ptype_intensity_rain",
+            },
+        ),
+        primary=True,
+        derived=True,
+        derive="ptype_intensity_ecmwf",
+        kind="indexed",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_rain": VarSpec(
+        id="ptype_intensity_rain",
+        name="Precipitation Type Intensity Rain",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "rain",
+                "precip_component": "precip_total",
+                "snow_component": "sf",
+                "surface_temp_component": "tmp2m",
+                "low_temp_component": "tmp925",
+                "mid_temp_component": "tmp850",
+                "step_hours": "3",
+                "step_transition_fh": "144",
+                "step_hours_after_fh": "6",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component_ecmwf",
+        kind="continuous",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_snow": VarSpec(
+        id="ptype_intensity_snow",
+        name="Precipitation Type Intensity Snow",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "snow",
+                "precip_component": "precip_total",
+                "snow_component": "sf",
+                "surface_temp_component": "tmp2m",
+                "low_temp_component": "tmp925",
+                "mid_temp_component": "tmp850",
+                "step_hours": "3",
+                "step_transition_fh": "144",
+                "step_hours_after_fh": "6",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component_ecmwf",
+        kind="continuous",
+        units="in/hr",
+        normalize_units="in/hr",
+    ),
+    "ptype_intensity_ice": VarSpec(
+        id="ptype_intensity_ice",
+        name="Precipitation Type Intensity Ice",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "ice",
+                "precip_component": "precip_total",
+                "snow_component": "sf",
+                "surface_temp_component": "tmp2m",
+                "low_temp_component": "tmp925",
+                "mid_temp_component": "tmp850",
+                "step_hours": "3",
+                "step_transition_fh": "144",
+                "step_hours_after_fh": "6",
+            },
+        ),
+        derived=True,
+        derive="ptype_intensity_component_ecmwf",
+        kind="continuous",
+        units="in/hr",
+        normalize_units="in/hr",
     ),
     "snowfall_total": VarSpec(
         id="snowfall_total",
@@ -366,6 +470,23 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="Pa",
     ),
+    "msl": VarSpec(
+        id="msl",
+        name="Mean Sea-Level Pressure",
+        selectors=VarSelectors(
+            search=[":msl:"],
+            filter_by_keys={
+                "shortName": "msl",
+                "typeOfLevel": "meanSea",
+            },
+            hints={
+                "upstream_var": "msl",
+                "short_name": "msl",
+            },
+        ),
+        kind="continuous",
+        units="Pa",
+    ),
     "10u": VarSpec(
         id="10u",
         name="10m U Wind",
@@ -475,6 +596,10 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "precip_total": "precip_total",
+    "ptype_intensity": "ptype_intensity",
+    "ptype_intensity_rain": "ptype_intensity_rain",
+    "ptype_intensity_snow": "ptype_intensity_snow",
+    "ptype_intensity_ice": "ptype_intensity_ice",
     "pwat": "pwat",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
@@ -487,6 +612,10 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
     "precip_total": 3,
+    "ptype_intensity": 6,
+    "ptype_intensity_rain": 6,
+    "ptype_intensity_snow": 6,
+    "ptype_intensity_ice": 6,
     "pwat": 0,
     "snowfall_total": 3,
     "snowfall_kuchera_total": 3,
@@ -502,6 +631,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "precip_total": 10,
     "snowfall_total": 11,
     "snowfall_kuchera_total": 14,
+    "ptype_intensity": 15,
     "wspd10m": 12,
     "wgst10m": 13,
     "mucape": 20,
@@ -512,6 +642,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "dp2m": "Temperature",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
+    "ptype_intensity": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
     "wspd10m": "Wind",
@@ -533,6 +664,9 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
     "precip_total": {
         "min_fh": 3,
     },
+    "ptype_intensity": {
+        "min_fh": 3,
+    },
     "snowfall_total": {
         "min_fh": 3,
     },
@@ -546,6 +680,23 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
+    is_buildable = bool(var_spec.primary or var_spec.derived)
+    hints = getattr(getattr(var_spec, "selectors", None), "hints", {}) or {}
+    frontend: dict[str, object] = {}
+    if str(hints.get("companion_vars") or "").strip():
+        frontend["companion_vars"] = [
+            item.strip()
+            for item in str(hints.get("companion_vars") or "").split(",")
+            if item.strip()
+        ]
+    if str(hints.get("composite_mode") or "").strip():
+        frontend["composite_mode"] = str(hints.get("composite_mode") or "").strip()
+    if str(hints.get("composite_layers") or "").strip():
+        frontend["composite_layers"] = str(hints.get("composite_layers") or "").strip()
+    if str(var_key).startswith("ptype_intensity_"):
+        frontend["internal_only"] = True
+        frontend["allow_dry_frame"] = True
+        is_buildable = False
     return VariableCapability(
         var_key=var_key,
         name=var_spec.name,
@@ -559,11 +710,12 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         scale=var_spec.scale,
         color_map_id=ECMWF_COLOR_MAP_BY_VAR_KEY.get(var_key),
         default_fh=ECMWF_DEFAULT_FH_BY_VAR_KEY.get(var_key),
-        buildable=bool(var_spec.primary or var_spec.derived),
+        buildable=is_buildable,
         order=ECMWF_ORDER_BY_VAR_KEY.get(var_key),
         group=ECMWF_GROUP_BY_VAR_KEY.get(var_key),
         conversion=ECMWF_CONVERSION_BY_VAR_KEY.get(var_key),
         constraints=dict(ECMWF_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),
+        frontend=frontend,
     )
 
 

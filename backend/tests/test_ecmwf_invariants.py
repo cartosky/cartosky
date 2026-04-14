@@ -61,6 +61,9 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert ECMWF_MODEL.normalize_var_id("precipitablewater") == "pwat"
     assert ECMWF_MODEL.normalize_var_id("tcwv") == "pwat"
+    assert ECMWF_MODEL.normalize_var_id("ptype_intensity") == "ptype_intensity"
+    assert ECMWF_MODEL.normalize_var_id("precip_ptype") == "ptype_intensity"
+    assert ECMWF_MODEL.normalize_var_id("ptype") == "ptype_intensity"
     assert ECMWF_MODEL.normalize_var_id("10u") == "10u"
     assert ECMWF_MODEL.normalize_var_id("u10") == "10u"
     assert ECMWF_MODEL.normalize_var_id("10v") == "10v"
@@ -81,7 +84,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -127,6 +130,21 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         "shortName": "tcwv",
         "typeOfLevel": "atmosphereSingleLayer",
     }
+
+    ptype_intensity_spec = ECMWF_MODEL.get_var("ptype_intensity")
+    assert ptype_intensity_spec is not None
+    assert ptype_intensity_spec.primary is True
+    assert ptype_intensity_spec.derived is True
+    assert ptype_intensity_spec.derive == "ptype_intensity_ecmwf"
+    assert ptype_intensity_spec.kind == "indexed"
+    assert ptype_intensity_spec.units == "in/hr"
+    assert ptype_intensity_spec.selectors.hints["precip_component"] == "precip_total"
+    assert ptype_intensity_spec.selectors.hints["snow_component"] == "sf"
+    assert ptype_intensity_spec.selectors.hints["contour_component"] == "msl"
+
+    msl_spec = ECMWF_MODEL.get_var("msl")
+    assert msl_spec is not None
+    assert msl_spec.selectors.search == [":msl:"]
 
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
@@ -179,6 +197,21 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 3
     assert precip_total["constraints"] == {"min_fh": 3}
     assert precip_total["render_substrates"] == ["grid"]
+
+    ptype_intensity = payload["variables"]["ptype_intensity"]
+    assert ptype_intensity["var_key"] == "ptype_intensity"
+    assert ptype_intensity["display_name"] == "Precipitation Type & Intensity"
+    assert ptype_intensity["kind"] == "indexed"
+    assert ptype_intensity["units"] == "in/hr"
+    assert ptype_intensity["buildable"] is True
+    assert ptype_intensity["derived"] is True
+    assert ptype_intensity["derive_strategy_id"] == "ptype_intensity_ecmwf"
+    assert ptype_intensity["color_map_id"] == "ptype_intensity"
+    assert ptype_intensity["order"] == 15
+    assert ptype_intensity["group"] == "Precipitation"
+    assert ptype_intensity["default_fh"] == 6
+    assert ptype_intensity["constraints"] == {"min_fh": 3}
+    assert ptype_intensity["render_substrates"] == ["grid"]
 
     pwat = payload["variables"]["pwat"]
     assert pwat["var_key"] == "pwat"

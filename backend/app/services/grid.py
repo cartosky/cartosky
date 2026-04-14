@@ -190,6 +190,30 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "in",
     },
+    ("ecmwf", "ptype_intensity"): {
+        "scale": 1.0,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "index",
+    },
+    ("ecmwf", "ptype_intensity_rain"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
+    ("ecmwf", "ptype_intensity_snow"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
+    ("ecmwf", "ptype_intensity_ice"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in/hr",
+    },
     ("ecmwf", "pwat"): {
         "scale": 0.01,
         "offset": 0.0,

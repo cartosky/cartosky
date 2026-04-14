@@ -98,6 +98,35 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         support_min_value=0.01,
         support_coverage_threshold=0.1,
     ),
+    ("ecmwf", "ptype_intensity"): GridDisplayPrepConfig(
+        id="ecmwf_ptype_intensity_display_v1",
+        upscale_factor=3,
+        categorical_nearest=True,
+    ),
+    ("ecmwf", "ptype_intensity_rain"): GridDisplayPrepConfig(
+        id="ecmwf_ptype_intensity_component_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.25,
+    ),
+    ("ecmwf", "ptype_intensity_snow"): GridDisplayPrepConfig(
+        id="ecmwf_ptype_intensity_component_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.1,
+    ),
+    ("ecmwf", "ptype_intensity_ice"): GridDisplayPrepConfig(
+        id="ecmwf_ptype_intensity_component_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.1,
+    ),
 }
 
 

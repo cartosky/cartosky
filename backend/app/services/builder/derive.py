@@ -1264,6 +1264,358 @@ def _ptype_intensity_fetch_step_intensity(
     return np.where(apcp_valid, step_inches, np.nan).astype(np.float32, copy=False)
 
 
+def _ptype_intensity_fetch_direct_cumulative_step(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    hints: dict[str, Any],
+    component_var_key: str,
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    step_fhs = _resolve_cumulative_step_fhs(
+        hints=hints,
+        fh=fh,
+        run_date=run_date,
+        default_step_hours=3,
+    )
+    prev_fh: int | None = None
+    for candidate in reversed(step_fhs):
+        if int(candidate) < int(fh):
+            prev_fh = int(candidate)
+            break
+
+    current_data, current_crs, current_transform = _fetch_step_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        step_fh=fh,
+        model_plugin=model_plugin,
+        var_key=component_var_key,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        ctx=ctx,
+    )
+    current_values = np.asarray(current_data, dtype=np.float32)
+    current_valid = np.isfinite(current_values) & (current_values >= 0.0)
+    current_clean = np.where(current_valid, current_values, 0.0).astype(np.float32, copy=False)
+
+    if prev_fh is None:
+        step_clean = current_clean
+        step_valid = current_valid
+        duration_hours = int(step_fhs[0]) if step_fhs else max(1, int(fh))
+    else:
+        previous_data, previous_crs, previous_transform = _fetch_step_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            step_fh=prev_fh,
+            model_plugin=model_plugin,
+            var_key=component_var_key,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+        previous_values = np.asarray(previous_data, dtype=np.float32)
+        if (
+            previous_values.shape != current_values.shape
+            or previous_crs != current_crs
+            or previous_transform != current_transform
+        ):
+            raise ValueError(
+                f"ptype_intensity cumulative grid mismatch for {model_id}/{component_var_key} fh{fh:03d}"
+            )
+        previous_valid = np.isfinite(previous_values) & (previous_values >= 0.0)
+        previous_clean = np.where(previous_valid, previous_values, 0.0).astype(np.float32, copy=False)
+        step_clean = np.clip(current_clean - previous_clean, 0.0, None).astype(np.float32, copy=False)
+        step_valid = current_valid & previous_valid
+        duration_hours = max(1, int(fh) - int(prev_fh))
+
+    step_inches = (step_clean * np.float32(39.37007874015748)).astype(np.float32, copy=False)
+    if duration_hours != 3:
+        step_inches = (step_inches * (np.float32(3.0) / np.float32(duration_hours))).astype(np.float32, copy=False)
+        logger.info(
+            "ptype_intensity cumulative step normalised model=%s component=%s fh=%03d duration=%dh target=3h",
+            model_id,
+            component_var_key,
+            fh,
+            duration_hours,
+        )
+    return np.where(step_valid, step_inches, np.nan).astype(np.float32, copy=False), step_valid, current_crs, current_transform
+
+
+def _ptype_intensity_ecmwf_phase_signals(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    hints: dict[str, Any],
+    expected_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    component_specs = (
+        (str(hints.get("surface_temp_component") or "tmp2m"), -1.0, 1.0, 0.40, "surface"),
+        (str(hints.get("low_temp_component") or "tmp925"), -1.5, 1.5, 0.25, "low"),
+        (str(hints.get("mid_temp_component") or "tmp850"), -4.0, 2.0, 0.35, "mid"),
+    )
+
+    cold_fields: list[np.ndarray] = []
+    cold_weights: list[float] = []
+    surface_cold = np.zeros(expected_shape, dtype=np.float32)
+    warm_nose = np.zeros(expected_shape, dtype=np.float32)
+
+    for var_key, cold_at_c, warm_at_c, weight, role in component_specs:
+        values = _ptype_intensity_fetch_optional_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=var_key,
+            ctx=ctx,
+        )
+        if values is None or values.shape != expected_shape:
+            continue
+        cold, warm = _ptype_intensity_temp_signal(
+            values,
+            cold_at_c=float(cold_at_c),
+            warm_at_c=float(warm_at_c),
+        )
+        cold_fields.append(cold)
+        cold_weights.append(float(weight))
+        if role == "surface":
+            surface_cold = cold
+        else:
+            warm_nose = np.maximum(warm_nose, warm)
+
+    if not cold_fields:
+        zeros = np.zeros(expected_shape, dtype=np.float32)
+        return zeros, zeros, zeros
+
+    deep_cold = np.average(
+        np.stack(cold_fields, axis=0),
+        axis=0,
+        weights=np.asarray(cold_weights, dtype=np.float32),
+    ).astype(np.float32, copy=False)
+    return deep_cold, surface_cold.astype(np.float32, copy=False), warm_nose.astype(np.float32, copy=False)
+
+
+def _ptype_intensity_family_rates_ecmwf(
+    *,
+    intensity: np.ndarray,
+    snow_lwe: np.ndarray,
+    deep_cold: np.ndarray,
+    surface_cold: np.ndarray,
+    warm_nose: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    base_intensity = np.where(
+        np.isfinite(intensity),
+        np.maximum(np.asarray(intensity, dtype=np.float32), 0.0),
+        np.nan,
+    ).astype(np.float32, copy=False)
+    snow_lwe_clean = np.where(
+        np.isfinite(snow_lwe),
+        np.maximum(np.asarray(snow_lwe, dtype=np.float32), 0.0),
+        0.0,
+    ).astype(np.float32, copy=False)
+
+    positive_precip = np.isfinite(base_intensity) & (base_intensity >= np.float32(0.01))
+    snow_frac = np.zeros(base_intensity.shape, dtype=np.float32)
+    np.divide(
+        np.minimum(snow_lwe_clean, np.nan_to_num(base_intensity, nan=0.0)),
+        np.maximum(np.nan_to_num(base_intensity, nan=0.0), np.float32(1e-6)),
+        out=snow_frac,
+        where=positive_precip,
+    )
+    snow_frac = np.clip(snow_frac, 0.0, 1.0).astype(np.float32, copy=False)
+
+    deep_cold = np.clip(np.nan_to_num(deep_cold, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+    surface_cold = np.clip(np.nan_to_num(surface_cold, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+    warm_nose = np.clip(np.nan_to_num(warm_nose, nan=0.0), 0.0, 1.0).astype(np.float32, copy=False)
+
+    strong_snow = positive_precip & (
+        (snow_frac >= np.float32(0.55))
+        | ((snow_frac >= np.float32(0.20)) & (deep_cold >= np.float32(0.55)))
+        | ((snow_frac >= np.float32(0.05)) & (deep_cold >= np.float32(0.85)) & (warm_nose <= np.float32(0.20)))
+        | ((snow_frac < np.float32(0.05)) & (deep_cold >= np.float32(0.92)) & (warm_nose <= np.float32(0.10)))
+    )
+    ice_mask = positive_precip & (~strong_snow) & (
+        (surface_cold >= np.float32(0.45))
+        & (warm_nose >= np.float32(0.35))
+        & (snow_frac < np.float32(0.55))
+    )
+    rain_mask = positive_precip & (~strong_snow) & (~ice_mask)
+
+    rain_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    snow_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    ice_rate = np.zeros(base_intensity.shape, dtype=np.float32)
+    rain_rate[rain_mask] = base_intensity[rain_mask]
+    snow_rate[strong_snow] = base_intensity[strong_snow]
+    ice_rate[ice_mask] = base_intensity[ice_mask]
+    invalid = ~np.isfinite(base_intensity)
+    rain_rate[invalid] = np.nan
+    snow_rate[invalid] = np.nan
+    ice_rate[invalid] = np.nan
+    return base_intensity, rain_rate, snow_rate, ice_rate
+
+
+def _ptype_intensity_index_from_family_rates(
+    *,
+    rain_rate: np.ndarray,
+    snow_rate: np.ndarray,
+    ice_rate: np.ndarray,
+    snow_display_boost: float,
+) -> np.ndarray:
+    family_rate_by_code = {
+        "rain": rain_rate,
+        "snow": snow_rate,
+        "ice": ice_rate,
+    }
+    family_stack = np.stack([ice_rate, snow_rate, rain_rate], axis=0).astype(np.float32, copy=False)
+    family_idx = np.argmax(np.nan_to_num(family_stack, nan=-1.0), axis=0).astype(np.int32)
+    family_codes = np.array(["ice", "snow", "rain"])
+    ptype = family_codes[family_idx]
+    has_any_ptype = (
+        np.isfinite(rain_rate)
+        & (
+            (np.nan_to_num(rain_rate, nan=0.0) > 0.0)
+            | (np.nan_to_num(snow_rate, nan=0.0) > 0.0)
+            | (np.nan_to_num(ice_rate, nan=0.0) > 0.0)
+        )
+    )
+
+    type_levels = {
+        "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
+        "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
+        "ice": np.asarray([0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
+    }
+    type_breaks = {
+        "rain": {"offset": 0, "count": 16},
+        "snow": {"offset": 16, "count": 10},
+        "ice": {"offset": 26, "count": 18},
+    }
+    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.01}
+
+    indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
+    for code in ("rain", "snow", "ice"):
+        levels = type_levels[code]
+        offset = int(type_breaks[code]["offset"])
+        count = int(type_breaks[code]["count"])
+        family_rate = family_rate_by_code[code]
+        display_rate = family_rate
+        if code == "snow":
+            display_rate = (np.float32(snow_display_boost) * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
+        selector = (
+            (ptype == code)
+            & np.isfinite(family_rate)
+            & (family_rate >= float(min_visible[code]))
+            & has_any_ptype
+        )
+        if not np.any(selector):
+            continue
+        local_bin = np.digitize(display_rate[selector], levels, right=False) - 1
+        local_bin = np.clip(local_bin, 0, count - 1)
+        indexed[selector] = (offset + local_bin).astype(np.float32)
+    return indexed
+
+
+def _derive_ptype_intensity_rates_ecmwf(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    derive_component_target_grid: dict[str, str] | None,
+    derive_component_resampling: str | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid,
+        derive_component_resampling,
+        model_id,
+    )
+    precip_component = str(hints.get("precip_component") or "precip_total")
+    snow_component = str(hints.get("snow_component") or "sf")
+
+    total_step, _, src_crs, src_transform = _ptype_intensity_fetch_direct_cumulative_step(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        component_var_key=precip_component,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
+    try:
+        snow_step, _, snow_crs, snow_transform = _ptype_intensity_fetch_direct_cumulative_step(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            hints=hints,
+            component_var_key=snow_component,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+        )
+        if snow_step.shape != total_step.shape or snow_crs != src_crs or snow_transform != src_transform:
+            raise ValueError(
+                f"ptype_intensity ECMWF snow/precip grid mismatch for fh{fh:03d}"
+            )
+    except Exception:
+        logger.debug(
+            "ptype_intensity ECMWF snow component unavailable: model=%s fh=%03d var=%s",
+            model_id,
+            fh,
+            snow_component,
+            exc_info=True,
+        )
+        snow_step = np.zeros(total_step.shape, dtype=np.float32)
+        snow_step[~np.isfinite(total_step)] = np.nan
+
+    deep_cold, surface_cold, warm_nose = _ptype_intensity_ecmwf_phase_signals(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=total_step.shape,
+    )
+    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates_ecmwf(
+        intensity=total_step,
+        snow_lwe=snow_step,
+        deep_cold=deep_cold,
+        surface_cold=surface_cold,
+        warm_nose=warm_nose,
+    )
+    return rain_rate, snow_rate, ice_rate, src_crs, src_transform
+
+
 def _ptype_intensity_family_rates(
     *,
     intensity: np.ndarray,
@@ -3132,6 +3484,84 @@ def _derive_ptype_intensity_component(
     return values.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _derive_ptype_intensity_ecmwf(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_key, var_capability
+    rain_rate, snow_rate, ice_rate, src_crs, src_transform = _derive_ptype_intensity_rates_ecmwf(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        var_spec_model=var_spec_model,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    indexed = _ptype_intensity_index_from_family_rates(
+        rain_rate=rain_rate,
+        snow_rate=snow_rate,
+        ice_rate=ice_rate,
+        snow_display_boost=2.0,
+    )
+    return indexed.astype(np.float32, copy=False), src_crs, src_transform
+
+
+def _derive_ptype_intensity_component_ecmwf(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_key, var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    component = str(hints.get("ptype_component") or "").strip().lower()
+    rain_rate, snow_rate, ice_rate, src_crs, src_transform = _derive_ptype_intensity_rates_ecmwf(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        var_spec_model=var_spec_model,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    component_values = {
+        "rain": rain_rate,
+        "snow": snow_rate,
+        "ice": ice_rate,
+    }
+    values = component_values.get(component)
+    if values is None:
+        values = np.zeros(rain_rate.shape, dtype=np.float32)
+        values[~np.isfinite(rain_rate)] = np.nan
+    elif component == "snow":
+        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
+        values[~np.isfinite(rain_rate)] = np.nan
+    return values.astype(np.float32, copy=False), src_crs, src_transform
+
+
 def _derive_precip_total_cumulative(
     *,
     model_id: str,
@@ -4702,6 +5132,18 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("prate", "apcp_step", "crain", "csnow", "cicep", "cfrzr"),
         output_var_key=None,
         execute=_derive_ptype_intensity_component,
+    ),
+    "ptype_intensity_ecmwf": DeriveStrategy(
+        id="ptype_intensity_ecmwf",
+        required_inputs=("precip_total", "sf", "tmp2m", "tmp925", "tmp850", "msl"),
+        output_var_key="ptype_intensity",
+        execute=_derive_ptype_intensity_ecmwf,
+    ),
+    "ptype_intensity_component_ecmwf": DeriveStrategy(
+        id="ptype_intensity_component_ecmwf",
+        required_inputs=("precip_total", "sf", "tmp2m", "tmp925", "tmp850"),
+        output_var_key=None,
+        execute=_derive_ptype_intensity_component_ecmwf,
     ),
     "precip_total_cumulative": DeriveStrategy(
         id="precip_total_cumulative",
