@@ -332,27 +332,6 @@ export function BottomForecastControls({
             </div>
           </div>
 
-          {isDesktopLayout && validTime ? (
-            <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-1.5">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-white">{validTime.primary}</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-white/44">
-                  {validTime.axisLabel} · {validTime.secondary}
-                </div>
-              </div>
-              {sourceStatusLabel ? (
-                <div
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
-                    statusBadgeClass(sourceStatusTone)
-                  )}
-                >
-                  {sourceStatusLabel}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
           <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
             <div className="flex shrink-0 items-center gap-2">
               <Tooltip>
@@ -417,16 +396,6 @@ export function BottomForecastControls({
             </div>
 
             <div className="flex shrink-0 flex-col items-end gap-1 border-l border-border/30 pl-5 sm:min-w-[220px]">
-              {sourceStatusLabel ? (
-                <div
-                  className={cn(
-                    "rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider",
-                    statusBadgeClass(sourceStatusTone)
-                  )}
-                >
-                  {sourceStatusLabel}
-                </div>
-              ) : null}
               {transientStatus ? (
                 <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[10px] text-foreground/90">
                   <AlertCircle className="h-3 w-3" />

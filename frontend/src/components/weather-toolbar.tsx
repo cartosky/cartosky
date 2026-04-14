@@ -126,21 +126,6 @@ function SourceStatusBadge({
   );
 }
 
-function ToolbarMeta({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/40">{label}</div>
-      <div className="mt-1 truncate text-xs font-medium text-white/88">{value}</div>
-    </div>
-  );
-}
-
 function ToolbarSelect(props: {
   label: string;
   icon: ComponentType<{ className?: string }>;
@@ -413,8 +398,8 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
       <div className={isDesktopLayout ? "block" : "hidden"}>
         <div className="mx-auto max-w-7xl">
-          <div className="glass-strong flex items-center justify-between gap-3 rounded-[1.35rem] border border-white/12 px-3 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
-            <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-2">
+          <div className="glass-strong flex items-center justify-between gap-3 rounded-[1.15rem] border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
+            <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1.45fr)_minmax(0,0.95fr)_minmax(0,1.05fr)] items-center gap-2">
               <ToolbarSelect
                 label="Product"
                 icon={Layers}
@@ -425,7 +410,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 placeholder="Variable"
                 grouped
                 hideLabel
-                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
+                triggerClassName="h-10 rounded-xl border-white/10 bg-white/[0.06] px-3 text-[13px]"
               />
 
               <ToolbarSelect
@@ -438,7 +423,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                 placeholder="Model"
                 grouped
                 hideLabel
-                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
+                triggerClassName="h-10 rounded-xl border-white/10 bg-white/[0.06] px-3 text-[13px]"
               />
 
               <ToolbarSelect
@@ -463,77 +448,21 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
                     : null
                 }
                 onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
+                triggerClassName="h-10 rounded-xl border-white/10 bg-white/[0.06] px-3 text-[13px]"
               />
-
-              <div className="flex min-w-0 items-center justify-end gap-4 pl-2">
-                <ToolbarMeta label="Region" value={regions.find((opt) => opt.value === region)?.label ?? "Region"} />
-                <ToolbarMeta label="Active" value={selectedVariableLabel} />
-                {sourceStatusLabel ? (
-                  <SourceStatusBadge
-                    label={sourceStatusLabel}
-                    description={sourceStatusDescription}
-                    tone={sourceStatusTone}
-                  />
-                ) : null}
-              </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-2 border-l border-white/8 pl-3">
-              <div className="hidden min-[1180px]:flex items-center gap-3 pr-1">
-                <ToolbarMeta label="Run Label" value={selectedRunLabel} />
-                <ToolbarMeta label="Mode" value={selectedModelLabel} />
-              </div>
+              {sourceStatusLabel ? (
+                <SourceStatusBadge
+                  label={sourceStatusLabel}
+                  description={sourceStatusDescription}
+                  tone={sourceStatusTone}
+                />
+              ) : null}
               {onPostToTwf ? <ShareButton onClick={onPostToTwf} compact /> : null}
-              <button
-                type="button"
-                onClick={() => setMobilePanelOpen((value) => !value)}
-                className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-white/84 transition duration-150 hover:bg-white/[0.08]"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                Display
-                <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
-              </button>
             </div>
           </div>
-          {mobilePanelOpen ? (
-            <div className="mt-2 ml-auto w-[280px] rounded-2xl border border-white/12 bg-[#08111f]/92 p-3 shadow-[0_18px_36px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">
-                Display
-              </div>
-              <div className="space-y-2">
-                <DisplayToggle
-                  label="City Labels"
-                  checked={pointLabelsEnabled}
-                  onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
-                />
-                <DisplayToggle
-                  label="Legend"
-                  checked={legendVisible}
-                  onToggle={() => onLegendVisibleChange(!legendVisible)}
-                />
-                <DisplayToggle
-                  label="Dark Mode"
-                  checked={basemapMode === "dark"}
-                  onToggle={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                />
-                <div className="rounded-xl border border-white/10 bg-black/18 px-3 py-2">
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-white">Opacity</span>
-                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
-                  </div>
-                  <Slider
-                    value={[Math.round(opacity * 100)]}
-                    onValueChange={([value]) => onOpacityChange((value ?? 100) / 100)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       </div>
 
