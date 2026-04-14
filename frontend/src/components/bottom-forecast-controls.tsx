@@ -237,7 +237,7 @@ export function BottomForecastControls({
           className={cn(
             "pointer-events-auto relative flex flex-col",
             isDesktopLayout
-              ? "w-full max-w-[42rem] gap-1.5 rounded-2xl px-4 py-3"
+              ? "w-full max-w-[42rem] gap-2 rounded-2xl px-5 py-3.5"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -247,7 +247,7 @@ export function BottomForecastControls({
           <div
             aria-hidden="true"
             className={cn(
-              "pointer-events-none absolute inset-0 border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-2xl",
+              "pointer-events-none absolute inset-0 border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
               isDesktopLayout ? "rounded-2xl" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
             )}
             style={{ willChange: "transform" }}
