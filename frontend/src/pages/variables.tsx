@@ -491,18 +491,19 @@ export default function Variables() {
                       key={variable.id}
                       className="border-b border-white/8 last:border-b-0"
                     >
-                      <div className="flex flex-col gap-5 py-6 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="max-w-3xl">
+                      <div className="my-4 rounded-[1.35rem] border border-white/8 bg-white/[0.025] px-5 py-6 md:px-6">
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="max-w-3xl">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                             <h3 className="text-2xl font-semibold tracking-tight text-white">{variable.name}</h3>
-                            <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
+                            <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-white/48">
                               {variable.units}
                             </span>
                           </div>
                           <p className="mt-3 text-sm leading-7 text-white/68">{variable.definition}</p>
                           <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/58">
                             {variable.models.map((modelName) => (
-                              <span key={modelName}>
+                              <span key={modelName} className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1">
                                 {modelName}
                               </span>
                             ))}
@@ -520,12 +521,13 @@ export default function Variables() {
                       </div>
 
                       {isOpen ? (
-                        <div className="grid gap-8 border-t border-white/8 py-6 md:grid-cols-2">
+                          <div className="mt-6 grid gap-8 border-t border-white/8 pt-6 md:grid-cols-2">
                           <DetailList title="Best used for" items={variable.bestFor} />
                           <DetailList title="How to read it" items={variable.interpretation} />
                           {variable.limitations.length ? <DetailList title="Limitations" items={variable.limitations} /> : null}
                         </div>
                       ) : null}
+                      </div>
                     </div>
                   );
                 })}
