@@ -348,6 +348,8 @@ type MapLegendProps = {
   showOpacityControl?: boolean;
   displayPanelOpen?: boolean;
   defaultExpanded?: boolean;
+  /** When true, renders inline (no fixed positioning). Use inside popovers/portals. */
+  inline?: boolean;
 };
 
 export function MapLegend({
@@ -357,6 +359,7 @@ export function MapLegend({
   showOpacityControl = true,
   displayPanelOpen = false,
   defaultExpanded = false,
+  inline = false,
 }: MapLegendProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => defaultExpanded ? false : readCollapsedPreference());
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -364,6 +367,8 @@ export function MapLegend({
   const prevTitleRef = useRef(legend?.title);
 
   useEffect(() => {
+    // Skip media query listener when rendering inline (inside a popover)
+    if (inline) return;
     const mq = window.matchMedia("(max-width: 640px)");
     const handler = (query: MediaQueryList | MediaQueryListEvent) => {
       setIsSmallScreen(query.matches);
@@ -375,7 +380,7 @@ export function MapLegend({
     handler(mq);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, []);
+  }, [inline]);
 
   useEffect(() => {
     if (legend?.title !== prevTitleRef.current) {
@@ -385,6 +390,14 @@ export function MapLegend({
   }, [legend?.title]);
 
   if (!legend) {
+    // In inline mode (popover), render a simple inline placeholder — not a fixed overlay
+    if (inline) {
+      return (
+        <div ref={containerRef} className="px-2.5 py-2">
+          <UnavailablePlaceholder />
+        </div>
+      );
+    }
     return (
       <div
         ref={containerRef}
@@ -415,9 +428,14 @@ export function MapLegend({
     <div
       ref={containerRef}
       className={cn(
-        "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md transition-all duration-200",
-        showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
-        isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[7.75rem]"
+        "flex flex-col overflow-hidden transition-all duration-200",
+        inline
+          ? "w-full" // popover controls size/position
+          : cn(
+              "fixed z-[55] max-h-[70vh] rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+              showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
+              isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[7.75rem]"
+            )
       )}
       role="complementary"
       aria-label="Map legend"
