@@ -43,6 +43,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert ECMWF_MODEL.normalize_var_id("t850") == "tmp850"
     assert ECMWF_MODEL.normalize_var_id("temp850") == "tmp850"
+    assert ECMWF_MODEL.normalize_var_id("wspd850") == "wspd850"
+    assert ECMWF_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("apcp") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -87,7 +89,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -118,6 +120,21 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert tmp850_spec.kind == "continuous"
     assert tmp850_spec.units == "C"
     assert tmp850_spec.selectors.search == [":t:850:pl:"]
+
+    wspd850_spec = ECMWF_MODEL.get_var("wspd850")
+    assert wspd850_spec is not None
+    assert wspd850_spec.primary is True
+    assert wspd850_spec.derived is True
+    assert wspd850_spec.derive == "wspd10m"
+    assert wspd850_spec.kind == "continuous"
+    assert wspd850_spec.units == "kt"
+    assert wspd850_spec.selectors.search == []
+    assert wspd850_spec.selectors.hints["u_component"] == "u850"
+    assert wspd850_spec.selectors.hints["v_component"] == "v850"
+    assert wspd850_spec.selectors.hints["contour_component"] == "hgt850"
+    assert wspd850_spec.selectors.hints["contour_interval"] == "30"
+    assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
+    assert wspd850_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
 
     snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
     assert snowfall_kuchera_spec is not None
@@ -156,6 +173,33 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     msl_spec = ECMWF_MODEL.get_var("msl")
     assert msl_spec is not None
     assert msl_spec.selectors.search == [":msl:"]
+
+    hgt850_spec = ECMWF_MODEL.get_var("hgt850")
+    assert hgt850_spec is not None
+    assert hgt850_spec.selectors.search == [":z:850:pl:"]
+    assert hgt850_spec.selectors.filter_by_keys == {
+        "shortName": "z",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+
+    u850_spec = ECMWF_MODEL.get_var("u850")
+    assert u850_spec is not None
+    assert u850_spec.selectors.search == [":u:850:pl:"]
+    assert u850_spec.selectors.filter_by_keys == {
+        "shortName": "u",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+
+    v850_spec = ECMWF_MODEL.get_var("v850")
+    assert v850_spec is not None
+    assert v850_spec.selectors.search == [":v:850:pl:"]
+    assert v850_spec.selectors.filter_by_keys == {
+        "shortName": "v",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
 
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
@@ -207,6 +251,20 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["group"] == "Temperature"
     assert tmp850["default_fh"] == 0
     assert tmp850["render_substrates"] == ["grid"]
+
+    wspd850 = payload["variables"]["wspd850"]
+    assert wspd850["var_key"] == "wspd850"
+    assert wspd850["display_name"] == "850mb Heights + Winds"
+    assert wspd850["kind"] == "continuous"
+    assert wspd850["units"] == "kt"
+    assert wspd850["buildable"] is True
+    assert wspd850["derived"] is True
+    assert wspd850["derive_strategy_id"] == "wspd10m"
+    assert wspd850["color_map_id"] == "wspd850"
+    assert wspd850["order"] == 4
+    assert wspd850["group"] == "Wind"
+    assert wspd850["default_fh"] == 0
+    assert wspd850["render_substrates"] == ["grid"]
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"

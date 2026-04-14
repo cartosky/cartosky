@@ -1,12 +1,12 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { AlertCircle, Eye, MapPin, Moon, Send, SlidersHorizontal, Sun } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, buildMapStyle } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
-import { WeatherToolbar } from "@/components/weather-toolbar";
+import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
 import {
   fetchAnchorFeatureCollection,
   type CapabilitiesResponse,
@@ -2973,52 +2973,66 @@ export default function App() {
     region,
   });
 
+  const toolbarContextValue = useMemo(() => ({
+    region,
+    onRegionChange: handleRegionChange,
+    model,
+    onModelChange: handleModelChange,
+    run,
+    onRunChange: handleRunChange,
+    variable,
+    onVariableChange: handleVariableChange,
+    regions,
+    models,
+    runs: runOptions,
+    variables,
+    disabled: loading || models.length === 0,
+    runDisplayLabel: selectedRunLabel,
+    latestAvailableRunLabel,
+    hasNewerRunAvailable,
+    onViewLatestRun: hasNewerRunAvailable ? handleViewLatestRun : undefined,
+    runSelectionLocked: selectedModelLatestOnly,
+    sourceStatusLabel: observedSourceStatus?.label ?? null,
+    sourceStatusDescription: observedSourceStatus?.description ?? null,
+    sourceStatusTone: observedSourceStatus?.tone ?? null,
+    pointLabelsEnabled,
+    onPointLabelsEnabledChange: setPointLabelsEnabled,
+    legendVisible,
+    onLegendVisibleChange: (nextVisible: boolean) => {
+      setLegendVisible(nextVisible);
+      if (nextVisible) {
+        captureProductAnalyticsEvent("legend_opened", {
+          model_id: model || null,
+          variable_id: variable || null,
+          run_id: telemetryRunId,
+          region_id: region || null,
+          forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+        });
+      }
+    },
+    basemapMode,
+    onBasemapModeChange: setBasemapMode,
+    opacity,
+    onOpacityChange: setOpacity,
+    zoomControlsVisible,
+    onZoomControlsVisibleChange: setZoomControlsVisible,
+    displayPanelOpen,
+    onDisplayPanelOpenChange: setDisplayPanelOpen,
+    onShare: handleOpenShareModal,
+    layoutMode: viewerLayoutMode,
+  }), [
+    region, handleRegionChange, model, handleModelChange, run, handleRunChange,
+    variable, handleVariableChange, regions, models, runOptions, variables,
+    loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
+    handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus,
+    pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
+    displayPanelOpen, handleOpenShareModal, viewerLayoutMode,
+    telemetryRunId, forecastHour,
+  ]);
+
   return (
+    <ViewerToolbarContext.Provider value={toolbarContextValue}>
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <WeatherToolbar
-        region={region}
-        onRegionChange={handleRegionChange}
-        model={model}
-        onModelChange={handleModelChange}
-        run={run}
-        onRunChange={handleRunChange}
-        variable={variable}
-        onVariableChange={handleVariableChange}
-        regions={regions}
-        models={models}
-        runs={runOptions}
-        variables={variables}
-        disabled={loading || models.length === 0}
-        pointLabelsEnabled={pointLabelsEnabled}
-        onPointLabelsEnabledChange={setPointLabelsEnabled}
-        legendVisible={legendVisible}
-        onLegendVisibleChange={(nextVisible) => {
-          setLegendVisible(nextVisible);
-          if (nextVisible) {
-            captureProductAnalyticsEvent("legend_opened", {
-              model_id: model || null,
-              variable_id: variable || null,
-              run_id: telemetryRunId,
-              region_id: region || null,
-              forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-            });
-          }
-        }}
-        basemapMode={basemapMode}
-        onBasemapModeChange={setBasemapMode}
-        opacity={opacity}
-        onOpacityChange={setOpacity}
-        onPostToTwf={handleOpenShareModal}
-        layoutMode={viewerLayoutMode}
-        runDisplayLabel={selectedRunLabel}
-        latestAvailableRunLabel={latestAvailableRunLabel}
-        hasNewerRunAvailable={hasNewerRunAvailable}
-        onViewLatestRun={hasNewerRunAvailable ? handleViewLatestRun : undefined}
-        sourceStatusLabel={observedSourceStatus?.label ?? null}
-        sourceStatusDescription={observedSourceStatus?.description ?? null}
-        sourceStatusTone={observedSourceStatus?.tone ?? null}
-        runSelectionLocked={selectedModelLatestOnly}
-      />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas
@@ -3109,168 +3123,6 @@ export default function App() {
           </div>
         )}
 
-        {isDesktopViewerLayout ? (
-          <div className="fixed right-4 bottom-6 z-40">
-          <div className="relative flex flex-col items-end">
-            {displayPanelOpen ? (
-              <div className="glass absolute right-0 bottom-full mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.3)]">
-              <div className="mb-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Display</div>
-                <div className="pt-1 text-xs text-white/62">Map overlays and reference aids.</div>
-              </div>
-
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setPointLabelsEnabled((current) => !current)}
-                  aria-pressed={pointLabelsEnabled}
-                  className={
-                    pointLabelsEnabled
-                      ? "flex w-full items-center justify-between gap-3 rounded-lg border border-[#354d42] bg-[rgba(53,77,66,0.22)] px-3 py-2 text-left transition-all duration-150 hover:bg-[rgba(53,77,66,0.3)]"
-                      : "flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-                  }
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <MapPin className="h-4 w-4 text-white/72" />
-                      City Labels
-                    </div>
-                  </div>
-                  <div className={pointLabelsEnabled ? "text-xs font-semibold text-[#354d42]" : "text-xs font-semibold text-white/42"}>
-                    {pointLabelsEnabled ? "On" : "Off"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLegendVisible((current) => {
-                      const nextVisible = !current;
-                      if (nextVisible) {
-                        captureProductAnalyticsEvent("legend_opened", {
-                          model_id: model || null,
-                          variable_id: variable || null,
-                          run_id: telemetryRunId,
-                          region_id: region || null,
-                          forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
-                        });
-                      }
-                      return nextVisible;
-                    });
-                  }}
-                  aria-pressed={legendVisible}
-                  className={
-                    legendVisible
-                      ? "flex w-full items-center justify-between gap-3 rounded-lg border border-[#354d42] bg-[rgba(53,77,66,0.22)] px-3 py-2 text-left transition-all duration-150 hover:bg-[rgba(53,77,66,0.3)]"
-                      : "flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-                  }
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <Eye className="h-4 w-4 text-white/72" />
-                      Legend
-                    </div>
-                  </div>
-                  <div className={legendVisible ? "text-xs font-semibold text-[#354d42]" : "text-xs font-semibold text-white/42"}>
-                    {legendVisible ? "On" : "Off"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setZoomControlsVisible((current) => !current)}
-                  aria-pressed={zoomControlsVisible}
-                  className={
-                    zoomControlsVisible
-                      ? "flex w-full items-center justify-between gap-3 rounded-lg border border-[#354d42] bg-[rgba(53,77,66,0.22)] px-3 py-2 text-left transition-all duration-150 hover:bg-[rgba(53,77,66,0.3)]"
-                      : "flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-                  }
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <SlidersHorizontal className="h-4 w-4 text-white/72" />
-                      Zoom Controls
-                    </div>
-                  </div>
-                  <div className={zoomControlsVisible ? "text-xs font-semibold text-[#354d42]" : "text-xs font-semibold text-white/42"}>
-                    {zoomControlsVisible ? "On" : "Off"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setBasemapMode(basemapMode === "dark" ? "light" : "dark")}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left transition-all duration-150 hover:bg-black/28"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
-                      Basemap
-                    </div>
-                  </div>
-                  <div className="text-xs font-semibold text-[#354d42]">
-                    {basemapMode === "dark" ? "Dark" : "Light"}
-                  </div>
-                </button>
-
-                <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white">Opacity</span>
-                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={Math.round(opacity * 100)}
-                    onChange={(event) => setOpacity(Number(event.target.value) / 100)}
-                    className="h-2 w-full cursor-pointer accent-[#354d42]"
-                    aria-label="Overlay opacity"
-                  />
-                </div>
-
-                <div className="border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/42">
-                  Maps:{" "}
-                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-white/70">
-                    MapLibre
-                  </a>
-                  {" "}|
-                  {" "}
-                  <a
-                    href="https://www.openstreetmap.org/copyright"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-2 hover:text-white/70"
-                  >
-                    OSM
-                  </a>
-                  {" "}|
-                  {" "}
-                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-white/70">
-                    CARTO
-                  </a>
-                </div>
-              </div>
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={() => setDisplayPanelOpen((current) => !current)}
-              aria-expanded={displayPanelOpen}
-              className={displayPanelOpen
-                ? "glass inline-flex h-11 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-semibold text-white"
-                : "glass inline-flex h-11 items-center gap-2 rounded-full border border-white/12 px-4 text-sm font-semibold text-white/88 hover:bg-white/10"
-              }
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              Display
-            </button>
-          </div>
-          </div>
-        ) : null}
-
         {legendVisible ? (
           <Suspense fallback={null}>
             <MapLegend
@@ -3324,5 +3176,6 @@ export default function App() {
         </Suspense>
       ) : null}
     </div>
+    </ViewerToolbarContext.Provider>
   );
 }

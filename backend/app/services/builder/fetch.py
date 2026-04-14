@@ -2293,6 +2293,11 @@ def _pa_to_hpa(data: np.ndarray) -> np.ndarray:
     return data / 100.0
 
 
+def _geopotential_to_height_m(data: np.ndarray) -> np.ndarray:
+    """Convert geopotential (m^2/s^2) to geopotential height in meters."""
+    return data / 9.80665
+
+
 # Registry: conversion-key -> converter function.
 # Variables not listed here need no conversion (GRIB units match spec units).
 # NOTE: GDAL's GRIB driver applies GRIB_NORMALIZE_UNITS=YES by default,
@@ -2307,6 +2312,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "kgm2_to_in": _kgm2_to_inches,
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,
     "pressure_pa_to_hpa": _pa_to_hpa,
+    "geopotential_to_height_m": _geopotential_to_height_m,
     # Legacy var-key fallback path
     "tmp2m": _celsius_to_fahrenheit,
     "dp2m": _celsius_to_fahrenheit,
