@@ -235,7 +235,7 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.13] bg-[#07111f]/[0.88] shadow-[0_8px_40px_rgba(0,0,0,0.65),0_2px_12px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-2xl",
+            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.15] bg-[#07111f]/[0.55] shadow-[0_8px_40px_rgba(0,0,0,0.5),0_2px_12px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.12),inset_0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur-2xl",
             isDesktopLayout
               ? "w-full max-w-[42rem] gap-1.5 rounded-2xl px-4 py-3"
               : isTabletTouchLayout
@@ -323,7 +323,7 @@ export function BottomForecastControls({
                   max={Math.max(0, availableFrames.length - 1)}
                   step={1}
                   disabled={disabled || isPlaying || !hasFrames}
-                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-cyan-300 [&>*:first-child>*:first-child]:shadow-[0_0_12px_rgba(35,196,255,0.4)] [&>*:nth-child(2)]:h-5 [&>*:nth-child(2)]:w-5 [&>*:nth-child(2)]:border-slate-800 [&>*:nth-child(2)]:bg-cyan-100"
+                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                 />
                 {validTime ? (
                   <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em] text-white/50">
@@ -398,7 +398,7 @@ export function BottomForecastControls({
                     max={Math.max(0, availableFrames.length - 1)}
                     step={1}
                     disabled={disabled || isPlaying || !hasFrames}
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-300 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200 [&>*:nth-child(2)]:h-3.5 [&>*:nth-child(2)]:w-3.5 [&>*:nth-child(2)]:border-2 [&>*:nth-child(2)]:border-slate-900 [&>*:nth-child(2)]:bg-white [&>*:nth-child(2)]:shadow-[0_0_10px_rgba(103,232,249,0.5)]"
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                   />
                 </div>
               </div>
