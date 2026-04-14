@@ -781,6 +781,167 @@ def test_direct_cumulative_kuchera_reuses_prior_sf_tail_window(monkeypatch, capl
     np.testing.assert_allclose(data, full_data, rtol=1e-6, atol=1e-6)
 
 
+def test_direct_cumulative_kuchera_reuses_immediate_prev_frame_cache(monkeypatch, caplog) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    tmp_925 = np.full((2, 2), -10.0, dtype=np.float32)
+    tmp_850 = np.full((2, 2), -12.0, dtype=np.float32)
+    tmp_700 = np.full((2, 2), -10.0, dtype=np.float32)
+    tmp_600 = np.full((2, 2), -8.0, dtype=np.float32)
+    tmp2m = np.full((2, 2), 28.0, dtype=np.float32)
+    pres_sfc = np.full((2, 2), 100000.0, dtype=np.float32)
+    step_fhs = [258, 264, 270, 276, 282, 288, 294, 300]
+
+    sf_cumulative = {
+        258: np.full((2, 2), 1.0, dtype=np.float32),
+        264: np.full((2, 2), 2.0, dtype=np.float32),
+        270: np.full((2, 2), 3.0, dtype=np.float32),
+        276: np.full((2, 2), 4.0, dtype=np.float32),
+        282: np.full((2, 2), 5.0, dtype=np.float32),
+        288: np.full((2, 2), 6.0, dtype=np.float32),
+        294: np.full((2, 2), 7.0, dtype=np.float32),
+        300: np.full((2, 2), 9.0, dtype=np.float32),
+    }
+    sf_calls: list[int] = []
+    use_bad_older_tail = {"enabled": False}
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        step_fh = int(fh)
+        if pattern in {":sf:sfc:", ":sf:"}:
+            sf_calls.append(step_fh)
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            data = sf_cumulative[step_fh]
+            if use_bad_older_tail["enabled"] and step_fh == 288:
+                data = np.full((2, 2), 2.0, dtype=np.float32)
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":t:925:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_925, crs, transform, meta) if return_meta else (tmp_925, crs, transform)
+        if pattern == ":t:850:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_850, crs, transform, meta) if return_meta else (tmp_850, crs, transform)
+        if pattern == ":t:700:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_700, crs, transform, meta) if return_meta else (tmp_700, crs, transform)
+        if pattern == ":t:600:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_600, crs, transform, meta) if return_meta else (tmp_600, crs, transform)
+        if pattern == ":2t:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp2m, crs, transform, meta) if return_meta else (tmp2m, crs, transform)
+        if pattern == ":sp:sfc:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (pres_sfc, crs, transform, meta) if return_meta else (pres_sfc, crs, transform)
+        raise AssertionError(f"unexpected pattern: {pattern}")
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "kuchera_lwe_component": "sf",
+                "kuchera_lwe_component_scale": "1",
+                "step_hours": "6",
+                "kuchera_levels_hpa": "925,850,700,600",
+                "kuchera_profile_mode": "simplified",
+                "kuchera_use_surface_temp_cap": "true",
+                "kuchera_surface_temp_cap_cold_f": "30",
+                "kuchera_surface_temp_cap_warm_f": "34",
+                "kuchera_surface_temp_cap_cold_ratio": "18",
+                "kuchera_surface_temp_cap_warm_ratio": "10",
+                "kuchera_use_sfc_pressure_mask": "true",
+                "kuchera_incremental_rebuild_window_steps": "6",
+            }
+        )
+    )
+
+    plugin = _Plugin(
+        {
+            "sf": [":sf:sfc:", ":sf:"],
+            "tmp925": [":t:925:pl:"],
+            "tmp850": [":t:850:pl:"],
+            "tmp700": [":t:700:pl:"],
+            "tmp600": [":t:600:pl:"],
+            "tmp2m": [":2t:"],
+            "pres_sfc": [":sp:sfc:"],
+        }
+    )
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
+    )
+    monkeypatch.setattr(derive_module, "_prefetch_components_parallel", lambda tasks, ctx, *, label="": 0)
+
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", lambda **kwargs: None)
+    fh294_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="ecmwf",
+        var_key="snowfall_kuchera_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 12, 0),
+        fh=294,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=plugin,
+    )
+    fh294_internal = (fh294_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
+
+    sf_calls.clear()
+    full_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="ecmwf",
+        var_key="snowfall_kuchera_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 12, 0),
+        fh=300,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=plugin,
+    )
+
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, ctx, grid_cache_key
+        if int(fh) == 294 and str(var_key) == "snowfall_kuchera_total":
+            return fh294_internal, crs, transform
+        return None
+
+    use_bad_older_tail["enabled"] = True
+    sf_calls.clear()
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
+
+    with caplog.at_level("INFO"):
+        data, out_crs, out_transform = derive_module._derive_snowfall_kuchera_total_cumulative(
+            model_id="ecmwf",
+            var_key="snowfall_kuchera_total",
+            product="oper",
+            run_date=datetime(2026, 4, 14, 12, 0),
+            fh=300,
+            var_spec_model=var_spec_model,
+            var_capability=None,
+            model_plugin=plugin,
+        )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert sf_calls == [294, 300]
+    assert "reused_prev_cumulative=true" in caplog.text
+    assert "base_fh=294" in caplog.text
+    assert "computed_steps=1" in caplog.text
+    np.testing.assert_allclose(data, full_data, rtol=1e-6, atol=1e-6)
+
+
 def test_snow10to1_incremental_reuses_prior_overlap_bucket_window(monkeypatch, caplog) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

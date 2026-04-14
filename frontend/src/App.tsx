@@ -2755,6 +2755,9 @@ export default function App() {
   const latestAvailableRunLabel = useMemo(() => {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);
+  const selectedModelAvailability = useMemo(() => {
+    return model ? capabilities?.availability?.[model] ?? null : null;
+  }, [capabilities, model]);
   const hasNewerRunAvailable = Boolean(
     !selectedModelLatestOnly
     && 
@@ -2800,6 +2803,80 @@ export default function App() {
     const manifestVariable = runManifest?.variables?.[variable];
     return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
   }, [variables, variable, selectedCapabilityVarMap, runManifest]);
+  const runAvailability = useMemo(() => {
+    if (selectedTimeAxisMode === "observed") {
+      return null;
+    }
+
+    const latestRun = selectedModelAvailability?.latest_run ?? latestRunId ?? null;
+    if (!latestRun) {
+      return null;
+    }
+
+    const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
+    const selectedRunCompact = selectedRunLabel.replace(/^Latest\s*\((.*)\)$/, "$1");
+    const viewingOlderRun = run !== "latest" && run !== latestRun;
+
+    const targetFrameCount = Number.isFinite(selectedModelAvailability?.target_frame_count)
+      ? Math.max(0, Number(selectedModelAvailability?.target_frame_count))
+      : null;
+    const readyFrameCount = Number.isFinite(selectedModelAvailability?.latest_run_ready_frame_count)
+      ? Math.max(0, Number(selectedModelAvailability?.latest_run_ready_frame_count))
+      : null;
+    const readyVars = Array.isArray(selectedModelAvailability?.latest_run_ready_vars)
+      ? selectedModelAvailability.latest_run_ready_vars
+      : [];
+    const selectedVariableReady = variable ? readyVars.includes(variable) : true;
+    const latestRunComplete =
+      selectedModelAvailability?.latest_run_ready === true
+      || (
+        targetFrameCount !== null
+        && readyFrameCount !== null
+        && readyFrameCount >= targetFrameCount
+      );
+
+    if (!latestRunComplete || !selectedVariableReady) {
+      const progressLabel = targetFrameCount !== null && readyFrameCount !== null
+        ? `${readyFrameCount}/${targetFrameCount} hrs`
+        : "Ingesting";
+      let description = targetFrameCount !== null && readyFrameCount !== null
+        ? `Latest ${latestLabel} is still ingesting. ${readyFrameCount} of ${targetFrameCount} forecast hours are currently available.`
+        : `Latest ${latestLabel} is still ingesting.`;
+      if (!selectedVariableReady) {
+        description += ` ${selectedVariableLabel} is not fully ready on the latest run yet.`;
+      }
+      if (viewingOlderRun) {
+        description += ` You are viewing ${selectedRunCompact}.`;
+      }
+      return {
+        label: `${latestLabel} · ${progressLabel}`,
+        description,
+        tone: "delayed" as const,
+      };
+    }
+
+    if (viewingOlderRun) {
+      return {
+        label: `Latest ${latestLabel} ready`,
+        description: `Latest ${latestLabel} is fully available. You are viewing ${selectedRunCompact}.`,
+        tone: "live" as const,
+      };
+    }
+
+    return {
+      label: `${latestLabel} · complete`,
+      description: `Latest ${latestLabel} is fully available for this model.`,
+      tone: "live" as const,
+    };
+  }, [
+    latestRunId,
+    run,
+    selectedModelAvailability,
+    selectedRunLabel,
+    selectedTimeAxisMode,
+    selectedVariableLabel,
+    variable,
+  ]);
   const selectedRegionLabel = useMemo(() => {
     const fromOptions = regions.find((entry) => entry.value === region)?.label;
     return fromOptions ?? regionPresets[region]?.label ?? region;
@@ -2993,6 +3070,9 @@ export default function App() {
     sourceStatusLabel: observedSourceStatus?.label ?? null,
     sourceStatusDescription: observedSourceStatus?.description ?? null,
     sourceStatusTone: observedSourceStatus?.tone ?? null,
+    runAvailabilityLabel: runAvailability?.label ?? null,
+    runAvailabilityDescription: runAvailability?.description ?? null,
+    runAvailabilityTone: runAvailability?.tone ?? null,
     pointLabelsEnabled,
     onPointLabelsEnabledChange: setPointLabelsEnabled,
     legendVisible,
@@ -3023,7 +3103,7 @@ export default function App() {
     region, handleRegionChange, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
-    handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus,
+    handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour,

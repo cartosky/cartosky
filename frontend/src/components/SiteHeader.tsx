@@ -75,79 +75,6 @@ function SourceStatusBadge({
   );
 }
 
-// ─── Run / data freshness status badge ───────────────────────────────────────
-/**
- * Shows a trust signal for the currently selected run.
- * - Observed products (radar, etc.): delegates to SourceStatusBadge.
- * - Forecast products: shows whether we're on the current cycle, whether a
- *   newer run is available, or whether data is still loading.
- */
-function RunStatusBadge({
-  // Observed source status (radar / satellite products)
-  sourceStatusLabel,
-  sourceStatusDescription,
-  sourceStatusTone,
-  // Forecast run state
-  hasNewerRunAvailable,
-  latestAvailableRunLabel,
-  runSelectionLocked,
-  disabled,
-  onViewLatestRun,
-}: {
-  sourceStatusLabel?: string | null;
-  sourceStatusDescription?: string | null;
-  sourceStatusTone?: ObservedSourceStatusTone | null;
-  hasNewerRunAvailable?: boolean;
-  latestAvailableRunLabel?: string | null;
-  runSelectionLocked?: boolean;
-  disabled?: boolean;
-  onViewLatestRun?: () => void;
-}) {
-  // Observed product — use existing tone badge
-  if (sourceStatusLabel) {
-    return (
-      <SourceStatusBadge
-        label={sourceStatusLabel}
-        description={sourceStatusDescription}
-        tone={sourceStatusTone}
-      />
-    );
-  }
-
-  // Data still loading — no badge yet
-  if (disabled) return null;
-
-  // Newer run is available and user is not locked to latest
-  if (!runSelectionLocked && hasNewerRunAvailable) {
-    const label = latestAvailableRunLabel ? `${latestAvailableRunLabel} ready` : "New run ready";
-    return (
-      <button
-        type="button"
-        onClick={onViewLatestRun}
-        title="A newer model run is available — click to update"
-        className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/28 bg-amber-300/[0.09] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100 transition-colors hover:bg-amber-300/[0.15]"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
-        {label}
-      </button>
-    );
-  }
-
-  // Current cycle — green pulse
-  return (
-    <div
-      title="Viewing the current model run cycle"
-      className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/22 bg-emerald-300/[0.07] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100"
-    >
-      <span className="relative flex h-1.5 w-1.5">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-300" />
-      </span>
-      Current
-    </div>
-  );
-}
-
 
 const GROUP_ORDER = ["MODELS", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR"];
 
@@ -371,7 +298,8 @@ function ViewerNavDesktop() {
     run, onRunChange, runs, region, onRegionChange, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
-    sourceStatusTone, onShare, displayPanelOpen, onDisplayPanelOpenChange,
+    sourceStatusTone, runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
+    onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible, onLegendVisibleChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legend,
@@ -443,6 +371,20 @@ function ViewerNavDesktop() {
           minWidth="min-w-[88px] max-w-[140px]"
         />
 
+        {runAvailabilityLabel ? (
+          <SourceStatusBadge
+            label={runAvailabilityLabel}
+            description={runAvailabilityDescription}
+            tone={runAvailabilityTone}
+          />
+        ) : sourceStatusLabel ? (
+          <SourceStatusBadge
+            label={sourceStatusLabel}
+            description={sourceStatusDescription}
+            tone={sourceStatusTone}
+          />
+        ) : null}
+
         {/* Legend button */}
         <div className="relative shrink-0" ref={legendRef}>
           <button
@@ -462,7 +404,7 @@ function ViewerNavDesktop() {
           </button>
 
           {legendPanelOpen ? createPortal(
-            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.95] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
               <MapLegend
                 legend={legend}
                 onOpacityChange={onOpacityChange}
@@ -606,10 +548,14 @@ function ViewerNavMobile() {
     run, onRunChange, runs, region, onRegionChange, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     runSelectionLocked, sourceStatusLabel, sourceStatusDescription, sourceStatusTone,
+    runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
     onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange,
+    zoomControlsVisible, onZoomControlsVisibleChange, layoutMode,
   } = toolbar;
+
+  const isTabletTouchLayout = layoutMode === "tablet-touch";
+  const isPhoneLayout = !isTabletTouchLayout;
 
   const displayVariables = model === "spc"
     ? variables.map((o) => ({ ...o, label: spcVariableLabel(o) }))
@@ -624,21 +570,41 @@ function ViewerNavMobile() {
   const selectedRunLabel = (runDisplayLabel ?? runs.find((o) => o.value === run)?.label ?? "Run")
     .replace(/^Latest\s*\((.*)\)$/, "$1");
 
+  useEffect(() => {
+    if (!sheetOpen) {
+      document.body.style.removeProperty("overflow");
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [sheetOpen]);
+
+  const summaryPillClass = "rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 font-medium whitespace-nowrap";
+
   return (
     <>
       {/* Compact summary + controls icon */}
       <div className="flex flex-1 items-center justify-end gap-2">
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {sourceStatusLabel ? (
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {runAvailabilityLabel ? (
+            <SourceStatusBadge
+              label={runAvailabilityLabel}
+              description={runAvailabilityDescription}
+              tone={runAvailabilityTone}
+            />
+          ) : sourceStatusLabel ? (
             <SourceStatusBadge label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
           ) : null}
-          <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/82 whitespace-nowrap">
+          <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
           </span>
-          <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68 whitespace-nowrap">
+          <span className={cn(summaryPillClass, "text-white/68")}>
             {selectedModelLabel}
           </span>
-          <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/60 whitespace-nowrap">
+          <span className={cn(summaryPillClass, "text-white/60")}>
             {selectedRunLabel}
           </span>
         </div>
@@ -673,32 +639,70 @@ function ViewerNavMobile() {
         <>
           {/* Backdrop */}
           <div
-            className="fixed inset-0 z-[65] bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-[65] bg-black/42 backdrop-blur-[6px]"
             onClick={() => setSheetOpen(false)}
             aria-hidden="true"
           />
-          {/* Sheet */}
-          <div className="fixed bottom-0 left-0 right-0 z-[66] rounded-t-[1.5rem] border-t border-white/12 bg-[#0d1a2f] pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_40px_rgba(0,0,0,0.5)]">
-            {/* Handle */}
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="h-1 w-10 rounded-full bg-white/20" />
-            </div>
-            <div className="flex items-center justify-between px-4 pb-3 pt-1">
-              <span className="text-sm font-semibold text-white">Controls</span>
+          <div
+            className={cn(
+              "fixed z-[66] overflow-hidden border border-white/10 bg-[#0b1628]/[0.94] shadow-[0_24px_70px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl",
+              isTabletTouchLayout
+                ? "right-3 top-[4.5rem] bottom-3 w-[min(28rem,82vw)] rounded-[1.4rem]"
+                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)]"
+            )}
+          >
+            {isPhoneLayout ? (
+              <div className="flex justify-center pt-3 pb-1">
+                <div className="h-1 w-10 rounded-full bg-white/20" />
+              </div>
+            ) : null}
+
+            <div className={cn("flex items-center justify-between", isTabletTouchLayout ? "px-5 pb-3 pt-4" : "px-4 pb-3 pt-1")}>
+              <div>
+                <div className="text-sm font-semibold text-white">Controls</div>
+                <div className="mt-0.5 text-[11px] text-white/45">
+                  Product, run, and display settings.
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setSheetOpen(false)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
                 aria-label="Close controls"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="max-h-[70svh] overflow-y-auto px-4 pb-6">
-              <div className="grid grid-cols-1 gap-3">
-                <div className="flex flex-col gap-1">
-                  <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-white/50">
+            <div className={cn("overflow-y-auto", isTabletTouchLayout ? "h-[calc(100%-4.25rem)] px-5 pb-5" : "max-h-[78svh] px-4 pb-6")}>
+              {(runAvailabilityLabel || sourceStatusLabel) ? (
+                <div className="mb-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
+                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/38">
+                      Run Availability
+                    </div>
+                    <div className="mt-2">
+                      {runAvailabilityLabel ? (
+                        <SourceStatusBadge
+                          label={runAvailabilityLabel}
+                          description={runAvailabilityDescription}
+                          tone={runAvailabilityTone}
+                        />
+                      ) : sourceStatusLabel ? (
+                        <SourceStatusBadge
+                          label={sourceStatusLabel}
+                          description={sourceStatusDescription}
+                          tone={sourceStatusTone}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className={cn("grid gap-3", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
                     <Layers className="h-3 w-3" /> Product
                   </span>
                   <NavbarSelect
@@ -712,8 +716,8 @@ function ViewerNavMobile() {
                   />
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-white/50">
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
                     <Boxes className="h-3 w-3" /> Model
                   </span>
                   <NavbarSelect
@@ -727,8 +731,8 @@ function ViewerNavMobile() {
                   />
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-white/50">
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
                     <CalendarClock className="h-3 w-3" /> Run
                   </span>
                   <NavbarSelect
@@ -754,8 +758,8 @@ function ViewerNavMobile() {
                   />
                 </div>
 
-                <div className="flex flex-col gap-1">
-                  <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-white/50">
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
                     <MapPin className="h-3 w-3" /> Region
                   </span>
                   <NavbarSelect
@@ -769,11 +773,11 @@ function ViewerNavMobile() {
                 </div>
               </div>
 
-              <div className="mt-4 border-t border-white/10 pt-3">
-                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">
                   Map Display
                 </div>
-                <div className="space-y-2">
+                <div className={cn("grid gap-2", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
                   <DisplayRow
                     label="City Labels"
                     icon={MapPin}
@@ -795,7 +799,7 @@ function ViewerNavMobile() {
                   <button
                     type="button"
                     onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/18 px-3 py-2 text-left hover:bg-black/28"
+                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
                   >
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
                       {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
@@ -805,31 +809,22 @@ function ViewerNavMobile() {
                       {basemapMode === "dark" ? "Dark" : "Light"}
                     </span>
                   </button>
-
-                  <div className="rounded-lg border border-white/10 bg-black/18 px-3 py-2">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-sm font-semibold text-white">Opacity</span>
-                      <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
-                    </div>
-                    <Slider
-                      value={[Math.round(opacity * 100)]}
-                      onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
-                      min={0}
-                      max={100}
-                      step={1}
-                      className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
-                    />
-                  </div>
                 </div>
-              </div>
 
-              <div className="mt-4 border-t border-white/10 pt-3 text-[10px] leading-relaxed text-white/42">
-                Maps:{" "}
-                <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2">MapLibre</a>
-                {" "}|{" "}
-                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline underline-offset-2">OSM</a>
-                {" "}|{" "}
-                <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline underline-offset-2">CARTO</a>
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Opacity</span>
+                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
+                  </div>
+                  <Slider
+                    value={[Math.round(opacity * 100)]}
+                    onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
+                  />
+                </div>
               </div>
             </div>
           </div>

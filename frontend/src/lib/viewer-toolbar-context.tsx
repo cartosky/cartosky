@@ -33,6 +33,9 @@ export type ViewerToolbarProps = {
   sourceStatusLabel?: string | null;
   sourceStatusDescription?: string | null;
   sourceStatusTone?: ObservedSourceStatusTone | null;
+  runAvailabilityLabel?: string | null;
+  runAvailabilityDescription?: string | null;
+  runAvailabilityTone?: ObservedSourceStatusTone | null;
   // Display settings
   pointLabelsEnabled: boolean;
   onPointLabelsEnabledChange: (next: boolean) => void;

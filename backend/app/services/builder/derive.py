@@ -4471,7 +4471,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             int(seed_fh),
         )
 
-    if (not use_direct_cumulative_lwe) and len(step_fhs) >= 2:
+    if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior = _kuchera_load_prior_cumulative(
             model_id=model_id,
