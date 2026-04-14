@@ -268,14 +268,14 @@ function NavbarSelect(props: {
     >
       <SelectTrigger
         className={cn(
-          "h-8 rounded-xl border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
+          "h-8 w-auto gap-2 rounded-xl border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
           minWidth,
           highlightState
             ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.12]"
             : ""
         )}
       >
-        <span className="whitespace-nowrap pr-1">{selectedLabel}</span>
+        <span className="whitespace-nowrap">{selectedLabel}</span>
       </SelectTrigger>
       <SelectContent>{resolvedContent}</SelectContent>
     </Select>
@@ -406,7 +406,7 @@ function ViewerNavDesktop() {
           disabled={disabled}
           placeholder="Variable"
           grouped
-          minWidth="min-w-[148px] max-w-[280px]"
+          minWidth="min-w-[180px] max-w-[320px]"
         />
         <NavbarSelect
           value={model}
@@ -415,7 +415,7 @@ function ViewerNavDesktop() {
           disabled={disabled}
           placeholder="Model"
           grouped
-          minWidth="min-w-[80px] max-w-[120px]"
+          minWidth="min-w-[90px] max-w-[140px]"
         />
         <NavbarSelect
           value={run}
@@ -432,7 +432,7 @@ function ViewerNavDesktop() {
               : null
           }
           onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-          minWidth="min-w-[130px] max-w-[210px]"
+          minWidth="min-w-[148px] max-w-[220px]"
         />
         <NavbarSelect
           value={region}
@@ -440,7 +440,7 @@ function ViewerNavDesktop() {
           options={regions}
           disabled={disabled}
           placeholder="Region"
-          minWidth="min-w-[80px] max-w-[130px]"
+          minWidth="min-w-[88px] max-w-[140px]"
         />
 
         {/* Legend button */}
@@ -474,21 +474,6 @@ function ViewerNavDesktop() {
             </div>
           , document.body) : null}
         </div>
-
-        {/* Divider — cyan tint to match marketing accent language */}
-        <div className="mx-1.5 h-5 w-px bg-cyan-300/20" />
-
-        {/* Run / data freshness trust badge */}
-        <RunStatusBadge
-          sourceStatusLabel={sourceStatusLabel}
-          sourceStatusDescription={sourceStatusDescription}
-          sourceStatusTone={sourceStatusTone}
-          hasNewerRunAvailable={hasNewerRunAvailable}
-          latestAvailableRunLabel={latestAvailableRunLabel}
-          runSelectionLocked={runSelectionLocked}
-          disabled={disabled}
-          onViewLatestRun={onViewLatestRun}
-        />
 
         {onShare ? (
           <button

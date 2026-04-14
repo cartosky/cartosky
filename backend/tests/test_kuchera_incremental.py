@@ -17,6 +17,15 @@ from app.services.builder import derive as derive_module
 
 
 class _Plugin:
+    def __init__(self, extra_search: dict[str, list[str]] | None = None) -> None:
+        self._by_var = {
+            "apcp_step": [r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$"],
+            "tmp850": [":TMP:850 mb:"],
+            "tmp700": [":TMP:700 mb:"],
+        }
+        if extra_search:
+            self._by_var.update({str(key): list(value) for key, value in extra_search.items()})
+
     def normalize_var_id(self, var_key: str) -> str:
         return str(var_key)
 
@@ -25,12 +34,7 @@ class _Plugin:
         return None
 
     def get_var(self, var_key: str):
-        by_var = {
-            "apcp_step": [r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:$"],
-            "tmp850": [":TMP:850 mb:"],
-            "tmp700": [":TMP:700 mb:"],
-        }
-        search = by_var.get(str(var_key))
+        search = self._by_var.get(str(var_key))
         if search is None:
             return None
         return SimpleNamespace(
@@ -40,6 +44,25 @@ class _Plugin:
                 hints={},
             )
         )
+
+    def search_patterns_for_var(self, *, var_key: str, fh: int | None = None, product: str | None = None, var_spec=None):
+        del fh, product, var_spec
+        resolved = self.get_var(var_key)
+        if resolved is None:
+            return []
+        return list(getattr(resolved.selectors, "search", []) or [])
+
+    def herbie_request(
+        self,
+        *,
+        product: str | None = None,
+        var_key: str | None = None,
+        run_date: datetime | None = None,
+        fh: int | None = None,
+        search_pattern: str | None = None,
+    ):
+        del var_key, run_date, fh, search_pattern
+        return SimpleNamespace(product=product, herbie_kwargs={})
 
 
 def _var_spec(*, rebuild_window_steps: int = 6) -> SimpleNamespace:
@@ -586,6 +609,176 @@ def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypat
     assert "cumulative_apcp_requires_full_rebuild" not in caplog.text
     assert "base_fh=002" in caplog.text
     assert "computed_steps=2" in caplog.text
+
+
+def test_direct_cumulative_kuchera_reuses_prior_sf_tail_window(monkeypatch, caplog) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    tmp_925 = np.full((2, 2), -10.0, dtype=np.float32)
+    tmp_850 = np.full((2, 2), -12.0, dtype=np.float32)
+    tmp_700 = np.full((2, 2), -10.0, dtype=np.float32)
+    tmp_600 = np.full((2, 2), -8.0, dtype=np.float32)
+    tmp2m = np.full((2, 2), 28.0, dtype=np.float32)
+    pres_sfc = np.full((2, 2), 100000.0, dtype=np.float32)
+    step_fhs = [3, 6, 9, 12]
+
+    sf_cumulative = {
+        3: np.full((2, 2), 1.0, dtype=np.float32),
+        6: np.full((2, 2), 3.0, dtype=np.float32),
+        9: np.full((2, 2), 6.0, dtype=np.float32),
+        12: np.full((2, 2), 10.0, dtype=np.float32),
+    }
+    sf_calls: list[int] = []
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        step_fh = int(fh)
+        if pattern in {":sf:sfc:", ":sf:"}:
+            sf_calls.append(step_fh)
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            data = sf_cumulative[step_fh]
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":t:925:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_925, crs, transform, meta) if return_meta else (tmp_925, crs, transform)
+        if pattern == ":t:850:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_850, crs, transform, meta) if return_meta else (tmp_850, crs, transform)
+        if pattern == ":t:700:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_700, crs, transform, meta) if return_meta else (tmp_700, crs, transform)
+        if pattern == ":t:600:pl:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp_600, crs, transform, meta) if return_meta else (tmp_600, crs, transform)
+        if pattern == ":2t:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (tmp2m, crs, transform, meta) if return_meta else (tmp2m, crs, transform)
+        if pattern == ":sp:sfc:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (pres_sfc, crs, transform, meta) if return_meta else (pres_sfc, crs, transform)
+        raise AssertionError(f"unexpected pattern: {pattern}")
+
+    def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
+        del model_id, run_date, ctx, grid_cache_key
+        if int(fh) == 6 and str(var_key) == "snowfall_kuchera_total":
+            return fh6_internal, crs, transform
+        return None
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [
+            int(step_fh) for step_fh in step_fhs if int(step_fh) <= int(fh)
+        ],
+    )
+    monkeypatch.setattr(derive_module, "_prefetch_components_parallel", lambda tasks, ctx, *, label="": 0)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "kuchera_lwe_component": "sf",
+                "kuchera_lwe_component_scale": "1",
+                "step_hours": "3",
+                "kuchera_levels_hpa": "925,850,700,600",
+                "kuchera_profile_mode": "simplified",
+                "kuchera_use_surface_temp_cap": "true",
+                "kuchera_surface_temp_cap_cold_f": "30",
+                "kuchera_surface_temp_cap_warm_f": "34",
+                "kuchera_surface_temp_cap_cold_ratio": "18",
+                "kuchera_surface_temp_cap_warm_ratio": "10",
+                "kuchera_use_sfc_pressure_mask": "true",
+                "kuchera_incremental_rebuild_window_steps": "2",
+            }
+        )
+    )
+
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", lambda **kwargs: None)
+    fh6_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="ecmwf",
+        var_key="snowfall_kuchera_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 12, 0),
+        fh=6,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=_Plugin(
+            {
+                "sf": [":sf:sfc:", ":sf:"],
+                "tmp925": [":t:925:pl:"],
+                "tmp850": [":t:850:pl:"],
+                "tmp700": [":t:700:pl:"],
+                "tmp600": [":t:600:pl:"],
+                "tmp2m": [":2t:"],
+                "pres_sfc": [":sp:sfc:"],
+            }
+        ),
+    )
+    fh6_internal = (fh6_data / np.float32(0.03937007874015748)).astype(np.float32, copy=False)
+    full_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="ecmwf",
+        var_key="snowfall_kuchera_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 12, 0),
+        fh=12,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=_Plugin(
+            {
+                "sf": [":sf:sfc:", ":sf:"],
+                "tmp925": [":t:925:pl:"],
+                "tmp850": [":t:850:pl:"],
+                "tmp700": [":t:700:pl:"],
+                "tmp600": [":t:600:pl:"],
+                "tmp2m": [":2t:"],
+                "pres_sfc": [":sp:sfc:"],
+            }
+        ),
+    )
+
+    sf_calls.clear()
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)
+
+    with caplog.at_level("INFO"):
+        data, out_crs, out_transform = derive_module._derive_snowfall_kuchera_total_cumulative(
+            model_id="ecmwf",
+            var_key="snowfall_kuchera_total",
+            product="oper",
+            run_date=datetime(2026, 4, 14, 12, 0),
+            fh=12,
+            var_spec_model=var_spec_model,
+            var_capability=None,
+            model_plugin=_Plugin(
+                {
+                    "sf": [":sf:sfc:", ":sf:"],
+                    "tmp925": [":t:925:pl:"],
+                    "tmp850": [":t:850:pl:"],
+                    "tmp700": [":t:700:pl:"],
+                    "tmp600": [":t:600:pl:"],
+                    "tmp2m": [":2t:"],
+                    "pres_sfc": [":sp:sfc:"],
+                }
+            ),
+        )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert sf_calls == [6, 9, 12]
+    assert "retrying full rebuild" not in caplog.text
+    assert "reused_prev_cumulative=true" in caplog.text
+    assert "base_fh=006" in caplog.text
+    assert "computed_steps=2" in caplog.text
+    np.testing.assert_allclose(data, full_data, rtol=1e-6, atol=1e-6)
 
 
 def test_snow10to1_incremental_reuses_prior_overlap_bucket_window(monkeypatch, caplog) -> None:
