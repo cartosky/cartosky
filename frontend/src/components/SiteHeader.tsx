@@ -53,6 +53,8 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const accountLabel = twfStatus.linked ? twfStatus.display_name : "Login";
   const accountPhotoUrl = twfStatus.linked ? twfStatus.photo_url : null;
   const adminEnabled = twfStatus.admin === true;
+  const referenceNavClassName =
+    "text-xs font-medium uppercase tracking-[0.18em] text-white/54 hover:text-white/82 hover:bg-white/[0.06]";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -128,8 +130,15 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
-            <NavItem to="/models" label="Models" />
-            <NavItem to="/variables" label="Variables" />
+            <NavLink
+              to="/viewer"
+              className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3.5 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)] transition duration-150 hover:brightness-105"
+            >
+              Viewer
+            </NavLink>
+            <NavItem to="/forecast" label="Forecast" className="text-white/82 hover:text-white" />
+            <NavItem to="/models" label="Models" className={referenceNavClassName} />
+            <NavItem to="/variables" label="Variables" className={referenceNavClassName} />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <NavLink
               to="/login"
@@ -141,12 +150,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 ) : null}
                 <span>{accountLabel}</span>
               </span>
-            </NavLink>
-            <NavLink
-              to="/viewer"
-              className="ml-1 inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3.5 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)] transition duration-150 hover:brightness-105"
-            >
-              Viewer
             </NavLink>
           </nav>
         ) : null}
@@ -192,6 +195,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <NavItem
                   to="/viewer"
                   label="Viewer"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="text-white/90 hover:text-white"
+                />
+                <NavItem
+                  to="/forecast"
+                  label="Forecast"
                   onClick={() => setMobileMenuOpen(false)}
                   className="text-white/90 hover:text-white"
                 />

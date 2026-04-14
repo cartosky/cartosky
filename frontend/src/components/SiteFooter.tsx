@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 export default function SiteFooter() {
   return (
     <footer className="border-t border-white/8 bg-[#07101d]">
-      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 md:grid-cols-[1.2fr_0.8fr_0.8fr] md:px-8">
+      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 md:grid-cols-[1.15fr_0.85fr_0.85fr] md:px-8">
         <div>
           <div className="text-lg font-semibold tracking-tight text-white">CartoSky</div>
           <p className="mt-3 max-w-sm text-sm leading-7 text-white/56">
@@ -18,6 +18,9 @@ export default function SiteFooter() {
             <Link to="/viewer" className="transition duration-150 hover:text-white">
               Viewer
             </Link>
+            <Link to="/forecast" className="transition duration-150 hover:text-white">
+              Forecast
+            </Link>
             <Link to="/models" className="transition duration-150 hover:text-white">
               Models
             </Link>
@@ -31,11 +34,17 @@ export default function SiteFooter() {
         </div>
 
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Interface</div>
-          <div className="mt-4 space-y-3 text-sm text-white/56">
-            <p>Map-first viewer workflow</p>
-            <p>Freshness-aware model guidance</p>
-            <p>Winter, severe, hydro, and upper-air products</p>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Resources</div>
+          <div className="mt-4 flex flex-col gap-3 text-sm text-white/68">
+            <Link to="/login" className="transition duration-150 hover:text-white">
+              Account
+            </Link>
+            <Link to="/models" className="transition duration-150 hover:text-white">
+              Model Catalog
+            </Link>
+            <Link to="/variables" className="transition duration-150 hover:text-white">
+              Variable Guide
+            </Link>
           </div>
         </div>
       </div>

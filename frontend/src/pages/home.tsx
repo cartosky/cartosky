@@ -86,32 +86,20 @@ function ViewerPreview({
         className="absolute inset-0 opacity-95"
         style={{
           backgroundImage: `
-            radial-gradient(circle at 72% 42%, rgba(34,197,255,0.18), transparent 0 15%),
-            radial-gradient(circle at 42% 58%, rgba(16,185,129,0.16), transparent 0 18%),
-            radial-gradient(circle at 68% 57%, rgba(245,158,11,0.16), transparent 0 12%),
             linear-gradient(115deg, rgba(16,25,42,0.96), rgba(8,17,32,0.92)),
-            url(/assets/hero-space.webp)
+            url(/assets/hero-image.png)
           `,
-          backgroundSize: "auto, auto, auto, auto, cover",
-          backgroundPosition: "center",
+          backgroundSize: "auto, cover",
+          backgroundPosition: "center, center right",
         }}
       />
       <div
         aria-hidden="true"
-        className="absolute inset-0 opacity-50"
+        className="absolute inset-0 opacity-80"
         style={{
           backgroundImage: `
-            repeating-linear-gradient(
-              105deg,
-              transparent 0 10px,
-              rgba(103, 232, 249, 0.05) 10px 11px,
-              transparent 11px 26px
-            ),
-            repeating-radial-gradient(
-              circle at 20% 78%,
-              rgba(56, 189, 248, 0.16) 0 2px,
-              transparent 2px 28px
-            )
+            linear-gradient(90deg, rgba(7,17,31,0.92) 0%, rgba(7,17,31,0.72) 34%, rgba(7,17,31,0.34) 70%, rgba(7,17,31,0.44) 100%),
+            linear-gradient(180deg, rgba(7,17,31,0.2), rgba(7,17,31,0.58))
           `,
         }}
       />
@@ -133,105 +121,44 @@ function ViewerPreview({
       <div className="relative z-10 grid gap-4 p-4 sm:p-5">
         <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] uppercase tracking-[0.2em] text-white/45">
-            <span>Map-first viewport</span>
-            <span className="text-cyan-200/70">Model switching stays fast</span>
+            <span>Viewer showcase</span>
+            <span className="text-cyan-200/70">Screenshot-ready stage</span>
           </div>
           <div className="mt-5 h-[260px] overflow-hidden rounded-[1.2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]">
             <div className="relative h-full w-full overflow-hidden">
+              <div aria-hidden="true" className="absolute inset-0 bg-[linear-gradient(180deg,#102338_0%,#081120_100%)]" />
               <div
                 aria-hidden="true"
-                className="absolute inset-0 bg-[linear-gradient(180deg,#1d3557_0%,#102338_100%)]"
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-[9%_8%_12%_8%] opacity-[0.92]"
+                className="absolute inset-0 opacity-95"
                 style={{
                   backgroundImage: `
-                    linear-gradient(180deg, rgba(226,236,224,0.92), rgba(165,178,157,0.86))
+                    linear-gradient(90deg, rgba(8,17,32,0.62) 0%, rgba(8,17,32,0.28) 46%, rgba(8,17,32,0.38) 100%),
+                    url(/assets/hero-image.png)
                   `,
-                  clipPath:
-                    "polygon(7% 26%, 13% 13%, 24% 9%, 35% 14%, 42% 17%, 48% 26%, 58% 30%, 71% 27%, 86% 34%, 92% 43%, 89% 57%, 83% 72%, 74% 78%, 67% 88%, 58% 89%, 49% 84%, 42% 87%, 31% 82%, 22% 75%, 15% 64%, 10% 49%)",
-                  boxShadow: "inset 0 0 0 1px rgba(17,24,39,0.12)",
+                  backgroundSize: "auto, cover",
+                  backgroundPosition: "center, center right",
                 }}
               />
               <div
                 aria-hidden="true"
-                className="absolute inset-[18%_28%_42%_52%] rounded-[40%] bg-[#102338]/70 blur-[1px]"
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-[34%_20%_36%_63%] rounded-[45%] bg-[#102338]/78 blur-[1px]"
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-[0.72]"
-                style={{
-                  backgroundImage: `
-                    linear-gradient(93deg, transparent 0 14%, rgba(9, 21, 39, 0.55) 14.1% 14.5%, transparent 14.6% 100%),
-                    linear-gradient(122deg, transparent 0 44%, rgba(9, 21, 39, 0.46) 44.1% 44.45%, transparent 44.55% 100%),
-                    linear-gradient(166deg, transparent 0 59%, rgba(9, 21, 39, 0.42) 59.1% 59.45%, transparent 59.55% 100%),
-                    linear-gradient(180deg, transparent 0 72%, rgba(255, 255, 255, 0.08) 72.1% 72.4%, transparent 72.5% 100%)
-                  `,
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-80"
-                style={{
-                  backgroundImage: `
-                    repeating-linear-gradient(
-                      108deg,
-                      transparent 0 15px,
-                      rgba(34,211,238,0.16) 15px 17px,
-                      transparent 17px 36px
-                    )
-                  `,
-                }}
-              />
-              <div className="absolute left-4 top-1/2 z-10 hidden -translate-y-1/2 rounded-2xl border border-white/10 bg-slate-950/55 p-2 backdrop-blur-sm lg:block">
-                <div className="flex h-36 flex-col justify-between">
-                  <div className="h-2 w-2 rounded-full bg-sky-100" />
-                  <div className="h-2 w-2 rounded-full bg-cyan-200" />
-                  <div className="h-2 w-2 rounded-full bg-cyan-400" />
-                  <div className="h-2 w-2 rounded-full bg-emerald-300" />
-                  <div className="h-2 w-2 rounded-full bg-fuchsia-300" />
-                </div>
-              </div>
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-65"
+                className="absolute inset-0 opacity-30"
                 style={{
                   backgroundImage:
-                    "radial-gradient(circle at 54% 54%, rgba(244,114,182,0.20), transparent 0 10%), radial-gradient(circle at 52% 58%, rgba(34,197,94,0.18), transparent 0 12%)",
+                    "linear-gradient(0deg, transparent 0 88%, rgba(255,255,255,0.06) 88.1% 88.4%, transparent 88.5% 100%), linear-gradient(90deg, transparent 0 86%, rgba(255,255,255,0.05) 86.1% 86.4%, transparent 86.5% 100%)",
                 }}
               />
-              <div className="absolute left-[19%] top-[27%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
-                <span className="h-2 w-2 rounded-full bg-white/70" />
-                Seattle
-              </div>
-              <div className="absolute left-[47%] top-[33%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
-                <span className="h-2 w-2 rounded-full bg-white/70" />
-                Minneapolis
-              </div>
-              <div className="absolute left-[58%] top-[46%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
-                <span className="h-2 w-2 rounded-full bg-cyan-200" />
-                Chicago
-              </div>
-              <div className="absolute left-[68%] top-[62%] flex items-center gap-1.5 text-[10px] font-medium text-white/78">
-                <span className="h-2 w-2 rounded-full bg-white/70" />
-                Atlanta
-              </div>
               <div className="absolute left-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
                 HRRR · CONUS · 2m Temp
               </div>
               <div className="absolute right-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
                 Valid 18Z
               </div>
-              <div className="absolute bottom-4 left-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
-                Surface layer
-              </div>
-              <div className="absolute bottom-4 right-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
-                Smooth playback
+              <div className="absolute left-4 top-[27%] max-w-[15rem] rounded-2xl border border-white/12 bg-slate-950/58 p-4 text-left backdrop-blur-md">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Viewer Focus</div>
+                <div className="mt-3 text-sm font-semibold text-white">Map-dominant forecast workflow</div>
+                <div className="mt-2 text-xs leading-6 text-white/60">
+                  This stage is reserved for the redesigned viewer screenshot that will ship before public beta.
+                </div>
               </div>
             </div>
           </div>
@@ -470,28 +397,6 @@ export default function Home() {
       </section>
 
       <section className="border-b border-white/8 bg-[#091423] px-5 md:px-8">
-        <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-4 md:py-5">
-          <ProofItem
-            label="Models"
-            value={`${homepageStats.coreModelCount} core models`}
-            detail="HRRR, NAM, GFS, NBM, and ECMWF in one workflow."
-          />
-          <ProofItem
-            label="Products"
-            value={`~${homepageStats.averageCoreVariableCount} per model`}
-            detail="Surface, severe, winter, hydro, and upper-air fields."
-          />
-          <ProofItem
-            label="Freshness"
-            value="Run status stays visible"
-            detail={homepageStats.freshnessDetail}
-          />
-          <ProofItem
-            label="Update Cycles"
-            value="Hourly to 6-hourly"
-            detail="Viewer context stays tied to the latest available cycle."
-          />
-        </div>
       </section>
 
       <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
@@ -560,6 +465,62 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="border-y border-white/8 bg-[#091423] px-5 md:px-8">
+        <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-4 md:py-5">
+          <ProofItem
+            label="Models"
+            value={`${homepageStats.coreModelCount} core models`}
+            detail="HRRR, NAM, GFS, NBM, and ECMWF in one workflow."
+          />
+          <ProofItem
+            label="Products"
+            value={`~${homepageStats.averageCoreVariableCount} per model`}
+            detail="Surface, severe, winter, hydro, and upper-air fields."
+          />
+          <ProofItem
+            label="Freshness"
+            value="Run status stays visible"
+            detail={homepageStats.freshnessDetail}
+          />
+          <ProofItem
+            label="Update Cycles"
+            value="Hourly to 6-hourly"
+            detail="Viewer context stays tied to the latest available cycle."
+          />
+        </div>
+      </section>
+
+      <section className="border-b border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
+        <div className="mx-auto flex max-w-6xl flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <SectionEyebrow>Forecast</SectionEyebrow>
+            <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
+              Need a local briefing before you open the map?
+            </h2>
+            <p className="mt-4 text-base leading-8 text-white/64">
+              The new Forecast page gives you a cleaner location-first surface for current conditions,
+              short-range context, and a direct handoff into the viewer when you want deeper analysis.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to="/forecast"
+              className="inline-flex items-center gap-2 rounded-xl border border-white/14 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.07]"
+            >
+              Open Forecast
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link
+              to="/viewer"
+              className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
+            >
+              Go straight to Viewer
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
       <section className="border-y border-white/6 bg-[#0d182d] px-5 py-20 md:px-8 md:py-24">
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Forecast Products</SectionEyebrow>
@@ -596,22 +557,34 @@ export default function Home() {
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
             Built for serious guidance, not visual noise.
           </h2>
-          <div className="mt-12 grid gap-6 lg:grid-cols-3">
-            <TrustPoint
-              icon={<Gauge className="h-5 w-5" />}
-              title="Serious guidance"
-              description="Forecast products stay tied to model context, run freshness, and the details that matter when you are actually making a read."
-            />
-            <TrustPoint
-              icon={<Sparkles className="h-5 w-5" />}
-              title="Clean interface"
-              description="Hierarchy does the work. The map leads, the main controls stay obvious, and lower-frequency settings stop fighting for attention."
-            />
-            <TrustPoint
-              icon={<Globe2 className="h-5 w-5" />}
-              title="Product depth"
-              description="From core surface fields to winter, severe, hydro, and upper-air workflows, CartoSky keeps expanding where weather users actually need it."
-            />
+          <div className="mt-12 grid gap-8 border-t border-white/8 pt-8 lg:grid-cols-3">
+            <div className="border-l border-white/8 pl-5 first:border-l-0 first:pl-0">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                <Gauge className="h-5 w-5" />
+              </div>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Serious guidance</h3>
+              <p className="mt-3 text-sm leading-7 text-white/66">
+                Forecast products stay tied to model context, run freshness, and the details that matter when you are actually making a read.
+              </p>
+            </div>
+            <div className="border-l border-white/8 pl-5">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Clean interface</h3>
+              <p className="mt-3 text-sm leading-7 text-white/66">
+                Hierarchy does the work. The map leads, the main controls stay obvious, and lower-frequency settings stop fighting for attention.
+              </p>
+            </div>
+            <div className="border-l border-white/8 pl-5">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                <Globe2 className="h-5 w-5" />
+              </div>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Product depth</h3>
+              <p className="mt-3 text-sm leading-7 text-white/66">
+                From core surface fields to winter, severe, hydro, and upper-air workflows, CartoSky keeps expanding where weather users actually need it.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -634,10 +607,10 @@ export default function Home() {
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              to="/variables"
+              to="/forecast"
               className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/30 px-5 py-3 text-sm font-semibold text-white/85 transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
             >
-              Browse Variables
+              Open Forecast
             </Link>
           </div>
         </div>
