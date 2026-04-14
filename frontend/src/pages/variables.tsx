@@ -392,7 +392,7 @@ export default function Variables() {
     <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
       <section className="border-b border-white/8 bg-[#07111f] px-5 pb-16 pt-28 md:px-8 md:pt-32">
         <div className="mx-auto max-w-6xl">
-          <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
+          <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
             <div className="max-w-3xl">
               <SectionEyebrow>Reference</SectionEyebrow>
               <h1 className="mt-8 text-balance text-5xl font-semibold tracking-[-0.04em] text-white md:text-7xl md:leading-[0.98]">
@@ -424,13 +424,14 @@ export default function Variables() {
               </div>
             </div>
 
-            <div className="rounded-[1.9rem] border border-white/10 bg-white/[0.03] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.2)]">
+            <div className="border-l border-white/8 pl-6 lg:pl-8">
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/42">Current Library</div>
-              <div className="mt-6 grid gap-5 sm:grid-cols-2">
+              <div className="mt-6 space-y-5">
                 <div>
                   <div className="text-3xl font-semibold tracking-tight text-white">{variableState.variables.length || "Live"}</div>
                   <div className="mt-2 text-sm text-white/58">Supported product entries in the current catalog.</div>
                 </div>
+                <div className="h-px bg-white/8" />
                 <div>
                   <div className="text-3xl font-semibold tracking-tight text-white">{variableState.groupNames.length || "Multi"}</div>
                   <div className="mt-2 text-sm text-white/58">Operational groupings for faster scanning.</div>
@@ -482,26 +483,26 @@ export default function Variables() {
                 </div>
               </div>
 
-              <div className="mt-10 space-y-4">
+              <div className="mt-10 border-t border-white/8">
                 {variableState.grouped[groupName]?.map((variable) => {
                   const isOpen = openId === variable.id;
                   return (
                     <div
                       key={variable.id}
-                      className="rounded-[1.7rem] border border-white/10 bg-white/[0.03] shadow-[0_18px_60px_rgba(0,0,0,0.18)]"
+                      className="border-b border-white/8 last:border-b-0"
                     >
-                      <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex flex-col gap-5 py-6 lg:flex-row lg:items-start lg:justify-between">
                         <div className="max-w-3xl">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                             <h3 className="text-2xl font-semibold tracking-tight text-white">{variable.name}</h3>
-                            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-white/52">
+                            <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
                               {variable.units}
                             </span>
                           </div>
                           <p className="mt-3 text-sm leading-7 text-white/68">{variable.definition}</p>
                           <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/58">
                             {variable.models.map((modelName) => (
-                              <span key={modelName} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">
+                              <span key={modelName}>
                                 {modelName}
                               </span>
                             ))}
@@ -512,14 +513,14 @@ export default function Variables() {
                           type="button"
                           onClick={() => setOpenId((current) => (current === variable.id ? "" : variable.id))}
                           aria-expanded={isOpen}
-                          className="inline-flex items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/82 transition duration-150 hover:border-white/22 hover:bg-white/[0.07]"
+                          className="inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-2 text-sm font-medium text-white/82 transition duration-150 hover:border-white/20 hover:bg-white/[0.04]"
                         >
                           {isOpen ? "Hide details" : "Show details"}
                         </button>
                       </div>
 
                       {isOpen ? (
-                        <div className="grid gap-8 border-t border-white/8 px-6 py-6 md:grid-cols-2">
+                        <div className="grid gap-8 border-t border-white/8 py-6 md:grid-cols-2">
                           <DetailList title="Best used for" items={variable.bestFor} />
                           <DetailList title="How to read it" items={variable.interpretation} />
                           {variable.limitations.length ? <DetailList title="Limitations" items={variable.limitations} /> : null}

@@ -194,21 +194,23 @@ function ModelRow({
   onToggle: () => void;
 }) {
   return (
-    <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] shadow-[0_18px_60px_rgba(0,0,0,0.2)]">
-      <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start lg:justify-between">
+    <div className="border-t border-white/8 first:border-t-0">
+      <div className="flex flex-col gap-5 py-7 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-3xl">
           <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-200/70">{model.eyebrow}</div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
             <h3 className="text-2xl font-semibold tracking-tight text-white">{model.name}</h3>
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-white/52">
+            <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
               {model.variableCount} live products
             </span>
           </div>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-white/68">{model.oneLiner}</p>
           <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/60">
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{model.coverage}</span>
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{model.cadence}</span>
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">Latest {model.latestRun}</span>
+            <span>{model.coverage}</span>
+            <span className="text-white/22">/</span>
+            <span>{model.cadence}</span>
+            <span className="text-white/22">/</span>
+            <span>Latest {model.latestRun}</span>
           </div>
         </div>
 
@@ -216,14 +218,14 @@ function ModelRow({
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          className="inline-flex items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/82 transition duration-150 hover:border-white/22 hover:bg-white/[0.07]"
+          className="inline-flex items-center justify-center rounded-xl border border-white/10 px-4 py-2 text-sm font-medium text-white/78 transition duration-150 hover:border-white/20 hover:bg-white/[0.04]"
         >
           {isOpen ? "Hide details" : "Show details"}
         </button>
       </div>
 
       {isOpen ? (
-        <div className="grid gap-8 border-t border-white/8 px-6 py-6 md:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid gap-8 border-t border-white/8 py-6 md:grid-cols-[1.1fr_0.9fr]">
           <DetailList title="Best used for" items={model.focus} />
           <DetailList title="Operational notes" items={model.notes} />
         </div>
@@ -299,7 +301,7 @@ export default function Models() {
     <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
       <section className="border-b border-white/8 bg-[#07111f] px-5 pb-16 pt-28 md:px-8 md:pt-32">
         <div className="mx-auto max-w-6xl">
-          <div className="grid gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
+          <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
             <div className="max-w-3xl">
               <SectionEyebrow>Reference</SectionEyebrow>
               <h1 className="mt-8 text-balance text-5xl font-semibold tracking-[-0.04em] text-white md:text-7xl md:leading-[0.98]">
@@ -330,13 +332,14 @@ export default function Models() {
               </div>
             </div>
 
-            <div className="rounded-[1.9rem] border border-white/10 bg-white/[0.03] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.2)]">
+            <div className="border-l border-white/8 pl-6 lg:pl-8">
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/42">Current Support</div>
-              <div className="mt-6 grid gap-5 sm:grid-cols-2">
+              <div className="mt-6 space-y-5">
                 <div>
                   <div className="text-3xl font-semibold tracking-tight text-white">{modelState.coreModels.length || 5}</div>
                   <div className="mt-2 text-sm text-white/58">Core model families in the main workflow.</div>
                 </div>
+                <div className="h-px bg-white/8" />
                 <div>
                   <div className="text-3xl font-semibold tracking-tight text-white">{modelState.specialtyModels.length}</div>
                   <div className="mt-2 text-sm text-white/58">Operational layers and observational products.</div>
@@ -385,7 +388,7 @@ export default function Models() {
             </div>
           </div>
 
-          <div className="mt-12 space-y-5">
+          <div className="mt-12">
             {modelState.coreModels.map((model) => (
               <ModelRow
                 key={model.id}
@@ -416,22 +419,24 @@ export default function Models() {
             </div>
           </div>
 
-          <div className="mt-12 grid gap-6 lg:grid-cols-3">
+          <div className="mt-12 grid gap-0 border-t border-white/8 lg:grid-cols-3">
             {modelState.specialtyModels.map((model) => (
               <div
                 key={model.id}
-                className="rounded-[1.7rem] border border-white/10 bg-white/[0.03] p-6 shadow-[0_18px_60px_rgba(0,0,0,0.18)]"
+                className="border-b border-white/8 py-6 lg:border-b-0 lg:border-l lg:border-white/8 lg:px-6 lg:first:border-l-0 lg:py-0"
               >
-                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-slate-950/35 text-cyan-200">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-cyan-200">
                   {model.id === "spc" ? <Radar className="h-5 w-5" /> : model.id === "mrms" ? <Map className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
                 </div>
                 <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">{model.eyebrow}</div>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">{model.name}</h3>
+                <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">{model.name}</h3>
                 <p className="mt-3 text-sm leading-7 text-white/68">{model.oneLiner}</p>
                 <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/58">
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{model.coverage}</span>
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{model.cadence}</span>
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1">{model.variableCount} products</span>
+                  <span>{model.coverage}</span>
+                  <span className="text-white/22">/</span>
+                  <span>{model.cadence}</span>
+                  <span className="text-white/22">/</span>
+                  <span>{model.variableCount} products</span>
                 </div>
               </div>
             ))}
