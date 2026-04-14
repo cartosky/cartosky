@@ -235,7 +235,7 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.15] bg-[#07111f]/[0.55] shadow-[0_8px_40px_rgba(0,0,0,0.5),0_2px_12px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.12),inset_0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur-2xl",
+            "pointer-events-auto flex flex-col overflow-hidden border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08),inset_0_0_0_1px_rgba(100,180,255,0.03)] backdrop-blur-2xl",
             isDesktopLayout
               ? "w-full max-w-[42rem] gap-1.5 rounded-2xl px-4 py-3"
               : isTabletTouchLayout
