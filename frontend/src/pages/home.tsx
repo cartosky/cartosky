@@ -391,9 +391,6 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-b border-white/8 bg-[#091423] px-5 md:px-8">
-      </section>
-
       <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
         <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-[0.78fr_1.22fr]">
           <div className="max-w-lg">

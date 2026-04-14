@@ -2,7 +2,7 @@
 
 Phase 1 rollout scope:
   - IFS `oper`
-        - `tmp2m`, `dp2m`, `wspd10m`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
+        - `tmp2m`, `dp2m`, `tmp850`, `wspd10m`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
@@ -44,6 +44,11 @@ class ECMWFPlugin(BaseModelPlugin):
             "dpt2m": "dp2m",
             "dewpoint2m": "dp2m",
             "dewpoint": "dp2m",
+            "tmp850": "tmp850",
+            "t850": "tmp850",
+            "t850mb": "tmp850",
+            "temp850": "tmp850",
+            "temp850mb": "tmp850",
             "precip_total": "precip_total",
             "total_precip": "precip_total",
             "apcp": "precip_total",
@@ -396,6 +401,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
                 "short_name": "t",
             },
         ),
+        primary=True,
         kind="continuous",
         units="C",
     ),
@@ -595,6 +601,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
+    "tmp850": "tmp850",
     "precip_total": "precip_total",
     "ptype_intensity": "ptype_intensity",
     "ptype_intensity_rain": "ptype_intensity_rain",
@@ -611,6 +618,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
     "dp2m": 0,
+    "tmp850": 0,
     "precip_total": 3,
     "ptype_intensity": 6,
     "ptype_intensity_rain": 6,
@@ -627,6 +635,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
     "dp2m": 2,
+    "tmp850": 3,
     "pwat": 9,
     "precip_total": 10,
     "snowfall_total": 11,
@@ -640,6 +649,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
+    "tmp850": "Temperature",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
     "ptype_intensity": "Precipitation",
