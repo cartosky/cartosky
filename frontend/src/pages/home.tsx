@@ -282,16 +282,11 @@ export default function Home() {
   const homepageStats = useMemo(() => {
     const modelCatalog = capabilities?.model_catalog ?? {};
     const coreModels = CORE_MODEL_IDS.filter((modelId) => Boolean(modelCatalog[modelId]));
-    const coreVariableCounts = coreModels.map((modelId) => Object.keys(modelCatalog[modelId]?.variables ?? {}).length);
-    const averageCoreVariableCount = coreVariableCounts.length > 0
-      ? Math.round(coreVariableCounts.reduce((sum, count) => sum + count, 0) / coreVariableCounts.length)
-      : 15;
     const hrrrRunLabel = formatRunLabel(capabilities?.availability?.hrrr?.latest_run);
     const gfsRunLabel = formatRunLabel(capabilities?.availability?.gfs?.latest_run);
 
     return {
       coreModelCount: coreModels.length || 5,
-      averageCoreVariableCount,
       hrrrRunLabel,
       gfsRunLabel,
       freshnessDetail: `HRRR ${hrrrRunLabel} · GFS ${gfsRunLabel}`,
@@ -347,10 +342,10 @@ export default function Home() {
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                to="/models"
+                to="/forecast"
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/25 px-5 py-3 text-sm font-semibold text-white/88 backdrop-blur-sm transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
               >
-                View Models
+                Open Forecast
               </Link>
             </div>
           </div>
@@ -474,8 +469,8 @@ export default function Home() {
           />
           <ProofItem
             label="Products"
-            value={`~${homepageStats.averageCoreVariableCount} per model`}
-            detail="Surface, severe, winter, hydro, and upper-air fields."
+            value="~15 per model"
+            detail="Surface, severe, winter, hydro, and upper-air products, with more on the way."
           />
           <ProofItem
             label="Freshness"

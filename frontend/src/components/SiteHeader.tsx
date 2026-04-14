@@ -53,8 +53,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const accountLabel = twfStatus.linked ? twfStatus.display_name : "Login";
   const accountPhotoUrl = twfStatus.linked ? twfStatus.photo_url : null;
   const adminEnabled = twfStatus.admin === true;
-  const referenceNavClassName =
-    "text-xs font-medium uppercase tracking-[0.18em] text-white/54 hover:text-white/82 hover:bg-white/[0.06]";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -136,13 +134,11 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             >
               Viewer
             </NavLink>
-            <NavItem to="/forecast" label="Forecast" className="text-white/82 hover:text-white" />
-            <NavItem to="/models" label="Models" className={referenceNavClassName} />
-            <NavItem to="/variables" label="Variables" className={referenceNavClassName} />
+            <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <NavLink
               to="/login"
-              className="ml-2 rounded-lg px-3 py-2 text-sm text-white/72 transition duration-150 hover:text-white"
+              className="ml-3 rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
             >
               <span className="inline-flex items-center gap-2">
                 {accountPhotoUrl ? (
@@ -201,18 +197,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <NavItem
                   to="/forecast"
                   label="Forecast"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-white/90 hover:text-white"
-                />
-                <NavItem
-                  to="/models"
-                  label="Models"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-white/90 hover:text-white"
-                />
-                <NavItem
-                  to="/variables"
-                  label="Variables"
                   onClick={() => setMobileMenuOpen(false)}
                   className="text-white/90 hover:text-white"
                 />
