@@ -185,18 +185,18 @@ function ModelRow({
 }) {
   return (
     <div className="border-t border-white/8 first:border-t-0">
-      <div className="my-4 rounded-[1.4rem] border border-white/8 bg-white/[0.025] px-5 py-6 md:px-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <div className="my-3 rounded-[1.2rem] border border-white/8 bg-white/[0.02] px-4 py-4 md:px-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-3xl">
           <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-200/70">{model.eyebrow}</div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <h3 className="text-2xl font-semibold tracking-tight text-white">{model.name}</h3>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <h3 className="text-xl font-semibold tracking-tight text-white">{model.name}</h3>
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-white/48">
               {model.variableCount} live products
             </span>
           </div>
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-white/68">{model.oneLiner}</p>
-          <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/60">
+          <p className="mt-2.5 max-w-2xl text-sm leading-6 text-white/68">{model.oneLiner}</p>
+          <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-medium text-white/60">
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1">{model.coverage}</span>
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1">{model.cadence}</span>
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1">Latest {model.latestRun}</span>
@@ -214,11 +214,11 @@ function ModelRow({
       </div>
 
       {isOpen ? (
-          <div className="mt-6 grid gap-8 border-t border-white/8 pt-6 md:grid-cols-[1.1fr_0.9fr]">
+          <div className="mt-5 grid gap-6 border-t border-white/8 pt-5 md:grid-cols-[1.1fr_0.9fr]">
             <DetailList title="Best used for" items={model.focus} />
             <DetailList title="Operational notes" items={model.notes} />
           </div>
-      ) : null}
+        ) : null}
       </div>
     </div>
   );
@@ -226,7 +226,7 @@ function ModelRow({
 
 export default function Models() {
   const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
-  const [openId, setOpenId] = useState("hrrr");
+  const [openId, setOpenId] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -289,23 +289,23 @@ export default function Models() {
 
   return (
     <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
-      <section className="border-b border-white/8 bg-[#07111f] px-5 pb-16 pt-28 md:px-8 md:pt-32">
+      <section className="border-b border-white/8 bg-[#07111f] px-5 pb-12 pt-24 md:px-8 md:pb-14 md:pt-28">
         <div className="mx-auto max-w-6xl">
           <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
             <div className="max-w-3xl">
               <SectionEyebrow>Reference</SectionEyebrow>
-              <h1 className="mt-8 text-balance text-5xl font-semibold tracking-[-0.04em] text-white md:text-7xl md:leading-[0.98]">
+              <h1 className="mt-6 text-balance text-4xl font-semibold tracking-[-0.04em] text-white md:text-6xl md:leading-[0.98]">
                 The model catalog,
                 <br />
                 <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic text-cyan-200">
                   clearly scoped.
                 </span>
               </h1>
-              <p className="mt-7 max-w-2xl text-base leading-8 text-white/72 md:text-lg">
+              <p className="mt-5 max-w-2xl text-base leading-7 text-white/72 md:text-[1.02rem]">
                 A cleaner reference surface for the guidance CartoSky supports right now: core models,
                 official operational layers, cadence context, and the kinds of reads each source is best at.
               </p>
-              <div className="mt-10 flex flex-wrap gap-3">
+              <div className="mt-8 flex flex-wrap gap-3">
                 <Link
                   to="/viewer"
                   className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
@@ -322,17 +322,17 @@ export default function Models() {
               </div>
             </div>
 
-            <div className="border-l border-white/8 pl-6 lg:pl-8">
+            <div className="border-l border-white/8 pl-5 lg:pl-7">
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/42">Current Support</div>
-              <div className="mt-6 space-y-5">
+              <div className="mt-5 space-y-4">
                 <div>
-                  <div className="text-3xl font-semibold tracking-tight text-white">{modelState.coreModels.length || 5}</div>
-                  <div className="mt-2 text-sm text-white/58">Core model families in the main workflow.</div>
+                  <div className="text-2xl font-semibold tracking-tight text-white">{modelState.coreModels.length || 5}</div>
+                  <div className="mt-1 text-sm text-white/58">Core model families.</div>
                 </div>
                 <div className="h-px bg-white/8" />
                 <div>
-                  <div className="text-3xl font-semibold tracking-tight text-white">{modelState.specialtyModels.length}</div>
-                  <div className="mt-2 text-sm text-white/58">Operational layers and observational products.</div>
+                  <div className="text-2xl font-semibold tracking-tight text-white">{modelState.specialtyModels.length}</div>
+                  <div className="mt-1 text-sm text-white/58">Operational layers.</div>
                 </div>
               </div>
             </div>
@@ -340,7 +340,7 @@ export default function Models() {
         </div>
       </section>
 
-      <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
+      <section className="bg-[#0b1527] px-5 py-16 md:px-8 md:py-18">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-start gap-4">
             <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
@@ -348,13 +348,13 @@ export default function Models() {
             </div>
             <div>
               <SectionEyebrow>Core Models</SectionEyebrow>
-              <h2 className="mt-4 text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
+              <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
                 The guidance that anchors the viewer.
               </h2>
             </div>
           </div>
 
-          <div className="mt-12">
+          <div className="mt-10">
             {modelState.coreModels.map((model) => (
               <ModelRow
                 key={model.id}
@@ -367,7 +367,7 @@ export default function Models() {
         </div>
       </section>
 
-      <section className="border-t border-white/8 bg-[#0c172b] px-5 py-20 md:px-8 md:py-24">
+      <section className="border-t border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-start gap-4">
             <div className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
@@ -375,25 +375,25 @@ export default function Models() {
             </div>
             <div>
               <SectionEyebrow>Operational Layers</SectionEyebrow>
-              <h2 className="mt-4 text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
+              <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
                 Official and observed context belongs in the same workflow.
               </h2>
             </div>
           </div>
 
-          <div className="mt-12 grid gap-5 lg:grid-cols-3">
+          <div className="mt-10 grid gap-4 lg:grid-cols-3">
             {modelState.specialtyModels.map((model) => (
               <div
                 key={model.id}
-                className="rounded-[1.35rem] border border-white/8 bg-white/[0.025] px-5 py-6"
+                className="rounded-[1.2rem] border border-white/8 bg-white/[0.02] px-4 py-5"
               >
                 <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-cyan-200">
                   {model.id === "spc" ? <Radar className="h-5 w-5" /> : model.id === "mrms" ? <Map className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
                 </div>
                 <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">{model.eyebrow}</div>
-                <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">{model.name}</h3>
-                <p className="mt-3 text-sm leading-7 text-white/68">{model.oneLiner}</p>
-                <div className="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-white/58">
+                <h3 className="mt-3 text-lg font-semibold tracking-tight text-white">{model.name}</h3>
+                <p className="mt-2.5 text-sm leading-6 text-white/68">{model.oneLiner}</p>
+                <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-medium text-white/58">
                   <span>{model.coverage}</span>
                   <span className="text-white/22">/</span>
                   <span>{model.cadence}</span>
