@@ -6,6 +6,7 @@ import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, buildMapStyle } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
+import SiteHeader from "@/components/SiteHeader";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
 import {
   fetchAnchorFeatureCollection,
@@ -3033,6 +3034,7 @@ export default function App() {
   return (
     <ViewerToolbarContext.Provider value={toolbarContextValue}>
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <SiteHeader variant="app" />
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         <MapCanvas

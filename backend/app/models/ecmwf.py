@@ -427,7 +427,6 @@ ECMWF_VARS: dict[str, VarSpec] = {
                 "contour_end": "1800",
                 "contour_key": "height_850mb",
                 "contour_label": "850 mb Height",
-                "contour_conversion": "geopotential_to_height_m",
             }
         ),
         primary=True,
@@ -594,16 +593,16 @@ ECMWF_VARS: dict[str, VarSpec] = {
         id="hgt850",
         name="850mb Height",
         selectors=VarSelectors(
-            search=[":z:850:pl:"],
+            search=[":gh:850:"],
             filter_by_keys={
-                "shortName": "z",
+                "shortName": "gh",
                 "typeOfLevel": "isobaricInhPa",
                 "level": "850",
             },
             hints={
-                "upstream_var": "z850",
-                "cf_var": "z",
-                "short_name": "z",
+                "upstream_var": "gh850",
+                "cf_var": "gh",
+                "short_name": "gh",
             },
         ),
     ),

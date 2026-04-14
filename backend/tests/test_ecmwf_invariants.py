@@ -134,7 +134,6 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd850_spec.selectors.hints["contour_component"] == "hgt850"
     assert wspd850_spec.selectors.hints["contour_interval"] == "30"
     assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
-    assert wspd850_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
 
     snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
     assert snowfall_kuchera_spec is not None
@@ -176,9 +175,9 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
 
     hgt850_spec = ECMWF_MODEL.get_var("hgt850")
     assert hgt850_spec is not None
-    assert hgt850_spec.selectors.search == [":z:850:pl:"]
+    assert hgt850_spec.selectors.search == [":gh:850:"]
     assert hgt850_spec.selectors.filter_by_keys == {
-        "shortName": "z",
+        "shortName": "gh",
         "typeOfLevel": "isobaricInhPa",
         "level": "850",
     }
