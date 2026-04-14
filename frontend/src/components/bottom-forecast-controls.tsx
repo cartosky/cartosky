@@ -235,7 +235,7 @@ export function BottomForecastControls({
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
-            "pointer-events-auto flex flex-col glass-strong",
+            "pointer-events-auto flex flex-col overflow-hidden border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl",
             isDesktopLayout
               ? "w-full max-w-[42rem] gap-2 rounded-[1.35rem] px-3 py-2 sm:px-3.5 sm:py-2.5"
               : isTabletTouchLayout
@@ -244,12 +244,12 @@ export function BottomForecastControls({
           )}
         >
           <div className={isDesktopLayout ? "hidden" : "block"}>
-            <div className={cn("flex items-start justify-between gap-2", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
+            <div className={cn("flex items-start justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0">
                 {validTime ? (
-                  <div className="truncate text-xs font-semibold text-foreground">{validTime.primary}</div>
+                  <div className="truncate text-xs font-semibold text-white">{validTime.primary}</div>
                 ) : (
-                  <div className="text-[10px] text-muted-foreground">
+                  <div className="text-[10px] text-white/50">
                     {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
                   </div>
                 )}
@@ -258,7 +258,7 @@ export function BottomForecastControls({
                 {sourceStatusLabel ? (
                   <div
                     className={cn(
-                      "rounded-md border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider",
+                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
                       statusBadgeClass(sourceStatusTone)
                     )}
                   >
@@ -266,7 +266,7 @@ export function BottomForecastControls({
                   </div>
                 ) : null}
                 {transientStatus ? (
-                  <div className="flex items-center gap-1 rounded-md border border-border/35 bg-background/35 px-2 py-1 text-[9px] text-foreground/90">
+                  <div className="flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
                     <AlertCircle className="h-3 w-3" />
                     {transientStatus}
                   </div>
@@ -277,21 +277,23 @@ export function BottomForecastControls({
             <div className={cn("flex items-center", isTabletTouchLayout ? "gap-2.5" : "gap-3")}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant={isPlaying ? "default" : "outline"}
-                    size="sm"
+                  <button
+                    type="button"
                     onClick={() => setIsPlaying(!isPlaying)}
                     disabled={disabled || !hasFrames || playDisabled}
                     aria-label={isPlaying ? "Pause animation" : "Play animation"}
                     className={cn(
-                      "shrink-0 p-0 transition-all duration-150",
-                      isTabletTouchLayout ? "h-9 w-9 rounded-lg" : "h-10 w-10 rounded-xl"
+                      "flex shrink-0 items-center justify-center border transition-all duration-150 disabled:opacity-50 disabled:hover:scale-100",
+                      isTabletTouchLayout ? "h-9 w-9 rounded-lg" : "h-10 w-10 rounded-xl",
+                      isPlaying
+                        ? "bg-cyan-300/[0.12] text-cyan-200 border-cyan-300/30"
+                        : "bg-white/[0.05] text-white/80 border-white/10 hover:bg-white/[0.09] hover:text-white"
                     )}
                   >
-                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-px" />}
-                  </Button>
+                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+                  </button>
                 </TooltipTrigger>
-                <TooltipContent side="top">
+                <TooltipContent side="top" className="bg-[#07111f] border-white/10 text-white">
                   {isPlaying ? "Pause" : "Play"} animation
                 </TooltipContent>
               </Tooltip>
@@ -321,10 +323,10 @@ export function BottomForecastControls({
                   max={Math.max(0, availableFrames.length - 1)}
                   step={1}
                   disabled={disabled || isPlaying || !hasFrames}
-                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-5 [&>*:nth-child(2)]:w-5"
+                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-cyan-300 [&>*:first-child>*:first-child]:shadow-[0_0_12px_rgba(35,196,255,0.4)] [&>*:nth-child(2)]:h-5 [&>*:nth-child(2)]:w-5 [&>*:nth-child(2)]:border-slate-800 [&>*:nth-child(2)]:bg-cyan-100"
                 />
                 {validTime ? (
-                  <div className="pt-1 text-right text-[10px] font-medium uppercase tracking-wider text-foreground/60">
+                  <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em] text-white/50">
                     {validTime.secondary}
                   </div>
                 ) : null}
@@ -332,94 +334,98 @@ export function BottomForecastControls({
             </div>
           </div>
 
-          <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
-            <div className="flex shrink-0 items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={isPlaying ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={disabled || !hasFrames || playDisabled}
-                    aria-label={isPlaying ? "Pause animation" : "Play animation"}
-                    className="h-10 w-10 p-0 transition-all duration-150 hover:scale-105 active:scale-95"
-                  >
-                    {isPlaying ? (
-                      <Pause className="h-4 w-4" />
-                    ) : (
-                      <Play className="h-4 w-4 translate-x-px" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {isPlaying ? "Pause" : "Play"} animation
-                </TooltipContent>
-              </Tooltip>
-            </div>
-
-            <div className="flex flex-1 flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-foreground/65">
-                  <Clock className="h-3 w-3" />
-                  {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
-                </span>
-                <span className="font-mono text-xs font-semibold tabular-nums tracking-tight text-foreground/95 transition-all duration-150">
-                  {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
-                </span>
+            <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
+              <div className="flex shrink-0 items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      disabled={disabled || !hasFrames || playDisabled}
+                      aria-label={isPlaying ? "Pause animation" : "Play animation"}
+                      className={cn(
+                        "flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 transition-all duration-150 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100",
+                        isPlaying
+                          ? "bg-cyan-300/[0.12] text-cyan-200 border-cyan-300/30"
+                          : "bg-white/[0.05] text-white/80 hover:bg-white/[0.09] hover:text-white"
+                      )}
+                    >
+                      {isPlaying ? (
+                        <Pause className="h-4 w-4" />
+                      ) : (
+                        <Play className="h-4 w-4 translate-x-[1px]" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-[#07111f] border-white/10 text-white">
+                    {isPlaying ? "Pause" : "Play"} animation
+                  </TooltipContent>
+                </Tooltip>
               </div>
-              <Slider
-                value={[sliderIndex]}
-                onValueChange={([value]) => {
-                  const next = availableFrames[Math.round(value ?? 0)];
-                  if (Number.isFinite(next)) {
-                    if (!isScrubbing) {
-                      setIsScrubbing(true);
+
+              <div className="flex flex-1 flex-col gap-1.5">
+                <div className="flex items-center justify-between px-1">
+                  <span className="flex items-center gap-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.2em] text-cyan-300/60">
+                    <Clock className="h-3 w-3" />
+                    {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
+                  </span>
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium tracking-tight text-white/90 transition-all duration-150">
+                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
+                  </span>
+                </div>
+                <Slider
+                  value={[sliderIndex]}
+                  onValueChange={([value]) => {
+                    const next = availableFrames[Math.round(value ?? 0)];
+                    if (Number.isFinite(next)) {
+                      if (!isScrubbing) {
+                        setIsScrubbing(true);
+                      }
+                      setPreviewHour(next);
+                      emitForecastHour(next, false);
                     }
-                    setPreviewHour(next);
-                    emitForecastHour(next, false);
-                  }
-                }}
-                onValueCommit={([value]) => {
-                  const next = availableFrames[Math.round(value ?? 0)];
-                  if (Number.isFinite(next)) {
-                    setPreviewHour(null);
-                    setIsScrubbing(false);
-                    emitForecastHour(next, true);
-                  }
-                }}
-                min={0}
-                max={Math.max(0, availableFrames.length - 1)}
-                step={1}
-                disabled={disabled || isPlaying || !hasFrames}
-                className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-[22px] [&>*:nth-child(2)]:w-[22px]"
-              />
+                  }}
+                  onValueCommit={([value]) => {
+                    const next = availableFrames[Math.round(value ?? 0)];
+                    if (Number.isFinite(next)) {
+                      setPreviewHour(null);
+                      setIsScrubbing(false);
+                      emitForecastHour(next, true);
+                    }
+                  }}
+                  min={0}
+                  max={Math.max(0, availableFrames.length - 1)}
+                  step={1}
+                  disabled={disabled || isPlaying || !hasFrames}
+                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-white/10 [&>*:first-child>*:first-child]:bg-cyan-300 [&>*:first-child>*:first-child]:shadow-[0_0_12px_rgba(35,196,255,0.4)] [&>*:nth-child(2)]:h-[22px] [&>*:nth-child(2)]:w-[22px] [&>*:nth-child(2)]:border-slate-800 [&>*:nth-child(2)]:bg-cyan-100 [&>*:nth-child(2)]:shadow-[0_0_16px_rgba(35,196,255,0.5)]"
+                />
             </div>
 
-            <div className="flex shrink-0 flex-col items-end gap-1 border-l border-border/30 pl-5 sm:min-w-[220px]">
-              {transientStatus ? (
-                <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[10px] text-foreground/90">
-                  <AlertCircle className="h-3 w-3" />
-                  {transientStatus}
-                </div>
-              ) : null}
-              {validTime ? (
-                <>
-                  <span className="text-sm font-semibold leading-tight tracking-tight text-foreground transition-all duration-200">
-                    {validTime.primary}
-                  </span>
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-foreground/65 transition-all duration-200">
-                    {validTime.secondary}
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <AlertCircle className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground">
-                    {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
-                  </span>
-                </div>
-              )}
-            </div>
+              <div className="flex shrink-0 flex-col items-end gap-0.5 border-l border-white/10 pl-5 sm:min-w-[220px]">
+                {transientStatus ? (
+                  <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[10px] text-amber-100">
+                    <AlertCircle className="h-3 w-3" />
+                    {transientStatus}
+                  </div>
+                ) : null}
+                {validTime ? (
+                  <>
+                    <span className="text-[13px] font-semibold leading-tight tracking-tight text-white transition-all duration-200">
+                      {validTime.primary}
+                    </span>
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em] text-white/50 transition-all duration-200">
+                      {validTime.secondary}
+                    </span>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <AlertCircle className="h-3 w-3 text-white/50" />
+                    <span className="text-[10px] text-white/50">
+                      {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
+                    </span>
+                  </div>
+                )}
+              </div>
           </div>
         </div>
       </div>
