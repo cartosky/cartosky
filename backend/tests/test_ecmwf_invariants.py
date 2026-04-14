@@ -47,6 +47,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
     assert ECMWF_MODEL.normalize_var_id("wspd300") == "wspd300"
     assert ECMWF_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
+    assert ECMWF_MODEL.normalize_var_id("vort500") == "vort500"
+    assert ECMWF_MODEL.normalize_var_id("500mb_vorticity") == "vort500"
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("apcp") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -91,7 +93,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "vort500", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -150,6 +152,17 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd300_spec.selectors.hints["contour_component"] == "hgt300"
     assert wspd300_spec.selectors.hints["contour_interval"] == "120"
     assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
+
+    vort500_spec = ECMWF_MODEL.get_var("vort500")
+    assert vort500_spec is not None
+    assert vort500_spec.primary is True
+    assert vort500_spec.derived is False
+    assert vort500_spec.kind == "continuous"
+    assert vort500_spec.units == "10^-5 s^-1"
+    assert vort500_spec.selectors.search == [":vo:500:", ":vo:500:pl:"]
+    assert vort500_spec.selectors.hints["contour_component"] == "hgt500"
+    assert vort500_spec.selectors.hints["contour_interval"] == "60"
+    assert vort500_spec.selectors.hints["contour_key"] == "height_500mb"
 
     snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
     assert snowfall_kuchera_spec is not None
@@ -243,6 +256,15 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         "level": "300",
     }
 
+    hgt500_spec = ECMWF_MODEL.get_var("hgt500")
+    assert hgt500_spec is not None
+    assert hgt500_spec.selectors.search == [":gh:500:"]
+    assert hgt500_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "500",
+    }
+
 
 def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     capabilities = ECMWF_MODEL.capabilities
@@ -321,6 +343,19 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["group"] == "Wind"
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]
+
+    vort500 = payload["variables"]["vort500"]
+    assert vort500["var_key"] == "vort500"
+    assert vort500["display_name"] == "500mb Vorticity"
+    assert vort500["kind"] == "continuous"
+    assert vort500["units"] == "10^-5 s^-1"
+    assert vort500["buildable"] is True
+    assert vort500["derived"] is False
+    assert vort500["color_map_id"] == "vort500"
+    assert vort500["order"] == 5
+    assert vort500["group"] == "Dynamics"
+    assert vort500["default_fh"] == 0
+    assert vort500["render_substrates"] == ["grid"]
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"

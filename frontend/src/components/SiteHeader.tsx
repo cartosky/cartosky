@@ -462,12 +462,13 @@ function ViewerNavDesktop() {
           </button>
 
           {legendPanelOpen ? createPortal(
-            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.95] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.95] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
               <MapLegend
                 legend={legend}
                 onOpacityChange={onOpacityChange}
                 showOpacityControl={true}
                 displayPanelOpen={displayPanelOpen}
+                defaultExpanded={true}
               />
             </div>
           , document.body) : null}
@@ -519,9 +520,9 @@ function ViewerNavDesktop() {
           </button>
 
           {displayPanelOpen ? createPortal(
-            <div className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-white/[0.11] bg-[#0b1828]/95 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+            <div className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
               {/* Panel header */}
-              <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
+              <div className="flex items-center justify-between border-b border-[#1a3a5c]/50 px-4 py-3">
                 <div>
                   <div className="font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.22em] text-cyan-300/60">
                     Display
@@ -951,13 +952,20 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-[60] border-b border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_2px_12px_rgba(0,0,0,0.35),inset_0_-1px_0_rgba(100,180,255,0.05)] backdrop-blur-md">
+    <header className="fixed inset-x-0 top-0 z-[60]">
+      {/* Isolated blur layer — own compositor layer, never repaints from map activity */}
       <div
-        className={
+        aria-hidden="true"
+        className="absolute inset-0 border-b border-[#1a3a5c]/60 bg-[#04101e]/[0.72] shadow-[0_2px_16px_rgba(0,0,0,0.4),inset_0_-1px_0_rgba(100,180,255,0.06)] backdrop-blur-md"
+        style={{ willChange: "transform" }}
+      />
+      <div
+        className={cn(
+          "relative z-10",
           isAppVariant
             ? "flex h-14 items-center gap-3 px-4 md:px-5"
             : "mx-auto flex h-16 max-w-6xl items-center gap-3 px-5 md:gap-6 md:px-8"
-        }
+        )}
       >
         {/* Logo */}
         <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">

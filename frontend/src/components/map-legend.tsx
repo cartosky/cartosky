@@ -347,6 +347,7 @@ type MapLegendProps = {
   containerRef?: Ref<HTMLDivElement>;
   showOpacityControl?: boolean;
   displayPanelOpen?: boolean;
+  defaultExpanded?: boolean;
 };
 
 export function MapLegend({
@@ -355,8 +356,9 @@ export function MapLegend({
   containerRef,
   showOpacityControl = true,
   displayPanelOpen = false,
+  defaultExpanded = false,
 }: MapLegendProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsedPreference());
+  const [collapsed, setCollapsed] = useState<boolean>(() => defaultExpanded ? false : readCollapsedPreference());
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [fadeKey, setFadeKey] = useState(0);
   const prevTitleRef = useRef(legend?.title);
