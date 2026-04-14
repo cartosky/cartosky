@@ -413,9 +413,9 @@ export function MapLegend({
     <div
       ref={containerRef}
       className={cn(
-        "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/34 shadow-[0_6px_22px_rgba(0,0,0,0.3)] transition-all duration-200",
+        "fixed z-[55] flex flex-col max-h-[70vh] overflow-hidden rounded-xl glass bg-black/28 shadow-[0_6px_22px_rgba(0,0,0,0.24)] transition-all duration-200",
         showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
-        isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[4.35rem]"
+        isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[7.75rem]"
       )}
       role="complementary"
       aria-label="Map legend"

@@ -237,10 +237,10 @@ export function BottomForecastControls({
           className={cn(
             "pointer-events-auto flex flex-col glass-strong",
             isDesktopLayout
-              ? "w-full max-w-3xl gap-2.5 rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3"
+              ? "w-full max-w-[42rem] gap-2 rounded-[1.35rem] px-3 py-2 sm:px-3.5 sm:py-2.5"
               : isTabletTouchLayout
-                ? "w-[min(90vw,560px)] gap-2 rounded-xl px-2.5 py-2"
-                : "w-full max-w-3xl gap-2.5 rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3"
+                ? "w-[min(90vw,560px)] gap-1.5 rounded-xl px-2.5 py-2"
+                : "w-full max-w-3xl gap-2 rounded-[1.2rem] px-3 py-2.5 sm:px-3.5 sm:py-2.5"
           )}
         >
           <div className={isDesktopLayout ? "hidden" : "block"}>
@@ -331,6 +331,27 @@ export function BottomForecastControls({
               </div>
             </div>
           </div>
+
+          {isDesktopLayout && validTime ? (
+            <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-1.5">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">{validTime.primary}</div>
+                <div className="mt-0.5 text-[10px] uppercase tracking-[0.18em] text-white/44">
+                  {validTime.axisLabel} · {validTime.secondary}
+                </div>
+              </div>
+              {sourceStatusLabel ? (
+                <div
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
+                    statusBadgeClass(sourceStatusTone)
+                  )}
+                >
+                  {sourceStatusLabel}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className={isDesktopLayout ? "flex items-center gap-5" : "hidden"}>
             <div className="flex shrink-0 items-center gap-2">

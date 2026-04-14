@@ -3110,23 +3110,10 @@ export default function App() {
         )}
 
         {isDesktopViewerLayout ? (
-          <div className="fixed right-4 bottom-6 z-40 flex items-end gap-3">
-          {handleOpenShareModal ? (
-            <button
-              type="button"
-              onClick={handleOpenShareModal}
-              className="inline-flex h-11 items-center gap-2 rounded-full border border-emerald-300/25 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-4 text-sm font-semibold text-emerald-50 shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition-all duration-150 hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300/45"
-              aria-label="Share"
-              title="Share"
-            >
-              <Send className="h-4 w-4" />
-              Share
-            </button>
-          ) : null}
-
+          <div className="fixed right-4 bottom-6 z-40">
           <div className="relative flex flex-col items-end">
             {displayPanelOpen ? (
-              <div className="glass absolute right-0 bottom-full mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+              <div className="glass absolute right-0 bottom-full mb-3 w-[220px] rounded-2xl px-3 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.3)]">
               <div className="mb-3">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">Display</div>
                 <div className="pt-1 text-xs text-white/62">Map overlays and reference aids.</div>

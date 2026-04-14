@@ -3,6 +3,7 @@ import {
   Boxes,
   CalendarClock,
   ChevronDown,
+  Clock3,
   Layers,
   MapPin,
   Send,
@@ -121,6 +122,21 @@ function SourceStatusBadge({
       )}
     >
       {label}
+    </div>
+  );
+}
+
+function ToolbarMeta({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/40">{label}</div>
+      <div className="mt-1 truncate text-xs font-medium text-white/88">{value}</div>
     </div>
   );
 }
@@ -396,80 +412,128 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
   return (
     <header role="toolbar" aria-label="Weather model controls" className="fixed top-[4.35rem] z-50 w-full px-3 sm:px-4">
       <div className={isDesktopLayout ? "block" : "hidden"}>
-        <div className="flex items-start">
-          <div className="glass-strong inline-flex items-center gap-2 rounded-full border border-white/12 px-3 py-2.5 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
-            <ToolbarSelect
-              label="Region"
-              icon={MapPin}
-              value={region}
-              onValueChange={onRegionChange}
-              options={regions}
-              disabled={disabled}
-              placeholder="Region"
-              hideLabel
-              triggerClassName="min-w-[132px] max-w-[132px] rounded-full border-white/10 bg-white/8 px-3"
-            />
-
-            <ToolbarSelect
-              label="Model"
-              icon={Boxes}
-              value={model}
-              onValueChange={onModelChange}
-              options={models}
-              disabled={disabled}
-              placeholder="Model"
-              grouped
-              hideLabel
-              triggerClassName="min-w-[118px] max-w-[118px] rounded-full border-white/10 bg-white/8 px-3"
-            />
-
-            <ToolbarSelect
-              label="Run"
-              icon={CalendarClock}
-              value={run}
-              onValueChange={onRunChange}
-              options={runMenuOptions}
-              disabled={disabled || runSelectionLocked}
-              placeholder="Run"
-              hideLabel
-              selectedLabelOverride={runDisplayLabel}
-              highlightState={!runSelectionLocked && hasNewerRunAvailable}
-              menuActionLabel={
-                !runSelectionLocked && hasNewerRunAvailable
-                  ? "View latest run"
-                  : null
-              }
-              menuActionDescription={
-                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                  ? `${latestAvailableRunLabel} available`
-                  : null
-              }
-              onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-              triggerClassName="min-w-[210px] max-w-[210px] rounded-full border-white/10 bg-white/8 px-3"
-            />
-
-            <ToolbarSelect
-              label="Variable"
-              icon={Layers}
-              value={variable}
-              onValueChange={onVariableChange}
-              options={displayVariables}
-              disabled={disabled}
-              placeholder="Variable"
-              grouped
-              hideLabel
-              triggerClassName="min-w-[248px] max-w-[248px] rounded-full border-white/10 bg-white/8 px-3"
-            />
-
-            {sourceStatusLabel ? (
-              <SourceStatusBadge
-                label={sourceStatusLabel}
-                description={sourceStatusDescription}
-                tone={sourceStatusTone}
+        <div className="mx-auto max-w-7xl">
+          <div className="glass-strong flex items-center justify-between gap-3 rounded-[1.35rem] border border-white/12 px-3 py-3 shadow-[0_18px_40px_rgba(0,0,0,0.34)]">
+            <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-2">
+              <ToolbarSelect
+                label="Product"
+                icon={Layers}
+                value={variable}
+                onValueChange={onVariableChange}
+                options={displayVariables}
+                disabled={disabled}
+                placeholder="Variable"
+                grouped
+                hideLabel
+                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
               />
-            ) : null}
-          </div>
 
+              <ToolbarSelect
+                label="Model"
+                icon={Boxes}
+                value={model}
+                onValueChange={onModelChange}
+                options={models}
+                disabled={disabled}
+                placeholder="Model"
+                grouped
+                hideLabel
+                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
+              />
+
+              <ToolbarSelect
+                label="Run"
+                icon={CalendarClock}
+                value={run}
+                onValueChange={onRunChange}
+                options={runMenuOptions}
+                disabled={disabled || runSelectionLocked}
+                placeholder="Run"
+                hideLabel
+                selectedLabelOverride={runDisplayLabel}
+                highlightState={!runSelectionLocked && hasNewerRunAvailable}
+                menuActionLabel={
+                  !runSelectionLocked && hasNewerRunAvailable
+                    ? "View latest run"
+                    : null
+                }
+                menuActionDescription={
+                  !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
+                    ? `${latestAvailableRunLabel} available`
+                    : null
+                }
+                onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
+                triggerClassName="h-11 rounded-2xl border-white/10 bg-white/[0.06] px-3.5 text-[13px]"
+              />
+
+              <div className="flex min-w-0 items-center justify-end gap-4 pl-2">
+                <ToolbarMeta label="Region" value={regions.find((opt) => opt.value === region)?.label ?? "Region"} />
+                <ToolbarMeta label="Active" value={selectedVariableLabel} />
+                {sourceStatusLabel ? (
+                  <SourceStatusBadge
+                    label={sourceStatusLabel}
+                    description={sourceStatusDescription}
+                    tone={sourceStatusTone}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2 border-l border-white/8 pl-3">
+              <div className="hidden min-[1180px]:flex items-center gap-3 pr-1">
+                <ToolbarMeta label="Run Label" value={selectedRunLabel} />
+                <ToolbarMeta label="Mode" value={selectedModelLabel} />
+              </div>
+              {onPostToTwf ? <ShareButton onClick={onPostToTwf} compact /> : null}
+              <button
+                type="button"
+                onClick={() => setMobilePanelOpen((value) => !value)}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-white/84 transition duration-150 hover:bg-white/[0.08]"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Display
+                <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
+              </button>
+            </div>
+          </div>
+          {mobilePanelOpen ? (
+            <div className="mt-2 ml-auto w-[280px] rounded-2xl border border-white/12 bg-[#08111f]/92 p-3 shadow-[0_18px_36px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48">
+                Display
+              </div>
+              <div className="space-y-2">
+                <DisplayToggle
+                  label="City Labels"
+                  checked={pointLabelsEnabled}
+                  onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
+                />
+                <DisplayToggle
+                  label="Legend"
+                  checked={legendVisible}
+                  onToggle={() => onLegendVisibleChange(!legendVisible)}
+                />
+                <DisplayToggle
+                  label="Dark Mode"
+                  checked={basemapMode === "dark"}
+                  onToggle={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
+                />
+                <div className="rounded-xl border border-white/10 bg-black/18 px-3 py-2">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-white">Opacity</span>
+                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
+                  </div>
+                  <Slider
+                    value={[Math.round(opacity * 100)]}
+                    onValueChange={([value]) => onOpacityChange((value ?? 100) / 100)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -494,7 +558,7 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             aria-controls="mobile-layers-panel"
           >
             <SlidersHorizontal className="h-4 w-4" />
-            Layers
+            Controls
             <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", mobilePanelOpen ? "rotate-180" : "")} />
           </button>
 
@@ -509,14 +573,14 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
             ) : null}
             {isCompactTouchLayout ? (
               <>
-              <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
-                {selectedRunLabel}
-              </span>
               <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/82">
+                {selectedVariableLabel}
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/76">
                 {selectedModelLabel}
               </span>
-              <span className="max-w-[180px] truncate rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/74">
-                {selectedVariableLabel}
+              <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 font-medium text-white/68">
+                {selectedRunLabel}
               </span>
               </>
             ) : null}
@@ -530,16 +594,6 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
           >
             <div className="grid grid-cols-1 gap-3">
               <ToolbarSelect
-                label="Region"
-                icon={MapPin}
-                value={region}
-                onValueChange={onRegionChange}
-                options={regions}
-                disabled={disabled}
-                placeholder="Region"
-              />
-
-              <ToolbarSelect
                 label="Model"
                 icon={Boxes}
                 value={model}
@@ -551,8 +605,19 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               />
 
               <ToolbarSelect
+                label="Product"
+                icon={Layers}
+                value={variable}
+                onValueChange={onVariableChange}
+                options={displayVariables}
+                disabled={disabled}
+                placeholder="Variable"
+                grouped
+              />
+
+              <ToolbarSelect
                 label="Run"
-                icon={CalendarClock}
+                icon={Clock3}
                 value={run}
                 onValueChange={onRunChange}
                 options={runMenuOptions}
@@ -574,14 +639,13 @@ export function WeatherToolbar(props: WeatherToolbarProps) {
               />
 
               <ToolbarSelect
-                label="Variable"
-                icon={Layers}
-                value={variable}
-                onValueChange={onVariableChange}
-                options={displayVariables}
+                label="Region"
+                icon={MapPin}
+                value={region}
+                onValueChange={onRegionChange}
+                options={regions}
                 disabled={disabled}
-                placeholder="Variable"
-                grouped
+                placeholder="Region"
               />
             </div>
 
