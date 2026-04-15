@@ -99,14 +99,12 @@ function ViewerPreview() {
           `,
         }}
       />
-      <div className="relative z-10 p-4 sm:p-5">
-        <div className="overflow-hidden rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-          <img
-            src="/assets/screenshot_home.png"
-            alt="CartoSky viewer screenshot"
-            className="block h-auto w-full object-cover"
-          />
-        </div>
+      <div className="relative z-10">
+        <img
+          src="/assets/screenshot_home.png"
+          alt="CartoSky viewer screenshot"
+          className="block h-auto w-full object-cover"
+        />
       </div>
     </div>
   );
