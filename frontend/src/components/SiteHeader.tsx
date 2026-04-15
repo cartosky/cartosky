@@ -352,7 +352,7 @@ function ViewerNavDesktop() {
     onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
     sourceStatusTone, runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
     onShare, displayPanelOpen, onDisplayPanelOpenChange,
-    pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible, onLegendVisibleChange,
+    pointLabelsEnabled, onPointLabelsEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legend,
   } = toolbar;
@@ -532,12 +532,6 @@ function ViewerNavDesktop() {
                   icon={MapPin}
                   checked={pointLabelsEnabled}
                   onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
-                />
-                <DisplayRow
-                  label="Legend"
-                  icon={Eye}
-                  checked={legendVisible}
-                  onToggle={() => onLegendVisibleChange(!legendVisible)}
                 />
                 <DisplayRow
                   label="Zoom Controls"

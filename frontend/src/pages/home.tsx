@@ -124,45 +124,14 @@ function ViewerPreview({
         <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] uppercase tracking-[0.2em] text-white/45">
             <span>Viewer showcase</span>
-            <span className="text-cyan-200/70">Screenshot-ready stage</span>
+            <span className="text-cyan-200/70">Live product view</span>
           </div>
-          <div className="mt-5 h-[260px] overflow-hidden rounded-[1.2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]">
-            <div className="relative h-full w-full overflow-hidden">
-              <div aria-hidden="true" className="absolute inset-0 bg-[linear-gradient(180deg,#102338_0%,#081120_100%)]" />
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-95"
-                style={{
-                  backgroundImage: `
-                    linear-gradient(90deg, rgba(8,17,32,0.62) 0%, rgba(8,17,32,0.28) 46%, rgba(8,17,32,0.38) 100%),
-                    url(/assets/hero-image.png)
-                  `,
-                  backgroundSize: "auto, cover",
-                  backgroundPosition: "center, center right",
-                }}
-              />
-              <div
-                aria-hidden="true"
-                className="absolute inset-0 opacity-30"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(0deg, transparent 0 88%, rgba(255,255,255,0.06) 88.1% 88.4%, transparent 88.5% 100%), linear-gradient(90deg, transparent 0 86%, rgba(255,255,255,0.05) 86.1% 86.4%, transparent 86.5% 100%)",
-                }}
-              />
-              <div className="absolute left-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
-                HRRR · CONUS · 2m Temp
-              </div>
-              <div className="absolute right-4 top-4 rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-white/75 backdrop-blur-md">
-                Valid 18Z
-              </div>
-              <div className="absolute left-4 top-[27%] max-w-[15rem] rounded-2xl border border-white/12 bg-slate-950/58 p-4 text-left backdrop-blur-md">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Viewer Focus</div>
-                <div className="mt-3 text-sm font-semibold text-white">Map-dominant forecast workflow</div>
-                <div className="mt-2 text-xs leading-6 text-white/60">
-                  This stage is reserved for the redesigned viewer screenshot that will ship before public beta.
-                </div>
-              </div>
-            </div>
+          <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]">
+            <img
+              src="/assets/screenshot_home.png"
+              alt="CartoSky viewer screenshot"
+              className="block h-auto w-full object-cover"
+            />
           </div>
           <div className="mt-4 flex items-center gap-3">
             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">Init 12Z</div>
