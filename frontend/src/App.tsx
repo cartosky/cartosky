@@ -2829,8 +2829,10 @@ export default function App() {
       ? Math.max(...readyRows.map((row) => Number(row.fh)).filter(Number.isFinite))
       : null;
 
-    const targetMaxForecastHour = Number.isFinite(selectedModelAvailability?.target_frame_count)
-      ? Math.max(0, Number(selectedModelAvailability?.target_frame_count) - 1)
+    const targetMaxForecastHour = Number.isFinite(selectedModelAvailability?.latest_run_target_max_fh)
+      ? Math.max(0, Number(selectedModelAvailability?.latest_run_target_max_fh))
+      : Number.isFinite(selectedModelAvailability?.target_frame_count)
+        ? Math.max(0, Number(selectedModelAvailability?.target_frame_count) - 1)
       : null;
     const readyVars = Array.isArray(selectedModelAvailability?.latest_run_ready_vars)
       ? selectedModelAvailability.latest_run_ready_vars

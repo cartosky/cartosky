@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
+from .models.registry import get_model
 from .models.serialization import (
     serialize_model_capability,
     serialize_variable_capability,
@@ -2139,6 +2140,21 @@ def _latest_run_readiness(
     return bool(ready_vars), ready_vars, ready_frame_count
 
 
+def _latest_run_target_max_fh(model_id: str, latest_run: str | None) -> int | None:
+    if not isinstance(latest_run, str) or not latest_run:
+        return None
+    run_dt = parse_run_id_datetime(latest_run)
+    if run_dt is None:
+        return None
+    try:
+        model_plugin = get_model(model_id)
+        scheduled = model_plugin.target_fhs(run_dt.hour)
+    except Exception:
+        return None
+    resolved = [int(fh) for fh in scheduled if isinstance(fh, int) or str(fh).isdigit()]
+    return max(resolved) if resolved else None
+
+
 def _availability_for_models(
     model_ids: list[str],
     capabilities_by_model: dict[str, Any],
@@ -2153,12 +2169,14 @@ def _availability_for_models(
             latest_run,
             model_capability=model_capability,
         )
+        latest_run_target_max_fh = _latest_run_target_max_fh(model_id, latest_run)
         availability[model_id] = {
             "latest_run": latest_run,
             "published_runs": published_runs,
             "latest_run_ready": latest_run_ready,
             "latest_run_ready_vars": latest_run_ready_vars,
             "latest_run_ready_frame_count": latest_run_ready_frame_count,
+            "latest_run_target_max_fh": latest_run_target_max_fh,
         }
         if is_observed_model_capability(model_capability):
             availability[model_id].update(

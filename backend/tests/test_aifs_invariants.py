@@ -42,6 +42,10 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("qpf") == "precip_total"
+    assert AIFS_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
+    assert AIFS_MODEL.normalize_var_id("asnow") == "snowfall_total"
+    assert AIFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
+    assert AIFS_MODEL.normalize_var_id("total_snow") == "snowfall_total"
     assert AIFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("10u") == "10u"
@@ -64,7 +68,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -111,6 +115,20 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     }
     precip_capability = capabilities.variable_catalog["precip_total"]
     assert precip_capability.conversion == "kgm2_to_in"
+
+    snowfall_spec = AIFS_MODEL.get_var("snowfall_total")
+    assert snowfall_spec is not None
+    assert snowfall_spec.primary is True
+    assert snowfall_spec.derived is False
+    assert snowfall_spec.kind == "continuous"
+    assert snowfall_spec.units == "in"
+    assert snowfall_spec.selectors.search == [":sf:sfc:", ":sf:"]
+    assert snowfall_spec.selectors.filter_by_keys == {
+        "shortName": "sf",
+        "typeOfLevel": "surface",
+    }
+    snowfall_capability = capabilities.variable_catalog["snowfall_total"]
+    assert snowfall_capability.conversion == "m_swe_to_in_10to1"
 
     wspd10m_spec = AIFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None
@@ -195,6 +213,20 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 3
     assert precip_total["constraints"] == {"min_fh": 3}
     assert precip_total["render_substrates"] == ["grid"]
+
+    snowfall_total = payload["variables"]["snowfall_total"]
+    assert snowfall_total["var_key"] == "snowfall_total"
+    assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
+    assert snowfall_total["kind"] == "continuous"
+    assert snowfall_total["units"] == "in"
+    assert snowfall_total["buildable"] is True
+    assert snowfall_total["derived"] is False
+    assert snowfall_total["color_map_id"] == "snowfall_total"
+    assert snowfall_total["order"] == 11
+    assert snowfall_total["group"] == "Precipitation"
+    assert snowfall_total["default_fh"] == 3
+    assert snowfall_total["constraints"] == {"min_fh": 3}
+    assert snowfall_total["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

@@ -74,6 +74,7 @@ export type CapabilitiesResponse = {
       latest_run_ready?: boolean;
       latest_run_ready_vars?: string[];
       latest_run_ready_frame_count?: number;
+      latest_run_target_max_fh?: number | null;
       source?: string | null;
       time_axis_mode?: ModelTimeAxisMode | null;
       latest_scan_valid_time?: string | null;

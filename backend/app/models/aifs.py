@@ -53,6 +53,7 @@ AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
     "dp2m": ECMWF_VARS["dp2m"],
     "precip_total": ECMWF_VARS["precip_total"],
+    "snowfall_total": ECMWF_VARS["snowfall_total"],
     "10u": ECMWF_VARS["10u"],
     "10v": ECMWF_VARS["10v"],
     "wspd10m": ECMWF_VARS["wspd10m"],

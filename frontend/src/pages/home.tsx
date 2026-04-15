@@ -396,12 +396,25 @@ export default function Home() {
             <h2 className="mt-6 max-w-md text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
               Map-first analysis,
               <br />
-              minimal friction.
+              less friction.
             </h2>
             <p className="mt-5 text-base leading-8 text-white/66">
-              CartoSky keeps the map dominant while giving fast access to the controls advanced weather
-              users actually hit most: model selection, forecast time, and product switching.
+              CartoSky keeps the map dominant, with core controls always within reach - so you can move through data without breaking your flow.
             </p>
+
+            <div className="flex gap-4">
+              <div className="mt-1 text-cyan-200">
+                <Clock3 className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
+                  Interactive Map
+                </div>
+                <p className="mt-2 text-sm leading-7 text-white/62">
+                  Move through the map without interruption. Zoom, pan, and explore fluidly - no reloads, no static images.
+                </p>
+              </div>
+            </div>
 
             <div className="mt-10 space-y-5">
               <div className="flex gap-4">
@@ -413,21 +426,7 @@ export default function Home() {
                     Model switching
                   </div>
                   <p className="mt-2 text-sm leading-7 text-white/62">
-                    Compare core models without losing context, viewport, or run orientation.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <div className="mt-1 text-cyan-200">
-                  <Clock3 className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
-                    Time scrubbing
-                  </div>
-                  <p className="mt-2 text-sm leading-7 text-white/62">
-                    Forecast-hour control stays obvious and stable so loop timing feels immediate.
+                    Switch models without losing your place. Viewport and context stay locked as you move between guidance.
                   </p>
                 </div>
               </div>
@@ -441,7 +440,7 @@ export default function Home() {
                     Trust signals
                   </div>
                   <p className="mt-2 text-sm leading-7 text-white/62">
-                    Freshness and run state stay visible without turning the interface into a warning panel.
+                    Run freshness is always visible. Know exactly what you're looking at - no digging, no guesswork.
                   </p>
                 </div>
               </div>
