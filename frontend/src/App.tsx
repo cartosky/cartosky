@@ -2837,30 +2837,31 @@ export default function App() {
       ? selectedModelAvailability.latest_run_ready_vars
       : [];
     const selectedVariableReady = variable ? readyVars.includes(variable) : true;
-    const latestRunComplete =
-      viewingLatestRun && expectedVariableFrameCount !== null
-        ? readyVariableFrameCount >= expectedVariableFrameCount && readyVariableFrameCount > 0
-        : selectedModelAvailability?.latest_run_ready === true
-      || (
-        targetFrameCount !== null
-        && readyFrameCount !== null
-        && readyFrameCount >= targetFrameCount
+    if (viewingLatestRun && latestReadyForecastHour !== null) {
+      const runLikelyComplete = Boolean(
+        selectedModelAvailability?.latest_run_ready === true
+        || (
+          targetFrameCount !== null
+          && readyFrameCount !== null
+          && readyFrameCount >= targetFrameCount
+        )
       );
-
-    if (
-      viewingLatestRun
-      && latestReadyForecastHour !== null
-      && expectedVariableFrameCount !== null
-      && readyVariableFrameCount < expectedVariableFrameCount
-    ) {
+      const tone: "live" | "delayed" =
+        runLikelyComplete && selectedVariableReady ? "live" : "delayed";
+      const progressSuffix =
+        targetFrameCount !== null && readyFrameCount !== null
+          ? ` ${readyFrameCount}/${targetFrameCount} forecast hours are currently available.`
+          : "";
       return {
         label: `${latestLabel} · FH ${latestReadyForecastHour}`,
-        description: `Latest ${latestLabel} is still ingesting for ${selectedVariableLabel}. ${readyVariableFrameCount} of ${expectedVariableFrameCount} forecast hours are currently ready, through forecast hour ${latestReadyForecastHour}.`,
-        tone: "delayed" as const,
+        description:
+          `Latest ${latestLabel} is currently available through forecast hour ${latestReadyForecastHour} for ${selectedVariableLabel}.`
+          + progressSuffix,
+        tone,
       };
     }
 
-    if (!latestRunComplete || !selectedVariableReady) {
+    if (!selectedVariableReady) {
       const progressLabel = targetFrameCount !== null && readyFrameCount !== null
         ? `${readyFrameCount}/${targetFrameCount} hrs`
         : latestReadyForecastHour !== null
@@ -2887,14 +2888,14 @@ export default function App() {
     if (viewingOlderRun) {
       return {
         label: `Latest ${latestLabel} ready`,
-        description: `Latest ${latestLabel} is fully available. You are viewing ${selectedRunCompact}.`,
+        description: `Latest ${latestLabel} is ready. You are viewing ${selectedRunCompact}.`,
         tone: "live" as const,
       };
     }
 
     return {
-      label: `${latestLabel} · complete`,
-      description: `Latest ${latestLabel} is fully available for this model.`,
+      label: `${latestLabel}`,
+      description: `Latest ${latestLabel} is selected for this model.`,
       tone: "live" as const,
     };
   }, [
