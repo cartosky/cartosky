@@ -34,6 +34,8 @@ class AIFSPlugin(ECMWFPlugin):
         normalized = var_id.strip().lower()
         if normalized in {"tcw", "total_column_water"}:
             return "pwat"
+        if normalized in {"z850", "gh850", "z"}:
+            return "hgt850"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -106,9 +108,42 @@ AIFS_VARS["pwat"] = replace(
     ),
 )
 
+AIFS_VARS["hgt850"] = replace(
+    AIFS_VARS["hgt850"],
+    selectors=VarSelectors(
+        search=[":z:850:pl:", ":z:850:"],
+        filter_by_keys={
+            "shortName": "z",
+            "typeOfLevel": "isobaricInhPa",
+            "level": "850",
+        },
+        hints={
+            "upstream_var": "z850",
+            "cf_var": "z",
+            "short_name": "z",
+        },
+    ),
+)
+
+AIFS_VARS["wspd850"] = replace(
+    AIFS_VARS["wspd850"],
+    selectors=replace(
+        AIFS_VARS["wspd850"].selectors,
+        hints={
+            **AIFS_VARS["wspd850"].selectors.hints,
+            "contour_conversion": "geopotential_to_height_m",
+        },
+    ),
+)
+
 AIFS_VARIABLE_CATALOG["pwat"] = replace(
     AIFS_VARIABLE_CATALOG["pwat"],
     selectors=AIFS_VARS["pwat"].selectors,
+)
+
+AIFS_VARIABLE_CATALOG["wspd850"] = replace(
+    AIFS_VARIABLE_CATALOG["wspd850"],
+    selectors=AIFS_VARS["wspd850"].selectors,
 )
 
 AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(

@@ -45,6 +45,8 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert AIFS_MODEL.normalize_var_id("wind850") == "wspd850"
     assert AIFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
+    assert AIFS_MODEL.normalize_var_id("z850") == "hgt850"
+    assert AIFS_MODEL.normalize_var_id("gh850") == "hgt850"
     assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -134,6 +136,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd850_spec.selectors.hints["contour_component"] == "hgt850"
     assert wspd850_spec.selectors.hints["contour_interval"] == "30"
     assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
+    assert wspd850_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
 
     u850_spec = AIFS_MODEL.get_var("u850")
     assert u850_spec is not None
@@ -151,7 +154,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert hgt850_spec is not None
     assert hgt850_spec.primary is False
     assert hgt850_spec.derived is False
-    assert hgt850_spec.selectors.search == [":gh:850:"]
+    assert hgt850_spec.selectors.search == [":z:850:pl:", ":z:850:"]
 
     precip_spec = AIFS_MODEL.get_var("precip_total")
     assert precip_spec is not None
