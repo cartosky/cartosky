@@ -1,12 +1,12 @@
 """ECMWF AIFS model plugin.
 
 Initial rollout scope:
-    - AIFS `oper`
-            - `tmp2m`
-            - `dp2m`
-        - `precip_total`
-            - `wspd10m`
-    - realtime publishing only
+  - AIFS `oper`
+      - `tmp2m`
+      - `dp2m`
+      - `precip_total`
+      - `wspd10m`
+  - realtime publishing only
 
 Herbie wiring:
     - model = "aifs"
@@ -14,6 +14,8 @@ Herbie wiring:
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
@@ -65,6 +67,11 @@ AIFS_VARIABLE_CATALOG = {
     for var_key, var_spec in AIFS_VARS.items()
     if var_key not in {"10u", "10v"}
 }
+
+AIFS_VARIABLE_CATALOG["precip_total"] = replace(
+    AIFS_VARIABLE_CATALOG["precip_total"],
+    conversion="kgm2_to_in",
+)
 
 
 AIFS_CAPABILITIES = ModelCapabilities(

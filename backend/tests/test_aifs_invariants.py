@@ -109,6 +109,8 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "shortName": "tp",
         "typeOfLevel": "surface",
     }
+    precip_capability = capabilities.variable_catalog["precip_total"]
+    assert precip_capability.conversion == "kgm2_to_in"
 
     wspd10m_spec = AIFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None
