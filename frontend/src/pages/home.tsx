@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowRight,
   Clock3,
+  CloudLightning,
   Gauge,
   Globe2,
   Layers3,
@@ -199,18 +200,18 @@ function ProductCard({
     variant === "winter"
       ? {
           backgroundImage: `
-            radial-gradient(circle at 26% 26%, rgba(207,250,254,0.22), transparent 0 22%),
-            radial-gradient(circle at 70% 38%, rgba(125,211,252,0.16), transparent 0 20%),
-            linear-gradient(135deg, rgba(20,32,53,0.88), rgba(9,21,36,0.94)),
+            radial-gradient(circle at 22% 24%, rgba(207,250,254,0.16), transparent 0 18%),
+            linear-gradient(135deg, rgba(20,32,53,0.9), rgba(9,21,36,0.96)),
+            linear-gradient(180deg, rgba(255,255,255,0.04), transparent 42%),
             linear-gradient(125deg, rgba(255,255,255,0.05) 0 18%, transparent 18% 100%)
           `,
         }
       : {
           backgroundImage: `
-            radial-gradient(circle at 68% 34%, rgba(34,211,238,0.16), transparent 0 18%),
-            radial-gradient(circle at 38% 60%, rgba(251,191,36,0.16), transparent 0 14%),
-            radial-gradient(circle at 52% 48%, rgba(248,113,113,0.18), transparent 0 12%),
-            linear-gradient(135deg, rgba(16,24,39,0.9), rgba(8,20,32,0.96))
+            radial-gradient(circle at 72% 30%, rgba(34,211,238,0.14), transparent 0 16%),
+            radial-gradient(circle at 40% 62%, rgba(248,113,113,0.1), transparent 0 12%),
+            linear-gradient(135deg, rgba(16,24,39,0.92), rgba(8,20,32,0.98)),
+            linear-gradient(180deg, rgba(255,255,255,0.02), transparent 38%)
           `,
         };
 
@@ -223,11 +224,11 @@ function ProductCard({
         style={{
           backgroundImage:
             variant === "winter"
-              ? "repeating-linear-gradient(144deg, transparent 0 18px, rgba(255,255,255,0.06) 18px 19px, transparent 19px 38px)"
-              : "repeating-linear-gradient(108deg, transparent 0 14px, rgba(34,211,238,0.10) 14px 16px, transparent 16px 30px)",
+              ? "linear-gradient(135deg, transparent 0 68%, rgba(255,255,255,0.06) 68% 69%, transparent 69% 100%), linear-gradient(90deg, transparent 0 82%, rgba(255,255,255,0.04) 82% 82.6%, transparent 82.6% 100%)"
+              : "linear-gradient(180deg, transparent 0 74%, rgba(34,211,238,0.08) 74% 75%, transparent 75% 100%), linear-gradient(90deg, transparent 0 14%, rgba(34,211,238,0.08) 14% 14.6%, transparent 14.6% 100%), linear-gradient(90deg, transparent 0 86%, rgba(34,211,238,0.07) 86% 86.6%, transparent 86.6% 100%)",
         }}
       />
-      <div className="relative z-10 flex h-full min-h-[260px] flex-col justify-between">
+      <div className="relative z-10 flex min-h-[260px] flex-col">
         <div>
           <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-slate-950/35 text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm">
             {icon}
@@ -235,10 +236,6 @@ function ProductCard({
           <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.24em] text-white/55">{eyebrow}</div>
           <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">{title}</h3>
           <p className="mt-3 max-w-md text-sm leading-7 text-white/70">{description}</p>
-        </div>
-        <div className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-cyan-100/90">
-          <span>Operational workflow</span>
-          <ArrowRight className="h-4 w-4" />
         </div>
       </div>
     </div>
@@ -467,17 +464,17 @@ export default function Home() {
           <ProofItem
             label="Products"
             value="~15 per model"
-            detail="Surface, severe, winter, hydro, and upper-air products, with more on the way."
+            detail="Surface, precip, severe, and upper-air products, with more on the way."
           />
           <ProofItem
-            label="Freshness"
-            value="Run status stays visible"
-            detail={homepageStats.freshnessDetail}
+            label="Coverage"
+            value="CONUS and expanding"
+            detail="Optimized for U.S. weather analysis, with broader regions coming soon."
           />
           <ProofItem
-            label="Update Cycles"
-            value="Hourly to 6-hourly"
-            detail="Viewer context stays tied to the latest available cycle."
+            label="Use Cases"
+            value="Severe, winter, and more."
+            detail="Designed for high-impact forecasting scenarios."
           />
         </div>
       </section>
@@ -487,11 +484,10 @@ export default function Home() {
           <div className="max-w-2xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
-              Need a local briefing before you open the map?
+              Start with a local briefing.
             </h2>
             <p className="mt-4 text-base leading-8 text-white/64">
-              The new Forecast page gives you a cleaner location-first surface for current conditions,
-              short-range context, and a direct handoff into the viewer when you want deeper analysis.
+              Check current conditions and short-range context for any location then move straight into the map for deeper analysis. More forecast detail and model guidance coming soon.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -506,7 +502,7 @@ export default function Home() {
               to="/viewer"
               className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
             >
-              Go straight to Viewer
+              Skip to Viewer
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
@@ -517,26 +513,25 @@ export default function Home() {
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Forecast Products</SectionEyebrow>
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
-            Viewer-ready workflows for winter and severe weather.
+            Workflows for winter and severe weather.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-8 text-white/64">
-            Move from core surface fields into the forecast products that matter most when the setup
-            turns seasonal, high-impact, or time-sensitive.
+            Move from core fields into the products that matter when timing, structure, and impact come into focus.
           </p>
 
           <div className="mt-12 grid gap-6 lg:grid-cols-2">
             <ProductCard
               eyebrow="Winter Analysis"
-              title="Kuchera snowfall and cold-season structure."
-              description="Use derived snow fields, thermal context, and timing-sensitive guidance to work higher-impact winter setups cleanly."
+              title="Understand where snow will actually accumulate."
+              description="Use snowfall, thermal structure, and timing to see how a setup evolves and where real impacts are likely."
               icon={<Snowflake className="h-5 w-5" />}
               variant="winter"
             />
             <ProductCard
-              eyebrow="Severe Workflow"
-              title="Convective and mesoscale signal, without the mess."
-              description="Surface fields, reflectivity-style products, and severe-weather context stay easy to scan when the forecast pace picks up."
-              icon={<Radar className="h-5 w-5" />}
+              eyebrow="Severe Analysis"
+              title="See the full severe setup in one place."
+              description="Models, SPC Outlooks, and radar come together in a single view so you can track how storms evolve in real time."
+              icon={<CloudLightning className="h-5 w-5" />}
               variant="severe"
             />
           </div>
@@ -547,34 +542,34 @@ export default function Home() {
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Why CartoSky</SectionEyebrow>
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
-            Built for serious guidance, not visual noise.
+            A better way to work the forecast.
           </h2>
           <div className="mt-12 grid gap-8 border-t border-white/8 pt-8 lg:grid-cols-3">
             <div className="border-l border-white/8 pl-5 first:border-l-0 first:pl-0">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Gauge className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Serious guidance</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Interactive by default</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
-                Forecast products stay tied to model context, run freshness, and the details that matter when you are actually making a read.
+                Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
             </div>
             <div className="border-l border-white/8 pl-5">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Sparkles className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Clean interface</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">More context in one place</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
-                Hierarchy does the work. The map leads, the main controls stay obvious, and lower-frequency settings stop fighting for attention.
+                Models, forecasts, SPC outlooks, and live radar live in the same workflow, so you spend less time jumping between sites.
               </p>
             </div>
             <div className="border-l border-white/8 pl-5">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
-                <Globe2 className="h-5 w-5" />
+                <Layers3 className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Product depth</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Built to stay focused</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
-                From core surface fields to winter, severe, hydro, and upper-air workflows, CartoSky keeps expanding where weather users actually need it.
+                A cleaner interface keeps the map and the highest-value controls in front, without burying the signal under clutter.
               </p>
             </div>
           </div>
