@@ -516,7 +516,7 @@ export default function Home() {
             Workflows for winter and severe weather.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-8 text-white/64">
-            Move from core fields into the products that matter when timing, structure, and impact come into focus.
+            Move from core fields into the products that matter most when timing, structure, and impact come into focus.
           </p>
 
           <div className="mt-12 grid gap-6 lg:grid-cols-2">
@@ -583,7 +583,7 @@ export default function Home() {
             Start with the map.
           </h2>
           <p className="mt-5 text-base leading-8 text-white/64 md:text-lg">
-            Work the forecast directly - models, radar, SPC outlooks, and more in a single interactive view.
+            Work the forecast directly with models, radar, SPC outlooks, and more in a single interactive view.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link

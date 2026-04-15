@@ -296,7 +296,9 @@ function RegionUtilitySelect({
 function ViewerNavDesktop() {
   const toolbar = useViewerToolbar();
   const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
+  const legendPanelRef = useRef<HTMLDivElement>(null);
   const [legendPanelOpen, setLegendPanelOpen] = useState(false);
 
   useEffect(() => {
@@ -304,6 +306,7 @@ function ViewerNavDesktop() {
     function onPointerDown(e: MouseEvent | TouchEvent) {
       if (!(e.target instanceof Node)) return;
       if (settingsRef.current?.contains(e.target)) return;
+      if (settingsPanelRef.current?.contains(e.target)) return;
       toolbar?.onDisplayPanelOpenChange(false);
     }
     function onKey(e: KeyboardEvent) {
@@ -324,6 +327,7 @@ function ViewerNavDesktop() {
     function onPointerDown(e: MouseEvent | TouchEvent) {
       if (!(e.target instanceof Node)) return;
       if (legendRef.current?.contains(e.target)) return;
+      if (legendPanelRef.current?.contains(e.target)) return;
       setLegendPanelOpen(false);
     }
     function onKey(e: KeyboardEvent) {
@@ -453,7 +457,10 @@ function ViewerNavDesktop() {
           </button>
 
           {legendPanelOpen ? createPortal(
-            <div className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+            <div
+              ref={legendPanelRef}
+              className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+            >
               <MapLegend
                 legend={legend}
                 onOpacityChange={onOpacityChange}
@@ -497,7 +504,10 @@ function ViewerNavDesktop() {
           </button>
 
           {displayPanelOpen ? createPortal(
-            <div className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+            <div
+              ref={settingsPanelRef}
+              className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+            >
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-[#1a3a5c]/50 px-4 py-3">
                 <div>
