@@ -2820,18 +2820,16 @@ export default function App() {
     const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
       ? runManifest.variables?.[variable]?.frames ?? []
       : [];
-    const expectedVariableFrameCount = manifestVariableFrames.length > 0 ? manifestVariableFrames.length : null;
+    const expectedVariableMaxForecastHour = manifestVariableFrames.length > 0
+      ? Math.max(...manifestVariableFrames.map((frame) => Number(frame?.fh)).filter(Number.isFinite))
+      : null;
     const readyRows = frameRows.filter((row) => row?.has_cog === true);
-    const readyVariableFrameCount = readyRows.length;
     const latestReadyForecastHour = readyRows.length > 0
       ? Math.max(...readyRows.map((row) => Number(row.fh)).filter(Number.isFinite))
       : null;
 
-    const targetFrameCount = Number.isFinite(selectedModelAvailability?.target_frame_count)
-      ? Math.max(0, Number(selectedModelAvailability?.target_frame_count))
-      : null;
-    const readyFrameCount = Number.isFinite(selectedModelAvailability?.latest_run_ready_frame_count)
-      ? Math.max(0, Number(selectedModelAvailability?.latest_run_ready_frame_count))
+    const targetMaxForecastHour = Number.isFinite(selectedModelAvailability?.target_frame_count)
+      ? Math.max(0, Number(selectedModelAvailability?.target_frame_count) - 1)
       : null;
     const readyVars = Array.isArray(selectedModelAvailability?.latest_run_ready_vars)
       ? selectedModelAvailability.latest_run_ready_vars
@@ -2841,13 +2839,10 @@ export default function App() {
     const unusable = selectedModelAvailability?.usable === false;
     const stale = selectedModelAvailability?.stale === true;
 
-    const resolvedTotalCount =
-      expectedVariableFrameCount
-      ?? (targetFrameCount !== null ? targetFrameCount : null);
-    const resolvedAvailableCount =
-      expectedVariableFrameCount !== null
-        ? readyVariableFrameCount
-        : (readyFrameCount !== null ? readyFrameCount : null);
+    const resolvedTotalForecastHour =
+      expectedVariableMaxForecastHour
+      ?? targetMaxForecastHour;
+    const resolvedAvailableForecastHour = latestReadyForecastHour;
 
     const resolvedTone: "live" | "delayed" | "stale" | "unavailable" =
       unusable
@@ -2858,21 +2853,16 @@ export default function App() {
             ? "live"
             : "delayed";
 
-    if (resolvedTotalCount !== null && resolvedAvailableCount !== null) {
-      const cappedAvailable = Math.max(0, Math.min(resolvedAvailableCount, resolvedTotalCount));
-      const isComplete = cappedAvailable >= resolvedTotalCount && resolvedTotalCount > 0;
-      let description = `${isComplete ? "Complete" : "Availability"} for ${selectedVariableLabel} on the latest ${latestLabel} run: ${cappedAvailable} of ${resolvedTotalCount} frames`;
-      if (latestReadyForecastHour !== null && cappedAvailable > 0) {
-        description += ` are ready through forecast hour ${latestReadyForecastHour}`;
-      } else {
-        description += " are ready";
-      }
+    if (resolvedTotalForecastHour !== null && resolvedAvailableForecastHour !== null) {
+      const cappedAvailable = Math.max(0, Math.min(resolvedAvailableForecastHour, resolvedTotalForecastHour));
+      const isComplete = cappedAvailable >= resolvedTotalForecastHour && resolvedTotalForecastHour > 0;
+      let description = `${isComplete ? "Complete" : "Availability"} for ${selectedVariableLabel} on the latest ${latestLabel} run: forecast hours are currently available through FH ${cappedAvailable} of FH ${resolvedTotalForecastHour}.`;
       description += ".";
       if (degradedReason) {
         description += ` ${degradedReason}.`;
       }
       return {
-        label: `${cappedAvailable}/${resolvedTotalCount} ${isComplete ? "complete" : "available"}`,
+        label: `${cappedAvailable}/${resolvedTotalForecastHour} ${isComplete ? "complete" : "available"}`,
         description,
         tone: isComplete ? (resolvedTone === "live" ? "live" : resolvedTone) : resolvedTone,
       };

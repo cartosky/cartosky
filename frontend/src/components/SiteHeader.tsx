@@ -256,6 +256,7 @@ function RegionUtilitySelect({
       <SelectTrigger
         title={`Region: ${currentRegionLabel}`}
         aria-label={`Region: ${currentRegionLabel}`}
+        hideChevron
         className="h-8 w-8 rounded-xl border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:ring-0"
       >
         <Globe className="h-3.5 w-3.5" />

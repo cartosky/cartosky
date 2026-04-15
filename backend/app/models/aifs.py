@@ -1,19 +1,21 @@
 """ECMWF AIFS model plugin.
 
 Initial rollout scope:
-  - AIFS `oper`
-      - `tmp2m`
-  - realtime publishing only
+    - AIFS `oper`
+            - `tmp2m`
+            - `dp2m`
+            - `wspd10m`
+    - realtime publishing only
 
 Herbie wiring:
-  - model = "aifs"
-  - product = "oper"
+    - model = "aifs"
+    - product = "oper"
 """
 
 from __future__ import annotations
 
-from .base import HerbieRequest, ModelCapabilities, VariableCapability
-from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
+from .base import HerbieRequest, ModelCapabilities
+from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
 
 
 class AIFSPlugin(ECMWFPlugin):
@@ -46,6 +48,8 @@ class AIFSPlugin(ECMWFPlugin):
 
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
+    "dp2m": ECMWF_VARS["dp2m"],
+    "wspd10m": ECMWF_VARS["wspd10m"],
 }
 
 
@@ -53,20 +57,8 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 
 
 AIFS_VARIABLE_CATALOG = {
-    "tmp2m": VariableCapability(
-        var_key="tmp2m",
-        name="Surface Temp",
-        selectors=AIFS_VARS["tmp2m"].selectors,
-        primary=True,
-        derived=False,
-        kind="continuous",
-        units="F",
-        color_map_id="tmp2m",
-        default_fh=0,
-        buildable=True,
-        order=1,
-        group="Temperature",
-    ),
+    var_key: _capability_from_var_spec(var_key, var_spec)
+    for var_key, var_spec in AIFS_VARS.items()
 }
 
 

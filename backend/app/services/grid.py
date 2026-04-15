@@ -184,6 +184,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("aifs", "dp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
     ("ecmwf", "dp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -263,6 +269,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "units": "in",
     },
     ("ecmwf", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("aifs", "wspd10m"): {
         "scale": 0.1,
         "offset": 0.0,
         "nodata": 65535,

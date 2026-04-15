@@ -328,7 +328,7 @@ export default function Home() {
               </span>
             </h1>
             <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
-              Fast model switching, clean visuals, built for analysis.
+              Interactive weather data, without the clutter.
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
