@@ -2817,10 +2817,11 @@ export default function App() {
     }
 
     const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
+    const declaredVariableMaxForecastHour = toNumberOrNull(selectedVariableConstraints.max_fh);
     const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
       ? runManifest.variables?.[variable]?.frames ?? []
       : [];
-    const expectedVariableMaxForecastHour = manifestVariableFrames.length > 0
+    const manifestVariableMaxForecastHour = manifestVariableFrames.length > 0
       ? Math.max(...manifestVariableFrames.map((frame) => Number(frame?.fh)).filter(Number.isFinite))
       : null;
     const readyRows = frameRows.filter((row) => row?.has_cog === true);
@@ -2840,7 +2841,8 @@ export default function App() {
     const stale = selectedModelAvailability?.stale === true;
 
     const resolvedTotalForecastHour =
-      expectedVariableMaxForecastHour
+      declaredVariableMaxForecastHour
+      ?? manifestVariableMaxForecastHour
       ?? targetMaxForecastHour;
     const resolvedAvailableForecastHour = latestReadyForecastHour;
 
@@ -2856,8 +2858,7 @@ export default function App() {
     if (resolvedTotalForecastHour !== null && resolvedAvailableForecastHour !== null) {
       const cappedAvailable = Math.max(0, Math.min(resolvedAvailableForecastHour, resolvedTotalForecastHour));
       const isComplete = cappedAvailable >= resolvedTotalForecastHour && resolvedTotalForecastHour > 0;
-      let description = `${isComplete ? "Complete" : "Availability"} for ${selectedVariableLabel} on the latest ${latestLabel} run: forecast hours are currently available through FH ${cappedAvailable} of FH ${resolvedTotalForecastHour}.`;
-      description += ".";
+      let description = `${selectedVariableLabel} · latest ${latestLabel} · FH ${cappedAvailable}/${resolvedTotalForecastHour}`;
       if (degradedReason) {
         description += ` ${degradedReason}.`;
       }
@@ -2886,6 +2887,7 @@ export default function App() {
     selectedModelAvailability,
     selectedRunLabel,
     selectedTimeAxisMode,
+    selectedVariableConstraints,
     selectedVariableLabel,
     variable,
   ]);

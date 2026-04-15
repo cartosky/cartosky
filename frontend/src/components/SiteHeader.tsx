@@ -50,14 +50,14 @@ function AvailabilityReadout({
     <div
       title={description ?? label}
       className={cn(
-        "inline-flex items-center rounded-xl border px-2.5 py-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.06em]",
+        "inline-flex items-center rounded-xl border px-2.5 py-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.06em] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
         tone === "unavailable"
-          ? "border-rose-300/16 bg-rose-300/[0.05] text-rose-50/90"
+          ? "border-rose-300/20 bg-rose-300/[0.06] text-rose-50/92"
           : tone === "stale"
-            ? "border-orange-300/16 bg-orange-300/[0.05] text-orange-50/90"
+            ? "border-orange-300/20 bg-orange-300/[0.06] text-orange-50/92"
             : tone === "delayed"
-              ? "border-white/12 bg-white/[0.07] text-white/84"
-              : "border-white/10 bg-white/[0.04] text-white/66"
+              ? "border-cyan-300/14 bg-cyan-300/[0.06] text-cyan-50/92"
+              : "border-emerald-300/16 bg-emerald-300/[0.07] text-emerald-50/88"
       )}
     >
       {label}
@@ -257,7 +257,7 @@ function RegionUtilitySelect({
         title={`Region: ${currentRegionLabel}`}
         aria-label={`Region: ${currentRegionLabel}`}
         hideChevron
-        className="h-8 w-8 rounded-xl border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:ring-0"
+        className="h-8 w-8 items-center justify-center rounded-xl border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:ring-0 [&>span]:flex [&>span]:w-full [&>span]:items-center [&>span]:justify-center"
       >
         <Globe className="h-3.5 w-3.5" />
       </SelectTrigger>
