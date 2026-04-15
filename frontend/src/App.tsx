@@ -50,6 +50,7 @@ import {
   frameValidTime,
   formatIssuedTimeISO,
   observedSourceStatusFromAvailability,
+  parseRunId,
   runIdToIso,
 } from "@/lib/time-axis";
 import { readPermalink } from "@/lib/permalink-read";
@@ -115,6 +116,27 @@ const TwfShareModal = lazy(() =>
 const NwsCityModal = lazy(() =>
   import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
 );
+
+function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | null | undefined): number | null {
+  const parsedRun = parseRunId(runId);
+  const cycleHour = parsedRun?.getUTCHours() ?? null;
+
+  switch (modelId) {
+    case "aifs":
+    case "ecmwf":
+      return 360;
+    case "gfs":
+      return 384;
+    case "nam":
+      return 60;
+    case "hrrr":
+      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 48 : 18;
+    case "nbm":
+      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 264 : 261;
+    default:
+      return null;
+  }
+}
 
 export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
@@ -2590,7 +2612,6 @@ export default function App() {
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
-    setVariable("");
     setModel(nextModel);
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
@@ -2817,22 +2838,22 @@ export default function App() {
     }
 
     const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
-    const declaredVariableMaxForecastHour = toNumberOrNull(selectedVariableConstraints.max_fh);
     const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
       ? runManifest.variables?.[variable]?.frames ?? []
       : [];
     const manifestVariableMaxForecastHour = manifestVariableFrames.length > 0
       ? Math.max(...manifestVariableFrames.map((frame) => Number(frame?.fh)).filter(Number.isFinite))
       : null;
-    const readyRows = frameRows.filter((row) => row?.has_cog === true);
-    const latestReadyForecastHour = readyRows.length > 0
-      ? Math.max(...readyRows.map((row) => Number(row.fh)).filter(Number.isFinite))
+    const selectableAvailableForecastHour = selectableFrameHours.length > 0
+      ? Math.max(...selectableFrameHours.filter(Number.isFinite))
       : null;
+    const declaredVariableMaxForecastHour = toNumberOrNull(selectedVariableConstraints.max_fh);
+    const inferredTargetMaxForecastHour = inferLatestRunTargetMaxForecastHour(model, latestRun);
 
     const targetMaxForecastHour = Number.isFinite(selectedModelAvailability?.latest_run_target_max_fh)
       ? Math.max(0, Number(selectedModelAvailability?.latest_run_target_max_fh))
-      : Number.isFinite(selectedModelAvailability?.target_frame_count)
-        ? Math.max(0, Number(selectedModelAvailability?.target_frame_count) - 1)
+      : inferredTargetMaxForecastHour !== null
+        ? inferredTargetMaxForecastHour
       : null;
     const readyVars = Array.isArray(selectedModelAvailability?.latest_run_ready_vars)
       ? selectedModelAvailability.latest_run_ready_vars
@@ -2843,10 +2864,11 @@ export default function App() {
     const stale = selectedModelAvailability?.stale === true;
 
     const resolvedTotalForecastHour =
-      declaredVariableMaxForecastHour
+      targetMaxForecastHour
+      ?? declaredVariableMaxForecastHour
       ?? manifestVariableMaxForecastHour
-      ?? targetMaxForecastHour;
-    const resolvedAvailableForecastHour = latestReadyForecastHour;
+      ?? null;
+    const resolvedAvailableForecastHour = selectableAvailableForecastHour;
 
     const resolvedTone: "live" | "delayed" | "stale" | "unavailable" =
       unusable
@@ -2860,10 +2882,7 @@ export default function App() {
     if (resolvedTotalForecastHour !== null && resolvedAvailableForecastHour !== null) {
       const cappedAvailable = Math.max(0, Math.min(resolvedAvailableForecastHour, resolvedTotalForecastHour));
       const isComplete = cappedAvailable >= resolvedTotalForecastHour && resolvedTotalForecastHour > 0;
-      let description = `${selectedVariableLabel} · latest ${latestLabel} · FH ${cappedAvailable}/${resolvedTotalForecastHour}`;
-      if (degradedReason) {
-        description += ` ${degradedReason}.`;
-      }
+      const description = `${selectedVariableLabel} · latest ${latestLabel} · ${cappedAvailable}/${resolvedTotalForecastHour} ${isComplete ? "complete" : "available"}`;
       return {
         label: `${cappedAvailable}/${resolvedTotalForecastHour} ${isComplete ? "complete" : "available"}`,
         description,
@@ -2872,10 +2891,7 @@ export default function App() {
     }
 
     const fallbackLabel = selectedVariableReady ? "Latest ready" : "Latest updating";
-    let fallbackDescription = `${selectedVariableLabel} on the latest ${latestLabel} run is ${selectedVariableReady ? "ready" : "still updating"}, but exact frame counts are not currently available.`;
-    if (degradedReason) {
-      fallbackDescription += ` ${degradedReason}.`;
-    }
+    const fallbackDescription = `${selectedVariableLabel} · latest ${latestLabel} · ${fallbackLabel.toLowerCase()}`;
     return {
       label: fallbackLabel,
       description: fallbackDescription,
@@ -2886,11 +2902,12 @@ export default function App() {
     frameRows,
     run,
     runManifest,
+    model,
     selectedModelAvailability,
-    selectedRunLabel,
     selectedTimeAxisMode,
     selectedVariableConstraints,
     selectedVariableLabel,
+    selectableFrameHours,
     variable,
   ]);
   const selectedRegionLabel = useMemo(() => {

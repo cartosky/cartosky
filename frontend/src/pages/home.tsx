@@ -442,7 +442,7 @@ export default function Home() {
                     Trust signals
                   </div>
                   <p className="mt-2 text-sm leading-7 text-white/62">
-                    Run freshness is always visible. Know exactly what you're looking at - no digging, no guesswork.
+                    Run freshness is always visible. Know exactly what you're looking at and how current it is, without hunting through menus.
                   </p>
                 </div>
               </div>
