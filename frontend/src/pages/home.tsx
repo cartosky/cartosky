@@ -223,11 +223,11 @@ export default function Home() {
       <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-10 pt-28 md:px-8 md:pb-14 md:pt-32">
         <div
           aria-hidden="true"
-          className="absolute inset-0 opacity-95"
+          className="absolute inset-0 opacity-90"
           style={{
             backgroundImage: `
-              linear-gradient(90deg, rgba(6,12,24,0.94) 0%, rgba(6,12,24,0.82) 30%, rgba(6,12,24,0.46) 58%, rgba(6,12,24,0.62) 100%),
-              linear-gradient(180deg, rgba(7,17,31,0.72), rgba(7,17,31,0.92)),
+              linear-gradient(90deg, rgba(6,12,24,0.9) 0%, rgba(6,12,24,0.74) 30%, rgba(6,12,24,0.34) 58%, rgba(6,12,24,0.5) 100%),
+              linear-gradient(180deg, rgba(7,17,31,0.54), rgba(7,17,31,0.8)),
               url(/assets/hero-image.png)
             `,
             backgroundSize: "auto, auto, cover",
@@ -253,7 +253,7 @@ export default function Home() {
               </span>
             </h1>
             <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
-              Interactive weather maps, built for speed, without the clutter.
+              Interactive weather maps, built for meteorologists and weather enthusiasts alike.
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
@@ -411,7 +411,7 @@ export default function Home() {
               Start with a local briefing.
             </h2>
             <p className="mt-4 text-base leading-8 text-white/64">
-              Check current conditions and short-range context for any location then move straight into the map for deeper analysis. More forecast detail and model guidance coming soon.
+              Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -426,7 +426,7 @@ export default function Home() {
               to="/viewer"
               className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
             >
-              Skip to Viewer
+              Go to Viewer
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
