@@ -74,11 +74,7 @@ function ProofItem({
   );
 }
 
-function ViewerPreview({
-  gfsRunLabel,
-}: {
-  gfsRunLabel: string;
-}) {
+function ViewerPreview() {
   return (
     <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#081120] shadow-[0_32px_120px_rgba(0,0,0,0.45)]">
       <div
@@ -110,11 +106,6 @@ function ViewerPreview({
             alt="CartoSky viewer screenshot"
             className="block h-auto w-full object-cover"
           />
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-white/58">
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">GFS · {gfsRunLabel}</span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NAM · Latest</span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NBM · Every 3 hours</span>
         </div>
       </div>
     </div>
@@ -385,9 +376,7 @@ export default function Home() {
           </div>
         </div>  
 
-          <ViewerPreview
-            gfsRunLabel={homepageStats.gfsRunLabel}
-          />
+          <ViewerPreview />
         </div>
       </section>
 
