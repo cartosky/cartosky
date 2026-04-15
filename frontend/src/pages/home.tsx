@@ -199,24 +199,24 @@ function ForecastInfoCard({
   cta?: { label: string; icon?: ReactNode };
 }) {
   return (
-    <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-5 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/78">{eyebrow}</div>
+    <div className="rounded-[1.15rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.16)]">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">{eyebrow}</div>
       {rows ? (
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 space-y-2.5">
           {rows.map((row, index) => (
             <div
               key={row.title}
-              className={index === 0 ? "" : "border-t border-white/8 pt-3"}
+              className={index === 0 ? "" : "border-t border-white/8 pt-2.5"}
             >
-              <div className="text-xl font-semibold tracking-tight text-white">{row.title}</div>
-              <div className="mt-1 text-sm text-cyan-100/62">{row.detail}</div>
+              <div className="text-[1.05rem] font-semibold tracking-tight text-white">{row.title}</div>
+              <div className="mt-0.5 text-sm text-cyan-100/62">{row.detail}</div>
             </div>
           ))}
         </div>
       ) : null}
       {cta ? (
-        <div className="mt-3 flex items-center justify-between gap-3 text-white">
-          <div className="text-2xl font-semibold tracking-tight">{cta.label}</div>
+        <div className="mt-2 flex items-center justify-between gap-3 text-white">
+          <div className="text-[1.1rem] font-semibold tracking-tight">{cta.label}</div>
           {cta.icon}
         </div>
       ) : null}
@@ -449,7 +449,7 @@ export default function Home() {
               Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
           </div>
-          <div className="max-w-xl justify-self-start lg:justify-self-end">
+          <div className="max-w-[18rem] justify-self-start lg:justify-self-end">
             <div className="grid gap-3">
               <ForecastInfoCard
                 eyebrow="What You Get"
