@@ -8,6 +8,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.models.base import ModelCapabilities
+from app.models.base import VariableCapability
 from app.models.serialization import serialize_model_capability
 
 
@@ -42,3 +43,36 @@ def test_serialize_model_capability_preserves_observed_source_contract_fields() 
     assert payload["constraints"]["time_axis_mode"] == "observed"
     assert payload["constraints"]["latest_only"] is True
     assert payload["constraints"]["supports_sampling"] is True
+
+
+def test_serialize_model_capability_defaults_capability_variables_to_grid() -> None:
+    capabilities = ModelCapabilities(
+        model_id="test_model",
+        name="Test Model",
+        product="oper",
+        canonical_region="conus",
+        ui_defaults={
+            "default_var_key": "tmp2m",
+            "default_run": "latest",
+        },
+        ui_constraints={
+            "canonical_region": "conus",
+            "supports_sampling": True,
+        },
+        variable_catalog={
+            "tmp2m": VariableCapability(
+                var_key="tmp2m",
+                name="Surface Temp",
+                kind="continuous",
+                units="F",
+                buildable=True,
+                order=1,
+                group="Temperature",
+            )
+        },
+    )
+
+    payload = serialize_model_capability("test_model", capabilities)
+
+    assert payload["variables"]["tmp2m"]["render_substrates"] == ["grid"]
+    assert payload["defaults"]["default_render_substrate"] == "grid"

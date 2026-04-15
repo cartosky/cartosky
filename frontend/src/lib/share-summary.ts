@@ -29,6 +29,7 @@ const MODEL_LABELS: Record<string, string> = {
   rap: "RAP",
   gefs: "GEFS",
   ecmwf: "ECMWF",
+  aifs: "AIFS",
 };
 
 const VARIABLE_SPECIAL_CASES: Record<string, string> = {

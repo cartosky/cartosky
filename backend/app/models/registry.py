@@ -55,6 +55,12 @@ try:
 except ImportError as exc:
     logger.warning("ECMWF plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .aifs import AIFS_MODEL
+    MODEL_REGISTRY[AIFS_MODEL.id] = AIFS_MODEL
+except ImportError as exc:
+    logger.warning("AIFS plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)

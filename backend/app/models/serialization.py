@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..config import grid_render_substrates
 from ..services.render_resampling import display_resampling_override
 
 
 def _render_substrates_for_variable(model_id: str, capability: Any | None) -> list[str]:
+    del model_id
     configured = getattr(capability, "render_substrates", None) if capability is not None else None
     if isinstance(configured, (list, tuple)):
         normalized: list[str] = []
@@ -16,9 +16,7 @@ def _render_substrates_for_variable(model_id: str, capability: Any | None) -> li
                 normalized.append(substrate)
         if normalized:
             return normalized
-
-    var_key = str(getattr(capability, "var_key", "")) if capability is not None else ""
-    return list(grid_render_substrates(model_id, var_key))
+    return ["grid"]
 
 
 def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:

@@ -13,7 +13,7 @@ type ModelReference = {
   notes: string[];
 };
 
-const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf"] as const;
+const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs"] as const;
 const SPECIAL_LAYER_ORDER = ["spc", "nws_hazards", "mrms"] as const;
 
 const MODEL_REFERENCE: Record<string, ModelReference> = {
@@ -76,6 +76,18 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
       "Cross-checking GFS before committing to a deeper read",
     ],
     notes: ["A strong pattern anchor when you want a second global deterministic take."],
+  },
+  aifs: {
+    eyebrow: "Core Model",
+    oneLiner: "AI-based ECMWF global guidance sourced from the same open-data stream, rolled out first with surface temperature.",
+    coverage: "Global",
+    cadence: "Every 12 hours",
+    focus: [
+      "Fast comparison against deterministic ECMWF thermal structure",
+      "Alternative large-scale temperature evolution from the same upstream feed",
+      "Early read on where AIFS diverges from classic IFS guidance",
+    ],
+    notes: ["Initial rollout is intentionally narrow: start with surface temperature, then expand once runtime behavior is validated."],
   },
   spc: {
     eyebrow: "Operational Layer",

@@ -178,6 +178,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("aifs", "tmp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
     ("ecmwf", "dp2m"): {
         "scale": 0.1,
         "offset": -100.0,
@@ -680,8 +686,14 @@ def _resize_continuous_grid(values: np.ndarray, *, target_height: int, target_wi
     zoom_factors = (target_height / source.shape[0], target_width / source.shape[1])
     filled = np.where(finite_mask, source, 0.0).astype(np.float32, copy=False)
     weights = finite_mask.astype(np.float32, copy=False)
-    resized_values = ndimage_zoom(filled, zoom_factors, order=1, mode="nearest", prefilter=False)
-    resized_weights = ndimage_zoom(weights, zoom_factors, order=1, mode="nearest", prefilter=False)
+    resized_values = np.asarray(
+        ndimage_zoom(filled, zoom_factors, order=1, mode="nearest", prefilter=False),
+        dtype=np.float32,
+    )
+    resized_weights = np.asarray(
+        ndimage_zoom(weights, zoom_factors, order=1, mode="nearest", prefilter=False),
+        dtype=np.float32,
+    )
     output = np.full((target_height, target_width), np.nan, dtype=np.float32)
     np.divide(resized_values, resized_weights, out=output, where=resized_weights > 1e-6)
     return output
@@ -769,7 +781,7 @@ def _packing_config(model: str, var: str) -> dict[str, Any] | None:
 
 def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: int, dtype: str) -> np.ndarray:
     resolved_dtype = grid_dtype(dtype)
-    encoded_dtype: np.dtype[Any] = np.uint8 if resolved_dtype == GRID_DTYPE_UINT8 else np.uint16
+    encoded_dtype: np.dtype[Any] = np.dtype(np.uint8 if resolved_dtype == GRID_DTYPE_UINT8 else np.uint16)
     encoded = np.full(values.shape, int(nodata), dtype=encoded_dtype)
     valid_mask = np.isfinite(values)
     if not np.any(valid_mask):

@@ -14,7 +14,7 @@ import {
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
 
-const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf"] as const;
+const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs"] as const;
 
 function formatRunLabel(runId?: string | null): string {
   if (!runId) {
@@ -320,17 +320,15 @@ export default function Home() {
 
         <div className="relative mx-auto grid min-h-[calc(100svh-8rem)] max-w-6xl items-center gap-14 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-10">
           <div className="max-w-4xl text-center lg:text-left">
-            <SectionEyebrow>Viewer First</SectionEyebrow>
             <h1 className="mt-8 max-w-4xl text-balance text-5xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] md:text-7xl md:leading-[0.98]">
-              Serious weather guidance,
+              Serious weather data,
               <br />
               <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic tracking-[-0.03em] text-cyan-200">
                 clearly rendered.
               </span>
             </h1>
             <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
-              Model data built for technical analysis, with a cleaner interface for switching models,
-              scrubbing time, and staying oriented through the latest cycle.
+              Fast model switching, clean visuals, built for analysis.
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
@@ -462,7 +460,7 @@ export default function Home() {
           <ProofItem
             label="Models"
             value={`${homepageStats.coreModelCount} core models`}
-            detail="HRRR, NAM, GFS, NBM, and ECMWF in one workflow."
+            detail="HRRR, NAM, GFS, NBM, ECMWF, and AIFS in one workflow."
           />
           <ProofItem
             label="Products"
