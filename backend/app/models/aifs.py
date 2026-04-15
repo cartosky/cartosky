@@ -5,6 +5,7 @@ Initial rollout scope:
       - `tmp2m`
       - `dp2m`
             - `tmp850`
+    - `wspd850`
       - `precip_total`
             - `pwat`
             - `snowfall_total`
@@ -62,6 +63,10 @@ AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
     "dp2m": ECMWF_VARS["dp2m"],
     "tmp850": ECMWF_VARS["tmp850"],
+    "u850": ECMWF_VARS["u850"],
+    "v850": ECMWF_VARS["v850"],
+    "hgt850": ECMWF_VARS["hgt850"],
+    "wspd850": ECMWF_VARS["wspd850"],
     "precip_total": ECMWF_VARS["precip_total"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
@@ -77,7 +82,7 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 AIFS_VARIABLE_CATALOG = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in AIFS_VARS.items()
-    if var_key not in {"10u", "10v"}
+    if var_key not in {"10u", "10v", "u850", "v850", "hgt850"}
 }
 
 AIFS_VARIABLE_CATALOG["precip_total"] = replace(
