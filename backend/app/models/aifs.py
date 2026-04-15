@@ -49,6 +49,8 @@ class AIFSPlugin(ECMWFPlugin):
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
     "dp2m": ECMWF_VARS["dp2m"],
+    "10u": ECMWF_VARS["10u"],
+    "10v": ECMWF_VARS["10v"],
     "wspd10m": ECMWF_VARS["wspd10m"],
 }
 
@@ -59,6 +61,7 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 AIFS_VARIABLE_CATALOG = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in AIFS_VARS.items()
+    if var_key not in {"10u", "10v"}
 }
 
 

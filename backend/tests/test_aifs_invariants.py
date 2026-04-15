@@ -41,6 +41,10 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("2d") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
+    assert AIFS_MODEL.normalize_var_id("10u") == "10u"
+    assert AIFS_MODEL.normalize_var_id("u10") == "10u"
+    assert AIFS_MODEL.normalize_var_id("10v") == "10v"
+    assert AIFS_MODEL.normalize_var_id("v10") == "10v"
 
     request = AIFS_MODEL.herbie_request(product="oper", var_key="tmp2m")
     assert request.model == "aifs"
@@ -103,6 +107,26 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "v_component": "10v",
     }
 
+    u10_spec = AIFS_MODEL.get_var("10u")
+    assert u10_spec is not None
+    assert u10_spec.primary is False
+    assert u10_spec.derived is False
+    assert u10_spec.selectors.search == [":10u:"]
+    assert u10_spec.selectors.filter_by_keys == {
+        "shortName": "10u",
+        "typeOfLevel": "surface",
+    }
+
+    v10_spec = AIFS_MODEL.get_var("10v")
+    assert v10_spec is not None
+    assert v10_spec.primary is False
+    assert v10_spec.derived is False
+    assert v10_spec.selectors.search == [":10v:"]
+    assert v10_spec.selectors.filter_by_keys == {
+        "shortName": "10v",
+        "typeOfLevel": "surface",
+    }
+
 
 def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     capabilities = AIFS_MODEL.capabilities
@@ -154,6 +178,9 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd10m["group"] == "Wind"
     assert wspd10m["default_fh"] == 0
     assert wspd10m["render_substrates"] == ["grid"]
+
+    assert "10u" not in payload["variables"]
+    assert "10v" not in payload["variables"]
 
     assert payload["defaults"] == {
         "default_var_key": "tmp2m",
