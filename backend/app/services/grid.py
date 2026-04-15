@@ -226,6 +226,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "kt",
     },
+    ("aifs", "wspd300"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "kt",
+    },
     ("ecmwf", "vort500"): {
         "scale": 0.1,
         "offset": 0.0,

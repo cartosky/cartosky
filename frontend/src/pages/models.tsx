@@ -79,13 +79,14 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
   },
   aifs: {
     eyebrow: "Core Model",
-    oneLiner: "AI-based ECMWF global guidance sourced from the same open-data stream, now rolled out with surface temperature, dew point, 850mb temperature, 850mb heights and winds, precipitable water, total precip, total snowfall, and 10m wind speed.",
+    oneLiner: "AI-based ECMWF global guidance sourced from the same open-data stream, now rolled out with surface temperature, dew point, 850mb temperature, 850mb heights and winds, 300mb heights and winds, precipitable water, total precip, total snowfall, and 10m wind speed.",
     coverage: "Global",
     cadence: "Every 6 hours",
     focus: [
       "Fast comparison against deterministic ECMWF low-level thermal and moisture structure",
       "Alternative 850mb thermal structure for advection and winter-profile context",
       "Alternative 850mb jet and height pattern for low-level forcing context",
+      "Alternative 300mb jet and height pattern for upper-level support context",
       "Alternative whole-column moisture signal for plume depth and transport context",
       "Alternative large-scale precipitation placement and accumulation signal from the same upstream feed",
       "Alternative broad-brush snowfall footprint and accumulation signal from the same upstream feed",

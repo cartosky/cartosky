@@ -6,6 +6,7 @@ Initial rollout scope:
       - `dp2m`
             - `tmp850`
     - `wspd850`
+            - `wspd300`
       - `precip_total`
             - `pwat`
             - `snowfall_total`
@@ -36,6 +37,8 @@ class AIFSPlugin(ECMWFPlugin):
             return "pwat"
         if normalized in {"z850", "gh850", "z"}:
             return "hgt850"
+        if normalized in {"z300", "gh300"}:
+            return "hgt300"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -69,6 +72,10 @@ AIFS_VARS = {
     "v850": ECMWF_VARS["v850"],
     "hgt850": ECMWF_VARS["hgt850"],
     "wspd850": ECMWF_VARS["wspd850"],
+    "u300": ECMWF_VARS["u300"],
+    "v300": ECMWF_VARS["v300"],
+    "hgt300": ECMWF_VARS["hgt300"],
+    "wspd300": ECMWF_VARS["wspd300"],
     "precip_total": ECMWF_VARS["precip_total"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
@@ -84,7 +91,7 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 AIFS_VARIABLE_CATALOG = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in AIFS_VARS.items()
-    if var_key not in {"10u", "10v", "u850", "v850", "hgt850"}
+    if var_key not in {"10u", "10v", "u850", "v850", "hgt850", "u300", "v300", "hgt300"}
 }
 
 AIFS_VARIABLE_CATALOG["precip_total"] = replace(
@@ -136,6 +143,34 @@ AIFS_VARS["wspd850"] = replace(
     ),
 )
 
+AIFS_VARS["hgt300"] = replace(
+    AIFS_VARS["hgt300"],
+    selectors=VarSelectors(
+        search=[":z:300:pl:", ":z:300:"],
+        filter_by_keys={
+            "shortName": "z",
+            "typeOfLevel": "isobaricInhPa",
+            "level": "300",
+        },
+        hints={
+            "upstream_var": "z300",
+            "cf_var": "z",
+            "short_name": "z",
+        },
+    ),
+)
+
+AIFS_VARS["wspd300"] = replace(
+    AIFS_VARS["wspd300"],
+    selectors=replace(
+        AIFS_VARS["wspd300"].selectors,
+        hints={
+            **AIFS_VARS["wspd300"].selectors.hints,
+            "contour_conversion": "geopotential_to_height_m",
+        },
+    ),
+)
+
 AIFS_VARIABLE_CATALOG["pwat"] = replace(
     AIFS_VARIABLE_CATALOG["pwat"],
     selectors=AIFS_VARS["pwat"].selectors,
@@ -144,6 +179,11 @@ AIFS_VARIABLE_CATALOG["pwat"] = replace(
 AIFS_VARIABLE_CATALOG["wspd850"] = replace(
     AIFS_VARIABLE_CATALOG["wspd850"],
     selectors=AIFS_VARS["wspd850"].selectors,
+)
+
+AIFS_VARIABLE_CATALOG["wspd300"] = replace(
+    AIFS_VARIABLE_CATALOG["wspd300"],
+    selectors=AIFS_VARS["wspd300"].selectors,
 )
 
 AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(
