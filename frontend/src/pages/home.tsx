@@ -75,10 +75,8 @@ function ProofItem({
 }
 
 function ViewerPreview({
-  hrrrRunLabel,
   gfsRunLabel,
 }: {
-  hrrrRunLabel: string;
   gfsRunLabel: string;
 }) {
   return (
@@ -105,47 +103,18 @@ function ViewerPreview({
           `,
         }}
       />
-      <div className="relative z-10 border-b border-white/10 bg-slate-950/55 px-4 py-3 backdrop-blur-md">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-white/72">
-          <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-cyan-100">
-            HRRR
-          </span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">CONUS</span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">2m Temp</span>
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{hrrrRunLabel}</span>
-          <span className="ml-auto inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-100">
-            <span className="h-2 w-2 rounded-full bg-emerald-300" />
-            Current cycle
-          </span>
+      <div className="relative z-10 p-4 sm:p-5">
+        <div className="overflow-hidden rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <img
+            src="/assets/screenshot_home.png"
+            alt="CartoSky viewer screenshot"
+            className="block h-auto w-full object-cover"
+          />
         </div>
-      </div>
-
-      <div className="relative z-10 grid gap-4 p-4 sm:p-5">
-        <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] uppercase tracking-[0.2em] text-white/45">
-            <span>Viewer showcase</span>
-            <span className="text-cyan-200/70">Live product view</span>
-          </div>
-          <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]">
-            <img
-              src="/assets/screenshot_home.png"
-              alt="CartoSky viewer screenshot"
-              className="block h-auto w-full object-cover"
-            />
-          </div>
-          <div className="mt-4 flex items-center gap-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">Init 12Z</div>
-            <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-              <div className="absolute inset-y-0 left-0 w-[52%] rounded-full bg-gradient-to-r from-cyan-300 via-sky-300 to-slate-200" />
-              <div className="absolute left-[52%] top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-slate-950 bg-cyan-200 shadow-[0_0_16px_rgba(103,232,249,0.45)]" />
-            </div>
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">F24</div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-white/58">
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">GFS · {gfsRunLabel}</span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NAM · Latest</span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NBM · Every 3 hours</span>
-          </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-white/58">
+          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">GFS · {gfsRunLabel}</span>
+          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NAM · Latest</span>
+          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">NBM · Every 3 hours</span>
         </div>
       </div>
     </div>
@@ -417,7 +386,6 @@ export default function Home() {
         </div>  
 
           <ViewerPreview
-            hrrrRunLabel={homepageStats.hrrrRunLabel}
             gfsRunLabel={homepageStats.gfsRunLabel}
           />
         </div>
