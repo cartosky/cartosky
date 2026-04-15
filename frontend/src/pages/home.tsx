@@ -7,6 +7,7 @@ import {
   Gauge,
   Globe2,
   Layers3,
+  Move,
   Radar,
   Snowflake,
   Sparkles,
@@ -402,9 +403,10 @@ export default function Home() {
               CartoSky keeps the map dominant, with core controls always within reach - so you can move through data without breaking your flow.
             </p>
 
+          <div className="mt-10 space-y-5">
             <div className="flex gap-4">
               <div className="mt-1 text-cyan-200">
-                <Clock3 className="h-5 w-5" />
+                <Move className="h-5 w-5" />
               </div>
               <div>
                 <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
@@ -446,6 +448,7 @@ export default function Home() {
               </div>
             </div>
           </div>
+        </div>  
 
           <ViewerPreview
             hrrrRunLabel={homepageStats.hrrrRunLabel}

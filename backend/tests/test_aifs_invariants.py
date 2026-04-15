@@ -128,7 +128,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "typeOfLevel": "surface",
     }
     snowfall_capability = capabilities.variable_catalog["snowfall_total"]
-    assert snowfall_capability.conversion == "m_swe_to_in_10to1"
+    assert snowfall_capability.conversion == "kgm2_swe_to_in_10to1"
 
     wspd10m_spec = AIFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None

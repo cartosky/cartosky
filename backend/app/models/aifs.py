@@ -74,6 +74,11 @@ AIFS_VARIABLE_CATALOG["precip_total"] = replace(
     conversion="kgm2_to_in",
 )
 
+AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(
+    AIFS_VARIABLE_CATALOG["snowfall_total"],
+    conversion="kgm2_swe_to_in_10to1",
+)
+
 
 AIFS_CAPABILITIES = ModelCapabilities(
     model_id="aifs",
