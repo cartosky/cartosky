@@ -16,17 +16,17 @@ def test_aifs_run_discovery_invariants() -> None:
     assert capabilities is not None
     assert capabilities.run_discovery == {
         "probe_var_key": "tmp2m",
-        "probe_fhs": [0, 3],
+        "probe_fhs": [0, 6],
         "probe_enabled": True,
         "probe_attempts": 4,
-        "cycle_cadence_hours": 12,
+        "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
         "source_priority": ["azure", "aws", "ecmwf"],
     }
 
 
 def test_aifs_target_fhs_invariants() -> None:
-    expected = list(range(0, 145, 3)) + list(range(150, 361, 6))
+    expected = list(range(0, 361, 6))
     assert AIFS_MODEL.target_fhs(0) == expected
     assert AIFS_MODEL.target_fhs(12) == expected
 

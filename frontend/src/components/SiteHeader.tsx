@@ -4,8 +4,8 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   Boxes,
   CalendarClock,
-  ChevronDown,
   Eye,
+  Globe,
   Layers,
   MapPin,
   Moon,
@@ -37,23 +37,7 @@ import type { GroupedOption } from "@/lib/app-utils";
 type Option = { value: string; label: string };
 type VariableOption = Option & { group: string | null };
 
-// ─── Source status badge ─────────────────────────────────────────────────────
-function sourceStatusBadgeClass(tone: ObservedSourceStatusTone | null | undefined): string {
-  switch (tone) {
-    case "live":
-      return "border-emerald-300/24 bg-emerald-300/[0.08] text-emerald-50";
-    case "delayed":
-      return "border-amber-300/24 bg-amber-300/[0.08] text-amber-50";
-    case "stale":
-      return "border-orange-300/24 bg-orange-300/[0.1] text-orange-50";
-    case "unavailable":
-      return "border-rose-300/24 bg-rose-300/[0.08] text-rose-50";
-    default:
-      return "border-white/10 bg-white/8 text-white/78";
-  }
-}
-
-function SourceStatusBadge({
+function AvailabilityReadout({
   label,
   description,
   tone,
@@ -66,8 +50,14 @@ function SourceStatusBadge({
     <div
       title={description ?? label}
       className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
-        sourceStatusBadgeClass(tone)
+        "inline-flex items-center rounded-xl border px-2.5 py-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.06em]",
+        tone === "unavailable"
+          ? "border-rose-300/16 bg-rose-300/[0.05] text-rose-50/90"
+          : tone === "stale"
+            ? "border-orange-300/16 bg-orange-300/[0.05] text-orange-50/90"
+            : tone === "delayed"
+              ? "border-white/12 bg-white/[0.07] text-white/84"
+              : "border-white/10 bg-white/[0.04] text-white/66"
       )}
     >
       {label}
@@ -244,6 +234,46 @@ function DisplayRow({
   );
 }
 
+function RegionUtilitySelect({
+  value,
+  onValueChange,
+  options,
+  disabled,
+  currentRegionLabel,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  options: Option[];
+  disabled?: boolean;
+  currentRegionLabel: string;
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled || options.length === 0}
+    >
+      <SelectTrigger
+        title={`Region: ${currentRegionLabel}`}
+        aria-label={`Region: ${currentRegionLabel}`}
+        className="h-8 w-8 rounded-xl border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:ring-0"
+      >
+        <Globe className="h-3.5 w-3.5" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+          Region
+        </SelectLabel>
+        {options.map((opt) => (
+          <SelectItem key={opt.value} value={opt.value} className="text-xs font-medium">
+            {opt.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 // ─── Viewer toolbar inline (desktop) ─────────────────────────────────────────
 function ViewerNavDesktop() {
   const toolbar = useViewerToolbar();
@@ -317,6 +347,7 @@ function ViewerNavDesktop() {
     if (!hasNewerRunAvailable) return runs;
     return runs.filter((o) => o.value !== "latest");
   }, [hasNewerRunAvailable, runs]);
+  const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
 
   return (
     /* flex-1 so this fills all space after the logo; spacer pushes controls to the right */
@@ -362,28 +393,28 @@ function ViewerNavDesktop() {
           onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
           minWidth="min-w-[148px] max-w-[220px]"
         />
-        <NavbarSelect
-          value={region}
-          onValueChange={onRegionChange}
-          options={regions}
-          disabled={disabled}
-          placeholder="Region"
-          minWidth="min-w-[88px] max-w-[140px]"
-        />
 
         {runAvailabilityLabel ? (
-          <SourceStatusBadge
+          <AvailabilityReadout
             label={runAvailabilityLabel}
             description={runAvailabilityDescription}
             tone={runAvailabilityTone}
           />
         ) : sourceStatusLabel ? (
-          <SourceStatusBadge
+          <AvailabilityReadout
             label={sourceStatusLabel}
             description={sourceStatusDescription}
             tone={sourceStatusTone}
           />
         ) : null}
+
+        <RegionUtilitySelect
+          value={region}
+          onValueChange={onRegionChange}
+          options={regions}
+          disabled={disabled}
+          currentRegionLabel={selectedRegionLabel}
+        />
 
         {/* Legend button */}
         <div className="relative shrink-0" ref={legendRef}>
@@ -589,14 +620,16 @@ function ViewerNavMobile() {
       {/* Compact summary + controls icon */}
       <div className="flex flex-1 items-center justify-end gap-2">
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {runAvailabilityLabel ? (
-            <SourceStatusBadge
-              label={runAvailabilityLabel}
-              description={runAvailabilityDescription}
-              tone={runAvailabilityTone}
-            />
-          ) : sourceStatusLabel ? (
-            <SourceStatusBadge label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
+          {isTabletTouchLayout ? (
+            runAvailabilityLabel ? (
+              <AvailabilityReadout
+                label={runAvailabilityLabel}
+                description={runAvailabilityDescription}
+                tone={runAvailabilityTone}
+              />
+            ) : sourceStatusLabel ? (
+              <AvailabilityReadout label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
+            ) : null
           ) : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
@@ -679,17 +712,17 @@ function ViewerNavMobile() {
                 <div className="mb-4">
                   <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
                     <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/38">
-                      Run Availability
+                      Status
                     </div>
                     <div className="mt-2">
                       {runAvailabilityLabel ? (
-                        <SourceStatusBadge
+                        <AvailabilityReadout
                           label={runAvailabilityLabel}
                           description={runAvailabilityDescription}
                           tone={runAvailabilityTone}
                         />
                       ) : sourceStatusLabel ? (
-                        <SourceStatusBadge
+                        <AvailabilityReadout
                           label={sourceStatusLabel}
                           description={sourceStatusDescription}
                           tone={sourceStatusTone}
@@ -700,6 +733,9 @@ function ViewerNavMobile() {
                 </div>
               ) : null}
 
+              <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">
+                Selection
+              </div>
               <div className={cn("grid gap-3", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
                 <div className="space-y-1.5">
                   <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">

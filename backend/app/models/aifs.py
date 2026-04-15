@@ -13,13 +13,13 @@ Herbie wiring:
 from __future__ import annotations
 
 from .base import HerbieRequest, ModelCapabilities, VariableCapability
-from .ecmwf import ECMWFPlugin, ECMWF_OPER_FHS, ECMWF_REGIONS, ECMWF_VARS
+from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
 
 
 class AIFSPlugin(ECMWFPlugin):
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
-        return list(ECMWF_OPER_FHS)
+        return list(AIFS_OPER_FHS)
 
     def herbie_request(
         self,
@@ -47,6 +47,9 @@ class AIFSPlugin(ECMWFPlugin):
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
 }
+
+
+AIFS_OPER_FHS = list(range(0, 361, 6))
 
 
 AIFS_VARIABLE_CATALOG = {
@@ -77,10 +80,10 @@ AIFS_CAPABILITIES = ModelCapabilities(
     },
     run_discovery={
         "probe_var_key": "tmp2m",
-        "probe_fhs": [0, 3],
+        "probe_fhs": [0, 6],
         "probe_enabled": True,
         "probe_attempts": 4,
-        "cycle_cadence_hours": 12,
+        "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
         "source_priority": ["azure", "aws", "ecmwf"],
     },

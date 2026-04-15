@@ -2807,6 +2807,9 @@ export default function App() {
     if (selectedTimeAxisMode === "observed") {
       return null;
     }
+    if (run !== "latest") {
+      return null;
+    }
 
     const latestRun = selectedModelAvailability?.latest_run ?? latestRunId ?? null;
     if (!latestRun) {
@@ -2814,9 +2817,6 @@ export default function App() {
     }
 
     const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
-    const selectedRunCompact = selectedRunLabel.replace(/^Latest\s*\((.*)\)$/, "$1");
-    const viewingOlderRun = run !== "latest" && run !== latestRun;
-    const viewingLatestRun = !viewingOlderRun;
     const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
       ? runManifest.variables?.[variable]?.frames ?? []
       : [];
@@ -2837,66 +2837,56 @@ export default function App() {
       ? selectedModelAvailability.latest_run_ready_vars
       : [];
     const selectedVariableReady = variable ? readyVars.includes(variable) : true;
-    if (viewingLatestRun && latestReadyForecastHour !== null) {
-      const runLikelyComplete = Boolean(
-        selectedModelAvailability?.latest_run_ready === true
-        || (
-          targetFrameCount !== null
-          && readyFrameCount !== null
-          && readyFrameCount >= targetFrameCount
-        )
-      );
-      const tone: "live" | "delayed" =
-        runLikelyComplete && selectedVariableReady ? "live" : "delayed";
-      const progressSuffix =
-        targetFrameCount !== null && readyFrameCount !== null
-          ? ` ${readyFrameCount}/${targetFrameCount} forecast hours are currently available.`
-          : "";
-      return {
-        label: `${latestLabel} · FH ${latestReadyForecastHour}`,
-        description:
-          `Latest ${latestLabel} is currently available through forecast hour ${latestReadyForecastHour} for ${selectedVariableLabel}.`
-          + progressSuffix,
-        tone,
-      };
-    }
+    const degradedReason = String(selectedModelAvailability?.degraded_reason ?? "").trim().replace(/_/g, " ");
+    const unusable = selectedModelAvailability?.usable === false;
+    const stale = selectedModelAvailability?.stale === true;
 
-    if (!selectedVariableReady) {
-      const progressLabel = targetFrameCount !== null && readyFrameCount !== null
-        ? `${readyFrameCount}/${targetFrameCount} hrs`
-        : latestReadyForecastHour !== null
-          ? `FH ${latestReadyForecastHour}`
-        : "Ingesting";
-      let description = targetFrameCount !== null && readyFrameCount !== null
-        ? `Latest ${latestLabel} is still ingesting. ${readyFrameCount} of ${targetFrameCount} forecast hours are currently available.`
-        : latestReadyForecastHour !== null
-          ? `Latest ${latestLabel} is still ingesting and is currently available through forecast hour ${latestReadyForecastHour}.`
-        : `Latest ${latestLabel} is still ingesting.`;
-      if (!selectedVariableReady) {
-        description += ` ${selectedVariableLabel} is not fully ready on the latest run yet.`;
+    const resolvedTotalCount =
+      expectedVariableFrameCount
+      ?? (targetFrameCount !== null ? targetFrameCount : null);
+    const resolvedAvailableCount =
+      expectedVariableFrameCount !== null
+        ? readyVariableFrameCount
+        : (readyFrameCount !== null ? readyFrameCount : null);
+
+    const resolvedTone: "live" | "delayed" | "stale" | "unavailable" =
+      unusable
+        ? "unavailable"
+        : stale
+          ? "stale"
+          : selectedVariableReady
+            ? "live"
+            : "delayed";
+
+    if (resolvedTotalCount !== null && resolvedAvailableCount !== null) {
+      const cappedAvailable = Math.max(0, Math.min(resolvedAvailableCount, resolvedTotalCount));
+      const isComplete = cappedAvailable >= resolvedTotalCount && resolvedTotalCount > 0;
+      let description = `${isComplete ? "Complete" : "Availability"} for ${selectedVariableLabel} on the latest ${latestLabel} run: ${cappedAvailable} of ${resolvedTotalCount} frames`;
+      if (latestReadyForecastHour !== null && cappedAvailable > 0) {
+        description += ` are ready through forecast hour ${latestReadyForecastHour}`;
+      } else {
+        description += " are ready";
       }
-      if (viewingOlderRun) {
-        description += ` You are viewing ${selectedRunCompact}.`;
+      description += ".";
+      if (degradedReason) {
+        description += ` ${degradedReason}.`;
       }
       return {
-        label: `${latestLabel} · ${progressLabel}`,
+        label: `${cappedAvailable}/${resolvedTotalCount} ${isComplete ? "complete" : "available"}`,
         description,
-        tone: "delayed" as const,
+        tone: isComplete ? (resolvedTone === "live" ? "live" : resolvedTone) : resolvedTone,
       };
     }
 
-    if (viewingOlderRun) {
-      return {
-        label: `Latest ${latestLabel} ready`,
-        description: `Latest ${latestLabel} is ready. You are viewing ${selectedRunCompact}.`,
-        tone: "live" as const,
-      };
+    const fallbackLabel = selectedVariableReady ? "Latest ready" : "Latest updating";
+    let fallbackDescription = `${selectedVariableLabel} on the latest ${latestLabel} run is ${selectedVariableReady ? "ready" : "still updating"}, but exact frame counts are not currently available.`;
+    if (degradedReason) {
+      fallbackDescription += ` ${degradedReason}.`;
     }
-
     return {
-      label: `${latestLabel}`,
-      description: `Latest ${latestLabel} is selected for this model.`,
-      tone: "live" as const,
+      label: fallbackLabel,
+      description: fallbackDescription,
+      tone: resolvedTone,
     };
   }, [
     latestRunId,
