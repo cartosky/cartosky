@@ -321,7 +321,7 @@ export default function Home() {
         <div className="relative mx-auto grid min-h-[calc(100svh-8rem)] max-w-6xl items-center gap-14 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-10">
           <div className="max-w-4xl text-center lg:text-left">
             <h1 className="mt-8 max-w-4xl text-balance text-5xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] md:text-7xl md:leading-[0.98]">
-              Serious weather data,
+              Weather data,
               <br />
               <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic tracking-[-0.03em] text-cyan-200">
                 clearly rendered.

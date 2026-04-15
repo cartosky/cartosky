@@ -1,0 +1,27 @@
+[Unit]
+Description=CartoSky AIFS Scheduler (CONUS canonical)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cartosky
+Group=cartosky
+UMask=0027
+LimitNOFILE=65536
+WorkingDirectory=/opt/cartosky/backend
+EnvironmentFile=-/etc/cartosky/scheduler-aifs.env
+Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/opt/cartosky/.venv/bin/python -m app.services.scheduler --model aifs
+Nice=10
+CPUWeight=50
+IOWeight=50
+# Optional hard cap if needed for noisy neighbors / OOM protection:
+# MemoryMax=2G
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
