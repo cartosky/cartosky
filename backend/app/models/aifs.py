@@ -4,8 +4,10 @@ Initial rollout scope:
   - AIFS `oper`
       - `tmp2m`
       - `dp2m`
+            - `tmp850`
       - `precip_total`
             - `pwat`
+            - `snowfall_total`
       - `wspd10m`
   - realtime publishing only
 
@@ -53,6 +55,7 @@ class AIFSPlugin(ECMWFPlugin):
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
     "dp2m": ECMWF_VARS["dp2m"],
+    "tmp850": ECMWF_VARS["tmp850"],
     "precip_total": ECMWF_VARS["precip_total"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],

@@ -549,7 +549,7 @@ export default function Home() {
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Gauge className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Interactive by default</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Work with the map, don't just view it</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
@@ -583,14 +583,14 @@ export default function Home() {
             Start with the map.
           </h2>
           <p className="mt-5 text-base leading-8 text-white/64 md:text-lg">
-            Explore live model guidance, forecast products, and seasonal workflows in a cleaner technical interface.
+            Work the forecast directly - models, radar, SPC outlooks, and more in a single interactive view.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link
               to="/viewer"
               className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
             >
-              Launch Viewer
+              Open Viewer
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link

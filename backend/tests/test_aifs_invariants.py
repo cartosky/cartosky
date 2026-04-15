@@ -39,6 +39,9 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("dp2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("d2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("2d") == "dp2m"
+    assert AIFS_MODEL.normalize_var_id("tmp850") == "tmp850"
+    assert AIFS_MODEL.normalize_var_id("t850") == "tmp850"
+    assert AIFS_MODEL.normalize_var_id("temp850") == "tmp850"
     assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -72,7 +75,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "pwat", "snowfall_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "precip_total", "pwat", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -105,6 +108,14 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "shortName": "2d",
         "typeOfLevel": "surface",
     }
+
+    tmp850_spec = AIFS_MODEL.get_var("tmp850")
+    assert tmp850_spec is not None
+    assert tmp850_spec.primary is True
+    assert tmp850_spec.derived is False
+    assert tmp850_spec.kind == "continuous"
+    assert tmp850_spec.units == "C"
+    assert tmp850_spec.selectors.search == [":t:850:pl:"]
 
     precip_spec = AIFS_MODEL.get_var("precip_total")
     assert precip_spec is not None
@@ -217,6 +228,19 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["group"] == "Temperature"
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
+
+    tmp850 = payload["variables"]["tmp850"]
+    assert tmp850["var_key"] == "tmp850"
+    assert tmp850["display_name"] == "850mb Temp"
+    assert tmp850["kind"] == "continuous"
+    assert tmp850["units"] == "C"
+    assert tmp850["buildable"] is True
+    assert tmp850["derived"] is False
+    assert tmp850["color_map_id"] == "tmp850"
+    assert tmp850["order"] == 3
+    assert tmp850["group"] == "Temperature"
+    assert tmp850["default_fh"] == 0
+    assert tmp850["render_substrates"] == ["grid"]
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"
