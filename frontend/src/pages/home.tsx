@@ -189,6 +189,41 @@ function TrustPoint({
   );
 }
 
+function ForecastInfoCard({
+  eyebrow,
+  rows,
+  cta,
+}: {
+  eyebrow: string;
+  rows?: Array<{ title: string; detail: string }>;
+  cta?: { label: string; icon?: ReactNode };
+}) {
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-5 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/78">{eyebrow}</div>
+      {rows ? (
+        <div className="mt-3 space-y-3">
+          {rows.map((row, index) => (
+            <div
+              key={row.title}
+              className={index === 0 ? "" : "border-t border-white/8 pt-3"}
+            >
+              <div className="text-xl font-semibold tracking-tight text-white">{row.title}</div>
+              <div className="mt-1 text-sm text-cyan-100/62">{row.detail}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {cta ? (
+        <div className="mt-3 flex items-center justify-between gap-3 text-white">
+          <div className="text-2xl font-semibold tracking-tight">{cta.label}</div>
+          {cta.icon}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Home() {
   const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
 
@@ -404,7 +439,7 @@ export default function Home() {
       </section>
 
       <section className="border-b border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
-        <div className="mx-auto flex max-w-6xl flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1fr_0.9fr] lg:items-end">
           <div className="max-w-2xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
@@ -414,21 +449,40 @@ export default function Home() {
               Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              to="/forecast"
-              className="inline-flex items-center gap-2 rounded-xl border border-white/14 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.07]"
-            >
-              Open Forecast
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/viewer"
-              className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
-            >
-              Go to Viewer
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+          <div className="max-w-xl justify-self-start lg:justify-self-end">
+            <div className="grid gap-3">
+              <ForecastInfoCard
+                eyebrow="What You Get"
+                rows={[
+                  { title: "Location briefing", detail: "Current obs, short-range outlook" },
+                  { title: "Model signals", detail: "HRRR, GFS, NBM agreement" },
+                  { title: "Viewer handoff", detail: "Location stays locked" },
+                ]}
+              />
+              <ForecastInfoCard
+                eyebrow="Then"
+                cta={{
+                  label: "Continue in Viewer",
+                  icon: <ArrowRight className="h-5 w-5 text-cyan-200" />,
+                }}
+              />
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Link
+                to="/forecast"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/14 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.07]"
+              >
+                Open Forecast
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/viewer"
+                className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
+              >
+                Go to Viewer
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           </div>
         </div>
       </section>
