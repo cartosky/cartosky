@@ -53,6 +53,7 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert AIFS_MODEL.normalize_var_id("precipitablewater") == "pwat"
     assert AIFS_MODEL.normalize_var_id("tcwv") == "pwat"
+    assert AIFS_MODEL.normalize_var_id("tcw") == "pwat"
     assert AIFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("10u") == "10u"
@@ -151,10 +152,10 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert pwat_spec.derived is False
     assert pwat_spec.kind == "continuous"
     assert pwat_spec.units == "in"
-    assert pwat_spec.selectors.search == [":tcwv:"]
+    assert pwat_spec.selectors.search == [":tcw:", ":tcw:sfc:"]
     assert pwat_spec.selectors.filter_by_keys == {
-        "shortName": "tcwv",
-        "typeOfLevel": "atmosphereSingleLayer",
+        "shortName": "tcw",
+        "typeOfLevel": "surface",
     }
     pwat_capability = capabilities.variable_catalog["pwat"]
     assert pwat_capability.conversion == "kgm2_to_in"

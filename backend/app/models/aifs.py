@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import HerbieRequest, ModelCapabilities
+from .base import HerbieRequest, ModelCapabilities, VarSelectors
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
 
 
@@ -28,6 +28,12 @@ class AIFSPlugin(ECMWFPlugin):
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
         return list(AIFS_OPER_FHS)
+
+    def normalize_var_id(self, var_id: str) -> str:
+        normalized = var_id.strip().lower()
+        if normalized in {"tcw", "total_column_water"}:
+            return "pwat"
+        return super().normalize_var_id(var_id)
 
     def herbie_request(
         self,
@@ -77,6 +83,27 @@ AIFS_VARIABLE_CATALOG = {
 AIFS_VARIABLE_CATALOG["precip_total"] = replace(
     AIFS_VARIABLE_CATALOG["precip_total"],
     conversion="kgm2_to_in",
+)
+
+AIFS_VARS["pwat"] = replace(
+    AIFS_VARS["pwat"],
+    selectors=VarSelectors(
+        search=[":tcw:", ":tcw:sfc:"],
+        filter_by_keys={
+            "shortName": "tcw",
+            "typeOfLevel": "surface",
+        },
+        hints={
+            "upstream_var": "tcw",
+            "cf_var": "tcw",
+            "short_name": "tcw",
+        },
+    ),
+)
+
+AIFS_VARIABLE_CATALOG["pwat"] = replace(
+    AIFS_VARIABLE_CATALOG["pwat"],
+    selectors=AIFS_VARS["pwat"].selectors,
 )
 
 AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(
