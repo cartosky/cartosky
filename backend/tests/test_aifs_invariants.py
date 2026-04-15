@@ -39,6 +39,9 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("dp2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("d2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("2d") == "dp2m"
+    assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
+    assert AIFS_MODEL.normalize_var_id("apcp") == "precip_total"
+    assert AIFS_MODEL.normalize_var_id("qpf") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIFS_MODEL.normalize_var_id("10u") == "10u"
@@ -61,7 +64,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "precip_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -92,6 +95,18 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert dp2m_spec.selectors.search == [":2d:"]
     assert dp2m_spec.selectors.filter_by_keys == {
         "shortName": "2d",
+        "typeOfLevel": "surface",
+    }
+
+    precip_spec = AIFS_MODEL.get_var("precip_total")
+    assert precip_spec is not None
+    assert precip_spec.primary is True
+    assert precip_spec.derived is False
+    assert precip_spec.kind == "continuous"
+    assert precip_spec.units == "in"
+    assert precip_spec.selectors.search == [":tp:sfc:", ":tp:"]
+    assert precip_spec.selectors.filter_by_keys == {
+        "shortName": "tp",
         "typeOfLevel": "surface",
     }
 
@@ -164,6 +179,20 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["group"] == "Temperature"
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
+
+    precip_total = payload["variables"]["precip_total"]
+    assert precip_total["var_key"] == "precip_total"
+    assert precip_total["display_name"] == "Total Precip"
+    assert precip_total["kind"] == "continuous"
+    assert precip_total["units"] == "in"
+    assert precip_total["buildable"] is True
+    assert precip_total["derived"] is False
+    assert precip_total["color_map_id"] == "precip_total"
+    assert precip_total["order"] == 10
+    assert precip_total["group"] == "Precipitation"
+    assert precip_total["default_fh"] == 3
+    assert precip_total["constraints"] == {"min_fh": 3}
+    assert precip_total["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

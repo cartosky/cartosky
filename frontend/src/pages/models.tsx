@@ -79,15 +79,16 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
   },
   aifs: {
     eyebrow: "Core Model",
-    oneLiner: "AI-based ECMWF global guidance sourced from the same open-data stream, now rolled out with surface temperature, dew point, and 10m wind speed.",
+    oneLiner: "AI-based ECMWF global guidance sourced from the same open-data stream, now rolled out with surface temperature, dew point, total precip, and 10m wind speed.",
     coverage: "Global",
     cadence: "Every 6 hours",
     focus: [
       "Fast comparison against deterministic ECMWF low-level thermal and moisture structure",
+      "Alternative large-scale precipitation placement and accumulation signal from the same upstream feed",
       "Alternative large-scale surface wind and boundary-layer evolution from the same upstream feed",
       "Early read on where AIFS diverges from classic IFS guidance",
     ],
-    notes: ["Initial rollout stays focused on near-surface fields while runtime behavior is validated across more cycles."],
+    notes: ["Initial rollout stays focused on near-surface and surface-accumulation fields while runtime behavior is validated across more cycles."],
   },
   spc: {
     eyebrow: "Operational Layer",
