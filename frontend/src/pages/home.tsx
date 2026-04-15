@@ -189,41 +189,6 @@ function TrustPoint({
   );
 }
 
-function ForecastInfoCard({
-  eyebrow,
-  rows,
-  cta,
-}: {
-  eyebrow: string;
-  rows?: Array<{ title: string; detail: string }>;
-  cta?: { label: string; icon?: ReactNode };
-}) {
-  return (
-    <div className="rounded-[1.15rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.16)]">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">{eyebrow}</div>
-      {rows ? (
-        <div className="mt-3 space-y-2.5">
-          {rows.map((row, index) => (
-            <div
-              key={row.title}
-              className={index === 0 ? "" : "border-t border-white/8 pt-2.5"}
-            >
-              <div className="text-[1.05rem] font-semibold tracking-tight text-white">{row.title}</div>
-              <div className="mt-0.5 text-sm text-cyan-100/62">{row.detail}</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {cta ? (
-        <div className="mt-2 flex items-center justify-between gap-3 text-white">
-          <div className="text-[1.1rem] font-semibold tracking-tight">{cta.label}</div>
-          {cta.icon}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 export default function Home() {
   const [capabilities, setCapabilities] = useState<CapabilitiesResponse | null>(null);
 
@@ -288,7 +253,7 @@ export default function Home() {
               </span>
             </h1>
             <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
-              Interactive weather maps, built for meteorologists and weather enthusiasts alike.
+              Interactive weather maps, built for meteorologists and weather enthusiasts.
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
@@ -439,8 +404,8 @@ export default function Home() {
       </section>
 
       <section className="border-b border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
-        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1fr_0.9fr] lg:items-end">
-          <div className="max-w-2xl">
+        <div className="mx-auto max-w-6xl">
+          <div className="max-w-3xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
               Start with a local briefing.
@@ -448,25 +413,35 @@ export default function Home() {
             <p className="mt-4 text-base leading-8 text-white/64">
               Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
-          </div>
-          <div className="max-w-[18rem] justify-self-start lg:justify-self-end">
-            <div className="grid gap-3">
-              <ForecastInfoCard
-                eyebrow="What You Get"
-                rows={[
-                  { title: "Location briefing", detail: "Current obs, short-range outlook" },
-                  { title: "Model signals", detail: "HRRR, GFS, NBM agreement" },
-                  { title: "Viewer handoff", detail: "Location stays locked" },
-                ]}
-              />
-              <ForecastInfoCard
-                eyebrow="Then"
-                cta={{
-                  label: "Continue in Viewer",
-                  icon: <ArrowRight className="h-5 w-5 text-cyan-200" />,
-                }}
-              />
+
+            <div className="mt-10 max-w-2xl border-t border-white/8 pt-6">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">What You Get</div>
+              <div className="mt-4 grid gap-4 md:grid-cols-3 md:gap-5">
+                <div className="border-l border-white/8 pl-4 md:pl-5">
+                  <div className="text-lg font-semibold tracking-tight text-white">Location briefing</div>
+                  <div className="mt-1 text-sm text-cyan-100/62">Current obs, short-range outlook</div>
+                </div>
+                <div className="border-l border-white/8 pl-4 md:pl-5">
+                  <div className="text-lg font-semibold tracking-tight text-white">Model signals</div>
+                  <div className="mt-1 text-sm text-cyan-100/62">HRRR, GFS, NBM agreement</div>
+                </div>
+                <div className="border-l border-white/8 pl-4 md:pl-5">
+                  <div className="text-lg font-semibold tracking-tight text-white">Viewer handoff</div>
+                  <div className="mt-1 text-sm text-cyan-100/62">Location stays locked</div>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-white/8 pt-5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">Then</div>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight text-white">
+                    Continue in Viewer
+                    <ArrowRight className="h-4 w-4 text-cyan-200" />
+                  </div>
+                </div>
+              </div>
             </div>
+
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <Link
                 to="/forecast"
