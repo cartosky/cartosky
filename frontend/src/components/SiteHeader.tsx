@@ -261,14 +261,16 @@ function RegionUtilitySelect({
         <Globe className="h-3.5 w-3.5" />
       </SelectTrigger>
       <SelectContent>
-        <SelectLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
-          Region
-        </SelectLabel>
-        {options.map((opt) => (
-          <SelectItem key={opt.value} value={opt.value} className="text-xs font-medium">
-            {opt.label}
-          </SelectItem>
-        ))}
+        <SelectGroup>
+          <SelectLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+            Region
+          </SelectLabel>
+          {options.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value} className="text-xs font-medium">
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
       </SelectContent>
     </Select>
   );
