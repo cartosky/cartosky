@@ -242,6 +242,14 @@ export default function Home() {
               "radial-gradient(circle at 24% 34%, rgba(255,255,255,0.12), transparent 0 10%), radial-gradient(circle at 70% 56%, rgba(125,211,252,0.14), transparent 0 10%)",
           }}
         />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 78% 24%, rgba(6,12,24,0.48), rgba(6,12,24,0.28) 18%, transparent 42%)",
+          }}
+        />
 
         <div className="relative mx-auto grid min-h-[calc(100svh-8rem)] max-w-6xl items-center gap-14 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-10">
           <div className="max-w-4xl text-center lg:text-left">
@@ -404,59 +412,85 @@ export default function Home() {
       </section>
 
       <section className="border-b border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
-        <div className="mx-auto max-w-6xl">
+        <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[0.95fr_0.75fr] lg:items-start">
           <div className="max-w-3xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
-              Start with a local briefing.
+              Get your bearings
+              <br />
+              before you open the map.
             </h2>
             <p className="mt-4 text-base leading-8 text-white/64">
               Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
 
-            <div className="mt-10 max-w-2xl border-t border-white/8 pt-6">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">What You Get</div>
-              <div className="mt-4 grid gap-4 md:grid-cols-3 md:gap-5">
-                <div className="border-l border-white/8 pl-4 md:pl-5">
-                  <div className="text-lg font-semibold tracking-tight text-white">Location briefing</div>
-                  <div className="mt-1 text-sm text-cyan-100/62">Current obs, short-range outlook</div>
-                </div>
-                <div className="border-l border-white/8 pl-4 md:pl-5">
-                  <div className="text-lg font-semibold tracking-tight text-white">Model signals</div>
-                  <div className="mt-1 text-sm text-cyan-100/62">HRRR, GFS, NBM agreement</div>
-                </div>
-                <div className="border-l border-white/8 pl-4 md:pl-5">
-                  <div className="text-lg font-semibold tracking-tight text-white">Viewer handoff</div>
-                  <div className="mt-1 text-sm text-cyan-100/62">Location stays locked</div>
-                </div>
+            <div className="mt-8 space-y-4 text-white/72">
+              <div className="flex gap-3">
+                <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
+                <p className="text-base leading-8">
+                  <span className="font-semibold text-white">Current obs + short-range context</span>
+                  {" "}surface conditions, precip timing, and thermal structure at a glance.
+                </p>
               </div>
-
-              <div className="mt-6 border-t border-white/8 pt-5">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">Then</div>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <div className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight text-white">
-                    Continue in Viewer
-                    <ArrowRight className="h-4 w-4 text-cyan-200" />
-                  </div>
-                </div>
+              <div className="flex gap-3">
+                <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
+                <p className="text-base leading-8">
+                  <span className="font-semibold text-white">Model signal summary</span>
+                  {" "}see where HRRR, GFS, and NBM agree or diverge before you drill in.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
+                <p className="text-base leading-8">
+                  <span className="font-semibold text-white">One-click handoff to the Viewer</span>
+                  {" "}your location stays locked as you move into the interactive map.
+                </p>
               </div>
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 to="/forecast"
-                className="inline-flex items-center gap-2 rounded-xl border border-white/14 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.07]"
+                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#70dfcf_0%,#4ecab9_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(56,189,169,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
               >
                 Open Forecast
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
                 to="/viewer"
-                className="inline-flex items-center gap-2 rounded-xl text-sm font-medium text-cyan-200/92 transition duration-200 hover:text-cyan-100"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-transparent px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.05]"
               >
                 Go to Viewer
                 <ArrowRight className="h-4 w-4" />
               </Link>
+            </div>
+          </div>
+
+          <div className="max-w-[17rem] justify-self-start lg:justify-self-end">
+            <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">What You Get</div>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <div className="text-[1.05rem] font-semibold tracking-tight text-white">Location briefing</div>
+                  <div className="mt-0.5 text-sm text-cyan-100/62">Current obs, short-range outlook</div>
+                </div>
+                <div className="border-t border-white/8 pt-3">
+                  <div className="text-[1.05rem] font-semibold tracking-tight text-white">Model signals</div>
+                  <div className="mt-0.5 text-sm text-cyan-100/62">HRRR · GFS · NBM agreement</div>
+                </div>
+                <div className="border-t border-white/8 pt-3">
+                  <div className="text-[1.05rem] font-semibold tracking-tight text-white">Viewer handoff</div>
+                  <div className="mt-0.5 text-sm text-cyan-100/62">Location stays locked</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">Then</div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="text-[1.05rem] font-semibold tracking-tight text-white">Continue in Viewer</div>
+                <ArrowRight className="h-5 w-5 text-cyan-200" />
+              </div>
             </div>
           </div>
         </div>
