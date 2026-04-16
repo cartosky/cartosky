@@ -67,3 +67,4 @@ extract_colorbar.py
 /.idea/
 /.playwright-mcp/
 /.opencode/
+/.claude/

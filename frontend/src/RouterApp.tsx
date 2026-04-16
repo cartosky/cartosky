@@ -1,5 +1,5 @@
-import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Suspense, lazy, useEffect } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
@@ -20,7 +20,34 @@ function withSuspense(node: React.ReactNode) {
   return <Suspense fallback={null}>{node}</Suspense>;
 }
 
+function getPageTitle(pathname: string) {
+  const pageTitles: Array<[prefix: string, title: string]> = [
+    ["/admin/overview", "Admin Overview"],
+    ["/admin/analytics", "Admin Analytics"],
+    ["/admin/observability", "Admin Observability"],
+    ["/admin/traces", "Admin Traces"],
+    ["/admin/status", "Admin Status"],
+    ["/admin", "Admin"],
+    ["/viewer", "Viewer"],
+    ["/forecast", "Forecast"],
+    ["/models", "Models"],
+    ["/variables", "Variables"],
+    ["/login", "Login"],
+    ["/", "Home"],
+  ];
+
+  const matchedTitle = pageTitles.find(([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`))?.[1];
+
+  return matchedTitle ? `CartoSky - ${matchedTitle}` : "CartoSky";
+}
+
 export default function RouterApp() {
+  const location = useLocation();
+
+  useEffect(() => {
+    document.title = getPageTitle(location.pathname);
+  }, [location.pathname]);
+
   return (
     <Routes>
       <Route element={<MarketingLayout />}>
