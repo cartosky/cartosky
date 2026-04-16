@@ -717,6 +717,7 @@ def _prefetch_components_parallel(
     succeeded = 0
     failed = 0
     lock = threading.Lock()
+    log_label = f" [{label}]" if label else ""
 
     def _run_one(task: _PrefetchTask) -> bool:
         # Early abort check: if many tasks have already failed, skip new ones
@@ -759,21 +760,32 @@ def _prefetch_components_parallel(
             return False
 
     t0 = time.monotonic()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_run_one, task): task for task in unique}
-        for future in as_completed(futures):
-            try:
-                ok = future.result()
-            except Exception:
-                ok = False
-            with lock:
-                if ok:
-                    succeeded += 1
-                else:
-                    failed += 1
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_run_one, task): task for task in unique}
+            for future in as_completed(futures):
+                try:
+                    ok = future.result()
+                except Exception:
+                    ok = False
+                with lock:
+                    if ok:
+                        succeeded += 1
+                    else:
+                        failed += 1
+    except RuntimeError as exc:
+        if "interpreter shutdown" in str(exc).lower():
+            logger.info(
+                "prefetch%s aborted during interpreter shutdown: completed=%d/%d workers=%d",
+                log_label,
+                succeeded,
+                len(unique),
+                workers,
+            )
+            return succeeded
+        raise
 
     elapsed_ms = (time.monotonic() - t0) * 1000
-    log_label = f" [{label}]" if label else ""
     logger.info(
         "prefetch%s complete: %d/%d ok, %d failed, workers=%d, %.0fms",
         log_label,

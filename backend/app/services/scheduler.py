@@ -1783,6 +1783,13 @@ def run_scheduler(
     if resolved_probe_var is None:
         resolved_probe_var = plugin.resolve_probe_var_key(DEFAULT_PROBE_VAR)
 
+    if rebuild_existing and workers > 1:
+        logger.info(
+            "Rebuild-existing mode throttling frame workers from %d to 1 to reduce ECMWF Kuchera memory and GDAL pressure",
+            workers,
+        )
+        workers = 1
+
     logger.info(
         "Scheduler starting model=%s coverage=%s vars=%s primary=%s probe_var=%s data_root=%s workers=%d poll_incomplete=%ds poll_complete=%ds rebuild_existing=%s",
         model,
