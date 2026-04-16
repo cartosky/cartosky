@@ -3251,11 +3251,10 @@ def _derive_vort500_from_uv(
             - du_dphi / _EARTH_RADIUS_M
             + (u * tan_lat) / _EARTH_RADIUS_M
         )
-        absolute_vorticity = relative_vorticity + (2.0 * _EARTH_ANGULAR_VELOCITY_RAD_S * sin_lat)
 
-    absolute_vorticity = np.where(valid_mask, absolute_vorticity, np.nan).astype(np.float32, copy=False)
+    relative_vorticity = np.where(valid_mask, relative_vorticity, np.nan).astype(np.float32, copy=False)
     converted = convert_units(
-        absolute_vorticity,
+        relative_vorticity,
         var_key=var_key,
         model_id=model_id,
         var_capability=var_capability,

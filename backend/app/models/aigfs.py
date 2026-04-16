@@ -19,7 +19,7 @@ Upstream verification:
     - Pressure temperature inventory includes `TMP:850 mb`
     - Pressure 850mb height and wind components inventory entries are `HGT:850 mb`, `UGRD:850 mb`, and `VGRD:850 mb`
     - Pressure 300mb height and wind components inventory entries are `HGT:300 mb`, `UGRD:300 mb`, and `VGRD:300 mb`
-        - Pressure 500mb height inventory includes `HGT:500 mb`; `ABSV:500 mb` is not published, so AIGFS `vort500` is derived from `UGRD:500 mb` and `VGRD:500 mb`
+        - Pressure 500mb height inventory includes `HGT:500 mb`; `ABSV:500 mb` is not published, so AIGFS `vort500` is derived as relative vorticity from `UGRD:500 mb` and `VGRD:500 mb`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -139,7 +139,7 @@ def _aigfs_pres_wind_component(axis: str, level_hpa: int) -> VarSpec:
 def _aigfs_vort500_spec() -> VarSpec:
     return VarSpec(
         id="vort500",
-        name="500mb Absolute Vorticity",
+        name="500mb Relative Vorticity",
         selectors=VarSelectors(
             hints={
                 "u_component": "u500",
