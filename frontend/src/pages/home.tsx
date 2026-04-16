@@ -411,8 +411,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-b border-white/8 bg-[#0c172b] px-5 py-16 md:px-8 md:py-18">
-        <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[0.95fr_0.75fr] lg:items-start">
+      <section className="border-b border-white/8 bg-[#0c172b] px-5 py-14 md:px-8 md:py-16">
+        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.95fr_0.75fr] lg:items-start">
           <div className="max-w-3xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
@@ -424,31 +424,31 @@ export default function Home() {
               Enter any location to see current conditions, a short-range outlook, and the key model signals - all in one view. Then jump straight into the Viewer for deeper analysis.
             </p>
 
-            <div className="mt-8 space-y-4 text-white/72">
+            <div className="mt-6 space-y-3 text-white/72">
               <div className="flex gap-3">
                 <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
                 <p className="text-base leading-8">
-                  <span className="font-semibold text-white">Current obs + short-range context</span>
+                  <span className="font-semibold text-white">Current obs + short-range context -</span>
                   {" "}surface conditions, precip timing, and thermal structure at a glance.
                 </p>
               </div>
               <div className="flex gap-3">
                 <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
                 <p className="text-base leading-8">
-                  <span className="font-semibold text-white">Model signal summary</span>
+                  <span className="font-semibold text-white">Model signal summary -</span>
                   {" "}see where HRRR, GFS, and NBM agree or diverge before you drill in.
                 </p>
               </div>
               <div className="flex gap-3">
                 <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
                 <p className="text-base leading-8">
-                  <span className="font-semibold text-white">One-click handoff to the Viewer</span>
+                  <span className="font-semibold text-white">One-click handoff to the Viewer -</span>
                   {" "}your location stays locked as you move into the interactive map.
                 </p>
               </div>
             </div>
 
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
               <Link
                 to="/forecast"
                 className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#70dfcf_0%,#4ecab9_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(56,189,169,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
@@ -485,7 +485,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-3 rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
+            <div className="mt-2.5 rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
               <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">Then</div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <div className="text-[1.05rem] font-semibold tracking-tight text-white">Continue in Viewer</div>
