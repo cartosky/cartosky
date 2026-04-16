@@ -671,7 +671,7 @@ def test_direct_cumulative_kuchera_reuses_prior_sf_tail_window(monkeypatch, capl
     def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
         del model_id, run_date, ctx, grid_cache_key
         if int(fh) == 6 and str(var_key) == "snowfall_kuchera_total":
-            return fh6_internal, crs, transform
+            return fh6_internal, crs, transform, {"coverage_start_fh": 0}
         return None
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
@@ -914,7 +914,7 @@ def test_direct_cumulative_kuchera_reuses_immediate_prev_frame_cache(monkeypatch
     def _prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key=None):
         del model_id, run_date, ctx, grid_cache_key
         if int(fh) == 294 and str(var_key) == "snowfall_kuchera_total":
-            return fh294_internal, crs, transform
+            return fh294_internal, crs, transform, {"coverage_start_fh": 0}
         return None
 
     use_bad_older_tail["enabled"] = True

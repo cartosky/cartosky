@@ -335,6 +335,31 @@ def _affine_from_cache_values(values: Any) -> rasterio.transform.Affine | None:
     return rasterio.transform.Affine(*transform_values.tolist())
 
 
+def _unpack_kuchera_cumulative_cache_entry(
+    cached: Any,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]] | None:
+    if not isinstance(cached, tuple):
+        return None
+    if len(cached) == 3:
+        data, crs, transform = cached
+        return np.asarray(data, dtype=np.float32), crs, transform, {}
+    if len(cached) == 4:
+        data, crs, transform, metadata = cached
+        safe_metadata = metadata if isinstance(metadata, dict) else {}
+        return np.asarray(data, dtype=np.float32), crs, transform, safe_metadata
+    return None
+
+
+def _kuchera_cache_has_full_run_coverage(metadata: dict[str, Any] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    coverage_start_fh = metadata.get("coverage_start_fh")
+    try:
+        return int(coverage_start_fh) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _kuchera_load_prior_cumulative(
     *,
     model_id: str,
@@ -344,7 +369,7 @@ def _kuchera_load_prior_cumulative(
     ctx: FetchContext | None,
     grid_cache_key: str,
     scale_divisor: float = 0.03937007874015748,
-) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]] | None:
     if fh <= 0:
         return None
     del scale_divisor
@@ -353,8 +378,7 @@ def _kuchera_load_prior_cumulative(
     if ctx is not None:
         cache = getattr(ctx, "kuchera_cumulative_cache", None)
         if isinstance(cache, dict) and cache_key in cache:
-            cached = cache[cache_key]
-            return cached[0], cached[1], cached[2]
+            return _unpack_kuchera_cumulative_cache_entry(cache[cache_key])
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
@@ -401,7 +425,13 @@ def _kuchera_load_prior_cumulative(
                 if not crs_wkt:
                     continue
                 loaded_crs = rasterio.crs.CRS.from_wkt(crs_wkt)
-            loaded = (loaded_data, loaded_crs, loaded_transform)
+                loaded_metadata = {}
+                if "coverage_start_fh" in cached_npz.files:
+                    try:
+                        loaded_metadata["coverage_start_fh"] = int(cached_npz["coverage_start_fh"].tolist())
+                    except (TypeError, ValueError):
+                        loaded_metadata["coverage_start_fh"] = None
+            loaded = (loaded_data, loaded_crs, loaded_transform, loaded_metadata)
             if ctx is not None:
                 cache = getattr(ctx, "kuchera_cumulative_cache", None)
                 if not isinstance(cache, dict):
@@ -425,15 +455,17 @@ def _kuchera_store_cumulative_cache(
     transform: rasterio.transform.Affine,
     ctx: FetchContext | None,
     grid_cache_key: str,
+    coverage_start_fh: int = 0,
 ) -> None:
     run_id = _run_id_from_date(run_date)
     cache_key = (str(model_id), run_id, str(var_key), int(fh), str(grid_cache_key))
+    cache_metadata = {"coverage_start_fh": int(coverage_start_fh)}
     if ctx is not None:
         cache = getattr(ctx, "kuchera_cumulative_cache", None)
         if not isinstance(cache, dict):
             cache = {}
             setattr(ctx, "kuchera_cumulative_cache", cache)
-        cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform)
+        cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform, cache_metadata)
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
@@ -464,6 +496,7 @@ def _kuchera_store_cumulative_cache(
             crs_wkt=crs.to_wkt(),
             transform=_affine_to_cache_values(transform),
             grid_cache_key=str(grid_cache_key),
+            coverage_start_fh=np.int32(coverage_start_fh),
         )
         tmp_path.replace(cache_path)
     except Exception:
@@ -4502,6 +4535,33 @@ def _derive_snowfall_kuchera_total_cumulative(
     ] | None = None
     start_index = max(0, len(step_fhs) - rebuild_window_steps)
 
+    def _load_prior_kuchera_base(
+        prior_fh: int,
+    ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=int(prior_fh),
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+        )
+        if prior is None:
+            return None
+        unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
+        if unpacked_prior is None:
+            return None
+        prior_data, prior_crs, prior_transform, prior_meta = unpacked_prior
+        if use_direct_cumulative_lwe and not _kuchera_cache_has_full_run_coverage(prior_meta):
+            logger.info(
+                "kuchera_incremental ignoring_legacy_direct_cache model=%s var=%s fh=%03d",
+                model_id,
+                var_key,
+                int(prior_fh),
+            )
+            return None
+        return prior_data, prior_crs, prior_transform
+
     def _load_prior_apcp_seed(
         seed_fh: int,
         *,
@@ -4570,14 +4630,7 @@ def _derive_snowfall_kuchera_total_cumulative(
 
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
-        prior = _kuchera_load_prior_cumulative(
-            model_id=model_id,
-            run_date=run_date,
-            var_key=var_key,
-            fh=prev_fh,
-            ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
-        )
+        prior = _load_prior_kuchera_base(prev_fh)
         if prior is not None:
             base_cumulative, base_crs, base_transform = prior
             base_fh = prev_fh
@@ -4594,14 +4647,7 @@ def _derive_snowfall_kuchera_total_cumulative(
 
     if base_cumulative is None and start_index > 0:
         anchor_fh = int(step_fhs[start_index - 1])
-        prior = _kuchera_load_prior_cumulative(
-            model_id=model_id,
-            run_date=run_date,
-            var_key=var_key,
-            fh=anchor_fh,
-            ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
-        )
+        prior = _load_prior_kuchera_base(anchor_fh)
         if prior is None:
             start_index = 0
             base_fh = None
@@ -4627,14 +4673,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         if start_index > 0:
             anchor_fh = int(step_fhs[start_index - 1])
             if base_fh != anchor_fh or base_cumulative is None:
-                prior = _kuchera_load_prior_cumulative(
-                    model_id=model_id,
-                    run_date=run_date,
-                    var_key=var_key,
-                    fh=anchor_fh,
-                    ctx=ctx,
-                    grid_cache_key=cumulative_cache_grid_key,
-                )
+                prior = _load_prior_kuchera_base(anchor_fh)
                 if prior is None:
                     start_index = 0
                     base_cumulative = None
