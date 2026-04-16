@@ -97,17 +97,18 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
   },
   aigfs: {
     eyebrow: "Core Model",
-    oneLiner: "NOAA AI GFS guidance from the operational AIGFS stream, now rolled out with 2m temperature and derived 10m wind speed from the surface product plus 850mb temperature from the pressure product.",
+    oneLiner: "NOAA AI GFS guidance from the operational AIGFS stream, now rolled out with 2m temperature and derived 10m wind speed from the surface product plus 850mb temperature and 850mb heights and winds from the pressure product.",
     coverage: "Global",
     cadence: "Every 6 hours",
     focus: [
       "Fast comparison against classic GFS surface thermal structure",
       "Alternative 850mb thermal structure for advection and winter-profile context",
+      "Alternative 850mb jet and height pattern for low-level forcing context",
       "Alternative boundary-layer wind-speed signal from the operational AI GFS surface fields",
       "Alternative AI-guided 2m temperature signal for large-scale pattern checks",
       "Early detection of temperature spread between traditional and AI global guidance",
     ],
-    notes: ["Initial rollout stays intentionally narrow: tmp2m and derived 10m wind speed from the NOAA/Herbie AIGFS surface product, plus tmp850 from the pressure product, while runtime behavior is validated in production."],
+    notes: ["Initial rollout stays intentionally narrow: tmp2m and derived 10m wind speed from the NOAA/Herbie AIGFS surface product, plus tmp850 and wspd850 from the pressure product, while runtime behavior is validated in production."],
   },
   spc: {
     eyebrow: "Operational Layer",

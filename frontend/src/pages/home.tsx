@@ -535,7 +535,7 @@ export default function Home() {
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Gauge className="h-5 w-5" />
                 </div>
-                <h3 className="text-xl font-semibold tracking-tight text-white">Work with the map, don't just view it</h3>
+                <h3 className="text-xl font-semibold tracking-tight text-white">Work the map, not just view it</h3>
               </div>
               <p className="mt-3 text-sm leading-7 text-white/66">
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.

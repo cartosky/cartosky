@@ -6,14 +6,16 @@ Initial rollout scope:
       - `wspd10m`
   - AIGFS `pres`
       - `tmp850`
+      - `wspd850`
   - realtime publishing only
 
 Upstream verification:
   - Herbie model = "aigfs"
   - Herbie products = "sfc", "pres"
-  - Surface tmp2m inventory entry is `TMP:2 m above ground`
+    - Surface tmp2m inventory entry is `TMP:2 m above ground`
     - Surface 10m wind components inventory entries are `UGRD:10 m above ground` and `VGRD:10 m above ground`
     - Pressure temperature inventory includes `TMP:850 mb`
+    - Pressure 850mb height and wind components inventory entries are `HGT:850 mb`, `UGRD:850 mb`, and `VGRD:850 mb`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -23,11 +25,15 @@ References:
 
 from __future__ import annotations
 
-from .base import HerbieRequest, ModelCapabilities, RegionSpec, VariableCapability
+from dataclasses import replace
+
+from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VariableCapability
 from .gfs import GFSPlugin, GFS_VARS
 
 
 class AIGFSPlugin(GFSPlugin):
+    _PRES_VAR_KEYS = frozenset({"tmp850", "u850", "v850", "hgt850", "wspd850"})
+
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
         return list(AIGFS_SFC_FHS)
@@ -36,6 +42,8 @@ class AIGFSPlugin(GFSPlugin):
         normalized = var_id.strip().lower()
         if normalized in {"wind10m", "10mwind"}:
             return "wspd10m"
+        if normalized in {"z850", "gh850", "850height", "850mbheight", "850mbheights", "850_heights"}:
+            return "hgt850"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -55,7 +63,7 @@ class AIGFSPlugin(GFSPlugin):
             search_pattern=search_pattern,
         )
         normalized_var = self.normalize_var_id(var_key or "") if isinstance(var_key, str) else ""
-        resolved_product = "pres" if normalized_var == "tmp850" else base_request.product
+        resolved_product = "pres" if normalized_var in self._PRES_VAR_KEYS else base_request.product
         return HerbieRequest(
             model="aigfs",
             product=resolved_product,
@@ -76,12 +84,29 @@ AIGFS_REGIONS: dict[str, RegionSpec] = {
 AIGFS_SFC_FHS = tuple(range(0, 385, 6))
 
 
+def _with_pres_product(var_spec):
+    return replace(
+        var_spec,
+        selectors=replace(
+            var_spec.selectors,
+            hints={
+                **(var_spec.selectors.hints or {}),
+                "product": "pres",
+            },
+        ),
+    )
+
+
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
-    "tmp850": GFS_VARS["tmp850"],
+    "tmp850": _with_pres_product(GFS_VARS["tmp850"]),
     "10u": GFS_VARS["10u"],
     "10v": GFS_VARS["10v"],
     "wspd10m": GFS_VARS["wspd10m"],
+    "u850": _with_pres_product(GFS_VARS["u850"]),
+    "v850": _with_pres_product(GFS_VARS["v850"]),
+    "hgt850": _with_pres_product(GFS_VARS["hgt850"]),
+    "wspd850": _with_pres_product(GFS_VARS["wspd850"]),
 }
 
 
@@ -114,6 +139,22 @@ AIGFS_VARIABLE_CATALOG = {
         buildable=True,
         order=3,
         group="Temperature",
+    ),
+    "wspd850": VariableCapability(
+        var_key="wspd850",
+        name=AIGFS_VARS["wspd850"].name,
+        selectors=AIGFS_VARS["wspd850"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="wspd10m",
+        kind="continuous",
+        units="kt",
+        color_map_id="wspd850",
+        default_fh=0,
+        buildable=True,
+        order=4,
+        group="Wind",
+        conversion="ms_to_kt",
     ),
     "wspd10m": VariableCapability(
         var_key="wspd10m",

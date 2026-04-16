@@ -38,6 +38,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("temp850") == "tmp850"
+    assert AIGFS_MODEL.normalize_var_id("wspd850") == "wspd850"
+    assert AIGFS_MODEL.normalize_var_id("wind850") == "wspd850"
+    assert AIGFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
+    assert AIGFS_MODEL.normalize_var_id("z850") == "hgt850"
+    assert AIGFS_MODEL.normalize_var_id("gh850") == "hgt850"
     assert AIGFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("10mwind") == "wspd10m"
@@ -56,6 +61,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert tmp850_request.product == "pres"
     assert tmp850_request.herbie_kwargs["priority"] == ["nomads"]
 
+    wspd850_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="wspd850")
+    assert wspd850_request.model == "aigfs"
+    assert wspd850_request.product == "pres"
+    assert wspd850_request.herbie_kwargs["priority"] == ["nomads"]
+
 
 def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     capabilities = AIGFS_MODEL.capabilities
@@ -66,7 +76,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -100,6 +110,58 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         "typeOfLevel": "isobaricInhPa",
         "level": "850",
     }
+    assert tmp850_spec.selectors.hints["product"] == "pres"
+
+    wspd850_spec = AIGFS_MODEL.get_var("wspd850")
+    assert wspd850_spec is not None
+    assert wspd850_spec.primary is True
+    assert wspd850_spec.derived is True
+    assert wspd850_spec.derive == "wspd10m"
+    assert wspd850_spec.kind == "continuous"
+    assert wspd850_spec.units == "kt"
+    assert wspd850_spec.selectors.search == []
+    assert wspd850_spec.selectors.hints["u_component"] == "u850"
+    assert wspd850_spec.selectors.hints["v_component"] == "v850"
+    assert wspd850_spec.selectors.hints["contour_component"] == "hgt850"
+    assert wspd850_spec.selectors.hints["contour_interval"] == "30"
+    assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
+    assert wspd850_spec.selectors.hints["product"] == "pres"
+
+    hgt850_spec = AIGFS_MODEL.get_var("hgt850")
+    assert hgt850_spec is not None
+    assert hgt850_spec.primary is False
+    assert hgt850_spec.derived is False
+    assert hgt850_spec.selectors.search == [":HGT:850 mb:"]
+    assert hgt850_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+    assert hgt850_spec.selectors.hints["product"] == "pres"
+
+    u850_spec = AIGFS_MODEL.get_var("u850")
+    assert u850_spec is not None
+    assert u850_spec.primary is False
+    assert u850_spec.derived is False
+    assert u850_spec.selectors.search == [":UGRD:850 mb:"]
+    assert u850_spec.selectors.filter_by_keys == {
+        "shortName": "ugrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+    assert u850_spec.selectors.hints["product"] == "pres"
+
+    v850_spec = AIGFS_MODEL.get_var("v850")
+    assert v850_spec is not None
+    assert v850_spec.primary is False
+    assert v850_spec.derived is False
+    assert v850_spec.selectors.search == [":VGRD:850 mb:"]
+    assert v850_spec.selectors.filter_by_keys == {
+        "shortName": "vgrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
+    }
+    assert v850_spec.selectors.hints["product"] == "pres"
 
     wspd10m_spec = AIGFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None
@@ -170,6 +232,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["group"] == "Temperature"
     assert tmp850["default_fh"] == 0
     assert tmp850["render_substrates"] == ["grid"]
+
+    wspd850 = payload["variables"]["wspd850"]
+    assert wspd850["var_key"] == "wspd850"
+    assert wspd850["display_name"] == "850mb Heights + Winds"
+    assert wspd850["kind"] == "continuous"
+    assert wspd850["units"] == "kt"
+    assert wspd850["buildable"] is True
+    assert wspd850["derived"] is True
+    assert wspd850["derive_strategy_id"] == "wspd10m"
+    assert wspd850["color_map_id"] == "wspd850"
+    assert wspd850["order"] == 4
+    assert wspd850["group"] == "Wind"
+    assert wspd850["default_fh"] == 0
+    assert wspd850["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"
