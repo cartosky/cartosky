@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, BarChart3, ClipboardCheck, Database, Gauge, Waypoints } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import {
   fetchAdminNetworkDiagnostics,
   fetchAdminObservabilitySummary,
@@ -32,17 +33,17 @@ function AdminGate(props: {
 
   if (status === null) {
     return (
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <AdminEmpty>
         {loadingLabel}
-      </section>
+      </AdminEmpty>
     );
   }
 
   if (!status.linked || !status.admin) {
     return (
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <AdminEmpty>
         Admin access appears here after a linked admin session is available.
-      </section>
+      </AdminEmpty>
     );
   }
 
@@ -70,7 +71,7 @@ function SummaryCard(props: {
     statusClassName = "border-white/10 bg-white/[0.05] text-white/72",
   } = props;
   return (
-    <section className="rounded-[24px] border border-white/12 bg-black/28 p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+    <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.025] p-4 shadow-[0_12px_30px_rgba(0,0,0,0.16)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -362,22 +363,19 @@ export default function AdminOverviewPage() {
 
   return (
     <AdminGate status={status} loadingLabel="Loading admin overview...">
-      <div className="space-y-6">
-        <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">Overview</div>
-          <h2 className="mt-2 text-4xl font-semibold tracking-tight">Telemetry trust center</h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
-            Phase 8 turns the admin shell into the rollout checkpoint for telemetry ownership. Use this page to confirm which
-            system owns each signal class, whether the live emitters are healthy, and where to drill down when a rollout looks off.
-          </p>
-
+      <AdminPage>
+        <AdminHero
+          eyebrow="Overview"
+          title="Telemetry trust center"
+          description="Use this page to confirm which system owns each signal class, whether the live emitters are healthy, and where to drill down when a rollout looks off."
+        >
           {error ? (
-            <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
               {error}
             </div>
           ) : null}
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <SummaryCard title="Open Issues" value={String(issueRows.length)} hint="Retained run warnings and errors" icon={AlertTriangle} accentClassName="text-amber-300" />
             <SummaryCard title="Artifact Failures" value={String(artifactRows.length)} hint="Missing or unreadable artifacts" icon={ClipboardCheck} accentClassName="text-rose-300" />
             <SummaryCard title="Stale / Stalled" value={String(staleRows.length)} hint="Latest runs needing attention" icon={Activity} accentClassName="text-[#9dd5bf]" />
@@ -393,9 +391,9 @@ export default function AdminOverviewPage() {
               accentClassName="text-sky-300"
             />
           </div>
-        </section>
+        </AdminHero>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
             title="LCP p75"
             value={formatMetricValue(webVitals?.lcp ?? null)}
@@ -451,21 +449,16 @@ export default function AdminOverviewPage() {
           />
         </section>
 
-        <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-lg font-semibold">Network Diagnostics</div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-                These sampled RUM timings make the new Phase 0 fetch diagnostics actionable. Compare overall p95 with the cache-status,
-                model, device, WebGL-backend, payload-size, and encoding splits to tell whether a route is edge-bound, origin-bound, or frontend-bound.
-              </p>
-            </div>
-            <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
+        <AdminSurface
+          title="Network Diagnostics"
+          description="Compare overall p95 with cache-status, model, device, WebGL-backend, payload-size, and encoding splits to tell whether a route is edge-bound, origin-bound, or frontend-bound."
+          headerRight={
+            <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
               Last seen {formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}
             </div>
-          </div>
-
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          }
+        >
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {NETWORK_CARD_METRICS.map((metricName) => {
               const metric = networkMetricByName.get(metricName);
               const targetMs = NETWORK_P95_TARGETS[metricName] ?? null;
@@ -493,7 +486,7 @@ export default function AdminOverviewPage() {
             })}
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03]">
+          <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/10 bg-white/[0.03]">
             <div className="grid grid-cols-[minmax(0,1fr)_110px_80px_110px_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_minmax(0,1fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
               <div>Metric</div>
               <div>p95</div>
@@ -539,7 +532,7 @@ export default function AdminOverviewPage() {
               })}
             </div>
           </div>
-        </section>
+        </AdminSurface>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -596,16 +589,14 @@ export default function AdminOverviewPage() {
           />
         </section>
 
-        <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          <div className="text-lg font-semibold">Ownership Map</div>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-            Each admin route now fronts a specific telemetry owner. Use these as the release-level handoff points instead of the
-            retired custom frontend perf stack.
-          </p>
+        <AdminSurface
+          title="Ownership Map"
+          description="Each admin route fronts a specific telemetry owner. Use these as the release-level handoff points instead of the retired custom frontend perf stack."
+        >
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <Link
               to="/admin/analytics"
-              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
+              className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
             >
               <div className="font-semibold">Analytics</div>
               <div className="mt-2 text-white/60">PostHog owns product analytics, dashboards, event ingestion validation, and replay launch points.</div>
@@ -632,8 +623,8 @@ export default function AdminOverviewPage() {
               <div className="mt-2 text-white/60">CartoSky keeps ownership here for retained-run health, artifact checks, QA warnings, and domain-specific pipeline issues.</div>
             </Link>
           </div>
-        </section>
-      </div>
+        </AdminSurface>
+      </AdminPage>
     </AdminGate>
   );
 }

@@ -7,6 +7,7 @@ Initial rollout scope:
   - AIGFS `pres`
       - `tmp850`
       - `wspd850`
+      - `wspd300`
   - realtime publishing only
 
 Upstream verification:
@@ -16,6 +17,7 @@ Upstream verification:
     - Surface 10m wind components inventory entries are `UGRD:10 m above ground` and `VGRD:10 m above ground`
     - Pressure temperature inventory includes `TMP:850 mb`
     - Pressure 850mb height and wind components inventory entries are `HGT:850 mb`, `UGRD:850 mb`, and `VGRD:850 mb`
+    - Pressure 300mb height and wind components inventory entries are `HGT:300 mb`, `UGRD:300 mb`, and `VGRD:300 mb`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -32,7 +34,7 @@ from .gfs import GFSPlugin, GFS_VARS
 
 
 class AIGFSPlugin(GFSPlugin):
-    _PRES_VAR_KEYS = frozenset({"tmp850", "u850", "v850", "hgt850", "wspd850"})
+    _PRES_VAR_KEYS = frozenset({"tmp850", "u850", "v850", "hgt850", "wspd850", "u300", "v300", "hgt300", "wspd300"})
 
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
@@ -44,6 +46,8 @@ class AIGFSPlugin(GFSPlugin):
             return "wspd10m"
         if normalized in {"z850", "gh850", "850height", "850mbheight", "850mbheights", "850_heights"}:
             return "hgt850"
+        if normalized in {"z300", "gh300", "300height", "300mbheight", "300mbheights", "300_heights"}:
+            return "hgt300"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -107,6 +111,10 @@ AIGFS_VARS = {
     "v850": _with_pres_product(GFS_VARS["v850"]),
     "hgt850": _with_pres_product(GFS_VARS["hgt850"]),
     "wspd850": _with_pres_product(GFS_VARS["wspd850"]),
+    "u300": _with_pres_product(GFS_VARS["u300"]),
+    "v300": _with_pres_product(GFS_VARS["v300"]),
+    "hgt300": _with_pres_product(GFS_VARS["hgt300"]),
+    "wspd300": _with_pres_product(GFS_VARS["wspd300"]),
 }
 
 
@@ -153,6 +161,22 @@ AIGFS_VARIABLE_CATALOG = {
         default_fh=0,
         buildable=True,
         order=4,
+        group="Wind",
+        conversion="ms_to_kt",
+    ),
+    "wspd300": VariableCapability(
+        var_key="wspd300",
+        name=AIGFS_VARS["wspd300"].name,
+        selectors=AIGFS_VARS["wspd300"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="wspd10m",
+        kind="continuous",
+        units="kt",
+        color_map_id="wspd300",
+        default_fh=0,
+        buildable=True,
+        order=18,
         group="Wind",
         conversion="ms_to_kt",
     ),

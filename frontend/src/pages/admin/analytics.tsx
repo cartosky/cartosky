@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BarChart3, Clapperboard, ExternalLink, Flag, ShieldCheck } from "lucide-react";
 
+import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
 import { fetchTwfStatus, type TwfStatus } from "@/lib/admin-api";
 import {
   getPostHogDashboardEmbedUrl,
@@ -43,38 +44,55 @@ export default function AdminAnalyticsPage() {
 
   if (!status?.linked || !status.admin) {
     return (
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <AdminEmpty>
         Analytics appears here after admin access is available.
-      </section>
+      </AdminEmpty>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl border border-white/12 bg-white/[0.05] p-3">
-            <BarChart3 className="h-5 w-5 text-[#9dd5bf]" />
-          </div>
-          <div>
-            <div className="text-2xl font-semibold tracking-tight">Analytics</div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-              This route is the PostHog launch point inside the CartoSky admin shell. It now provides native status and launch surfaces,
-              plus an embedded dashboard when a PostHog embed URL is configured.
-            </p>
-          </div>
-        </div>
-
+    <AdminPage>
+      <AdminHero
+        eyebrow="Analytics"
+        title="Product analytics and replay launch"
+        description="PostHog remains the analytics owner inside the CartoSky admin shell. Use this page to confirm enablement, open native surfaces, and embed the main dashboard when configured."
+      >
         {error ? (
-          <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {error}
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-3">
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <AdminStat
+            label="PostHog Status"
+            value={posthogEnabled ? "Enabled" : "Disabled"}
+            hint={posthogEnabled ? "Feature flags armed" : "Needs env configuration"}
+            accentClassName={posthogEnabled ? "text-cyan-200" : "text-white"}
+            icon={<Flag className="h-5 w-5 text-cyan-200/80" />}
+          />
+          <AdminStat
+            label="Replay"
+            value={replayEnabled ? "Enabled" : "Disabled"}
+            hint={replayEnabled ? "Controlled sampling and errors" : "Replay flag is off"}
+            accentClassName={replayEnabled ? "text-cyan-200" : "text-white"}
+            icon={<Clapperboard className="h-5 w-5 text-cyan-200/80" />}
+          />
+          <AdminStat
+            label="Event Contract"
+            value="Curated"
+            hint="Discrete CartoSky events only"
+            accentClassName="text-white"
+            icon={<ShieldCheck className="h-5 w-5 text-cyan-200/80" />}
+          />
+        </div>
+      </AdminHero>
+
+      <AdminSurface title="Launch surfaces" description="Use these entry points for native PostHog dashboards, replay, and project-level drill-down.">
+        <div className="grid gap-3 xl:grid-cols-3">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <Flag className="h-5 w-5 text-sky-300" />
+              <Flag className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">PostHog Status</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
@@ -82,18 +100,18 @@ export default function AdminAnalyticsPage() {
               {" "}Autocapture and automatic page navigation capture remain off in favor of a strict CartoSky event contract.
             </p>
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <Clapperboard className="h-5 w-5 text-amber-300" />
+              <Clapperboard className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">Replay Surface</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
               Session replay remains a native PostHog drill-down flow. Replay is currently {replayEnabled ? "enabled with controlled sampling/error triggers." : "disabled until the replay flag is enabled."}
             </p>
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <ShieldCheck className="h-5 w-5 text-[#9dd5bf]" />
+              <ShieldCheck className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">Controlled Defaults</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
@@ -101,9 +119,11 @@ export default function AdminAnalyticsPage() {
             </p>
           </section>
         </div>
+      </AdminSurface>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-3">
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+      <AdminSurface title="Native links">
+        <div className="grid gap-3 xl:grid-cols-3">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
               <ExternalLink className="h-5 w-5 text-white/76" />
               <div className="text-sm font-semibold text-white">Dashboard Link</div>
@@ -116,16 +136,16 @@ export default function AdminAnalyticsPage() {
                 href={dashboardUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
               >
                 Open PostHog Dashboard
                 <ExternalLink className="h-4 w-4" />
               </a>
             ) : null}
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <Clapperboard className="h-5 w-5 text-amber-300" />
+              <Clapperboard className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">Replay Link</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
@@ -136,16 +156,16 @@ export default function AdminAnalyticsPage() {
                 href={replayUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
               >
                 Open PostHog Replays
                 <ExternalLink className="h-4 w-4" />
               </a>
             ) : null}
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <BarChart3 className="h-5 w-5 text-sky-300" />
+              <BarChart3 className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">Project Entry</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
@@ -156,7 +176,7 @@ export default function AdminAnalyticsPage() {
                 href={uiHost}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
               >
                 Open PostHog
                 <ExternalLink className="h-4 w-4" />
@@ -164,15 +184,11 @@ export default function AdminAnalyticsPage() {
             ) : null}
           </section>
         </div>
-      </section>
+      </AdminSurface>
 
       {dashboardEmbedUrl ? (
-        <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          <div className="text-lg font-semibold">Embedded dashboard</div>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-            This embed is the main live analytics surface inside CartoSky admin. Replay and ad hoc drill-down still stay in native PostHog.
-          </p>
-          <div className="mt-5 overflow-hidden rounded-[24px] border border-white/10 bg-black/20">
+        <AdminSurface title="Embedded dashboard" description="This embed is the main live analytics surface inside CartoSky admin. Replay and ad hoc drill-down still stay in native PostHog.">
+          <div className="overflow-hidden rounded-[1.2rem] border border-white/10 bg-black/20">
             <iframe
               src={dashboardEmbedUrl}
               title="PostHog analytics dashboard"
@@ -180,15 +196,11 @@ export default function AdminAnalyticsPage() {
               loading="lazy"
             />
           </div>
-        </section>
+        </AdminSurface>
       ) : null}
 
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-        <div className="text-lg font-semibold">CartoSky event contract</div>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-          Phase 3 intentionally keeps the taxonomy small. These are the events currently eligible for PostHog capture from the viewer.
-        </p>
-        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <AdminSurface title="CartoSky event contract" description="Phase 3 intentionally keeps the taxonomy small. These are the events currently eligible for PostHog capture from the viewer.">
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {[
             "viewer_opened",
             "model_selected",
@@ -198,12 +210,12 @@ export default function AdminAnalyticsPage() {
             "legend_opened",
             "share_clicked",
           ].map((eventName) => (
-            <div key={eventName} className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
+            <div key={eventName} className="border-l border-white/8 pl-4 py-2">
               <div className="text-sm font-semibold text-white">{eventName}</div>
             </div>
           ))}
         </div>
-      </section>
-    </div>
+      </AdminSurface>
+    </AdminPage>
   );
 }

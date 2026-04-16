@@ -1,32 +1,9 @@
 import { useEffect, useState } from "react";
 import { Activity, Database, ExternalLink, Server } from "lucide-react";
 
+import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
 import { fetchAdminObservabilitySummary, fetchTwfStatus, type AdminObservabilitySummaryResponse, type TwfStatus } from "@/lib/admin-api";
 import { getGrafanaDashboardUrl, getGrafanaEmbedUrl, getGrafanaUrl } from "@/lib/config";
-
-function SummaryCard(props: {
-  title: string;
-  value: string;
-  hint: string;
-  accentClassName?: string;
-  icon: typeof Activity;
-}) {
-  const { title, value, hint, accentClassName = "text-white", icon: Icon } = props;
-  return (
-    <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-white">{title}</div>
-          <div className={`mt-3 text-[2.1rem] font-semibold tracking-tight ${accentClassName}`}>{value}</div>
-          <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/40">{hint}</div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3">
-          <Icon className={`h-5 w-5 ${accentClassName}`} />
-        </div>
-      </div>
-    </section>
-  );
-}
 
 export default function AdminObservabilityPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
@@ -64,9 +41,9 @@ export default function AdminObservabilityPage() {
 
   if (!status?.linked || !status.admin) {
     return (
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <AdminEmpty>
         Observability appears here after admin access is available.
-      </section>
+      </AdminEmpty>
     );
   }
 
@@ -81,68 +58,62 @@ export default function AdminObservabilityPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl border border-white/12 bg-white/[0.05] p-3">
-            <Activity className="h-5 w-5 text-[#9dd5bf]" />
-          </div>
-          <div>
-            <div className="text-2xl font-semibold tracking-tight">Observability</div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-              This route is the Grafana and Prometheus launch point inside the CartoSky admin shell. It now exposes native rollout summaries and can host a Grafana dashboard embed when configured.
-            </p>
-          </div>
-        </div>
-
+    <AdminPage>
+      <AdminHero
+        eyebrow="Observability"
+        title="Service metrics and run-health surfaces"
+        description="Grafana and Prometheus own the service-side view of CartoSky: API latency, error rate, cache health, and published-run freshness."
+      >
         {error ? (
-          <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {error}
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            title="API p95"
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <AdminStat
+            label="API p95"
             value={summary?.http.p95_ms !== null && summary?.http.p95_ms !== undefined ? `${Math.round(summary.http.p95_ms)} ms` : "Awaiting data"}
             hint={summary ? `${summary.http.recent_request_count} recent requests` : "Waiting for summary"}
-            accentClassName="text-sky-300"
-            icon={Server}
+            accentClassName="text-cyan-200"
+            icon={<Server className="h-5 w-5 text-cyan-200/80" />}
           />
-          <SummaryCard
-            title="Error Rate"
+          <AdminStat
+            label="Error Rate"
             value={summary?.http.error_rate !== null && summary?.http.error_rate !== undefined ? `${Math.round(summary.http.error_rate * 100)}%` : "Awaiting data"}
             hint="Recent API requests with 4xx/5xx"
-            accentClassName="text-amber-300"
-            icon={Activity}
+            accentClassName="text-white"
+            icon={<Activity className="h-5 w-5 text-cyan-200/80" />}
           />
-          <SummaryCard
-            title="Sample Cache Hit Rate"
+          <AdminStat
+            label="Sample Cache Hit Rate"
             value={summary?.sample_cache.point_hit_rate !== null && summary?.sample_cache.point_hit_rate !== undefined ? `${Math.round(summary.sample_cache.point_hit_rate * 100)}%` : "Awaiting data"}
             hint={summary ? `${summary.sample_cache.entries} active cache entries` : "Waiting for summary"}
-            accentClassName="text-[#9dd5bf]"
-            icon={Database}
+            accentClassName="text-cyan-200"
+            icon={<Database className="h-5 w-5 text-cyan-200/80" />}
           />
-          <SummaryCard
-            title="Oldest Published Run"
+          <AdminStat
+            label="Oldest Published Run"
             value={oldestPublishedRun !== null ? `${oldestPublishedRun.toFixed(1)} h` : "Awaiting data"}
             hint={lowestCompletion !== null ? `Lowest completion ${(lowestCompletion * 100).toFixed(0)}%` : "Waiting for published-run gauges"}
             accentClassName="text-white"
-            icon={Activity}
+            icon={<Activity className="h-5 w-5 text-cyan-200/80" />}
           />
         </div>
+      </AdminHero>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-3">
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+      <AdminSurface title="Launch surfaces" description="These links anchor operators into native Grafana while keeping key enablement signals in one place.">
+        <div className="grid gap-3 xl:grid-cols-3">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
-              <Server className="h-5 w-5 text-sky-300" />
+              <Server className="h-5 w-5 text-cyan-200/80" />
               <div className="text-sm font-semibold text-white">Prometheus Status</div>
             </div>
             <p className="mt-3 text-sm leading-6 text-white/62">
               Prometheus metrics are currently {summary?.metrics_enabled ? "enabled and exposed on the API." : "disabled until CARTOSKY_PROMETHEUS_ENABLED is turned on in production."}
             </p>
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
               <ExternalLink className="h-5 w-5 text-white/76" />
               <div className="text-sm font-semibold text-white">Grafana Dashboard</div>
@@ -155,14 +126,14 @@ export default function AdminObservabilityPage() {
                 href={grafanaDashboardUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
               >
                 Open Grafana Dashboard
                 <ExternalLink className="h-4 w-4" />
               </a>
             ) : null}
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="border-l border-white/8 pl-4">
             <div className="flex items-center gap-3">
               <ExternalLink className="h-5 w-5 text-white/76" />
               <div className="text-sm font-semibold text-white">Grafana Project</div>
@@ -175,7 +146,7 @@ export default function AdminObservabilityPage() {
                 href={grafanaUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white transition hover:bg-white/[0.08]"
               >
                 Open Grafana
                 <ExternalLink className="h-4 w-4" />
@@ -183,15 +154,11 @@ export default function AdminObservabilityPage() {
             ) : null}
           </section>
         </div>
-      </section>
+      </AdminSurface>
 
       {grafanaEmbedUrl ? (
-        <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-          <div className="text-lg font-semibold">Embedded dashboard</div>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-            This is the main Grafana view inside CartoSky admin. Use it for high-level latency, cache, and run-health trends, then jump to native Grafana for deeper drill-down.
-          </p>
-          <div className="mt-5 overflow-hidden rounded-[24px] border border-white/10 bg-black/20">
+        <AdminSurface title="Embedded dashboard" description="This is the main Grafana view inside CartoSky admin. Use it for high-level latency, cache, and run-health trends, then jump to native Grafana for deeper drill-down.">
+          <div className="overflow-hidden rounded-[1.2rem] border border-white/10 bg-black/20">
             <iframe
               src={grafanaEmbedUrl}
               title="Grafana observability dashboard"
@@ -199,8 +166,8 @@ export default function AdminObservabilityPage() {
               loading="lazy"
             />
           </div>
-        </section>
+        </AdminSurface>
       ) : null}
-    </div>
+    </AdminPage>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ClipboardCheck, Clock3, SearchCheck, X } from "lucide-react";
 
+import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import {
   fetchAdminStatusQaSummary,
   fetchAdminStatusResults,
@@ -80,10 +81,10 @@ function SummaryCard(props: {
   return (
     <section
       className={[
-        "rounded-[24px] border p-5 shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl",
+        "rounded-[1.15rem] border p-4 shadow-[0_12px_30px_rgba(0,0,0,0.18)]",
         props.onClick ? "cursor-pointer transition-colors hover:bg-white/[0.03]" : "",
-        muted ? "border-white/8 bg-black/18" : "border-white/12 bg-black/28",
-        props.active ? "ring-1 ring-emerald-300/30" : "",
+        muted ? "border-white/8 bg-white/[0.02]" : "border-white/10 bg-white/[0.03]",
+        props.active ? "ring-1 ring-cyan-300/30" : "",
       ].join(" ")}
       onClick={props.onClick}
     >
@@ -222,15 +223,19 @@ export default function AdminStatusPage() {
 
   if (!status?.linked || !status.admin) {
     return (
-      <section className="rounded-[28px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+      <AdminEmpty>
         Admin pipeline status appears here after admin access is available.
-      </section>
+      </AdminEmpty>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-[32px] border border-white/12 bg-black/28 p-6 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+    <AdminPage>
+      <AdminHero
+        eyebrow="Pipeline Status"
+        title="Retained run health and artifact checks"
+        description="Operational health for retained published runs. This page tracks stale runs, incomplete manifests, and artifact failures from the current pipeline output."
+      >
         <div className="flex items-start gap-3">
           <div className="rounded-2xl border border-white/12 bg-white/[0.05] p-3">
             <ClipboardCheck className="h-5 w-5 text-[#9dd5bf]" />
@@ -289,7 +294,7 @@ export default function AdminStatusPage() {
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-sm font-semibold text-white">QA Store</div>
             <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
               {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
@@ -298,7 +303,7 @@ export default function AdminStatusPage() {
               {qaSummary?.store_mode === "separate" ? "Ready for final DB retirement" : "Still sharing legacy telemetry DB"}
             </div>
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-sm font-semibold text-white">QA Reviews</div>
             <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
               {qaSummary?.total_reviews ?? 0}
@@ -307,7 +312,7 @@ export default function AdminStatusPage() {
               {qaSummary?.warning_reviews ?? 0} warning rows
             </div>
           </section>
-          <section className="rounded-[24px] border border-white/12 bg-white/[0.04] p-5">
+          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
             <div className="text-sm font-semibold text-white">Latest QA Check</div>
             <div className="mt-3 text-[1.15rem] font-semibold tracking-tight text-white">
               {formatTimestamp(qaSummary?.latest_checked_at)}
@@ -324,7 +329,7 @@ export default function AdminStatusPage() {
             <select
               value={windowValue}
               onChange={(event) => setWindowValue(event.target.value as WindowValue)}
-              className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none"
+              className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="24h">24 hours</option>
               <option value="7d">7 days</option>
@@ -336,7 +341,7 @@ export default function AdminStatusPage() {
             <select
               value={modelFilter}
               onChange={(event) => setModelFilter(event.target.value)}
-              className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none"
+              className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="all">All models</option>
               {modelOptions.map((modelId) => (
@@ -351,7 +356,7 @@ export default function AdminStatusPage() {
             <select
               value={viewFilter}
               onChange={(event) => setViewFilter(event.target.value as ViewFilter)}
-              className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none"
+              className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="issues">Open issues</option>
               <option value="artifacts">Artifact failures</option>
@@ -364,21 +369,9 @@ export default function AdminStatusPage() {
         <div className="mt-4 text-sm text-white/48">
           Healthy runs: <span className="text-white/72">{healthyRows.length}</span>. The page scans the latest four retained published runs per model directly from disk.
         </div>
-      </section>
+      </AdminHero>
 
-      <section className="rounded-[32px] border border-white/12 bg-black/28 p-4 text-white shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
-        <div className="mb-3 flex items-center justify-between gap-3 px-2">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#95b1a2]">Current View</div>
-            <div className="mt-1 text-sm text-white/58">
-              Showing <span className="text-white">{viewLabel(viewFilter)}</span> for retained published runs matching the current filters.
-            </div>
-          </div>
-          <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">
-            {filteredRows.length} rows loaded
-          </div>
-        </div>
-
+      <AdminSurface className="p-4" title="Current View" description={`Showing ${viewLabel(viewFilter)} for retained published runs matching the current filters.`} headerRight={<div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">{filteredRows.length} rows loaded</div>}>
         <div className="mb-3 px-2 text-xs text-white/42">
           Click a row to inspect missing files, incomplete variables, and run timing. Use the top scrollbar to reach the right-side columns while staying at the top of the table.
         </div>
@@ -454,12 +447,12 @@ export default function AdminStatusPage() {
             </tbody>
           </table>
         </div>
-      </section>
+      </AdminSurface>
 
       {selected ? (
         <>
           <button type="button" aria-label="Close status details" className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px]" onClick={() => setSelectedId(null)} />
-          <section className="fixed inset-y-4 right-4 z-40 w-[min(540px,calc(100vw-2rem))] overflow-y-auto rounded-[32px] border border-white/12 bg-[#030711]/95 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+          <section className="fixed inset-y-4 right-4 z-40 w-[min(540px,calc(100vw-2rem))] overflow-y-auto rounded-[1.75rem] border border-white/10 bg-[#081120]/96 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl">
             <div className="space-y-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -592,6 +585,6 @@ export default function AdminStatusPage() {
           </section>
         </>
       ) : null}
-    </div>
+    </AdminPage>
   );
 }

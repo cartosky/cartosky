@@ -43,6 +43,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
     assert AIGFS_MODEL.normalize_var_id("z850") == "hgt850"
     assert AIGFS_MODEL.normalize_var_id("gh850") == "hgt850"
+    assert AIGFS_MODEL.normalize_var_id("wspd300") == "wspd300"
+    assert AIGFS_MODEL.normalize_var_id("wind300") == "wspd300"
+    assert AIGFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
+    assert AIGFS_MODEL.normalize_var_id("z300") == "hgt300"
+    assert AIGFS_MODEL.normalize_var_id("gh300") == "hgt300"
     assert AIGFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("10mwind") == "wspd10m"
@@ -66,6 +71,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert wspd850_request.product == "pres"
     assert wspd850_request.herbie_kwargs["priority"] == ["nomads"]
 
+    wspd300_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="wspd300")
+    assert wspd300_request.model == "aigfs"
+    assert wspd300_request.product == "pres"
+    assert wspd300_request.herbie_kwargs["priority"] == ["nomads"]
+
 
 def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     capabilities = AIGFS_MODEL.capabilities
@@ -76,7 +86,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd300", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -127,6 +137,21 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd850_spec.selectors.hints["contour_key"] == "height_850mb"
     assert wspd850_spec.selectors.hints["product"] == "pres"
 
+    wspd300_spec = AIGFS_MODEL.get_var("wspd300")
+    assert wspd300_spec is not None
+    assert wspd300_spec.primary is True
+    assert wspd300_spec.derived is True
+    assert wspd300_spec.derive == "wspd10m"
+    assert wspd300_spec.kind == "continuous"
+    assert wspd300_spec.units == "kt"
+    assert wspd300_spec.selectors.search == []
+    assert wspd300_spec.selectors.hints["u_component"] == "u300"
+    assert wspd300_spec.selectors.hints["v_component"] == "v300"
+    assert wspd300_spec.selectors.hints["contour_component"] == "hgt300"
+    assert wspd300_spec.selectors.hints["contour_interval"] == "120"
+    assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
+    assert wspd300_spec.selectors.hints["product"] == "pres"
+
     hgt850_spec = AIGFS_MODEL.get_var("hgt850")
     assert hgt850_spec is not None
     assert hgt850_spec.primary is False
@@ -162,6 +187,42 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         "level": "850",
     }
     assert v850_spec.selectors.hints["product"] == "pres"
+
+    hgt300_spec = AIGFS_MODEL.get_var("hgt300")
+    assert hgt300_spec is not None
+    assert hgt300_spec.primary is False
+    assert hgt300_spec.derived is False
+    assert hgt300_spec.selectors.search == [":HGT:300 mb:"]
+    assert hgt300_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+    assert hgt300_spec.selectors.hints["product"] == "pres"
+
+    u300_spec = AIGFS_MODEL.get_var("u300")
+    assert u300_spec is not None
+    assert u300_spec.primary is False
+    assert u300_spec.derived is False
+    assert u300_spec.selectors.search == [":UGRD:300 mb:"]
+    assert u300_spec.selectors.filter_by_keys == {
+        "shortName": "ugrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+    assert u300_spec.selectors.hints["product"] == "pres"
+
+    v300_spec = AIGFS_MODEL.get_var("v300")
+    assert v300_spec is not None
+    assert v300_spec.primary is False
+    assert v300_spec.derived is False
+    assert v300_spec.selectors.search == [":VGRD:300 mb:"]
+    assert v300_spec.selectors.filter_by_keys == {
+        "shortName": "vgrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "300",
+    }
+    assert v300_spec.selectors.hints["product"] == "pres"
 
     wspd10m_spec = AIGFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None
@@ -246,6 +307,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["group"] == "Wind"
     assert wspd850["default_fh"] == 0
     assert wspd850["render_substrates"] == ["grid"]
+
+    wspd300 = payload["variables"]["wspd300"]
+    assert wspd300["var_key"] == "wspd300"
+    assert wspd300["display_name"] == "300mb Heights + Winds"
+    assert wspd300["kind"] == "continuous"
+    assert wspd300["units"] == "kt"
+    assert wspd300["buildable"] is True
+    assert wspd300["derived"] is True
+    assert wspd300["derive_strategy_id"] == "wspd10m"
+    assert wspd300["color_map_id"] == "wspd300"
+    assert wspd300["order"] == 18
+    assert wspd300["group"] == "Wind"
+    assert wspd300["default_fh"] == 0
+    assert wspd300["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

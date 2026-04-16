@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Activity, BarChart3, ChevronRight, ClipboardCheck, Gauge, Waypoints } from "lucide-react";
+import { Activity, BarChart3, ClipboardCheck, Gauge, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
@@ -9,61 +9,56 @@ function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ 
       to={to}
       className={({ isActive }) =>
         [
-          "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition-all duration-150",
+          "inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-all duration-150",
           isActive
-            ? "border-emerald-300/20 bg-emerald-400/10 text-white shadow-[0_10px_30px_rgba(0,0,0,0.28)]"
-            : "border-white/10 bg-black/20 text-white/74 hover:bg-white/[0.06] hover:text-white",
+            ? "border-cyan-300/24 bg-cyan-300/[0.1] text-cyan-50 shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+            : "border-white/10 bg-white/[0.03] text-white/70 hover:border-white/18 hover:bg-white/[0.06] hover:text-white",
         ].join(" ")
       }
     >
-      <span className="flex items-center gap-3">
-        <Icon className="h-4 w-4" />
-        {label}
-      </span>
-      <ChevronRight className="h-4 w-4 opacity-55" />
+      <Icon className="h-4 w-4" />
+      {label}
     </NavLink>
   );
 }
 
 export default function AdminLayout() {
   return (
-    <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#05070c] text-white">
+    <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#07111f] text-white">
       <div
         aria-hidden="true"
         className="absolute inset-0"
         style={{
           backgroundImage: `
-            radial-gradient(1200px 720px at 15% 15%, rgba(115,160,255,0.14), transparent 56%),
-            radial-gradient(1000px 700px at 82% 22%, rgba(100,210,175,0.10), transparent 58%),
-            linear-gradient(to bottom, rgba(3,6,12,0.72), rgba(3,6,12,0.96)),
-            url(/assets/hero-space.webp)
+            radial-gradient(1200px 720px at 15% 10%, rgba(72,160,220,0.14), transparent 56%),
+            radial-gradient(900px 620px at 82% 18%, rgba(52,211,203,0.08), transparent 58%),
+            linear-gradient(to bottom, rgba(6,12,24,0.82), rgba(6,12,24,0.96))
           `,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
         }}
       />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_34%,rgba(0,0,0,0.48)_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,17,31,0.2),rgba(7,17,31,0.62))]" />
 
-      <div className="relative mx-auto grid min-h-[calc(100vh-3.5rem)] max-w-[1500px] grid-cols-1 gap-6 px-4 py-5 md:grid-cols-[260px_minmax(0,1fr)] md:px-5">
-        <aside className="glass h-fit rounded-[28px] border border-white/12 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.38)]">
-          <div className="px-2 pb-4">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#95b1a2]">
-              CartoSky Admin
+      <div className="relative mx-auto max-w-[1500px] px-4 py-5 md:px-5">
+        <div className="mb-5 rounded-[1.6rem] border border-white/10 bg-[#0b1526]/88 px-5 py-4 shadow-[0_18px_52px_rgba(0,0,0,0.22)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/72">
+                CartoSky Admin
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Operations Center</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+                Unified admin shell for pipeline health, analytics, observability, and rollout diagnostics.
+              </p>
             </div>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Command Center</h1>
-            <p className="mt-2 text-sm leading-6 text-white/62">
-              Unified admin shell for pipeline health, analytics, observability, and rollout diagnostics.
-            </p>
+            <nav className="flex flex-wrap gap-2">
+              <AdminNavItem to="/admin/overview" label="Overview" icon={Gauge} />
+              <AdminNavItem to="/admin/analytics" label="Analytics" icon={BarChart3} />
+              <AdminNavItem to="/admin/observability" label="Observability" icon={Activity} />
+              <AdminNavItem to="/admin/traces" label="Traces" icon={Waypoints} />
+              <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
+            </nav>
           </div>
-
-          <nav className="space-y-2">
-            <AdminNavItem to="/admin/overview" label="Overview" icon={Gauge} />
-            <AdminNavItem to="/admin/analytics" label="Analytics" icon={BarChart3} />
-            <AdminNavItem to="/admin/observability" label="Observability" icon={Activity} />
-            <AdminNavItem to="/admin/traces" label="Traces" icon={Waypoints} />
-            <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
-          </nav>
-        </aside>
+        </div>
 
         <main className="min-w-0">
           <Outlet />
