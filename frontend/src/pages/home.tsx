@@ -464,7 +464,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="w-full md:max-w-[17rem] md:justify-self-end">
+          <div className="hidden md:block md:max-w-[17rem] md:justify-self-end">
             <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
               <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">What You Get</div>
               <div className="mt-3 space-y-3">
@@ -529,8 +529,8 @@ export default function Home() {
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
             A better way to work the forecast.
           </h2>
-          <div className="mt-8 grid border-t border-white/8 pt-0 lg:mt-12 lg:grid-cols-3 lg:gap-8 lg:pt-8">
-            <div className="border-t border-white/8 pt-8 first:border-t-0 first:pt-0 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0 lg:first:border-l-0 lg:first:pl-0">
+          <div className="mt-8 grid border-t border-white/8 md:mt-12 md:grid-cols-3 md:gap-8 md:pt-8">
+            <div className="pb-8 pt-8 first:pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0 md:first:border-l-0 md:first:pl-0">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Gauge className="h-5 w-5" />
@@ -541,7 +541,7 @@ export default function Home() {
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
             </div>
-            <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+            <div className="pb-8 pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Sparkles className="h-5 w-5" />
@@ -552,7 +552,7 @@ export default function Home() {
                 Models, forecasts, SPC outlooks, and live radar live in the same workflow, so you spend less time jumping between sites.
               </p>
             </div>
-            <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+            <div className="pb-8 pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Layers3 className="h-5 w-5" />

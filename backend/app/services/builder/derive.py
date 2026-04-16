@@ -4628,7 +4628,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             int(seed_fh),
         )
 
-    if len(step_fhs) >= 2:
+    if (not use_direct_cumulative_lwe) and len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior = _load_prior_kuchera_base(prev_fh)
         if prior is not None:
@@ -4645,7 +4645,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             if initial_apcp_cumulative is not None:
                 first_step_expected_start_fh = prev_fh
 
-    if base_cumulative is None and start_index > 0:
+    if (not use_direct_cumulative_lwe) and base_cumulative is None and start_index > 0:
         anchor_fh = int(step_fhs[start_index - 1])
         prior = _load_prior_kuchera_base(anchor_fh)
         if prior is None:
@@ -4670,7 +4670,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         if not subset_step_fhs:
             raise ValueError(f"No incremental Kuchera steps selected for {model_id}/{var_key} fh{fh:03d}")
 
-        if start_index > 0:
+        if (not use_direct_cumulative_lwe) and start_index > 0:
             anchor_fh = int(step_fhs[start_index - 1])
             if base_fh != anchor_fh or base_cumulative is None:
                 prior = _load_prior_kuchera_base(anchor_fh)
