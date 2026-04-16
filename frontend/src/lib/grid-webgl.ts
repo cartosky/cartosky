@@ -247,34 +247,67 @@ function expandUint8BytesToRgba(bytes: Uint8Array): Uint8Array {
   return expanded;
 }
 
-function isMobileDevice(): boolean {
+// ─── Device tier ─────────────────────────────────────────────────────────────
+// Three tiers drive cache budgets and texture warm aggressiveness.
+// "low"  < 2 GB  — low-end phones: conservative limits to avoid OOM/jank
+// "mid"  2–5 GB  — mid-range phones and tablets: 75 % of desktop limits
+// "high" ≥ 6 GB  — flagship phones, tablets, and all desktops: full limits
+//
+// navigator.deviceMemory (Chrome/Edge, capped at 8 by the spec) is the primary
+// signal. For browsers that don't expose it (Firefox, Safari) we fall back to
+// UA sniffing: mobile UA → "low", everything else → "mid".
+type DeviceTier = "low" | "mid" | "high";
+
+function resolveDeviceTier(): DeviceTier {
   if (typeof navigator === "undefined") {
-    return false;
+    return "high"; // SSR / test environment — assume capable
   }
-  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+  const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  if (mem !== undefined) {
+    if (mem >= 6) return "high";
+    if (mem >= 2) return "mid";
+    return "low";
+  }
+  // deviceMemory not supported — fall back to UA sniff.
+  const isMobileUa = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+  return isMobileUa ? "low" : "mid";
 }
 
+// Computed once at module load; the device doesn't change memory at runtime.
+const DEVICE_TIER: DeviceTier = resolveDeviceTier();
+
 function resolveFrameCacheBudgetBytes(): number {
-  return isMobileDevice() ? GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES : GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES;
+  if (DEVICE_TIER === "high") return GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES;            // 768 MB
+  if (DEVICE_TIER === "mid")  return Math.round(GRID_FRAME_CACHE_BUDGET_DESKTOP_BYTES * 0.75); // 576 MB
+  return GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES;                                          // 384 MB
 }
 
 function resolveTextureCacheBudgetBytes(): number {
-  return isMobileDevice() ? GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES : GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;
+  if (DEVICE_TIER === "high") return GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;            // 512 MB
+  if (DEVICE_TIER === "mid")  return Math.round(GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES * 0.75); // 384 MB
+  return GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES;                                          // 256 MB
 }
 
 function resolveObservedTextureWarmLimit(): number {
-  return isMobileDevice() ? OBSERVED_GRID_TEXTURE_WARM_LIMIT_MOBILE : OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP;
+  if (DEVICE_TIER === "high") return OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP; // 28
+  if (DEVICE_TIER === "mid")  return 18;
+  return OBSERVED_GRID_TEXTURE_WARM_LIMIT_MOBILE;                               // 10
 }
 
 function resolveObservedTextureWarmBatchSize(animating: boolean): number {
-  if (isMobileDevice()) {
+  if (DEVICE_TIER === "high") {
+    return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_DESKTOP;
+  }
+  if (DEVICE_TIER === "mid") {
     return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE;
   }
-  return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_DESKTOP;
+  return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE;
 }
 
 function resolveObservedTextureHighPriorityCount(): number {
-  return isMobileDevice() ? OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_MOBILE : OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP;
+  if (DEVICE_TIER === "high") return OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP; // 6
+  if (DEVICE_TIER === "mid")  return 5;
+  return OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_MOBILE;                               // 4
 }
 
 function resolveGridDtype(dtype: string | null | undefined): "uint8" | "uint16" {
