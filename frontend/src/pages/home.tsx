@@ -260,7 +260,7 @@ export default function Home() {
                 clearly rendered.
               </span>
             </h1>
-            <p className="mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:text-left">
+            <p className="mx-auto mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:mx-0 lg:text-left">
               Interactive weather maps, built for meteorologists and weather enthusiasts.
             </p>
 
@@ -531,28 +531,34 @@ export default function Home() {
           </h2>
           <div className="mt-8 grid border-t border-white/8 pt-0 lg:mt-12 lg:grid-cols-3 lg:gap-8 lg:pt-8">
             <div className="border-t border-white/8 pt-8 first:border-t-0 first:pt-0 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0 lg:first:border-l-0 lg:first:pl-0">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
-                <Gauge className="h-5 w-5" />
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                  <Gauge className="h-5 w-5" />
+                </div>
+                <h3 className="text-xl font-semibold tracking-tight text-white">Work with the map, don't just view it</h3>
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Work with the map, don't just view it</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
             </div>
             <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
-                <Sparkles className="h-5 w-5" />
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <h3 className="text-xl font-semibold tracking-tight text-white">More context in one place</h3>
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">More context in one place</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
                 Models, forecasts, SPC outlooks, and live radar live in the same workflow, so you spend less time jumping between sites.
               </p>
             </div>
             <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
-                <Layers3 className="h-5 w-5" />
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
+                  <Layers3 className="h-5 w-5" />
+                </div>
+                <h3 className="text-xl font-semibold tracking-tight text-white">Built to stay focused</h3>
               </div>
-              <h3 className="mt-5 text-xl font-semibold tracking-tight text-white">Built to stay focused</h3>
               <p className="mt-3 text-sm leading-7 text-white/66">
                 A cleaner interface keeps the map and the highest-value controls in front, without burying the signal under clutter.
               </p>
