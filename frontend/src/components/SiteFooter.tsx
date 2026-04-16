@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 export default function SiteFooter() {
   return (
     <footer className="border-t border-white/8 bg-[#07101d]">
-      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 md:grid-cols-[1.15fr_0.85fr_0.85fr] md:px-8">
+      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 sm:grid-cols-2 md:grid-cols-[1.15fr_0.85fr_0.85fr] md:px-8">
         <div>
           <div className="text-lg font-semibold tracking-tight text-white">CartoSky</div>
           <p className="mt-3 max-w-sm text-sm leading-7 text-white/56">

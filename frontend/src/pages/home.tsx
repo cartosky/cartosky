@@ -66,7 +66,7 @@ function ProofItem({
   detail: string;
 }) {
   return (
-    <div className="border-white/8 px-5 py-5 first:pl-0 last:pr-0 md:border-l md:first:border-l-0 md:px-7">
+    <div className="border-t border-white/8 py-5 first:border-t-0 sm:border-l sm:border-t-0 sm:px-5 sm:py-5 sm:first:border-l-0 sm:first:pl-0 md:px-7">
       <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/45">{label}</div>
       <div className="mt-2 text-sm font-semibold text-white md:text-base">{value}</div>
       <div className="mt-1 text-sm text-white/55">{detail}</div>
@@ -155,7 +155,7 @@ function ProductCard({
               : "linear-gradient(180deg, transparent 0 74%, rgba(34,211,238,0.08) 74% 75%, transparent 75% 100%), linear-gradient(90deg, transparent 0 14%, rgba(34,211,238,0.08) 14% 14.6%, transparent 14.6% 100%), linear-gradient(90deg, transparent 0 86%, rgba(34,211,238,0.07) 86% 86.6%, transparent 86.6% 100%)",
         }}
       />
-      <div className="relative z-10 flex min-h-[260px] flex-col">
+      <div className="relative z-10 flex min-h-[200px] flex-col sm:min-h-[260px]">
         <div>
           <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-slate-950/35 text-cyan-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm">
             {icon}
@@ -220,7 +220,7 @@ export default function Home() {
 
   return (
     <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
-      <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-10 pt-28 md:px-8 md:pb-14 md:pt-32">
+      <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-10 pt-20 md:px-8 md:pb-14 md:pt-28 lg:pt-32">
         <div
           aria-hidden="true"
           className="absolute inset-0 opacity-90"
@@ -251,9 +251,9 @@ export default function Home() {
           }}
         />
 
-        <div className="relative mx-auto grid min-h-[calc(100svh-8rem)] max-w-6xl items-center gap-14 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-10">
+        <div className="relative mx-auto grid max-w-6xl items-center gap-10 py-8 lg:min-h-[calc(100svh-8rem)] lg:grid-cols-[1.15fr_0.85fr] lg:gap-14">
           <div className="max-w-4xl text-center lg:text-left">
-            <h1 className="mt-8 max-w-4xl text-balance text-5xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] md:text-7xl md:leading-[0.98]">
+            <h1 className="mt-4 max-w-4xl text-balance text-4xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] sm:text-5xl lg:mt-8 lg:text-7xl lg:leading-[0.98]">
               Weather data,
               <br />
               <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic tracking-[-0.03em] text-cyan-200">
@@ -322,8 +322,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-[#0b1527] px-5 py-20 md:px-8 md:py-24">
-        <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-[0.78fr_1.22fr]">
+      <section className="bg-[#0b1527] px-5 py-12 md:px-8 md:py-16 lg:py-24">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 md:grid-cols-[0.78fr_1.22fr] md:gap-12">
           <div className="max-w-lg">
             <SectionEyebrow>Core Interface</SectionEyebrow>
             <h2 className="mt-6 max-w-md text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
@@ -335,7 +335,7 @@ export default function Home() {
               CartoSky keeps the map dominant, with core controls always within reach - so you can move through data without breaking your flow.
             </p>
 
-          <div className="mt-10 space-y-5">
+          <div className="mt-8 space-y-5">
             <div className="flex gap-4">
               <div className="mt-1 text-cyan-200">
                 <Move className="h-5 w-5" />
@@ -350,33 +350,31 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-10 space-y-5">
-              <div className="flex gap-4">
-                <div className="mt-1 text-cyan-200">
-                  <Layers3 className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
-                    Model switching
-                  </div>
-                  <p className="mt-2 text-sm leading-7 text-white/62">
-                    Switch models without losing your place. Viewport and context stay locked as you move between guidance.
-                  </p>
-                </div>
+            <div className="flex gap-4">
+              <div className="mt-1 text-cyan-200">
+                <Layers3 className="h-5 w-5" />
               </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
+                  Model switching
+                </div>
+                <p className="mt-2 text-sm leading-7 text-white/62">
+                  Switch models without losing your place. Viewport and context stay locked as you move between guidance.
+                </p>
+              </div>
+            </div>
 
-              <div className="flex gap-4">
-                <div className="mt-1 text-cyan-200">
-                  <Activity className="h-5 w-5" />
+            <div className="flex gap-4">
+              <div className="mt-1 text-cyan-200">
+                <Activity className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
+                  Trust signals
                 </div>
-                <div>
-                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-white/54">
-                    Trust signals
-                  </div>
-                  <p className="mt-2 text-sm leading-7 text-white/62">
-                    Run freshness is always visible. Know exactly what you're looking at and how current it is, without hunting through menus.
-                  </p>
-                </div>
+                <p className="mt-2 text-sm leading-7 text-white/62">
+                  Run freshness is always visible. Know exactly what you're looking at and how current it is, without hunting through menus.
+                </p>
               </div>
             </div>
           </div>
@@ -387,7 +385,7 @@ export default function Home() {
       </section>
 
       <section className="border-y border-white/8 bg-[#091423] px-5 md:px-8">
-        <div className="mx-auto grid max-w-6xl gap-y-2 py-4 md:grid-cols-4 md:py-5">
+        <div className="mx-auto grid max-w-6xl py-4 sm:grid-cols-2 md:grid-cols-4 md:py-5">
           <ProofItem
             label="Models"
             value={`${homepageStats.coreModelCount} core models`}
@@ -411,8 +409,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-b border-white/8 bg-[#0c172b] px-5 py-14 md:px-8 md:py-16">
-        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[0.95fr_0.75fr] lg:items-start">
+      <section className="border-b border-white/8 bg-[#0c172b] px-5 py-10 md:px-8 md:py-14 lg:py-16">
+        <div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.95fr_0.75fr] md:items-start">
           <div className="max-w-3xl">
             <SectionEyebrow>Forecast</SectionEyebrow>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-white md:text-4xl">
@@ -466,7 +464,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="max-w-[17rem] justify-self-start lg:justify-self-end">
+          <div className="w-full md:max-w-[17rem] md:justify-self-end">
             <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
               <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">What You Get</div>
               <div className="mt-3 space-y-3">
@@ -496,7 +494,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-y border-white/6 bg-[#0d182d] px-5 py-20 md:px-8 md:py-24">
+      <section className="border-y border-white/6 bg-[#0d182d] px-5 py-12 md:px-8 md:py-16 lg:py-24">
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Forecast Products</SectionEyebrow>
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
@@ -525,14 +523,14 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-[#0a1425] px-5 py-20 md:px-8 md:py-24">
+      <section className="bg-[#0a1425] px-5 py-12 md:px-8 md:py-16 lg:py-24">
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Why CartoSky</SectionEyebrow>
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
             A better way to work the forecast.
           </h2>
-          <div className="mt-12 grid gap-8 border-t border-white/8 pt-8 lg:grid-cols-3">
-            <div className="border-l border-white/8 pl-5 first:border-l-0 first:pl-0">
+          <div className="mt-8 grid border-t border-white/8 pt-0 lg:mt-12 lg:grid-cols-3 lg:gap-8 lg:pt-8">
+            <div className="border-t border-white/8 pt-8 first:border-t-0 first:pt-0 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0 lg:first:border-l-0 lg:first:pl-0">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Gauge className="h-5 w-5" />
               </div>
@@ -541,7 +539,7 @@ export default function Home() {
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
             </div>
-            <div className="border-l border-white/8 pl-5">
+            <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Sparkles className="h-5 w-5" />
               </div>
@@ -550,7 +548,7 @@ export default function Home() {
                 Models, forecasts, SPC outlooks, and live radar live in the same workflow, so you spend less time jumping between sites.
               </p>
             </div>
-            <div className="border-l border-white/8 pl-5">
+            <div className="border-t border-white/8 pt-8 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
               <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                 <Layers3 className="h-5 w-5" />
               </div>
@@ -563,7 +561,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-t border-white/6 bg-[#08111f] px-5 py-20 md:px-8 md:py-24">
+      <section className="border-t border-white/6 bg-[#08111f] px-5 py-12 md:px-8 md:py-16 lg:py-24">
         <div className="mx-auto max-w-3xl text-center">
           <SectionEyebrow>Open The Viewer</SectionEyebrow>
           <h2 className="mt-6 text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
