@@ -1375,6 +1375,7 @@ def _process_run(
     loop_tier1_quality: int,
     loop_tier1_max_dim: int,
     loop_tier1_fixed_w: int,
+    rebuild_existing: bool,
 ) -> tuple[str, int, int]:
     run_id = _run_id_from_dt(run_dt)
     cycle_hour = run_dt.hour
@@ -1414,6 +1415,7 @@ def _process_run(
     built_ok_at_last_publish = -1
     rebuild_attempts: dict[tuple[str, str, int], int] = {}
     rebuild_max_attempts = 2
+    rebuild_existing_pending = bool(rebuild_existing)
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
@@ -1453,6 +1455,63 @@ def _process_run(
 
     rounds = 0
     while True:
+        if rebuild_existing_pending:
+            rebuild_existing_pending = False
+            rounds += 1
+            round_work = list(targets)
+            logger.info(
+                "Run=%s model=%s coverage=%s targets=%d catchup_round=%d pending=%d blocked=%d rebuild_round=%s rebuild_existing=%s",
+                run_id,
+                model_id,
+                CANONICAL_COVERAGE,
+                total,
+                rounds,
+                len(round_work),
+                len(blocked_vars),
+                False,
+                True,
+            )
+
+            round_successes = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(
+                        _build_one,
+                        model_id=model_id,
+                        var_id=var_id,
+                        fh=fh,
+                        run_dt=run_dt,
+                        data_root=data_root,
+                        plugin=plugin,
+                    )
+                    for var_id, fh in round_work
+                ]
+
+                for future in concurrent.futures.as_completed(futures):
+                    var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
+                    _log_frame_timing(
+                        run_id=run_id,
+                        model_id=model_id,
+                        var_id=str(var_id),
+                        fh=int(fh),
+                        ok=ok,
+                        elapsed_ms=elapsed_ms,
+                        mode="single",
+                    )
+                    if ok:
+                        built_ok += 1
+                        round_successes += 1
+                        logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                    else:
+                        blocked_vars.add(var_id)
+                        logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
+
+            if not published_once and _should_promote(data_root, model_id, run_id, primary_vars, promotion_fhs):
+                _publish_run_snapshot(reason="rebuild_existing", pregenerate_loops=False)
+                published_once = True
+                built_ok_at_last_publish = built_ok
+            continue
+
         next_missing: list[tuple[str, int]] = []
         for var_id, fhs in fhs_by_var.items():
             if var_id in blocked_vars:
@@ -1690,6 +1749,7 @@ def run_scheduler(
     loop_tier1_quality: int,
     loop_tier1_max_dim: int,
     loop_tier1_fixed_w: int,
+    rebuild_existing: bool,
 ) -> int:
     plugin = _resolve_model(model)
     if plugin.get_region(CANONICAL_COVERAGE) is None:
@@ -1724,7 +1784,7 @@ def run_scheduler(
         resolved_probe_var = plugin.resolve_probe_var_key(DEFAULT_PROBE_VAR)
 
     logger.info(
-        "Scheduler starting model=%s coverage=%s vars=%s primary=%s probe_var=%s data_root=%s workers=%d poll_incomplete=%ds poll_complete=%ds",
+        "Scheduler starting model=%s coverage=%s vars=%s primary=%s probe_var=%s data_root=%s workers=%d poll_incomplete=%ds poll_complete=%ds rebuild_existing=%s",
         model,
         CANONICAL_COVERAGE,
         normalized_vars,
@@ -1734,7 +1794,11 @@ def run_scheduler(
         workers,
         INCOMPLETE_RUN_POLL_SECONDS,
         poll_seconds,
+        rebuild_existing,
     )
+
+    if rebuild_existing and not (once or run_arg):
+        raise SchedulerConfigError("--rebuild-existing requires --run or --once")
 
     with _scheduler_model_lock(data_root, model):
         last_run_id: str | None = None
@@ -1768,6 +1832,7 @@ def run_scheduler(
                 loop_tier1_quality=loop_tier1_quality,
                 loop_tier1_max_dim=loop_tier1_max_dim,
                 loop_tier1_fixed_w=loop_tier1_fixed_w,
+                rebuild_existing=rebuild_existing,
             )
             last_run_id = processed_run_id
             last_run_available = available
@@ -1808,6 +1873,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--probe-var", default=None, help="Var key used to probe run availability")
     parser.add_argument("--run", default=None, help="Explicit run id YYYYMMDD_HHz; implies one-shot")
     parser.add_argument("--once", action="store_true", help="Build one cycle then exit")
+    parser.add_argument(
+        "--rebuild-existing",
+        action="store_true",
+        help="Rebuild existing frame artifacts for the selected run instead of only filling missing frames",
+    )
     return parser.parse_args(argv)
 
 
@@ -1888,6 +1958,7 @@ def main(argv: list[str] | None = None) -> int:
             loop_tier1_quality=loop_tier1_quality,
             loop_tier1_max_dim=loop_tier1_max_dim,
             loop_tier1_fixed_w=loop_tier1_fixed_w,
+                rebuild_existing=bool(args.rebuild_existing),
         )
     except SchedulerConfigError as exc:
         logger.error("Scheduler configuration error: %s", exc)

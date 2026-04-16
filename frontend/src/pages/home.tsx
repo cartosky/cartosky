@@ -529,7 +529,8 @@ export default function Home() {
           <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
             A better way to work the forecast.
           </h2>
-          <div className="mt-8 grid border-t border-white/8 md:mt-12 md:grid-cols-3 md:gap-8 md:pt-8">
+          <div className="mt-8 border-t border-white/8 md:mt-12" />
+          <div className="grid pt-8 md:grid-cols-3 md:gap-8">
             <div className="pb-8 pt-8 first:pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0 md:first:border-l-0 md:first:pl-0">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
