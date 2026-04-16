@@ -289,6 +289,14 @@ function resolveTextureCacheBudgetBytes(): number {
   return GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES;                                          // 256 MB
 }
 
+function resolveCombinedCacheBudgetBytes(): number {
+  const frameBudget = resolveFrameCacheBudgetBytes();
+  const textureBudget = resolveTextureCacheBudgetBytes();
+  // Keep independent soft caps, but also apply a shared hard cap so a frame
+  // timeline can't fully saturate both memory pools at once.
+  return frameBudget + Math.round(textureBudget * 0.5);
+}
+
 function resolveObservedTextureWarmLimit(): number {
   if (DEVICE_TIER === "high") return OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP; // 28
   if (DEVICE_TIER === "mid")  return 18;
@@ -312,6 +320,17 @@ function resolveForecastTextureWarmBatchSize(animating: boolean): number {
   return DEVICE_TIER === "low"
     ? GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE
     : GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP;
+}
+
+function resolveTextureWarmFrameBudgetMs(animating: boolean): number {
+  if (animating) {
+    if (DEVICE_TIER === "high") return 5;
+    if (DEVICE_TIER === "mid") return 4;
+    return 3;
+  }
+  if (DEVICE_TIER === "high") return 8;
+  if (DEVICE_TIER === "mid") return 6;
+  return 4;
 }
 
 function resolveObservedTextureHighPriorityCount(): number {
@@ -673,6 +692,7 @@ export class GridWebglLayerController {
   private readonly layerId: string;
   private readonly frameCacheBudgetBytes = resolveFrameCacheBudgetBytes();
   private readonly textureCacheBudgetBytes = resolveTextureCacheBudgetBytes();
+  private readonly combinedCacheBudgetBytes = resolveCombinedCacheBudgetBytes();
   private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
   private active = false;
@@ -1386,7 +1406,7 @@ export class GridWebglLayerController {
       height: preparedUpload.height,
     });
     this.textureCacheBytes += preparedUpload.bytes.byteLength;
-    this.evictTextureCache(frameUrl);
+    this.evictCaches(frameUrl);
     return targetTexture;
   }
 
@@ -1529,37 +1549,89 @@ export class GridWebglLayerController {
     }
     this.frameCache.set(frameUrl, { bytes });
     this.frameCacheBytes += bytes.byteLength;
-
-    while (this.frameCacheBytes > this.frameCacheBudgetBytes && this.frameCache.size > 1) {
-      const evicted = this.frameCache.evictLeastRecentlyUsed((candidateKey) => candidateKey === this.frameUrl);
-      if (!evicted) {
-        break;
-      }
-      this.frameCacheBytes -= evicted.value.bytes.byteLength;
-      // Notify that this frame is no longer available in any cache.
-      if (!this.textureCache.has(evicted.key)) {
-        this.onFrameEvicted?.(evicted.key);
-      }
-    }
+    this.evictCaches(frameUrl);
   }
 
-  private evictTextureCache(preferredUrl?: string | null) {
-    while (this.textureCacheBytes > this.textureCacheBudgetBytes && this.textureCache.size > 1) {
-      const evicted = this.textureCache.evictLeastRecentlyUsed(
-        (candidateKey) =>
-          candidateKey === preferredUrl
-          || candidateKey === this.currentTextureUrl
-          || candidateKey === this.previousTextureUrl
-          || this.textureWarmQueued.has(candidateKey),
-      );
+  private combinedCacheBytes(): number {
+    return this.frameCacheBytes + this.textureCacheBytes;
+  }
+
+  private evictFrameCacheEntry(preferredUrl?: string | null, duplicateOnly = false): boolean {
+    const evicted = this.frameCache.evictLeastRecentlyUsed((candidateKey) => {
+      if (
+        candidateKey === preferredUrl
+        || candidateKey === this.frameUrl
+        || candidateKey === this.pendingFrameUrl
+        || this.frameFetches.has(candidateKey)
+      ) {
+        return true;
+      }
+      return duplicateOnly ? !this.textureCache.has(candidateKey) : false;
+    });
+    if (!evicted) {
+      return false;
+    }
+    this.frameCacheBytes -= evicted.value.bytes.byteLength;
+    if (!this.textureCache.has(evicted.key)) {
+      this.onFrameEvicted?.(evicted.key);
+    }
+    return true;
+  }
+
+  private evictTextureCacheEntry(preferredUrl?: string | null): boolean {
+    const evicted = this.textureCache.evictLeastRecentlyUsed(
+      (candidateKey) =>
+        candidateKey === preferredUrl
+        || candidateKey === this.currentTextureUrl
+        || candidateKey === this.previousTextureUrl
+        || this.textureWarmQueued.has(candidateKey),
+    );
+    if (!evicted) {
+      return false;
+    }
+    this.textureCacheBytes -= evicted.value.bytes;
+    this.gl?.deleteTexture(evicted.value.texture);
+    if (!this.frameCache.has(evicted.key)) {
+      this.onFrameEvicted?.(evicted.key);
+    }
+    return true;
+  }
+
+  private evictCaches(preferredUrl?: string | null) {
+    let safety = 0;
+    while (
+      safety < 256
+      && (
+        this.frameCacheBytes > this.frameCacheBudgetBytes
+        || this.textureCacheBytes > this.textureCacheBudgetBytes
+        || this.combinedCacheBytes() > this.combinedCacheBudgetBytes
+      )
+    ) {
+      safety += 1;
+      const frameOverBudget = this.frameCacheBytes > this.frameCacheBudgetBytes;
+      const textureOverBudget = this.textureCacheBytes > this.textureCacheBudgetBytes;
+      const combinedOverBudget = this.combinedCacheBytes() > this.combinedCacheBudgetBytes;
+
+      let evicted = false;
+      if (textureOverBudget) {
+        evicted = this.evictTextureCacheEntry(preferredUrl);
+      }
+      if (!evicted && frameOverBudget) {
+        evicted = this.evictFrameCacheEntry(preferredUrl);
+      }
+      if (!evicted && combinedOverBudget) {
+        // Under shared pressure, prefer dropping duplicated CPU-side bytes
+        // first so recently-uploaded textures stay immediately usable.
+        evicted = this.evictFrameCacheEntry(preferredUrl, true);
+        if (!evicted) {
+          evicted = this.evictFrameCacheEntry(preferredUrl);
+        }
+        if (!evicted) {
+          evicted = this.evictTextureCacheEntry(preferredUrl);
+        }
+      }
       if (!evicted) {
         break;
-      }
-      this.textureCacheBytes -= evicted.value.bytes;
-      this.gl?.deleteTexture(evicted.value.texture);
-      // If both caches have lost this URL, notify that it is no longer available.
-      if (!this.frameCache.has(evicted.key)) {
-        this.onFrameEvicted?.(evicted.key);
       }
     }
   }
@@ -1571,8 +1643,40 @@ export class GridWebglLayerController {
         controller.abort();
       }
     }
-    this.textureWarmQueue = this.textureWarmQueue.filter((candidate) => desiredUrls.has(candidate));
-    this.textureWarmQueued = new Set(this.textureWarmQueue);
+    let writeIndex = 0;
+    for (let readIndex = 0; readIndex < this.textureWarmQueue.length; readIndex += 1) {
+      const candidate = this.textureWarmQueue[readIndex];
+      if (!desiredUrls.has(candidate)) {
+        continue;
+      }
+      this.textureWarmQueue[writeIndex] = candidate;
+      writeIndex += 1;
+    }
+    this.textureWarmQueue.length = writeIndex;
+    this.textureWarmQueued.clear();
+    for (const candidate of this.textureWarmQueue) {
+      this.textureWarmQueued.add(candidate);
+    }
+  }
+
+  private pushTextureWarmQueueFront(frameUrl: string) {
+    const existingIndex = this.textureWarmQueue.indexOf(frameUrl);
+    if (existingIndex === 0) {
+      return;
+    }
+    if (existingIndex > 0) {
+      this.textureWarmQueue.splice(existingIndex, 1);
+    }
+    this.textureWarmQueue.unshift(frameUrl);
+  }
+
+  private trimTextureWarmQueue(warmLimit: number) {
+    while (this.textureWarmQueue.length > warmLimit) {
+      const removed = this.textureWarmQueue.pop();
+      if (removed) {
+        this.textureWarmQueued.delete(removed);
+      }
+    }
   }
 
   private scheduleTextureWarm(frameUrl: string | null, priority: "high" | "normal" = "normal") {
@@ -1582,21 +1686,19 @@ export class GridWebglLayerController {
     }
     if (this.textureWarmQueued.has(normalized)) {
       if (priority === "high") {
-        this.textureWarmQueue = [normalized, ...this.textureWarmQueue.filter((candidate) => candidate !== normalized)];
+        this.pushTextureWarmQueueFront(normalized);
       }
     } else {
       this.textureWarmQueued.add(normalized);
       if (priority === "high") {
-        this.textureWarmQueue.unshift(normalized);
+        this.pushTextureWarmQueueFront(normalized);
       } else {
         this.textureWarmQueue.push(normalized);
       }
     }
     const warmLimit = this.textureWarmLimit();
     if (this.textureWarmQueue.length > warmLimit) {
-      const trimmed = this.textureWarmQueue.slice(0, warmLimit);
-      this.textureWarmQueue = trimmed;
-      this.textureWarmQueued = new Set(trimmed);
+      this.trimTextureWarmQueue(warmLimit);
     }
     if (this.textureWarmRafId !== null || typeof window === "undefined") {
       return;
@@ -1611,31 +1713,48 @@ export class GridWebglLayerController {
     // During animation/scrub, observed MRMS grids can now warm a little more
     // aggressively on desktop because per-frame upload cost is lower.
     const effectiveBatchSize = this.textureWarmBatchSize();
+    const frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating);
+    const pumpStartedAt = typeof performance !== "undefined" ? performance.now() : 0;
+    let warmedAny = false;
+    let warmedCount = 0;
 
-    const batch: string[] = [];
-    while (this.textureWarmQueue.length > 0 && batch.length < effectiveBatchSize) {
+    while (this.textureWarmQueue.length > 0 && warmedCount < effectiveBatchSize) {
+      if (
+        warmedCount > 0
+        && typeof performance !== "undefined"
+        && performance.now() - pumpStartedAt >= frameBudgetMs
+      ) {
+        break;
+      }
       const nextUrl = this.textureWarmQueue.shift() ?? "";
       this.textureWarmQueued.delete(nextUrl);
       if (!nextUrl || this.invalidFrameUrls.has(nextUrl) || this.textureCache.has(nextUrl)) {
         continue;
       }
-      batch.push(nextUrl);
+
+      const bytes = await this.fetchFrameBytes(nextUrl);
+      if (!bytes || !this.gl) {
+        continue;
+      }
+
+      if (
+        warmedCount > 0
+        && typeof performance !== "undefined"
+        && performance.now() - pumpStartedAt >= frameBudgetMs
+      ) {
+        this.textureWarmQueued.add(nextUrl);
+        this.pushTextureWarmQueueFront(nextUrl);
+        break;
+      }
+
+      if (this.createTextureFromBytes(nextUrl, bytes)) {
+        warmedAny = true;
+      }
+      warmedCount += 1;
     }
 
-    if (batch.length > 0) {
-      const warmed = await Promise.all(
-        batch.map(async (nextUrl) => {
-          const bytes = await this.fetchFrameBytes(nextUrl);
-          if (!bytes || !this.gl) {
-            return false;
-          }
-          this.createTextureFromBytes(nextUrl, bytes);
-          return true;
-        })
-      );
-      if (warmed.some(Boolean)) {
-        this.map?.triggerRepaint();
-      }
+    if (warmedAny) {
+      this.map?.triggerRepaint();
     }
 
     if (this.textureWarmQueue.length > 0 && this.textureWarmRafId === null && typeof window !== "undefined") {

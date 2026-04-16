@@ -62,6 +62,58 @@ def test_non_display_prep_variable_remains_passthrough() -> None:
     np.testing.assert_array_equal(prepared, values.astype(np.float32))
 
 
+def test_ecmwf_snowfall_display_prep_matches_gfs_treatment() -> None:
+    values = np.array(
+        [
+            [0.0, 1.5],
+            [0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    prepared, meta = prepare_grid_display_values(model="ecmwf", var="snowfall_total", values=values)
+    gfs_prepared, gfs_meta = prepare_grid_display_values(model="gfs", var="snowfall_total", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "ecmwf_snowfall_total_display_v1"
+    assert meta["preserve_zero_support"] is True
+    assert gfs_meta is not None
+    assert gfs_meta["id"] == "gfs_snowfall_total_display_v1"
+    assert prepared.shape == gfs_prepared.shape
+    assert prepared.dtype == np.float32
+    np.testing.assert_allclose(prepared, gfs_prepared)
+
+
+def test_ecmwf_kuchera_snowfall_display_prep_matches_gfs_treatment() -> None:
+    values = np.array(
+        [
+            [0.0, 2.0],
+            [0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    prepared, meta = prepare_grid_display_values(
+        model="ecmwf",
+        var="snowfall_kuchera_total",
+        values=values,
+    )
+    gfs_prepared, gfs_meta = prepare_grid_display_values(
+        model="gfs",
+        var="snowfall_kuchera_total",
+        values=values,
+    )
+
+    assert meta is not None
+    assert meta["id"] == "ecmwf_snowfall_total_display_v1"
+    assert meta["preserve_zero_support"] is True
+    assert gfs_meta is not None
+    assert gfs_meta["id"] == "gfs_snowfall_total_display_v1"
+    assert prepared.shape == gfs_prepared.shape
+    assert prepared.dtype == np.float32
+    np.testing.assert_allclose(prepared, gfs_prepared)
+
+
 def test_hrrr_radar_ptype_display_prep_upscales_categorically() -> None:
     values = np.array(
         [

@@ -39,6 +39,18 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         smooth_sigma=None,
         preserve_zero_support=True,
     ),
+    ("ecmwf", "snowfall_total"): GridDisplayPrepConfig(
+        id="ecmwf_snowfall_total_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+    ),
+    ("ecmwf", "snowfall_kuchera_total"): GridDisplayPrepConfig(
+        id="ecmwf_snowfall_total_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+    ),
     ("nbm", "precip_total"): GridDisplayPrepConfig(
         id="nbm_precip_total_display_v2",
         upscale_factor=3,
