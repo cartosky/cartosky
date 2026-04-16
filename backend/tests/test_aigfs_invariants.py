@@ -48,6 +48,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert AIGFS_MODEL.normalize_var_id("z300") == "hgt300"
     assert AIGFS_MODEL.normalize_var_id("gh300") == "hgt300"
+    assert AIGFS_MODEL.normalize_var_id("vort500") == "vort500"
+    assert AIGFS_MODEL.normalize_var_id("500mb_vorticity") == "vort500"
+    assert AIGFS_MODEL.normalize_var_id("absv500") == "vort500"
+    assert AIGFS_MODEL.normalize_var_id("z500") == "hgt500"
+    assert AIGFS_MODEL.normalize_var_id("gh500") == "hgt500"
     assert AIGFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("10mwind") == "wspd10m"
@@ -76,6 +81,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert wspd300_request.product == "pres"
     assert wspd300_request.herbie_kwargs["priority"] == ["nomads"]
 
+    vort500_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="vort500")
+    assert vort500_request.model == "aigfs"
+    assert vort500_request.product == "pres"
+    assert vort500_request.herbie_kwargs["priority"] == ["nomads"]
+
 
 def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     capabilities = AIGFS_MODEL.capabilities
@@ -86,7 +96,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd300", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd300", "vort500", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -151,6 +161,21 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd300_spec.selectors.hints["contour_interval"] == "120"
     assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
     assert wspd300_spec.selectors.hints["product"] == "pres"
+
+    vort500_spec = AIGFS_MODEL.get_var("vort500")
+    assert vort500_spec is not None
+    assert vort500_spec.primary is True
+    assert vort500_spec.derived is True
+    assert vort500_spec.derive == "vort500_from_uv"
+    assert vort500_spec.kind == "continuous"
+    assert vort500_spec.units == "10^-5 s^-1"
+    assert vort500_spec.selectors.search == []
+    assert vort500_spec.selectors.hints["u_component"] == "u500"
+    assert vort500_spec.selectors.hints["v_component"] == "v500"
+    assert vort500_spec.selectors.hints["contour_component"] == "hgt500"
+    assert vort500_spec.selectors.hints["contour_interval"] == "60"
+    assert vort500_spec.selectors.hints["contour_key"] == "height_500mb"
+    assert vort500_spec.selectors.hints["product"] == "pres"
 
     hgt850_spec = AIGFS_MODEL.get_var("hgt850")
     assert hgt850_spec is not None
@@ -223,6 +248,42 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         "level": "300",
     }
     assert v300_spec.selectors.hints["product"] == "pres"
+
+    hgt500_spec = AIGFS_MODEL.get_var("hgt500")
+    assert hgt500_spec is not None
+    assert hgt500_spec.primary is False
+    assert hgt500_spec.derived is False
+    assert hgt500_spec.selectors.search == [":HGT:500 mb:"]
+    assert hgt500_spec.selectors.filter_by_keys == {
+        "shortName": "gh",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "500",
+    }
+    assert hgt500_spec.selectors.hints["product"] == "pres"
+
+    u500_spec = AIGFS_MODEL.get_var("u500")
+    assert u500_spec is not None
+    assert u500_spec.primary is False
+    assert u500_spec.derived is False
+    assert u500_spec.selectors.search == [":UGRD:500 mb:"]
+    assert u500_spec.selectors.filter_by_keys == {
+        "shortName": "ugrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "500",
+    }
+    assert u500_spec.selectors.hints["product"] == "pres"
+
+    v500_spec = AIGFS_MODEL.get_var("v500")
+    assert v500_spec is not None
+    assert v500_spec.primary is False
+    assert v500_spec.derived is False
+    assert v500_spec.selectors.search == [":VGRD:500 mb:"]
+    assert v500_spec.selectors.filter_by_keys == {
+        "shortName": "vgrd",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "500",
+    }
+    assert v500_spec.selectors.hints["product"] == "pres"
 
     wspd10m_spec = AIGFS_MODEL.get_var("wspd10m")
     assert wspd10m_spec is not None
@@ -321,6 +382,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["group"] == "Wind"
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]
+
+    vort500 = payload["variables"]["vort500"]
+    assert vort500["var_key"] == "vort500"
+    assert vort500["display_name"] == "500mb Absolute Vorticity"
+    assert vort500["kind"] == "continuous"
+    assert vort500["units"] == "10^-5 s^-1"
+    assert vort500["buildable"] is True
+    assert vort500["derived"] is True
+    assert vort500["derive_strategy_id"] == "vort500_from_uv"
+    assert vort500["color_map_id"] == "vort500"
+    assert vort500["order"] == 5
+    assert vort500["group"] == "Dynamics"
+    assert vort500["default_fh"] == 0
+    assert vort500["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

@@ -367,7 +367,7 @@ export default function AdminOverviewPage() {
         <AdminHero
           eyebrow="Overview"
           title="Telemetry trust center"
-          description="Use this page to confirm which system owns each signal class, whether the live emitters are healthy, and where to drill down when a rollout looks off."
+          description="Monitor health and performance of the system."
         >
           {error ? (
             <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
@@ -395,7 +395,7 @@ export default function AdminOverviewPage() {
 
         <AdminSurface
           title="Experience Signals"
-          description="Core frontend health and manifest fetch timing, flattened into one operational readout instead of another card wall."
+          description="Core frontend health and manifest fetch timing."
         >
           <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-4">

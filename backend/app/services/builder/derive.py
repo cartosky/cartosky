@@ -32,6 +32,9 @@ from app.services.colormaps import (
 )
 
 logger = logging.getLogger(__name__)
+_EARTH_RADIUS_M = np.float64(6_371_000.0)
+_EARTH_ANGULAR_VELOCITY_RAD_S = np.float64(7.2921159e-5)
+_MIN_COS_LAT = np.float64(1.0e-6)
 _MISSING_CSNOW_SAMPLE_LOG_COUNT = 0
 _KUCHERA_PTYPE_GATE_WARN_INTERVAL_SECONDS = 60.0
 _KUCHERA_PTYPE_GATE_LAST_WARN_TS = 0.0
@@ -3165,6 +3168,101 @@ def _derive_wspd10m(
     return wspd.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _grid_center_coordinates_geographic(
+    *,
+    transform: rasterio.transform.Affine,
+    shape: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    if abs(float(transform.b)) > 1.0e-9 or abs(float(transform.d)) > 1.0e-9:
+        raise ValueError("vort500 derive requires north-up affine transform")
+    height, width = int(shape[0]), int(shape[1])
+    if height < 2 or width < 2:
+        raise ValueError("vort500 derive requires at least a 2x2 grid")
+    col_centers = np.arange(width, dtype=np.float64) + 0.5
+    row_centers = np.arange(height, dtype=np.float64) + 0.5
+    lons_deg = np.asarray(transform.c + transform.a * col_centers, dtype=np.float64)
+    lats_deg = np.asarray(transform.f + transform.e * row_centers, dtype=np.float64)
+    return lats_deg, lons_deg
+
+
+def _derive_vort500_from_uv(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del derive_component_target_grid, derive_component_resampling
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    u_component = str(hints.get("u_component") or "u500")
+    v_component = str(hints.get("v_component") or "v500")
+
+    u_data, src_crs, src_transform = _fetch_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=u_component,
+        ctx=ctx,
+    )
+    v_data, _, _ = _fetch_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=v_component,
+        ctx=ctx,
+    )
+
+    if u_data.shape != v_data.shape:
+        raise ValueError("vort500 derive requires matching u/v component shapes")
+    if src_crs is None or not bool(getattr(src_crs, "is_geographic", False)):
+        raise ValueError("vort500 derive requires a geographic source CRS")
+
+    lats_deg, lons_deg = _grid_center_coordinates_geographic(transform=src_transform, shape=u_data.shape)
+    lats_rad = np.deg2rad(lats_deg)
+    lons_rad = np.deg2rad(lons_deg)
+    lat_matrix = lats_rad[:, np.newaxis]
+    cos_lat = np.cos(lat_matrix)
+    cos_lat = np.where(np.abs(cos_lat) < _MIN_COS_LAT, np.sign(cos_lat) * _MIN_COS_LAT, cos_lat)
+    cos_lat = np.where(cos_lat == 0.0, _MIN_COS_LAT, cos_lat)
+    sin_lat = np.sin(lat_matrix)
+    tan_lat = np.tan(lat_matrix)
+
+    u = np.asarray(u_data, dtype=np.float64)
+    v = np.asarray(v_data, dtype=np.float64)
+    valid_mask = np.isfinite(u) & np.isfinite(v)
+    edge_order = 2 if min(u.shape) >= 3 else 1
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        dv_dlambda = np.gradient(v, lons_rad, axis=1, edge_order=edge_order)
+        du_dphi = np.gradient(u, lats_rad, axis=0, edge_order=edge_order)
+        relative_vorticity = (
+            dv_dlambda / (_EARTH_RADIUS_M * cos_lat)
+            - du_dphi / _EARTH_RADIUS_M
+            + (u * tan_lat) / _EARTH_RADIUS_M
+        )
+        absolute_vorticity = relative_vorticity + (2.0 * _EARTH_ANGULAR_VELOCITY_RAD_S * sin_lat)
+
+    absolute_vorticity = np.where(valid_mask, absolute_vorticity, np.nan).astype(np.float32, copy=False)
+    converted = convert_units(
+        absolute_vorticity,
+        var_key=var_key,
+        model_id=model_id,
+        var_capability=var_capability,
+    )
+    return converted.astype(np.float32, copy=False), src_crs, src_transform
+
+
 def _derive_radar_ptype_combo(
     *,
     model_id: str,
@@ -5116,6 +5214,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("10u", "10v"),
         output_var_key="wspd10m",
         execute=_derive_wspd10m,
+    ),
+    "vort500_from_uv": DeriveStrategy(
+        id="vort500_from_uv",
+        required_inputs=("u500", "v500"),
+        output_var_key="vort500",
+        execute=_derive_vort500_from_uv,
     ),
     "radar_ptype_combo": DeriveStrategy(
         id="radar_ptype_combo",

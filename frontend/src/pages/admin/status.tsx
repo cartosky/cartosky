@@ -102,6 +102,36 @@ function SummaryCard(props: {
   );
 }
 
+function CompactMetric(props: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  accentClassName?: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const content = (
+    <div
+      className={[
+        "border-l pl-4 transition-colors",
+        props.active ? "border-cyan-300/40 bg-cyan-400/[0.03]" : "border-white/10",
+        props.onClick ? "cursor-pointer hover:border-white/20 hover:bg-white/[0.02]" : "",
+      ].join(" ")}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">{props.label}</div>
+      <div className={`mt-2 text-[1.6rem] font-semibold tracking-tight ${props.accentClassName ?? "text-white"}`}>{props.value}</div>
+      {props.hint ? <div className="mt-2 text-sm leading-6 text-white/58">{props.hint}</div> : null}
+    </div>
+  );
+
+  if (!props.onClick) return content;
+  return (
+    <button type="button" onClick={props.onClick} className="w-full text-left">
+      {content}
+    </button>
+  );
+}
+
 function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
   if (view === "issues") return rows.filter((row) => row.status !== "healthy");
@@ -254,73 +284,62 @@ export default function AdminStatusPage() {
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            title="Retained runs"
-            value={results.length}
-            accent="text-white"
-            icon={SearchCheck}
-            hint="click for all"
-            onClick={() => setViewFilter("all")}
-            active={viewFilter === "all"}
-          />
-          <SummaryCard
-            title="Open issues"
-            value={issueRows.length}
-            accent="text-amber-300"
-            icon={AlertTriangle}
-            hint="click to inspect"
-            onClick={() => setViewFilter("issues")}
-            active={viewFilter === "issues"}
-          />
-          <SummaryCard
-            title="Artifact failures"
-            value={artifactRows.length}
-            accent="text-rose-300"
-            icon={ClipboardCheck}
-            hint="manifest or files"
-            onClick={() => setViewFilter("artifacts")}
-            active={viewFilter === "artifacts"}
-          />
-          <SummaryCard
-            title="Stale or stalled"
-            value={staleRows.length}
-            accent="text-amber-300"
-            icon={Clock3}
-            hint="latest run cadence"
-            onClick={() => setViewFilter("stale")}
-            active={viewFilter === "stale"}
-          />
-        </div>
+        <div className="mt-6 space-y-5">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <CompactMetric
+              label="Retained runs"
+              value={results.length}
+              hint="All retained published runs in scope."
+              active={viewFilter === "all"}
+              onClick={() => setViewFilter("all")}
+            />
+            <CompactMetric
+              label="Open issues"
+              value={issueRows.length}
+              hint="Runs with operational problems worth review."
+              accentClassName="text-amber-300"
+              active={viewFilter === "issues"}
+              onClick={() => setViewFilter("issues")}
+            />
+            <CompactMetric
+              label="Artifact failures"
+              value={artifactRows.length}
+              hint="Missing manifests, files, or unreadable outputs."
+              accentClassName="text-rose-300"
+              active={viewFilter === "artifacts"}
+              onClick={() => setViewFilter("artifacts")}
+            />
+            <CompactMetric
+              label="Stale or stalled"
+              value={staleRows.length}
+              hint="Latest runs that are not advancing as expected."
+              accentClassName="text-amber-300"
+              active={viewFilter === "stale"}
+              onClick={() => setViewFilter("stale")}
+            />
+          </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
-            <div className="text-sm font-semibold text-white">QA Store</div>
-            <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
-              {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
+          <div className="grid gap-4 border-t border-white/8 pt-5 md:grid-cols-3">
+            <div className="border-l border-white/10 pl-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Store</div>
+              <div className="mt-2 text-xl font-semibold tracking-tight text-white">
+                {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-white/58">
+                {qaSummary?.store_mode === "separate" ? "Ready for final DB retirement." : "Still sharing legacy telemetry DB."}
+              </div>
             </div>
-            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
-              {qaSummary?.store_mode === "separate" ? "Ready for final DB retirement" : "Still sharing legacy telemetry DB"}
+            <div className="border-l border-white/10 pl-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Reviews</div>
+              <div className="mt-2 text-xl font-semibold tracking-tight text-white">{qaSummary?.total_reviews ?? 0}</div>
+              <div className="mt-2 text-sm leading-6 text-white/58">{qaSummary?.warning_reviews ?? 0} warning rows in the QA summary.</div>
             </div>
-          </section>
-          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
-            <div className="text-sm font-semibold text-white">QA Reviews</div>
-            <div className="mt-3 text-[1.9rem] font-semibold tracking-tight text-white">
-              {qaSummary?.total_reviews ?? 0}
+            <div className="border-l border-white/10 pl-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Latest QA Check</div>
+              <div className="mt-2 text-lg font-semibold tracking-tight text-white">{formatTimestamp(qaSummary?.latest_checked_at)}</div>
+              <div className="mt-2 text-sm leading-6 text-white/58">{qaSummary?.distinct_runs ?? 0} distinct runs tracked.</div>
             </div>
-            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
-              {qaSummary?.warning_reviews ?? 0} warning rows
-            </div>
-          </section>
-          <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-4">
-            <div className="text-sm font-semibold text-white">Latest QA Check</div>
-            <div className="mt-3 text-[1.15rem] font-semibold tracking-tight text-white">
-              {formatTimestamp(qaSummary?.latest_checked_at)}
-            </div>
-            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/42">
-              {qaSummary?.distinct_runs ?? 0} distinct runs tracked
-            </div>
-          </section>
+          </div>
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">
@@ -473,21 +492,21 @@ export default function AdminStatusPage() {
                 </button>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Status</div>
+              <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-2">
+                <div className="border-l border-white/10 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Status</div>
                   <div className="mt-3"><StatusBadge tone={issueTone(selected)} label={selected.status} /></div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Issue type</div>
+                <div className="border-l border-white/10 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Issue type</div>
                   <div className="mt-3"><StatusBadge tone={issueTone(selected)} label={issueLabel(selected.issue_type)} /></div>
                 </div>
               </div>
 
               {selected.time_axis_mode === "observed" ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Freshness</div>
+                <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
+                  <div className="border-l border-white/10 pl-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Freshness</div>
                     <div className="mt-3">
                       <StatusBadge
                         tone={freshnessTone(selected.freshness_state)}
@@ -495,8 +514,8 @@ export default function AdminStatusPage() {
                       />
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Latest scan</div>
+                  <div className="border-l border-white/10 pl-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Latest scan</div>
                     <div className="mt-2 text-sm leading-6 text-white">
                       {formatObservedValidTime(selected.latest_scan_valid_time ?? null) ?? "—"}
                     </div>
@@ -506,8 +525,8 @@ export default function AdminStatusPage() {
                         : "Age unavailable"}
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/42">Bundle publish</div>
+                  <div className="border-l border-white/10 pl-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Bundle publish</div>
                     <div className="mt-2 text-sm leading-6 text-white">
                       {formatObservedValidTime(selected.bundle_published_at ?? null) ?? "—"}
                     </div>
@@ -520,42 +539,42 @@ export default function AdminStatusPage() {
                 </div>
               ) : null}
 
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                <div className="text-xs uppercase tracking-[0.22em] text-white/42">Summary</div>
+              <div className="border-t border-white/8 pt-5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Summary</div>
                 <div className="mt-3 text-sm leading-6 text-white/78">{selected.summary}</div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Frames</div>
+              <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-2">
+                <div className="border-l border-white/10 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Frames</div>
                   <div className="mt-2 text-2xl font-semibold text-white">{selected.available_frames}/{selected.expected_frames}</div>
                   <div className="mt-1 text-sm text-white/60">{formatPercent(selected.completion_pct)} complete</div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Run age</div>
+                <div className="border-l border-white/10 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Run age</div>
                   <div className="mt-2 text-2xl font-semibold text-white">{selected.run_age_hours.toFixed(1)}h</div>
                   <div className="mt-1 text-sm text-white/60">{selected.latest_for_model ? "Latest retained cycle" : "Historical retained cycle"}</div>
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-rose-400/18 bg-rose-500/8 p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-rose-100/70">Missing artifacts</div>
+              <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
+                <div className="border-l border-rose-400/22 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-100/72">Missing artifacts</div>
                   <div className="mt-2 text-2xl font-semibold text-rose-100">{selected.missing_artifact_count}</div>
                 </div>
-                <div className="rounded-2xl border border-rose-400/18 bg-rose-500/8 p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-rose-100/70">Unreadable grids</div>
+                <div className="border-l border-rose-400/22 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-100/72">Unreadable grids</div>
                   <div className="mt-2 text-2xl font-semibold text-rose-100">{selected.unreadable_artifact_count}</div>
                 </div>
-                <div className="rounded-2xl border border-amber-400/18 bg-amber-500/8 p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-amber-100/70">Incomplete vars</div>
+                <div className="border-l border-amber-400/22 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Incomplete vars</div>
                   <div className="mt-2 text-2xl font-semibold text-amber-100">{selected.incomplete_variable_count}</div>
                 </div>
               </div>
 
               {selected.incomplete_variables.length > 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Incomplete variables</div>
+                <div className="border-t border-white/8 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Incomplete variables</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {selected.incomplete_variables.map((variableId) => (
                       <StatusBadge key={variableId} tone="warning" label={variableId} />
@@ -565,11 +584,11 @@ export default function AdminStatusPage() {
               ) : null}
 
               {selected.sample_paths.length > 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/42">Sample failing paths</div>
+                <div className="border-t border-white/8 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Sample failing paths</div>
                   <div className="mt-3 space-y-3 text-sm text-white/78">
                     {selected.sample_paths.map((sample, index) => (
-                      <div key={`${sample.variable_id}-${sample.forecast_hour}-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div key={`${sample.variable_id}-${sample.forecast_hour}-${index}`} className="border-l border-white/10 pl-4">
                         <div className="font-medium text-white">
                           {sample.variable_id} · f{sample.forecast_hour} · {sample.issue}
                         </div>

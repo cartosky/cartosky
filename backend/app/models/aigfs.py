@@ -8,6 +8,7 @@ Initial rollout scope:
       - `tmp850`
       - `wspd850`
       - `wspd300`
+            - `vort500`
   - realtime publishing only
 
 Upstream verification:
@@ -18,6 +19,7 @@ Upstream verification:
     - Pressure temperature inventory includes `TMP:850 mb`
     - Pressure 850mb height and wind components inventory entries are `HGT:850 mb`, `UGRD:850 mb`, and `VGRD:850 mb`
     - Pressure 300mb height and wind components inventory entries are `HGT:300 mb`, `UGRD:300 mb`, and `VGRD:300 mb`
+        - Pressure 500mb height inventory includes `HGT:500 mb`; `ABSV:500 mb` is not published, so AIGFS `vort500` is derived from `UGRD:500 mb` and `VGRD:500 mb`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -29,12 +31,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VariableCapability
+from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
 from .gfs import GFSPlugin, GFS_VARS
 
 
 class AIGFSPlugin(GFSPlugin):
-    _PRES_VAR_KEYS = frozenset({"tmp850", "u850", "v850", "hgt850", "wspd850", "u300", "v300", "hgt300", "wspd300"})
+    _PRES_VAR_KEYS = frozenset({
+        "tmp850", "u850", "v850", "hgt850", "wspd850",
+        "u300", "v300", "hgt300", "wspd300",
+        "u500", "v500", "hgt500", "vort500",
+    })
 
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
@@ -48,6 +54,8 @@ class AIGFSPlugin(GFSPlugin):
             return "hgt850"
         if normalized in {"z300", "gh300", "300height", "300mbheight", "300mbheights", "300_heights"}:
             return "hgt300"
+        if normalized == "gh500":
+            return "hgt500"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -101,6 +109,58 @@ def _with_pres_product(var_spec):
     )
 
 
+def _aigfs_pres_wind_component(axis: str, level_hpa: int) -> VarSpec:
+    axis_norm = axis.strip().lower()
+    level = int(level_hpa)
+    if axis_norm not in {"u", "v"}:
+        raise ValueError(f"Unsupported wind axis: {axis!r}")
+    short_name = "ugrd" if axis_norm == "u" else "vgrd"
+    grib_name = "UGRD" if axis_norm == "u" else "VGRD"
+    return VarSpec(
+        id=f"{axis_norm}{level}",
+        name=f"{level}mb {'U' if axis_norm == 'u' else 'V'} Wind",
+        selectors=VarSelectors(
+            search=[f":{grib_name}:{level} mb:"],
+            filter_by_keys={
+                "shortName": short_name,
+                "typeOfLevel": "isobaricInhPa",
+                "level": str(level),
+            },
+            hints={
+                "upstream_var": f"{axis_norm}{level}",
+                "cf_var": axis_norm,
+                "short_name": short_name,
+                "product": "pres",
+            },
+        ),
+    )
+
+
+def _aigfs_vort500_spec() -> VarSpec:
+    return VarSpec(
+        id="vort500",
+        name="500mb Absolute Vorticity",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "u500",
+                "v_component": "v500",
+                "contour_component": "hgt500",
+                "contour_interval": "60",
+                "contour_start": "4800",
+                "contour_end": "6240",
+                "contour_key": "height_500mb",
+                "contour_label": "500 mb Height",
+                "product": "pres",
+            },
+        ),
+        primary=True,
+        derived=True,
+        derive="vort500_from_uv",
+        kind="continuous",
+        units="10^-5 s^-1",
+    )
+
+
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
     "tmp850": _with_pres_product(GFS_VARS["tmp850"]),
@@ -115,6 +175,10 @@ AIGFS_VARS = {
     "v300": _with_pres_product(GFS_VARS["v300"]),
     "hgt300": _with_pres_product(GFS_VARS["hgt300"]),
     "wspd300": _with_pres_product(GFS_VARS["wspd300"]),
+    "u500": _aigfs_pres_wind_component("u", 500),
+    "v500": _aigfs_pres_wind_component("v", 500),
+    "hgt500": _with_pres_product(GFS_VARS["hgt500"]),
+    "vort500": _aigfs_vort500_spec(),
 }
 
 
@@ -179,6 +243,22 @@ AIGFS_VARIABLE_CATALOG = {
         order=18,
         group="Wind",
         conversion="ms_to_kt",
+    ),
+    "vort500": VariableCapability(
+        var_key="vort500",
+        name=AIGFS_VARS["vort500"].name,
+        selectors=AIGFS_VARS["vort500"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="vort500_from_uv",
+        kind="continuous",
+        units="10^-5 s^-1",
+        color_map_id="vort500",
+        default_fh=0,
+        buildable=True,
+        order=5,
+        group="Dynamics",
+        conversion="s-1_to_1e5s-1",
     ),
     "wspd10m": VariableCapability(
         var_key="wspd10m",
