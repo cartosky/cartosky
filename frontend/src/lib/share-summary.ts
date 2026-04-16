@@ -30,6 +30,7 @@ const MODEL_LABELS: Record<string, string> = {
   gefs: "GEFS",
   ecmwf: "ECMWF",
   aifs: "AIFS",
+  aigfs: "AIGFS",
 };
 
 const VARIABLE_SPECIAL_CASES: Record<string, string> = {

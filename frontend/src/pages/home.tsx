@@ -16,7 +16,7 @@ import {
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
 
-const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs"] as const;
+const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs"] as const;
 
 function formatRunLabel(runId?: string | null): string {
   if (!runId) {
@@ -211,7 +211,7 @@ export default function Home() {
     const gfsRunLabel = formatRunLabel(capabilities?.availability?.gfs?.latest_run);
 
     return {
-      coreModelCount: coreModels.length || 5,
+      coreModelCount: coreModels.length || CORE_MODEL_IDS.length,
       hrrrRunLabel,
       gfsRunLabel,
       freshnessDetail: `HRRR ${hrrrRunLabel} · GFS ${gfsRunLabel}`,
@@ -389,7 +389,7 @@ export default function Home() {
           <ProofItem
             label="Models"
             value={`${homepageStats.coreModelCount} core models`}
-            detail="HRRR, NAM, GFS, NBM, ECMWF, and AIFS in one workflow."
+            detail="HRRR, NAM, GFS, NBM, ECMWF, AIFS, and AIGFS in one workflow."
           />
           <ProofItem
             label="Products"

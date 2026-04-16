@@ -13,7 +13,7 @@ type ModelReference = {
   notes: string[];
 };
 
-const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs"] as const;
+const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs"] as const;
 const SPECIAL_LAYER_ORDER = ["spc", "nws_hazards", "mrms"] as const;
 
 const MODEL_REFERENCE: Record<string, ModelReference> = {
@@ -94,6 +94,18 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
       "Early read on where AIFS diverges from classic IFS guidance",
     ],
     notes: ["Initial rollout stays focused on near-surface and surface-accumulation fields while runtime behavior is validated across more cycles."],
+  },
+  aigfs: {
+    eyebrow: "Core Model",
+    oneLiner: "NOAA AI GFS guidance from the operational AIGFS stream, rolled out first with 2m temperature from the surface product.",
+    coverage: "Global",
+    cadence: "Every 6 hours",
+    focus: [
+      "Fast comparison against classic GFS surface thermal structure",
+      "Alternative AI-guided 2m temperature signal for large-scale pattern checks",
+      "Early detection of temperature spread between traditional and AI global guidance",
+    ],
+    notes: ["Initial rollout is intentionally narrow: tmp2m only, using the NOAA/Herbie AIGFS surface product while runtime behavior is validated in production."],
   },
   spc: {
     eyebrow: "Operational Layer",
@@ -344,7 +356,7 @@ export default function Models() {
               <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/42">Current Support</div>
               <div className="mt-5 space-y-4">
                 <div>
-                  <div className="text-2xl font-semibold tracking-tight text-white">{modelState.coreModels.length || 5}</div>
+                  <div className="text-2xl font-semibold tracking-tight text-white">{modelState.coreModels.length || CORE_MODEL_ORDER.length}</div>
                   <div className="mt-1 text-sm text-white/58">Core model families.</div>
                 </div>
                 <div className="h-px bg-white/8" />

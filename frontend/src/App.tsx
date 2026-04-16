@@ -122,6 +122,8 @@ function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | nu
   const cycleHour = parsedRun?.getUTCHours() ?? null;
 
   switch (modelId) {
+    case "aigfs":
+      return 384;
     case "aifs":
     case "ecmwf":
       return 360;
