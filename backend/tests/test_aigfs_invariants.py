@@ -35,6 +35,9 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert AIGFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert AIGFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert AIGFS_MODEL.normalize_var_id("tmp850") == "tmp850"
+    assert AIGFS_MODEL.normalize_var_id("t850") == "tmp850"
+    assert AIGFS_MODEL.normalize_var_id("temp850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert AIGFS_MODEL.normalize_var_id("10mwind") == "wspd10m"
@@ -48,6 +51,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert request.product == "sfc"
     assert request.herbie_kwargs["priority"] == ["nomads"]
 
+    tmp850_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="tmp850")
+    assert tmp850_request.model == "aigfs"
+    assert tmp850_request.product == "pres"
+    assert tmp850_request.herbie_kwargs["priority"] == ["nomads"]
+
 
 def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     capabilities = AIGFS_MODEL.capabilities
@@ -58,7 +66,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -78,6 +86,19 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert tmp2m_spec.selectors.filter_by_keys == {
         "typeOfLevel": "heightAboveGround",
         "level": "2",
+    }
+
+    tmp850_spec = AIGFS_MODEL.get_var("tmp850")
+    assert tmp850_spec is not None
+    assert tmp850_spec.primary is True
+    assert tmp850_spec.derived is False
+    assert tmp850_spec.kind == "continuous"
+    assert tmp850_spec.units == "C"
+    assert tmp850_spec.selectors.search == [":TMP:850 mb:"]
+    assert tmp850_spec.selectors.filter_by_keys == {
+        "shortName": "t",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "850",
     }
 
     wspd10m_spec = AIGFS_MODEL.get_var("wspd10m")
@@ -136,6 +157,19 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["default_fh"] == 0
     assert tmp2m["render_substrates"] == ["grid"]
+
+    tmp850 = payload["variables"]["tmp850"]
+    assert tmp850["var_key"] == "tmp850"
+    assert tmp850["display_name"] == "850mb Temp"
+    assert tmp850["kind"] == "continuous"
+    assert tmp850["units"] == "C"
+    assert tmp850["buildable"] is True
+    assert tmp850["derived"] is False
+    assert tmp850["color_map_id"] == "tmp850"
+    assert tmp850["order"] == 3
+    assert tmp850["group"] == "Temperature"
+    assert tmp850["default_fh"] == 0
+    assert tmp850["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

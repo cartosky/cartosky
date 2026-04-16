@@ -3,7 +3,9 @@
 Initial rollout scope:
   - AIGFS `sfc`
       - `tmp2m`
-            - `wspd10m`
+      - `wspd10m`
+  - AIGFS `pres`
+      - `tmp850`
   - realtime publishing only
 
 Upstream verification:
@@ -11,6 +13,7 @@ Upstream verification:
   - Herbie products = "sfc", "pres"
   - Surface tmp2m inventory entry is `TMP:2 m above ground`
     - Surface 10m wind components inventory entries are `UGRD:10 m above ground` and `VGRD:10 m above ground`
+    - Pressure temperature inventory includes `TMP:850 mb`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -20,7 +23,7 @@ References:
 
 from __future__ import annotations
 
-from .base import ModelCapabilities, RegionSpec, VariableCapability
+from .base import HerbieRequest, ModelCapabilities, RegionSpec, VariableCapability
 from .gfs import GFSPlugin, GFS_VARS
 
 
@@ -34,6 +37,30 @@ class AIGFSPlugin(GFSPlugin):
         if normalized in {"wind10m", "10mwind"}:
             return "wspd10m"
         return super().normalize_var_id(var_id)
+
+    def herbie_request(
+        self,
+        *,
+        product: str | None = None,
+        var_key: str | None = None,
+        run_date=None,
+        fh: int | None = None,
+        search_pattern: str | None = None,
+    ) -> HerbieRequest:
+        base_request = super().herbie_request(
+            product=product,
+            var_key=var_key,
+            run_date=run_date,
+            fh=fh,
+            search_pattern=search_pattern,
+        )
+        normalized_var = self.normalize_var_id(var_key or "") if isinstance(var_key, str) else ""
+        resolved_product = "pres" if normalized_var == "tmp850" else base_request.product
+        return HerbieRequest(
+            model="aigfs",
+            product=resolved_product,
+            herbie_kwargs=dict(base_request.herbie_kwargs),
+        )
 
 
 AIGFS_REGIONS: dict[str, RegionSpec] = {
@@ -51,6 +78,7 @@ AIGFS_SFC_FHS = tuple(range(0, 385, 6))
 
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
+    "tmp850": GFS_VARS["tmp850"],
     "10u": GFS_VARS["10u"],
     "10v": GFS_VARS["10v"],
     "wspd10m": GFS_VARS["wspd10m"],
@@ -72,6 +100,20 @@ AIGFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+    ),
+    "tmp850": VariableCapability(
+        var_key="tmp850",
+        name=AIGFS_VARS["tmp850"].name,
+        selectors=AIGFS_VARS["tmp850"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="C",
+        color_map_id="tmp850",
+        default_fh=0,
+        buildable=True,
+        order=3,
+        group="Temperature",
     ),
     "wspd10m": VariableCapability(
         var_key="wspd10m",
