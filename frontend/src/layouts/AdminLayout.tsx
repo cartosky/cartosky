@@ -38,8 +38,8 @@ export default function AdminLayout() {
       />
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,17,31,0.2),rgba(7,17,31,0.62))]" />
 
-      <div className="relative mx-auto max-w-[1500px] px-4 py-5 md:px-5">
-        <div className="mb-5 rounded-[1.6rem] border border-white/10 bg-[#0b1526]/88 px-5 py-4 shadow-[0_18px_52px_rgba(0,0,0,0.22)]">
+      <div className="relative mx-auto max-w-[1500px] px-4 pb-5 pt-[4.5rem] md:px-5 md:pb-6 md:pt-[4.75rem]">
+        <div className="mb-4 rounded-[1.6rem] border border-white/10 bg-[#0b1526]/88 px-5 py-4 shadow-[0_18px_52px_rgba(0,0,0,0.22)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/72">

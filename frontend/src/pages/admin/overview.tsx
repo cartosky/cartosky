@@ -393,61 +393,98 @@ export default function AdminOverviewPage() {
           </div>
         </AdminHero>
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            title="LCP p75"
-            value={formatMetricValue(webVitals?.lcp ?? null)}
-            hint={
-              webVitals?.lcp?.count
-                ? `${webVitals.lcp.count} samples in last 7d · last seen ${formatRelativeTimestamp(telemetryHealth?.web_vitals_last_seen_at ?? null)}`
-                : "Waiting for Web Vitals data"
-            }
-            icon={Gauge}
-            accentClassName={getVitalTone(webVitals?.lcp ?? null)}
-            description="Measures how long the main visible content takes to appear after navigation."
-            statusLabel={lcpStatus.label}
-            statusClassName={lcpStatus.className}
-          />
-          <SummaryCard
-            title="INP p75"
-            value={formatMetricValue(webVitals?.inp ?? null)}
-            hint={
-              webVitals?.inp?.count
-                ? `${webVitals.inp.count} samples in last 7d · ${formatTarget(webVitals.inp)}`
-                : "Waiting for Web Vitals data"
-            }
-            icon={Gauge}
-            accentClassName={getVitalTone(webVitals?.inp ?? null)}
-            description="Measures how responsive the page feels when a user clicks, taps, or types."
-            statusLabel={inpStatus.label}
-            statusClassName={inpStatus.className}
-          />
-          <SummaryCard
-            title="CLS p75"
-            value={formatMetricValue(webVitals?.cls ?? null)}
-            hint={
-              webVitals?.cls?.count
-                ? `${webVitals.cls.count} samples in last 7d · ${formatTarget(webVitals.cls)}`
-                : "Waiting for Web Vitals data"
-            }
-            icon={Gauge}
-            accentClassName={getVitalTone(webVitals?.cls ?? null)}
-            description="Measures unexpected layout movement while the page is loading and settling."
-            statusLabel={clsStatus.label}
-            statusClassName={clsStatus.className}
-          />
-          <SummaryCard
-            title="Manifest Fetch p95"
-            value={formatMetricValue(rumDiagnostics?.manifest_fetch_duration ?? null, "p95")}
-            hint={
-              rumDiagnostics?.manifest_fetch_duration?.count
-                ? `${rumDiagnostics.manifest_fetch_duration.count} sampled diagnostics · last seen ${formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}`
-                : "Waiting for sampled RUM diagnostics"
-            }
-            icon={Activity}
-            accentClassName="text-sky-300"
-          />
-        </section>
+        <AdminSurface
+          title="Experience Signals"
+          description="Core frontend health and manifest fetch timing, flattened into one operational readout instead of another card wall."
+        >
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="space-y-4">
+              {[
+                {
+                  title: "LCP p75",
+                  value: formatMetricValue(webVitals?.lcp ?? null),
+                  hint: webVitals?.lcp?.count
+                    ? `${webVitals.lcp.count} samples in last 7d · last seen ${formatRelativeTimestamp(telemetryHealth?.web_vitals_last_seen_at ?? null)}`
+                    : "Waiting for Web Vitals data",
+                  target: "Measures how long the main visible content takes to appear after navigation.",
+                  tone: getVitalTone(webVitals?.lcp ?? null),
+                  statusLabel: lcpStatus.label,
+                  statusClassName: lcpStatus.className,
+                },
+                {
+                  title: "INP p75",
+                  value: formatMetricValue(webVitals?.inp ?? null),
+                  hint: webVitals?.inp?.count
+                    ? `${webVitals.inp.count} samples in last 7d · ${formatTarget(webVitals.inp)}`
+                    : "Waiting for Web Vitals data",
+                  target: "Measures how responsive the page feels when a user clicks, taps, or types.",
+                  tone: getVitalTone(webVitals?.inp ?? null),
+                  statusLabel: inpStatus.label,
+                  statusClassName: inpStatus.className,
+                },
+                {
+                  title: "CLS p75",
+                  value: formatMetricValue(webVitals?.cls ?? null),
+                  hint: webVitals?.cls?.count
+                    ? `${webVitals.cls.count} samples in last 7d · ${formatTarget(webVitals.cls)}`
+                    : "Waiting for Web Vitals data",
+                  target: "Measures unexpected layout movement while the page is loading and settling.",
+                  tone: getVitalTone(webVitals?.cls ?? null),
+                  statusLabel: clsStatus.label,
+                  statusClassName: clsStatus.className,
+                },
+              ].map((metric) => (
+                <div key={metric.title} className="border-l border-white/8 pl-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-sm font-semibold text-white">{metric.title}</div>
+                    <div className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${metric.statusClassName}`}>
+                      {metric.statusLabel}
+                    </div>
+                  </div>
+                  <div className={`mt-2 text-2xl font-semibold tracking-tight ${metric.tone}`}>{metric.value}</div>
+                  <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/40">{metric.hint}</div>
+                  <div className="mt-2 text-sm leading-6 text-white/58">{metric.target}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-l border-white/8 pl-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Activity className="h-4 w-4 text-cyan-200/80" />
+                Manifest Fetch p95
+              </div>
+              <div className="mt-3 text-3xl font-semibold tracking-tight text-cyan-200">
+                {formatMetricValue(rumDiagnostics?.manifest_fetch_duration ?? null, "p95")}
+              </div>
+              <div className="mt-2 text-xs uppercase tracking-[0.16em] text-white/40">
+                {rumDiagnostics?.manifest_fetch_duration?.count
+                  ? `${rumDiagnostics.manifest_fetch_duration.count} sampled diagnostics · last seen ${formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}`
+                  : "Waiting for sampled RUM diagnostics"}
+              </div>
+              <div className="mt-5 border-t border-white/8 pt-4">
+                <div className="text-sm font-semibold text-white">Frontend ownership snapshot</div>
+                <div className="mt-3 space-y-3 text-sm text-white/62">
+                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
+                    <span>Product analytics</span>
+                    <span className="font-medium text-white/84">{posthogEnabled ? "PostHog enabled" : "PostHog disabled"}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
+                    <span>Service metrics</span>
+                    <span className="font-medium text-white/84">{observabilityLive ? "Prometheus live" : observability?.metrics_enabled ? "Prometheus armed" : "Prometheus disabled"}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
+                    <span>Trace drill-down</span>
+                    <span className="font-medium text-white/84">{tracesLive ? "Tempo live" : traces?.enabled ? "Tracing armed" : "Tracing disabled"}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <span>QA store</span>
+                    <span className="font-medium text-white/84">{qaStoreMode}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </AdminSurface>
 
         <AdminSurface
           title="Network Diagnostics"
@@ -464,24 +501,31 @@ export default function AdminOverviewPage() {
               const targetMs = NETWORK_P95_TARGETS[metricName] ?? null;
               const statusTone = getNetworkStatus(metric?.summary ?? null, targetMs);
               return (
-                <SummaryCard
-                  key={metricName}
-                  title={`${metric?.label ?? metricName} p95`}
-                  value={formatMetricValue(metric?.summary ?? null, "p95")}
-                  hint={
-                    metric?.summary?.count
-                      ? `${metric.summary.count} samples · ${getNetworkActionLabel({
+                <div key={metricName} className="border-l border-white/8 pl-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-sm font-semibold text-white">{`${metric?.label ?? metricName} p95`}</div>
+                    <div className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusTone.className}`}>
+                      {statusTone.label}
+                    </div>
+                  </div>
+                  <div className={`mt-2 text-2xl font-semibold tracking-tight ${statusTone.accentClassName}`}>
+                    {formatMetricValue(metric?.summary ?? null, "p95")}
+                  </div>
+                  <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/40">
+                    {metric?.summary?.count
+                      ? `${metric.summary.count} samples`
+                      : "Waiting for sampled diagnostics"}
+                  </div>
+                  <div className="mt-2 text-sm leading-6 text-white/58">
+                    {metric?.summary?.count
+                      ? getNetworkActionLabel({
                         summary: metric.summary,
                         by_cf_cache_status: metric.by_cf_cache_status,
                         targetMs,
-                      })}`
-                      : "Waiting for sampled diagnostics"
-                  }
-                  icon={Activity}
-                  accentClassName={statusTone.accentClassName}
-                  statusLabel={statusTone.label}
-                  statusClassName={statusTone.className}
-                />
+                      })
+                      : "Awaiting samples"}
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -534,92 +578,49 @@ export default function AdminOverviewPage() {
           </div>
         </AdminSurface>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            title="Product Analytics"
-            value={posthogEnabled ? "Enabled" : "Disabled"}
-            hint={`Owner: PostHog · replay ${posthogReplayEnabled ? "on" : "off"}`}
-            icon={BarChart3}
-            accentClassName={posthogEnabled ? "text-[#9dd5bf]" : "text-white"}
-            description="Usage events, funnels, and replay are owned in PostHog. Validate ingestion and drill-down under Analytics."
-            statusLabel={posthogEnabled ? "External Owner" : "Needs Config"}
-            statusClassName={posthogEnabled ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/[0.05] text-white/72"}
-          />
-          <SummaryCard
-            title="Service Metrics"
-            value={observabilityLive ? "Live" : observability?.metrics_enabled ? "Armed" : "Disabled"}
-            hint={
-              observability
-                ? `${observability.http.recent_request_count} recent requests · p95 ${observability.http.p95_ms !== null ? `${Math.round(observability.http.p95_ms)} ms` : "n/a"}`
-                : "Awaiting Prometheus summary"
-            }
-            icon={Activity}
-            accentClassName={observabilityLive ? "text-[#9dd5bf]" : "text-white"}
-            description="API latency, error rate, cache health, and run freshness are owned by Prometheus and Grafana."
-            statusLabel={observabilityLive ? "Healthy" : observability?.metrics_enabled ? "Needs Traffic" : "Disabled"}
-            statusClassName={observabilityLive ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/[0.05] text-white/72"}
-          />
-          <SummaryCard
-            title="Trace Drill-down"
-            value={tracesLive ? "Live" : traces?.enabled ? "Armed" : "Disabled"}
-            hint={
-              traces
-                ? `${traces.recent.exported_traces} exported traces · last seen ${formatRelativeTimestamp(traces.recent.last_trace_at)}`
-                : "Awaiting trace summary"
-            }
-            icon={Waypoints}
-            accentClassName={tracesLive ? "text-sky-300" : "text-white"}
-            description="Slow-request correlation and backend drill-down are owned by OpenTelemetry plus Tempo."
-            statusLabel={tracesLive ? "Healthy" : traces?.enabled ? "Waiting" : "Disabled"}
-            statusClassName={tracesLive ? "border-sky-400/25 bg-sky-500/10 text-sky-200" : "border-white/10 bg-white/[0.05] text-white/72"}
-          />
-          <SummaryCard
-            title="QA Store"
-            value={qaStoreMode}
-            hint={
-              qaSummary
-                ? `${new Intl.NumberFormat("en-US").format(qaSummary.distinct_runs)} tracked runs · last checked ${formatRelativeTimestamp(qaSummary.latest_checked_at)}`
-                : "Awaiting QA store summary"
-            }
-            icon={Database}
-            accentClassName={qaSummary?.store_mode === "separate" ? "text-[#9dd5bf]" : "text-white"}
-            description="Pipeline and QA health remain first-party CartoSky ownership under Status."
-            statusLabel={qaSummary?.store_mode === "separate" ? "Separated" : qaSummary?.store_mode === "shared" ? "Shared Store" : "Awaiting Data"}
-            statusClassName={qaSummary?.store_mode === "separate" ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/[0.05] text-white/72"}
-          />
-        </section>
-
         <AdminSurface
           title="Ownership Map"
           description="Each admin route fronts a specific telemetry owner. Use these as the release-level handoff points instead of the retired custom frontend perf stack."
         >
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2">
             <Link
               to="/admin/analytics"
-              className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
+              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
             >
-              <div className="font-semibold">Analytics</div>
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <BarChart3 className="h-4 w-4 text-cyan-200/80" />
+                Analytics
+              </div>
               <div className="mt-2 text-white/60">PostHog owns product analytics, dashboards, event ingestion validation, and replay launch points.</div>
             </Link>
             <Link
               to="/admin/observability"
-              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
+              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
             >
-              <div className="font-semibold">Observability</div>
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <Activity className="h-4 w-4 text-cyan-200/80" />
+                Observability
+              </div>
               <div className="mt-2 text-white/60">Prometheus and Grafana own API latency, errors, cache health, and published-run freshness.</div>
             </Link>
             <Link
               to="/admin/traces"
-              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
+              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
             >
-              <div className="font-semibold">Traces</div>
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <Waypoints className="h-4 w-4 text-cyan-200/80" />
+                Traces
+              </div>
               <div className="mt-2 text-white/60">Tempo-backed traces own slow-request drill-down, correlation, and request-path debugging.</div>
             </Link>
             <Link
               to="/admin/status"
-              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-sm text-white transition hover:bg-white/[0.08]"
+              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
             >
-              <div className="font-semibold">Pipeline Status</div>
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <ClipboardCheck className="h-4 w-4 text-cyan-200/80" />
+                Pipeline Status
+              </div>
               <div className="mt-2 text-white/60">CartoSky keeps ownership here for retained-run health, artifact checks, QA warnings, and domain-specific pipeline issues.</div>
             </Link>
           </div>
