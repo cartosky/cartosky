@@ -781,6 +781,14 @@ export class GridWebglLayerController {
       for (const controller of this.frameFetchAbortControllers.values()) {
         controller.abort();
       }
+      // Clear the current texture so the render loop skips drawing until the
+      // new frame is ready. Without this, the next render applies the incoming
+      // variable's new LUT to the previous variable's raw data bytes, producing
+      // a mis-colored flash (typically orange from the colormap edge values).
+      this.currentTexture = null;
+      this.currentTextureSignature = null;
+      this.hasPreviousTexture = false;
+      this.previousTexture = null;
     }
     this.active = config.active;
     this.manifest = config.manifest;
