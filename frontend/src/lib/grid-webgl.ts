@@ -333,6 +333,12 @@ function resolveTextureWarmFrameBudgetMs(animating: boolean): number {
   return 4;
 }
 
+function resolveRecentFrameRetentionCount(): number {
+  if (DEVICE_TIER === "high") return 12;
+  if (DEVICE_TIER === "mid") return 8;
+  return 5;
+}
+
 function resolveObservedTextureHighPriorityCount(): number {
   if (DEVICE_TIER === "high") return OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP; // 6
   if (DEVICE_TIER === "mid")  return 5;
@@ -522,6 +528,8 @@ function resolveOpacity(
 
 type CachedFrame = {
   bytes: Uint8Array<ArrayBufferLike>;
+  preparedUploadKey?: string | null;
+  preparedUpload?: PreparedGridUpload | null;
 };
 
 type CachedTexture = {
@@ -693,6 +701,7 @@ export class GridWebglLayerController {
   private readonly frameCacheBudgetBytes = resolveFrameCacheBudgetBytes();
   private readonly textureCacheBudgetBytes = resolveTextureCacheBudgetBytes();
   private readonly combinedCacheBudgetBytes = resolveCombinedCacheBudgetBytes();
+  private readonly recentFrameRetentionCount = resolveRecentFrameRetentionCount();
   private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
   private active = false;
@@ -721,6 +730,8 @@ export class GridWebglLayerController {
   private textureWarmQueue: string[] = [];
   private textureWarmQueued = new Set<string>();
   private textureWarmRafId: number | null = null;
+  private recentFrameUrls: string[] = [];
+  private recentFrameUrlSet = new Set<string>();
   private currentFrameSignature: string | null = null;
   private currentTextureSignature: string | null = null;
   private currentTextureUrl: string | null = null;
@@ -763,6 +774,96 @@ export class GridWebglLayerController {
       selection_key: this.selectionKey || null,
       webgl_backend: this.isWebGL2 ? "webgl2" : "webgl1",
     };
+  }
+
+  private buildPreparedUploadCacheKey(
+    width: number,
+    height: number,
+    dtype: "uint8" | "uint16",
+    maxTextureSize: number,
+  ): string {
+    return `${width}x${height}:${dtype}:${maxTextureSize}`;
+  }
+
+  private markFrameRetained(frameUrl: string | null | undefined) {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized) {
+      return;
+    }
+    if (this.recentFrameUrlSet.has(normalized)) {
+      const existingIndex = this.recentFrameUrls.indexOf(normalized);
+      if (existingIndex >= 0) {
+        this.recentFrameUrls.splice(existingIndex, 1);
+      }
+    } else {
+      this.recentFrameUrlSet.add(normalized);
+    }
+    this.recentFrameUrls.push(normalized);
+    while (this.recentFrameUrls.length > this.recentFrameRetentionCount) {
+      const removed = this.recentFrameUrls.shift();
+      if (removed) {
+        this.recentFrameUrlSet.delete(removed);
+      }
+    }
+  }
+
+  private shouldRetainFrameUrl(frameUrl: string | null | undefined, preferredUrl?: string | null): boolean {
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized) {
+      return false;
+    }
+    if (
+      normalized === preferredUrl
+      || normalized === this.frameUrl
+      || normalized === this.pendingFrameUrl
+      || normalized === this.currentTextureUrl
+      || normalized === this.previousTextureUrl
+      || this.frameFetches.has(normalized)
+      || this.textureWarmQueued.has(normalized)
+      || this.recentFrameUrlSet.has(normalized)
+    ) {
+      return true;
+    }
+    const prefetchIndex = this.prefetchUrls.indexOf(normalized);
+    return prefetchIndex >= 0 && prefetchIndex < this.textureWarmHighPriorityCount();
+  }
+
+  private resolvePreparedUpload(
+    frameUrl: string,
+    bytes: Uint8Array<ArrayBufferLike>,
+    width: number,
+    height: number,
+    dtype: "uint8" | "uint16",
+  ): { preparedUpload: PreparedGridUpload; cacheHit: boolean; maxTextureSize: number; prepareDurationMs: number } {
+    const gl = this.gl;
+    if (!gl) {
+      return {
+        preparedUpload: { bytes, width, height, downsampled: false },
+        cacheHit: false,
+        maxTextureSize: 4096,
+        prepareDurationMs: 0,
+      };
+    }
+    const maxTextureSize = resolveMaxTextureSize(gl);
+    const cacheKey = this.buildPreparedUploadCacheKey(width, height, dtype, maxTextureSize);
+    const cachedFrame = this.frameCache.get(frameUrl);
+    if (cachedFrame?.preparedUploadKey === cacheKey && cachedFrame.preparedUpload) {
+      return {
+        preparedUpload: cachedFrame.preparedUpload,
+        cacheHit: true,
+        maxTextureSize,
+        prepareDurationMs: 0,
+      };
+    }
+
+    const prepareStartedAtMs = startNetworkTimer();
+    const preparedUpload = preparePackedGridUpload(gl, bytes, width, height, dtype);
+    const prepareDurationMs = startNetworkTimer() - prepareStartedAtMs;
+    if (cachedFrame) {
+      cachedFrame.preparedUploadKey = cacheKey;
+      cachedFrame.preparedUpload = preparedUpload;
+    }
+    return { preparedUpload, cacheHit: false, maxTextureSize, prepareDurationMs };
   }
 
   private resolveSelectedLod(): { level: number; width: number; height: number } | null {
@@ -840,6 +941,8 @@ export class GridWebglLayerController {
       this.invalidFrameUrls.clear();
       this.textureWarmQueue = [];
       this.textureWarmQueued.clear();
+      this.recentFrameUrls = [];
+      this.recentFrameUrlSet.clear();
       // Abort all in-flight fetches for the previous selection.
       for (const controller of this.frameFetchAbortControllers.values()) {
         controller.abort();
@@ -881,6 +984,10 @@ export class GridWebglLayerController {
     }
 
     const prioritizedPrefetchUrls = this.prefetchUrls.slice(0, this.textureWarmLimit());
+    this.markFrameRetained(this.frameUrl);
+    for (const prefetchUrl of prioritizedPrefetchUrls.slice(0, this.textureWarmHighPriorityCount())) {
+      this.markFrameRetained(prefetchUrl);
+    }
     this.pruneTextureWarmQueue(new Set([this.frameUrl, ...prioritizedPrefetchUrls]));
 
     if (nextSignature !== this.currentFrameSignature) {
@@ -1267,7 +1374,6 @@ export class GridWebglLayerController {
     if (!bytes) {
       return null;
     }
-    const prepareStartedAtMs = startNetworkTimer();
     const diagnosticMeta: Record<string, unknown> = {
       ...this.buildDiagnosticMeta(frameUrl),
       payload_bytes: bytes.byteLength,
@@ -1309,12 +1415,15 @@ export class GridWebglLayerController {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    const preparedUpload = preparePackedGridUpload(gl, bytes, width, height, gridDtype);
-    diagnosticMeta.max_texture_size = resolveMaxTextureSize(gl);
+    const { preparedUpload, cacheHit: preparedUploadCacheHit, maxTextureSize, prepareDurationMs } =
+      this.resolvePreparedUpload(frameUrl, bytes, width, height, gridDtype);
+    diagnosticMeta.max_texture_size = maxTextureSize;
     diagnosticMeta.upload_width = preparedUpload.width;
     diagnosticMeta.upload_height = preparedUpload.height;
     diagnosticMeta.upload_bytes = preparedUpload.bytes.byteLength;
     diagnosticMeta.texture_downsampled = preparedUpload.downsampled;
+    diagnosticMeta.prepared_upload_cache_hit = preparedUploadCacheHit;
+    diagnosticMeta.prepared_upload_duration_ms = Math.round(prepareDurationMs);
 
     if (this.isWebGL2) {
       const gl2 = gl as WebGL2RenderingContext;
@@ -1391,7 +1500,7 @@ export class GridWebglLayerController {
     }
     trackClientProcessingDuration({
       metric_name: "grid_texture_prepare_duration",
-      duration_ms: startNetworkTimer() - prepareStartedAtMs,
+      duration_ms: prepareDurationMs,
       model_id: this.manifest?.model ?? null,
       variable_id: this.manifest?.var ?? null,
       run_id: this.manifest?.run ?? null,
@@ -1406,6 +1515,7 @@ export class GridWebglLayerController {
       height: preparedUpload.height,
     });
     this.textureCacheBytes += preparedUpload.bytes.byteLength;
+    this.markFrameRetained(frameUrl);
     this.evictCaches(frameUrl);
     return targetTexture;
   }
@@ -1432,6 +1542,7 @@ export class GridWebglLayerController {
     this.currentTextureHeight = cachedTexture?.height ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.height) || 1));
     this.currentTextureSignature = signature;
     this.transitionStartedAt = performance.now();
+    this.markFrameRetained(frameUrl);
     this.map?.triggerRepaint();
   }
 
@@ -1473,6 +1584,7 @@ export class GridWebglLayerController {
     }
     const cached = this.frameCache.touch(frameUrl);
     if (cached) {
+      this.markFrameRetained(frameUrl);
       return cached.bytes;
     }
     const inFlight = this.frameFetches.get(frameUrl);
@@ -1525,6 +1637,7 @@ export class GridWebglLayerController {
         });
         const bytes = new Uint8Array(arrayBuffer);
         this.upsertFrameCache(frameUrl, bytes);
+        this.markFrameRetained(frameUrl);
         this.onFrameReady?.(frameUrl);
         return bytes;
       })
@@ -1547,7 +1660,7 @@ export class GridWebglLayerController {
     if (existing) {
       this.frameCacheBytes -= existing.bytes.byteLength;
     }
-    this.frameCache.set(frameUrl, { bytes });
+    this.frameCache.set(frameUrl, { bytes, preparedUploadKey: null, preparedUpload: null });
     this.frameCacheBytes += bytes.byteLength;
     this.evictCaches(frameUrl);
   }
@@ -1558,12 +1671,7 @@ export class GridWebglLayerController {
 
   private evictFrameCacheEntry(preferredUrl?: string | null, duplicateOnly = false): boolean {
     const evicted = this.frameCache.evictLeastRecentlyUsed((candidateKey) => {
-      if (
-        candidateKey === preferredUrl
-        || candidateKey === this.frameUrl
-        || candidateKey === this.pendingFrameUrl
-        || this.frameFetches.has(candidateKey)
-      ) {
+      if (this.shouldRetainFrameUrl(candidateKey, preferredUrl)) {
         return true;
       }
       return duplicateOnly ? !this.textureCache.has(candidateKey) : false;
@@ -1580,11 +1688,7 @@ export class GridWebglLayerController {
 
   private evictTextureCacheEntry(preferredUrl?: string | null): boolean {
     const evicted = this.textureCache.evictLeastRecentlyUsed(
-      (candidateKey) =>
-        candidateKey === preferredUrl
-        || candidateKey === this.currentTextureUrl
-        || candidateKey === this.previousTextureUrl
-        || this.textureWarmQueued.has(candidateKey),
+      (candidateKey) => this.shouldRetainFrameUrl(candidateKey, preferredUrl),
     );
     if (!evicted) {
       return false;
@@ -1908,6 +2012,8 @@ export class GridWebglLayerController {
     this.textureWarmQueue = [];
     this.textureWarmQueued.clear();
     this.textureWarmRafId = null;
+    this.recentFrameUrls = [];
+    this.recentFrameUrlSet.clear();
     this.currentTexture = null;
     this.previousTexture = null;
     this.currentTextureUrl = null;
