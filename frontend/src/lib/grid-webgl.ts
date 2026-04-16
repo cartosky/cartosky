@@ -12,7 +12,8 @@ const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 512 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 256 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 12;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 3;
-const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING = 1;
+const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP = 2;
+const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE = 1;
 const OBSERVED_GRID_TEXTURE_WARM_LIMIT_DESKTOP = 28;
 const OBSERVED_GRID_TEXTURE_WARM_LIMIT_MOBILE = 10;
 const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_DESKTOP = 4;
@@ -302,6 +303,15 @@ function resolveObservedTextureWarmBatchSize(animating: boolean): number {
     return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE;
   }
   return animating ? OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE : OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_MOBILE;
+}
+
+function resolveForecastTextureWarmBatchSize(animating: boolean): number {
+  if (!animating) {
+    return GRID_TEXTURE_WARM_BATCH_SIZE;
+  }
+  return DEVICE_TIER === "low"
+    ? GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE
+    : GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP;
 }
 
 function resolveObservedTextureHighPriorityCount(): number {
@@ -894,7 +904,7 @@ export class GridWebglLayerController {
     if (isObservedGridManifest(this.manifest)) {
       return resolveObservedTextureWarmBatchSize(this.animating);
     }
-    return this.animating ? GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING : GRID_TEXTURE_WARM_BATCH_SIZE;
+    return resolveForecastTextureWarmBatchSize(this.animating);
   }
 
   private textureWarmHighPriorityCount(): number {

@@ -140,6 +140,39 @@ function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | nu
   }
 }
 
+function nearestSortedNumber(values: number[], target: number): number | null {
+  if (values.length === 0 || !Number.isFinite(target)) {
+    return null;
+  }
+
+  let low = 0;
+  let high = values.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const current = values[mid];
+    if (current === target) {
+      return current;
+    }
+    if (current < target) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const right = values[low] ?? null;
+  const left = values[high] ?? null;
+  if (!Number.isFinite(left)) {
+    return Number.isFinite(right) ? Number(right) : null;
+  }
+  if (!Number.isFinite(right)) {
+    return Number(left);
+  }
+  return Math.abs(Number(left) - target) <= Math.abs(Number(right) - target)
+    ? Number(left)
+    : Number(right);
+}
+
 export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
@@ -761,6 +794,13 @@ export default function App() {
   const gridFrameHours = useMemo(() => {
     return Array.from(gridFrameByHour.keys()).sort((a, b) => a - b);
   }, [gridFrameByHour]);
+  const gridFrameIndexByHour = useMemo(() => {
+    const indexByHour = new Map<number, number>();
+    for (let index = 0; index < gridFrameHours.length; index += 1) {
+      indexByHour.set(gridFrameHours[index], index);
+    }
+    return indexByHour;
+  }, [gridFrameHours]);
   const canUseGridPlayback = useMemo(() => {
     if (gridFrameHours.length <= 1) {
       return false;
@@ -876,6 +916,19 @@ export default function App() {
     }
     return gridReadyFrameUrlsRef.current.has(normalized);
   }, [normalizeGridFrameUrl]);
+  const gridReadyHours = useMemo(() => {
+    const readyHours: number[] = [];
+    for (const hour of gridFrameHours) {
+      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(hour)?.url);
+      if (frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl)) {
+        readyHours.push(hour);
+      }
+    }
+    return readyHours;
+  }, [gridFrameByHour, gridFrameHours, gridReadyVersion, normalizeGridFrameUrl]);
+  const gridReadyHourSet = useMemo(() => {
+    return new Set(gridReadyHours);
+  }, [gridReadyHours]);
   const presentedGridDisplayHour = useMemo(() => {
     if (gridFrameHours.length === 0) {
       return null;
@@ -885,32 +938,20 @@ export default function App() {
       return Number.isFinite(visibleGridFrameHour) ? Number(visibleGridFrameHour) : null;
     }
     const requestedHour = Number(requestedHourCandidate);
-    if (isGridFrameReady(gridFrameUrlForHour(requestedHour))) {
+    if (gridReadyHourSet.has(requestedHour)) {
       return requestedHour;
     }
     if (Number.isFinite(visibleGridFrameHour) && gridFrameByHour.has(Number(visibleGridFrameHour))) {
       return Number(visibleGridFrameHour);
     }
 
-    let nearestReadyHour: number | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const hour of gridFrameHours) {
-      if (!isGridFrameReady(gridFrameUrlForHour(hour))) {
-        continue;
-      }
-      const distance = Math.abs(hour - requestedHour);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestReadyHour = hour;
-      }
-    }
+    const nearestReadyHour = nearestSortedNumber(gridReadyHours, requestedHour);
     return nearestReadyHour ?? requestedHour;
   }, [
     gridFrameByHour,
     gridFrameHours,
-    gridFrameUrlForHour,
-    gridReadyVersion,
-    isGridFrameReady,
+    gridReadyHourSet,
+    gridReadyHours,
     resolvedGridDisplayHour,
     visibleGridFrameHour,
   ]);
@@ -921,7 +962,7 @@ export default function App() {
     if (gridFrameHours.length === 0 || maxAhead <= 0) {
       return 0;
     }
-    const currentIndex = gridFrameHours.indexOf(currentHour);
+    const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
     if (currentIndex < 0) {
       return 0;
     }
@@ -929,20 +970,16 @@ export default function App() {
     let ready = 0;
     const endIndex = Math.min(gridFrameHours.length - 1, currentIndex + maxAhead);
     for (let index = currentIndex + 1; index <= endIndex; index += 1) {
-      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(gridFrameHours[index])?.url);
-      if (!isGridFrameReady(frameUrl)) {
+      if (!gridReadyHourSet.has(gridFrameHours[index])) {
         break;
       }
       ready += 1;
     }
     return ready;
-  }, [gridFrameByHour, gridFrameHours, isGridFrameReady, normalizeGridFrameUrl]);
+  }, [gridFrameHours, gridFrameIndexByHour, gridReadyHourSet]);
   const gridReadyCount = useMemo(() => {
-    return gridFrameHours.reduce((count, fh) => {
-      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(fh)?.url);
-      return count + (isGridFrameReady(frameUrl) ? 1 : 0);
-    }, 0);
-  }, [gridFrameByHour, gridFrameHours, gridReadyVersion, isGridFrameReady, normalizeGridFrameUrl]);
+    return gridReadyHours.length;
+  }, [gridReadyHours]);
   const gridPlaybackStartHour = useMemo(() => {
     if (gridFrameHours.length === 0) {
       return null;
@@ -963,11 +1000,10 @@ export default function App() {
       return false;
     }
     const currentHour = Number(gridPlaybackStartHour);
-    const currentUrl = normalizeGridFrameUrl(gridFrameByHour.get(currentHour)?.url);
-    if (!isGridFrameReady(currentUrl)) {
+    if (!gridReadyHourSet.has(currentHour)) {
       return false;
     }
-    const currentIndex = gridFrameHours.indexOf(currentHour);
+    const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
     if (currentIndex < 0) {
       return false;
     }
@@ -975,13 +1011,11 @@ export default function App() {
     const requiredAhead = Math.min(GRID_PLAY_START_AHEAD_FRAMES, remainingAhead);
     return gridPlaybackAheadReadyCount >= requiredAhead;
   }, [
-    gridFrameByHour,
     gridFrameHours,
+    gridFrameIndexByHour,
     gridPlaybackAheadReadyCount,
     gridPlaybackStartHour,
-    gridReadyVersion,
-    isGridFrameReady,
-    normalizeGridFrameUrl,
+    gridReadyHourSet,
   ]);
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
@@ -2255,7 +2289,7 @@ export default function App() {
     const tick = (now: number) => {
       const currentHour = gridPlaybackHourRef.current
         ?? (Number.isFinite(targetForecastHourRef.current) ? targetForecastHourRef.current : forecastHourRef.current);
-      const currentIndex = gridFrameHours.indexOf(currentHour);
+      const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
       if (currentIndex < 0) {
         const firstHour = gridFrameHours[0];
         if (Number.isFinite(firstHour)) {
@@ -2278,8 +2312,7 @@ export default function App() {
           return;
         }
         const nextHour = gridFrameHours[nextIndex];
-        const nextUrl = String(gridFrameByHour.get(nextHour)?.url ?? "").trim();
-        if (isGridFrameReady(nextUrl)) {
+        if (gridReadyHourSet.has(nextHour)) {
           // Look-ahead: only advance if the next AUTOPLAY_READY_AHEAD frames
           // beyond this one are also ready (or we're near the end).  This
           // prevents advancing into a gap that will immediately stall.
@@ -2287,8 +2320,7 @@ export default function App() {
           const lookAheadEnd = Math.min(nextIndex + AUTOPLAY_READY_AHEAD, gridFrameHours.length - 1);
           for (let li = nextIndex + 1; li <= lookAheadEnd; li++) {
             const laHour = gridFrameHours[li];
-            const laUrl = String(gridFrameByHour.get(laHour)?.url ?? "").trim();
-            if (!isGridFrameReady(laUrl)) {
+            if (!gridReadyHourSet.has(laHour)) {
               aheadReady = false;
               break;
             }
@@ -2325,8 +2357,7 @@ export default function App() {
           const maxStep = Math.min(AUTOPLAY_SKIP_WINDOW, gridFrameHours.length - 1 - currentIndex);
           for (let step = 2; step <= maxStep; step += 1) {
             const candidateHour = gridFrameHours[currentIndex + step];
-            const candidateUrl = String(gridFrameByHour.get(candidateHour)?.url ?? "").trim();
-            if (isGridFrameReady(candidateUrl)) {
+            if (gridReadyHourSet.has(candidateHour)) {
               accumulatedMs -= AUTOPLAY_TICK_MS;
               gridPlaybackHourRef.current = candidateHour;
               setTargetForecastHour(candidateHour);
@@ -2349,7 +2380,7 @@ export default function App() {
       }
       gridPlaybackHourRef.current = null;
     };
-  }, [gridFrameByHour, gridFrameHours, isGridFrameReady, isGridPlayable, isPlaying]);
+  }, [gridFrameHours, gridFrameIndexByHour, gridReadyHourSet, isGridPlayable, isPlaying]);
 
   useEffect(() => {
     if (!isGridPreloadingForPlay) {
@@ -3156,8 +3187,8 @@ export default function App() {
           gridManifest={isGridLowMidActive ? gridManifest : null}
           compositeGridLayers={isGridLowMidActive ? compositeGridLayers : []}
           gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
-          gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
-          gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
+          gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? activeGridFrameUrl : null}
+          gridFrameHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
           gridPrefetchPivotHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}

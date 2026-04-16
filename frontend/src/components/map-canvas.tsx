@@ -706,10 +706,15 @@ export function MapCanvas({
       ?? gridManifest.lods[0]
       ?? null;
     const frames = Array.isArray(lod?.frames) ? lod.frames : [];
-    const frameHours = frames
-      .map((entry) => Number(entry?.fh))
-      .filter(Number.isFinite)
-      .sort((a, b) => a - b);
+    const frameByHour = new Map<number, typeof frames[number]>();
+    for (const frame of frames) {
+      const hour = Number(frame?.fh);
+      if (!Number.isFinite(hour)) {
+        continue;
+      }
+      frameByHour.set(hour, frame);
+    }
+    const frameHours = Array.from(frameByHour.keys()).sort((a, b) => a - b);
 
     // Use the prefetch pivot hour (the requested/target hour) when available so
     // that jumping directly to a far forecast hour immediately prefetches around
@@ -815,7 +820,7 @@ export function MapCanvas({
     };
 
     const pushFrameUrl = (hour: number) => {
-      const frame = frames.find((entry) => Number(entry?.fh) === hour);
+      const frame = frameByHour.get(hour);
       const url = normalizeGridUrl(String(frame?.url ?? "").trim());
       if (url && url !== gridFrameUrl && !urls.includes(url)) {
         urls.push(url);
