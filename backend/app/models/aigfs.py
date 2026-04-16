@@ -4,6 +4,7 @@ Initial rollout scope:
   - AIGFS `sfc`
       - `tmp2m`
       - `wspd10m`
+      - `precip_total`
   - AIGFS `pres`
       - `tmp850`
       - `wspd850`
@@ -16,6 +17,7 @@ Upstream verification:
   - Herbie products = "sfc", "pres"
     - Surface tmp2m inventory entry is `TMP:2 m above ground`
     - Surface 10m wind components inventory entries are `UGRD:10 m above ground` and `VGRD:10 m above ground`
+    - Surface precipitation inventory includes cumulative `APCP:surface:0-6 hour acc`, `0-12 hour acc`, and `0-1 day acc` messages alongside step windows
     - Pressure temperature inventory includes `TMP:850 mb`
     - Pressure 850mb height and wind components inventory entries are `HGT:850 mb`, `UGRD:850 mb`, and `VGRD:850 mb`
     - Pressure 300mb height and wind components inventory entries are `HGT:300 mb`, `UGRD:300 mb`, and `VGRD:300 mb`
@@ -163,6 +165,26 @@ def _aigfs_vort500_spec() -> VarSpec:
 
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
+    "precip_total": VarSpec(
+        id="precip_total",
+        name="Total Precip",
+        selectors=VarSelectors(
+            search=[
+                r":APCP:surface:0-[0-9]+ hour acc[^:]*:$",
+                r":APCP:surface:0-[0-9]+ day acc[^:]*:$",
+            ],
+            filter_by_keys={
+                "shortName": "apcp",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "apcp",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
+    ),
     "tmp850": _with_pres_product(GFS_VARS["tmp850"]),
     "10u": GFS_VARS["10u"],
     "10v": GFS_VARS["10v"],
@@ -197,6 +219,22 @@ AIGFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+    ),
+    "precip_total": VariableCapability(
+        var_key="precip_total",
+        name=AIGFS_VARS["precip_total"].name,
+        selectors=AIGFS_VARS["precip_total"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="precip_total",
+        default_fh=6,
+        buildable=True,
+        order=10,
+        group="Precipitation",
+        conversion="kgm2_to_in",
+        constraints={"min_fh": 6},
     ),
     "tmp850": VariableCapability(
         var_key="tmp850",

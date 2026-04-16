@@ -174,6 +174,41 @@ def test_resolve_probe_fhs_defaults_to_zero() -> None:
     assert scheduler_module._resolve_probe_fhs(plugin) == [0]
 
 
+class _FakeProbePluginAllowGrib(_FakeProbePlugin):
+    def run_discovery_config(self) -> dict[str, object]:
+        return {
+            "probe_fhs": [0, 3],
+            "source_priority": ["azure"],
+            "allow_grib_without_idx": True,
+        }
+
+
+def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeHerbie:
+        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
+            del run_dt, model, product, kwargs
+            self.fxx = int(fxx)
+            self.priority = str(priority)
+            self.grib = "https://azure.example/ecmwf.grib2"
+
+        def inventory(self, pattern: str):
+            del pattern
+            raise ValueError(
+                "No index file was found for None\n"
+                "Download the full file first (with `H.download()`)."
+            )
+
+    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+
+    found = scheduler_module._probe_run_exists(
+        plugin=_FakeProbePluginAllowGrib(),
+        run_dt=datetime(2026, 4, 13, 12, tzinfo=timezone.utc),
+        probe_var="tmp2m",
+    )
+
+    assert found is True
+
+
 class _FakeGFSPlugin:
     id = "gfs"
 

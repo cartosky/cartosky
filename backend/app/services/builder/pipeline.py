@@ -849,6 +849,8 @@ def _ensure_products_ready(
     required_products: list[str],
     readiness_cache: dict[str, bool] | None = None,
 ) -> None:
+    run_discovery = model_plugin.run_discovery_config() if hasattr(model_plugin, "run_discovery_config") else {}
+    allow_grib_without_idx = bool(run_discovery.get("allow_grib_without_idx", False))
     missing_products: list[str] = []
     for product_name in required_products:
         request = model_plugin.herbie_request(
@@ -869,6 +871,7 @@ def _ensure_products_ready(
                 run_date=run_date,
                 fh=fh,
                 herbie_kwargs=getattr(request, "herbie_kwargs", None),
+                allow_grib_without_idx=allow_grib_without_idx,
             )
             if readiness_cache is not None:
                 readiness_cache[product_name] = bool(ready)

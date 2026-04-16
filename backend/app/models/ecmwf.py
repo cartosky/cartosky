@@ -974,6 +974,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
         "probe_attempts": 4,
         "cycle_cadence_hours": 12,
         "fallback_lag_hours": 6,
+        "allow_grib_without_idx": True,
         "source_priority": ["azure", "aws", "ecmwf"],
     },
     ui_defaults={

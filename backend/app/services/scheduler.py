@@ -378,6 +378,8 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
     herbie_date = run_dt.replace(tzinfo=None) if run_dt.tzinfo else run_dt
     last_exc: Exception | None = None
     probe_fhs = _resolve_probe_fhs(plugin)
+    run_discovery = plugin.run_discovery_config() if hasattr(plugin, "run_discovery_config") else {}
+    allow_grib_without_idx = bool(run_discovery.get("allow_grib_without_idx", False))
     for probe_fh in probe_fhs:
         request = plugin.herbie_request(
             product=getattr(plugin, "product", "sfc"),
@@ -399,6 +401,7 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
             priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
 
         for priority in priorities:
+            H = None
             try:
                 H = Herbie(
                     herbie_date,
@@ -421,6 +424,16 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
                     return True
             except Exception as exc:
                 last_exc = exc
+                if allow_grib_without_idx and "no index file was found for" in str(exc).lower() and getattr(H, "grib", None):
+                    logger.info(
+                        "Run probe success via GRIB fallback: model=%s run=%s probe_var=%s fh=%s priority=%s",
+                        plugin.id,
+                        _run_id_from_dt(run_dt),
+                        probe_var_key,
+                        probe_fh,
+                        priority,
+                    )
+                    return True
                 continue
 
     logger.info(

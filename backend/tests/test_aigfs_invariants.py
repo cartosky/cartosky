@@ -35,6 +35,10 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert AIGFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert AIGFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert AIGFS_MODEL.normalize_var_id("precip_total") == "precip_total"
+    assert AIGFS_MODEL.normalize_var_id("total_precip") == "precip_total"
+    assert AIGFS_MODEL.normalize_var_id("apcp") == "precip_total"
+    assert AIGFS_MODEL.normalize_var_id("qpf") == "precip_total"
     assert AIGFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("temp850") == "tmp850"
@@ -96,7 +100,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp850", "wspd850", "wspd300", "vort500", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "precip_total", "tmp850", "wspd850", "wspd300", "vort500", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -116,6 +120,21 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert tmp2m_spec.selectors.filter_by_keys == {
         "typeOfLevel": "heightAboveGround",
         "level": "2",
+    }
+
+    precip_total_spec = AIGFS_MODEL.get_var("precip_total")
+    assert precip_total_spec is not None
+    assert precip_total_spec.primary is True
+    assert precip_total_spec.derived is False
+    assert precip_total_spec.kind == "continuous"
+    assert precip_total_spec.units == "in"
+    assert precip_total_spec.selectors.search == [
+        r":APCP:surface:0-[0-9]+ hour acc[^:]*:$",
+        r":APCP:surface:0-[0-9]+ day acc[^:]*:$",
+    ]
+    assert precip_total_spec.selectors.filter_by_keys == {
+        "shortName": "apcp",
+        "typeOfLevel": "surface",
     }
 
     tmp850_spec = AIGFS_MODEL.get_var("tmp850")
@@ -341,6 +360,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["default_fh"] == 0
     assert tmp2m["render_substrates"] == ["grid"]
+
+    precip_total = payload["variables"]["precip_total"]
+    assert precip_total["var_key"] == "precip_total"
+    assert precip_total["display_name"] == "Total Precip"
+    assert precip_total["kind"] == "continuous"
+    assert precip_total["units"] == "in"
+    assert precip_total["buildable"] is True
+    assert precip_total["derived"] is False
+    assert precip_total["color_map_id"] == "precip_total"
+    assert precip_total["order"] == 10
+    assert precip_total["group"] == "Precipitation"
+    assert precip_total["default_fh"] == 6
+    assert precip_total["constraints"] == {"min_fh": 6}
+    assert precip_total["render_substrates"] == ["grid"]
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["var_key"] == "tmp850"

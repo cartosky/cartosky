@@ -1008,8 +1008,9 @@ def product_hour_has_any_idx(
     run_date: datetime,
     fh: int,
     herbie_kwargs: dict[str, Any] | None = None,
+    allow_grib_without_idx: bool = False,
 ) -> bool:
-    """Cheap run-hour readiness probe using only IDX availability."""
+    """Cheap run-hour readiness probe using IDX, with optional GRIB fallback."""
     from herbie.core import Herbie
 
     kwargs = {
@@ -1024,15 +1025,17 @@ def product_hour_has_any_idx(
     herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
     all_cached_missing = True
     for priority in priority_list:
-        cache_key = _idx_negative_key(
-            model_id=model_id,
-            run_date=run_date,
-            product=product,
-            fh=fh,
-            priority=priority,
-        )
-        if _idx_negative_cache_remaining(cache_key) > 0:
-            continue
+        H = None
+        if not allow_grib_without_idx:
+            cache_key = _idx_negative_key(
+                model_id=model_id,
+                run_date=run_date,
+                product=product,
+                fh=fh,
+                priority=priority,
+            )
+            if _idx_negative_cache_remaining(cache_key) > 0:
+                continue
         all_cached_missing = False
         run_kwargs = _quiet_herbie_kwargs(kwargs)
         run_kwargs["priority"] = priority
@@ -1041,6 +1044,15 @@ def product_hour_has_any_idx(
             idx_ref = getattr(H, "idx", None)
         except Exception as exc:
             if _is_missing_index_error(exc):
+                if allow_grib_without_idx and getattr(H, "grib", None):
+                    logger.info(
+                        "Herbie readiness probe using GRIB fallback (%s %s fh%03d; priority=%s): idx exception but GRIB exists",
+                        model_id,
+                        product,
+                        int(fh),
+                        priority,
+                    )
+                    return True
                 _record_and_log_idx_missing(
                     model_id=model_id,
                     run_date=run_date,
@@ -1061,6 +1073,15 @@ def product_hour_has_any_idx(
             )
             return True
         if not idx_ref:
+            if allow_grib_without_idx and getattr(H, "grib", None):
+                logger.info(
+                    "Herbie readiness probe using GRIB fallback (%s %s fh%03d; priority=%s): idx missing but GRIB exists",
+                    model_id,
+                    product,
+                    int(fh),
+                    priority,
+                )
+                return True
             _record_and_log_idx_missing(
                 model_id=model_id,
                 run_date=run_date,

@@ -52,8 +52,8 @@ def test_build_frame_readiness_gate_short_circuits_derived_fetch(monkeypatch, tm
         lambda color_map_id: {"id": color_map_id, "type": "continuous", "units": "in", "range": [0.0, 10.0], "colors": ["#000", "#fff"]},
     )
 
-    def _fake_product_ready(*, model_id, product, run_date, fh, herbie_kwargs=None):
-        del model_id, run_date, fh, herbie_kwargs
+    def _fake_product_ready(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+        del model_id, run_date, fh, herbie_kwargs, allow_grib_without_idx
         readiness_calls.append(str(product))
         return str(product) != "sfc"
 
