@@ -588,6 +588,7 @@ type MapCanvasProps = {
   gridLodLevel?: number | null;
   gridFrameUrl?: string | null;
   gridFrameHour?: number | null;
+  gridPrefetchPivotHour?: number | null;
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
   contourGeoJsonUrl?: string | null;
@@ -625,6 +626,7 @@ export function MapCanvas({
   gridLodLevel = null,
   gridFrameUrl = null,
   gridFrameHour = null,
+  gridPrefetchPivotHour = null,
   gridLegend = null,
   gridActive = false,
   contourGeoJsonUrl,
@@ -708,14 +710,23 @@ export function MapCanvas({
       .map((entry) => Number(entry?.fh))
       .filter(Number.isFinite)
       .sort((a, b) => a - b);
-    const pivot = frameHours.indexOf(Number(gridFrameHour));
+
+    // Use the prefetch pivot hour (the requested/target hour) when available so
+    // that jumping directly to a far forecast hour immediately prefetches around
+    // the destination rather than the currently-displayed frame.  Falls back to
+    // gridFrameHour (the presented/visible hour) when no explicit pivot is given.
+    const effectivePivotHour = Number.isFinite(gridPrefetchPivotHour)
+      ? Number(gridPrefetchPivotHour)
+      : Number(gridFrameHour);
+    const pivot = frameHours.indexOf(effectivePivotHour);
     if (pivot < 0) {
       return [] as string[];
     }
 
-    // Track scrub direction from frame-to-frame movement.
+    // Track scrub direction from frame-to-frame movement using the effective
+    // pivot so a direct jump (without scrubbing) still sets the direction.
     const prevHour = prevGridFrameHourRef.current;
-    const currentHour = Number(gridFrameHour);
+    const currentHour = effectivePivotHour;
     if (prevHour !== null && Number.isFinite(prevHour) && prevHour !== currentHour) {
       scrubDirectionRef.current = currentHour > prevHour ? 1 : -1;
     }
@@ -864,7 +875,7 @@ export function MapCanvas({
       }
     }
     return urls;
-  }, [apiRoot, gridFrameHour, gridFrameUrl, gridLodLevel, gridManifest, mode]);
+  }, [apiRoot, gridFrameHour, gridFrameUrl, gridLodLevel, gridManifest, gridPrefetchPivotHour, mode]);
   const shouldUseGridController = Boolean(
     gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0 || compositeGridLayers.length > 0
   );

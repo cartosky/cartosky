@@ -3,12 +3,14 @@
 Initial rollout scope:
   - AIGFS `sfc`
       - `tmp2m`
+            - `wspd10m`
   - realtime publishing only
 
 Upstream verification:
   - Herbie model = "aigfs"
   - Herbie products = "sfc", "pres"
   - Surface tmp2m inventory entry is `TMP:2 m above ground`
+    - Surface 10m wind components inventory entries are `UGRD:10 m above ground` and `VGRD:10 m above ground`
   - NOAA product inventory exposes 00/06/12/18z cycles with f000 and f006-f384
 
 References:
@@ -27,6 +29,12 @@ class AIGFSPlugin(GFSPlugin):
         del cycle_hour
         return list(AIGFS_SFC_FHS)
 
+    def normalize_var_id(self, var_id: str) -> str:
+        normalized = var_id.strip().lower()
+        if normalized in {"wind10m", "10mwind"}:
+            return "wspd10m"
+        return super().normalize_var_id(var_id)
+
 
 AIGFS_REGIONS: dict[str, RegionSpec] = {
     "conus": RegionSpec(
@@ -43,6 +51,9 @@ AIGFS_SFC_FHS = tuple(range(0, 385, 6))
 
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
+    "10u": GFS_VARS["10u"],
+    "10v": GFS_VARS["10v"],
+    "wspd10m": GFS_VARS["wspd10m"],
 }
 
 
@@ -61,6 +72,22 @@ AIGFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+    ),
+    "wspd10m": VariableCapability(
+        var_key="wspd10m",
+        name=AIGFS_VARS["wspd10m"].name,
+        selectors=AIGFS_VARS["wspd10m"].selectors,
+        primary=False,
+        derived=True,
+        derive_strategy_id="wspd10m",
+        kind="continuous",
+        units="mph",
+        color_map_id="wspd10m",
+        default_fh=0,
+        buildable=True,
+        order=12,
+        group="Wind",
+        conversion="ms_to_mph",
     ),
 }
 

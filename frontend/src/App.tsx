@@ -3158,6 +3158,7 @@ export default function App() {
           gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
           gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
+          gridPrefetchPivotHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
             contourGeoJsonUrl={contourGeoJsonUrl}
