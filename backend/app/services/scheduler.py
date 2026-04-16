@@ -23,6 +23,7 @@ from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
+from app.services.builder.derive import FetchContext
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
 from app.services.render_resampling import (
@@ -791,6 +792,10 @@ def _build_one(
     run_dt: datetime,
     data_root: Path,
     plugin,
+    fetch_ctx: FetchContext | None = None,
+    readiness_cache: dict[str, bool] | None = None,
+    log_fetch_cache_stats: bool = True,
+    derive_component_warp_cache: bool = False,
 ) -> tuple[str, int, bool, int]:
     started_at = time.perf_counter()
     result = build_frame(
@@ -802,6 +807,10 @@ def _build_one(
         data_root=data_root,
         product=getattr(plugin, "product", "sfc"),
         model_plugin=plugin,
+        fetch_ctx=fetch_ctx,
+        readiness_cache=readiness_cache,
+        log_fetch_cache_stats=log_fetch_cache_stats,
+        derive_component_warp_cache=derive_component_warp_cache,
     )
     return var_id, fh, result is not None, int((time.perf_counter() - started_at) * 1000)
 
@@ -1473,22 +1482,23 @@ def _process_run(
             )
 
             round_successes = 0
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [
-                    pool.submit(
-                        _build_one,
+            if workers == 1:
+                shared_fetch_ctx = FetchContext(coverage=CANONICAL_COVERAGE)
+                shared_readiness_cache: dict[str, bool] = {}
+                for var_id, fh in round_work:
+                    result = _build_one(
                         model_id=model_id,
                         var_id=var_id,
                         fh=fh,
                         run_dt=run_dt,
                         data_root=data_root,
                         plugin=plugin,
+                        fetch_ctx=shared_fetch_ctx,
+                        readiness_cache=shared_readiness_cache,
+                        log_fetch_cache_stats=False,
+                        derive_component_warp_cache=True,
                     )
-                    for var_id, fh in round_work
-                ]
-
-                for future in concurrent.futures.as_completed(futures):
-                    var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
+                    var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(result))
                     _log_frame_timing(
                         run_id=run_id,
                         model_id=model_id,
@@ -1505,6 +1515,46 @@ def _process_run(
                     else:
                         blocked_vars.add(var_id)
                         logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
+                logger.info(
+                    "rebuild_existing shared_fetch_cache hits=%d misses=%d warp_hits=%d warp_misses=%d",
+                    int(shared_fetch_ctx.stats.get("hits", 0)),
+                    int(shared_fetch_ctx.stats.get("misses", 0)),
+                    int(shared_fetch_ctx.warp_stats.get("hits", 0)),
+                    int(shared_fetch_ctx.warp_stats.get("misses", 0)),
+                )
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [
+                        pool.submit(
+                            _build_one,
+                            model_id=model_id,
+                            var_id=var_id,
+                            fh=fh,
+                            run_dt=run_dt,
+                            data_root=data_root,
+                            plugin=plugin,
+                        )
+                        for var_id, fh in round_work
+                    ]
+
+                    for future in concurrent.futures.as_completed(futures):
+                        var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
+                        _log_frame_timing(
+                            run_id=run_id,
+                            model_id=model_id,
+                            var_id=str(var_id),
+                            fh=int(fh),
+                            ok=ok,
+                            elapsed_ms=elapsed_ms,
+                            mode="single",
+                        )
+                        if ok:
+                            built_ok += 1
+                            round_successes += 1
+                            logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                        else:
+                            blocked_vars.add(var_id)
+                            logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
 
             if not published_once and _should_promote(data_root, model_id, run_id, primary_vars, promotion_fhs):
                 _publish_run_snapshot(reason="rebuild_existing", pregenerate_loops=False)
