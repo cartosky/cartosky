@@ -113,6 +113,8 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     run_id = "20260330_12z"
     variable = "tmp2m"
     runtime_var = "tmp2m__mean"
+    pwat_variable = "pwat"
+    pwat_runtime_var = "pwat__mean"
     precip_variable = "precip_total"
     precip_runtime_var = "precip_total__mean"
 
@@ -126,6 +128,14 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                 "variables": {
                     variable: {
                         "display_name": "Surface Temp (Mean)",
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-03-30T12:00:00Z"},
+                        ],
+                    },
+                    pwat_variable: {
+                        "display_name": "Precipitable Water (Mean)",
                         "expected_frames": 1,
                         "available_frames": 1,
                         "frames": [
@@ -163,6 +173,20 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
+    pwat_var_dir = model_root / run_id / pwat_runtime_var
+    pwat_var_dir.mkdir(parents=True, exist_ok=True)
+    _write_precip_raster(pwat_var_dir / "fh000.val.cog.tif")
+    (pwat_var_dir / "fh000.json").write_text(
+        json.dumps(
+            {
+                "units": "in",
+                "valid_time": "2026-03-30T12:00:00Z",
+                "kind": "continuous",
+                "display_name": "Precipitable Water (Mean)",
+            }
+        )
+    )
+
     precip_var_dir = model_root / run_id / precip_runtime_var
     precip_var_dir.mkdir(parents=True, exist_ok=True)
     _write_precip_raster(precip_var_dir / "fh006.val.cog.tif")
@@ -182,7 +206,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         model=model,
         run=run_id,
         workers=1,
-        variables=(runtime_var, precip_runtime_var),
+        variables=(runtime_var, pwat_runtime_var, precip_runtime_var),
     )
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
@@ -266,6 +290,45 @@ async def test_gefs_grid_manifest_keeps_canonical_var_but_runtime_artifact_urls(
     assert frame["url"].startswith(
         "/api/v4/grid/gefs/20260330_12z/tmp2m__mean/fh000.l0.u16.bin?v=20260330_12z-tmp2m__mean-"
     )
+
+
+async def test_gefs_pwat_mean_uses_canonical_api_var_and_runtime_artifacts(client: httpx.AsyncClient) -> None:
+    frames_response = await client.get("/api/v4/gefs/latest/pwat/frames")
+    assert frames_response.status_code == 200
+    frames = frames_response.json()
+    assert [frame["fh"] for frame in frames] == [0]
+    assert frames[0]["has_cog"] is True
+
+    manifest_response = await client.get(
+        "/api/v4/gefs/latest/pwat/grid-manifest",
+        params={"ensemble_view": "mean"},
+    )
+    assert manifest_response.status_code == 200
+    payload = manifest_response.json()
+    assert payload["var"] == "pwat"
+    frame = payload["lods"][0]["frames"][0]
+    assert frame["fh"] == 0
+    assert frame["url"].startswith(
+        "/api/v4/grid/gefs/20260330_12z/pwat__mean/fh000.l0.u16.bin?v=20260330_12z-pwat__mean-"
+    )
+
+    sample_response = await client.get(
+        "/api/v4/sample",
+        params={
+            "model": "gefs",
+            "run": "latest",
+            "var": "pwat",
+            "fh": 0,
+            "lat": 45.5,
+            "lon": -100.5,
+        },
+    )
+    assert sample_response.status_code == 200
+    sample_payload = sample_response.json()
+    assert sample_payload["run"] == "20260330_12z"
+    assert sample_payload["var"] == "pwat"
+    assert sample_payload["units"] == "in"
+    assert sample_payload["value"] == 0.1
 
 
 async def test_gefs_precip_total_mean_uses_canonical_api_var_and_runtime_artifacts(client: httpx.AsyncClient) -> None:

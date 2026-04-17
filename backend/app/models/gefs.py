@@ -3,6 +3,7 @@
 Initial rollout scope:
     - GEFS `atmos.5`
     - `tmp2m` with `ensemble_view=mean`
+    - `pwat` with `ensemble_view=mean`
     - `precip_total` with `ensemble_view=mean`
   - realtime publishing only
 
@@ -44,6 +45,10 @@ class GEFSPlugin(BaseModelPlugin):
         aliases = {
             "tmp2m": "tmp2m",
             "tmp2m__mean": "tmp2m__mean",
+            "pwat": "pwat",
+            "pwat__mean": "pwat__mean",
+            "precipitable_water": "pwat",
+            "precipitablewater": "pwat",
             "precip_total": "precip_total",
             "precip_total__mean": "precip_total__mean",
             "total_precip": "precip_total",
@@ -75,7 +80,7 @@ class GEFSPlugin(BaseModelPlugin):
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
         resolved_product = "atmos.5"
         herbie_kwargs = dict(base_request.herbie_kwargs)
-        if runtime_var in {"tmp2m__mean", "apcp_step__mean", "precip_total__mean"}:
+        if runtime_var in {"tmp2m__mean", "pwat__mean", "apcp_step__mean", "precip_total__mean"}:
             herbie_kwargs["member"] = "mean"
         return HerbieRequest(
             model="gefs",
@@ -93,6 +98,15 @@ GEFS_VARS: dict[str, VarSpec] = {
         GFS_VARS["tmp2m"],
         id="tmp2m__mean",
         name="Surface Temp (Mean)",
+    ),
+    "pwat": replace(
+        GFS_VARS["pwat"],
+        name="Precipitable Water (Mean)",
+    ),
+    "pwat__mean": replace(
+        GFS_VARS["pwat"],
+        id="pwat__mean",
+        name="Precipitable Water (Mean)",
     ),
     "apcp_step__mean": VarSpec(
         id="apcp_step__mean",
@@ -169,6 +183,46 @@ GEFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "pwat": VariableCapability(
+        var_key="pwat",
+        name=GEFS_VARS["pwat"].name,
+        selectors=GEFS_VARS["pwat"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="pwat",
+        default_fh=0,
+        buildable=True,
+        order=9,
+        group="Moisture",
+        conversion="kgm2_to_in",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "pwat__mean"},
+        },
+    ),
+    "pwat__mean": VariableCapability(
+        var_key="pwat__mean",
+        name=GEFS_VARS["pwat__mean"].name,
+        selectors=GEFS_VARS["pwat__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="pwat",
+        default_fh=0,
+        buildable=False,
+        order=9,
+        group="Moisture",
+        conversion="kgm2_to_in",
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],

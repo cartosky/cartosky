@@ -24,18 +24,28 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert GEFS_MODEL.normalize_var_id("pwat") == "pwat"
+    assert GEFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("pwat") == "mean"
     assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("pwat") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("pwat", "mean") == "pwat__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("precip_total", "mean") == "precip_total__mean"
 
     request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="tmp2m", ensemble_view="mean")
     assert request.model == "gefs"
     assert request.product == "atmos.5"
     assert request.herbie_kwargs["member"] == "mean"
+
+    pwat_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="pwat", ensemble_view="mean")
+    assert pwat_request.model == "gefs"
+    assert pwat_request.product == "atmos.5"
+    assert pwat_request.herbie_kwargs["member"] == "mean"
 
     precip_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="precip_total", ensemble_view="mean")
     assert precip_request.model == "gefs"
@@ -52,7 +62,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"precip_total", "tmp2m"}
+    assert buildable_var_keys == {"precip_total", "pwat", "tmp2m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
@@ -69,6 +79,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["product"] == "atmos.5"
     assert payload["ensemble"]["default_view"] == "mean"
     assert payload["ensemble"]["supported_views"] == ["mean"]
+    assert "pwat__mean" not in payload["variables"]
     assert "tmp2m__mean" not in payload["variables"]
     assert "precip_total__mean" not in payload["variables"]
 
@@ -79,6 +90,17 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    pwat = payload["variables"]["pwat"]
+    assert pwat["var_key"] == "pwat"
+    assert pwat["display_name"] == "Precipitable Water (Mean)"
+    assert pwat["buildable"] is True
+    assert pwat["derived"] is False
+    assert pwat["color_map_id"] == "pwat"
+    assert pwat["default_fh"] == 0
+    assert pwat["group"] == "Moisture"
+    assert pwat["ensemble"]["default_view"] == "mean"
+    assert pwat["ensemble"]["supported_views"] == ["mean"]
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"
@@ -94,8 +116,10 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "pwat", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("gefs", "pwat", "mean") == "pwat__mean"
     assert _runtime_var_id_for_request("gefs", "precip_total", "mean") == "precip_total__mean"
     try:
         _resolve_requested_ensemble_view("gefs", "tmp2m", "spread")
