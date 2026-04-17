@@ -464,7 +464,7 @@ function ViewerNavDesktop() {
               <MapLegend
                 legend={legend}
                 onOpacityChange={onOpacityChange}
-                showOpacityControl={true}
+                showOpacityControl={false}
                 displayPanelOpen={displayPanelOpen}
                 defaultExpanded={true}
                 inline={true}
@@ -568,7 +568,7 @@ function ViewerNavDesktop() {
                     min={0}
                     max={100}
                     step={1}
-                    className="w-full [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/12 [&>*:nth-child(2)]:h-3.5 [&>*:nth-child(2)]:w-3.5 [&>*:nth-child(2)]:border-slate-700 [&>*:nth-child(2)]:bg-cyan-200"
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                   />
                 </div>
 
@@ -880,7 +880,7 @@ function ViewerNavMobile() {
                     min={0}
                     max={100}
                     step={1}
-                    className="w-full [&>*:first-child]:h-2 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4"
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                   />
                 </div>
               </div>

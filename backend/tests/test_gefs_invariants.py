@@ -29,6 +29,9 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert GEFS_MODEL.normalize_var_id("wind850") == "wspd850"
     assert GEFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
+    assert GEFS_MODEL.normalize_var_id("wspd300") == "wspd300"
+    assert GEFS_MODEL.normalize_var_id("wind300") == "wspd300"
+    assert GEFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert GEFS_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert GEFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
     assert GEFS_MODEL.normalize_var_id("asnow") == "snowfall_total"
@@ -43,6 +46,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
     assert GEFS_MODEL.default_ensemble_view("tmp850") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd850") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("wspd300") == "mean"
     assert GEFS_MODEL.default_ensemble_view("sbcape") == "mean"
     assert GEFS_MODEL.default_ensemble_view("snowfall_total") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd10m") == "mean"
@@ -51,6 +55,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("tmp850") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd850") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("wspd300") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("sbcape") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("snowfall_total") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
@@ -59,6 +64,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("tmp850", "mean") == "tmp850__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd850", "mean") == "wspd850__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("wspd300", "mean") == "wspd300__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("sbcape", "mean") == "sbcape__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("snowfall_total", "mean") == "snowfall_total__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
@@ -79,6 +85,11 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert wspd850_request.model == "gefs"
     assert wspd850_request.product == "atmos.5"
     assert wspd850_request.herbie_kwargs["member"] == "mean"
+
+    wspd300_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="wspd300", ensemble_view="mean")
+    assert wspd300_request.model == "gefs"
+    assert wspd300_request.product == "atmos.5"
+    assert wspd300_request.herbie_kwargs["member"] == "mean"
 
     sbcape_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="sbcape", ensemble_view="mean")
     assert sbcape_request.model == "gefs"
@@ -115,7 +126,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"precip_total", "pwat", "sbcape", "snowfall_total", "tmp2m", "tmp850", "wspd10m", "wspd850"}
+    assert buildable_var_keys == {"precip_total", "pwat", "sbcape", "snowfall_total", "tmp2m", "tmp850", "wspd10m", "wspd300", "wspd850"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
@@ -136,6 +147,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert "tmp2m__mean" not in payload["variables"]
     assert "tmp850__mean" not in payload["variables"]
     assert "wspd850__mean" not in payload["variables"]
+    assert "wspd300__mean" not in payload["variables"]
     assert "sbcape__mean" not in payload["variables"]
     assert "snowfall_total__mean" not in payload["variables"]
     assert "wspd10m__mean" not in payload["variables"]
@@ -171,6 +183,18 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["group"] == "Wind"
     assert wspd850["ensemble"]["default_view"] == "mean"
     assert wspd850["ensemble"]["supported_views"] == ["mean"]
+
+    wspd300 = payload["variables"]["wspd300"]
+    assert wspd300["var_key"] == "wspd300"
+    assert wspd300["display_name"] == "300mb Heights + Winds (Mean)"
+    assert wspd300["buildable"] is True
+    assert wspd300["derived"] is True
+    assert wspd300["color_map_id"] == "wspd300"
+    assert wspd300["derive_strategy_id"] == "wspd10m"
+    assert wspd300["default_fh"] == 0
+    assert wspd300["group"] == "Wind"
+    assert wspd300["ensemble"]["default_view"] == "mean"
+    assert wspd300["ensemble"]["supported_views"] == ["mean"]
 
     sbcape = payload["variables"]["sbcape"]
     assert sbcape["var_key"] == "sbcape"
@@ -235,6 +259,7 @@ def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "tmp850", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd850", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "wspd300", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "sbcape", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "snowfall_total", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd10m", None) == "mean"
@@ -243,6 +268,7 @@ def test_gefs_runtime_resolution_helpers() -> None:
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
     assert _runtime_var_id_for_request("gefs", "tmp850", "mean") == "tmp850__mean"
     assert _runtime_var_id_for_request("gefs", "wspd850", "mean") == "wspd850__mean"
+    assert _runtime_var_id_for_request("gefs", "wspd300", "mean") == "wspd300__mean"
     assert _runtime_var_id_for_request("gefs", "sbcape", "mean") == "sbcape__mean"
     assert _runtime_var_id_for_request("gefs", "snowfall_total", "mean") == "snowfall_total__mean"
     assert _runtime_var_id_for_request("gefs", "wspd10m", "mean") == "wspd10m__mean"
@@ -278,3 +304,12 @@ def test_gefs_wspd850_inputs_match_live_inventory_shape() -> None:
     assert re.search(hgt_pattern, ":HGT:850 mb:6 hour fcst:ens mean") is not None
     assert re.search(u_pattern, ":UGRD:850 mb:6 hour fcst:ens mean") is not None
     assert re.search(v_pattern, ":VGRD:850 mb:6 hour fcst:ens mean") is not None
+
+
+def test_gefs_wspd300_inputs_match_live_inventory_shape() -> None:
+    hgt_pattern = GEFS_MODEL.get_var("hgt300__mean").selectors.search[0]
+    u_pattern = GEFS_MODEL.get_var("u300__mean").selectors.search[0]
+    v_pattern = GEFS_MODEL.get_var("v300__mean").selectors.search[0]
+    assert re.search(hgt_pattern, ":HGT:300 mb:6 hour fcst:ens mean") is not None
+    assert re.search(u_pattern, ":UGRD:300 mb:6 hour fcst:ens mean") is not None
+    assert re.search(v_pattern, ":VGRD:300 mb:6 hour fcst:ens mean") is not None

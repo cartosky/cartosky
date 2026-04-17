@@ -153,6 +153,31 @@ def _write_wind850_raster(path: Path) -> None:
         ds.write(data, 1)
 
 
+def _write_wind300_raster(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = np.array(
+        [
+            [70.0, 75.0, 80.0],
+            [85.0, 90.0, 95.0],
+            [100.0, 105.0, 110.0],
+        ],
+        dtype=np.float32,
+    )
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=data.shape[0],
+        width=data.shape[1],
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(-101.0, 46.0, 1.0, 1.0),
+        nodata=float("nan"),
+    ) as ds:
+        ds.write(data, 1)
+
+
 def _write_snow_raster(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = np.array(
@@ -242,6 +267,8 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     tmp850_runtime_var = "tmp850__mean"
     wspd850_variable = "wspd850"
     wspd850_runtime_var = "wspd850__mean"
+    wspd300_variable = "wspd300"
+    wspd300_runtime_var = "wspd300__mean"
     sbcape_variable = "sbcape"
     sbcape_runtime_var = "sbcape__mean"
     snowfall_variable = "snowfall_total"
@@ -279,6 +306,14 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                     },
                     wspd850_variable: {
                         "display_name": "850mb Heights + Winds (Mean)",
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-03-30T12:00:00Z"},
+                        ],
+                    },
+                    wspd300_variable: {
+                        "display_name": "300mb Heights + Winds (Mean)",
                         "expected_frames": 1,
                         "available_frames": 1,
                         "frames": [
@@ -376,6 +411,20 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
+    wspd300_var_dir = model_root / run_id / wspd300_runtime_var
+    wspd300_var_dir.mkdir(parents=True, exist_ok=True)
+    _write_wind300_raster(wspd300_var_dir / "fh000.val.cog.tif")
+    (wspd300_var_dir / "fh000.json").write_text(
+        json.dumps(
+            {
+                "units": "kt",
+                "valid_time": "2026-03-30T12:00:00Z",
+                "kind": "continuous",
+                "display_name": "300mb Heights + Winds (Mean)",
+            }
+        )
+    )
+
     sbcape_var_dir = model_root / run_id / sbcape_runtime_var
     sbcape_var_dir.mkdir(parents=True, exist_ok=True)
     _write_cape_raster(sbcape_var_dir / "fh000.val.cog.tif")
@@ -451,7 +500,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         model=model,
         run=run_id,
         workers=1,
-        variables=(runtime_var, tmp850_runtime_var, wspd850_runtime_var, sbcape_runtime_var, snowfall_runtime_var, wspd_runtime_var, pwat_runtime_var, precip_runtime_var),
+        variables=(runtime_var, tmp850_runtime_var, wspd850_runtime_var, wspd300_runtime_var, sbcape_runtime_var, snowfall_runtime_var, wspd_runtime_var, pwat_runtime_var, precip_runtime_var),
     )
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
@@ -615,6 +664,46 @@ async def test_gefs_wspd850_mean_uses_canonical_api_var_and_runtime_artifacts(cl
     assert sample_payload["valid_time"] == "2026-03-30T12:00:00Z"
     assert sample_payload["units"] == "kt"
     assert sample_payload["value"] == 25.0
+
+
+async def test_gefs_wspd300_mean_uses_canonical_api_var_and_runtime_artifacts(client: httpx.AsyncClient) -> None:
+    frames_response = await client.get("/api/v4/gefs/latest/wspd300/frames")
+    assert frames_response.status_code == 200
+    frames = frames_response.json()
+    assert [frame["fh"] for frame in frames] == [0]
+    assert frames[0]["has_cog"] is True
+
+    manifest_response = await client.get(
+        "/api/v4/gefs/latest/wspd300/grid-manifest",
+        params={"ensemble_view": "mean"},
+    )
+    assert manifest_response.status_code == 200
+    payload = manifest_response.json()
+    assert payload["var"] == "wspd300"
+    frame = payload["lods"][0]["frames"][0]
+    assert frame["fh"] == 0
+    assert frame["url"].startswith(
+        "/api/v4/grid/gefs/20260330_12z/wspd300__mean/fh000.l0.u16.bin?v=20260330_12z-wspd300__mean-"
+    )
+
+    sample_response = await client.get(
+        "/api/v4/sample",
+        params={
+            "model": "gefs",
+            "run": "latest",
+            "var": "wspd300",
+            "fh": 0,
+            "lat": 45.5,
+            "lon": -100.5,
+        },
+    )
+    assert sample_response.status_code == 200
+    sample_payload = sample_response.json()
+    assert sample_payload["run"] == "20260330_12z"
+    assert sample_payload["var"] == "wspd300"
+    assert sample_payload["valid_time"] == "2026-03-30T12:00:00Z"
+    assert sample_payload["units"] == "kt"
+    assert sample_payload["value"] == 70.0
 
 
 async def test_gefs_sbcape_mean_uses_canonical_api_var_and_runtime_artifacts(client: httpx.AsyncClient) -> None:
