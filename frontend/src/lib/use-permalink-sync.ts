@@ -15,6 +15,7 @@ export interface UsePermalinkSyncParams {
   model: string | null;
   run: string | null;
   variable: string | null;
+  ensembleView: string | null;
   resolvedForecastHourPermalink: number | null;
   region: string | null;
 }
@@ -37,6 +38,7 @@ export function usePermalinkSync({
   model,
   run,
   variable,
+  ensembleView,
   resolvedForecastHourPermalink,
   region,
 }: UsePermalinkSyncParams): void {
@@ -85,6 +87,7 @@ export function usePermalinkSync({
           model: model || undefined,
           run: run || undefined,
           var: variable || undefined,
+          ensembleView: ensembleView || undefined,
           fh: Number.isFinite(resolvedForecastHourPermalink)
             ? Number(resolvedForecastHourPermalink)
             : undefined,
@@ -111,6 +114,7 @@ export function usePermalinkSync({
     model,
     run,
     variable,
+    ensembleView,
     resolvedForecastHourPermalink,
     region,
     mapViewTick,

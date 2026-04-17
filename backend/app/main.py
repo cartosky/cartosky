@@ -112,7 +112,7 @@ LOOP_URL_PREFIX = _normalized_path_prefix(
     _env_value("CARTOSKY_LOOP_URL_PREFIX", "CARTOSKY_V3_LOOP_URL_PREFIX", "TWF_V3_LOOP_URL_PREFIX", default="/loop/"),
     default="/loop/",
 )
-CAPABILITIES_CONTRACT_VERSION = "v1"
+CAPABILITIES_CONTRACT_VERSION = "v2"
 _JSON_CACHE_RECHECK_SECONDS = float(
     _env_value(
         "CARTOSKY_JSON_CACHE_RECHECK_SECONDS",
@@ -1857,6 +1857,7 @@ class SampleBatchIn(BaseModel):
     model: str = Field(..., min_length=1, max_length=64)
     run: str = Field(..., min_length=1, max_length=32)
     variable: str = Field(..., min_length=1, max_length=128)
+    ensemble_view: str | None = Field(default=None, max_length=64)
     forecast_hour: int = Field(..., ge=0)
     points: list[SampleBatchPointIn] = Field(..., min_length=1, max_length=500)
 
@@ -2323,14 +2324,22 @@ def _path_mtime_ns(path: Path) -> int:
         return 0
 
 
-def _bootstrap_frames_state_token(model: str, run: str, var: str, manifest: dict[str, Any] | None) -> str:
+def _bootstrap_frames_state_token(
+    model: str,
+    run: str,
+    var: str,
+    manifest: dict[str, Any] | None,
+    *,
+    ensemble_view: str | None = None,
+) -> str:
     variables = manifest.get("variables") if isinstance(manifest, dict) else None
     var_entry = variables.get(var) if isinstance(variables, dict) else None
     frame_entries = var_entry.get("frames") if isinstance(var_entry, dict) else None
     if not isinstance(frame_entries, list):
         return ""
 
-    var_dir = _published_var_dir(model, run, var)
+    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
+    var_dir = _published_var_dir(model, run, runtime_var)
     frame_state: list[tuple[int, int, int]] = []
     for item in frame_entries:
         if not isinstance(item, dict):
@@ -2349,6 +2358,7 @@ def _bootstrap_selection_state(
     model: str | None,
     run: str,
     var: str | None,
+    ensemble_view: str | None,
     region: str | None,
     capabilities_by_model: dict[str, Any],
 ) -> dict[str, Any]:
@@ -2361,6 +2371,7 @@ def _bootstrap_selection_state(
     selected_run: str | None = None
     run_manifest: dict[str, Any] | None = None
     selected_var = ""
+    selected_ensemble_view = ""
     manifest_load_ms = 0.0
 
     model_capability = capabilities_by_model.get(selected_model) if selected_model else None
@@ -2383,6 +2394,12 @@ def _bootstrap_selection_state(
                 selected_var = default_var
             elif ordered_manifest_vars:
                 selected_var = ordered_manifest_vars[0]
+            if selected_var:
+                selected_ensemble_view = _resolve_requested_ensemble_view(
+                    selected_model,
+                    selected_var,
+                    ensemble_view,
+                ) or ""
 
     default_region = "conus"
     canonical_region = _model_canonical_region(model_capability)
@@ -2398,6 +2415,7 @@ def _bootstrap_selection_state(
         "selected_model": selected_model,
         "selected_run": selected_run,
         "selected_var": selected_var,
+        "selected_ensemble_view": selected_ensemble_view,
         "selected_region": selected_region,
         "run_manifest": run_manifest,
         "model_capability": model_capability,
@@ -2414,11 +2432,18 @@ def _bootstrap_state_etag(
     selected_model = str(selection_state.get("selected_model") or "")
     selected_run = str(selection_state.get("selected_run") or "")
     selected_var = str(selection_state.get("selected_var") or "")
+    selected_ensemble_view = str(selection_state.get("selected_ensemble_view") or "")
     selected_region = str(selection_state.get("selected_region") or "")
     run_manifest = selection_state.get("run_manifest")
     manifest_token = _run_version_token(selected_model, selected_run) if selected_model and selected_run else ""
     frames_token = (
-        _bootstrap_frames_state_token(selected_model, selected_run, selected_var, run_manifest)
+        _bootstrap_frames_state_token(
+            selected_model,
+            selected_run,
+            selected_var,
+            run_manifest,
+            ensemble_view=selected_ensemble_view,
+        )
         if selected_model and selected_run and selected_var
         else ""
     )
@@ -2428,6 +2453,7 @@ def _bootstrap_state_etag(
         selected_model,
         selected_run or requested_run,
         selected_var,
+        selected_ensemble_view,
         selected_region,
         manifest_token,
         frames_token,
@@ -2566,32 +2592,81 @@ def _grid_version_token(model: str, run: str, var: str) -> str:
     return f"{run}-{var}-{mtime_ns}"
 
 
+def _normalize_ensemble_view(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized or None
+
+
+def _resolve_requested_ensemble_view(model: str, var: str, ensemble_view: str | None) -> str | None:
+    try:
+        plugin = get_model(model)
+    except HTTPException:
+        return _normalize_ensemble_view(ensemble_view)
+
+    normalized_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
+    requested_view = _normalize_ensemble_view(ensemble_view)
+    supported_views = (
+        plugin.supported_ensemble_views(normalized_var)
+        if hasattr(plugin, "supported_ensemble_views")
+        else []
+    )
+    if requested_view:
+        if supported_views and requested_view not in supported_views:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unsupported ensemble_view for {model}/{normalized_var}: {requested_view}",
+            )
+        if not supported_views:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ensemble_view is unsupported for {model}/{normalized_var}",
+            )
+        return requested_view
+    if hasattr(plugin, "default_ensemble_view"):
+        return _normalize_ensemble_view(plugin.default_ensemble_view(normalized_var))
+    return None
+
+
+def _runtime_var_id_for_request(model: str, var: str, ensemble_view: str | None) -> str:
+    plugin = get_model(model)
+    normalized_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
+    resolved_view = _resolve_requested_ensemble_view(model, normalized_var, ensemble_view)
+    if hasattr(plugin, "resolve_runtime_var_id"):
+        runtime_var = str(plugin.resolve_runtime_var_id(normalized_var, resolved_view)).strip()
+        if runtime_var:
+            return runtime_var
+    return normalized_var
+
+
 def _published_var_dir(model: str, run: str, var: str) -> Path:
     return PUBLISHED_ROOT / model / run / var
 
 
-def _resolve_val_cog(model: str, run: str, var: str, fh: int) -> Path | None:
+def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> Path | None:
     resolved = _resolve_run(model, run) or run
-    candidate = _published_var_dir(model, resolved, var) / f"fh{fh:03d}.val.cog.tif"
+    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
+    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.val.cog.tif"
     if candidate.is_file():
         return candidate
     return None
 
 
-def _resolve_sidecar(model: str, run: str, var: str, fh: int) -> dict | None:
+def _resolve_sidecar(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> dict | None:
     resolved = _resolve_run(model, run) or run
-    candidate = _published_var_dir(model, resolved, var) / f"fh{fh:03d}.json"
+    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
+    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
     if candidate.is_file():
         return _load_json_cached(candidate, _sidecar_cache)
     return None
 
 
-def _frame_has_cog(model: str, run: str, var: str, fh: int) -> bool:
-    return _resolve_val_cog(model, run, var, fh) is not None
+def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> bool:
+    return _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view) is not None
 
 
-def _load_grid_manifest(model: str, run: str, var: str) -> dict[str, Any] | None:
-    path = grid_manifest_path(DATA_ROOT, model, run, var)
+def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None) -> dict[str, Any] | None:
+    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
+    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var)
     if not path.is_file():
         return None
     loaded = _load_json_cached(path, _grid_manifest_cache)
@@ -2613,18 +2688,28 @@ def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int) -> Path | No
     resolved = _resolve_run(model, run)
     if resolved is None:
         return None
-    var_dir = _published_var_dir(model, resolved, var)
+    runtime_var = _runtime_var_id_for_request(model, var, None)
+    var_dir = _published_var_dir(model, resolved, runtime_var)
     if not var_dir.is_dir():
         return None
     return var_dir
 
 
-def _sample_cache_key(model: str, run: str, var: str, fh: int, row: int, col: int) -> str:
-    return f"{model}:{run}:{var}:{fh}:{row}:{col}"
+def _sample_cache_key(model: str, run: str, var: str, fh: int, row: int, col: int, ensemble_view: str | None = None) -> str:
+    view = _normalize_ensemble_view(ensemble_view) or "-"
+    return f"{model}:{run}:{var}:{view}:{fh}:{row}:{col}"
 
 
-def _sample_batch_cache_key(model: str, run: str, var: str, fh: int, points_hash: str) -> str:
-    return f"batch:{model}:{run}:{var}:{fh}:{points_hash}"
+def _sample_batch_cache_key(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    points_hash: str,
+    ensemble_view: str | None = None,
+) -> str:
+    view = _normalize_ensemble_view(ensemble_view) or "-"
+    return f"batch:{model}:{run}:{var}:{view}:{fh}:{points_hash}"
 
 
 def _sample_points_hash(points: list[SampleBatchPointIn]) -> str:
@@ -3032,6 +3117,7 @@ def get_bootstrap_v4(
     model: str | None = Query(None, description="Optional preferred model ID"),
     run: str = Query("latest", description="Preferred run ID or latest"),
     var: str | None = Query(None, description="Optional preferred variable ID"),
+    ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional preferred region preset ID"),
 ):
     started_at = time.perf_counter()
@@ -3052,6 +3138,7 @@ def get_bootstrap_v4(
             model=model,
             run=run,
             var=var,
+            ensemble_view=ensemble_view,
             region=region,
             capabilities_by_model=capabilities_by_model,
         )
@@ -3059,6 +3146,7 @@ def get_bootstrap_v4(
         selected_run = selection_state.get("selected_run")
         run_manifest = selection_state.get("run_manifest")
         selected_var = str(selection_state.get("selected_var") or "")
+        selected_ensemble_view = str(selection_state.get("selected_ensemble_view") or "")
         selected_region = str(selection_state.get("selected_region") or "conus")
         if selected_run:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": selected_run})
@@ -3117,9 +3205,23 @@ def get_bootstrap_v4(
                 frames_payload.append(
                     {
                         "fh": fh,
-                        "has_cog": _frame_has_cog(selected_model, selected_run, selected_var, fh),
+                        "has_cog": _frame_has_cog(
+                            selected_model,
+                            selected_run,
+                            selected_var,
+                            fh,
+                            ensemble_view=selected_ensemble_view,
+                        ),
                         "run": selected_run,
-                        "meta": {"meta": _resolve_sidecar(selected_model, selected_run, selected_var, fh)},
+                        "meta": {
+                            "meta": _resolve_sidecar(
+                                selected_model,
+                                selected_run,
+                                selected_var,
+                                fh,
+                                ensemble_view=selected_ensemble_view,
+                            )
+                        },
                     }
                 )
             otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames_payload)})
@@ -3134,6 +3236,7 @@ def get_bootstrap_v4(
             "model": selected_model,
             "run": selected_run or run,
             "variable": selected_var,
+            "ensemble_view": selected_ensemble_view,
             "region": selected_region,
         },
         "manifest": run_manifest,
@@ -3280,7 +3383,13 @@ def list_vars(model: str, run: str):
 
 
 @app.get("/api/v4/{model}/{run}/{var}/frames")
-def list_frames(request: Request, model: str, run: str, var: str):
+def list_frames(
+    request: Request,
+    model: str,
+    run: str,
+    var: str,
+    ensemble_view: str | None = Query(None, description="Optional ensemble view"),
+):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -3334,9 +3443,11 @@ def list_frames(request: Request, model: str, run: str, var: str):
             frames.append(
                 {
                     "fh": fh,
-                    "has_cog": _frame_has_cog(model, resolved, var, fh),
+                    "has_cog": _frame_has_cog(model, resolved, var, fh, ensemble_view=ensemble_view),
                     "run": resolved,
-                    "meta": {"meta": meta},
+                    "meta": {
+                        "meta": _resolve_sidecar(model, resolved, var, fh, ensemble_view=ensemble_view),
+                    },
                 }
             )
         otel_tracing.set_current_attributes({"cartosky.frame_count": len(frames)})
@@ -3369,7 +3480,13 @@ def list_frames(request: Request, model: str, run: str, var: str):
 
 
 @app.get("/api/v4/{model}/{run}/{var}/grid-manifest")
-def get_grid_manifest(request: Request, model: str, run: str, var: str):
+def get_grid_manifest(
+    request: Request,
+    model: str,
+    run: str,
+    var: str,
+    ensemble_view: str | None = Query(None, description="Optional ensemble view"),
+):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -3382,7 +3499,8 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
-    if not grid_supported(model, var):
+    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
+    if not grid_supported(model, runtime_var):
         return Response(status_code=404, content='{"error": "grid manifest not enabled"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
@@ -3390,14 +3508,17 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
         "grid_manifest.load",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
     ):
-        manifest = _load_grid_manifest(model, resolved, var)
+        manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
-    version_token = _grid_version_token(model, resolved, var)
+    version_token = _grid_version_token(model, resolved, runtime_var)
     build_started_at = time.perf_counter()
     payload = dict(manifest)
+    plugin = get_model(model)
+    canonical_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
+    payload["var"] = canonical_var
     lods = payload.get("lods")
     if isinstance(lods, list):
         next_lods: list[dict[str, Any]] = []
@@ -3416,7 +3537,7 @@ def get_grid_manifest(request: Request, model: str, run: str, var: str):
                     if not filename or not isinstance(fh, int):
                         continue
                     next_frame = dict(frame)
-                    next_frame["url"] = _grid_file_url(model, resolved, var, filename, version_token=version_token)
+                    next_frame["url"] = _grid_file_url(model, resolved, runtime_var, filename, version_token=version_token)
                     next_frames.append(next_frame)
             next_frames.sort(key=lambda item: int(item.get("fh", 0)))
             next_lod["frames"] = next_frames
@@ -3529,6 +3650,7 @@ def sample(
     model: str = Query(..., description="Model ID (e.g. hrrr)"),
     run: str = Query(..., description="Run ID (e.g. 20260217_20z or latest)"),
     var: str = Query(..., description="Variable ID (e.g. tmp2m)"),
+    ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     fh: int = Query(..., description="Forecast hour"),
     lat: float = Query(..., ge=-90, le=90, description="Latitude (WGS84)"),
     lon: float = Query(..., ge=-180, le=180, description="Longitude (WGS84)"),
@@ -3554,7 +3676,7 @@ def sample(
         )
 
     with otel_tracing.start_as_current_span("sample.resolve_cog") as _span:
-        val_cog = _resolve_val_cog(model, run, var, fh)
+        val_cog = _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view)
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
@@ -3563,7 +3685,7 @@ def sample(
             ds = _get_cached_dataset(val_cog)
             row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
             resolved_run = _resolve_run(model, run) or run
-            sidecar = _resolve_sidecar(model, run, var, fh)
+            sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view)
             units = sidecar.get("units", "") if sidecar else ""
             valid_time = sidecar.get("valid_time", "") if sidecar else ""
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved_run})
@@ -3583,7 +3705,7 @@ def sample(
             )
             return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
-        key = _sample_cache_key(model, resolved_run, var, fh, row, col)
+        key = _sample_cache_key(model, resolved_run, var, fh, row, col, ensemble_view)
         now = time.monotonic()
         inflight: _SampleInflight | None = None
         is_leader = False
@@ -3706,7 +3828,13 @@ def sample_batch(request: Request, body: SampleBatchIn):
         )
 
     with otel_tracing.start_as_current_span("sample_batch.resolve_cog"):
-        val_cog = _resolve_val_cog(body.model, body.run, body.variable, body.forecast_hour)
+        val_cog = _resolve_val_cog(
+            body.model,
+            body.run,
+            body.variable,
+            body.forecast_hour,
+            ensemble_view=body.ensemble_view,
+        )
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
@@ -3717,6 +3845,7 @@ def sample_batch(request: Request, body: SampleBatchIn):
         body.variable,
         body.forecast_hour,
         _sample_points_hash(body.points),
+        body.ensemble_view,
     )
     now = time.monotonic()
     inflight: _SampleInflight | None = None
@@ -3764,7 +3893,13 @@ def sample_batch(request: Request, body: SampleBatchIn):
     try:
         with otel_tracing.start_as_current_span("sample_batch.compute"):
             ds = _get_cached_dataset(val_cog)
-            sidecar = _resolve_sidecar(body.model, body.run, body.variable, body.forecast_hour)
+            sidecar = _resolve_sidecar(
+                body.model,
+                body.run,
+                body.variable,
+                body.forecast_hour,
+                ensemble_view=body.ensemble_view,
+            )
             units = sidecar.get("units", "") if sidecar else ""
             payload = {
                 "units": units,

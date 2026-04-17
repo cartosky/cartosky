@@ -114,6 +114,7 @@ def _build_contour_metadata_for_variable(
     dst_transform: Any,
     staging_dir: Path,
     fetch_ctx: FetchContext | None,
+    ensemble_view: str | None = None,
 ) -> tuple[dict[str, Any] | None, Path | None]:
     selectors = getattr(var_spec_model, "selectors", None)
     hints = getattr(selectors, "hints", {}) if selectors is not None else {}
@@ -152,6 +153,7 @@ def _build_contour_metadata_for_variable(
             contour_request = model_plugin.herbie_request(
                 product=contour_product,
                 var_key=contour_component,
+                ensemble_view=ensemble_view,
                 run_date=run_date,
                 fh=fh,
                 search_pattern=search_pattern,
@@ -458,6 +460,7 @@ def build_sidecar_json(
     value_downsample_factor: int = 1,
     quality: str = "full",
     quality_flags: list[str] | None = None,
+    ensemble_view: str | None = None,
     valid_time_override: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the sidecar metadata dict per the artifact contract.
@@ -501,6 +504,8 @@ def build_sidecar_json(
 
     if region:
         sidecar["region"] = region
+    if isinstance(ensemble_view, str) and ensemble_view.strip():
+        sidecar["ensemble_view"] = ensemble_view.strip().lower()
 
     if value_downsample_factor > 1:
         sidecar["hover_value_downsample_factor"] = int(value_downsample_factor)
@@ -847,6 +852,7 @@ def _ensure_products_ready(
     fh: int,
     var_key: str,
     required_products: list[str],
+    ensemble_view: str | None = None,
     readiness_cache: dict[str, bool] | None = None,
 ) -> None:
     run_discovery = model_plugin.run_discovery_config() if hasattr(model_plugin, "run_discovery_config") else {}
@@ -856,6 +862,7 @@ def _ensure_products_ready(
         request = model_plugin.herbie_request(
             product=product_name,
             var_key=var_key,
+            ensemble_view=ensemble_view,
             run_date=run_date,
             fh=fh,
         )
@@ -902,6 +909,7 @@ def build_frame(
     data_root: Path,
     product: str = "sfc",
     model_plugin: Any = None,
+    ensemble_view: str | None = None,
     fetch_ctx: FetchContext | None = None,
     readiness_cache: dict[str, bool] | None = None,
     log_fetch_cache_stats: bool = True,
@@ -1035,6 +1043,7 @@ def build_frame(
             fh=fh,
             var_key=var_key,
             required_products=[source_product],
+            ensemble_view=ensemble_view,
             readiness_cache=readiness_cache,
         )
         if getattr(var_spec_model, "derived", False):
@@ -1088,6 +1097,7 @@ def build_frame(
                     source_request = resolved_plugin.herbie_request(
                         product=source_product,
                         var_key=var_key,
+                        ensemble_view=ensemble_view,
                         run_date=run_date,
                         fh=fh,
                         search_pattern=search_pattern,
@@ -1217,6 +1227,7 @@ def build_frame(
             dst_transform=dst_transform,
             staging_dir=staging_dir,
             fetch_ctx=local_fetch_ctx,
+            ensemble_view=ensemble_view,
         )
 
         # --- Write sidecar JSON ---
@@ -1233,6 +1244,7 @@ def build_frame(
             value_downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
             quality=frame_quality,
             quality_flags=frame_quality_flags,
+            ensemble_view=ensemble_view,
         )
         _write_json_atomic(sidecar_path, sidecar)
 

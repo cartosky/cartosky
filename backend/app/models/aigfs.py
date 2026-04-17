@@ -65,6 +65,7 @@ class AIGFSPlugin(GFSPlugin):
         *,
         product: str | None = None,
         var_key: str | None = None,
+        ensemble_view: str | None = None,
         run_date=None,
         fh: int | None = None,
         search_pattern: str | None = None,
@@ -72,6 +73,7 @@ class AIGFSPlugin(GFSPlugin):
         base_request = super().herbie_request(
             product=product,
             var_key=var_key,
+            ensemble_view=ensemble_view,
             run_date=run_date,
             fh=fh,
             search_pattern=search_pattern,

@@ -15,6 +15,9 @@ export function buildPermalinkSearch(state: PermalinkState): string {
   if (state.var) {
     params.set("v", state.var);
   }
+  if (state.ensembleView) {
+    params.set("ev", state.ensembleView);
+  }
   if (Number.isFinite(state.fh) && Number(state.fh) >= 0) {
     params.set("fh", String(Math.round(Number(state.fh))));
   }

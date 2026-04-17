@@ -2,6 +2,7 @@ export type PermalinkState = {
   model?: string;
   run?: string;
   var?: string;
+  ensembleView?: string;
   fh?: number;
   region?: string;
   lat?: number;
@@ -48,6 +49,11 @@ export function readPermalink(): PermalinkState {
   const varKey = readStringParam(params, "v");
   if (varKey) {
     state.var = varKey;
+  }
+
+  const ensembleView = readStringParam(params, "ev");
+  if (ensembleView) {
+    state.ensembleView = ensembleView;
   }
 
   const region = readStringParam(params, "reg");

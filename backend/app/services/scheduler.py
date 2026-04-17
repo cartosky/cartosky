@@ -385,6 +385,7 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
         request = plugin.herbie_request(
             product=getattr(plugin, "product", "sfc"),
             var_key=probe_var_key,
+            ensemble_view=_var_default_ensemble_view(plugin, probe_var_key),
             run_date=run_dt,
             fh=probe_fh,
             search_pattern=search_pattern,
@@ -527,6 +528,27 @@ def _resolve_run_dt(run_arg: str | None, *, plugin: Any, probe_var: str | None) 
     return _resolve_latest_run_dt(plugin=plugin, probe_var=probe_var)
 
 
+def _var_default_ensemble_view(plugin: Any, var_id: str) -> str | None:
+    if hasattr(plugin, "default_ensemble_view"):
+        value = plugin.default_ensemble_view(plugin.normalize_var_id(var_id))
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    capabilities = getattr(plugin, "capabilities", None)
+    defaults = getattr(capabilities, "ui_defaults", {}) if capabilities is not None else {}
+    if isinstance(defaults, dict):
+        value = str(defaults.get("default_ensemble_view") or "").strip().lower()
+        if value:
+            return value
+    return None
+
+
+def _runtime_var_id(plugin: Any, var_id: str, ensemble_view: str | None = None) -> str:
+    normalized_var = plugin.normalize_var_id(var_id) if hasattr(plugin, "normalize_var_id") else str(var_id)
+    if hasattr(plugin, "resolve_runtime_var_id"):
+        return str(plugin.resolve_runtime_var_id(normalized_var, ensemble_view)).strip() or normalized_var
+    return normalized_var
+
+
 def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: int) -> list[tuple[str, int]]:
     targets: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
@@ -553,11 +575,15 @@ def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: i
 
 
 def _frame_sidecar_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
-    return data_root / "staging" / model / run_id / var_id / f"fh{fh:03d}.json"
+    plugin = MODEL_REGISTRY.get(model)
+    runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
+    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.json"
 
 
 def _frame_value_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
-    return data_root / "staging" / model / run_id / var_id / f"fh{fh:03d}.val.cog.tif"
+    plugin = MODEL_REGISTRY.get(model)
+    runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
+    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.val.cog.tif"
 
 
 def _frame_artifacts_exist(
@@ -702,6 +728,7 @@ def _component_precheck_available(
             request = plugin.herbie_request(
                 product=product,
                 var_key=var_key,
+                ensemble_view=_var_default_ensemble_view(plugin, var_key),
                 run_date=run_dt,
                 fh=int(fh),
                 search_pattern=str(pattern),
@@ -798,15 +825,18 @@ def _build_one(
     derive_component_warp_cache: bool = False,
 ) -> tuple[str, int, bool, int]:
     started_at = time.perf_counter()
+    ensemble_view = _var_default_ensemble_view(plugin, var_id)
+    runtime_var_id = _runtime_var_id(plugin, var_id, ensemble_view)
     result = build_frame(
         model=model_id,
         region=CANONICAL_COVERAGE,
-        var_id=var_id,
+        var_id=runtime_var_id,
         fh=fh,
         run_date=run_dt,
         data_root=data_root,
         product=getattr(plugin, "product", "sfc"),
         model_plugin=plugin,
+        ensemble_view=ensemble_view,
         fetch_ctx=fetch_ctx,
         readiness_cache=readiness_cache,
         log_fetch_cache_stats=log_fetch_cache_stats,
@@ -844,15 +874,16 @@ def _build_bundle(
     data_root: Path,
     plugin: Any,
 ) -> list[tuple[str, int, bool, int]]:
-    normalize = getattr(plugin, "normalize_var_id", None)
-    normalized_vars: list[str] = []
+    normalized_vars: list[tuple[str, str, str | None]] = []
     seen: set[str] = set()
     for var_id in var_ids:
-        normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
-        if normalized in seen:
+        normalized = plugin.normalize_var_id(var_id) if hasattr(plugin, "normalize_var_id") else str(var_id)
+        ensemble_view = _var_default_ensemble_view(plugin, normalized)
+        runtime_var_id = _runtime_var_id(plugin, normalized, ensemble_view)
+        if runtime_var_id in seen:
             continue
-        seen.add(normalized)
-        normalized_vars.append(normalized)
+        seen.add(runtime_var_id)
+        normalized_vars.append((normalized, runtime_var_id, ensemble_view))
 
     if not normalized_vars:
         return []
@@ -860,7 +891,7 @@ def _build_bundle(
     results, timings_ms = build_frame_bundle(
         model=model_id,
         region=CANONICAL_COVERAGE,
-        var_keys=normalized_vars,
+        var_keys=[runtime_var_id for _, runtime_var_id, _ in normalized_vars],
         fh=fh,
         run_date=run_dt,
         data_root=data_root,
@@ -869,8 +900,8 @@ def _build_bundle(
         include_timings=True,
     )
     return [
-        (var_key, fh, results.get(var_key) is not None, int(timings_ms.get(var_key, 0)))
-        for var_key in normalized_vars
+        (var_key, fh, results.get(runtime_var_id) is not None, int(timings_ms.get(runtime_var_id, 0)))
+        for var_key, runtime_var_id, _ensemble_view in normalized_vars
     ]
 
 
@@ -1255,6 +1286,9 @@ def _write_run_manifest(
             "available_frames": len(frames),
             "frames": sorted(frames, key=lambda item: item["fh"]),
         }
+        ensemble_view = _var_default_ensemble_view(plugin, var_id) if plugin is not None else None
+        if ensemble_view:
+            variables[var_id]["ensemble_view"] = ensemble_view
 
     payload = {
         "contract_version": "3.0",

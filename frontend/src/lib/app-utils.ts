@@ -63,6 +63,7 @@ export const MODEL_ORDER_BY_ID: Record<string, number> = {
   ecmwf: 4,
   aifs: 5,
   aigfs: 6,
+  gefs: 7,
   spc: 7,
 };
 
@@ -356,6 +357,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   ecmwf: { label: "ECMWF", group: "MODELS", order: 4 },
   aifs: { label: "AIFS", group: "MODELS", order: 5 },
   aigfs: { label: "AIGFS", group: "MODELS", order: 6 },
+  gefs: { label: "GEFS", group: "MODELS", order: 7 },
   mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 11 },
   spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 12 },

@@ -13,7 +13,7 @@ type ModelReference = {
   notes: string[];
 };
 
-const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs"] as const;
+const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs"] as const;
 const SPECIAL_LAYER_ORDER = ["spc", "nws_hazards", "mrms"] as const;
 
 const MODEL_REFERENCE: Record<string, ModelReference> = {

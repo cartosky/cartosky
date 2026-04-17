@@ -67,6 +67,12 @@ try:
 except ImportError as exc:
     logger.warning("AIGFS plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .gefs import GEFS_MODEL
+    MODEL_REGISTRY[GEFS_MODEL.id] = GEFS_MODEL
+except ImportError as exc:
+    logger.warning("GEFS plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)

@@ -23,6 +23,7 @@ export type AvailabilityFreshnessState = "live" | "delayed" | "stale" | "unavail
 export type CapabilityModelDefaults = Record<string, unknown> & {
   default_var_key?: string;
   default_run?: string;
+  default_ensemble_view?: string | null;
   default_render_substrate?: WeatherSubstrate | null;
   default_frame_selection?: ModelDefaultFrameSelection | null;
 };
@@ -49,6 +50,7 @@ export type CapabilityVariable = {
   constraints?: Record<string, unknown>;
   derived?: boolean;
   derive_strategy_id?: string | null;
+  ensemble?: Record<string, unknown>;
 };
 
 export type CapabilityModel = {
@@ -59,6 +61,7 @@ export type CapabilityModel = {
   defaults?: CapabilityModelDefaults;
   constraints?: CapabilityModelConstraints;
   run_discovery?: Record<string, unknown>;
+  ensemble?: Record<string, unknown>;
   variables: Record<string, CapabilityVariable>;
 };
 
@@ -96,6 +99,7 @@ export type BootstrapSelection = {
   model: string;
   run: string;
   variable: string;
+  ensemble_view?: string;
   region: string;
 };
 
@@ -464,6 +468,7 @@ export async function fetchBootstrap(params?: {
   model?: string;
   run?: string;
   variable?: string;
+  ensembleView?: string;
   region?: string;
   signal?: AbortSignal;
 }): Promise<BootstrapResponse> {
@@ -477,6 +482,9 @@ export async function fetchBootstrap(params?: {
   if (params?.variable) {
     query.set("var", params.variable);
   }
+  if (params?.ensembleView) {
+    query.set("ensemble_view", params.ensembleView);
+  }
   if (params?.region) {
     query.set("region", params.region);
   }
@@ -489,6 +497,7 @@ export async function fetchBootstrap(params?: {
       model: params?.model ?? null,
       run: params?.run ?? null,
       variable: params?.variable ?? null,
+      ensemble_view: params?.ensembleView ?? null,
       region: params?.region ?? null,
     },
   });
@@ -518,11 +527,16 @@ export async function fetchVars(model: string, run: string, options?: FetchOptio
 export async function fetchManifest(
   model: string,
   run: string,
+  ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<RunManifestResponse> {
   const runKey = run || "latest";
+  const query = new URLSearchParams();
+  if (ensembleView) {
+    query.set("ensemble_view", ensembleView);
+  }
   const payload = await fetchJson<unknown>(
-    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/manifest`,
+    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/manifest${query.toString() ? `?${query.toString()}` : ""}`,
     {
       ...options,
       diagnosticMetricName: options?.diagnosticMetricName ?? "manifest_fetch_duration",
@@ -543,11 +557,16 @@ export async function fetchFrames(
   model: string,
   run: string,
   varKey: string,
+  ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<FrameRow[]> {
   const runKey = run || "latest";
+  const query = new URLSearchParams();
+  if (ensembleView) {
+    query.set("ensemble_view", ensembleView);
+  }
   const response = await fetchJson<FrameRow[]>(
-    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/frames`,
+    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/frames${query.toString() ? `?${query.toString()}` : ""}`,
     {
       ...options,
       diagnosticMetricName: options?.diagnosticMetricName ?? "frames_fetch_duration",
@@ -583,12 +602,17 @@ export async function fetchGridManifest(
   model: string,
   run: string,
   varKey: string,
+  ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<GridManifestResponse | null> {
   const runKey = run || "latest";
+  const query = new URLSearchParams();
+  if (ensembleView) {
+    query.set("ensemble_view", ensembleView);
+  }
   try {
     const response = await fetchJson<GridManifestResponse>(
-      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest`,
+      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest${query.toString() ? `?${query.toString()}` : ""}`,
       {
         ...options,
         diagnosticMetricName: options?.diagnosticMetricName ?? "grid_manifest_fetch_duration",
@@ -635,6 +659,7 @@ export async function fetchSampleBatch(params: {
   model: string;
   run: string;
   variable: string;
+  ensembleView?: string | null;
   forecastHour: number;
   points: AnchorBatchPoint[];
   signal?: AbortSignal;
@@ -651,6 +676,7 @@ export async function fetchSampleBatch(params: {
       model: params.model,
       run: params.run,
       variable: params.variable,
+      ensemble_view: params.ensembleView ?? null,
       forecast_hour: params.forecastHour,
       points: params.points,
     }),
@@ -702,6 +728,7 @@ export async function fetchSample(params: {
   model: string;
   run: string;
   var: string;
+  ensembleView?: string | null;
   fh: number;
   lat: number;
   lon: number;
@@ -715,6 +742,9 @@ export async function fetchSample(params: {
     lat: String(params.lat),
     lon: String(params.lon),
   });
+  if (params.ensembleView) {
+    qs.set("ensemble_view", params.ensembleView);
+  }
   const startedAtMs = startNetworkTimer();
   const response = await fetch(`${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
   trackNetworkFetchDuration({

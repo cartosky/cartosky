@@ -23,7 +23,10 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
     constraints = getattr(capability, "constraints", None)
     constraints_payload = dict(constraints) if isinstance(constraints, dict) else {}
     var_key = str(getattr(capability, "var_key", ""))
-    return {
+    ensemble = getattr(capability, "ensemble", None)
+    ensemble_payload = dict(ensemble) if isinstance(ensemble, dict) else {}
+    ensemble_payload.pop("artifact_map", None)
+    payload = {
         "var_key": var_key,
         "display_name": str(getattr(capability, "name", "")),
         "kind": getattr(capability, "kind", None),
@@ -39,12 +42,22 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         "derived": bool(getattr(capability, "derived", False)),
         "derive_strategy_id": getattr(capability, "derive_strategy_id", None),
     }
+    if ensemble_payload:
+        payload["ensemble"] = ensemble_payload
+    return payload
 
 
 def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]:
     variable_catalog = getattr(capability, "variable_catalog", {}) or {}
     ordered_items = sorted(
-        variable_catalog.items(),
+        (
+            (var_key, var_capability)
+            for var_key, var_capability in variable_catalog.items()
+            if not bool(
+                isinstance(getattr(var_capability, "frontend", None), dict)
+                and getattr(var_capability, "frontend", {}).get("internal_only")
+            )
+        ),
         key=lambda item: (
             getattr(item[1], "order", None) is None,
             getattr(item[1], "order", 0) if getattr(item[1], "order", None) is not None else 0,
@@ -59,12 +72,13 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
     defaults = getattr(capability, "ui_defaults", None)
     constraints = getattr(capability, "ui_constraints", None)
     run_discovery = getattr(capability, "run_discovery", None)
+    ensemble = getattr(capability, "ensemble", None)
     defaults_payload = dict(defaults) if isinstance(defaults, dict) else {}
     default_var_key = str(defaults_payload.get("default_var_key") or "").strip()
     default_var_capability = variable_catalog.get(default_var_key) if isinstance(variable_catalog, dict) else None
     default_substrates = _render_substrates_for_variable(model_id, default_var_capability)
     defaults_payload["default_render_substrate"] = default_substrates[0] if default_substrates else "grid"
-    return {
+    payload = {
         "model_id": model_id,
         "name": str(getattr(capability, "name", model_id.upper())),
         "product": getattr(capability, "product", None),
@@ -74,3 +88,6 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
         "run_discovery": dict(run_discovery) if isinstance(run_discovery, dict) else {},
         "variables": variables_payload,
     }
+    if isinstance(ensemble, dict) and ensemble:
+        payload["ensemble"] = dict(ensemble)
+    return payload

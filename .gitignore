@@ -68,3 +68,4 @@ extract_colorbar.py
 /.playwright-mcp/
 /.opencode/
 /.claude/
+env_vars.sh

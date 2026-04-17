@@ -123,6 +123,7 @@ function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | nu
 
   switch (modelId) {
     case "aigfs":
+    case "gefs":
       return 384;
     case "aifs":
     case "ecmwf":
@@ -173,6 +174,24 @@ function nearestSortedNumber(values: number[], target: number): number | null {
     : Number(right);
 }
 
+function defaultEnsembleViewForVariable(
+  modelCapability: CapabilityModel | null | undefined,
+  varKey: string | null | undefined,
+): string {
+  const variableEntry = varKey ? modelCapability?.variables?.[varKey] : null;
+  const variableEnsemble = (variableEntry?.ensemble ?? {}) as Record<string, unknown>;
+  const modelEnsemble = (modelCapability?.ensemble ?? {}) as Record<string, unknown>;
+  const variableDefault = String(variableEnsemble.default_view ?? "").trim().toLowerCase();
+  if (variableDefault) {
+    return variableDefault;
+  }
+  return String(
+    modelCapability?.defaults?.default_ensemble_view
+    ?? modelEnsemble.default_view
+    ?? ""
+  ).trim().toLowerCase();
+}
+
 export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
@@ -218,6 +237,7 @@ export default function App() {
   const [run, setRun] = useState("latest");
   const [newRunNotice, setNewRunNotice] = useState<NewRunNoticeState | null>(null);
   const [variable, setVariable] = useState("");
+  const [ensembleView, setEnsembleView] = useState(initialPermalink.ensembleView?.trim() ?? "");
   const [visualVariable, setVisualVariable] = useState("");
   const [variableSwitchState, setVariableSwitchState] = useState<VariableSwitchState | null>(null);
   const [forecastHour, setForecastHour] = useState(Number.POSITIVE_INFINITY);
@@ -382,6 +402,23 @@ export default function App() {
     return { start, end };
   }, [selectedVariableConstraints.overlay_fade_out_zoom_start, selectedVariableConstraints.overlay_fade_out_zoom_end]);
 
+  useEffect(() => {
+    const nextDefault = defaultEnsembleViewForVariable(selectedModelCapability, variable);
+    if (!nextDefault) {
+      if (ensembleView) {
+        setEnsembleView("");
+      }
+      return;
+    }
+    const ensembleMeta = (selectedVariableCapability?.ensemble ?? {}) as Record<string, unknown>;
+    const supportedViews = Array.isArray(ensembleMeta.supported_views)
+      ? ensembleMeta.supported_views.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (!ensembleView || (supportedViews.length > 0 && !supportedViews.includes(ensembleView))) {
+      setEnsembleView(nextDefault);
+    }
+  }, [selectedModelCapability, selectedVariableCapability, variable, ensembleView]);
+
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
     return Array.from(new Set(hours)).sort((a, b) => a - b);
@@ -458,6 +495,7 @@ export default function App() {
         model: context.model,
         run: context.run,
         variable: context.variable,
+        ensembleView,
         forecastHour: requestedHour,
         points: context.points,
         signal: controller.signal,
@@ -529,7 +567,7 @@ export default function App() {
           startAnchorBatchRequest(pendingHour as number, latestContext);
         });
     },
-    []
+    [ensembleView]
   );
 
   const currentFrame = frameByHour.get(forecastHour) ?? frameRows[0] ?? null;
@@ -596,7 +634,7 @@ export default function App() {
   const selectionRunKey = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? lastResolvedGridRunRef.current ?? "pending-grid")
     : resolvedRunForRequests;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}`;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}:${ensembleView || "-"}`;
   const telemetryRunId = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
@@ -607,7 +645,7 @@ export default function App() {
       setResolvedGridLatestRunId(null);
       lastResolvedGridRunRef.current = null;
     }
-  }, [gridOnlySelection, model, run, variable]);
+  }, [gridOnlySelection, model, run, variable, ensembleView]);
 
   useEffect(() => {
     if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGrid) {
@@ -622,7 +660,7 @@ export default function App() {
         // order) that returns a valid manifest.
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, variable, { signal: controller.signal })
+            fetchGridManifest(model, candidateRun, variable, ensembleView, { signal: controller.signal })
               .then((manifest) => ({ candidateRun, manifest })),
           ),
         );
@@ -644,7 +682,7 @@ export default function App() {
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, { signal: controller.signal });
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, ensembleView, { signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
@@ -678,6 +716,7 @@ export default function App() {
     selectionSupportsGrid,
     telemetryRunId,
     variable,
+    ensembleView,
   ]);
 
   // Clock tick (30s) so the observed-source freshness badge re-evaluates as
@@ -761,7 +800,7 @@ export default function App() {
     const controller = new AbortController();
     void Promise.all(
       compositeLayerSpecs.map(async (layer) => {
-        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, { signal: controller.signal });
+        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, ensembleView, { signal: controller.signal });
         return [layer.id, manifest] as const;
       })
     ).then((entries) => {
@@ -1266,6 +1305,7 @@ export default function App() {
     model: hoverSamplingEnabled ? model : "",
     run: hoverSamplingEnabled ? hoverSampleRun : "",
     varId: hoverSamplingEnabled ? variable : "",
+    ensembleView: hoverSamplingEnabled ? ensembleView : "",
     fh: hoverSamplingEnabled ? hoverSampleHour : Number.NaN,
   });
   const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);
@@ -1585,6 +1625,7 @@ export default function App() {
       try {
         const requestedModel = initialPermalink.model?.trim();
         const requestedVariable = initialPermalink.var?.trim();
+        const requestedEnsembleView = initialPermalink.ensembleView?.trim().toLowerCase();
         const requestedRegion = initialPermalink.region?.trim();
         const requestedRun = initialPermalink.run?.trim();
 
@@ -1628,6 +1669,8 @@ export default function App() {
           : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? ""));
         setVariables(variableOptions);
         setVariable(nextVariable);
+        const nextEnsembleView = requestedEnsembleView || defaultEnsembleViewForVariable(modelCapability, nextVariable);
+        setEnsembleView(nextEnsembleView);
 
         setRegionPresets(regionPresetData);
         const regionIds = Object.keys(regionPresetData);
@@ -1718,7 +1761,7 @@ export default function App() {
           : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
-          fetchManifest(model, manifestRunKey, { signal: controller.signal }).catch(() => null),
+          fetchManifest(model, manifestRunKey, ensembleView, { signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
@@ -1731,7 +1774,7 @@ export default function App() {
           ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : nextRun)
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
-          manifestData = await fetchManifest(model, nextManifestRunKey, { signal: controller.signal }).catch(() => null);
+          manifestData = await fetchManifest(model, nextManifestRunKey, ensembleView, { signal: controller.signal }).catch(() => null);
           if (controller.signal.aborted || generation !== requestGenerationRef.current) {
             return;
           }
@@ -1768,7 +1811,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId]);
+  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView]);
 
   useEffect(() => {
     setFrameRows([]);
@@ -1840,7 +1883,7 @@ export default function App() {
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, variable, { signal: controller.signal });
+        const rows = await fetchFrames(model, framesRunKey, variable, ensembleView, { signal: controller.signal });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
           if (!current || current.toVariable !== variable) {
@@ -2102,7 +2145,7 @@ export default function App() {
             const manifestRunKey = gridOnlySelection && run === "latest"
               ? (resolvedGridLatestRunId ?? run)
               : run;
-            const manifestData = await fetchManifest(model, manifestRunKey, { signal: tickController.signal });
+            const manifestData = await fetchManifest(model, manifestRunKey, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -2135,7 +2178,7 @@ export default function App() {
               const gridRunKey = gridOnlySelection && run === "latest"
                 ? (resolvedGridLatestRunId ?? manifestRunKey)
                 : resolvedRunForRequests;
-              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, { signal: tickController.signal });
+              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, ensembleView, { signal: tickController.signal });
               if (cancelled || tickController?.signal.aborted) {
                 return;
               }
@@ -2171,7 +2214,7 @@ export default function App() {
           if (!framesRunKey) {
             return;
           }
-          const rows = await fetchFrames(model, framesRunKey, variable, { signal: tickController.signal });
+          const rows = await fetchFrames(model, framesRunKey, variable, ensembleView, { signal: tickController.signal });
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
@@ -2182,7 +2225,7 @@ export default function App() {
             const gridRunKey = gridOnlySelection && run === "latest"
               ? (resolvedGridLatestRunId ?? framesRunKey)
               : resolvedRunForRequests;
-            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, { signal: tickController.signal });
+            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -2218,7 +2261,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
+  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -3110,6 +3153,7 @@ export default function App() {
     model,
     run,
     variable,
+    ensembleView,
     resolvedForecastHourPermalink,
     region,
   });

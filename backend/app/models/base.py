@@ -76,6 +76,7 @@ class VariableCapability:
     constraints: dict[str, Any] = field(default_factory=dict)
     frontend: dict[str, Any] = field(default_factory=dict)
     render_substrates: list[str] = field(default_factory=list)
+    ensemble: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "selectors", normalize_selectors(self.selectors))
@@ -119,6 +120,7 @@ class ModelCapabilities:
     ui_defaults: dict[str, Any] = field(default_factory=dict)
     ui_constraints: dict[str, Any] = field(default_factory=dict)
     variable_catalog: dict[str, VariableCapability] = field(default_factory=dict)
+    ensemble: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for key, capability in self.variable_catalog.items():
@@ -186,10 +188,20 @@ class ModelPlugin(Protocol):
         *,
         product: str | None = None,
         var_key: str | None = None,
+        ensemble_view: str | None = None,
         run_date: datetime | None = None,
         fh: int | None = None,
         search_pattern: str | None = None,
     ) -> HerbieRequest:
+        ...
+
+    def default_ensemble_view(self, var_key: str) -> str | None:
+        ...
+
+    def supported_ensemble_views(self, var_key: str) -> list[str]:
+        ...
+
+    def resolve_runtime_var_id(self, var_id: str, ensemble_view: str | None = None) -> str:
         ...
 
     def search_patterns_for_var(
@@ -290,11 +302,12 @@ class BaseModelPlugin:
         *,
         product: str | None = None,
         var_key: str | None = None,
+        ensemble_view: str | None = None,
         run_date: datetime | None = None,
         fh: int | None = None,
         search_pattern: str | None = None,
     ) -> HerbieRequest:
-        del var_key, run_date, fh, search_pattern
+        del var_key, ensemble_view, run_date, fh, search_pattern
         herbie_kwargs: dict[str, Any] = {}
         priority_raw = self.run_discovery_config().get("source_priority")
         if isinstance(priority_raw, str):
@@ -326,6 +339,45 @@ class BaseModelPlugin:
             return []
         search_list = getattr(selectors, "search", [])
         return [str(pattern) for pattern in search_list if str(pattern).strip()]
+
+    def _ensemble_metadata(self, var_key: str) -> dict[str, Any]:
+        capability = self.get_var_capability(var_key)
+        if capability is None:
+            return {}
+        metadata = getattr(capability, "ensemble", None)
+        if isinstance(metadata, dict):
+            return metadata
+        return {}
+
+    def default_ensemble_view(self, var_key: str) -> str | None:
+        metadata = self._ensemble_metadata(var_key)
+        value = str(metadata.get("default_view") or "").strip().lower()
+        return value or None
+
+    def supported_ensemble_views(self, var_key: str) -> list[str]:
+        metadata = self._ensemble_metadata(var_key)
+        raw = metadata.get("supported_views")
+        if not isinstance(raw, (list, tuple)):
+            return []
+        views: list[str] = []
+        for item in raw:
+            normalized = str(item or "").strip().lower()
+            if normalized and normalized not in views:
+                views.append(normalized)
+        return views
+
+    def resolve_runtime_var_id(self, var_id: str, ensemble_view: str | None = None) -> str:
+        normalized_var = self.normalize_var_id(var_id)
+        metadata = self._ensemble_metadata(normalized_var)
+        artifact_map = metadata.get("artifact_map")
+        normalized_view = str(ensemble_view or "").strip().lower()
+        if not normalized_view:
+            normalized_view = self.default_ensemble_view(normalized_var) or ""
+        if isinstance(artifact_map, dict) and normalized_view:
+            resolved = str(artifact_map.get(normalized_view) or "").strip()
+            if resolved:
+                return resolved
+        return normalized_var
 
     def select_dataarray(self, ds: object, var_id: str) -> object:
         raise NotImplementedError("select_dataarray is not implemented for this model")

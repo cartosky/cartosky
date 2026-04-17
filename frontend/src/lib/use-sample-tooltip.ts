@@ -46,11 +46,12 @@ function cacheKey(
   model: string,
   run: string,
   varId: string,
+  ensembleView: string | null | undefined,
   fh: number,
   lat: number,
   lon: number
 ): string {
-  return `${model}/${run}/${varId}/${fh}/${roundCoord(lat)}/${roundCoord(lon)}`;
+  return `${model}/${run}/${varId}/${ensembleView || "-"}/${fh}/${roundCoord(lat)}/${roundCoord(lon)}`;
 }
 
 // ── Debounce interval (ms) ───────────────────────────────────────────
@@ -78,6 +79,7 @@ export type SampleContext = {
   model: string;
   run: string;
   varId: string;
+  ensembleView?: string | null;
   fh: number;
 };
 
@@ -114,7 +116,7 @@ export function useSampleTooltip(ctx: SampleContext) {
   const canSample = hasValidSampleContext(ctx);
 
   // Clear cache when model/run/var change
-  const ctxFingerprint = `${ctx.model}/${ctx.run}/${ctx.varId}`;
+  const ctxFingerprint = `${ctx.model}/${ctx.run}/${ctx.varId}/${ctx.ensembleView || "-"}`;
   useEffect(() => {
     if (ctxFingerprint !== prevCtxRef.current) {
       cacheRef.current.clear();
@@ -138,7 +140,7 @@ export function useSampleTooltip(ctx: SampleContext) {
         const gen = ++genRef.current;
         const roundedLat = roundCoord(lat);
         const roundedLon = roundCoord(lon);
-        const key = cacheKey(ctx.model, ctx.run, ctx.varId, ctx.fh, roundedLat, roundedLon);
+        const key = cacheKey(ctx.model, ctx.run, ctx.varId, ctx.ensembleView, ctx.fh, roundedLat, roundedLon);
 
         // Check LRU cache
         const cached = cacheRef.current.get(key);
@@ -160,6 +162,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           model: ctx.model,
           run: ctx.run,
           var: ctx.varId,
+          ensembleView: ctx.ensembleView,
           fh: ctx.fh,
           lat: roundedLat,
           lon: roundedLon,
@@ -184,7 +187,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           });
       }, DEBOUNCE_MS);
     },
-    [canSample, ctx.model, ctx.run, ctx.varId, ctx.fh]
+    [canSample, ctx.model, ctx.run, ctx.varId, ctx.ensembleView, ctx.fh]
   );
 
   const onHoverEnd = useCallback(() => {
