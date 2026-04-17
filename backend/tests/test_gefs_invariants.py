@@ -24,6 +24,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert GEFS_MODEL.normalize_var_id("sbcape") == "sbcape"
     assert GEFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
     assert GEFS_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert GEFS_MODEL.normalize_var_id("csnow") == "csnow__mean"
@@ -35,16 +36,19 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("sbcape") == "mean"
     assert GEFS_MODEL.default_ensemble_view("snowfall_total") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd10m") == "mean"
     assert GEFS_MODEL.default_ensemble_view("pwat") == "mean"
     assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("sbcape") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("snowfall_total") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("pwat") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("sbcape", "mean") == "sbcape__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("snowfall_total", "mean") == "snowfall_total__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("pwat", "mean") == "pwat__mean"
@@ -54,6 +58,11 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert request.model == "gefs"
     assert request.product == "atmos.5"
     assert request.herbie_kwargs["member"] == "mean"
+
+    sbcape_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="sbcape", ensemble_view="mean")
+    assert sbcape_request.model == "gefs"
+    assert sbcape_request.product == "atmos.5"
+    assert sbcape_request.herbie_kwargs["member"] == "mean"
 
     snowfall_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="snowfall_total", ensemble_view="mean")
     assert snowfall_request.model == "gefs"
@@ -85,7 +94,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"precip_total", "pwat", "snowfall_total", "tmp2m", "wspd10m"}
+    assert buildable_var_keys == {"precip_total", "pwat", "sbcape", "snowfall_total", "tmp2m", "wspd10m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
@@ -104,6 +113,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "pwat__mean" not in payload["variables"]
     assert "tmp2m__mean" not in payload["variables"]
+    assert "sbcape__mean" not in payload["variables"]
     assert "snowfall_total__mean" not in payload["variables"]
     assert "wspd10m__mean" not in payload["variables"]
     assert "precip_total__mean" not in payload["variables"]
@@ -115,6 +125,17 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    sbcape = payload["variables"]["sbcape"]
+    assert sbcape["var_key"] == "sbcape"
+    assert sbcape["display_name"] == "Surface-Based CAPE (Mean)"
+    assert sbcape["buildable"] is True
+    assert sbcape["derived"] is False
+    assert sbcape["color_map_id"] == "mlcape"
+    assert sbcape["default_fh"] == 0
+    assert sbcape["group"] == "Instability"
+    assert sbcape["ensemble"]["default_view"] == "mean"
+    assert sbcape["ensemble"]["supported_views"] == ["mean"]
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["var_key"] == "snowfall_total"
@@ -166,11 +187,13 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "sbcape", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "snowfall_total", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd10m", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "pwat", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("gefs", "sbcape", "mean") == "sbcape__mean"
     assert _runtime_var_id_for_request("gefs", "snowfall_total", "mean") == "snowfall_total__mean"
     assert _runtime_var_id_for_request("gefs", "wspd10m", "mean") == "wspd10m__mean"
     assert _runtime_var_id_for_request("gefs", "pwat", "mean") == "pwat__mean"
@@ -186,3 +209,8 @@ def test_gefs_runtime_resolution_helpers() -> None:
 def test_gefs_precip_apcp_selector_matches_live_inventory_shape() -> None:
     pattern = GEFS_MODEL.get_var("apcp_step__mean").selectors.search[0]
     assert re.search(pattern, ":APCP:surface:0-6 hour acc fcst:ens mean:") is not None
+
+
+def test_gefs_sbcape_selector_matches_live_inventory_shape() -> None:
+    pattern = GEFS_MODEL.get_var("sbcape__mean").selectors.search[0]
+    assert re.search(pattern, ":CAPE:180-0 mb above ground:6 hour fcst:ens mean") is not None
