@@ -3766,7 +3766,12 @@ def _derive_precip_total_cumulative(
             scale_divisor=0.03937007874015748,
         )
         if prior is not None:
-            prior_data, prior_crs, prior_transform = prior
+            unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
+            if unpacked_prior is None:
+                prior = None
+            else:
+                prior_data, prior_crs, prior_transform, _ = unpacked_prior
+        if prior is not None:
             active_step_fhs = [int(step_fhs[-1])]
             reused_prev_cumulative = True
             base_fh = prev_fh
@@ -4100,8 +4105,15 @@ def _derive_snowfall_total_10to1_cumulative(
             scale_divisor=0.03937007874015748,
         )
         if prior_snowfall is not None and prior_precip is not None:
-            prior_snowfall_data, prior_snowfall_crs, prior_snowfall_transform = prior_snowfall
-            prior_precip_data, prior_precip_crs, prior_precip_transform = prior_precip
+            unpacked_prior_snowfall = _unpack_kuchera_cumulative_cache_entry(prior_snowfall)
+            unpacked_prior_precip = _unpack_kuchera_cumulative_cache_entry(prior_precip)
+            if unpacked_prior_snowfall is None or unpacked_prior_precip is None:
+                prior_snowfall = None
+                prior_precip = None
+            else:
+                prior_snowfall_data, prior_snowfall_crs, prior_snowfall_transform, _ = unpacked_prior_snowfall
+                prior_precip_data, prior_precip_crs, prior_precip_transform, _ = unpacked_prior_precip
+        if prior_snowfall is not None and prior_precip is not None:
             same_shape = prior_snowfall_data.shape == prior_precip_data.shape
             same_crs = prior_snowfall_crs == prior_precip_crs
             same_transform = prior_snowfall_transform == prior_precip_transform
@@ -4625,7 +4637,10 @@ def _derive_snowfall_kuchera_total_cumulative(
         )
         if prior_precip is None:
             return None
-        prior_precip_data, prior_precip_crs, prior_precip_transform = prior_precip
+        unpacked_prior_precip = _unpack_kuchera_cumulative_cache_entry(prior_precip)
+        if unpacked_prior_precip is None:
+            return None
+        prior_precip_data, prior_precip_crs, prior_precip_transform, _ = unpacked_prior_precip
         if reference_data is not None:
             same_shape = prior_precip_data.shape == reference_data.shape
             same_crs = prior_precip_crs == reference_crs

@@ -1146,8 +1146,8 @@ def test_incremental_overlap_apcp_uses_seeded_prior_exact_window(monkeypatch, ca
         del model_id, run_date, ctx, grid_cache_key
         if int(fh) == 4:
             if str(var_key) == "precip_total":
-                return prior_precip_fh4, crs, transform
-            return fh4_internal, crs, transform
+                return prior_precip_fh4, crs, transform, {"coverage_start_fh": 0}
+            return fh4_internal, crs, transform, {"coverage_start_fh": 0}
         return None
 
     monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _prior_loader)

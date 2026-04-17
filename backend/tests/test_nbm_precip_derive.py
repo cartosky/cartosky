@@ -155,7 +155,7 @@ def test_precip_total_incremental_reuses_prior_cumulative_for_gfs_late_step(monk
     def _fake_prior_loader(*, model_id, run_date, var_key, fh, ctx, grid_cache_key, scale_divisor=0.03937007874015748):
         del model_id, run_date, ctx, grid_cache_key, scale_divisor
         if str(var_key) == "precip_total" and int(fh) == 3:
-            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform
+            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform, {"coverage_start_fh": 0}
         return None
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)

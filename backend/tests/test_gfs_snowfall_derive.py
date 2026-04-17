@@ -20,6 +20,19 @@ class _FakePlugin:
     def normalize_var_id(self, var_key: str) -> str:
         return var_key
 
+    def search_patterns_for_var(self, *, var_key: str, fh: int, product: str, var_spec=None):
+        del fh, product, var_spec
+        resolved = self.get_var(var_key)
+        selectors = getattr(resolved, "selectors", None)
+        search = getattr(selectors, "search", None)
+        if not search:
+            return []
+        return [str(pattern) for pattern in search if str(pattern).strip()]
+
+    def herbie_request(self, *, product: str, var_key: str, run_date, fh: int, search_pattern: str):
+        del var_key, run_date, fh, search_pattern
+        return SimpleNamespace(product=product, herbie_kwargs=None)
+
     def get_var_capability(self, var_key: str):
         del var_key
         return None
@@ -308,9 +321,9 @@ def test_snowfall_derive_reuses_prior_cumulative_for_final_gfs_step(monkeypatch,
         if int(fh) != 3:
             return None
         if str(var_key) == "snowfall_total":
-            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform
+            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform, {"coverage_start_fh": 0}
         if str(var_key) == "precip_total":
-            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform
+            return np.full((2, 2), 3.0, dtype=np.float32), crs, transform, {"coverage_start_fh": 0}
         return None
 
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
