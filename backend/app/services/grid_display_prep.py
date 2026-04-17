@@ -19,6 +19,12 @@ class GridDisplayPrepConfig:
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
+    ("gefs", "snowfall_total__mean"): GridDisplayPrepConfig(
+        id="gefs_snowfall_total_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+    ),
     ("gefs", "precip_total__mean"): GridDisplayPrepConfig(
         id="gefs_precip_total_display_v1",
         upscale_factor=3,

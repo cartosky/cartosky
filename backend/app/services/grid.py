@@ -202,6 +202,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "mph",
     },
+    ("gefs", "snowfall_total__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
     ("gefs", "pwat__mean"): {
         "scale": 0.01,
         "offset": 0.0,
