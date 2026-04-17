@@ -1864,7 +1864,7 @@ export default function App() {
             };
           });
           setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey));
-          setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
+          setLoadedFramesKey(selectionKey);
           const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) =>
             resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
@@ -1935,7 +1935,7 @@ export default function App() {
           mergedRows = result;
           return result;
         });
-        setLoadedFramesKey(`${model}:${resolvedRunForRequests}:${variable}`);
+        setLoadedFramesKey(selectionKey);
         // Use the merged frame set so resolveForecastHour sees ALL expected
         // hours (including manifest-only rows), not just COG-ready ones.
         // Note: React processes functional updaters synchronously within the
