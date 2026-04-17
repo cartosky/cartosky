@@ -29,6 +29,10 @@ const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
   ["snowfall_total", 0.1],
   ["pwat", 0.05],
 ]);
+const SUPPORT_COVERAGE_THRESHOLD_DISABLED_COLOR_MAP_IDS = new Set<string>([
+  "precip_total",
+  "snowfall_total",
+]);
 
 export type GridFrameVisiblePayload = {
   frameHour: number;
@@ -439,6 +443,13 @@ function categoricalNearestForManifest(manifest: GridManifestResponse | null): b
 }
 
 function supportCoverageThresholdForManifest(manifest: GridManifestResponse | null): number {
+  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
+  // Accumulated precip/snow already use transparent_below_min to fade weak edges.
+  // A second support-coverage rejection step creates peppered holes along some
+  // low-end contours, so disable that extra pruning for these fields.
+  if (SUPPORT_COVERAGE_THRESHOLD_DISABLED_COLOR_MAP_IDS.has(colorMapId)) {
+    return 0;
+  }
   const threshold = Number(manifest?.display_prep?.support_coverage_threshold);
   if (Number.isFinite(threshold)) {
     return Math.max(0, Math.min(1, threshold));

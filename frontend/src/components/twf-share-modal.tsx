@@ -80,6 +80,9 @@ const insetCardClass =
 const secondaryButtonClass =
   "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12]";
 
+const primaryButtonClass =
+  "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/30 bg-[linear-gradient(135deg,#102438_0%,#1a4f68_52%,#6ab7d4_100%)] px-4 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(17,68,92,0.34)] transition-all hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100";
+
 const fieldClass =
   "h-8 w-full rounded-md border border-white/[0.05] bg-black/10 px-2 text-xs text-white outline-none transition-colors focus:border-emerald-300/28 focus:bg-black/14";
 
@@ -334,6 +337,7 @@ export function TwfShareModal({
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [screenshotKey, setScreenshotKey] = useState<string | null>(null);
   const [includeScreenshotInPost, setIncludeScreenshotInPost] = useState(false);
+  const [hasAttemptedAutoScreenshot, setHasAttemptedAutoScreenshot] = useState(false);
   const [showDestinationEditor, setShowDestinationEditor] = useState(false);
   const [showSummaryEditor, setShowSummaryEditor] = useState(false);
 
@@ -387,27 +391,8 @@ export function TwfShareModal({
     const candidate = (hasExpandedMessageEditor ? content : defaultContent).trim();
     return candidate || defaultContent;
   }, [content, defaultContent, hasExpandedMessageEditor]);
-  const screenshotStepLabel = useMemo(() => {
-    if (screenshotBusy || screenshotUploadBusy) {
-      return screenshotStatus;
-    }
-    if (screenshotUrl && includeScreenshotInPost) {
-      return "Will be included in your post.";
-    }
-    if (screenshotUrl && !includeScreenshotInPost) {
-      return "Ready, but currently excluded from the post.";
-    }
-    if (screenshotBlobUrl) {
-      return "Screenshot generated successfully. It will be included automatically.";
-    }
-    return "Included by default, or prepare and preview one now.";
-  }, [includeScreenshotInPost, screenshotBlobUrl, screenshotBusy, screenshotStatus, screenshotUploadBusy, screenshotUrl]);
-  const destinationStepLabel = useMemo(() => {
-    if (shareMode === "new") {
-      return `New topic in ${selectedForumLabel}`;
-    }
-    return `Replying in ${selectedForumLabel}`;
-  }, [selectedForumLabel, shareMode]);
+  const twfActionLabel = useMemo(() => (shareMode === "new" ? "Create topic on TWF" : "Share to TWF"), [shareMode]);
+  const sharePreviewDetail = useMemo(() => payload.detailsSummary?.trim() || TWF_PERMALINK_LABEL, [payload.detailsSummary]);
 
   useEffect(() => {
     if (!open) {
@@ -444,6 +429,7 @@ export function TwfShareModal({
     setScreenshotUrl(null);
     setScreenshotKey(null);
     setIncludeScreenshotInPost(true);
+    setHasAttemptedAutoScreenshot(false);
     setShowDestinationEditor(false);
     setShowSummaryEditor(false);
     setScreenshotBlobUrl((previous) => {
@@ -493,6 +479,24 @@ export function TwfShareModal({
       document.body.style.overflow = previousOverflow;
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open || hasAttemptedAutoScreenshot || !canPrepareScreenshot) {
+      return;
+    }
+    if (screenshotBusy || screenshotUploadBusy || screenshotBlobUrl) {
+      return;
+    }
+    setHasAttemptedAutoScreenshot(true);
+    void generateScreenshot();
+  }, [
+    canPrepareScreenshot,
+    hasAttemptedAutoScreenshot,
+    open,
+    screenshotBlobUrl,
+    screenshotBusy,
+    screenshotUploadBusy,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -781,9 +785,9 @@ export function TwfShareModal({
   };
 
   const handleCopy = async (kind: "link" | "summary") => {
-    const text = kind === "link" ? payload.permalink : payload.summary;
+    const text = kind === "link" ? payload.permalink : currentSummaryPreview;
     const ok = await writeClipboard(text);
-    setClipboardStatus(ok ? `${kind === "link" ? "Link" : "Summary"} copied` : "Clipboard unavailable");
+    setClipboardStatus(ok ? `${kind === "link" ? "Link" : "Share text"} copied` : "Clipboard unavailable");
   };
 
   const handleSubmitPost = async () => {
@@ -918,8 +922,11 @@ export function TwfShareModal({
       >
         <div className="flex shrink-0 items-center justify-between px-4 py-3.5">
           <div>
-            <div className="text-sm font-semibold tracking-[0.01em] text-white">Share</div>
-            <div className="text-xs text-white/68">Copy link or summary, generate a screenshot, or post to TWF.</div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-200/72">Share</div>
+            <div className="mt-1 text-lg font-semibold tracking-[-0.02em] text-white sm:text-xl">Share this view</div>
+            <div className="mt-1 max-w-xl text-xs text-white/68 sm:text-sm">
+              Package the exact map you are looking at, then post it to TWF or grab a clean link and share text for elsewhere.
+            </div>
           </div>
           <button
             type="button"
@@ -932,40 +939,162 @@ export function TwfShareModal({
         </div>
 
         <div className="legend-scroll min-h-0 space-y-4 overflow-y-auto px-4 py-4">
-          <div className={`${sectionCardClass} p-3 sm:p-4`}>
-            <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/65">
-              Post to The Weather Forums
+          <div className={`${sectionCardClass} overflow-hidden p-3 sm:p-4`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/14 bg-cyan-300/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/82">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-200/80" />
+                  Recommended for TWF posts
+                </div>
+                <div className="mt-3 text-lg font-semibold tracking-[-0.02em] text-white">Preview what you are about to share</div>
+                <div className="mt-1 max-w-2xl text-sm text-white/64">
+                  The screenshot is prepared automatically when possible so you can confirm the exact map before posting.
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handlePrepareScreenshot();
+                  }}
+                  disabled={!canPrepareScreenshot || screenshotBusy || screenshotUploadBusy}
+                  className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
+                >
+                  {screenshotBusy || screenshotUploadBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Image className="h-3.5 w-3.5" />
+                  )}
+                  {screenshotBlobUrl ? "Refresh preview" : "Prepare preview"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadScreenshot}
+                  disabled={!screenshotBlobUrl || screenshotBusy}
+                  className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </button>
+              </div>
             </div>
 
-            {statusLoading ? (
-              <div className="flex items-center gap-2 text-sm text-white/70">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Checking TWF connection...
+            <div className="mt-4 overflow-hidden rounded-[1.35rem] border border-white/8 bg-[#081120] shadow-[0_22px_56px_rgba(0,0,0,0.28)]">
+              {screenshotBlobUrl ? (
+                <img
+                  src={screenshotBlobUrl}
+                  alt="Screenshot preview"
+                  className="max-h-[42dvh] w-full object-contain sm:max-h-[48dvh]"
+                />
+              ) : (
+                <div className="flex min-h-[260px] items-center justify-center bg-[radial-gradient(circle_at_top,rgba(103,232,249,0.12),transparent_0_32%),linear-gradient(180deg,rgba(7,17,31,0.95),rgba(9,20,36,0.98))] px-6 py-10 text-center">
+                  <div className="max-w-sm">
+                    {screenshotBusy ? (
+                      <>
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-cyan-200/15 bg-cyan-300/10 text-cyan-100">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        </div>
+                        <div className="mt-4 text-base font-semibold text-white">Preparing your screenshot</div>
+                        <div className="mt-2 text-sm text-white/60">
+                          Pulling together the current map view so you can share it with confidence.
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-white/70">
+                          <Image className="h-5 w-5" />
+                        </div>
+                        <div className="mt-4 text-base font-semibold text-white">Preview not ready yet</div>
+                        <div className="mt-2 text-sm text-white/60">
+                          You can still copy the share text and link now, or prepare a screenshot before posting to TWF.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/50">Share asset</div>
+                <div className="mt-1 text-sm text-white">{screenshotStatus}</div>
               </div>
-            ) : twfStatus.linked !== true ? (
-              <div className="space-y-3">
+              <label className="flex items-center gap-2 rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-white/78 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <input
+                  type="checkbox"
+                  checked={includeScreenshotInPost}
+                  onChange={(event) => setIncludeScreenshotInPost(event.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 bg-black/30 text-cyan-300 focus:ring-cyan-300/40"
+                />
+                <span>Include screenshot in TWF post</span>
+              </label>
+            </div>
+
+            {screenshotUrl ? (
+              <div className="mt-3 space-y-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-3">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-50/92">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Screenshot uploaded
+                </div>
+                <div className="text-sm text-emerald-50/90">This image is ready to be attached when you share to TWF.</div>
+                {screenshotKey ? <div className="text-[11px] text-emerald-100/76">Upload complete</div> : null}
+              </div>
+            ) : null}
+          </div>
+
+          {screenshotError ? (
+            <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+              {screenshotError}
+            </div>
+          ) : null}
+          {screenshotUploadError ? (
+            <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+              {screenshotUploadError}
+            </div>
+          ) : null}
+
+          <div className={`${sectionCardClass} p-3 sm:p-4`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/52">Primary destination</div>
+                <div className="mt-2 text-lg font-semibold tracking-[-0.02em] text-white">Post to The Weather Forums</div>
+                <div className="mt-1 max-w-2xl text-sm text-white/64">
+                  TWF stays front and center for beta, while the share text and permalink remain ready for other destinations.
+                </div>
+              </div>
+              {statusLoading ? (
+                <div className="flex items-center gap-2 text-sm text-white/70">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking TWF connection...
+                </div>
+              ) : twfStatus.linked === true ? (
+                <div className="rounded-full border border-emerald-300/16 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-50/90">
+                  Connected as {twfStatus.display_name}
+                </div>
+              ) : null}
+            </div>
+
+            {twfStatus.linked !== true ? (
+              <div className="mt-4 space-y-3 rounded-[1.1rem] bg-black/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                 <div className="text-sm text-white/70">
-                  Connect your TWF account to post directly. You can still copy the permalink and summary above.
+                  Connect your TWF account to post directly from CartoSky. You can still copy the link and share text below.
                 </div>
                 <div className="flex items-center gap-2">
-                  <a
-                    href={`${API_ORIGIN}/auth/twf/start`}
-                    className="inline-flex h-8 items-center rounded-md border border-emerald-300/30 bg-[linear-gradient(to_top_right,#1f342f_0%,#526d5c_100%)] px-2.5 text-xs font-semibold text-emerald-50 shadow-[0_10px_22px_rgba(22,39,34,0.35)] transition-all hover:brightness-110"
-                  >
+                  <a href={`${API_ORIGIN}/auth/twf/start`} className={primaryButtonClass}>
                     Connect TWF
                   </a>
                   {statusError ? <span className="text-xs text-red-200">{statusError}</span> : null}
                 </div>
               </div>
             ) : submitSuccess || submitTopicSuccess ? (
-              <div className="space-y-3">
+              <div className="mt-4 space-y-3 rounded-[1.1rem] bg-black/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                 <div className="flex items-center gap-2 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-50">
                   <CheckCircle2 className="h-4 w-4" />
                   {submitTopicSuccess ? "Topic created successfully." : "Posted successfully."}
                 </div>
                 <div className="text-xs text-white/70">
-                  {submitTopicSuccess ? "Created topic:" : "Posted to:"}{" "}
-                  <span className="text-white">{submitTopicTitle ?? "Selected topic"}</span>
+                  {submitTopicSuccess ? "Created topic:" : "Posted to:"} <span className="text-white">{submitTopicTitle ?? "Selected topic"}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <a
@@ -977,347 +1106,243 @@ export function TwfShareModal({
                     <ExternalLink className="h-3.5 w-3.5" />
                     {submitTopicSuccess ? "Open topic" : "Open post"}
                   </a>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className={secondaryButtonClass}
-                  >
+                  <button type="button" onClick={onClose} className={secondaryButtonClass}>
                     Close
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="rounded-[20px] bg-black/10 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-xl sm:p-3">
-                  <div className="space-y-2.5">
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-400/14 text-[11px] font-semibold text-emerald-100 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.18)]">
-                            1
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/48">Where to post</div>
-                            <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
-                            <div className="mt-1 text-xs text-white/64">{destinationStepLabel}</div>
+              <div className="mt-4 rounded-[1.25rem] bg-black/10 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-xl sm:p-4">
+                <div className="space-y-3">
+                  <div className={`${insetCardClass} px-3 py-3`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/48">Destination</div>
+                        <div className="mt-1 text-sm text-white">{postingTargetSummary}</div>
+                        <div className="mt-1 text-xs text-white/62">
+                          {shareMode === "new" ? `Creating a new topic in ${selectedForumLabel}` : `Replying in ${selectedForumLabel}`}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowDestinationEditor((current) => !current)}
+                        className={`${secondaryButtonClass} shrink-0`}
+                      >
+                        {showDestinationEditor ? "Done" : "Edit"}
+                      </button>
+                    </div>
+                    {showDestinationEditor ? (
+                      <div className="mt-3 grid gap-2 pt-3">
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Share mode</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShareMode("existing")}
+                              className={[
+                                "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                shareMode === "existing"
+                                  ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                  : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
+                              ].join(" ")}
+                            >
+                              Existing topic
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShareMode("new")}
+                              className={[
+                                "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                shareMode === "new"
+                                  ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                  : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
+                              ].join(" ")}
+                            >
+                              New topic
+                            </button>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowDestinationEditor((current) => !current)}
-                          className={`${secondaryButtonClass} shrink-0`}
-                        >
-                          {showDestinationEditor ? "Done" : "Edit"}
-                        </button>
-                      </div>
-                      {showDestinationEditor ? (
-                        <div className="mt-3 grid gap-2 pt-3">
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Share mode</div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setShareMode("existing")}
-                                className={[
-                                  "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
-                                  shareMode === "existing"
-                                    ? "bg-emerald-400/18 text-emerald-50 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.22)]"
-                                    : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
-                                ].join(" ")}
-                              >
-                                Existing topic
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setShareMode("new")}
-                                className={[
-                                  "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
-                                  shareMode === "new"
-                                    ? "bg-emerald-400/18 text-emerald-50 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.22)]"
-                                    : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
-                                ].join(" ")}
-                              >
-                                New topic
-                              </button>
-                            </div>
-                          </div>
 
-                          <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Choose forum</div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {QUICK_FORUMS.map((forum) => (
-                                <button
-                                  key={forum.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedForumId(forum.id);
-                                    setShowOtherForums(false);
-                                  }}
-                                  className={[
-                                    "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
-                                    selectedForumId === forum.id && !showOtherForums
-                                      ? "bg-emerald-400/18 text-emerald-50 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.22)]"
-                                      : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
-                                  ].join(" ")}
-                                >
-                                  {forum.label}
-                                </button>
-                              ))}
+                        <div>
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Choose forum</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {QUICK_FORUMS.map((forum) => (
                               <button
+                                key={forum.id}
                                 type="button"
-                                onClick={() => setShowOtherForums((current) => !current)}
+                                onClick={() => {
+                                  setSelectedForumId(forum.id);
+                                  setShowOtherForums(false);
+                                }}
                                 className={[
                                   "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
-                                  showOtherForums
-                                    ? "bg-emerald-400/18 text-emerald-50 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.22)]"
+                                  selectedForumId === forum.id && !showOtherForums
+                                    ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                     : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
                                 ].join(" ")}
                               >
-                                Other forum...
+                                {forum.label}
                               </button>
-                            </div>
-                            {showOtherForums ? (
-                              <div className="mt-2 space-y-1">
-                                {forumsLoading ? (
-                                  <div className="text-xs text-white/65">Loading forums...</div>
-                                ) : forums.length > 0 ? (
-                                  <select
-                                    value={String(selectedForumId)}
-                                    onChange={(event) => setSelectedForumId(Number(event.target.value))}
-                                    className={fieldClass}
-                                  >
-                                    {forums.map((forum) => (
-                                      <option key={forum.id} value={String(forum.id)}>
-                                        {(forum.path ?? forum.name) + ` (ID ${forum.id})`}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <div className="text-xs text-white/65">No accessible forums found.</div>
-                                )}
-                                {forumsError ? <div className="text-xs text-red-200">{forumsError}</div> : null}
-                              </div>
-                            ) : null}
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setShowOtherForums((current) => !current)}
+                              className={[
+                                "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                showOtherForums
+                                  ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                  : "bg-white/[0.07] text-white/80 hover:bg-white/[0.11]",
+                              ].join(" ")}
+                            >
+                              Other forum...
+                            </button>
                           </div>
-
-                          {shareMode === "existing" ? (
-                            <div>
-                              <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Topic</div>
-                              {topicsLoading ? (
-                                <div className="flex items-center gap-2 text-xs text-white/70">
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  Loading topics...
-                                </div>
-                              ) : topics.length > 0 ? (
+                          {showOtherForums ? (
+                            <div className="mt-2 space-y-1">
+                              {forumsLoading ? (
+                                <div className="text-xs text-white/65">Loading forums...</div>
+                              ) : forums.length > 0 ? (
                                 <select
-                                  value={selectedTopicId !== null ? String(selectedTopicId) : ""}
-                                  onChange={(event) => setSelectedTopicId(Number(event.target.value))}
+                                  value={String(selectedForumId)}
+                                  onChange={(event) => setSelectedForumId(Number(event.target.value))}
                                   className={fieldClass}
                                 >
-                                  {topics.map((topic) => (
-                                    <option key={topic.id} value={String(topic.id)}>
-                                      {(topic.pinned ? "[PIN] " : "") + topic.title}
+                                  {forums.map((forum) => (
+                                    <option key={forum.id} value={String(forum.id)}>
+                                      {(forum.path ?? forum.name) + ` (ID ${forum.id})`}
                                     </option>
                                   ))}
                                 </select>
                               ) : (
-                                <div className="text-xs text-white/65">No topics loaded for this forum.</div>
+                                <div className="text-xs text-white/65">No accessible forums found.</div>
                               )}
-                              {topicsError ? <div className="mt-1 text-xs text-red-200">{topicsError}</div> : null}
+                              {forumsError ? <div className="text-xs text-red-200">{forumsError}</div> : null}
                             </div>
-                          ) : (
-                            <div>
-                              <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Topic title</div>
-                              <input
-                                value={newTopicTitle}
-                                onChange={(event) => setNewTopicTitle(event.target.value)}
-                                maxLength={255}
-                                placeholder="Enter a topic title"
-                                className={`${fieldClass} placeholder:text-white/40`}
-                              />
-                              <div className="mt-1 text-[11px] text-white/55">New topic will be posted in the selected forum.</div>
-                            </div>
-                          )}
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-400/14 text-[11px] font-semibold text-emerald-100 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.18)]">
-                            2
+
+                        {shareMode === "existing" ? (
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Topic</div>
+                            {topicsLoading ? (
+                              <div className="flex items-center gap-2 text-xs text-white/70">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading topics...
+                              </div>
+                            ) : topics.length > 0 ? (
+                              <select
+                                value={selectedTopicId !== null ? String(selectedTopicId) : ""}
+                                onChange={(event) => setSelectedTopicId(Number(event.target.value))}
+                                className={fieldClass}
+                              >
+                                {topics.map((topic) => (
+                                  <option key={topic.id} value={String(topic.id)}>
+                                    {(topic.pinned ? "[PIN] " : "") + topic.title}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="text-xs text-white/65">No topics loaded for this forum.</div>
+                            )}
+                            {topicsError ? <div className="mt-1 text-xs text-red-200">{topicsError}</div> : null}
                           </div>
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/48">Screenshot</div>
-                            <div className="mt-1 text-sm text-white">{screenshotStepLabel}</div>
+                        ) : (
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/80">Topic title</div>
+                            <input
+                              value={newTopicTitle}
+                              onChange={(event) => setNewTopicTitle(event.target.value)}
+                              maxLength={255}
+                              placeholder="Enter a topic title"
+                              className={`${fieldClass} placeholder:text-white/40`}
+                            />
+                            <div className="mt-1 text-[11px] text-white/55">New topic will be posted in the selected forum.</div>
                           </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handlePrepareScreenshot();
-                          }}
-                          disabled={!canPrepareScreenshot || screenshotBusy || screenshotUploadBusy}
-                          className={`${secondaryButtonClass} shrink-0 gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
-                        >
-                          {screenshotBusy || screenshotUploadBusy ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Image className="h-3.5 w-3.5" />
-                          )}
-                          {screenshotUrl ? "Refresh" : "Prepare"}
-                        </button>
+                        )}
                       </div>
-                    </div>
-                    <div className={`${insetCardClass} px-3 py-2.5`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-400/14 text-[11px] font-semibold text-emerald-100 shadow-[inset_0_0_0_1px_rgba(167,243,208,0.18)]">
-                            3
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/48">Summary</div>
-                            <div className="mt-1 line-clamp-2 text-sm text-white">{currentSummaryPreview}</div>
-                            <div className="mt-1 text-xs text-white/64">Permalink is added automatically below the summary.</div>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowSummaryEditor((current) => {
-                              const next = !current;
-                              if (next) {
-                                setHasExpandedMessageEditor(true);
-                              }
-                              return next;
-                            });
-                          }}
-                          className={`${secondaryButtonClass} shrink-0`}
-                        >
-                          {showSummaryEditor ? "Done" : "Edit"}
-                        </button>
-                      </div>
-                      {showSummaryEditor ? (
-                        <div className="mt-3 space-y-1.5 pt-3">
-                          <textarea
-                            value={content}
-                            onChange={(event) => handleMessageChange(event.target.value)}
-                            rows={6}
-                            className={textareaClass}
-                          />
-                          <button
-                            type="button"
-                            onClick={handleResetMessage}
-                            className="text-[11px] font-medium text-emerald-200/90 hover:text-emerald-100"
-                          >
-                            Reset to default summary
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
+                    ) : null}
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleSubmitPost();
-                      }}
-                      disabled={postButtonDisabled}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200/35 bg-[linear-gradient(to_top_right,#244238_0%,#5f7f6f_100%)] px-3 text-sm font-semibold text-emerald-50 shadow-[0_0_12px_rgba(94,164,135,0.16)] hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100"
-                    >
-                      {submitBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                      {submitBusy ? "Posting..." : "Share to TWF"}
-                    </button>
+
+                  <div className={`${insetCardClass} px-3 py-3`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/48">Share text</div>
+                        <div className="mt-1 line-clamp-3 text-sm text-white">{currentSummaryPreview}</div>
+                        <div className="mt-1 text-xs text-white/64">The permalink is appended automatically below the summary.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSummaryEditor((current) => {
+                            const next = !current;
+                            if (next) {
+                              setHasExpandedMessageEditor(true);
+                            }
+                            return next;
+                          });
+                        }}
+                        className={`${secondaryButtonClass} shrink-0`}
+                      >
+                        {showSummaryEditor ? "Done" : "Edit"}
+                      </button>
+                    </div>
+                    {showSummaryEditor ? (
+                      <div className="mt-3 space-y-1.5 pt-3">
+                        <textarea
+                          value={content}
+                          onChange={(event) => handleMessageChange(event.target.value)}
+                          rows={6}
+                          className={textareaClass}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleResetMessage}
+                          className="text-[11px] font-medium text-cyan-200/90 hover:text-cyan-100"
+                        >
+                          Reset to default share text
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSubmitPost();
+                    }}
+                    disabled={postButtonDisabled}
+                    className={primaryButtonClass}
+                  >
+                    {submitBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    {submitBusy ? "Sharing..." : twfActionLabel}
+                  </button>
+                </div>
+
                 {submitError ? (
-                  <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                  <div className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
                     <div>{submitError.message}</div>
                     {submitError.code ? <div className="mt-0.5 text-[11px] opacity-90">Code: {submitError.code}</div> : null}
                     {retryAfterSeconds ? <div className="mt-0.5 text-[11px] opacity-90">Try again in {retryAfterSeconds}s.</div> : null}
-                  </div>
-                ) : null}
-                {screenshotError ? (
-                  <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-                    {screenshotError}
-                  </div>
-                ) : null}
-                {screenshotUploadError ? (
-                  <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-                    {screenshotUploadError}
                   </div>
                 ) : null}
               </div>
             )}
           </div>
 
-          {screenshotBlobUrl ? (
-            <div className={`${sectionCardClass} p-3`}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wider text-white/65">Screenshot Preview</div>
-                  <div className="mt-1 text-xs text-white/55">{screenshotStatus}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadScreenshot}
-                    disabled={!screenshotBlobUrl || screenshotBusy}
-                    className={`${secondaryButtonClass} gap-1.5 disabled:opacity-60 disabled:hover:bg-white/[0.07]`}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Download Image
-                  </button>
-                  {screenshotBlobUrl ? (
-                    <label className="flex items-center gap-2 rounded-md bg-white/[0.08] px-2.5 py-2 text-xs text-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                      <input
-                        type="checkbox"
-                        checked={includeScreenshotInPost}
-                        onChange={(event) => setIncludeScreenshotInPost(event.target.checked)}
-                        className="h-4 w-4 rounded border-white/20 bg-black/30 text-emerald-400 focus:ring-emerald-300/40"
-                      />
-                      <span>Include in post</span>
-                    </label>
-                  ) : null}
-                </div>
-              </div>
-              {screenshotError ? (
-                <div className="mb-2 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
-                  {screenshotError}
-                </div>
-              ) : null}
-              {screenshotUploadError ? (
-                <div className="mb-2 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
-                  {screenshotUploadError}
-                </div>
-              ) : null}
-              <div className="overflow-hidden rounded-xl bg-black/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                <img
-                  src={screenshotBlobUrl}
-                  alt="Screenshot preview"
-                  className="max-h-[30dvh] w-full object-contain sm:max-h-[34dvh]"
-                />
-              </div>
-              {screenshotUrl ? (
-                <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-50/90">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Screenshot uploaded
-                  </div>
-                  <div className="text-sm text-emerald-50/90">This screenshot is ready to include in your TWF post.</div>
-                  {screenshotKey ? <div className="text-[11px] text-emerald-100/80">Upload complete</div> : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className={`${sectionCardClass} px-3 py-3`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className={`${sectionCardClass} px-3 py-3 sm:px-4`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/52">Share preview</div>
-                <div className="mt-1 line-clamp-2 text-sm text-white/90">{payload.summary}</div>
-                <div className="mt-1 truncate text-xs text-white/64">{TWF_PERMALINK_LABEL}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/52">Quick share</div>
+                <div className="mt-2 text-base font-semibold tracking-[-0.02em] text-white">Copy the essentials for anywhere else</div>
+                <div className="mt-1 text-sm text-white/64">
+                  Keep it lightweight when you just need the share text or the direct CartoSky link.
+                </div>
+                <div className="mt-3 rounded-xl bg-white/[0.04] px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <div className="line-clamp-3 text-sm text-white/90">{currentSummaryPreview}</div>
+                  <div className="mt-2 truncate text-xs text-white/56">{sharePreviewDetail}</div>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1338,11 +1363,11 @@ export function TwfShareModal({
                   className={`${secondaryButtonClass} gap-1.5`}
                 >
                   <Copy className="h-3.5 w-3.5" />
-                  Copy summary
+                  Copy share text
                 </button>
               </div>
             </div>
-            {clipboardStatus ? <div className="mt-2 text-xs text-emerald-200/90">{clipboardStatus}</div> : null}
+            {clipboardStatus ? <div className="mt-2 text-xs text-cyan-200/90">{clipboardStatus}</div> : null}
           </div>
         </div>
       </div>
