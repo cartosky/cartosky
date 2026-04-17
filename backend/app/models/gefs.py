@@ -30,7 +30,7 @@ GEFS_REGIONS: dict[str, RegionSpec] = {
 }
 
 
-GEFS_FHS = tuple(range(0, 385, 6))
+GEFS_FHS = tuple(range(0, 361, 6))
 
 
 class GEFSPlugin(BaseModelPlugin):
@@ -81,12 +81,12 @@ class GEFSPlugin(BaseModelPlugin):
 GEFS_VARS: dict[str, VarSpec] = {
     "tmp2m": replace(
         GFS_VARS["tmp2m"],
-        name="Surface Temp (Ensemble Mean)",
+        name="Surface Temp (Mean)",
     ),
     "tmp2m__mean": replace(
         GFS_VARS["tmp2m"],
         id="tmp2m__mean",
-        name="Surface Temp (Ensemble Mean)",
+        name="Surface Temp (Mean)",
     ),
 }
 

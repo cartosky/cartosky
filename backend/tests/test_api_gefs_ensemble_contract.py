@@ -98,7 +98,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                 "run": run_id,
                 "variables": {
                     variable: {
-                        "display_name": "Surface Temp (Ensemble Mean)",
+                        "display_name": "Surface Temp (Mean)",
                         "expected_frames": 1,
                         "available_frames": 1,
                         "frames": [
@@ -123,7 +123,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                 "units": "F",
                 "valid_time": "2026-03-30T12:00:00Z",
                 "kind": "continuous",
-                "display_name": "Surface Temp (Ensemble Mean)",
+                "display_name": "Surface Temp (Mean)",
             }
         )
     )

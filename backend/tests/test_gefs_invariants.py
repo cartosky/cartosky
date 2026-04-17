@@ -14,7 +14,7 @@ from app.models.gefs import GEFS_MODEL
 
 
 def test_gefs_target_fhs_invariants() -> None:
-    expected = list(range(0, 385, 6))
+    expected = list(range(0, 361, 6))
     assert GEFS_MODEL.target_fhs(0) == expected
     assert GEFS_MODEL.target_fhs(12) == expected
 
@@ -63,7 +63,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
     tmp2m = payload["variables"]["tmp2m"]
     assert tmp2m["var_key"] == "tmp2m"
-    assert tmp2m["display_name"] == "Surface Temp (Ensemble Mean)"
+    assert tmp2m["display_name"] == "Surface Temp (Mean)"
     assert tmp2m["buildable"] is True
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
