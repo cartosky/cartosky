@@ -99,7 +99,7 @@ GEFS_VARS: dict[str, VarSpec] = {
         name="APCP Step (Mean)",
         selectors=VarSelectors(
             search=[
-                r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:ens mean$",
+                r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:ens mean:",
             ],
             filter_by_keys={
                 "shortName": "apcp",

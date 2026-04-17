@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -102,3 +103,8 @@ def test_gefs_runtime_resolution_helpers() -> None:
         assert exc.status_code == 404
     else:
         raise AssertionError("Expected unsupported GEFS ensemble view to raise HTTPException")
+
+
+def test_gefs_precip_apcp_selector_matches_live_inventory_shape() -> None:
+    pattern = GEFS_MODEL.get_var("apcp_step__mean").selectors.search[0]
+    assert re.search(pattern, ":APCP:surface:0-6 hour acc fcst:ens mean:") is not None
