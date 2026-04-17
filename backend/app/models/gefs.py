@@ -351,7 +351,6 @@ GEFS_VARS: dict[str, VarSpec] = {
                 "step_hours": "6",
                 "skip_zero_hour_sample": "true",
                 "slr": "10",
-                "snow_mask_threshold": "0.5",
                 "min_step_lwe_kgm2": "0.01",
             }
         ),
@@ -367,7 +366,6 @@ GEFS_VARS: dict[str, VarSpec] = {
                 "step_hours": "6",
                 "skip_zero_hour_sample": "true",
                 "slr": "10",
-                "snow_mask_threshold": "0.5",
                 "min_step_lwe_kgm2": "0.01",
             }
         ),

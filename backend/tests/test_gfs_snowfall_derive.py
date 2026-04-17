@@ -194,6 +194,72 @@ def test_snowfall_derive_skips_missing_csnow_samples_and_preserves_nan(monkeypat
     assert np.isnan(data).all()
 
 
+def test_gefs_snowfall_derive_uses_fractional_mean_csnow_without_binary_threshold(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+
+    apcp_by_fh = {
+        6: np.array([[1.0, 2.0], [0.5, np.nan]], dtype=np.float32),
+    }
+    csnow_by_fh = {
+        3: np.array([[0.25, 0.60], [0.10, 0.90]], dtype=np.float32),
+        6: np.array([[0.25, 0.60], [0.10, 0.90]], dtype=np.float32),
+    }
+
+    fetched_csnow_fhs: list[int] = []
+
+    def _fake_fetch_step_component(**kwargs):
+        step_fh = int(kwargs["step_fh"])
+        var_key = str(kwargs["var_key"])
+        if var_key == "apcp_step__mean":
+            return apcp_by_fh[step_fh], crs, transform
+        if var_key == "csnow__mean":
+            fetched_csnow_fhs.append(step_fh)
+            return csnow_by_fh[step_fh], crs, transform
+        raise AssertionError(f"Unexpected step component var_key={var_key!r}")
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step__mean",
+                "snow_component": "csnow__mean",
+                "step_hours": "6",
+                "skip_zero_hour_sample": "true",
+                "slr": "10",
+                "min_step_lwe_kgm2": "0.01",
+            }
+        )
+    )
+
+    data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
+        model_id="gefs",
+        var_key="snowfall_total",
+        product="atmos.5",
+        run_date=datetime(2026, 4, 17, 12, 0),
+        fh=6,
+        var_spec_model=var_spec_model,
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert fetched_csnow_fhs == [3, 6]
+
+    expected = np.array(
+        [
+            [0.0984252, 0.47244096],
+            [0.01968504, np.nan],
+        ],
+        dtype=np.float32,
+    )
+    assert data.dtype == np.float32
+    assert data.shape == (2, 2)
+    np.testing.assert_allclose(data, expected, rtol=1e-6, atol=1e-6, equal_nan=True)
+
+
 def test_snowfall_derive_inventory_differences_gfs_cumulative_apcp(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
