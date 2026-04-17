@@ -75,7 +75,7 @@ const sectionCardClass =
   "glass-overlay-section rounded-2xl";
 
 const insetCardClass =
-  "rounded-xl bg-[linear-gradient(180deg,rgba(255,255,255,0.04)_0%,rgba(255,255,255,0.022)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_rgba(0,0,0,0.12)]";
+  "rounded-xl border border-cyan-200/8 bg-[#0b182b]/60";
 
 const secondaryButtonClass =
   "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12]";
@@ -84,10 +84,10 @@ const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/30 bg-[linear-gradient(135deg,#102438_0%,#1a4f68_52%,#6ab7d4_100%)] px-4 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(17,68,92,0.34)] transition-all hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100";
 
 const fieldClass =
-  "h-8 w-full rounded-md border border-white/[0.05] bg-black/10 px-2 text-xs text-white outline-none transition-colors focus:border-emerald-300/28 focus:bg-black/14";
+  "h-8 w-full rounded-md border border-cyan-200/10 bg-[#091322]/75 px-2 text-xs text-white outline-none transition-colors focus:border-cyan-300/34 focus:bg-[#0c182a]";
 
 const textareaClass =
-  "w-full rounded-md border border-white/[0.05] bg-black/10 px-2 py-2 text-xs text-white outline-none transition-colors focus:border-emerald-300/28 focus:bg-black/14";
+  "w-full rounded-md border border-cyan-200/10 bg-[#091322]/75 px-2 py-2 text-xs text-white outline-none transition-colors focus:border-cyan-300/34 focus:bg-[#0c182a]";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -979,7 +979,7 @@ export function TwfShareModal({
               </div>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-[1.35rem] border border-white/8 bg-[#081120] shadow-[0_22px_56px_rgba(0,0,0,0.28)]">
+            <div className="mt-4 overflow-hidden rounded-[1.35rem] border border-cyan-200/10 bg-[#081120] shadow-[0_16px_34px_rgba(0,0,0,0.22)]">
               {screenshotBlobUrl ? (
                 <img
                   src={screenshotBlobUrl}
@@ -1020,7 +1020,7 @@ export function TwfShareModal({
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/50">Share asset</div>
                 <div className="mt-1 text-sm text-white">{screenshotStatus}</div>
               </div>
-              <label className="flex items-center gap-2 rounded-lg bg-white/[0.06] px-3 py-2 text-xs text-white/78 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+              <label className="flex items-center gap-2 rounded-lg border border-cyan-200/10 bg-[#0b182b]/55 px-3 py-2 text-xs text-white/78">
                 <input
                   type="checkbox"
                   checked={includeScreenshotInPost}
@@ -1032,13 +1032,13 @@ export function TwfShareModal({
             </div>
 
             {screenshotUrl ? (
-              <div className="mt-3 space-y-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-3">
+              <div className="mt-3 space-y-2 rounded-xl border border-cyan-200/12 bg-cyan-300/8 px-3 py-3">
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-50/92">
                   <CheckCircle2 className="h-4 w-4" />
                   Screenshot uploaded
                 </div>
-                <div className="text-sm text-emerald-50/90">This image is ready to be attached when you share to TWF.</div>
-                {screenshotKey ? <div className="text-[11px] text-emerald-100/76">Upload complete</div> : null}
+                <div className="text-sm text-cyan-50/90">This image is ready to be attached when you share to TWF.</div>
+                {screenshotKey ? <div className="text-[11px] text-cyan-100/76">Upload complete</div> : null}
               </div>
             ) : null}
           </div>
@@ -1069,14 +1069,14 @@ export function TwfShareModal({
                   Checking TWF connection...
                 </div>
               ) : twfStatus.linked === true ? (
-                <div className="rounded-full border border-emerald-300/16 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-50/90">
+                <div className="rounded-full border border-cyan-200/16 bg-cyan-300/10 px-3 py-1.5 text-xs text-cyan-50/90">
                   Connected as {twfStatus.display_name}
                 </div>
               ) : null}
             </div>
 
             {twfStatus.linked !== true ? (
-              <div className="mt-4 space-y-3 rounded-[1.1rem] bg-black/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+              <div className="mt-4 space-y-3 rounded-[1.1rem] border border-cyan-200/8 bg-[#0b182b]/45 p-4">
                 <div className="text-sm text-white/70">
                   Connect your TWF account to post directly from CartoSky. You can still copy the link and share text below.
                 </div>
@@ -1088,8 +1088,8 @@ export function TwfShareModal({
                 </div>
               </div>
             ) : submitSuccess || submitTopicSuccess ? (
-              <div className="mt-4 space-y-3 rounded-[1.1rem] bg-black/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                <div className="flex items-center gap-2 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-50">
+              <div className="mt-4 space-y-3 rounded-[1.1rem] border border-cyan-200/8 bg-[#0b182b]/45 p-4">
+                <div className="flex items-center gap-2 rounded-lg border border-cyan-200/16 bg-cyan-300/10 px-3 py-2 text-sm text-cyan-50">
                   <CheckCircle2 className="h-4 w-4" />
                   {submitTopicSuccess ? "Topic created successfully." : "Posted successfully."}
                 </div>
@@ -1112,8 +1112,7 @@ export function TwfShareModal({
                 </div>
               </div>
             ) : (
-              <div className="mt-4 rounded-[1.25rem] bg-black/10 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-xl sm:p-4">
-                <div className="space-y-3">
+              <div className="mt-4 space-y-3 sm:space-y-4">
                   <div className={`${insetCardClass} px-3 py-3`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -1304,7 +1303,6 @@ export function TwfShareModal({
                       </div>
                     ) : null}
                   </div>
-                </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button
@@ -1321,7 +1319,7 @@ export function TwfShareModal({
                 </div>
 
                 {submitError ? (
-                  <div className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                  <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
                     <div>{submitError.message}</div>
                     {submitError.code ? <div className="mt-0.5 text-[11px] opacity-90">Code: {submitError.code}</div> : null}
                     {retryAfterSeconds ? <div className="mt-0.5 text-[11px] opacity-90">Try again in {retryAfterSeconds}s.</div> : null}
@@ -1339,7 +1337,7 @@ export function TwfShareModal({
                 <div className="mt-1 text-sm text-white/64">
                   Keep it lightweight when you just need the share text or the direct CartoSky link.
                 </div>
-                <div className="mt-3 rounded-xl bg-white/[0.04] px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                <div className="mt-3 rounded-xl border border-cyan-200/8 bg-[#0b182b]/45 px-3 py-3">
                   <div className="line-clamp-3 text-sm text-white/90">{currentSummaryPreview}</div>
                   <div className="mt-2 truncate text-xs text-white/56">{sharePreviewDetail}</div>
                 </div>
