@@ -1,13 +1,13 @@
 """NOAA GEFS model plugin.
 
 Initial rollout scope:
-  - GEFS `atmos.25`
+    - GEFS `atmos.5`
       - `tmp2m` with `ensemble_view=mean`
   - realtime publishing only
 
 Herbie wiring:
   - model = "gefs"
-  - product = "atmos.25"
+    - product = "atmos.5"
   - member = "mean"
 """
 
@@ -67,7 +67,7 @@ class GEFSPlugin(BaseModelPlugin):
             search_pattern=search_pattern,
         )
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
-        resolved_product = "atmos.25"
+        resolved_product = "atmos.5"
         herbie_kwargs = dict(base_request.herbie_kwargs)
         if runtime_var == "tmp2m__mean":
             herbie_kwargs["member"] = "mean"
@@ -138,7 +138,7 @@ GEFS_VARIABLE_CATALOG = {
 GEFS_CAPABILITIES = ModelCapabilities(
     model_id="gefs",
     name="GEFS",
-    product="atmos.25",
+    product="atmos.5",
     canonical_region="conus",
     grid_meters_by_region={
         "conus": 25_000.0,
@@ -177,6 +177,6 @@ GEFS_MODEL = GEFSPlugin(
     name="GEFS",
     regions=GEFS_REGIONS,
     vars=GEFS_VARS,
-    product="atmos.25",
+    product="atmos.5",
     capabilities=GEFS_CAPABILITIES,
 )

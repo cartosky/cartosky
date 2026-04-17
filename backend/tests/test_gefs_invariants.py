@@ -27,9 +27,9 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
 
-    request = GEFS_MODEL.herbie_request(product="atmos.25", var_key="tmp2m", ensemble_view="mean")
+    request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="tmp2m", ensemble_view="mean")
     assert request.model == "gefs"
-    assert request.product == "atmos.25"
+    assert request.product == "atmos.5"
     assert request.herbie_kwargs["member"] == "mean"
 
 
@@ -56,7 +56,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
     assert payload["model_id"] == "gefs"
     assert payload["name"] == "GEFS"
-    assert payload["product"] == "atmos.25"
+    assert payload["product"] == "atmos.5"
     assert payload["ensemble"]["default_view"] == "mean"
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "tmp2m__mean" not in payload["variables"]

@@ -370,13 +370,12 @@ function getActiveAnchorMarkers(
     const coordinates = feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
     const lng = Number(coordinates?.[0]);
     const lat = Number(coordinates?.[1]);
+    const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
     const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
     const stateName = typeof feature.properties?.state === "string" ? feature.properties.state.trim() : "";
     const stAbbr = typeof feature.properties?.st === "string" ? feature.properties.st.trim() : "";
-    const sampledLabel = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
     const active = feature.properties?.active === true;
-    const label = active && sampledLabel ? sampledLabel : cityName;
-    if (!id || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
+    if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
       continue;
     }
     activeMarkers.push({
