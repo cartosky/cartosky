@@ -3985,6 +3985,7 @@ def _derive_snowfall_total_10to1_cumulative(
     slr_raw = hints.get("slr", "10")
     snow_mask_threshold_raw = hints.get("snow_mask_threshold")
     snow_interval_sample_mode = str(hints.get("snow_interval_sample_mode", "auto")).strip().lower() or "auto"
+    skip_zero_hour_sample = _parse_hint_bool(hints.get("skip_zero_hour_sample"), default=False)
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
 
     try:
@@ -4040,6 +4041,8 @@ def _derive_snowfall_total_10to1_cumulative(
             )
             if sf >= 0
         ]
+        if skip_zero_hour_sample:
+            sample_fhs = [sf for sf in sample_fhs if sf != 0]
         sample_fhs = _filter_sample_fhs_to_available_steps(
             sample_fhs,
             available_fhs=cadence_sample_fhs,
