@@ -19,6 +19,14 @@ class GridDisplayPrepConfig:
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
+    ("gefs", "precip_total__mean"): GridDisplayPrepConfig(
+        id="gefs_precip_total_display_v1",
+        upscale_factor=3,
+        smooth_sigma=None,
+        preserve_zero_support=True,
+        support_min_value=0.01,
+        support_coverage_threshold=0.5,
+    ),
     ("gfs", "precip_total"): GridDisplayPrepConfig(
         id="gfs_precip_total_display_v2",
         upscale_factor=3,

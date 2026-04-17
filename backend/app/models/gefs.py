@@ -2,7 +2,8 @@
 
 Initial rollout scope:
     - GEFS `atmos.5`
-      - `tmp2m` with `ensemble_view=mean`
+    - `tmp2m` with `ensemble_view=mean`
+    - `precip_total` with `ensemble_view=mean`
   - realtime publishing only
 
 Herbie wiring:
@@ -43,6 +44,11 @@ class GEFSPlugin(BaseModelPlugin):
         aliases = {
             "tmp2m": "tmp2m",
             "tmp2m__mean": "tmp2m__mean",
+            "precip_total": "precip_total",
+            "precip_total__mean": "precip_total__mean",
+            "total_precip": "precip_total",
+            "apcp": "precip_total",
+            "qpf": "precip_total",
             "t2m": "tmp2m",
             "2t": "tmp2m",
         }
@@ -69,7 +75,7 @@ class GEFSPlugin(BaseModelPlugin):
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
         resolved_product = "atmos.5"
         herbie_kwargs = dict(base_request.herbie_kwargs)
-        if runtime_var == "tmp2m__mean":
+        if runtime_var in {"tmp2m__mean", "apcp_step__mean", "precip_total__mean"}:
             herbie_kwargs["member"] = "mean"
         return HerbieRequest(
             model="gefs",
@@ -87,6 +93,43 @@ GEFS_VARS: dict[str, VarSpec] = {
         GFS_VARS["tmp2m"],
         id="tmp2m__mean",
         name="Surface Temp (Mean)",
+    ),
+    "apcp_step__mean": VarSpec(
+        id="apcp_step__mean",
+        name="APCP Step (Mean)",
+        selectors=VarSelectors(
+            search=[
+                r":APCP:surface:[0-9]+-[0-9]+ hour acc[^:]*:ens mean$",
+            ],
+            filter_by_keys={
+                "shortName": "apcp",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "apcp",
+            },
+        ),
+    ),
+    "precip_total": replace(
+        GFS_VARS["precip_total"],
+        selectors=VarSelectors(
+            hints={
+                "apcp_component": "apcp_step__mean",
+                "step_hours": "6",
+            },
+        ),
+        name="Total Precip (Mean)",
+    ),
+    "precip_total__mean": replace(
+        GFS_VARS["precip_total"],
+        id="precip_total__mean",
+        selectors=VarSelectors(
+            hints={
+                "apcp_component": "apcp_step__mean",
+                "step_hours": "6",
+            },
+        ),
+        name="Total Precip (Mean)",
     ),
 }
 
@@ -126,6 +169,50 @@ GEFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "precip_total": VariableCapability(
+        var_key="precip_total",
+        name=GEFS_VARS["precip_total"].name,
+        selectors=GEFS_VARS["precip_total"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_total_cumulative",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_total",
+        default_fh=6,
+        buildable=True,
+        order=10,
+        group="Precipitation",
+        conversion="kgm2_to_in",
+        constraints={"min_fh": 6},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "precip_total__mean"},
+        },
+    ),
+    "precip_total__mean": VariableCapability(
+        var_key="precip_total__mean",
+        name=GEFS_VARS["precip_total__mean"].name,
+        selectors=GEFS_VARS["precip_total__mean"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_total_cumulative",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_total",
+        default_fh=6,
+        buildable=False,
+        order=10,
+        group="Precipitation",
+        conversion="kgm2_to_in",
+        constraints={"min_fh": 6},
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],

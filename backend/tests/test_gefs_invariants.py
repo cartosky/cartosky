@@ -23,14 +23,23 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("precip_total", "mean") == "precip_total__mean"
 
     request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="tmp2m", ensemble_view="mean")
     assert request.model == "gefs"
     assert request.product == "atmos.5"
     assert request.herbie_kwargs["member"] == "mean"
+
+    precip_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="precip_total", ensemble_view="mean")
+    assert precip_request.model == "gefs"
+    assert precip_request.product == "atmos.5"
+    assert precip_request.herbie_kwargs["member"] == "mean"
 
 
 def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
@@ -42,7 +51,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m"}
+    assert buildable_var_keys == {"precip_total", "tmp2m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
@@ -60,6 +69,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["default_view"] == "mean"
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "tmp2m__mean" not in payload["variables"]
+    assert "precip_total__mean" not in payload["variables"]
 
     tmp2m = payload["variables"]["tmp2m"]
     assert tmp2m["var_key"] == "tmp2m"
@@ -69,10 +79,23 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
 
+    precip_total = payload["variables"]["precip_total"]
+    assert precip_total["var_key"] == "precip_total"
+    assert precip_total["display_name"] == "Total Precip (Mean)"
+    assert precip_total["buildable"] is True
+    assert precip_total["color_map_id"] == "precip_total"
+    assert precip_total["derive_strategy_id"] == "precip_total_cumulative"
+    assert precip_total["default_fh"] == 6
+    assert precip_total["constraints"]["min_fh"] == 6
+    assert precip_total["ensemble"]["default_view"] == "mean"
+    assert precip_total["ensemble"]["supported_views"] == ["mean"]
+
 
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("gefs", "precip_total", "mean") == "precip_total__mean"
     try:
         _resolve_requested_ensemble_view("gefs", "tmp2m", "spread")
     except HTTPException as exc:
