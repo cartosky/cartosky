@@ -45,6 +45,14 @@ class GEFSPlugin(BaseModelPlugin):
         aliases = {
             "tmp2m": "tmp2m",
             "tmp2m__mean": "tmp2m__mean",
+            "wspd10m": "wspd10m",
+            "wspd10m__mean": "wspd10m__mean",
+            "wind10m": "wspd10m",
+            "10mwind": "wspd10m",
+            "10u": "10u__mean",
+            "u10": "10u__mean",
+            "10v": "10v__mean",
+            "v10": "10v__mean",
             "pwat": "pwat",
             "pwat__mean": "pwat__mean",
             "precipitable_water": "pwat",
@@ -80,7 +88,15 @@ class GEFSPlugin(BaseModelPlugin):
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
         resolved_product = "atmos.5"
         herbie_kwargs = dict(base_request.herbie_kwargs)
-        if runtime_var in {"tmp2m__mean", "pwat__mean", "apcp_step__mean", "precip_total__mean"}:
+        if runtime_var in {
+            "tmp2m__mean",
+            "10u__mean",
+            "10v__mean",
+            "wspd10m__mean",
+            "pwat__mean",
+            "apcp_step__mean",
+            "precip_total__mean",
+        }:
             herbie_kwargs["member"] = "mean"
         return HerbieRequest(
             model="gefs",
@@ -98,6 +114,37 @@ GEFS_VARS: dict[str, VarSpec] = {
         GFS_VARS["tmp2m"],
         id="tmp2m__mean",
         name="Surface Temp (Mean)",
+    ),
+    "10u__mean": replace(
+        GFS_VARS["10u"],
+        id="10u__mean",
+        name="10m U Wind (Mean)",
+    ),
+    "10v__mean": replace(
+        GFS_VARS["10v"],
+        id="10v__mean",
+        name="10m V Wind (Mean)",
+    ),
+    "wspd10m": replace(
+        GFS_VARS["wspd10m"],
+        name="10m Wind Speed (Mean)",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "10u__mean",
+                "v_component": "10v__mean",
+            }
+        ),
+    ),
+    "wspd10m__mean": replace(
+        GFS_VARS["wspd10m"],
+        id="wspd10m__mean",
+        name="10m Wind Speed (Mean)",
+        selectors=VarSelectors(
+            hints={
+                "u_component": "10u__mean",
+                "v_component": "10v__mean",
+            }
+        ),
     ),
     "pwat": replace(
         GFS_VARS["pwat"],
@@ -183,6 +230,48 @@ GEFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "wspd10m": VariableCapability(
+        var_key="wspd10m",
+        name=GEFS_VARS["wspd10m"].name,
+        selectors=GEFS_VARS["wspd10m"].selectors,
+        primary=False,
+        derived=True,
+        derive_strategy_id="wspd10m",
+        kind="continuous",
+        units="mph",
+        color_map_id="wspd10m",
+        default_fh=0,
+        buildable=True,
+        order=12,
+        group="Wind",
+        conversion="ms_to_mph",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "wspd10m__mean"},
+        },
+    ),
+    "wspd10m__mean": VariableCapability(
+        var_key="wspd10m__mean",
+        name=GEFS_VARS["wspd10m__mean"].name,
+        selectors=GEFS_VARS["wspd10m__mean"].selectors,
+        primary=False,
+        derived=True,
+        derive_strategy_id="wspd10m",
+        kind="continuous",
+        units="mph",
+        color_map_id="wspd10m",
+        default_fh=0,
+        buildable=False,
+        order=12,
+        group="Wind",
+        conversion="ms_to_mph",
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],

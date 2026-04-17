@@ -24,16 +24,23 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert GEFS_MODEL.normalize_var_id("wspd10m") == "wspd10m"
+    assert GEFS_MODEL.normalize_var_id("wind10m") == "wspd10m"
+    assert GEFS_MODEL.normalize_var_id("10u") == "10u__mean"
+    assert GEFS_MODEL.normalize_var_id("10v") == "10v__mean"
     assert GEFS_MODEL.normalize_var_id("pwat") == "pwat"
     assert GEFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("wspd10m") == "mean"
     assert GEFS_MODEL.default_ensemble_view("pwat") == "mean"
     assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("pwat") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("pwat", "mean") == "pwat__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("precip_total", "mean") == "precip_total__mean"
 
@@ -41,6 +48,11 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert request.model == "gefs"
     assert request.product == "atmos.5"
     assert request.herbie_kwargs["member"] == "mean"
+
+    wspd_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="wspd10m", ensemble_view="mean")
+    assert wspd_request.model == "gefs"
+    assert wspd_request.product == "atmos.5"
+    assert wspd_request.herbie_kwargs["member"] == "mean"
 
     pwat_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="pwat", ensemble_view="mean")
     assert pwat_request.model == "gefs"
@@ -62,7 +74,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"precip_total", "pwat", "tmp2m"}
+    assert buildable_var_keys == {"precip_total", "pwat", "tmp2m", "wspd10m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
@@ -81,6 +93,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "pwat__mean" not in payload["variables"]
     assert "tmp2m__mean" not in payload["variables"]
+    assert "wspd10m__mean" not in payload["variables"]
     assert "precip_total__mean" not in payload["variables"]
 
     tmp2m = payload["variables"]["tmp2m"]
@@ -90,6 +103,18 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    wspd10m = payload["variables"]["wspd10m"]
+    assert wspd10m["var_key"] == "wspd10m"
+    assert wspd10m["display_name"] == "10m Wind Speed (Mean)"
+    assert wspd10m["buildable"] is True
+    assert wspd10m["derived"] is True
+    assert wspd10m["color_map_id"] == "wspd10m"
+    assert wspd10m["derive_strategy_id"] == "wspd10m"
+    assert wspd10m["default_fh"] == 0
+    assert wspd10m["group"] == "Wind"
+    assert wspd10m["ensemble"]["default_view"] == "mean"
+    assert wspd10m["ensemble"]["supported_views"] == ["mean"]
 
     pwat = payload["variables"]["pwat"]
     assert pwat["var_key"] == "pwat"
@@ -116,9 +141,11 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "wspd10m", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "pwat", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("gefs", "wspd10m", "mean") == "wspd10m__mean"
     assert _runtime_var_id_for_request("gefs", "pwat", "mean") == "pwat__mean"
     assert _runtime_var_id_for_request("gefs", "precip_total", "mean") == "precip_total__mean"
     try:
