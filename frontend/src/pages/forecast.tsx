@@ -979,12 +979,14 @@ export default function Forecast() {
           className="absolute inset-0 opacity-92"
           style={{
             backgroundImage: `
-              linear-gradient(90deg, rgba(6,12,24,0.92) 0%, rgba(6,12,24,0.76) 28%, rgba(6,12,24,0.38) 58%, rgba(6,12,24,0.56) 100%),
-              linear-gradient(180deg, rgba(7,17,31,0.56), rgba(7,17,31,0.82)),
-              url(/assets/hero-image.png)
+              radial-gradient(circle at 16% 24%, rgba(125,211,252,0.14), transparent 0 28%),
+              radial-gradient(circle at 82% 18%, rgba(56,189,248,0.12), transparent 0 24%),
+              radial-gradient(circle at 72% 74%, rgba(34,211,238,0.08), transparent 0 22%),
+              linear-gradient(115deg, rgba(8,18,34,0.98) 0%, rgba(9,22,39,0.9) 34%, rgba(7,17,31,0.76) 58%, rgba(4,10,20,0.94) 100%),
+              linear-gradient(180deg, rgba(7,17,31,0.58), rgba(7,17,31,0.88))
             `,
-            backgroundSize: "auto, auto, cover",
-            backgroundPosition: "center, center, center right",
+            backgroundSize: "auto, auto, auto, auto, auto",
+            backgroundPosition: "center, center, center, center, center",
           }}
         />
 
@@ -993,7 +995,8 @@ export default function Forecast() {
           className="absolute inset-0 opacity-20"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 24% 34%, rgba(255,255,255,0.12), transparent 0 10%), radial-gradient(circle at 70% 56%, rgba(125,211,252,0.14), transparent 0 10%)",
+              "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
+            backgroundSize: "88px 88px",
           }}
         />
 
@@ -1002,7 +1005,7 @@ export default function Forecast() {
           className="absolute inset-0"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 76% 24%, rgba(6,12,24,0.48), rgba(6,12,24,0.28) 18%, transparent 42%)",
+              "radial-gradient(circle at 78% 24%, rgba(6,12,24,0.5), rgba(6,12,24,0.22) 18%, transparent 42%), radial-gradient(circle at 18% 78%, rgba(8,18,34,0.42), transparent 0 30%)",
           }}
         />
 
