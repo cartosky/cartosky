@@ -585,6 +585,98 @@ async def test_get_forecast_page_by_coordinates_probes_nws_when_reverse_geocode_
     assert payload["afd"]["product_id"] == "AFDBOX"
 
 
+async def test_get_forecast_page_with_location_hint_skips_reverse_geocode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
+        return nws_service.AfdResult(
+            wfo=office,
+            office_name="SEW",
+            issued_at="2026-04-18T16:42:00-07:00",
+            product_text="Seattle area forecast discussion.",
+            product_id="AFDSEW",
+        )
+
+    monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "geocoding-api.open-meteo.com" and path == "/v1/reverse":
+            raise AssertionError("reverse geocoding should be skipped when a location hint is provided")
+        if host == "api.open-meteo.com" and path == "/v1/forecast":
+            payload = _open_meteo_payload(timezone_name="America/Los_Angeles")
+            payload["latitude"] = 47.6062
+            payload["longitude"] = -122.3321
+            return httpx.Response(200, json=payload)
+        if host == "api.weather.gov" and path == "/points/47.6062,-122.3321":
+            return httpx.Response(
+                200,
+                json={
+                    "properties": {
+                        "cwa": "SEW",
+                        "gridId": "SEW",
+                        "gridX": 124,
+                        "gridY": 67,
+                        "forecast": "https://api.weather.gov/gridpoints/SEW/124,67/forecast",
+                        "forecastHourly": "https://api.weather.gov/gridpoints/SEW/124,67/forecast/hourly",
+                        "forecastZone": "https://api.weather.gov/zones/forecast/WAZ509",
+                        "county": "https://api.weather.gov/zones/county/WAC033",
+                        "fireWeatherZone": "https://api.weather.gov/zones/fire/WAZ659",
+                        "observationStations": "https://api.weather.gov/gridpoints/SEW/124,67/stations",
+                    }
+                },
+            )
+        if host == "api.weather.gov" and path == "/gridpoints/SEW/124,67/forecast":
+            return httpx.Response(200, json=_nws_forecast_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/SEW/124,67/forecast/hourly":
+            return httpx.Response(200, json=_nws_hourly_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/SEW/124,67/stations":
+            return httpx.Response(
+                200,
+                json={
+                    "features": [
+                        {
+                            "id": "https://api.weather.gov/stations/KSEA",
+                            "geometry": {"coordinates": [-122.3094, 47.4490]},
+                            "properties": {
+                                "stationIdentifier": "KSEA",
+                                "name": "Seattle-Tacoma International Airport",
+                                "elevation": {"value": 132.0},
+                                "stationType": "ASOS",
+                            },
+                        }
+                    ]
+                },
+            )
+        if host == "api.weather.gov" and path == "/stations/KSEA/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-18T16:50:00+00:00", description="Partly Cloudy"))
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.get_forecast_page(
+        47.6062,
+        -122.3321,
+        location_hint=forecast_page_service.LocationHint(
+            display_name="Seattle, WA",
+            timezone="America/Los_Angeles",
+            country_code="US",
+            admin1="Washington",
+            country="United States",
+        ),
+    )
+
+    assert payload["location"]["display_name"] == "Seattle, WA"
+    assert payload["location"]["resolved_by"] == "frontend_location_hint"
+    assert payload["source_status"]["primary_region_mode"] == "us_hybrid"
+    assert payload["current"]["source"] == "nws"
+
+
 @pytest.fixture
 async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
     monkeypatch.setattr(main_module, "DATA_ROOT", Path("/tmp/test-forecast-data"))
@@ -599,6 +691,26 @@ async def test_forecast_page_routes_smoke(
 ) -> None:
     async def fake_search_locations(query: str) -> dict:
         return {"query": query, "results": [{"display_name": "Sioux Falls, SD"}]}
+
+    async def fake_forecast_page(lat: float, lon: float, location_hint=None) -> dict:
+        return {
+            "location": {
+                "query": getattr(location_hint, "display_name", None),
+                "display_name": getattr(location_hint, "display_name", None) or "Sioux Falls, SD",
+                "latitude": lat,
+                "longitude": lon,
+                "resolved_by": "frontend_location_hint" if location_hint is not None else "open_meteo_reverse_geocoding",
+            },
+            "source_status": {"primary_region_mode": "us_hybrid", "nws": "ok", "open_meteo": "ok", "generated_at": "2026-04-18T17:00:00Z"},
+            "current": {"source": "nws"},
+            "hourly": [],
+            "daily": [],
+            "official_text_forecast": None,
+            "afd": None,
+            "alerts": [],
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "afd": None, "alerts": None},
+            "freshness": {},
+        }
 
     async def fake_forecast_page_by_query(query: str) -> dict:
         return {
@@ -621,17 +733,32 @@ async def test_forecast_page_routes_smoke(
         return {"status": "placeholder", "location": {"latitude": lat, "longitude": lon}, "sections": []}
 
     monkeypatch.setattr(forecast_page_service, "search_locations", fake_search_locations)
+    monkeypatch.setattr(forecast_page_service, "get_forecast_page", fake_forecast_page)
     monkeypatch.setattr(forecast_page_service, "get_forecast_page_by_query", fake_forecast_page_by_query)
     monkeypatch.setattr(forecast_page_service, "get_forecast_discussion", fake_forecast_discussion)
     monkeypatch.setattr(forecast_page_service, "get_model_guidance_placeholder", fake_model_guidance)
 
     search_response = await client.get("/api/v4/locations/search", params={"q": "57104"})
+    forecast_coords_response = await client.get(
+        "/api/v4/forecast-page",
+        params={
+            "lat": 43.55,
+            "lon": -96.73,
+            "display_name": "Sioux Falls, SD",
+            "country_code": "US",
+            "timezone": "America/Chicago",
+            "admin1": "South Dakota",
+            "country": "United States",
+        },
+    )
     forecast_response = await client.get("/api/v4/forecast-page/by-query", params={"q": "57104"})
     discussion_response = await client.get("/api/v4/forecast-discussion", params={"office": "FSD"})
     guidance_response = await client.get("/api/v4/model-guidance", params={"lat": 43.55, "lon": -96.73})
 
     assert search_response.status_code == 200
     assert search_response.json()["results"][0]["display_name"] == "Sioux Falls, SD"
+    assert forecast_coords_response.status_code == 200
+    assert forecast_coords_response.json()["location"]["display_name"] == "Sioux Falls, SD"
     assert forecast_response.status_code == 200
     assert forecast_response.json()["location"]["query"] == "57104"
     assert discussion_response.status_code == 200

@@ -171,6 +171,15 @@ class ResolvedLocation:
 
 
 @dataclass(frozen=True)
+class LocationHint:
+    display_name: str | None = None
+    timezone: str | None = None
+    country_code: str | None = None
+    admin1: str | None = None
+    country: str | None = None
+
+
+@dataclass(frozen=True)
 class StationInfo:
     station_id: str
     name: str | None
@@ -769,6 +778,27 @@ def _resolved_location_from_result(result: dict[str, Any], *, query: str | None,
         resolved_by=resolved_by,
         elevation_m=_safe_float(result.get("elevation")),
         postcodes=tuple(result.get("postcodes") or []),
+    )
+
+
+def _resolved_location_from_hint(
+    *,
+    lat: float,
+    lon: float,
+    hint: LocationHint,
+) -> ResolvedLocation:
+    country_code = (hint.country_code or "").strip().upper() or None
+    display_name = (hint.display_name or "").strip() or f"{lat:.4f}, {lon:.4f}"
+    return ResolvedLocation(
+        query=display_name,
+        display_name=display_name,
+        latitude=lat,
+        longitude=lon,
+        timezone=(hint.timezone or "").strip() or None,
+        country_code=country_code,
+        admin1=(hint.admin1 or "").strip() or None,
+        country=(hint.country or "").strip() or None,
+        resolved_by="frontend_location_hint",
     )
 
 
@@ -1616,9 +1646,12 @@ async def get_forecast_page_by_query(query: str) -> dict[str, Any]:
         return await _build_forecast_page_payload(client, location)
 
 
-async def get_forecast_page(lat: float, lon: float) -> dict[str, Any]:
+async def get_forecast_page(lat: float, lon: float, location_hint: LocationHint | None = None) -> dict[str, Any]:
     async with _build_client() as client:
-        location = await _resolve_location_by_coordinates(client, lat, lon)
+        if location_hint is not None and location_hint.display_name:
+            location = _resolved_location_from_hint(lat=lat, lon=lon, hint=location_hint)
+        else:
+            location = await _resolve_location_by_coordinates(client, lat, lon)
         return await _build_forecast_page_payload(client, location)
 
 

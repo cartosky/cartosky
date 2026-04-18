@@ -32,6 +32,8 @@ type LocationResult = {
   longitude: number;
   timezone: string | null;
   country_code: string | null;
+  admin1?: string | null;
+  country?: string | null;
 };
 
 const FEATURED_LOCATIONS = [
@@ -661,6 +663,7 @@ export default function Forecast() {
   const [forecast, setForecast] = useState<ForecastPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showStickyLocationBar, setShowStickyLocationBar] = useState(false);
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -711,13 +714,36 @@ export default function Forecast() {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, pendingName]);
 
-  async function loadByCoords(lat: number, lon: number, preferredName?: string) {
+  useEffect(() => {
+    if (!forecast) {
+      setShowStickyLocationBar(false);
+      return;
+    }
+
+    function syncStickyLocationBar() {
+      setShowStickyLocationBar(window.scrollY > 56);
+    }
+
+    syncStickyLocationBar();
+    window.addEventListener("scroll", syncStickyLocationBar, { passive: true });
+    return () => window.removeEventListener("scroll", syncStickyLocationBar);
+  }, [forecast]);
+
+  async function loadByCoords(lat: number, lon: number, preferredName?: string, locationHint?: Partial<LocationResult>) {
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
     setIsLoading(true); setError(null); setForecast(null); setShowDropdown(false);
     try {
-      const res = await fetch(`${API_V4_BASE}/forecast-page?lat=${lat}&lon=${lon}`, { signal: ctrl.signal });
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      const displayName = preferredName ?? locationHint?.display_name ?? null;
+      if (displayName) params.set("display_name", displayName);
+      if (locationHint?.timezone) params.set("timezone", locationHint.timezone);
+      if (locationHint?.country_code) params.set("country_code", locationHint.country_code);
+      if (locationHint?.admin1) params.set("admin1", locationHint.admin1);
+      if (locationHint?.country) params.set("country", locationHint.country);
+
+      const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
       if (!res.ok) throw new Error("Forecast unavailable for this location.");
       const data = (await res.json()) as ForecastPayload;
       // Use preferred name if the API returns coords
@@ -760,7 +786,7 @@ export default function Forecast() {
     setQuery(loc.display_name);
     setShowDropdown(false);
     setSearchResults([]);
-    void loadByCoords(loc.latitude, loc.longitude, loc.display_name);
+    void loadByCoords(loc.latitude, loc.longitude, loc.display_name, loc);
   }
 
   function clearSearch() {
@@ -860,7 +886,7 @@ export default function Forecast() {
     return (
       <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16">
         {/* Location bar */}
-        <div className="fixed inset-x-0 top-16 z-[55] border-b border-white/8 bg-[#07111f]/90 px-5 py-3 backdrop-blur-md md:px-8">
+        <div className={`fixed inset-x-0 top-16 z-[55] border-b border-white/8 bg-[#07111f]/90 px-5 py-3 backdrop-blur-md transition duration-200 md:px-8 ${showStickyLocationBar ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-3 opacity-0"}`}>
           <div className="mx-auto flex max-w-6xl items-center gap-4">
             <button
               type="button"
@@ -895,7 +921,7 @@ export default function Forecast() {
         </div>
 
         {/* Main content */}
-        <div className="bg-[#07111f] px-5 pb-8 pt-[7.5rem] md:px-8 md:pb-10">
+        <div className="bg-[#07111f] px-5 pb-8 pt-[5.75rem] md:px-8 md:pb-10">
           <div className="mx-auto max-w-6xl space-y-8">
 
             {/* Search + current + hourly row */}

@@ -2920,9 +2920,23 @@ async def forecast_location_search_v4(
 async def forecast_page(
     lat: float = Query(..., ge=-90.0, le=90.0),
     lon: float = Query(..., ge=-180.0, le=180.0),
+    display_name: str | None = Query(None),
+    timezone: str | None = Query(None),
+    country_code: str | None = Query(None),
+    admin1: str | None = Query(None),
+    country: str | None = Query(None),
 ):
     try:
-        payload = await forecast_page_service.get_forecast_page(lat, lon)
+        location_hint = None
+        if display_name:
+            location_hint = forecast_page_service.LocationHint(
+                display_name=display_name,
+                timezone=timezone,
+                country_code=country_code,
+                admin1=admin1,
+                country=country,
+            )
+        payload = await forecast_page_service.get_forecast_page(lat, lon, location_hint=location_hint)
     except forecast_page_service.ForecastPageError as exc:
         status_code = 404 if exc.code == "LOCATION_NOT_FOUND" else 502 if exc.upstream_status else 500
         return _error_response(
@@ -2942,8 +2956,13 @@ async def forecast_page(
 async def forecast_page_v4(
     lat: float = Query(..., ge=-90.0, le=90.0),
     lon: float = Query(..., ge=-180.0, le=180.0),
+    display_name: str | None = Query(None),
+    timezone: str | None = Query(None),
+    country_code: str | None = Query(None),
+    admin1: str | None = Query(None),
+    country: str | None = Query(None),
 ):
-    return await forecast_page(lat, lon)
+    return await forecast_page(lat, lon, display_name, timezone, country_code, admin1, country)
 
 
 @app.get("/api/forecast-page/by-query")
