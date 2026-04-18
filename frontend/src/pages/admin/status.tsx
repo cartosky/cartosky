@@ -563,7 +563,7 @@ export default function AdminStatusPage() {
                   <div className="mt-2 text-2xl font-semibold text-rose-100">{selected.missing_artifact_count}</div>
                 </div>
                 <div className="border-l border-rose-400/22 pl-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-100/72">Unreadable grids</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-100/72">Unreadable artifacts</div>
                   <div className="mt-2 text-2xl font-semibold text-rose-100">{selected.unreadable_artifact_count}</div>
                 </div>
                 <div className="border-l border-amber-400/22 pl-4">

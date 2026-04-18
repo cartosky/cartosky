@@ -27,6 +27,7 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 os.environ.setdefault("TWM_ADMIN_MEMBER_IDS", "42")
 
 from app import main as main_module
+from app.services.grid import grid_supported
 
 twf_oauth = main_module.twf_oauth
 admin_telemetry = main_module.admin_telemetry
@@ -83,12 +84,82 @@ def _write_sidecar(path: Path, *, model_id: str, variable_id: str, run_id: str, 
     )
 
 
+def _write_grid_runtime(
+    root: Path,
+    *,
+    model_id: str,
+    run_id: str,
+    variable_id: str,
+    hours: list[int],
+    include_contours: bool = False,
+) -> None:
+    grid_dir = root / "published" / model_id / run_id / variable_id / "grid"
+    grid_dir.mkdir(parents=True, exist_ok=True)
+    lod_frames = []
+    for forecast_hour in hours:
+        filename = f"fh{forecast_hour:03d}.l0.u16.bin"
+        (grid_dir / filename).write_bytes((b"\x00\x00") * 4)
+        lod_frames.append({"fh": forecast_hour, "file": filename})
+        if include_contours:
+            sidecar_path = root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
+            sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+            sidecar_path.write_text(
+                json.dumps(
+                    {
+                        "contract_version": "3.0",
+                        "model": model_id,
+                        "run": run_id,
+                        "var": variable_id,
+                        "fh": forecast_hour,
+                        "contours": {
+                            "primary": {
+                                "path": f"contours/fh{forecast_hour:03d}_primary.geojson",
+                            }
+                        },
+                    }
+                )
+            )
+            contour_path = sidecar_path.parent / "contours" / f"fh{forecast_hour:03d}_primary.geojson"
+            contour_path.parent.mkdir(parents=True, exist_ok=True)
+            contour_path.write_text(json.dumps({"type": "FeatureCollection", "features": []}))
+
+    manifest_payload = {
+        "manifest_version": "1.0",
+        "subtype": "grid",
+        "model": model_id,
+        "run": run_id,
+        "var": variable_id,
+        "bbox": [0.0, 0.0, 2.0, 2.0],
+        "grid": {
+            "width": 2,
+            "height": 2,
+            "dtype": "uint16",
+            "endianness": "little",
+            "scale": 1.0,
+            "offset": 0.0,
+            "nodata": 65535,
+            "units": "in",
+        },
+        "lods": [
+            {
+                "level": 0,
+                "width": 2,
+                "height": 2,
+                "frames": lod_frames,
+            }
+        ],
+    }
+    if include_contours:
+        manifest_payload["contours"] = {"primary": {"label": "Primary"}}
+    (grid_dir / "manifest.json").write_text(json.dumps(manifest_payload))
+
+
 def _write_manifest(path: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]], available_override: dict[str, int] | None = None) -> None:
     payload = {
         "contract_version": "3.0",
         "model": model_id,
         "run": run_id,
-        "last_updated": "2026-03-11T18:00:00Z",
+        "last_updated": "2026-04-17T18:00:00Z",
         "variables": {},
     }
     for variable_id, hours in variables.items():
@@ -117,6 +188,14 @@ def _seed_run(root: Path, *, model_id: str, run_id: str, variables: dict[str, li
     )
     for variable_id, hours in variables.items():
         available = available_override.get(variable_id, len(hours)) if available_override else len(hours)
+        if grid_supported(model_id, variable_id):
+            _write_grid_runtime(
+                root,
+                model_id=model_id,
+                run_id=run_id,
+                variable_id=variable_id,
+                hours=hours[:available],
+            )
         for forecast_hour in hours[:available]:
             value_path = root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.val.cog.tif"
             sidecar_path = root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
@@ -173,12 +252,30 @@ async def test_status_results_reports_incomplete_and_artifact_failures(
         variables={"tmp2m": [0, 1], "precip_total": [0, 1]},
         available_override={"precip_total": 1},
     )
-    _seed_run(
-        main_module.DATA_ROOT,
-        model_id="gfs",
-        run_id="20260311_12z",
-        variables={"tmp2m": [0], "precip_total": [0]},
-        missing_value_grid=("precip_total", 0),
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "spc" / "20260311_1200z.json",
+        model_id="spc",
+        run_id="20260311_1200z",
+        variables={"convective": [0]},
+    )
+    spc_var_dir = main_module.DATA_ROOT / "published" / "spc" / "20260311_1200z" / "convective"
+    spc_var_dir.mkdir(parents=True, exist_ok=True)
+    (spc_var_dir / "fh000.json").write_text(
+        json.dumps(
+            {
+                "contract_version": "3.0",
+                "model": "spc",
+                "run": "20260311_1200z",
+                "var": "convective",
+                "fh": 0,
+                "vector_layers": {
+                    "primary": {
+                        "format": "geojson",
+                        "path": "vectors/fh000.geojson",
+                    }
+                },
+            }
+        )
     )
 
     response = await client.get(
@@ -190,9 +287,53 @@ async def test_status_results_reports_incomplete_and_artifact_failures(
     rows = response.json()["results"]
     assert any(row["issue_type"] == "run_incomplete" and row["model_id"] == "hrrr" for row in rows)
     artifact_row = next(row for row in rows if row["issue_type"] == "artifact_failure")
-    assert artifact_row["model_id"] == "gfs"
+    assert artifact_row["model_id"] == "spc"
     assert artifact_row["missing_artifact_count"] >= 1
     assert artifact_row["sample_paths"]
+
+
+async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_legacy_value_files(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 4, 17, 14, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "gefs" / "20260417_12z.json",
+        model_id="gefs",
+        run_id="20260417_12z",
+        variables={"tmp2m__mean": [0, 6]},
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id="gefs",
+        run_id="20260417_12z",
+        variable_id="tmp2m__mean",
+        hours=[0, 6],
+    )
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "healthy"
+    assert rows[0]["issue_type"] == "healthy"
+    assert rows[0]["missing_artifact_count"] == 0
+    assert rows[0]["unreadable_artifact_count"] == 0
 
 
 async def test_status_results_only_scans_retained_published_runs(client: httpx.AsyncClient) -> None:
