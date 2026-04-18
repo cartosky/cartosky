@@ -487,6 +487,104 @@ async def test_search_locations_city_state_query_falls_back_to_city_search(
     assert payload["results"][0]["latitude"] == pytest.approx(39.7392)
 
 
+async def test_get_forecast_page_by_coordinates_probes_nws_when_reverse_geocode_lacks_country(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
+        return nws_service.AfdResult(
+            wfo=office,
+            office_name="BOX",
+            issued_at="2026-04-18T16:42:00-04:00",
+            product_text="Boston area forecast discussion.",
+            product_id="AFDBOX",
+        )
+
+    monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "geocoding-api.open-meteo.com" and path == "/v1/reverse":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": "Boston",
+                            "latitude": 42.3601,
+                            "longitude": -71.0589,
+                            "timezone": "America/New_York",
+                            "country": "United States",
+                            "admin1": "Massachusetts",
+                        }
+                    ]
+                },
+            )
+        if host == "api.open-meteo.com" and path == "/v1/forecast":
+            payload = _open_meteo_payload(timezone_name="America/New_York")
+            payload["latitude"] = 42.3601
+            payload["longitude"] = -71.0589
+            return httpx.Response(200, json=payload)
+        if host == "api.weather.gov" and path == "/points/42.3601,-71.0589":
+            return httpx.Response(
+                200,
+                json={
+                    "properties": {
+                        "cwa": "BOX",
+                        "gridId": "BOX",
+                        "gridX": 70,
+                        "gridY": 76,
+                        "forecast": "https://api.weather.gov/gridpoints/BOX/70,76/forecast",
+                        "forecastHourly": "https://api.weather.gov/gridpoints/BOX/70,76/forecast/hourly",
+                        "forecastZone": "https://api.weather.gov/zones/forecast/MAZ015",
+                        "county": "https://api.weather.gov/zones/county/MAC025",
+                        "fireWeatherZone": "https://api.weather.gov/zones/fire/MAZ015",
+                        "observationStations": "https://api.weather.gov/gridpoints/BOX/70,76/stations",
+                    }
+                },
+            )
+        if host == "api.weather.gov" and path == "/gridpoints/BOX/70,76/forecast":
+            return httpx.Response(200, json=_nws_forecast_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/BOX/70,76/forecast/hourly":
+            return httpx.Response(200, json=_nws_hourly_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/BOX/70,76/stations":
+            return httpx.Response(
+                200,
+                json={
+                    "features": [
+                        {
+                            "id": "https://api.weather.gov/stations/KBOS",
+                            "geometry": {"coordinates": [-71.0096, 42.3656]},
+                            "properties": {
+                                "stationIdentifier": "KBOS",
+                                "name": "Boston Logan International Airport",
+                                "elevation": {"value": 5.0},
+                                "stationType": "ASOS",
+                            },
+                        }
+                    ]
+                },
+            )
+        if host == "api.weather.gov" and path == "/stations/KBOS/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-18T16:15:00+00:00", description="Partly Cloudy"))
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.get_forecast_page(42.3601, -71.0589)
+
+    assert payload["location"]["display_name"] == "Boston, Massachusetts"
+    assert payload["source_status"]["primary_region_mode"] == "us_hybrid"
+    assert payload["source_status"]["nws"] == "ok"
+    assert payload["current"]["source"] == "nws"
+    assert payload["official_text_forecast"] is not None
+    assert payload["afd"]["product_id"] == "AFDBOX"
+
+
 @pytest.fixture
 async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
     monkeypatch.setattr(main_module, "DATA_ROOT", Path("/tmp/test-forecast-data"))

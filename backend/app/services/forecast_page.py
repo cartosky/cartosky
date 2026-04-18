@@ -1439,7 +1439,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     if cached_payload is not None:
         payload = copy.deepcopy(cached_payload)
         payload["location"]["query"] = location.query
-        if (location.country_code or "").upper() == "US":
+        if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
             alerts, alerts_freshness = await _fetch_nws_alerts(
                 client,
                 lat=location.latitude,
@@ -1451,6 +1451,9 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         return payload
 
     om_task = asyncio.create_task(_fetch_open_meteo_forecast(client, location))
+
+    declared_us_region = (location.country_code or "").upper() == "US"
+    should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
 
     nws_status = "not_applicable"
     om_status = "ok"
@@ -1474,7 +1477,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     zone_codes: list[str] = []
     office_code: str | None = None
 
-    if (location.country_code or "").upper() == "US":
+    if should_probe_nws:
         try:
             points_payload = await _fetch_nws_points(client, location.latitude, location.longitude)
             nws_status = "ok"
@@ -1572,7 +1575,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         if not hourly_payload:
             hourly_payload, hourly_freshness = _normalize_open_meteo_hourly(om_payload)
             attribution["hourly"] = "Open-Meteo"
-            if (location.country_code or "").upper() == "US" and nws_status == "ok":
+            if should_probe_nws and nws_status == "ok":
                 nws_status = "degraded"
         daily_payload = _normalize_open_meteo_daily(om_payload)
     else:
@@ -1581,7 +1584,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     if current_payload is None:
         raise ForecastPageError("FORECAST_PAGE_EMPTY", "No forecast data could be assembled for this location.")
 
-    region_mode = "us_hybrid" if (location.country_code or "").upper() == "US" else "open_meteo_beta"
+    region_mode = "us_hybrid" if declared_us_region or points_payload is not None else "open_meteo_beta"
     payload = {
         "location": _location_payload(location, om_payload),
         "source_status": _build_source_status(region_mode=region_mode, nws_status=nws_status, om_status=om_status),

@@ -773,13 +773,34 @@ export default function Forecast() {
   const isLoaded = forecast !== null;
   const freshness = forecast?.freshness.current ?? null;
   const obsLabel = freshness?.observed_at ? formatObservedAt(freshness.observed_at) : null;
+  const emptyHeroFeaturedLocations = (
+    <div className="mt-6 flex flex-wrap gap-2 lg:max-w-xl">
+      {FEATURED_LOCATIONS.map(place => (
+        <button
+          key={place.name}
+          type="button"
+          onClick={() => {
+            setPendingName(place.name);
+            setQuery(place.name);
+            void loadByCoords(place.latitude, place.longitude, place.name);
+          }}
+          className="rounded-xl border border-white/10 bg-slate-950/18 px-3 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78"
+        >
+          {place.name}
+        </button>
+      ))}
+    </div>
+  );
 
   // ── Search box (shared between empty + loaded states) ──────────────
 
   const searchBox = (
     <div ref={searchContainerRef} className="relative">
-      <div className={`rounded-[1.6rem] border border-white/10 bg-slate-950/35 backdrop-blur-md ${isLoaded ? "p-3" : "p-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)]"}`}>
-        <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
+      <div className={isLoaded ? "rounded-[1.6rem] border border-white/10 bg-slate-950/35 p-3 backdrop-blur-md shadow-[0_24px_70px_rgba(0,0,0,0.28)]" : ""}>
+        <label className={isLoaded
+          ? "flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5"
+          : "flex items-center gap-3 rounded-[1.4rem] border border-white/12 bg-slate-950/24 px-5 py-4 backdrop-blur-sm shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-cyan-200/28 focus-within:bg-slate-950/30"}
+        >
           <Search className="h-3.5 w-3.5 flex-none text-cyan-200/75" />
           <input
             ref={inputRef}
@@ -814,7 +835,7 @@ export default function Forecast() {
         </label>
 
         {showDropdown && searchResults.length > 0 && (
-          <div className="mt-2 space-y-1">
+          <div className={isLoaded ? "mt-2 space-y-1" : "absolute left-0 right-0 top-full z-20 mt-3 space-y-1 rounded-[1.4rem] border border-white/10 bg-[#091221]/92 p-2 shadow-[0_28px_70px_rgba(0,0,0,0.34)] backdrop-blur-md"}>
             {searchResults.slice(0, 6).map((r, i) => (
               <button
                 key={i}
@@ -951,15 +972,15 @@ export default function Forecast() {
   // ── EMPTY STATE ────────────────────────────────────────────────────
 
   return (
-    <div className="-mx-5 -mt-12 space-y-0 md:-mx-8 md:-mt-16">
-      <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-16 pt-28 md:px-8 md:pt-32">
+    <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
+      <section className="relative overflow-hidden border-b border-white/8 bg-[#07111f] px-5 pb-10 pt-20 md:px-8 md:pb-14 md:pt-28 lg:pt-32">
         <div
           aria-hidden="true"
-          className="absolute inset-0 opacity-95"
+          className="absolute inset-0 opacity-92"
           style={{
             backgroundImage: `
-              linear-gradient(90deg, rgba(6,12,24,0.95) 0%, rgba(6,12,24,0.84) 42%, rgba(6,12,24,0.66) 100%),
-              linear-gradient(180deg, rgba(7,17,31,0.72), rgba(7,17,31,0.9)),
+              linear-gradient(90deg, rgba(6,12,24,0.92) 0%, rgba(6,12,24,0.76) 28%, rgba(6,12,24,0.38) 58%, rgba(6,12,24,0.56) 100%),
+              linear-gradient(180deg, rgba(7,17,31,0.56), rgba(7,17,31,0.82)),
               url(/assets/hero-image.png)
             `,
             backgroundSize: "auto, auto, cover",
@@ -967,67 +988,91 @@ export default function Forecast() {
           }}
         />
 
-        <div className="relative mx-auto grid min-h-[calc(100svh-10rem)] max-w-6xl items-center gap-12 py-10 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="max-w-2xl">
-            <SectionEyebrow>Forecast Preview</SectionEyebrow>
-            <h1 className="mt-8 text-balance text-5xl font-semibold tracking-[-0.04em] text-white md:text-7xl md:leading-[0.98]">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-20"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 24% 34%, rgba(255,255,255,0.12), transparent 0 10%), radial-gradient(circle at 70% 56%, rgba(125,211,252,0.14), transparent 0 10%)",
+          }}
+        />
+
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 76% 24%, rgba(6,12,24,0.48), rgba(6,12,24,0.28) 18%, transparent 42%)",
+          }}
+        />
+
+        <div className="relative mx-auto grid max-w-6xl items-center gap-10 py-8 lg:min-h-[calc(100svh-8rem)] lg:grid-cols-[1.1fr_0.9fr] lg:gap-14">
+          <div className="max-w-4xl text-center lg:text-left">
+            <SectionEyebrow>Forecast</SectionEyebrow>
+            <h1 className="mt-4 max-w-4xl text-balance text-4xl font-semibold tracking-[-0.04em] text-white drop-shadow-[0_8px_28px_rgba(0,0,0,0.45)] sm:text-5xl lg:mt-8 lg:text-7xl lg:leading-[0.98]">
               Local weather,
               <br />
-              <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic text-cyan-200">
+              <span className="font-['Georgia','Times_New_Roman',serif] font-normal italic tracking-[-0.03em] text-cyan-200">
                 clearly briefed.
               </span>
             </h1>
-            <p className="mt-6 max-w-md text-base leading-8 text-white/65">
+            <p className="mx-auto mt-8 max-w-2xl text-balance text-base leading-8 text-white/74 md:text-lg lg:mx-0 lg:text-left">
               Official NWS conditions and forecast periods, plus a 15-day extended outlook with a direct handoff to the viewer for deeper analysis.
             </p>
-            <div className="mt-8">
+            <div className="mx-auto mt-10 max-w-xl lg:mx-0">
               {searchBox}
+              {!isLoading && emptyHeroFeaturedLocations}
             </div>
             {error && (
-              <div className="mt-4 rounded-2xl border border-rose-300/18 bg-rose-300/10 px-4 py-3 text-sm text-rose-100">
+              <div className="mx-auto mt-4 max-w-xl rounded-2xl border border-rose-300/18 bg-rose-300/10 px-4 py-3 text-left text-sm text-rose-100 lg:mx-0">
                 {error}
                 <div className="mt-1 text-xs text-rose-200/70">Try selecting a location from the search dropdown.</div>
               </div>
             )}
           </div>
 
-          <div className="rounded-[2rem] border border-white/10 bg-slate-950/35 p-6 shadow-[0_28px_90px_rgba(0,0,0,0.26)] backdrop-blur-md">
+          <div className="relative hidden lg:block">
+            <div className="absolute -left-6 top-12 h-28 w-px bg-gradient-to-b from-transparent via-cyan-200/35 to-transparent" />
             {isLoading ? (
-              <div className="space-y-4 animate-pulse">
-                <div className="h-4 w-32 rounded-lg bg-white/8" />
-                <div className="h-8 w-48 rounded-xl bg-white/8" />
-                <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                  <div className="h-40 rounded-[1.4rem] bg-white/[0.04]" />
-                  <div className="h-40 rounded-[1.4rem] bg-white/[0.04]" />
+              <div className="pl-10 animate-pulse">
+                <div className="h-3 w-28 rounded-lg bg-white/8" />
+                <div className="mt-8 space-y-4">
+                  <div className="h-20 rounded-[1.4rem] border border-white/8 bg-white/[0.03]" />
+                  <div className="h-20 rounded-[1.4rem] border border-white/8 bg-white/[0.03]" />
+                  <div className="h-20 rounded-[1.4rem] border border-white/8 bg-white/[0.03]" />
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-white/25">
-                  <Search className="h-6 w-6" />
-                </div>
-                <p className="mt-5 text-sm font-medium text-white/55">Search a location to get started</p>
-                <p className="mt-2 max-w-xs text-xs leading-6 text-white/32">
-                  Type a city name, state, or zip code in the search box. U.S. locations include NWS data; international locations use Open-Meteo.
-                </p>
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  {FEATURED_LOCATIONS.map(place => (
-                    <button
-                      key={place.name}
-                      type="button"
-                      onClick={() => {
-                        setPendingName(place.name);
-                        setQuery(place.name);
-                        void loadByCoords(place.latitude, place.longitude, place.name);
-                      }}
-                      className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/55 transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/75"
-                    >
-                      {place.name}
-                    </button>
-                  ))}
+              <div className="pl-10">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.26em] text-white/42">Forecast Desk</div>
+                <div className="mt-6 space-y-4">
+                  <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/20 p-5 backdrop-blur-sm">
+                    <div className="text-sm font-semibold text-white">Official U.S. Forecast</div>
+                    <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
+                      Current observations, forecast periods, active alerts, and Area Forecast Discussions are surfaced when NWS coverage is available.
+                    </div>
+                  </div>
+                  <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
+                    <div className="text-sm font-semibold text-white">Extended Outlook</div>
+                    <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
+                      Open-Meteo carries the longer-range daily outlook so the page stays useful beyond the official forecast window.
+                    </div>
+                  </div>
+                  <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
+                    <div className="text-sm font-semibold text-white">Fast Entry</div>
+                    <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
+                      Search by city, state, zip, or jump straight in with the featured U.S. locations on the left.
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="mt-10 flex justify-center lg:col-span-2 lg:mt-0">
+            <div className="h-6 w-6 rounded-full border border-white/12 bg-white/[0.03] text-white/40">
+              <div className="flex h-full items-center justify-center text-base leading-none">⌄</div>
+            </div>
           </div>
         </div>
       </section>
