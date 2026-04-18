@@ -971,6 +971,13 @@ export default function Forecast() {
               </div>
               <DailyForecast daily={f.daily} limit={15} />
 
+              {/* AFD */}
+              {f.afd && (
+                <div className="mt-5">
+                  <AfdSection afd={f.afd} />
+                </div>
+              )}
+
               <div className="mt-5 flex items-center justify-between gap-4 rounded-[1.2rem] border border-cyan-300/12 bg-cyan-300/[0.04] px-4 py-3.5">
                 <div className="text-sm text-white/65">
                   Want to dig deeper? Open this location in the interactive map viewer.
@@ -983,13 +990,6 @@ export default function Forecast() {
                 </Link>
               </div>
             </div>
-
-            {/* AFD */}
-            {f.afd && (
-              <div>
-                <AfdSection afd={f.afd} />
-              </div>
-            )}
 
             <div className="h-4" />
           </div>
