@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 
-import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
+import { API_V4_BASE, MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -693,7 +693,7 @@ export default function Forecast() {
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_ORIGIN}/api/locations/search?q=${encodeURIComponent(trimmed)}`);
+        const res = await fetch(`${API_V4_BASE}/locations/search?q=${encodeURIComponent(trimmed)}`);
         if (!res.ok) throw new Error();
         const data = (await res.json()) as { results?: LocationResult[] };
         const results = data.results ?? [];
@@ -711,7 +711,7 @@ export default function Forecast() {
     loadAbortRef.current = ctrl;
     setIsLoading(true); setError(null); setForecast(null); setShowDropdown(false);
     try {
-      const res = await fetch(`${API_ORIGIN}/api/forecast-page?lat=${lat}&lon=${lon}`, { signal: ctrl.signal });
+      const res = await fetch(`${API_V4_BASE}/forecast-page?lat=${lat}&lon=${lon}`, { signal: ctrl.signal });
       if (!res.ok) throw new Error("Forecast unavailable for this location.");
       const data = (await res.json()) as ForecastPayload;
       // Use preferred name if the API returns coords
@@ -733,7 +733,7 @@ export default function Forecast() {
     loadAbortRef.current = ctrl;
     setIsLoading(true); setError(null); setForecast(null); setShowDropdown(false);
     try {
-      const res = await fetch(`${API_ORIGIN}/api/forecast-page/by-query?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+      const res = await fetch(`${API_V4_BASE}/forecast-page/by-query?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { detail?: string };
         throw new Error(body.detail ?? "Forecast unavailable. Try selecting a location from the dropdown.");
