@@ -75,7 +75,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services import admin_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app.auth import twf_oauth
 
@@ -98,6 +98,7 @@ def _normalized_path_prefix(value: str, *, default: str) -> str:
 
 DATA_ROOT = Path(_env_value("CARTOSKY_DATA_ROOT", "CARTOSKY_V3_DATA_ROOT", "TWF_V3_DATA_ROOT", default="./data"))
 nws_service.configure_data_root(DATA_ROOT)
+forecast_page_service.configure_data_root(DATA_ROOT)
 PUBLISHED_ROOT = DATA_ROOT / "published"
 MANIFESTS_ROOT = DATA_ROOT / "manifests"
 LOOP_CACHE_ROOT = Path(
@@ -2884,6 +2885,110 @@ def _ptype_intensity_sample_label(
 # ---------------------------------------------------------------------------
 # NWS Anchor City Weather
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/locations/search")
+async def forecast_location_search(
+    q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
+):
+    try:
+        payload = await forecast_page_service.search_locations(q)
+    except forecast_page_service.LocationNotFoundError as exc:
+        return _error_response(status_code=404, code=exc.code, message=exc.message)
+    except forecast_page_service.ForecastPageError as exc:
+        return _error_response(
+            status_code=502 if exc.upstream_status else 400,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/api/forecast-page")
+async def forecast_page(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+):
+    try:
+        payload = await forecast_page_service.get_forecast_page(lat, lon)
+    except forecast_page_service.ForecastPageError as exc:
+        status_code = 404 if exc.code == "LOCATION_NOT_FOUND" else 502 if exc.upstream_status else 500
+        return _error_response(
+            status_code=status_code,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=60"},
+    )
+
+
+@app.get("/api/forecast-page/by-query")
+async def forecast_page_by_query(
+    q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
+):
+    try:
+        payload = await forecast_page_service.get_forecast_page_by_query(q)
+    except forecast_page_service.LocationNotFoundError as exc:
+        return _error_response(status_code=404, code=exc.code, message=exc.message)
+    except forecast_page_service.ForecastPageError as exc:
+        return _error_response(
+            status_code=502 if exc.upstream_status else 500,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=60"},
+    )
+
+
+@app.get("/api/forecast-discussion")
+async def forecast_discussion(
+    office: str = Query(..., min_length=3, max_length=4, description="NWS forecast office code"),
+):
+    try:
+        payload = await forecast_page_service.get_forecast_discussion(office)
+    except forecast_page_service.ForecastPageError as exc:
+        return _error_response(
+            status_code=502 if exc.upstream_status else 400,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+
+    if payload is None:
+        return JSONResponse(
+            content={"afd": None, "reason": "no_afd_available", "meta": {"office": office.strip().upper()}},
+            headers={"Cache-Control": "public, max-age=900"},
+        )
+
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=900"},
+    )
+
+
+@app.get("/api/model-guidance")
+async def model_guidance_placeholder(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+):
+    payload = await forecast_page_service.get_model_guidance_placeholder(lat, lon)
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.get("/api/v4/anchors/{anchor_id}/weather")

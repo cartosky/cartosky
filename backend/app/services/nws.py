@@ -959,6 +959,28 @@ async def get_afd(anchor_id: str) -> AfdResult | None:
     return afd
 
 
+async def get_afd_by_office(office: str) -> AfdResult | None:
+    """Fetch the latest Area Forecast Discussion for a WFO office code."""
+    normalized_office = office.strip().upper()
+    if not normalized_office:
+        raise NwsServiceError(
+            code="INVALID_WFO",
+            message="A forecast office code is required.",
+        )
+
+    afd_cache_key = f"afd:wfo:{normalized_office}"
+    cached_afd: AfdResult | None = _afd_cache.get(afd_cache_key)
+    if cached_afd is not None:
+        return cached_afd
+
+    async with _build_client() as client:
+        afd = await _fetch_latest_afd(client, normalized_office)
+        if afd is not None:
+            _afd_cache.set(afd_cache_key, afd, AFD_CACHE_TTL)
+
+    return afd
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers (for JSON responses)
 # ---------------------------------------------------------------------------
