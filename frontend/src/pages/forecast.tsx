@@ -5,7 +5,6 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
   ChevronUp,
   Cloud,
   CloudDrizzle,
@@ -223,54 +222,190 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
   );
 }
 
-// ── Hourly Strip ──────────────────────────────────────────────────────
+// ── Hourly Chart ──────────────────────────────────────────────────────
 
-function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const entries = hourly.slice(0, 24);
   if (entries.length === 0) return null;
 
-  function scroll(dir: "left" | "right") {
-    scrollRef.current?.scrollBy({ left: dir === "right" ? 200 : -200, behavior: "smooth" });
+  const temps = entries.map(e => e.temperature_f ?? null).filter((t): t is number => t !== null);
+  if (temps.length === 0) return null;
+
+  const rawMin = Math.min(...temps);
+  const rawMax = Math.max(...temps);
+  const pad = Math.max((rawMax - rawMin) * 0.15, 3);
+  const minT = rawMin - pad;
+  const maxT = rawMax + pad;
+  const range = maxT - minT;
+
+  // SVG layout: temp chart on top, precip probability curve in a band below
+  const VW = 460;
+  const VH = 145;
+  const TEMP_T = 18;    // top of temp zone
+  const TEMP_B = 90;    // bottom of temp zone
+  const PRECIP_T = 97;  // top of precip zone (7px gap acts as divider)
+  const PRECIP_B = 135; // bottom of precip zone (38px tall = max curve height)
+
+  const xAt = (i: number) => (i / (entries.length - 1)) * VW;
+  const yAt = (t: number) => TEMP_T + (1 - (t - minT) / range) * (TEMP_B - TEMP_T);
+
+  // Smooth bezier helpers
+  function bezierPath(pts: { x: number; y: number }[]) {
+    return pts.reduce((d, p, i) => {
+      if (i === 0) return `M ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+      const prev = pts[i - 1];
+      const cpx = ((prev.x + p.x) / 2).toFixed(1);
+      return `${d} C ${cpx} ${prev.y.toFixed(1)} ${cpx} ${p.y.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+    }, "");
   }
+
+  const tempPts = entries.map((e, i) => ({ x: xAt(i), y: yAt(e.temperature_f ?? (minT + range / 2)) }));
+  const linePath = bezierPath(tempPts);
+  const areaPath = `${linePath} L ${VW} ${TEMP_B} L 0 ${TEMP_B} Z`;
+
+  // Precip probability curve — each point's y = PRECIP_B minus the probability height
+  const precipPts = entries.map((e, i) => ({
+    x: xAt(i),
+    y: PRECIP_B - ((e.pop_pct ?? 0) / 100) * (PRECIP_B - PRECIP_T),
+  }));
+  const precipLinePath = bezierPath(precipPts);
+  const precipAreaPath = `${precipLinePath} L ${VW} ${PRECIP_B} L 0 ${PRECIP_B} Z`;
+
+  const labelIdx = [0, 6, 12, 18, 23].filter(i => i < entries.length);
+  const hasPrecip = entries.some(e => (e.pop_pct ?? 0) > 0);
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <SectionLabel>Next 24 Hours</SectionLabel>
-        <div className="flex gap-1">
-          <button type="button" onClick={() => scroll("left")} className="rounded-lg border border-white/8 bg-white/[0.03] p-1 text-white/35 transition hover:text-white/60">
-            <ChevronLeft className="h-3 w-3" />
-          </button>
-          <button type="button" onClick={() => scroll("right")} className="rounded-lg border border-white/8 bg-white/[0.03] p-1 text-white/35 transition hover:text-white/60">
-            <ChevronRight className="h-3 w-3" />
-          </button>
+      <SectionLabel>Next 24 Hours</SectionLabel>
+      <div className="mt-4">
+        <svg
+          viewBox={`0 0 ${VW} ${VH}`}
+          preserveAspectRatio="none"
+          className="w-full"
+          style={{ height: hasPrecip ? 145 : 105 }}
+          aria-hidden="true"
+        >
+          <defs>
+            <linearGradient id="hTempGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(103,232,249,0.20)" />
+              <stop offset="100%" stopColor="rgba(103,232,249,0.01)" />
+            </linearGradient>
+            <linearGradient id="hPrecipGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(52,211,153,0.45)" />
+              <stop offset="100%" stopColor="rgba(52,211,153,0.08)" />
+            </linearGradient>
+          </defs>
+
+          {/* Temp area fill */}
+          <path d={areaPath} fill="url(#hTempGrad)" />
+
+          {/* Temp line */}
+          <path d={linePath} fill="none" stroke="rgba(103,232,249,0.85)"
+            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Dots + labels at key positions */}
+          {labelIdx.map(i => {
+            const e = entries[i];
+            const x = xAt(i);
+            const y = yAt(e.temperature_f ?? (minT + range / 2));
+            const anchor = i === 0 ? "start" : i === entries.length - 1 ? "end" : "middle";
+            return (
+              <g key={i}>
+                <circle cx={x} cy={y} r={2.5} fill="rgba(103,232,249,1)" />
+                <text x={x} y={y - 6} textAnchor={anchor} fontSize={9.5}
+                  fontWeight="600" fill="rgba(255,255,255,0.82)">
+                  {e.temperature_f != null ? `${e.temperature_f}°` : "--"}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Precip probability area curve */}
+          {hasPrecip && (
+            <>
+              <line x1={0} y1={PRECIP_T - 1} x2={VW} y2={PRECIP_T - 1}
+                stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+              <path d={precipAreaPath} fill="url(#hPrecipGrad)" />
+              <path d={precipLinePath} fill="none"
+                stroke="rgba(52,211,153,0.70)" strokeWidth={1.2}
+                strokeLinecap="round" strokeLinejoin="round" />
+            </>
+          )}
+        </svg>
+
+        {/* Icon + time labels row — absolutely aligned with SVG x positions */}
+        <div className="relative mt-2 h-12">
+          {labelIdx.map(i => {
+            const e = entries[i];
+            const pct = (i / (entries.length - 1)) * 100;
+            const align = i === 0 ? "items-start" : i === entries.length - 1 ? "items-end" : "items-center";
+            const translate = i === 0 ? "" : i === entries.length - 1 ? "-translate-x-full" : "-translate-x-1/2";
+            return (
+              <div
+                key={i}
+                className={`absolute top-0 flex flex-col gap-0.5 ${align} ${translate}`}
+                style={{ left: `${pct}%` }}
+              >
+                <WeatherIcon code={e.weather_code} className="h-4 w-4 text-cyan-200/65" />
+                <span className="text-[10px] text-white/40">{formatHour(e.time)}</span>
+                {(e.pop_pct ?? 0) > 0 && (
+                  <span className="text-[10px] text-cyan-300/65">{e.pop_pct}%</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div className="relative">
-        <div
-          ref={scrollRef}
-          className="flex gap-1.5 overflow-x-auto pb-1"
-          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-        >
-          {entries.map((entry, i) => (
-            <div
-              key={i}
-              className="flex min-w-[3.5rem] flex-none flex-col items-center rounded-xl border border-white/8 bg-slate-950/30 px-1.5 py-2.5"
-            >
-              <div className="text-[10px] text-white/45">{formatHour(entry.time)}</div>
-              <WeatherIcon code={entry.weather_code} className="mt-1.5 h-3.5 w-3.5 text-cyan-200/75" />
-              <div className="mt-1.5 text-sm font-semibold text-white">{entry.temperature_f ?? "--"}°</div>
-              <div className="mt-1 text-[10px] text-white/35">
-                {entry.pop_pct != null && entry.pop_pct > 0
-                  ? <span className="text-cyan-300/70">{entry.pop_pct}%</span>
-                  : <span className="text-white/20">—</span>}
+    </div>
+  );
+}
+
+// ── Daily Mini Chart ──────────────────────────────────────────────────
+
+function DailyMiniChart({ daily }: { daily: DailyEntry[] }) {
+  const entries = daily.slice(0, 7);
+  if (entries.length === 0) return null;
+
+  const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
+  const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
+  if (!lows.length || !highs.length) return null;
+
+  const globalMin = Math.min(...lows);
+  const globalMax = Math.max(...highs);
+  const span = globalMax - globalMin || 1;
+
+  return (
+    <div className="border-t border-white/8 pt-4">
+      <SectionLabel>7-Day Outlook</SectionLabel>
+      <div className="mt-3 space-y-2.5">
+        {entries.map((entry, i) => {
+          const low  = entry.low_f  ?? globalMin;
+          const high = entry.high_f ?? globalMax;
+          const leftPct  = ((low  - globalMin) / span) * 100;
+          const widthPct = ((high - low) / span) * 100;
+          const pop = entry.pop_pct ?? 0;
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-9 flex-none text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">
+                {formatDayLabel(entry.date, i)}
+              </div>
+              <WeatherIcon code={entry.icon} className="h-3.5 w-3.5 flex-none text-cyan-200/60" />
+              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+                <div
+                  className="absolute inset-y-0 rounded-full bg-gradient-to-r from-sky-400/60 to-cyan-300/80"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                />
+              </div>
+              <div className="flex w-16 flex-none justify-end gap-1.5 text-xs">
+                <span className="font-medium text-white/80">{high}°</span>
+                <span className="text-white/30">{low}°</span>
+              </div>
+              <div className="w-7 flex-none text-right text-[10px] text-emerald-400/70">
+                {pop > 0 ? `${pop}%` : ""}
               </div>
             </div>
-          ))}
-        </div>
-        {/* right fade */}
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-[#0a1528] to-transparent" />
+          );
+        })}
       </div>
     </div>
   );
@@ -698,7 +833,7 @@ export default function Forecast() {
     return (
       <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16">
         {/* Location bar */}
-        <div className="sticky top-16 z-[55] border-b border-white/8 bg-[#07111f]/90 px-5 py-3 backdrop-blur-md md:px-8">
+        <div className="fixed inset-x-0 top-16 z-[55] border-b border-white/8 bg-[#07111f]/90 px-5 py-3 backdrop-blur-md md:px-8">
           <div className="mx-auto flex max-w-6xl items-center gap-4">
             <button
               type="button"
@@ -733,7 +868,7 @@ export default function Forecast() {
         </div>
 
         {/* Main content */}
-        <div className="bg-[#07111f] px-5 py-8 md:px-8 md:py-10">
+        <div className="bg-[#07111f] px-5 pb-8 pt-[7.5rem] md:px-8 md:pb-10">
           <div className="mx-auto max-w-6xl space-y-8">
 
             {/* Search + current + hourly row */}
@@ -746,8 +881,9 @@ export default function Forecast() {
                   attribution={f.attribution.current}
                 />
               </div>
-              <div className="self-start rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">
-                <HourlyStrip hourly={f.hourly} />
+              <div className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">
+                <HourlyChart hourly={f.hourly} />
+                <DailyMiniChart daily={f.daily} />
               </div>
             </div>
 
@@ -873,7 +1009,7 @@ export default function Forecast() {
                     <button
                       key={place}
                       type="button"
-                      onClick={() => { setQuery(place); void loadByQuery(place); }}
+                      onClick={() => { setPendingName(place); setQuery(place); void loadByQuery(place); }}
                       className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/55 transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/75"
                     >
                       {place}
