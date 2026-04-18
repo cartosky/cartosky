@@ -732,7 +732,7 @@ export default function Forecast() {
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
-    setIsLoading(true); setError(null); setForecast(null); setShowDropdown(false);
+    setIsLoading(true); setError(null); setShowDropdown(false);
     try {
       const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
       const displayName = preferredName ?? locationHint?.display_name ?? null;
@@ -755,14 +755,16 @@ export default function Forecast() {
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
-    } finally { setIsLoading(false); }
+    } finally {
+      if (loadAbortRef.current === ctrl) setIsLoading(false);
+    }
   }
 
   async function loadByQuery(q: string) {
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
-    setIsLoading(true); setError(null); setForecast(null); setShowDropdown(false);
+    setIsLoading(true); setError(null); setShowDropdown(false);
     try {
       const res = await fetch(`${API_V4_BASE}/forecast-page/by-query?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
       if (!res.ok) {
@@ -777,7 +779,9 @@ export default function Forecast() {
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
-    } finally { setIsLoading(false); }
+    } finally {
+      if (loadAbortRef.current === ctrl) setIsLoading(false);
+    }
   }
 
   function selectLocation(loc: LocationResult) {
@@ -850,7 +854,7 @@ export default function Forecast() {
             autoComplete="off"
             spellCheck={false}
           />
-          {isSearching ? (
+          {(isSearching || (isLoaded && isLoading)) ? (
             <div className="h-3 w-3 flex-none animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
           ) : (isLoaded || query) ? (
             <button type="button" onClick={clearSearch} className="flex-none rounded-full p-0.5 text-white/30 transition hover:text-white/60">
