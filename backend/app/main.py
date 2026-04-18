@@ -2909,6 +2909,13 @@ async def forecast_location_search(
     )
 
 
+@app.get("/api/v4/locations/search")
+async def forecast_location_search_v4(
+    q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
+):
+    return await forecast_location_search(q)
+
+
 @app.get("/api/forecast-page")
 async def forecast_page(
     lat: float = Query(..., ge=-90.0, le=90.0),
@@ -2931,6 +2938,14 @@ async def forecast_page(
     )
 
 
+@app.get("/api/v4/forecast-page")
+async def forecast_page_v4(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+):
+    return await forecast_page(lat, lon)
+
+
 @app.get("/api/forecast-page/by-query")
 async def forecast_page_by_query(
     q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
@@ -2951,6 +2966,13 @@ async def forecast_page_by_query(
         content=payload,
         headers={"Cache-Control": "public, max-age=60"},
     )
+
+
+@app.get("/api/v4/forecast-page/by-query")
+async def forecast_page_by_query_v4(
+    q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
+):
+    return await forecast_page_by_query(q)
 
 
 @app.get("/api/forecast-discussion")
@@ -2979,6 +3001,13 @@ async def forecast_discussion(
     )
 
 
+@app.get("/api/v4/forecast-discussion")
+async def forecast_discussion_v4(
+    office: str = Query(..., min_length=3, max_length=4, description="NWS forecast office code"),
+):
+    return await forecast_discussion(office)
+
+
 @app.get("/api/model-guidance")
 async def model_guidance_placeholder(
     lat: float = Query(..., ge=-90.0, le=90.0),
@@ -2989,6 +3018,14 @@ async def model_guidance_placeholder(
         content=payload,
         headers={"Cache-Control": "public, max-age=300"},
     )
+
+
+@app.get("/api/v4/model-guidance")
+async def model_guidance_placeholder_v4(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+):
+    return await model_guidance_placeholder(lat, lon)
 
 
 @app.get("/api/v4/anchors/{anchor_id}/weather")

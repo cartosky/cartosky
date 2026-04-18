@@ -554,7 +554,7 @@ export default function Forecast() {
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_ORIGIN}/api/locations/search?q=${encodeURIComponent(trimmed)}`);
+        const res = await fetch(`${API_ORIGIN}/api/v4/locations/search?q=${encodeURIComponent(trimmed)}`);
         if (!res.ok) throw new Error("Search unavailable");
         const data = (await res.json()) as { results?: LocationResult[] };
         const results = data.results ?? [];
@@ -585,7 +585,7 @@ export default function Forecast() {
 
     try {
       const res = await fetch(
-        `${API_ORIGIN}/api/forecast-page/by-query?q=${encodeURIComponent(q)}`,
+        `${API_ORIGIN}/api/v4/forecast-page/by-query?q=${encodeURIComponent(q)}`,
         { signal: controller.signal }
       );
       if (!res.ok) {
@@ -622,7 +622,7 @@ export default function Forecast() {
 
     try {
       const res = await fetch(
-        `${API_ORIGIN}/api/forecast-page?lat=${lat}&lon=${lon}`,
+        `${API_ORIGIN}/api/v4/forecast-page?lat=${lat}&lon=${lon}`,
         { signal: controller.signal }
       );
       if (!res.ok) throw new Error("Forecast unavailable for this location.");

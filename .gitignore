@@ -59,7 +59,7 @@ frontend/.vs/
 # Additional files to ignore
 extract_colorbar.py
 ~HOME
-/docs/ANIMATION_FIX.md
+/docs/CURRENT_PROD_NGINX.md
 .hintrc
 .pytest_cache/
 .github/

@@ -4,11 +4,15 @@ This backend pass adds a normalized forecast-page service intended to keep the U
 
 ## Routes
 
-- `GET /api/locations/search?q=57104`
-- `GET /api/forecast-page?lat=43.55&lon=-96.73`
-- `GET /api/forecast-page/by-query?q=Sioux+Falls,+SD`
-- `GET /api/forecast-discussion?office=FSD`
-- `GET /api/model-guidance?lat=43.55&lon=-96.73`
+Preferred production paths:
+
+- `GET /api/v4/locations/search?q=57104`
+- `GET /api/v4/forecast-page?lat=43.55&lon=-96.73`
+- `GET /api/v4/forecast-page/by-query?q=Sioux+Falls,+SD`
+- `GET /api/v4/forecast-discussion?office=FSD`
+- `GET /api/v4/model-guidance?lat=43.55&lon=-96.73`
+
+Compatibility aliases are also registered under `/api/*` for local/dev use.
 
 ## Provider Routing
 
@@ -18,7 +22,7 @@ This backend pass adds a normalized forecast-page service intended to keep the U
 
 ## Normalized Forecast Payload
 
-`GET /api/forecast-page` and `GET /api/forecast-page/by-query` return a single normalized object with these top-level fields:
+`GET /api/v4/forecast-page` and `GET /api/v4/forecast-page/by-query` return a single normalized object with these top-level fields:
 
 - `location`
 - `source_status`
@@ -43,7 +47,7 @@ The response is intentionally source-agnostic. The frontend should treat upstrea
 
 ## Placeholder Guidance Route
 
-`GET /api/model-guidance` currently returns a placeholder payload with planned sections for:
+`GET /api/v4/model-guidance` currently returns a placeholder payload with planned sections for:
 
 - ensemble charts
 - guidance summary

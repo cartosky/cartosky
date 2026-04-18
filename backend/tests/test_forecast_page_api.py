@@ -482,10 +482,10 @@ async def test_forecast_page_routes_smoke(
     monkeypatch.setattr(forecast_page_service, "get_forecast_discussion", fake_forecast_discussion)
     monkeypatch.setattr(forecast_page_service, "get_model_guidance_placeholder", fake_model_guidance)
 
-    search_response = await client.get("/api/locations/search", params={"q": "57104"})
-    forecast_response = await client.get("/api/forecast-page/by-query", params={"q": "57104"})
-    discussion_response = await client.get("/api/forecast-discussion", params={"office": "FSD"})
-    guidance_response = await client.get("/api/model-guidance", params={"lat": 43.55, "lon": -96.73})
+    search_response = await client.get("/api/v4/locations/search", params={"q": "57104"})
+    forecast_response = await client.get("/api/v4/forecast-page/by-query", params={"q": "57104"})
+    discussion_response = await client.get("/api/v4/forecast-discussion", params={"office": "FSD"})
+    guidance_response = await client.get("/api/v4/model-guidance", params={"lat": 43.55, "lon": -96.73})
 
     assert search_response.status_code == 200
     assert search_response.json()["results"][0]["display_name"] == "Sioux Falls, SD"
