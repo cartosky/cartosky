@@ -282,16 +282,15 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
 
   const labelIdx = [0, 6, 12, 18, 23].filter(i => i < entries.length);
   const hasPrecip = entries.some(e => (e.pop_pct ?? 0) > 0);
+  const chartHeight = hasPrecip ? VH : TEMP_B + 10;
 
   return (
     <div>
       <SectionLabel>Next 24 Hours</SectionLabel>
       <div className="mt-4">
         <svg
-          viewBox={`0 0 ${VW} ${VH}`}
-          preserveAspectRatio="none"
-          className="w-full"
-          style={{ height: hasPrecip ? 145 : 105 }}
+          viewBox={`0 0 ${VW} ${chartHeight}`}
+          className="h-auto w-full"
           aria-hidden="true"
         >
           <defs>
