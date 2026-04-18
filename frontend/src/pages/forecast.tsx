@@ -34,6 +34,13 @@ type LocationResult = {
   country_code: string | null;
 };
 
+const FEATURED_LOCATIONS = [
+  { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 },
+  { name: "Chicago, IL", latitude: 41.8781, longitude: -87.6298 },
+  { name: "Miami, FL", latitude: 25.7617, longitude: -80.1918 },
+  { name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321 },
+] as const;
+
 type CurrentData = {
   source: string;
   observed_at: string | null;
@@ -460,10 +467,9 @@ function CurrentConditionsCard({ current, freshness, attribution }: {
       </dl>
 
       <div className="mt-4 flex items-center gap-3 border-t border-white/8 pt-3 text-xs">
+        {attribution ? <span className="text-white/35">{attribution}</span> : null}
         {current.station?.name ? (
-          <span className="text-white/35 truncate">{current.station.name}{current.station.distance_km != null ? ` · ${current.station.distance_km} km` : ""}</span>
-        ) : attribution ? (
-          <span className="text-white/35">{attribution}</span>
+          <span className="truncate text-white/35">{current.station.name}{current.station.distance_km != null ? ` · ${current.station.distance_km} km` : ""}</span>
         ) : null}
         <span className={`ml-auto flex-none font-medium ${chip.color}`}>{chip.label}</span>
       </div>
@@ -473,7 +479,7 @@ function CurrentConditionsCard({ current, freshness, attribution }: {
 
 // ── Daily Forecast ────────────────────────────────────────────────────
 
-function DailyForecast({ daily }: { daily: DailyEntry[] }) {
+function DailyForecast({ daily, limit = 15 }: { daily: DailyEntry[]; limit?: number }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   function toggle(i: number) {
@@ -486,7 +492,7 @@ function DailyForecast({ daily }: { daily: DailyEntry[] }) {
 
   return (
     <div className="divide-y divide-white/[0.06] rounded-[1.4rem] border border-white/8 overflow-hidden">
-      {daily.slice(0, 7).map((entry, i) => {
+      {daily.slice(0, limit).map((entry, i) => {
         const isOpen = expanded.has(i);
         const hasDetail = entry.wind_speed_mph != null || (entry.qpf_in != null && entry.qpf_in > 0) || (entry.snow_in != null && entry.snow_in > 0);
         return (
@@ -586,7 +592,7 @@ function TextForecastSection({ data }: { data: NonNullable<ForecastPayload["offi
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <SectionLabel>NWS Forecast Periods</SectionLabel>
+        <SectionLabel>Official Forecast · NWS</SectionLabel>
         {data.generated_at && <span className="text-xs text-white/30">Generated {formatObservedAt(data.generated_at)}</span>}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -900,13 +906,20 @@ export default function Forecast() {
               </div>
             )}
 
-            {/* 7-day forecast + viewer CTA */}
+            {/* Official NWS forecast */}
+            {f.official_text_forecast && (
+              <div>
+                <TextForecastSection data={f.official_text_forecast} />
+              </div>
+            )}
+
+            {/* Extended forecast + viewer CTA */}
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <SectionLabel>7-Day Forecast</SectionLabel>
+                <SectionLabel>15-Day Extended Forecast</SectionLabel>
                 {f.attribution.daily && <span className="text-xs text-white/25">Source: {f.attribution.daily}</span>}
               </div>
-              <DailyForecast daily={f.daily} />
+              <DailyForecast daily={f.daily} limit={15} />
 
               <div className="mt-5 flex items-center justify-between gap-4 rounded-[1.2rem] border border-cyan-300/12 bg-cyan-300/[0.04] px-4 py-3.5">
                 <div className="text-sm text-white/65">
@@ -920,13 +933,6 @@ export default function Forecast() {
                 </Link>
               </div>
             </div>
-
-            {/* NWS text forecast */}
-            {f.official_text_forecast && (
-              <div>
-                <TextForecastSection data={f.official_text_forecast} />
-              </div>
-            )}
 
             {/* AFD */}
             {f.afd && (
@@ -972,7 +978,7 @@ export default function Forecast() {
               </span>
             </h1>
             <p className="mt-6 max-w-md text-base leading-8 text-white/65">
-              Current conditions, 24-hour hourly, and a 7-day outlook — with a direct handoff to the viewer for deeper analysis.
+              Official NWS conditions and forecast periods, plus a 15-day extended outlook with a direct handoff to the viewer for deeper analysis.
             </p>
             <div className="mt-8">
               {searchBox}
@@ -1005,14 +1011,18 @@ export default function Forecast() {
                   Type a city name, state, or zip code in the search box. U.S. locations include NWS data; international locations use Open-Meteo.
                 </p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  {["Denver, CO", "Chicago, IL", "Miami, FL", "Seattle, WA"].map(place => (
+                  {FEATURED_LOCATIONS.map(place => (
                     <button
-                      key={place}
+                      key={place.name}
                       type="button"
-                      onClick={() => { setPendingName(place); setQuery(place); void loadByQuery(place); }}
+                      onClick={() => {
+                        setPendingName(place.name);
+                        setQuery(place.name);
+                        void loadByCoords(place.latitude, place.longitude, place.name);
+                      }}
                       className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/55 transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/75"
                     >
-                      {place}
+                      {place.name}
                     </button>
                   ))}
                 </div>

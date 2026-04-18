@@ -442,6 +442,51 @@ async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatc
     assert payload["current"]["source"] == "open_meteo"
 
 
+async def test_search_locations_city_state_query_falls_back_to_city_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "geocoding-api.open-meteo.com" and path == "/v1/search":
+            name = request.url.params.get("name")
+            country_code = request.url.params.get("countryCode")
+            requests.append((name or "", country_code))
+            if name == "Denver, CO":
+                return httpx.Response(200, json={"results": []})
+            if name == "Denver" and country_code == "US":
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "name": "Denver",
+                                "latitude": 39.7392,
+                                "longitude": -104.9903,
+                                "elevation": 1609.0,
+                                "timezone": "America/Denver",
+                                "country_code": "US",
+                                "country": "United States",
+                                "admin1": "Colorado",
+                                "population": 715522,
+                                "feature_code": "PPLA",
+                            }
+                        ]
+                    },
+                )
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.search_locations("Denver, CO")
+
+    assert requests == [("Denver, CO", None), ("Denver", "US")]
+    assert payload["results"][0]["display_name"] == "Denver, CO"
+    assert payload["results"][0]["latitude"] == pytest.approx(39.7392)
+
+
 @pytest.fixture
 async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
     monkeypatch.setattr(main_module, "DATA_ROOT", Path("/tmp/test-forecast-data"))

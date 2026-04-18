@@ -621,6 +621,17 @@ def _state_token_from_query(query: str) -> str | None:
     return US_STATE_LOOKUP.get(raw_token)
 
 
+def _city_token_from_query(query: str) -> str | None:
+    normalized = query.strip()
+    if not normalized:
+        return None
+    state_token = _state_token_from_query(normalized)
+    if state_token is None or "," not in normalized:
+        return None
+    city_token = normalized.rsplit(",", 1)[0].strip()
+    return city_token or None
+
+
 def _score_geocode_result(result: dict[str, Any], query: str) -> float:
     score = 0.0
     normalized_query = query.strip().lower()
@@ -633,6 +644,14 @@ def _score_geocode_result(result: dict[str, Any], query: str) -> float:
         score += 80.0
     elif normalized_query in result_name:
         score += 35.0
+
+    city_token = _city_token_from_query(query)
+    if city_token:
+        normalized_city = city_token.lower()
+        if result_name == normalized_city:
+            score += 75.0
+        elif normalized_city in result_name:
+            score += 30.0
 
     state_token = _state_token_from_query(query)
     if state_token and country_code == "US":
@@ -664,24 +683,41 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
     if cached is not None:
         return cached
 
-    params: dict[str, Any] = {
+    search_attempts: list[dict[str, Any]] = [{
         "name": normalized_query,
         "count": 10,
         "language": "en",
         "format": "json",
-    }
+    }]
     if re.fullmatch(r"\d{5}", normalized_query):
-        params["countryCode"] = "US"
+        search_attempts[0]["countryCode"] = "US"
 
-    payload = await _request_json(client, f"{OPEN_METEO_GEOCODING_BASE}/search", params=params)
-    results = payload.get("results") or []
-    if not isinstance(results, list):
-        results = []
-    results = sorted(
-        [item for item in results if isinstance(item, dict)],
-        key=lambda item: _score_geocode_result(item, normalized_query),
-        reverse=True,
-    )
+    city_token = _city_token_from_query(normalized_query)
+    state_token = _state_token_from_query(normalized_query)
+    if city_token and state_token:
+        search_attempts.append({
+            "name": city_token,
+            "count": 10,
+            "language": "en",
+            "format": "json",
+            "countryCode": "US",
+        })
+
+    results: list[dict[str, Any]] = []
+    for params in search_attempts:
+        payload = await _request_json(client, f"{OPEN_METEO_GEOCODING_BASE}/search", params=params)
+        candidate_results = payload.get("results") or []
+        if not isinstance(candidate_results, list):
+            candidate_results = []
+        candidate_results = [item for item in candidate_results if isinstance(item, dict)]
+        if candidate_results:
+            results = sorted(
+                candidate_results,
+                key=lambda item: _score_geocode_result(item, normalized_query),
+                reverse=True,
+            )
+            break
+
     _cache_set("geocode-search", cache_key, results, GEOCODE_CACHE_TTL)
     return results
 
