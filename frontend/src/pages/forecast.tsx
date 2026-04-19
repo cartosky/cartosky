@@ -200,9 +200,9 @@ function freshnessChip(state: string | null, ageMinutes: number | null): { label
 }
 
 function precipColor(pct: number | null): string {
-  if (pct == null || pct <= 10) return "text-slate-400 dark:text-white/30";
-  if (pct <= 25) return "text-sky-500 dark:text-sky-400";
-  return "text-amber-500 dark:text-amber-400";
+  if (pct == null || pct <= 10) return "text-white/30";
+  if (pct <= 25) return "text-sky-400";
+  return "text-amber-400";
 }
 
 function viewerHref(lat: number, lon: number): string {
@@ -232,7 +232,7 @@ function WeatherIcon({ code, className }: { code: string; className?: string }) 
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="text-[10px] font-medium uppercase tracking-[0.26em] text-slate-400 dark:text-white/40">
+    <div className="text-[10px] font-medium uppercase tracking-[0.26em] text-white/40">
       {children}
     </div>
   );
@@ -254,8 +254,8 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
 function MetaItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-400 dark:text-white/35">{label}</div>
-      <div className="mt-0.5 text-[13px] font-medium text-slate-700 dark:text-white/80">{value}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] text-white/35">{label}</div>
+      <div className="mt-0.5 text-[13px] font-medium text-white/80">{value}</div>
     </div>
   );
 }
@@ -378,13 +378,13 @@ function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
             key={i}
             className={`flex-none flex flex-col items-center gap-1.5 rounded-lg px-3 py-2.5 min-w-[3.5rem] transition-colors ${
               isCurrent
-                ? "bg-sky-50 dark:bg-white/[0.07] ring-[0.5px] ring-sky-200/60 dark:ring-white/[0.10]"
-                : "hover:bg-slate-50 dark:hover:bg-white/[0.03]"
+                ? "bg-white/[0.07] ring-[0.5px] ring-white/[0.10]"
+                : "hover:bg-white/[0.03]"
             }`}
           >
-            <span className="text-[11px] text-slate-500 dark:text-white/40">{formatHour(entry.time)}</span>
-            <WeatherIcon code={entry.weather_code} className="h-4 w-4 text-slate-400 dark:text-cyan-200/65" />
-            <span className="text-[13px] font-medium text-slate-800 dark:text-white">{entry.temperature_f ?? "--"}°</span>
+            <span className="text-[11px] text-white/40">{formatHour(entry.time)}</span>
+            <WeatherIcon code={entry.weather_code} className="h-4 w-4 text-cyan-200/65" />
+            <span className="text-[13px] font-medium text-white">{entry.temperature_f ?? "--"}°</span>
             {pop > 0
               ? <span className={`text-[10px] ${precipColor(pop)}`}>{pop}%</span>
               : <span className="h-[14px]" />
@@ -400,12 +400,12 @@ function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
 
 function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
   if (!hourly.length) {
-    return <div className="py-16 text-center text-[13px] text-slate-400 dark:text-white/35">No hourly data available.</div>;
+    return <div className="py-16 text-center text-[13px] text-white/35">No hourly data available.</div>;
   }
   return (
     <div className="space-y-5">
-      <div className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-4 md:p-5">
-        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-slate-400 dark:text-white/40">
+      <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
+        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
           Temperature · Next 24 Hours
         </p>
         <HourlyChart hourly={hourly} />
@@ -484,13 +484,13 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
         return (
           <div
             key={i}
-            className={`flex items-center gap-3 py-3 ${i < entries.length - 1 ? "border-b border-[0.5px] border-slate-100 dark:border-white/[0.06]" : ""}`}
+            className={`flex items-center gap-3 py-3 ${i < entries.length - 1 ? "border-b border-[0.5px] border-white/[0.06]" : ""}`}
           >
-            <div className="w-10 flex-none text-[13px] font-medium text-slate-600 dark:text-white/60">
+            <div className="w-10 flex-none text-[13px] font-medium text-white/60">
               {formatDayLabel(entry.date, i)}
             </div>
-            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-slate-400 dark:text-cyan-200/60" />
-            <div className="w-36 flex-none text-[13px] text-slate-500 dark:text-white/55 truncate hidden sm:block">
+            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/60" />
+            <div className="w-36 flex-none text-[13px] text-white/55 truncate hidden sm:block">
               {entry.short_text ?? ""}
             </div>
             <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
@@ -500,8 +500,8 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
               />
             </div>
             <div className="flex gap-1.5 w-16 flex-none justify-end text-[13px]">
-              <span className="font-medium text-slate-800 dark:text-white">{entry.high_f ?? "--"}°</span>
-              <span className="text-slate-400 dark:text-white/30">{entry.low_f ?? "--"}°</span>
+              <span className="font-medium text-white">{entry.high_f ?? "--"}°</span>
+              <span className="text-white/30">{entry.low_f ?? "--"}°</span>
             </div>
             <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
               {pop > 0 ? `${pop}%` : ""}
@@ -523,28 +523,28 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
   return (
     <div>
       {data.generated_at && (
-        <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">
+        <p className="mb-4 text-[11px] text-white/30">
           NWS Official · Generated {formatObservedAt(data.generated_at)}
         </p>
       )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((period, i) => (
-          <div key={i} className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-4">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400 dark:text-white/40">
+          <div key={i} className="rounded-xl bg-white/[0.03] p-4">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-white/40">
               {period.name ?? (period.is_daytime ? "Day" : "Night")}
             </div>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-medium text-slate-900 dark:text-white">{period.temperature_f ?? "--"}°</span>
-              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400 dark:text-white/30">
+              <span className="text-xl font-medium text-white">{period.temperature_f ?? "--"}°</span>
+              <span className="text-[10px] uppercase tracking-[0.14em] text-white/30">
                 {period.is_daytime ? "High" : "Low"}
               </span>
             </div>
-            <div className="mt-1.5 text-[13px] text-slate-700 dark:text-white/75">{period.short_text ?? ""}</div>
+            <div className="mt-1.5 text-[13px] text-white/75">{period.short_text ?? ""}</div>
             {period.wind_text && (
-              <div className="mt-1 text-[12px] text-slate-400 dark:text-white/40">Wind: {period.wind_text}</div>
+              <div className="mt-1 text-[12px] text-white/40">Wind: {period.wind_text}</div>
             )}
             {period.detailed_text && (
-              <p className="mt-2.5 border-t border-[0.5px] border-slate-200 dark:border-white/[0.08] pt-2.5 text-[12px] leading-[1.6] text-slate-500 dark:text-white/45">
+              <p className="mt-2.5 border-t border-[0.5px] border-white/[0.08] pt-2.5 text-[12px] leading-[1.6] text-white/45">
                 {period.detailed_text}
               </p>
             )}
@@ -555,7 +555,7 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
         <button
           type="button"
           onClick={() => setShowAll(v => !v)}
-          className="mt-4 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-white/40 transition hover:text-slate-600 dark:hover:text-white/60"
+          className="mt-4 flex items-center gap-1.5 text-[12px] text-white/40 transition hover:text-white/60"
         >
           {showAll
             ? <><ChevronUp className="h-3.5 w-3.5" /> Show fewer</>
@@ -587,27 +587,27 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
   return (
     <div>
       {attribution && (
-        <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">Source: {attribution}</p>
+        <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
       )}
       <table className="w-full">
         <tbody>
           {daily.map((entry, i) => (
             <tr
               key={i}
-              className={i < daily.length - 1 ? "border-b border-[0.5px] border-slate-100 dark:border-white/[0.06]" : ""}
+              className={i < daily.length - 1 ? "border-b border-[0.5px] border-white/[0.06]" : ""}
             >
-              <td className="py-2.5 w-14 text-[13px] font-medium text-slate-600 dark:text-white/60">
+              <td className="py-2.5 w-14 text-[13px] font-medium text-white/60">
                 {formatDayLabel(entry.date, i)}
               </td>
-              <td className="py-2.5 text-[13px] text-slate-500 dark:text-white/50">
+              <td className="py-2.5 text-[13px] text-white/50">
                 <div className="flex items-center gap-2">
-                  <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-slate-400 dark:text-cyan-200/55" />
+                  <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/55" />
                   <span className="truncate">{entry.short_text ?? ""}</span>
                 </div>
               </td>
               <td className="py-2.5 text-right whitespace-nowrap text-[13px]">
-                <span className="font-medium text-slate-800 dark:text-white">{entry.high_f ?? "--"}°</span>
-                <span className="text-slate-400 dark:text-white/30 ml-1.5">{entry.low_f ?? "--"}°</span>
+                <span className="font-medium text-white">{entry.high_f ?? "--"}°</span>
+                <span className="text-white/30 ml-1.5">{entry.low_f ?? "--"}°</span>
               </td>
               <td className={`py-2.5 w-10 text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
                 {entry.pop_pct != null && entry.pop_pct > 0 ? `${entry.pop_pct}%` : ""}
@@ -625,8 +625,8 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
 function ModelsTab() {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
-      <p className="text-[15px] font-medium text-slate-700 dark:text-white/65">Model guidance coming soon</p>
-      <p className="mt-2 text-[13px] text-slate-400 dark:text-white/35">
+      <p className="text-[15px] font-medium text-white/65">Model guidance coming soon</p>
+      <p className="mt-2 text-[13px] text-white/35">
         GFS, NAM, and ECMWF ensemble charts will appear here.
       </p>
     </div>
@@ -638,17 +638,17 @@ function ModelsTab() {
 function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
   if (!afd || !afd.text) {
     return (
-      <div className="py-16 text-center text-[13px] text-slate-400 dark:text-white/35">
+      <div className="py-16 text-center text-[13px] text-white/35">
         No forecast discussion available.
       </div>
     );
   }
   return (
-    <div className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-5 md:p-6">
-      <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">
+    <div className="rounded-xl bg-white/[0.03] p-5 md:p-6">
+      <p className="mb-4 text-[11px] text-white/30">
         {afd.office}{afd.issued_at ? ` · ${formatIssuedAt(afd.issued_at)}` : ""}
       </p>
-      <pre className="font-mono text-xs leading-[1.7] text-slate-600 dark:text-white/55 whitespace-pre-wrap break-words">
+      <pre className="font-mono text-xs leading-[1.7] text-white/55 whitespace-pre-wrap break-words">
         {afd.text}
       </pre>
     </div>
@@ -800,29 +800,29 @@ export default function Forecast() {
     const stationMeta = stationParts.join(" · ");
 
     return (
-      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16 min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-white">
+      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
 
         {/* Top Bar */}
-        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
-          <div className="mx-auto max-w-5xl px-5 md:px-8 py-3 flex items-center gap-3">
+        <div className="border-b border-[0.5px] border-white/[0.08]">
+          <div className="px-5 md:px-8 py-3 flex items-center gap-3">
             <button
               type="button"
               onClick={clearSearch}
-              className="flex-none flex items-center gap-1 text-[12px] text-slate-400 dark:text-white/35 transition hover:text-slate-600 dark:hover:text-white/60"
+              className="flex-none flex items-center gap-1 text-[12px] text-white/35 transition hover:text-white/60"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               Search
             </button>
             <div className="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
-              <h1 className="text-[15px] font-medium text-slate-900 dark:text-white truncate">{f.location.display_name}</h1>
+              <h1 className="text-[15px] font-medium text-white truncate">{f.location.display_name}</h1>
               {stationMeta && (
-                <span className="hidden sm:inline text-[12px] text-slate-400 dark:text-white/35 whitespace-nowrap">{stationMeta}</span>
+                <span className="hidden sm:inline text-[12px] text-white/35 whitespace-nowrap">{stationMeta}</span>
               )}
             </div>
             <span className={`flex-none text-[12px] ${freshChip.color}`}>{freshnessLabel}</span>
             <Link
               to={viewerHref(f.location.latitude, f.location.longitude)}
-              className="flex-none hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-[0.5px] border-sky-200 dark:border-cyan-300/30 bg-sky-50 dark:bg-cyan-300/[0.06] px-3 py-1.5 text-[12px] font-medium text-sky-600 dark:text-cyan-200 transition hover:bg-sky-100 dark:hover:bg-cyan-300/[0.10]"
+              className="flex-none hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-[0.5px] border-cyan-300/30 bg-cyan-300/[0.06] px-3 py-1.5 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-300/[0.10]"
             >
               Open In Viewer <ArrowRight className="h-3 w-3" />
             </Link>
@@ -830,21 +830,21 @@ export default function Forecast() {
         </div>
 
         {/* Conditions Strip */}
-        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
-          <div className="mx-auto max-w-5xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
+        <div className="border-b border-[0.5px] border-white/[0.08]">
+          <div className="px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
             <div className="flex items-center gap-3 flex-none">
-              <WeatherIcon code={f.current.icon} className="h-8 w-8 text-sky-500 dark:text-cyan-200/80" />
+              <WeatherIcon code={f.current.icon} className="h-8 w-8 text-cyan-200/80" />
               <div>
-                <div className="text-[36px] font-medium leading-none text-slate-900 dark:text-white">
+                <div className="text-[36px] font-medium leading-none text-white">
                   {f.current.temperature_f ?? "--"}°
                 </div>
-                <div className="mt-1 text-[13px] text-slate-500 dark:text-white/55">
+                <div className="mt-1 text-[13px] text-white/55">
                   {f.current.short_text ?? ""}
                 </div>
               </div>
             </div>
 
-            <div className="hidden sm:block self-stretch w-px bg-slate-200 dark:bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
+            <div className="hidden sm:block self-stretch w-px bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
 
             <div className="flex flex-wrap gap-x-6 gap-y-3">
               {f.current.dewpoint_f != null && (
@@ -868,8 +868,8 @@ export default function Forecast() {
         </div>
 
         {/* Tab Bar */}
-        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
-          <div className="mx-auto max-w-5xl px-5 md:px-8">
+        <div className="border-b border-[0.5px] border-white/[0.08]">
+          <div className="px-5 md:px-8">
             <div className="flex overflow-x-auto -mb-px">
               {TABS.map(tab => (
                 <button
@@ -878,8 +878,8 @@ export default function Forecast() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex-none px-4 py-3 text-[13px] whitespace-nowrap border-b-2 transition-colors ${
                     activeTab === tab.id
-                      ? "border-slate-900 dark:border-white text-slate-900 dark:text-white font-medium"
-                      : "border-transparent text-slate-500 dark:text-white/45 hover:text-slate-700 dark:hover:text-white/65"
+                      ? "border-white text-white font-medium"
+                      : "border-transparent text-white/45 hover:text-white/65"
                   }`}
                 >
                   {tab.label}
@@ -890,7 +890,7 @@ export default function Forecast() {
         </div>
 
         {/* Tab Content */}
-        <div className="mx-auto max-w-5xl px-5 md:px-8 py-6 pb-12">
+        <div className="px-5 md:px-8 py-6 pb-12">
           {f.alerts.length > 0 && (
             <div className="mb-6">
               <AlertsBanner alerts={f.alerts} />
