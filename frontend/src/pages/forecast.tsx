@@ -15,6 +15,7 @@ import {
   CloudSun,
   MapPinned,
   Moon,
+  RefreshCw,
   Search,
   Sun,
   Wind,
@@ -836,7 +837,18 @@ export default function Forecast() {
                 <span className="hidden sm:inline text-[12px] text-white/35 whitespace-nowrap">{stationMeta}</span>
               )}
             </div>
-            <span className={`flex-none text-[12px] ${freshChip.color}`}>{freshnessLabel}</span>
+            <div className="flex-none flex items-center gap-2">
+              <span className={`text-[12px] ${freshChip.color}`}>{freshnessLabel}</span>
+              <button
+                type="button"
+                onClick={() => void loadByCoords(f.location.latitude, f.location.longitude, f.location.display_name, { country_code: f.location.country_code ?? undefined })}
+                disabled={isLoading}
+                title="Refresh forecast"
+                className="text-white/30 transition hover:text-white/60 disabled:opacity-30"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
             <Link
               to={viewerHref(f.location.latitude, f.location.longitude)}
               className="flex-none hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-[0.5px] border-cyan-300/30 bg-cyan-300/[0.06] px-3 py-1.5 text-[12px] font-medium text-cyan-200 transition hover:bg-cyan-300/[0.10]"
