@@ -888,7 +888,7 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="glass w-full max-w-[420px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
+        className="glass w-full max-w-[540px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Drag handle */}
@@ -1160,11 +1160,6 @@ export function TwfShareModal({
               </button>
             </div>
           </div>
-        </div>
-
-        {/* Character count */}
-        <div className="mt-1.5 px-4 text-right">
-          <span className="text-xs text-white/35">{content.length} / 500</span>
         </div>
 
         {/* Success banner */}

@@ -1791,13 +1791,16 @@ def _scan_run_issue(
             if isinstance(frame, dict) and isinstance(frame.get("fh"), int)
         )
         substrates = _variable_render_substrates(model_id, public_variable_id)
+        has_vector_substrate = "vector" in substrates
         uses_grid_runtime = "grid" in substrates and grid_supported(model_id, artifact_variable_id)
         grid_manifest_payload: dict[str, Any] | None = None
         grid_frames_by_hour: dict[int, list[dict[str, Any]]] = {}
         contour_keys: list[str] = []
+        grid_manifest_dir: Path | None = None
 
         if uses_grid_runtime:
             grid_manifest_file = grid_manifest_path(data_root, model_id, run_id, artifact_variable_id)
+            grid_manifest_dir = grid_manifest_file.parent
             if not grid_manifest_file.is_file():
                 missing_artifact_count += 1
                 _append_sample_path(
@@ -1842,8 +1845,10 @@ def _scan_run_issue(
         for fh in frame_hours:
             value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
-            sidecar_payload = _load_json_file(sidecar_path) if sidecar_path.is_file() else None
-            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload)
+            sidecar_exists = sidecar_path.is_file()
+            needs_sidecar_payload = has_vector_substrate or bool(contour_keys)
+            sidecar_payload = _load_json_file(sidecar_path) if needs_sidecar_payload and sidecar_exists else None
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload) if has_vector_substrate else []
             missing_here = False
             artifact_path: str | None = None
             if uses_grid_runtime:
@@ -1851,9 +1856,9 @@ def _scan_run_issue(
                 if not runtime_frames:
                     missing_artifact_count += 1
                     missing_here = True
-                    artifact_path = str(grid_manifest_path(data_root, model_id, run_id, artifact_variable_id))
+                    artifact_path = str(grid_manifest_dir or grid_manifest_path(data_root, model_id, run_id, artifact_variable_id))
                 for runtime_frame in runtime_frames:
-                    runtime_path = grid_manifest_path(data_root, model_id, run_id, artifact_variable_id).parent / str(runtime_frame["file"])
+                    runtime_path = (grid_manifest_dir or grid_manifest_path(data_root, model_id, run_id, artifact_variable_id).parent) / str(runtime_frame["file"])
                     if not runtime_path.is_file():
                         missing_artifact_count += 1
                         missing_here = True
@@ -1878,7 +1883,7 @@ def _scan_run_issue(
                             },
                         )
                 if contour_keys:
-                    if not sidecar_path.is_file():
+                    if not sidecar_exists:
                         missing_artifact_count += 1
                         missing_here = True
                         artifact_path = artifact_path or str(sidecar_path)
@@ -1926,11 +1931,11 @@ def _scan_run_issue(
                     missing_artifact_count += 1
                     missing_here = True
                     artifact_path = str(value_path)
-                if not sidecar_path.is_file():
+                if not sidecar_exists:
                     missing_artifact_count += 1
                     missing_here = True
                     artifact_path = artifact_path or str(sidecar_path)
-            if "vector" in substrates:
+            if has_vector_substrate:
                 if vector_paths:
                     for vector_path in vector_paths:
                         if vector_path.is_file():
@@ -1938,7 +1943,7 @@ def _scan_run_issue(
                         missing_artifact_count += 1
                         missing_here = True
                         artifact_path = artifact_path or str(vector_path)
-                elif sidecar_path.is_file():
+                elif sidecar_exists:
                     missing_artifact_count += 1
                     missing_here = True
                     artifact_path = artifact_path or str(sidecar_path)
@@ -1951,7 +1956,7 @@ def _scan_run_issue(
                         "issue": "missing_artifact",
                         "value_grid_path": str(value_path) if "grid" in substrates and not uses_grid_runtime else None,
                         "artifact_path": artifact_path,
-                        "sidecar_path": str(sidecar_path) if sidecar_path.is_file() or contour_keys or "vector" in substrates or not uses_grid_runtime else None,
+                        "sidecar_path": str(sidecar_path) if sidecar_exists or contour_keys or has_vector_substrate or not uses_grid_runtime else None,
                     },
                 )
 
@@ -1960,8 +1965,9 @@ def _scan_run_issue(
             sample_hours.append(frame_hours[-1])
         for fh in sorted(set(sample_hours)):
             value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
-            sidecar_payload = _load_json_file(_sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh))
-            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload)
+            sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
+            sidecar_payload = _load_json_file(sidecar_path) if has_vector_substrate and sidecar_path.is_file() else None
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload) if has_vector_substrate else []
             if not uses_grid_runtime and "grid" in substrates and value_path.is_file():
                 try:
                     with rasterio.open(value_path):
@@ -1979,7 +1985,7 @@ def _scan_run_issue(
                             "read_error": str(exc),
                         },
                     )
-            if "vector" in substrates:
+            if has_vector_substrate:
                 for vector_path in vector_paths:
                     if not vector_path.is_file():
                         continue
@@ -1994,7 +2000,7 @@ def _scan_run_issue(
                                 "forecast_hour": fh,
                                 "issue": "unreadable_vector_artifact",
                                 "artifact_path": str(vector_path),
-                                "sidecar_path": str(_sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)),
+                                "sidecar_path": str(sidecar_path),
                                 "read_error": str(exc),
                             },
                         )

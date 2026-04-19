@@ -393,6 +393,66 @@ async def test_status_results_reuses_cached_operational_scan(
     assert first_response.json()["results"] == second_response.json()["results"]
 
 
+async def test_status_results_skips_irrelevant_sidecar_parsing_for_grid_runtime(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 4, 17, 14, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "gefs" / "20260417_12z.json",
+        model_id="gefs",
+        run_id="20260417_12z",
+        variables={"tmp2m": [0, 6]},
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id="gefs",
+        run_id="20260417_12z",
+        variable_id="tmp2m__mean",
+        hours=[0, 6],
+    )
+    for forecast_hour in [0, 6]:
+        _write_sidecar(
+            main_module.DATA_ROOT / "published" / "gefs" / "20260417_12z" / "tmp2m__mean" / f"fh{forecast_hour:03d}.json",
+            model_id="gefs",
+            variable_id="tmp2m__mean",
+            run_id="20260417_12z",
+            forecast_hour=forecast_hour,
+        )
+
+    real_load_json_file = admin_telemetry._load_json_file
+    loaded_paths: list[str] = []
+
+    def tracking_load_json_file(path: Path):
+        loaded_paths.append(str(path))
+        return real_load_json_file(path)
+
+    monkeypatch.setattr(admin_telemetry, "_load_json_file", tracking_load_json_file)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "healthy"
+    sidecar_reads = [path for path in loaded_paths if "/published/gefs/20260417_12z/tmp2m__mean/fh" in path]
+    assert sidecar_reads == []
+
+
 async def test_status_results_only_scans_retained_published_runs(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
     run_ids = [
