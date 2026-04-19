@@ -544,9 +544,9 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
           NWS Official · Generated {formatObservedAt(data.generated_at)}
         </p>
       )}
-      <div className="grid gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((period, i) => (
-          <div key={i} className="border-t border-[0.5px] border-white/[0.06] pt-4 pb-4">
+          <div key={i} className="py-1">
             <div className="text-[11px] uppercase tracking-[0.16em] text-white/40">
               {period.name ?? (period.is_daytime ? "Day" : "Night")}
             </div>
@@ -561,12 +561,9 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
               <div className="mt-1 text-[12px] text-white/40">Wind: {period.wind_text}</div>
             )}
             {period.detailed_text && (
-              <>
-                <div className="mt-3 border-t border-[0.5px] border-white/[0.06]" />
-                <p className="mt-3 text-[12px] leading-[1.6] text-white/40">
-                  {period.detailed_text}
-                </p>
-              </>
+              <p className="mt-3 border-t border-[0.5px] border-white/[0.06] pt-3 text-[12px] leading-[1.6] text-white/40">
+                {period.detailed_text}
+              </p>
             )}
           </div>
         ))}
@@ -820,7 +817,7 @@ export default function Forecast() {
     const stationMeta = stationParts.join(" · ");
 
     return (
-      <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
+      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
 
         {/* Top Bar */}
         <div className="border-b border-[0.5px] border-white/[0.08]">
