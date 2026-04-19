@@ -312,7 +312,7 @@ async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_l
         main_module.DATA_ROOT / "manifests" / "gefs" / "20260417_12z.json",
         model_id="gefs",
         run_id="20260417_12z",
-        variables={"tmp2m__mean": [0, 6]},
+        variables={"tmp2m": [0, 6]},
     )
     _write_grid_runtime(
         main_module.DATA_ROOT,

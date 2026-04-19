@@ -942,13 +942,9 @@ export function TwfShareModal({
           <div className={`${sectionCardClass} overflow-hidden p-3 sm:p-4`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/14 bg-cyan-300/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/82">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-200/80" />
-                  Recommended for TWF posts
-                </div>
                 <div className="mt-3 text-lg font-semibold tracking-[-0.02em] text-white">Preview what you are about to share</div>
                 <div className="mt-1 max-w-2xl text-sm text-white/64">
-                  The screenshot is prepared automatically when possible so you can confirm the exact map before posting.
+                  The screenshot is prepared automatically so you can confirm the exact map before posting.
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1059,9 +1055,6 @@ export function TwfShareModal({
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/52">Primary destination</div>
                 <div className="mt-2 text-lg font-semibold tracking-[-0.02em] text-white">Post to The Weather Forums</div>
-                <div className="mt-1 max-w-2xl text-sm text-white/64">
-                  TWF stays front and center for beta, while the share text and permalink remain ready for other destinations.
-                </div>
               </div>
               {statusLoading ? (
                 <div className="flex items-center gap-2 text-sm text-white/70">
@@ -1334,9 +1327,6 @@ export function TwfShareModal({
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/52">Quick share</div>
                 <div className="mt-2 text-base font-semibold tracking-[-0.02em] text-white">Copy the essentials for anywhere else</div>
-                <div className="mt-1 text-sm text-white/64">
-                  Keep it lightweight when you just need the share text or the direct CartoSky link.
-                </div>
                 <div className="mt-3 rounded-xl border border-cyan-200/8 bg-[#0b182b]/45 px-3 py-3">
                   <div className="line-clamp-3 text-sm text-white/90">{currentSummaryPreview}</div>
                   <div className="mt-2 truncate text-xs text-white/56">{sharePreviewDetail}</div>

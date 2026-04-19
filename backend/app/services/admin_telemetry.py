@@ -471,6 +471,21 @@ def _variable_render_substrates(model_id: str, variable_id: str) -> list[str]:
     return ["grid"]
 
 
+def _artifact_variable_id(model_id: str, variable_id: str, entry: dict[str, Any] | None = None) -> str:
+    plugin = MODEL_REGISTRY.get(model_id)
+    if plugin is None or not hasattr(plugin, "resolve_runtime_var_id"):
+        return variable_id
+
+    ensemble_view = None
+    if isinstance(entry, dict):
+        raw_ensemble_view = entry.get("ensemble_view")
+        if isinstance(raw_ensemble_view, str) and raw_ensemble_view.strip():
+            ensemble_view = raw_ensemble_view.strip().lower()
+
+    resolved = str(plugin.resolve_runtime_var_id(variable_id, ensemble_view)).strip()
+    return resolved or variable_id
+
+
 def _vector_artifact_paths(
     data_root: Path,
     model_id: str,
@@ -1746,12 +1761,14 @@ def _scan_run_issue(
     for variable_id, entry in sorted(variables.items()):
         if not isinstance(entry, dict):
             continue
+        public_variable_id = str(variable_id)
+        artifact_variable_id = _artifact_variable_id(model_id, public_variable_id, entry)
         expected = int(entry.get("expected_frames") or 0)
         available = int(entry.get("available_frames") or 0)
         expected_frames += max(0, expected)
         available_frames += max(0, available)
         if expected > available:
-            incomplete_variables.append(str(variable_id))
+            incomplete_variables.append(public_variable_id)
 
         frame_entries = entry.get("frames")
         if not isinstance(frame_entries, list):
@@ -1762,20 +1779,20 @@ def _scan_run_issue(
             for frame in frame_entries
             if isinstance(frame, dict) and isinstance(frame.get("fh"), int)
         )
-        substrates = _variable_render_substrates(model_id, str(variable_id))
-        uses_grid_runtime = "grid" in substrates and grid_supported(model_id, str(variable_id))
+        substrates = _variable_render_substrates(model_id, public_variable_id)
+        uses_grid_runtime = "grid" in substrates and grid_supported(model_id, artifact_variable_id)
         grid_manifest_payload: dict[str, Any] | None = None
         grid_frames_by_hour: dict[int, list[dict[str, Any]]] = {}
         contour_keys: list[str] = []
 
         if uses_grid_runtime:
-            grid_manifest_file = grid_manifest_path(data_root, model_id, run_id, str(variable_id))
+            grid_manifest_file = grid_manifest_path(data_root, model_id, run_id, artifact_variable_id)
             if not grid_manifest_file.is_file():
                 missing_artifact_count += 1
                 _append_sample_path(
                     sample_paths,
                     {
-                        "variable_id": str(variable_id),
+                        "variable_id": public_variable_id,
                         "forecast_hour": frame_hours[0] if frame_hours else 0,
                         "issue": "missing_grid_manifest",
                         "artifact_path": str(grid_manifest_file),
@@ -1788,7 +1805,7 @@ def _scan_run_issue(
                     _append_sample_path(
                         sample_paths,
                         {
-                            "variable_id": str(variable_id),
+                            "variable_id": public_variable_id,
                             "forecast_hour": frame_hours[0] if frame_hours else 0,
                             "issue": "unreadable_grid_manifest",
                             "artifact_path": str(grid_manifest_file),
@@ -1801,7 +1818,7 @@ def _scan_run_issue(
                         _append_sample_path(
                             sample_paths,
                             {
-                                "variable_id": str(variable_id),
+                                "variable_id": public_variable_id,
                                 "forecast_hour": frame_hours[0] if frame_hours else 0,
                                 "issue": "invalid_grid_manifest_entries",
                                 "artifact_path": str(grid_manifest_file),
@@ -1812,10 +1829,10 @@ def _scan_run_issue(
                         contour_keys = [str(key) for key in contours.keys() if str(key).strip()]
 
         for fh in frame_hours:
-            value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
-            sidecar_path = _sidecar_path(data_root, model_id, run_id, str(variable_id), fh)
+            value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
+            sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_payload = _load_json_file(sidecar_path) if sidecar_path.is_file() else None
-            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, str(variable_id), fh, sidecar_payload)
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload)
             missing_here = False
             artifact_path: str | None = None
             if uses_grid_runtime:
@@ -1823,9 +1840,9 @@ def _scan_run_issue(
                 if not runtime_frames:
                     missing_artifact_count += 1
                     missing_here = True
-                    artifact_path = str(grid_manifest_path(data_root, model_id, run_id, str(variable_id)))
+                    artifact_path = str(grid_manifest_path(data_root, model_id, run_id, artifact_variable_id))
                 for runtime_frame in runtime_frames:
-                    runtime_path = grid_manifest_path(data_root, model_id, run_id, str(variable_id)).parent / str(runtime_frame["file"])
+                    runtime_path = grid_manifest_path(data_root, model_id, run_id, artifact_variable_id).parent / str(runtime_frame["file"])
                     if not runtime_path.is_file():
                         missing_artifact_count += 1
                         missing_here = True
@@ -1843,7 +1860,7 @@ def _scan_run_issue(
                         _append_sample_path(
                             sample_paths,
                             {
-                                "variable_id": str(variable_id),
+                                "variable_id": public_variable_id,
                                 "forecast_hour": fh,
                                 "issue": "invalid_grid_frame",
                                 "artifact_path": str(runtime_path),
@@ -1863,7 +1880,7 @@ def _scan_run_issue(
                             data_root=data_root,
                             model_id=model_id,
                             run_id=run_id,
-                            variable_id=str(variable_id),
+                            variable_id=artifact_variable_id,
                             sidecar=sidecar_payload,
                             contour_keys=contour_keys,
                         )
@@ -1886,7 +1903,7 @@ def _scan_run_issue(
                                 _append_sample_path(
                                     sample_paths,
                                     {
-                                        "variable_id": str(variable_id),
+                                        "variable_id": public_variable_id,
                                         "forecast_hour": fh,
                                         "issue": "unreadable_contour_artifact",
                                         "artifact_path": str(contour_path),
@@ -1918,7 +1935,7 @@ def _scan_run_issue(
                 _append_sample_path(
                     sample_paths,
                     {
-                        "variable_id": str(variable_id),
+                        "variable_id": public_variable_id,
                         "forecast_hour": fh,
                         "issue": "missing_artifact",
                         "value_grid_path": str(value_path) if "grid" in substrates and not uses_grid_runtime else None,
@@ -1931,9 +1948,9 @@ def _scan_run_issue(
         if len(frame_hours) > 1:
             sample_hours.append(frame_hours[-1])
         for fh in sorted(set(sample_hours)):
-            value_path = _value_cog_path(data_root, model_id, run_id, str(variable_id), fh)
-            sidecar_payload = _load_json_file(_sidecar_path(data_root, model_id, run_id, str(variable_id), fh))
-            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, str(variable_id), fh, sidecar_payload)
+            value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
+            sidecar_payload = _load_json_file(_sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh))
+            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload)
             if not uses_grid_runtime and "grid" in substrates and value_path.is_file():
                 try:
                     with rasterio.open(value_path):
@@ -1943,7 +1960,7 @@ def _scan_run_issue(
                     _append_sample_path(
                         sample_paths,
                         {
-                            "variable_id": str(variable_id),
+                            "variable_id": public_variable_id,
                             "forecast_hour": fh,
                             "issue": "unreadable_value_grid",
                             "value_grid_path": str(value_path),
@@ -1962,11 +1979,11 @@ def _scan_run_issue(
                         _append_sample_path(
                             sample_paths,
                             {
-                                "variable_id": str(variable_id),
+                                "variable_id": public_variable_id,
                                 "forecast_hour": fh,
                                 "issue": "unreadable_vector_artifact",
                                 "artifact_path": str(vector_path),
-                                "sidecar_path": str(_sidecar_path(data_root, model_id, run_id, str(variable_id), fh)),
+                                "sidecar_path": str(_sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)),
                                 "read_error": str(exc),
                             },
                         )
