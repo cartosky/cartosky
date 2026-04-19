@@ -888,7 +888,7 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="glass-overlay w-full max-w-[420px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
+        className="glass w-full max-w-[420px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Drag handle */}
@@ -911,7 +911,7 @@ export function TwfShareModal({
 
         {/* Screenshot preview */}
         <div className="px-4">
-          <div className="relative h-[220px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+          <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
             {screenshotBlobUrl ? (
               <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-cover" />
             ) : screenshotBusy ? (
@@ -955,14 +955,14 @@ export function TwfShareModal({
                   void handlePrepareScreenshot();
                 }}
                 disabled={!canPrepareScreenshot || screenshotBusy}
-                className="flex items-center gap-1.5 rounded-xl border border-white/20 bg-black/50 px-3 py-1.5 text-sm font-medium text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
+                className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
+                aria-label="Refresh screenshot"
               >
                 {screenshotBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <RefreshCw className="h-3.5 w-3.5" />
                 )}
-                Refresh
               </button>
             </div>
           </div>
@@ -1158,9 +1158,6 @@ export function TwfShareModal({
               >
                 ↩ Use model label
               </button>
-              <span className="min-w-0 truncate text-xs text-white/35">
-                {payload.detailsSummary || payload.summary}
-              </span>
             </div>
           </div>
         </div>
