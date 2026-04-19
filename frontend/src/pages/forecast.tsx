@@ -502,7 +502,7 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
         return (
           <div
             key={i}
-            className={`flex items-center gap-3 py-3 ${i < entries.length - 1 ? "border-b border-[0.5px] border-white/[0.06]" : ""}`}
+            className={`flex items-center gap-3 py-3 ${i < entries.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
           >
             <div className="w-10 flex-none text-[13px] font-medium text-white/60">
               {formatDayLabel(entry.date, i)}
@@ -562,7 +562,7 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
               <div className="mt-1 text-[12px] text-white/40">Wind: {period.wind_text}</div>
             )}
             {period.detailed_text && (
-              <p className="mt-3 border-t border-[0.5px] border-white/[0.06] pt-3 text-[12px] leading-[1.6] text-white/40">
+              <p className="mt-3 border-t-[0.5px] border-white/[0.06] pt-3 text-[12px] leading-[1.6] text-white/40">
                 {period.detailed_text}
               </p>
             )}
@@ -612,7 +612,7 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
           {daily.map((entry, i) => (
             <tr
               key={i}
-              className={i < daily.length - 1 ? "border-b border-[0.5px] border-white/[0.06]" : ""}
+              className={i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}
             >
               <td className="py-2.5 w-14 text-[13px] font-medium text-white/60">
                 {formatDayLabel(entry.date, i)}
@@ -818,11 +818,11 @@ export default function Forecast() {
     const stationMeta = stationParts.join(" · ");
 
     return (
-      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
+      <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
 
         {/* Top Bar */}
-        <div className="border-b border-[0.5px] border-white/[0.08]">
-          <div className="px-5 md:px-8 py-3 flex items-center gap-3">
+        <div className="border-b-[0.5px] border-white/[0.08]">
+          <div className="mx-auto max-w-6xl px-5 md:px-8 py-3 flex items-center gap-3">
             <button
               type="button"
               onClick={clearSearch}
@@ -859,8 +859,8 @@ export default function Forecast() {
         </div>
 
         {/* Conditions Strip */}
-        <div className="border-b border-[0.5px] border-white/[0.08]">
-          <div className="px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
+        <div className="border-b-[0.5px] border-white/[0.08]">
+          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
             <div className="flex items-center gap-3 flex-none">
               <WeatherIcon code={f.current.icon} className="h-8 w-8 text-cyan-200/80" />
               <div>
@@ -897,8 +897,8 @@ export default function Forecast() {
         </div>
 
         {/* Tab Bar */}
-        <div className="border-b border-[0.5px] border-white/[0.08]">
-          <div className="px-5 md:px-8">
+        <div className="border-b-[0.5px] border-white/[0.08]">
+          <div className="mx-auto max-w-6xl px-5 md:px-8">
             <div className="flex overflow-x-auto -mb-px">
               {TABS.map(tab => (
                 <button
@@ -919,7 +919,7 @@ export default function Forecast() {
         </div>
 
         {/* Tab Content */}
-        <div className="px-5 md:px-8 py-6 pb-12">
+        <div className="mx-auto max-w-6xl px-5 md:px-8 py-6 pb-12">
           {f.alerts.length > 0 && (
             <div className="mb-6">
               <AlertsBanner alerts={f.alerts} />
