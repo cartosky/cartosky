@@ -1380,6 +1380,7 @@ async def admin_status_results(
     model: str | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(200, ge=1, le=500),
+    include_details: bool = Query(False),
 ) -> dict[str, Any]:
     _require_admin_session(request)
     normalized_window = window.strip().lower()
@@ -1396,7 +1397,24 @@ async def admin_status_results(
             model_id=_normalize_filter_value(model),
             status_filter=_normalize_filter_value(status),
             limit=limit,
+            include_details=include_details,
         ),
+    }
+
+
+@app.get("/api/v4/admin/status/run")
+async def admin_status_run_detail(
+    request: Request,
+    model: str = Query(...),
+    run: str = Query(...),
+) -> dict[str, Any]:
+    _require_admin_session(request)
+    return {
+        "result": admin_telemetry.get_operational_status_run_detail(
+            data_root=DATA_ROOT,
+            model_id=model.strip().lower(),
+            run_id=run.strip(),
+        )
     }
 
 

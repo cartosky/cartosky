@@ -126,6 +126,18 @@ type ForecastPayload = {
   };
 };
 
+// ── Tab config ────────────────────────────────────────────────────────
+
+type TabId = "hourly" | "7day" | "extended" | "models" | "discussion";
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: "hourly", label: "Hourly" },
+  { id: "7day", label: "7-day" },
+  { id: "extended", label: "Extended" },
+  { id: "models", label: "Models" },
+  { id: "discussion", label: "Discussion" },
+];
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 function degreesToCardinal(deg: number | null): string {
@@ -172,19 +184,25 @@ function isCoordString(s: string): boolean {
 
 function alertStyles(severity: string | null) {
   switch ((severity || "").toLowerCase()) {
-    case "extreme": return { border: "border-rose-300/25", bg: "bg-rose-300/10", text: "text-rose-100", badge: "bg-rose-300/18 text-rose-100" };
-    case "severe":  return { border: "border-orange-300/20", bg: "bg-orange-300/8", text: "text-orange-100", badge: "bg-orange-300/16 text-orange-100" };
-    case "moderate": return { border: "border-amber-300/20", bg: "bg-amber-300/8", text: "text-amber-100", badge: "bg-amber-300/14 text-amber-100" };
-    default:        return { border: "border-yellow-300/16", bg: "bg-yellow-300/[0.05]", text: "text-yellow-100", badge: "bg-yellow-300/12 text-yellow-100" };
+    case "extreme":  return { border: "border-rose-300/25",   bg: "bg-rose-300/10",       text: "text-rose-100",   badge: "bg-rose-300/18 text-rose-100" };
+    case "severe":   return { border: "border-orange-300/20", bg: "bg-orange-300/8",       text: "text-orange-100", badge: "bg-orange-300/16 text-orange-100" };
+    case "moderate": return { border: "border-amber-300/20",  bg: "bg-amber-300/8",        text: "text-amber-100",  badge: "bg-amber-300/14 text-amber-100" };
+    default:         return { border: "border-yellow-300/16", bg: "bg-yellow-300/[0.05]",  text: "text-yellow-100", badge: "bg-yellow-300/12 text-yellow-100" };
   }
 }
 
 function freshnessChip(state: string | null, ageMinutes: number | null): { label: string; color: string } {
-  if (state === "fresh")  return { label: ageMinutes != null ? `${ageMinutes}m ago` : "Fresh", color: "text-emerald-400" };
-  if (state === "aging")  return { label: ageMinutes != null ? `${ageMinutes}m ago` : "Aging", color: "text-amber-400" };
-  if (state === "stale")  return { label: ageMinutes != null ? `${ageMinutes}m ago · stale` : "Stale", color: "text-rose-400" };
-  if (state === "modeled") return { label: "Modeled", color: "text-white/45" };
-  return { label: "Recent", color: "text-white/45" };
+  if (state === "fresh")   return { label: ageMinutes != null ? `${ageMinutes}m ago` : "Fresh",             color: "text-emerald-400" };
+  if (state === "aging")   return { label: ageMinutes != null ? `${ageMinutes}m ago` : "Aging",             color: "text-amber-400" };
+  if (state === "stale")   return { label: ageMinutes != null ? `${ageMinutes}m ago · stale` : "Stale",     color: "text-rose-400" };
+  if (state === "modeled") return { label: "Modeled",                                                        color: "text-slate-400 dark:text-white/45" };
+  return { label: "Recent", color: "text-slate-400 dark:text-white/45" };
+}
+
+function precipColor(pct: number | null): string {
+  if (pct == null || pct <= 10) return "text-slate-400 dark:text-white/30";
+  if (pct <= 25) return "text-sky-500 dark:text-sky-400";
+  return "text-amber-500 dark:text-amber-400";
 }
 
 function viewerHref(lat: number, lon: number): string {
@@ -196,17 +214,17 @@ function viewerHref(lat: number, lon: number): string {
 function WeatherIcon({ code, className }: { code: string; className?: string }) {
   const cls = className ?? "h-5 w-5";
   switch (code) {
-    case "clear-day":          return <Sun className={cls} />;
-    case "clear-night":        return <Moon className={cls} />;
-    case "partly-cloudy-day":  return <CloudSun className={cls} />;
+    case "clear-day":           return <Sun className={cls} />;
+    case "clear-night":         return <Moon className={cls} />;
+    case "partly-cloudy-day":   return <CloudSun className={cls} />;
     case "partly-cloudy-night": return <CloudMoon className={cls} />;
-    case "cloudy": case "fog": return <Cloud className={cls} />;
-    case "drizzle":            return <CloudDrizzle className={cls} />;
-    case "rain": case "sleet": return <CloudRain className={cls} />;
-    case "snow":               return <CloudSnow className={cls} />;
-    case "thunderstorm":       return <CloudLightning className={cls} />;
-    case "wind":               return <Wind className={cls} />;
-    default:                   return <Cloud className={cls} />;
+    case "cloudy": case "fog":  return <Cloud className={cls} />;
+    case "drizzle":             return <CloudDrizzle className={cls} />;
+    case "rain": case "sleet":  return <CloudRain className={cls} />;
+    case "snow":                return <CloudSnow className={cls} />;
+    case "thunderstorm":        return <CloudLightning className={cls} />;
+    case "wind":                return <Wind className={cls} />;
+    default:                    return <Cloud className={cls} />;
   }
 }
 
@@ -214,7 +232,7 @@ function WeatherIcon({ code, className }: { code: string; className?: string }) 
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="text-[10px] font-semibold uppercase tracking-[0.26em] text-white/40">
+    <div className="text-[10px] font-medium uppercase tracking-[0.26em] text-slate-400 dark:text-white/40">
       {children}
     </div>
   );
@@ -227,6 +245,17 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
     <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-200/70">
       <span className="h-px w-7 bg-cyan-300/45" />
       <span>{children}</span>
+    </div>
+  );
+}
+
+// ── Metadata item (conditions strip) ─────────────────────────────────
+
+function MetaItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-400 dark:text-white/35">{label}</div>
+      <div className="mt-0.5 text-[13px] font-medium text-slate-700 dark:text-white/80">{value}</div>
     </div>
   );
 }
@@ -247,18 +276,16 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const maxT = rawMax + pad;
   const range = maxT - minT;
 
-  // SVG layout: temp chart on top, precip probability curve in a band below
   const VW = 460;
   const VH = 145;
-  const TEMP_T = 18;    // top of temp zone
-  const TEMP_B = 90;    // bottom of temp zone
-  const PRECIP_T = 97;  // top of precip zone (7px gap acts as divider)
-  const PRECIP_B = 135; // bottom of precip zone (38px tall = max curve height)
+  const TEMP_T = 18;
+  const TEMP_B = 90;
+  const PRECIP_T = 97;
+  const PRECIP_B = 135;
 
   const xAt = (i: number) => (i / (entries.length - 1)) * VW;
   const yAt = (t: number) => TEMP_T + (1 - (t - minT) / range) * (TEMP_B - TEMP_T);
 
-  // Smooth bezier helpers
   function bezierPath(pts: { x: number; y: number }[]) {
     return pts.reduce((d, p, i) => {
       if (i === 0) return `M ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
@@ -272,7 +299,6 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const linePath = bezierPath(tempPts);
   const areaPath = `${linePath} L ${VW} ${TEMP_B} L 0 ${TEMP_B} Z`;
 
-  // Precip probability curve — each point's y = PRECIP_B minus the probability height
   const precipPts = entries.map((e, i) => ({
     x: xAt(i),
     y: PRECIP_B - ((e.pop_pct ?? 0) / 100) * (PRECIP_B - PRECIP_T),
@@ -280,268 +306,111 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const precipLinePath = bezierPath(precipPts);
   const precipAreaPath = `${precipLinePath} L ${VW} ${PRECIP_B} L 0 ${PRECIP_B} Z`;
 
-  const labelIdx = [0, 6, 12, 18, 23].filter(i => i < entries.length);
+  // Label start, peak, and end
+  const peakIdx = entries.reduce(
+    (maxIdx, e, i, arr) => ((e.temperature_f ?? -999) > (arr[maxIdx].temperature_f ?? -999) ? i : maxIdx),
+    0,
+  );
+  const endIdx = entries.length - 1;
+  const labelIdx = [...new Set([0, peakIdx, endIdx])].sort((a, b) => a - b);
+
   const hasPrecip = entries.some(e => (e.pop_pct ?? 0) > 0);
   const chartHeight = hasPrecip ? VH : TEMP_B + 10;
 
   return (
-    <div>
-      <SectionLabel>Next 24 Hours</SectionLabel>
-      <div className="mt-4">
-        <svg
-          viewBox={`0 0 ${VW} ${chartHeight}`}
-          className="h-auto w-full"
-          aria-hidden="true"
-        >
-          <defs>
-            <linearGradient id="hTempGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(103,232,249,0.20)" />
-              <stop offset="100%" stopColor="rgba(103,232,249,0.01)" />
-            </linearGradient>
-            <linearGradient id="hPrecipGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(52,211,153,0.45)" />
-              <stop offset="100%" stopColor="rgba(52,211,153,0.08)" />
-            </linearGradient>
-          </defs>
+    <svg viewBox={`0 0 ${VW} ${chartHeight}`} className="h-auto w-full" aria-hidden="true">
+      <defs>
+        <linearGradient id="hTempGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(103,232,249,0.20)" />
+          <stop offset="100%" stopColor="rgba(103,232,249,0.01)" />
+        </linearGradient>
+        <linearGradient id="hPrecipGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(52,211,153,0.45)" />
+          <stop offset="100%" stopColor="rgba(52,211,153,0.08)" />
+        </linearGradient>
+      </defs>
 
-          {/* Temp area fill */}
-          <path d={areaPath} fill="url(#hTempGrad)" />
+      <path d={areaPath} fill="url(#hTempGrad)" />
+      <path d={linePath} fill="none" stroke="rgba(103,232,249,0.85)"
+        strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* Temp line */}
-          <path d={linePath} fill="none" stroke="rgba(103,232,249,0.85)"
-            strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-
-          {/* Dots + labels at key positions */}
-          {labelIdx.map(i => {
-            const e = entries[i];
-            const x = xAt(i);
-            const y = yAt(e.temperature_f ?? (minT + range / 2));
-            const anchor = i === 0 ? "start" : i === entries.length - 1 ? "end" : "middle";
-            return (
-              <g key={i}>
-                <circle cx={x} cy={y} r={2.5} fill="rgba(103,232,249,1)" />
-                <text x={x} y={y - 6} textAnchor={anchor} fontSize={9.5}
-                  fontWeight="600" fill="rgba(255,255,255,0.82)">
-                  {e.temperature_f != null ? `${e.temperature_f}°` : "--"}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Precip probability area curve */}
-          {hasPrecip && (
-            <>
-              <line x1={0} y1={PRECIP_T - 1} x2={VW} y2={PRECIP_T - 1}
-                stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
-              <path d={precipAreaPath} fill="url(#hPrecipGrad)" />
-              <path d={precipLinePath} fill="none"
-                stroke="rgba(52,211,153,0.70)" strokeWidth={1.2}
-                strokeLinecap="round" strokeLinejoin="round" />
-            </>
-          )}
-        </svg>
-
-        {/* Icon + time labels row — absolutely aligned with SVG x positions */}
-        <div className="relative mt-2 h-12">
-          {labelIdx.map(i => {
-            const e = entries[i];
-            const pct = (i / (entries.length - 1)) * 100;
-            const align = i === 0 ? "items-start" : i === entries.length - 1 ? "items-end" : "items-center";
-            const translate = i === 0 ? "" : i === entries.length - 1 ? "-translate-x-full" : "-translate-x-1/2";
-            return (
-              <div
-                key={i}
-                className={`absolute top-0 flex flex-col gap-0.5 ${align} ${translate}`}
-                style={{ left: `${pct}%` }}
-              >
-                <WeatherIcon code={e.weather_code} className="h-4 w-4 text-cyan-200/65" />
-                <span className="text-[10px] text-white/40">{formatHour(e.time)}</span>
-                {(e.pop_pct ?? 0) > 0 && (
-                  <span className="text-[10px] text-cyan-300/65">{e.pop_pct}%</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Daily Mini Chart ──────────────────────────────────────────────────
-
-function DailyMiniChart({ daily }: { daily: DailyEntry[] }) {
-  const entries = daily.slice(0, 7);
-  if (entries.length === 0) return null;
-
-  const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
-  const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
-  if (!lows.length || !highs.length) return null;
-
-  const globalMin = Math.min(...lows);
-  const globalMax = Math.max(...highs);
-  const span = globalMax - globalMin || 1;
-
-  return (
-    <div className="border-t border-white/8 pt-4">
-      <SectionLabel>7-Day Outlook</SectionLabel>
-      <div className="mt-3 space-y-2.5">
-        {entries.map((entry, i) => {
-          const low  = entry.low_f  ?? globalMin;
-          const high = entry.high_f ?? globalMax;
-          const leftPct  = ((low  - globalMin) / span) * 100;
-          const widthPct = ((high - low) / span) * 100;
-          const pop = entry.pop_pct ?? 0;
-          return (
-            <div key={i} className="flex items-center gap-3">
-              <div className="w-9 flex-none text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">
-                {formatDayLabel(entry.date, i)}
-              </div>
-              <WeatherIcon code={entry.icon} className="h-3.5 w-3.5 flex-none text-cyan-200/60" />
-              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
-                <div
-                  className="absolute inset-y-0 rounded-full bg-gradient-to-r from-sky-400/60 to-cyan-300/80"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                />
-              </div>
-              <div className="flex w-16 flex-none justify-end gap-1.5 text-xs">
-                <span className="font-medium text-white/80">{high}°</span>
-                <span className="text-white/30">{low}°</span>
-              </div>
-              <div className="w-7 flex-none text-right text-[10px] text-emerald-400/70">
-                {pop > 0 ? `${pop}%` : ""}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Current Conditions ────────────────────────────────────────────────
-
-function CurrentConditionsCard({ current, freshness, attribution }: {
-  current: CurrentData;
-  freshness: ForecastPayload["freshness"]["current"];
-  attribution: string | null;
-}) {
-  const chip = freshnessChip(freshness.state, freshness.age_minutes);
-
-  return (
-    <div className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">
-      <SectionLabel>Current Conditions</SectionLabel>
-
-      <div className="mt-4 flex items-start gap-4">
-        <WeatherIcon code={current.icon} className="mt-0.5 h-10 w-10 flex-none text-cyan-200/80" />
-        <div className="min-w-0">
-          <div className="text-5xl font-semibold tracking-tight text-white leading-none">
-            {current.temperature_f ?? "--"}°
-          </div>
-          <div className="mt-1.5 text-base text-white/75">
-            {current.short_text ?? ""}
-          </div>
-        </div>
-      </div>
-
-      <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
-        <dt className="whitespace-nowrap text-white/45">Dew Point</dt>
-        <dd className="text-right text-white/80">{current.dewpoint_f != null ? `${current.dewpoint_f}°` : "--"}</dd>
-        <dt className="whitespace-nowrap text-white/45">Humidity</dt>
-        <dd className="text-right text-white/80">{current.humidity_pct != null ? `${current.humidity_pct}%` : "--"}</dd>
-        <dt className="whitespace-nowrap text-white/45">Wind</dt>
-        <dd className="text-right text-white/80 whitespace-nowrap">
-          {degreesToCardinal(current.wind_dir_deg)} {current.wind_speed_mph ?? "--"} mph{current.wind_gust_mph ? ` · G${current.wind_gust_mph}` : ""}
-        </dd>
-        {current.pressure_mb != null && (
-          <>
-            <dt className="whitespace-nowrap text-white/45">Pressure</dt>
-            <dd className="text-right text-white/80">{current.pressure_mb} mb</dd>
-          </>
-        )}
-        {current.visibility_mi != null && (
-          <>
-            <dt className="whitespace-nowrap text-white/45">Visibility</dt>
-            <dd className="text-right text-white/80">{current.visibility_mi} mi</dd>
-          </>
-        )}
-      </dl>
-
-      <div className="mt-4 flex items-center gap-3 border-t border-white/8 pt-3 text-xs">
-        {attribution ? <span className="text-white/35">{attribution}</span> : null}
-        {current.station?.name ? (
-          <span className="truncate text-white/35">{current.station.name}{current.station.distance_km != null ? ` · ${current.station.distance_km} km` : ""}</span>
-        ) : null}
-        <span className={`ml-auto flex-none font-medium ${chip.color}`}>{chip.label}</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Daily Forecast ────────────────────────────────────────────────────
-
-function DailyForecast({ daily, limit = 15 }: { daily: DailyEntry[]; limit?: number }) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-
-  function toggle(i: number) {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  }
-
-  return (
-    <div className="divide-y divide-white/[0.06] rounded-[1.4rem] border border-white/8 overflow-hidden">
-      {daily.slice(0, limit).map((entry, i) => {
-        const isOpen = expanded.has(i);
-        const hasDetail = entry.wind_speed_mph != null || (entry.qpf_in != null && entry.qpf_in > 0) || (entry.snow_in != null && entry.snow_in > 0);
+      {labelIdx.map(i => {
+        const e = entries[i];
+        const x = xAt(i);
+        const y = yAt(e.temperature_f ?? (minT + range / 2));
+        const anchor = i === 0 ? "start" : i === endIdx ? "end" : "middle";
         return (
-          <div key={i}>
-            <button
-              type="button"
-              onClick={() => hasDetail && toggle(i)}
-              className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors ${hasDetail ? "hover:bg-white/[0.03]" : ""}`}
-            >
-              <div className="w-10 text-xs font-semibold uppercase tracking-[0.14em] text-white/55 flex-none">
-                {formatDayLabel(entry.date, i)}
-              </div>
-              <WeatherIcon code={entry.icon} className="h-5 w-5 flex-none text-cyan-200/75" />
-              <div className="flex items-baseline gap-2 min-w-[5rem]">
-                <span className="text-sm font-semibold text-white">{entry.high_f ?? "--"}°</span>
-                <span className="text-sm text-white/35">{entry.low_f ?? "--"}°</span>
-              </div>
-              <div className="flex-1 text-sm text-white/60 truncate">{entry.short_text ?? ""}</div>
-              <div className="flex-none text-sm text-cyan-300/65 min-w-[2.5rem] text-right">
-                {entry.pop_pct != null && entry.pop_pct > 0 ? `${entry.pop_pct}%` : ""}
-              </div>
-              {hasDetail && (
-                <div className="flex-none text-white/30">
-                  {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                </div>
-              )}
-            </button>
-            {isOpen && hasDetail && (
-              <div className="border-t border-white/[0.06] bg-white/[0.02] px-4 py-3">
-                <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-xs text-white/55">
-                  {entry.wind_speed_mph != null && (
-                    <span>Wind <span className="text-white/75">{entry.wind_speed_mph} mph{entry.wind_gust_mph ? ` · G${entry.wind_gust_mph}` : ""}</span></span>
-                  )}
-                  {entry.qpf_in != null && entry.qpf_in > 0 && (
-                    <span>Rain <span className="text-white/75">{entry.qpf_in}"</span></span>
-                  )}
-                  {entry.snow_in != null && entry.snow_in > 0 && (
-                    <span>Snow <span className="text-white/75">{entry.snow_in}"</span></span>
-                  )}
-                  {entry.pop_pct != null && entry.pop_pct > 0 && (
-                    <span>Precip <span className="text-cyan-300/80">{entry.pop_pct}%</span></span>
-                  )}
-                </div>
-              </div>
-            )}
+          <g key={i}>
+            <circle cx={x} cy={y} r={2.5} fill="rgba(103,232,249,1)" />
+            <text x={x} y={y - 6} textAnchor={anchor} fontSize={9.5}
+              fontWeight="500" fill="rgba(255,255,255,0.82)">
+              {e.temperature_f != null ? `${e.temperature_f}°` : "--"}
+            </text>
+          </g>
+        );
+      })}
+
+      {hasPrecip && (
+        <>
+          <line x1={0} y1={PRECIP_T - 1} x2={VW} y2={PRECIP_T - 1}
+            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+          <path d={precipAreaPath} fill="url(#hPrecipGrad)" />
+          <path d={precipLinePath} fill="none"
+            stroke="rgba(52,211,153,0.70)" strokeWidth={1.2}
+            strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+// ── Hourly Strip ──────────────────────────────────────────────────────
+
+function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
+  const entries = hourly.slice(0, 24);
+  return (
+    <div className="flex gap-1 overflow-x-auto py-1">
+      {entries.map((entry, i) => {
+        const pop = entry.pop_pct ?? 0;
+        const isCurrent = i === 0;
+        return (
+          <div
+            key={i}
+            className={`flex-none flex flex-col items-center gap-1.5 rounded-lg px-3 py-2.5 min-w-[3.5rem] transition-colors ${
+              isCurrent
+                ? "bg-sky-50 dark:bg-white/[0.07] ring-[0.5px] ring-sky-200/60 dark:ring-white/[0.10]"
+                : "hover:bg-slate-50 dark:hover:bg-white/[0.03]"
+            }`}
+          >
+            <span className="text-[11px] text-slate-500 dark:text-white/40">{formatHour(entry.time)}</span>
+            <WeatherIcon code={entry.weather_code} className="h-4 w-4 text-slate-400 dark:text-cyan-200/65" />
+            <span className="text-[13px] font-medium text-slate-800 dark:text-white">{entry.temperature_f ?? "--"}°</span>
+            {pop > 0
+              ? <span className={`text-[10px] ${precipColor(pop)}`}>{pop}%</span>
+              : <span className="h-[14px]" />
+            }
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Hourly Tab ────────────────────────────────────────────────────────
+
+function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
+  if (!hourly.length) {
+    return <div className="py-16 text-center text-[13px] text-slate-400 dark:text-white/35">No hourly data available.</div>;
+  }
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-4 md:p-5">
+        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-slate-400 dark:text-white/40">
+          Temperature · Next 24 Hours
+        </p>
+        <HourlyChart hourly={hourly} />
+      </div>
+      <HourlyStrip hourly={hourly} />
     </div>
   );
 }
@@ -559,18 +428,24 @@ function AlertsBanner({ alerts }: { alerts: AlertEntry[] }) {
         const s = alertStyles(alert.severity);
         const isOpen = expanded.has(i);
         return (
-          <div key={alert.id ?? i} className={`rounded-[1.2rem] border ${s.border} ${s.bg} overflow-hidden`}>
+          <div key={alert.id ?? i} className={`rounded-xl border ${s.border} ${s.bg} overflow-hidden`}>
             <button type="button" onClick={() => toggle(i)} className="flex w-full items-start gap-3 p-4 text-left">
               <AlertTriangle className={`mt-0.5 h-4 w-4 flex-none ${s.text}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`text-sm font-semibold ${s.text}`}>{alert.event ?? "Alert"}</span>
-                  {alert.severity && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${s.badge}`}>{alert.severity}</span>}
+                  <span className={`text-sm font-medium ${s.text}`}>{alert.event ?? "Alert"}</span>
+                  {alert.severity && (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.badge}`}>
+                      {alert.severity}
+                    </span>
+                  )}
                 </div>
                 {alert.headline && <p className="mt-1 text-sm text-white/70">{alert.headline}</p>}
                 {alert.areas.length > 0 && <p className="mt-0.5 text-xs text-white/38">{alert.areas.slice(0, 3).join(" · ")}</p>}
               </div>
-              <div className="flex-none text-white/35">{isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</div>
+              <div className="flex-none text-white/35">
+                {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </div>
             </button>
             {isOpen && alert.description && (
               <div className="border-t border-white/8 px-4 pb-4 pt-3">
@@ -584,68 +459,198 @@ function AlertsBanner({ alerts }: { alerts: AlertEntry[] }) {
   );
 }
 
-// ── NWS Text Forecast ─────────────────────────────────────────────────
+// ── Day List Table (7-day tab) ────────────────────────────────────────
 
-function TextForecastSection({ data }: { data: NonNullable<ForecastPayload["official_text_forecast"]> }) {
+function DayListTable({ daily }: { daily: DailyEntry[] }) {
+  const entries = daily.slice(0, 7);
+  if (!entries.length) return null;
+
+  const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
+  const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
+  if (!lows.length || !highs.length) return null;
+
+  const globalMin = Math.min(...lows);
+  const globalMax = Math.max(...highs);
+  const span = globalMax - globalMin || 1;
+
+  return (
+    <div>
+      {entries.map((entry, i) => {
+        const low  = entry.low_f  ?? globalMin;
+        const high = entry.high_f ?? globalMax;
+        const leftPct  = ((low  - globalMin) / span) * 100;
+        const widthPct = ((high - low) / span) * 100;
+        const pop = entry.pop_pct ?? 0;
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-3 py-3 ${i < entries.length - 1 ? "border-b border-[0.5px] border-slate-100 dark:border-white/[0.06]" : ""}`}
+          >
+            <div className="w-10 flex-none text-[13px] font-medium text-slate-600 dark:text-white/60">
+              {formatDayLabel(entry.date, i)}
+            </div>
+            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-slate-400 dark:text-cyan-200/60" />
+            <div className="w-36 flex-none text-[13px] text-slate-500 dark:text-white/55 truncate hidden sm:block">
+              {entry.short_text ?? ""}
+            </div>
+            <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
+              <div
+                className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+              />
+            </div>
+            <div className="flex gap-1.5 w-16 flex-none justify-end text-[13px]">
+              <span className="font-medium text-slate-800 dark:text-white">{entry.high_f ?? "--"}°</span>
+              <span className="text-slate-400 dark:text-white/30">{entry.low_f ?? "--"}°</span>
+            </div>
+            <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
+              {pop > 0 ? `${pop}%` : ""}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── NWS Cards Grid (7-day tab) ────────────────────────────────────────
+
+function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_text_forecast"]> }) {
   const [showAll, setShowAll] = useState(false);
   if (!data.periods.length) return null;
   const visible = showAll ? data.periods : data.periods.slice(0, 6);
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <SectionLabel>Official Forecast · NWS</SectionLabel>
-        {data.generated_at && <span className="text-xs text-white/30">Generated {formatObservedAt(data.generated_at)}</span>}
-      </div>
+      {data.generated_at && (
+        <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">
+          NWS Official · Generated {formatObservedAt(data.generated_at)}
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((period, i) => (
-          <div key={i} className="rounded-[1.2rem] border border-white/8 bg-white/[0.02] p-4">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">{period.name ?? (period.is_daytime ? "Day" : "Night")}</div>
-                <div className="mt-2 text-sm leading-6 text-white/78">{period.short_text ?? ""}</div>
-                {period.wind_text && <div className="mt-1 text-xs text-white/40">Wind: {period.wind_text}</div>}
-              </div>
-              <div className="flex-none text-right">
-                <div className="text-2xl font-semibold tracking-tight text-white">{period.temperature_f ?? "--"}°</div>
-                <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-white/30">{period.is_daytime ? "High" : "Low"}</div>
-              </div>
+          <div key={i} className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-4">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400 dark:text-white/40">
+              {period.name ?? (period.is_daytime ? "Day" : "Night")}
             </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-xl font-medium text-slate-900 dark:text-white">{period.temperature_f ?? "--"}°</span>
+              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400 dark:text-white/30">
+                {period.is_daytime ? "High" : "Low"}
+              </span>
+            </div>
+            <div className="mt-1.5 text-[13px] text-slate-700 dark:text-white/75">{period.short_text ?? ""}</div>
+            {period.wind_text && (
+              <div className="mt-1 text-[12px] text-slate-400 dark:text-white/40">Wind: {period.wind_text}</div>
+            )}
             {period.detailed_text && (
-              <p className="mt-3 border-t border-white/8 pt-3 text-xs leading-5.5 text-white/45">{period.detailed_text}</p>
+              <p className="mt-2.5 border-t border-[0.5px] border-slate-200 dark:border-white/[0.08] pt-2.5 text-[12px] leading-[1.6] text-slate-500 dark:text-white/45">
+                {period.detailed_text}
+              </p>
             )}
           </div>
         ))}
       </div>
       {data.periods.length > 6 && (
-        <button type="button" onClick={() => setShowAll(v => !v)} className="mt-4 flex items-center gap-1.5 text-xs text-white/40 transition hover:text-white/60">
-          {showAll ? <><ChevronUp className="h-3.5 w-3.5" /> Show fewer periods</> : <><ChevronDown className="h-3.5 w-3.5" /> Show all {data.periods.length} periods</>}
+        <button
+          type="button"
+          onClick={() => setShowAll(v => !v)}
+          className="mt-4 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-white/40 transition hover:text-slate-600 dark:hover:text-white/60"
+        >
+          {showAll
+            ? <><ChevronUp className="h-3.5 w-3.5" /> Show fewer</>
+            : <><ChevronDown className="h-3.5 w-3.5" /> Show all {data.periods.length} periods</>
+          }
         </button>
       )}
     </div>
   );
 }
 
-// ── AFD Section ───────────────────────────────────────────────────────
+// ── 7-day Tab ─────────────────────────────────────────────────────────
 
-function AfdSection({ afd }: { afd: NonNullable<ForecastPayload["afd"]> }) {
-  const [open, setOpen] = useState(false);
+function SevenDayTab({ daily, textForecast }: {
+  daily: DailyEntry[];
+  textForecast: ForecastPayload["official_text_forecast"];
+}) {
+  return (
+    <div className="space-y-8">
+      <DayListTable daily={daily} />
+      {textForecast && <NWSCardsGrid data={textForecast} />}
+    </div>
+  );
+}
+
+// ── Extended Tab ──────────────────────────────────────────────────────
+
+function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution: string | null }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <SectionLabel>Area Forecast Discussion · {afd.office}</SectionLabel>
-        {afd.issued_at && <span className="text-xs text-white/30">{formatIssuedAt(afd.issued_at)}</span>}
+      {attribution && (
+        <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">Source: {attribution}</p>
+      )}
+      <table className="w-full">
+        <tbody>
+          {daily.map((entry, i) => (
+            <tr
+              key={i}
+              className={i < daily.length - 1 ? "border-b border-[0.5px] border-slate-100 dark:border-white/[0.06]" : ""}
+            >
+              <td className="py-2.5 w-14 text-[13px] font-medium text-slate-600 dark:text-white/60">
+                {formatDayLabel(entry.date, i)}
+              </td>
+              <td className="py-2.5 text-[13px] text-slate-500 dark:text-white/50">
+                <div className="flex items-center gap-2">
+                  <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-slate-400 dark:text-cyan-200/55" />
+                  <span className="truncate">{entry.short_text ?? ""}</span>
+                </div>
+              </td>
+              <td className="py-2.5 text-right whitespace-nowrap text-[13px]">
+                <span className="font-medium text-slate-800 dark:text-white">{entry.high_f ?? "--"}°</span>
+                <span className="text-slate-400 dark:text-white/30 ml-1.5">{entry.low_f ?? "--"}°</span>
+              </td>
+              <td className={`py-2.5 w-10 text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
+                {entry.pop_pct != null && entry.pop_pct > 0 ? `${entry.pop_pct}%` : ""}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Models Tab ────────────────────────────────────────────────────────
+
+function ModelsTab() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center">
+      <p className="text-[15px] font-medium text-slate-700 dark:text-white/65">Model guidance coming soon</p>
+      <p className="mt-2 text-[13px] text-slate-400 dark:text-white/35">
+        GFS, NAM, and ECMWF ensemble charts will appear here.
+      </p>
+    </div>
+  );
+}
+
+// ── Discussion Tab ────────────────────────────────────────────────────
+
+function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
+  if (!afd || !afd.text) {
+    return (
+      <div className="py-16 text-center text-[13px] text-slate-400 dark:text-white/35">
+        No forecast discussion available.
       </div>
-      <div className="rounded-[1.2rem] border border-white/8 bg-white/[0.02] overflow-hidden">
-        <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-center justify-between px-4 py-3.5 text-left">
-          <span className="text-sm text-white/55">{open ? "Collapse discussion" : "Read Area Forecast Discussion"}</span>
-          {open ? <ChevronUp className="h-4 w-4 flex-none text-white/35" /> : <ChevronDown className="h-4 w-4 flex-none text-white/35" />}
-        </button>
-        {open && afd.text && (
-          <div className="border-t border-white/8 px-4 pb-5 pt-4">
-            <pre className="max-h-96 overflow-y-auto font-mono text-xs leading-6 text-white/55 whitespace-pre-wrap break-words">{afd.text}</pre>
-          </div>
-        )}
-      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl bg-slate-50 dark:bg-white/[0.03] p-5 md:p-6">
+      <p className="mb-4 text-[11px] text-slate-400 dark:text-white/30">
+        {afd.office}{afd.issued_at ? ` · ${formatIssuedAt(afd.issued_at)}` : ""}
+      </p>
+      <pre className="font-mono text-xs leading-[1.7] text-slate-600 dark:text-white/55 whitespace-pre-wrap break-words">
+        {afd.text}
+      </pre>
     </div>
   );
 }
@@ -662,14 +667,13 @@ export default function Forecast() {
   const [forecast, setForecast] = useState<ForecastPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showStickyLocationBar, setShowStickyLocationBar] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("hourly");
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function onOut(e: MouseEvent) {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
@@ -680,19 +684,16 @@ export default function Forecast() {
     return () => document.removeEventListener("mousedown", onOut);
   }, []);
 
-  // Handle URL param ?q= on mount
   useEffect(() => {
     const q = searchParams.get("q");
     if (q) { setQuery(q); void loadByQuery(q); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debounced live search
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmed = query.trim();
 
-    // Don't re-search if query matches what's already loaded
     if (trimmed.length < 2 || (pendingName && query === pendingName)) {
       if (trimmed.length < 2) { setSearchResults([]); setShowDropdown(false); }
       return;
@@ -713,21 +714,6 @@ export default function Forecast() {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, pendingName]);
 
-  useEffect(() => {
-    if (!forecast) {
-      setShowStickyLocationBar(false);
-      return;
-    }
-
-    function syncStickyLocationBar() {
-      setShowStickyLocationBar(window.scrollY > 56);
-    }
-
-    syncStickyLocationBar();
-    window.addEventListener("scroll", syncStickyLocationBar, { passive: true });
-    return () => window.removeEventListener("scroll", syncStickyLocationBar);
-  }, [forecast]);
-
   async function loadByCoords(lat: number, lon: number, preferredName?: string, locationHint?: Partial<LocationResult>) {
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
@@ -745,13 +731,13 @@ export default function Forecast() {
       const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
       if (!res.ok) throw new Error("Forecast unavailable for this location.");
       const data = (await res.json()) as ForecastPayload;
-      // Use preferred name if the API returns coords
       const name = isCoordString(data.location.display_name) && preferredName
         ? preferredName
         : data.location.display_name;
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
+      setActiveTab("hourly");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
@@ -776,6 +762,7 @@ export default function Forecast() {
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
+      setActiveTab("hourly");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
@@ -799,206 +786,182 @@ export default function Forecast() {
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  const isLoaded = forecast !== null;
-  const freshness = forecast?.freshness.current ?? null;
-  const obsLabel = freshness?.observed_at ? formatObservedAt(freshness.observed_at) : null;
-  const emptyHeroFeaturedLocations = (
-    <div className="mt-6 flex flex-wrap gap-2 lg:max-w-xl">
-      {FEATURED_LOCATIONS.map(place => (
-        <button
-          key={place.name}
-          type="button"
-          onClick={() => {
-            setPendingName(place.name);
-            setQuery(place.name);
-            void loadByCoords(place.latitude, place.longitude, place.name);
-          }}
-          className="rounded-xl border border-white/10 bg-slate-950/18 px-3 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78"
-        >
-          {place.name}
-        </button>
-      ))}
-    </div>
-  );
-
-  // ── Search box (shared between empty + loaded states) ──────────────
-
-  const searchBox = (
-    <div ref={searchContainerRef} className="relative">
-      <div className={isLoaded ? "rounded-[1.6rem] border border-white/10 bg-slate-950/35 p-3 backdrop-blur-md shadow-[0_24px_70px_rgba(0,0,0,0.28)]" : ""}>
-        <label className={isLoaded
-          ? "flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5"
-          : "flex items-center gap-3 rounded-[1.4rem] border border-white/12 bg-slate-950/24 px-5 py-4 backdrop-blur-sm shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-cyan-200/28 focus-within:bg-slate-950/30"}
-        >
-          <Search className="h-3.5 w-3.5 flex-none text-cyan-200/75" />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={e => {
-              setQuery(e.target.value);
-              if (e.target.value !== pendingName) setPendingName(null);
-            }}
-            onKeyDown={e => {
-              if (e.key === "Enter" && query.trim().length >= 2) {
-                if (searchResults.length > 0) {
-                  selectLocation(searchResults[0]);
-                } else {
-                  void loadByQuery(query.trim());
-                }
-              }
-              if (e.key === "Escape") setShowDropdown(false);
-            }}
-            onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
-            placeholder={isLoaded ? "Search another location…" : "Search city, state, or zip code"}
-            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {(isSearching || (isLoaded && isLoading)) ? (
-            <div className="h-3 w-3 flex-none animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
-          ) : (isLoaded || query) ? (
-            <button type="button" onClick={clearSearch} className="flex-none rounded-full p-0.5 text-white/30 transition hover:text-white/60">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </label>
-
-        {showDropdown && searchResults.length > 0 && (
-          <div className={isLoaded ? "mt-2 space-y-1" : "absolute left-0 right-0 top-full z-20 mt-3 space-y-1 rounded-[1.4rem] border border-white/10 bg-[#091221]/92 p-2 shadow-[0_28px_70px_rgba(0,0,0,0.34)] backdrop-blur-md"}>
-            {searchResults.slice(0, 6).map((r, i) => (
-              <button
-                key={i}
-                type="button"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => selectLocation(r)}
-                className="w-full rounded-xl border border-white/8 bg-white/[0.03] px-4 py-2.5 text-left text-sm font-medium text-white transition hover:border-white/14 hover:bg-white/[0.05]"
-              >
-                {r.display_name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   // ── LOADED STATE ───────────────────────────────────────────────────
 
-  if (isLoaded) {
+  if (forecast !== null) {
     const f = forecast;
+    const freshChip = freshnessChip(f.freshness.current.state, f.freshness.current.age_minutes);
+    const freshnessLabel = freshChip.label.includes("ago") ? `Updated ${freshChip.label}` : freshChip.label;
+
+    const stationParts: string[] = [];
+    if (f.attribution.current) stationParts.push(f.attribution.current);
+    if (f.current.station?.name) stationParts.push(f.current.station.name);
+    if (f.current.station?.distance_km != null) stationParts.push(`${f.current.station.distance_km} km`);
+    const stationMeta = stationParts.join(" · ");
+
     return (
-      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16">
-        {/* Location bar */}
-        <div className={`fixed inset-x-0 top-16 z-[55] border-b border-white/8 bg-[#07111f]/90 px-5 py-3 backdrop-blur-md transition duration-200 md:px-8 ${showStickyLocationBar ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-3 opacity-0"}`}>
-          <div className="mx-auto flex max-w-6xl items-center gap-4">
+      <div className="-mx-5 -mt-12 md:-mx-8 md:-mt-16 min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-white">
+
+        {/* Top Bar */}
+        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
+          <div className="mx-auto max-w-5xl px-5 md:px-8 py-3 flex items-center gap-3">
             <button
               type="button"
               onClick={clearSearch}
-              className="flex items-center gap-1.5 text-xs text-white/40 transition hover:text-white/65"
+              className="flex-none flex items-center gap-1 text-[12px] text-slate-400 dark:text-white/35 transition hover:text-slate-600 dark:hover:text-white/60"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               Search
             </button>
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="text-base font-semibold tracking-tight text-white truncate">
-                  {f.location.display_name}
-                </h1>
-                {obsLabel && (
-                  <span className={`text-xs ${freshnessChip(freshness?.state ?? null, freshness?.age_minutes ?? null).color}`}>
-                    {freshnessChip(freshness?.state ?? null, freshness?.age_minutes ?? null).label}
-                  </span>
-                )}
-                <span className="text-xs text-white/25 hidden sm:inline">
-                  {f.location.latitude.toFixed(4)}, {f.location.longitude.toFixed(4)}
-                </span>
-              </div>
+            <div className="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+              <h1 className="text-[15px] font-medium text-slate-900 dark:text-white truncate">{f.location.display_name}</h1>
+              {stationMeta && (
+                <span className="hidden sm:inline text-[12px] text-slate-400 dark:text-white/35 whitespace-nowrap">{stationMeta}</span>
+              )}
             </div>
+            <span className={`flex-none text-[12px] ${freshChip.color}`}>{freshnessLabel}</span>
             <Link
               to={viewerHref(f.location.latitude, f.location.longitude)}
-              className="flex-none inline-flex items-center gap-1.5 rounded-lg border border-cyan-200/30 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-1.5 text-xs font-semibold text-slate-950 shadow-[0_8px_24px_rgba(35,196,255,0.14)] transition hover:-translate-y-px hover:brightness-105"
+              className="flex-none hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-[0.5px] border-sky-200 dark:border-cyan-300/30 bg-sky-50 dark:bg-cyan-300/[0.06] px-3 py-1.5 text-[12px] font-medium text-sky-600 dark:text-cyan-200 transition hover:bg-sky-100 dark:hover:bg-cyan-300/[0.10]"
             >
-              Open In Viewer <ArrowRight className="h-3.5 w-3.5" />
+              Open In Viewer <ArrowRight className="h-3 w-3" />
             </Link>
           </div>
         </div>
 
-        {/* Main content */}
-        <div className="bg-[#07111f] px-5 pb-8 pt-[5.75rem] md:px-8 md:pb-10">
-          <div className="mx-auto max-w-6xl space-y-8">
-
-            {/* Search + current + hourly row */}
-            <div className="grid gap-5 lg:grid-cols-[1fr_1.5fr]">
-              <div className="space-y-4">
-                {searchBox}
-                <CurrentConditionsCard
-                  current={f.current}
-                  freshness={f.freshness.current}
-                  attribution={f.attribution.current}
-                />
-              </div>
-              <div className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">
-                <HourlyChart hourly={f.hourly} />
-                <DailyMiniChart daily={f.daily} />
+        {/* Conditions Strip */}
+        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
+          <div className="mx-auto max-w-5xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
+            <div className="flex items-center gap-3 flex-none">
+              <WeatherIcon code={f.current.icon} className="h-8 w-8 text-sky-500 dark:text-cyan-200/80" />
+              <div>
+                <div className="text-[36px] font-medium leading-none text-slate-900 dark:text-white">
+                  {f.current.temperature_f ?? "--"}°
+                </div>
+                <div className="mt-1 text-[13px] text-slate-500 dark:text-white/55">
+                  {f.current.short_text ?? ""}
+                </div>
               </div>
             </div>
 
-            {/* Alerts */}
-            {f.alerts.length > 0 && (
-              <div>
-                <div className="mb-3 flex items-center gap-3">
-                  <SectionLabel>Active Alerts</SectionLabel>
-                  <span className="rounded-full border border-rose-300/20 bg-rose-300/10 px-2 py-0.5 text-[10px] font-semibold text-rose-200">
-                    {f.alerts.length}
-                  </span>
-                </div>
-                <AlertsBanner alerts={f.alerts} />
-              </div>
-            )}
+            <div className="hidden sm:block self-stretch w-px bg-slate-200 dark:bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
 
-            {/* Official NWS forecast */}
-            {f.official_text_forecast && (
-              <div>
-                <TextForecastSection data={f.official_text_forecast} />
-              </div>
-            )}
-
-            {/* Extended forecast + viewer CTA */}
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <SectionLabel>15-Day Extended Forecast</SectionLabel>
-                {f.attribution.daily && <span className="text-xs text-white/25">Source: {f.attribution.daily}</span>}
-              </div>
-              <DailyForecast daily={f.daily} limit={15} />
-
-              {/* AFD */}
-              {f.afd && (
-                <div className="mt-5">
-                  <AfdSection afd={f.afd} />
-                </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-3">
+              {f.current.dewpoint_f != null && (
+                <MetaItem label="Dew Point" value={`${f.current.dewpoint_f}°`} />
               )}
-
-              <div className="mt-5 flex items-center justify-between gap-4 rounded-[1.2rem] border border-cyan-300/12 bg-cyan-300/[0.04] px-4 py-3.5">
-                <div className="text-sm text-white/65">
-                  Want to dig deeper? Open this location in the interactive map viewer.
-                </div>
-                <Link
-                  to={viewerHref(f.location.latitude, f.location.longitude)}
-                  className="flex-none inline-flex items-center gap-2 rounded-xl border border-cyan-200/30 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_8px_24px_rgba(35,196,255,0.12)] transition hover:-translate-y-px hover:brightness-105"
-                >
-                  Open In Viewer <ArrowRight className="h-4 w-4" />
-                </Link>
-              </div>
+              {f.current.humidity_pct != null && (
+                <MetaItem label="Humidity" value={`${f.current.humidity_pct}%`} />
+              )}
+              <MetaItem
+                label="Wind"
+                value={`${degreesToCardinal(f.current.wind_dir_deg)} ${f.current.wind_speed_mph ?? "--"} mph${f.current.wind_gust_mph ? ` · G${f.current.wind_gust_mph}` : ""}`}
+              />
+              {f.current.pressure_mb != null && (
+                <MetaItem label="Pressure" value={`${f.current.pressure_mb} mb`} />
+              )}
+              {f.current.visibility_mi != null && (
+                <MetaItem label="Visibility" value={`${f.current.visibility_mi} mi`} />
+              )}
             </div>
-
-            <div className="h-4" />
           </div>
         </div>
+
+        {/* Tab Bar */}
+        <div className="border-b border-[0.5px] border-slate-200 dark:border-white/[0.08]">
+          <div className="mx-auto max-w-5xl px-5 md:px-8">
+            <div className="flex overflow-x-auto -mb-px">
+              {TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-none px-4 py-3 text-[13px] whitespace-nowrap border-b-2 transition-colors ${
+                    activeTab === tab.id
+                      ? "border-slate-900 dark:border-white text-slate-900 dark:text-white font-medium"
+                      : "border-transparent text-slate-500 dark:text-white/45 hover:text-slate-700 dark:hover:text-white/65"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        <div className="mx-auto max-w-5xl px-5 md:px-8 py-6 pb-12">
+          {f.alerts.length > 0 && (
+            <div className="mb-6">
+              <AlertsBanner alerts={f.alerts} />
+            </div>
+          )}
+          {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
+          {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
+          {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
+          {activeTab === "models"     && <ModelsTab />}
+          {activeTab === "discussion" && <DiscussionTab afd={f.afd} />}
+        </div>
+
       </div>
     );
   }
 
   // ── EMPTY STATE ────────────────────────────────────────────────────
+
+  const searchBox = (
+    <div ref={searchContainerRef} className="relative">
+      <label className="flex items-center gap-3 rounded-[1.4rem] border border-white/12 bg-slate-950/24 px-5 py-4 backdrop-blur-sm shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition focus-within:border-cyan-200/28 focus-within:bg-slate-950/30">
+        <Search className="h-3.5 w-3.5 flex-none text-cyan-200/75" />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={e => {
+            setQuery(e.target.value);
+            if (e.target.value !== pendingName) setPendingName(null);
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter" && query.trim().length >= 2) {
+              if (searchResults.length > 0) {
+                selectLocation(searchResults[0]);
+              } else {
+                void loadByQuery(query.trim());
+              }
+            }
+            if (e.key === "Escape") setShowDropdown(false);
+          }}
+          onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
+          placeholder="Search city, state, or zip code"
+          className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {isSearching ? (
+          <div className="h-3 w-3 flex-none animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+        ) : query ? (
+          <button type="button" onClick={clearSearch} className="flex-none rounded-full p-0.5 text-white/30 transition hover:text-white/60">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </label>
+
+      {showDropdown && searchResults.length > 0 && (
+        <div className="absolute left-0 right-0 top-full z-20 mt-3 space-y-1 rounded-[1.4rem] border border-white/10 bg-[#091221]/92 p-2 shadow-[0_28px_70px_rgba(0,0,0,0.34)] backdrop-blur-md">
+          {searchResults.slice(0, 6).map((r, i) => (
+            <button
+              key={i}
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => selectLocation(r)}
+              className="w-full rounded-xl border border-white/8 bg-white/[0.03] px-4 py-2.5 text-left text-sm font-medium text-white transition hover:border-white/14 hover:bg-white/[0.05]"
+            >
+              {r.display_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 space-y-0 text-white md:-mt-16">
@@ -1014,11 +977,8 @@ export default function Forecast() {
               linear-gradient(115deg, rgba(8,18,34,0.98) 0%, rgba(9,22,39,0.9) 34%, rgba(7,17,31,0.76) 58%, rgba(4,10,20,0.94) 100%),
               linear-gradient(180deg, rgba(7,17,31,0.58), rgba(7,17,31,0.88))
             `,
-            backgroundSize: "auto, auto, auto, auto, auto",
-            backgroundPosition: "center, center, center, center, center",
           }}
         />
-
         <div
           aria-hidden="true"
           className="absolute inset-0 opacity-20"
@@ -1028,7 +988,6 @@ export default function Forecast() {
             backgroundSize: "88px 88px",
           }}
         />
-
         <div
           aria-hidden="true"
           className="absolute inset-0"
@@ -1053,7 +1012,24 @@ export default function Forecast() {
             </p>
             <div className="mx-auto mt-10 max-w-xl lg:mx-0">
               {searchBox}
-              {!isLoading && emptyHeroFeaturedLocations}
+              {!isLoading && (
+                <div className="mt-6 flex flex-wrap gap-2 lg:max-w-xl">
+                  {FEATURED_LOCATIONS.map(place => (
+                    <button
+                      key={place.name}
+                      type="button"
+                      onClick={() => {
+                        setPendingName(place.name);
+                        setQuery(place.name);
+                        void loadByCoords(place.latitude, place.longitude, place.name);
+                      }}
+                      className="rounded-xl border border-white/10 bg-slate-950/18 px-3 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78"
+                    >
+                      {place.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {error && (
               <div className="mx-auto mt-4 max-w-xl rounded-2xl border border-rose-300/18 bg-rose-300/10 px-4 py-3 text-left text-sm text-rose-100 lg:mx-0">
@@ -1076,22 +1052,22 @@ export default function Forecast() {
               </div>
             ) : (
               <div className="pl-10">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.26em] text-white/42">Forecast Desk</div>
+                <SectionLabel>Forecast Desk</SectionLabel>
                 <div className="mt-6 space-y-4">
                   <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/20 p-5 backdrop-blur-sm">
-                    <div className="text-sm font-semibold text-white">Official U.S. Forecast</div>
+                    <div className="text-sm font-medium text-white">Official U.S. Forecast</div>
                     <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
                       Current observations, forecast periods, active alerts, and Area Forecast Discussions are surfaced when NWS coverage is available.
                     </div>
                   </div>
                   <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
-                    <div className="text-sm font-semibold text-white">Extended Outlook</div>
+                    <div className="text-sm font-medium text-white">Extended Outlook</div>
                     <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
                       Open-Meteo carries the longer-range daily outlook so the page stays useful beyond the official forecast window.
                     </div>
                   </div>
                   <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
-                    <div className="text-sm font-semibold text-white">Fast Entry</div>
+                    <div className="text-sm font-medium text-white">Fast Entry</div>
                     <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
                       Search by city, state, zip, or jump straight in with the featured U.S. locations on the left.
                     </div>
@@ -1109,7 +1085,6 @@ export default function Forecast() {
         </div>
       </section>
 
-      {/* Feature cards — only shown in empty state */}
       <section className="border-y border-white/8 bg-[#0b1527] px-5 py-14 md:px-8">
         <div className="mx-auto grid max-w-6xl gap-5 lg:grid-cols-3">
           <div className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">

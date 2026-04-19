@@ -3,6 +3,7 @@ import { AlertTriangle, ClipboardCheck, Clock3, SearchCheck, X } from "lucide-re
 
 import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import {
+  fetchAdminStatusRunDetail,
   fetchAdminStatusQaSummary,
   fetchAdminStatusResults,
   fetchTwfStatus,
@@ -161,6 +162,8 @@ export default function AdminStatusPage() {
   const [viewFilter, setViewFilter] = useState<ViewFilter>("issues");
   const [results, setResults] = useState<StatusResult[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<StatusResult | null>(null);
+  const [selectedDetailLoading, setSelectedDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const topScrollRef = useRef<HTMLDivElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
@@ -181,11 +184,13 @@ export default function AdminStatusPage() {
             window: windowValue,
             model: modelFilter,
             limit: 200,
+            includeDetails: false,
           }),
           fetchAdminStatusQaSummary(),
         ]);
         if (cancelled) return;
         setResults(response.results);
+        setSelectedDetail(null);
         setQaSummary(nextQaSummary);
         setError(null);
       } catch (nextError) {
@@ -201,13 +206,49 @@ export default function AdminStatusPage() {
   }, [windowValue, modelFilter]);
 
   const filteredRows = useMemo(() => filterRows(results, viewFilter), [results, viewFilter]);
-  const selected = filteredRows.find((item) => item.id === selectedId) ?? results.find((item) => item.id === selectedId) ?? null;
+  const selectedSummary = filteredRows.find((item) => item.id === selectedId) ?? results.find((item) => item.id === selectedId) ?? null;
+  const selected = selectedDetail && selectedDetail.id === selectedId ? selectedDetail : selectedSummary;
 
   useEffect(() => {
     if (selectedId !== null && !results.some((item) => item.id === selectedId)) {
       setSelectedId(null);
+      setSelectedDetail(null);
     }
   }, [results, selectedId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!selectedSummary) {
+      setSelectedDetail(null);
+      setSelectedDetailLoading(false);
+      return;
+    }
+
+    setSelectedDetail(null);
+    setSelectedDetailLoading(true);
+
+    void fetchAdminStatusRunDetail({
+      model: selectedSummary.model_id,
+      run: selectedSummary.run_id,
+    })
+      .then((response) => {
+        if (cancelled) return;
+        setSelectedDetail(response.result);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSelectedDetail(null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setSelectedDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSummary?.id, selectedSummary?.model_id, selectedSummary?.run_id]);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -583,7 +624,13 @@ export default function AdminStatusPage() {
                 </div>
               ) : null}
 
-              {selected.sample_paths.length > 0 ? (
+              {selectedDetailLoading ? (
+                <div className="border-t border-white/8 pt-5 text-sm text-white/56">
+                  Loading run diagnostics...
+                </div>
+              ) : null}
+
+              {!selectedDetailLoading && selected.sample_paths.length > 0 ? (
                 <div className="border-t border-white/8 pt-5">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Sample failing paths</div>
                   <div className="mt-3 space-y-3 text-sm text-white/78">

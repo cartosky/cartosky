@@ -140,6 +140,10 @@ export type StatusResultsResponse = {
   results: StatusResult[];
 };
 
+export type StatusRunDetailResponse = {
+  result: StatusResult;
+};
+
 export type StatusQaSummaryResponse = {
   store_mode: "shared" | "separate";
   db_path: string;
@@ -245,13 +249,25 @@ export async function fetchAdminStatusResults(params: {
   model?: string;
   status?: string;
   limit?: number;
+  includeDetails?: boolean;
 }): Promise<StatusResultsResponse> {
   const search = new URLSearchParams();
   search.set("window", params.window);
   if (params.limit) search.set("limit", String(params.limit));
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.status && params.status !== "all") search.set("status", params.status);
+  if (params.includeDetails) search.set("include_details", "true");
   return fetchJson<StatusResultsResponse>(`${API_ORIGIN}/api/v4/admin/status/results?${search.toString()}`);
+}
+
+export async function fetchAdminStatusRunDetail(params: {
+  model: string;
+  run: string;
+}): Promise<StatusRunDetailResponse> {
+  const search = new URLSearchParams();
+  search.set("model", params.model);
+  search.set("run", params.run);
+  return fetchJson<StatusRunDetailResponse>(`${API_ORIGIN}/api/v4/admin/status/run?${search.toString()}`);
 }
 
 export async function fetchAdminStatusQaSummary(): Promise<StatusQaSummaryResponse> {

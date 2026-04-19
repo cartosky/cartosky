@@ -1696,6 +1696,7 @@ def _scan_run_issue(
     model_id: str,
     run_id: str,
     latest_run_id: str | None,
+    include_details: bool = True,
 ) -> dict[str, Any]:
     manifest_path = _manifest_path(data_root, model_id, run_id)
     manifest = _load_json_file(manifest_path)
@@ -1767,7 +1768,8 @@ def _scan_run_issue(
     incomplete_variables: list[str] = []
     missing_artifact_count = 0
     unreadable_artifact_count = 0
-    sample_paths: list[dict[str, Any]] = []
+    sample_paths: list[dict[str, Any]] = [] if include_details else []
+    incomplete_variable_count = 0
 
     for variable_id, entry in sorted(variables.items()):
         if not isinstance(entry, dict):
@@ -1779,7 +1781,9 @@ def _scan_run_issue(
         expected_frames += max(0, expected)
         available_frames += max(0, available)
         if expected > available:
-            incomplete_variables.append(public_variable_id)
+            incomplete_variable_count += 1
+            if include_details:
+                incomplete_variables.append(public_variable_id)
 
         frame_entries = entry.get("frames")
         if not isinstance(frame_entries, list):
@@ -1873,15 +1877,16 @@ def _scan_run_issue(
                         unreadable_artifact_count += 1
                         missing_here = True
                         artifact_path = artifact_path or str(runtime_path)
-                        _append_sample_path(
-                            sample_paths,
-                            {
-                                "variable_id": public_variable_id,
-                                "forecast_hour": fh,
-                                "issue": "invalid_grid_frame",
-                                "artifact_path": str(runtime_path),
-                            },
-                        )
+                        if include_details:
+                            _append_sample_path(
+                                sample_paths,
+                                {
+                                    "variable_id": public_variable_id,
+                                    "forecast_hour": fh,
+                                    "issue": "invalid_grid_frame",
+                                    "artifact_path": str(runtime_path),
+                                },
+                            )
                 if contour_keys:
                     if not sidecar_exists:
                         missing_artifact_count += 1
@@ -1916,16 +1921,17 @@ def _scan_run_issue(
                                 unreadable_artifact_count += 1
                                 missing_here = True
                                 artifact_path = artifact_path or str(contour_path)
-                                _append_sample_path(
-                                    sample_paths,
-                                    {
-                                        "variable_id": public_variable_id,
-                                        "forecast_hour": fh,
-                                        "issue": "unreadable_contour_artifact",
-                                        "artifact_path": str(contour_path),
-                                        "sidecar_path": str(sidecar_path),
-                                    },
-                                )
+                                if include_details:
+                                    _append_sample_path(
+                                        sample_paths,
+                                        {
+                                            "variable_id": public_variable_id,
+                                            "forecast_hour": fh,
+                                            "issue": "unreadable_contour_artifact",
+                                            "artifact_path": str(contour_path),
+                                            "sidecar_path": str(sidecar_path),
+                                        },
+                                    )
             else:
                 if "grid" in substrates and not value_path.is_file():
                     missing_artifact_count += 1
@@ -1947,7 +1953,7 @@ def _scan_run_issue(
                     missing_artifact_count += 1
                     missing_here = True
                     artifact_path = artifact_path or str(sidecar_path)
-            if missing_here:
+            if missing_here and include_details:
                 _append_sample_path(
                     sample_paths,
                     {
@@ -1960,37 +1966,19 @@ def _scan_run_issue(
                     },
                 )
 
-        sample_hours = frame_hours[:1]
-        if len(frame_hours) > 1:
-            sample_hours.append(frame_hours[-1])
-        for fh in sorted(set(sample_hours)):
-            value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
-            sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
-            sidecar_payload = _load_json_file(sidecar_path) if has_vector_substrate and sidecar_path.is_file() else None
-            vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload) if has_vector_substrate else []
-            if not uses_grid_runtime and "grid" in substrates and value_path.is_file():
-                try:
-                    with rasterio.open(value_path):
-                        pass
-                except Exception as exc:
-                    unreadable_artifact_count += 1
-                    _append_sample_path(
-                        sample_paths,
-                        {
-                            "variable_id": public_variable_id,
-                            "forecast_hour": fh,
-                            "issue": "unreadable_value_grid",
-                            "value_grid_path": str(value_path),
-                            "artifact_path": str(value_path),
-                            "read_error": str(exc),
-                        },
-                    )
-            if has_vector_substrate:
-                for vector_path in vector_paths:
-                    if not vector_path.is_file():
-                        continue
+        if include_details:
+            sample_hours = frame_hours[:1]
+            if len(frame_hours) > 1:
+                sample_hours.append(frame_hours[-1])
+            for fh in sorted(set(sample_hours)):
+                value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
+                sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
+                sidecar_payload = _load_json_file(sidecar_path) if has_vector_substrate and sidecar_path.is_file() else None
+                vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload) if has_vector_substrate else []
+                if not uses_grid_runtime and "grid" in substrates and value_path.is_file():
                     try:
-                        json.loads(vector_path.read_text())
+                        with rasterio.open(value_path):
+                            pass
                     except Exception as exc:
                         unreadable_artifact_count += 1
                         _append_sample_path(
@@ -1998,13 +1986,32 @@ def _scan_run_issue(
                             {
                                 "variable_id": public_variable_id,
                                 "forecast_hour": fh,
-                                "issue": "unreadable_vector_artifact",
-                                "artifact_path": str(vector_path),
-                                "sidecar_path": str(sidecar_path),
+                                "issue": "unreadable_value_grid",
+                                "value_grid_path": str(value_path),
+                                "artifact_path": str(value_path),
                                 "read_error": str(exc),
                             },
                         )
-                        break
+                if has_vector_substrate:
+                    for vector_path in vector_paths:
+                        if not vector_path.is_file():
+                            continue
+                        try:
+                            json.loads(vector_path.read_text())
+                        except Exception as exc:
+                            unreadable_artifact_count += 1
+                            _append_sample_path(
+                                sample_paths,
+                                {
+                                    "variable_id": public_variable_id,
+                                    "forecast_hour": fh,
+                                    "issue": "unreadable_vector_artifact",
+                                    "artifact_path": str(vector_path),
+                                    "sidecar_path": str(sidecar_path),
+                                    "read_error": str(exc),
+                                },
+                            )
+                            break
 
     completion_pct = round((available_frames / expected_frames) * 100.0, 1) if expected_frames > 0 else 0.0
     expected_latest_dt = _expected_latest_run_time(model_id=model_id, now_utc=now_utc)
@@ -2067,13 +2074,13 @@ def _scan_run_issue(
         "completion_pct": completion_pct,
         "missing_artifact_count": missing_artifact_count,
         "unreadable_artifact_count": unreadable_artifact_count,
-        "incomplete_variable_count": len(incomplete_variables),
-        "incomplete_variables": incomplete_variables[:12],
-        "sample_paths": sample_paths,
+        "incomplete_variable_count": incomplete_variable_count,
+        "incomplete_variables": incomplete_variables[:12] if include_details else [],
+        "sample_paths": sample_paths if include_details else [],
     }
 
 
-def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = None) -> list[dict[str, Any]]:
+def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = None, include_details: bool = True) -> list[dict[str, Any]]:
     candidate_models = [model_id] if model_id else sorted(MODEL_REGISTRY.keys())
     rows: list[dict[str, Any]] = []
 
@@ -2086,6 +2093,7 @@ def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = Non
                 model_id=candidate_model,
                 run_id=run_id,
                 latest_run_id=latest_run_id,
+                include_details=include_details,
             )
             rows.append(row)
 
@@ -2100,8 +2108,8 @@ def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = Non
     return rows
 
 
-def _get_operational_status_rows_cached(*, data_root: Path, model_id: str | None = None) -> list[dict[str, Any]]:
-    cache_key = (str(data_root.resolve()), model_id)
+def _get_operational_status_rows_cached(*, data_root: Path, model_id: str | None = None, include_details: bool = False) -> list[dict[str, Any]]:
+    cache_key = (str(data_root.resolve()), model_id, "details" if include_details else "summary")
     now = time.time()
     cached_rows: list[dict[str, Any]] | None = None
 
@@ -2122,7 +2130,7 @@ def _get_operational_status_rows_cached(*, data_root: Path, model_id: str | None
         }
 
     try:
-        rows = _scan_operational_status_rows(data_root=data_root, model_id=model_id)
+        rows = _scan_operational_status_rows(data_root=data_root, model_id=model_id, include_details=include_details)
     except Exception:
         with _operational_status_cache_lock:
             if cached_rows:
@@ -2151,9 +2159,10 @@ def get_operational_status_results(
     model_id: str | None = None,
     status_filter: str | None = None,
     limit: int = 200,
+    include_details: bool = False,
 ) -> list[dict[str, Any]]:
     normalized_status_filter = (status_filter or "").strip().lower() or None
-    rows = _get_operational_status_rows_cached(data_root=data_root, model_id=model_id)
+    rows = _get_operational_status_rows_cached(data_root=data_root, model_id=model_id, include_details=include_details)
     filtered_rows: list[dict[str, Any]] = []
     for row in rows:
         updated_at = int(row.get("last_updated_at") or row.get("run_timestamp") or 0)
@@ -2163,6 +2172,18 @@ def get_operational_status_results(
             continue
         filtered_rows.append(row)
     return filtered_rows[: max(1, min(500, int(limit)))]
+
+
+def get_operational_status_run_detail(*, data_root: Path, model_id: str, run_id: str) -> dict[str, Any]:
+    run_ids = _published_run_ids(data_root, model_id, keep_runs=STATUS_KEEP_RUNS_PER_MODEL)
+    latest_run_id = run_ids[0] if run_ids else None
+    return _scan_run_issue(
+        data_root=data_root,
+        model_id=model_id,
+        run_id=run_id,
+        latest_run_id=latest_run_id,
+        include_details=True,
+    )
 
 
 def get_usage_summary(*, since_ts: int) -> dict[str, Any]:
