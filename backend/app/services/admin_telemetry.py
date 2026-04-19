@@ -174,11 +174,17 @@ PERF_TARGETS_MS = {
 }
 
 STATUS_KEEP_RUNS_PER_MODEL = 4
+STATUS_RESULTS_CACHE_TTL_SECONDS = max(
+    1.0,
+    float(os.environ.get("CARTOSKY_ADMIN_STATUS_CACHE_TTL_SECONDS") or os.environ.get("TWM_ADMIN_STATUS_CACHE_TTL_SECONDS") or "30"),
+)
 
 _db_init_lock = threading.Lock()
 _db_initialized = False
 _status_db_init_lock = threading.Lock()
 _status_db_initialized = False
+_operational_status_cache_lock = threading.Lock()
+_operational_status_cache: dict[tuple[str, str | None], dict[str, Any]] = {}
 
 
 def _ensure_parent_dir(path: Path) -> None:
@@ -421,6 +427,11 @@ def _expected_latest_run_time(*, model_id: str, now_utc: datetime) -> datetime |
     reference = now_utc - timedelta(hours=max(0, fallback_lag))
     floored_hour = reference.hour - (reference.hour % cadence)
     return reference.replace(hour=floored_hour, minute=0, second=0, microsecond=0)
+
+
+def clear_operational_status_cache() -> None:
+    with _operational_status_cache_lock:
+        _operational_status_cache.clear()
 
 
 def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
@@ -2056,16 +2067,8 @@ def _scan_run_issue(
     }
 
 
-def get_operational_status_results(
-    *,
-    data_root: Path,
-    since_ts: int,
-    model_id: str | None = None,
-    status_filter: str | None = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
+def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = None) -> list[dict[str, Any]]:
     candidate_models = [model_id] if model_id else sorted(MODEL_REGISTRY.keys())
-    normalized_status_filter = (status_filter or "").strip().lower() or None
     rows: list[dict[str, Any]] = []
 
     for candidate_model in candidate_models:
@@ -2078,11 +2081,6 @@ def get_operational_status_results(
                 run_id=run_id,
                 latest_run_id=latest_run_id,
             )
-            updated_at = int(row.get("last_updated_at") or row.get("run_timestamp") or 0)
-            if updated_at < since_ts:
-                continue
-            if normalized_status_filter and row["status"] != normalized_status_filter:
-                continue
             rows.append(row)
 
     rows.sort(
@@ -2093,7 +2091,72 @@ def get_operational_status_results(
             item["run_id"],
         )
     )
-    return rows[: max(1, min(500, int(limit)))]
+    return rows
+
+
+def _get_operational_status_rows_cached(*, data_root: Path, model_id: str | None = None) -> list[dict[str, Any]]:
+    cache_key = (str(data_root.resolve()), model_id)
+    now = time.time()
+    cached_rows: list[dict[str, Any]] | None = None
+
+    with _operational_status_cache_lock:
+        entry = _operational_status_cache.get(cache_key)
+        if entry is not None:
+            cached_rows = [dict(row) for row in entry.get("rows", [])]
+            expires_at = float(entry.get("expires_at") or 0.0)
+            if cached_rows and now < expires_at:
+                return cached_rows
+            if cached_rows and entry.get("refreshing"):
+                return cached_rows
+
+        _operational_status_cache[cache_key] = {
+            "rows": cached_rows or [],
+            "expires_at": now,
+            "refreshing": True,
+        }
+
+    try:
+        rows = _scan_operational_status_rows(data_root=data_root, model_id=model_id)
+    except Exception:
+        with _operational_status_cache_lock:
+            if cached_rows:
+                _operational_status_cache[cache_key] = {
+                    "rows": cached_rows,
+                    "expires_at": time.time() + min(5.0, STATUS_RESULTS_CACHE_TTL_SECONDS),
+                    "refreshing": False,
+                }
+            else:
+                _operational_status_cache.pop(cache_key, None)
+        raise
+
+    with _operational_status_cache_lock:
+        _operational_status_cache[cache_key] = {
+            "rows": [dict(row) for row in rows],
+            "expires_at": time.time() + STATUS_RESULTS_CACHE_TTL_SECONDS,
+            "refreshing": False,
+        }
+    return [dict(row) for row in rows]
+
+
+def get_operational_status_results(
+    *,
+    data_root: Path,
+    since_ts: int,
+    model_id: str | None = None,
+    status_filter: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    normalized_status_filter = (status_filter or "").strip().lower() or None
+    rows = _get_operational_status_rows_cached(data_root=data_root, model_id=model_id)
+    filtered_rows: list[dict[str, Any]] = []
+    for row in rows:
+        updated_at = int(row.get("last_updated_at") or row.get("run_timestamp") or 0)
+        if updated_at < since_ts:
+            continue
+        if normalized_status_filter and row["status"] != normalized_status_filter:
+            continue
+        filtered_rows.append(row)
+    return filtered_rows[: max(1, min(500, int(limit)))]
 
 
 def get_usage_summary(*, since_ts: int) -> dict[str, Any]:

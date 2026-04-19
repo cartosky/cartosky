@@ -215,6 +215,7 @@ def isolate_environment(tmp_path: Path) -> None:
     twf_oauth.TOKEN_DB_PATH = str(token_db)
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
     admin_telemetry._db_initialized = False
+    admin_telemetry.clear_operational_status_cache()
 
     main_module.DATA_ROOT = data_root
     main_module.PUBLISHED_ROOT = data_root / "published"
@@ -334,6 +335,62 @@ async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_l
     assert rows[0]["issue_type"] == "healthy"
     assert rows[0]["missing_artifact_count"] == 0
     assert rows[0]["unreadable_artifact_count"] == 0
+
+
+async def test_status_results_reuses_cached_operational_scan(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    scan_calls: list[str] = []
+
+    def fake_published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
+        assert data_root == main_module.DATA_ROOT
+        assert model_id == "hrrr"
+        assert keep_runs == admin_telemetry.STATUS_KEEP_RUNS_PER_MODEL
+        return ["20260311_13z"]
+
+    def fake_scan_run_issue(*, data_root: Path, model_id: str, run_id: str, latest_run_id: str | None) -> dict[str, object]:
+        scan_calls.append(f"{model_id}:{run_id}")
+        assert data_root == main_module.DATA_ROOT
+        assert latest_run_id == "20260311_13z"
+        return {
+            "id": f"{model_id}:{run_id}",
+            "model_id": model_id,
+            "run_id": run_id,
+            "run_timestamp": 1_773_497_600,
+            "run_age_hours": 1.0,
+            "last_updated_at": 1_773_497_600,
+            "status": "healthy",
+            "issue_type": "healthy",
+            "summary": "Retained published run looks healthy.",
+            "expected_frames": 1,
+            "available_frames": 1,
+            "completion_pct": 100.0,
+            "missing_artifact_count": 0,
+            "unreadable_artifact_count": 0,
+            "incomplete_variable_count": 0,
+            "incomplete_variables": [],
+            "sample_paths": [],
+        }
+
+    monkeypatch.setattr(admin_telemetry, "_published_run_ids", fake_published_run_ids)
+    monkeypatch.setattr(admin_telemetry, "_scan_run_issue", fake_scan_run_issue)
+
+    first_response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=hrrr",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    second_response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=hrrr",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert len(scan_calls) == 1
+    assert first_response.json()["results"] == second_response.json()["results"]
 
 
 async def test_status_results_only_scans_retained_published_runs(client: httpx.AsyncClient) -> None:

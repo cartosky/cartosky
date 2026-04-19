@@ -307,8 +307,17 @@ export default function AdminOverviewPage() {
           return;
         }
 
-        const [statusResponse, overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse, qaSummaryResponse] = await Promise.all([
-          fetchAdminStatusResults({ window: "30d", limit: 200 }),
+        void fetchAdminStatusResults({ window: "30d", limit: 200 })
+          .then((statusResponse) => {
+            if (cancelled) return;
+            setResults(statusResponse.results);
+          })
+          .catch((nextError) => {
+            if (cancelled) return;
+            setError(nextError instanceof Error ? nextError.message : "Failed to load admin overview");
+          });
+
+        const [overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse, qaSummaryResponse] = await Promise.all([
           fetchAdminOverviewSummary("7d"),
           fetchAdminNetworkDiagnostics("7d"),
           fetchAdminObservabilitySummary(),
@@ -316,7 +325,6 @@ export default function AdminOverviewPage() {
           fetchAdminStatusQaSummary(),
         ]);
         if (cancelled) return;
-        setResults(statusResponse.results);
         setOverview(overviewResponse);
         setNetworkDiagnostics(networkDiagnosticsResponse);
         setObservability(observabilityResponse);
