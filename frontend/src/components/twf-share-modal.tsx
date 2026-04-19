@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Copy, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { API_ORIGIN } from "@/lib/config";
@@ -381,7 +381,7 @@ export function TwfShareModal({
     setShowOtherForums(prefs.forumMode === "other" || !isQuickForumId(persistedForumId));
     setSelectedTopicId(prefs.topicId ?? null);
     setShareMode("existing");
-    setContent(defaultContent);
+    setContent("");
     setNewTopicTitle(defaultTopicTitle);
     setContentDirty(false);
     setLinkCopied(false);
@@ -411,12 +411,6 @@ export function TwfShareModal({
     });
   }, [open, defaultContent, defaultTopicTitle]);
 
-  useEffect(() => {
-    if (!open || contentDirty) {
-      return;
-    }
-    setContent(defaultContent);
-  }, [open, defaultContent, contentDirty]);
 
   useEffect(() => {
     if (!open) {
@@ -860,7 +854,7 @@ export function TwfShareModal({
   };
 
   const handleCopyText = async () => {
-    const text = `${payload.summary}\n${payload.permalink}`;
+    const text = `${content.trim() || payload.summary}\n${payload.permalink}`;
     const ok = await writeClipboard(text);
     if (ok) {
       setTextCopied(true);
@@ -894,7 +888,7 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[420px] overflow-hidden rounded-t-3xl bg-[#0f1923] sm:rounded-2xl"
+        className="glass-overlay w-full max-w-[420px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Drag handle */}
@@ -917,7 +911,7 @@ export function TwfShareModal({
 
         {/* Screenshot preview */}
         <div className="px-4">
-          <div className="relative h-[168px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+          <div className="relative h-[220px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
             {screenshotBlobUrl ? (
               <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-cover" />
             ) : screenshotBusy ? (
@@ -935,38 +929,58 @@ export function TwfShareModal({
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setHasAttemptedAutoScreenshot(false);
-                void handlePrepareScreenshot();
-              }}
-              disabled={!canPrepareScreenshot || screenshotBusy}
-              className="absolute top-2 right-2 flex items-center gap-1.5 rounded-xl border border-white/20 bg-black/50 px-3 py-1.5 text-sm font-medium text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
-            >
-              {screenshotBusy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
+            <div className="absolute top-2 right-2 flex items-center gap-1.5">
+              {screenshotBlobUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = screenshotBlobUrl;
+                    link.download = screenshotFilenameValue;
+                    link.rel = "noopener";
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                  }}
+                  className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
+                  aria-label="Download screenshot"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
               )}
-              Refresh
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHasAttemptedAutoScreenshot(false);
+                  void handlePrepareScreenshot();
+                }}
+                disabled={!canPrepareScreenshot || screenshotBusy}
+                className="flex items-center gap-1.5 rounded-xl border border-white/20 bg-black/50 px-3 py-1.5 text-sm font-medium text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
+              >
+                {screenshotBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Composer card */}
         <div className="px-4 mt-3">
-          <div className="overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)]">
+          <div className="glass-overlay-section overflow-hidden rounded-2xl">
 
             {/* Destination row */}
-            <div className="flex items-center justify-between px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-blue-400/30 bg-blue-500/15 text-blue-300">
+            <div className="flex items-start justify-between gap-2 px-4 py-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-blue-400/30 bg-blue-500/15 text-blue-300">
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path d="M5 2v6M2 5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
                 </div>
-                <span className="truncate text-sm text-white/90">{destinationLabel}</span>
+                <span className="text-sm leading-snug text-white/90">{destinationLabel}</span>
               </div>
               <button
                 type="button"
