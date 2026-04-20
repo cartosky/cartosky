@@ -1956,7 +1956,7 @@ def _fetch_component(
             if ctx is not None and getattr(ctx, "bundle_fetch_cache", None) is not None:
                 fetch_kwargs["bundle_fetch_cache"] = getattr(ctx, "bundle_fetch_cache")
             fetch_result = fetch_variable(
-                model_id=model_id,
+                model_id=request.model,
                 product=request.product,
                 search_pattern=search_pattern,
                 run_date=run_date,

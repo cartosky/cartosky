@@ -1103,7 +1103,7 @@ def build_frame(
                         search_pattern=search_pattern,
                     )
                     raw_data, src_crs, src_transform = fetch_variable(  # type: ignore[misc]
-                        model_id=model,
+                        model_id=source_request.model,
                         product=source_request.product,
                         search_pattern=search_pattern,
                         run_date=run_date,
