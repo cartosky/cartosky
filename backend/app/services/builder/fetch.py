@@ -37,6 +37,7 @@ import numpy as np
 import rasterio
 import rasterio.crs
 import rasterio.errors
+import rasterio.io
 import rasterio.transform
 import requests
 
@@ -910,6 +911,87 @@ def _normalize_temperature_units_for_xarray(data: np.ndarray, units: str | None)
     return data
 
 
+def _inventory_row_byte_range(row: Any) -> tuple[int, int] | None:
+    start_byte: int | None = None
+    end_byte: int | None = None
+
+    try:
+        raw_start = row.get("start_byte")
+    except Exception:
+        raw_start = None
+    try:
+        raw_offset = row.get("_offset")
+    except Exception:
+        raw_offset = None
+
+    for candidate in (raw_start, raw_offset):
+        try:
+            if candidate is not None and np.isfinite(candidate):
+                start_byte = int(candidate)
+                break
+        except Exception:
+            continue
+
+    if start_byte is None:
+        return None
+
+    try:
+        raw_end = row.get("end_byte")
+        if raw_end is not None and np.isfinite(raw_end):
+            end_byte = int(raw_end)
+    except Exception:
+        end_byte = None
+
+    if end_byte is None:
+        try:
+            raw_length = row.get("_length")
+            if raw_length is not None and np.isfinite(raw_length):
+                parsed_length = int(raw_length)
+                if parsed_length > 0:
+                    end_byte = start_byte + parsed_length - 1
+        except Exception:
+            end_byte = None
+
+    if end_byte is None or end_byte < start_byte:
+        return None
+    return start_byte, end_byte
+
+
+def _read_rasterio_dataset(src: Any) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    band_data = src.read(1, masked=True)
+    data = np.asarray(np.ma.filled(band_data, np.nan), dtype=np.float32)
+    band_mask = np.ma.getmaskarray(band_data)
+    if band_mask is not np.ma.nomask:
+        data = np.where(band_mask, np.nan, data).astype(np.float32, copy=False)
+
+    nodata_val = _parse_float_tag(getattr(src, "nodata", None))
+    if nodata_val is not None:
+        atol = max(1e-6, abs(nodata_val) * 1e-6)
+        data = np.where(np.isclose(data, nodata_val, rtol=0.0, atol=atol), np.nan, data).astype(np.float32, copy=False)
+
+    tag_values: list[float] = []
+    for tags in (src.tags(), src.tags(1)):
+        for key in _MISSING_VALUE_TAG_KEYS:
+            parsed = _parse_float_tag(tags.get(key))
+            if parsed is not None:
+                tag_values.append(parsed)
+    for missing_val in set(tag_values):
+        atol = max(1e-6, abs(missing_val) * 1e-6)
+        data = np.where(np.isclose(data, missing_val, rtol=0.0, atol=atol), np.nan, data).astype(np.float32, copy=False)
+
+    data = np.where(np.abs(data) > 1e12, np.nan, data).astype(np.float32, copy=False)
+    return data, src.crs, src.transform
+
+
+def _read_grib_raster(source: Path | str | bytes) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    if isinstance(source, bytes):
+        with rasterio.io.MemoryFile(source) as memfile:
+            with memfile.open() as src:
+                return _read_rasterio_dataset(src)
+    with rasterio.open(source) as src:
+        return _read_rasterio_dataset(src)
+
+
 def _ecmwf_pf_mean_from_xarray_result(result: Any) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     datasets = result if isinstance(result, list) else [result]
     selected = None
@@ -974,6 +1056,7 @@ def _fetch_ecmwf_pf_mean_variable(
     run_date: datetime,
     fh: int,
     herbie_kwargs: dict[str, Any] | None,
+    bundle_fetch_cache: BundleFetchCache | None,
     return_meta: bool,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
     from herbie.core import Herbie
@@ -998,13 +1081,108 @@ def _fetch_ecmwf_pf_mean_variable(
                 run_kwargs = _quiet_herbie_kwargs(kwargs)
                 run_kwargs["priority"] = priority
                 H = Herbie(herbie_date, **run_kwargs)
-                data, crs, transform = _ecmwf_pf_mean_from_xarray_result(H.xarray(search_pattern))
+                inv_result = _inventory_search(
+                    H,
+                    search_pattern=search_pattern,
+                    priority=priority,
+                    model_id=model_id,
+                    run_date=run_date,
+                    product=product,
+                    fh=fh,
+                )
+                inventory = inv_result.inventory
+                if inv_result.reason != "ok" or inventory is None or len(inventory) == 0:
+                    raise RuntimeError(
+                        f"ECMWF EPS pf-mean inventory unavailable for {model_id} fh{fh:03d} pattern={search_pattern!r}: {inv_result.reason}"
+                    )
+
+                if "type" in inventory.columns:
+                    type_series = inventory["type"].astype(str).str.strip().str.lower()
+                    pf_inventory = inventory.loc[type_series == "pf"]
+                else:
+                    pf_inventory = inventory
+
+                if len(pf_inventory) == 0:
+                    raise RuntimeError(
+                        f"ECMWF EPS pf-mean inventory contained no perturbed members for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                    )
+
+                if "number" in pf_inventory.columns:
+                    try:
+                        pf_inventory = pf_inventory.assign(
+                            _cartosky_member_number=np.to_numeric(pf_inventory["number"], errors="coerce")
+                        ).sort_values("_cartosky_member_number", kind="stable")
+                    except Exception:
+                        pass
+
+                source_url = getattr(H, "grib", None)
+                if not source_url:
+                    raise RuntimeError(
+                        f"ECMWF EPS pf-mean aggregation missing GRIB source url for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                    )
+
+                aggregate_sum: np.ndarray | None = None
+                aggregate_count: np.ndarray | None = None
+                selected_crs = None
+                selected_transform = None
+                first_inventory_line = ""
+                member_count = 0
+
+                for _, row in pf_inventory.iterrows():
+                    byte_range = _inventory_row_byte_range(row)
+                    if byte_range is None:
+                        continue
+                    start_byte, end_byte = byte_range
+                    payload = _fetch_range_bytes(
+                        source=priority,
+                        source_url=str(source_url),
+                        model_id=model_id,
+                        run_date=run_date,
+                        fh=fh,
+                        start_byte=start_byte,
+                        end_byte=end_byte,
+                        bundle_fetch_cache=bundle_fetch_cache,
+                    )
+                    member_data, member_crs, member_transform = _read_grib_raster(payload)
+
+                    if aggregate_sum is None:
+                        aggregate_sum = np.zeros(member_data.shape, dtype=np.float64)
+                        aggregate_count = np.zeros(member_data.shape, dtype=np.uint16)
+                        selected_crs = member_crs
+                        selected_transform = member_transform
+                        first_inventory_line = _inventory_line_from_row(row)
+                    elif (
+                        member_data.shape != aggregate_sum.shape
+                        or member_crs != selected_crs
+                        or member_transform != selected_transform
+                    ):
+                        raise RuntimeError(
+                            f"ECMWF EPS pf-mean member grid mismatch for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                        )
+
+                    finite_mask = np.isfinite(member_data)
+                    aggregate_sum[finite_mask] += member_data[finite_mask].astype(np.float64, copy=False)
+                    aggregate_count[finite_mask] += 1
+                    member_count += 1
+
+                if aggregate_sum is None or aggregate_count is None or selected_crs is None or selected_transform is None or member_count == 0:
+                    raise RuntimeError(
+                        f"ECMWF EPS pf-mean aggregation decoded no perturbed members for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                    )
+
+                data = np.full(aggregate_sum.shape, np.nan, dtype=np.float32)
+                valid_mask = aggregate_count > 0
+                data[valid_mask] = (aggregate_sum[valid_mask] / aggregate_count[valid_mask]).astype(np.float32, copy=False)
+                crs = selected_crs
+                transform = selected_transform
                 meta = {
-                    "inventory_line": f"aggregate:{search_pattern}:pf_mean",
+                    "inventory_line": first_inventory_line or f"aggregate:{search_pattern}:pf_mean",
                     "search_pattern": str(search_pattern),
                     "fh": int(fh),
                     "product": str(product),
                     "priority": str(priority),
+                    "aggregation": "ecmwf_pf_mean",
+                    "member_count": int(member_count),
                 }
                 if return_meta:
                     return data, crs, transform, meta
@@ -1941,6 +2119,7 @@ def fetch_variable(
             run_date=run_date,
             fh=fh,
             herbie_kwargs=raw_herbie_kwargs,
+            bundle_fetch_cache=bundle_fetch_cache,
             return_meta=return_meta,
         )
 
@@ -2338,34 +2517,8 @@ def fetch_variable(
             f"for {model_id} fh{fh:03d} pattern={search_pattern!r}"
         ) from last_exc
 
-    # Open with rasterio to get array + CRS + transform
     try:
-        with rasterio.open(grib_path) as src:
-            band_data = src.read(1, masked=True)
-            data = np.asarray(np.ma.filled(band_data, np.nan), dtype=np.float32)
-            band_mask = np.ma.getmaskarray(band_data)
-            if band_mask is not np.ma.nomask:
-                data = np.where(band_mask, np.nan, data).astype(np.float32, copy=False)
-
-            nodata_val = _parse_float_tag(getattr(src, "nodata", None))
-            if nodata_val is not None:
-                atol = max(1e-6, abs(nodata_val) * 1e-6)
-                data = np.where(np.isclose(data, nodata_val, rtol=0.0, atol=atol), np.nan, data).astype(np.float32, copy=False)
-
-            tag_values: list[float] = []
-            for tags in (src.tags(), src.tags(1)):
-                for key in _MISSING_VALUE_TAG_KEYS:
-                    parsed = _parse_float_tag(tags.get(key))
-                    if parsed is not None:
-                        tag_values.append(parsed)
-            for missing_val in set(tag_values):
-                atol = max(1e-6, abs(missing_val) * 1e-6)
-                data = np.where(np.isclose(data, missing_val, rtol=0.0, atol=atol), np.nan, data).astype(np.float32, copy=False)
-
-            # GRIB nodata sentinels occasionally leak through metadata handling.
-            data = np.where(np.abs(data) > 1e12, np.nan, data).astype(np.float32, copy=False)
-            crs = src.crs
-            transform = src.transform
+        data, crs, transform = _read_grib_raster(grib_path)
     except rasterio.errors.RasterioIOError as exc:
         if _is_missing_file_error(exc):
             raise HerbieTransientUnavailableError(

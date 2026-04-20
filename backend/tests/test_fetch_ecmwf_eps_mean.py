@@ -7,7 +7,7 @@ from types import ModuleType
 from unittest.mock import patch
 
 import numpy as np
-import xarray as xr
+import pandas as pd
 import rasterio.crs
 import rasterio.transform
 
@@ -24,59 +24,63 @@ from app.models.eps import EPS_MODEL
 class _FakeHerbie:
     def __init__(self, *_args, **_kwargs) -> None:
         self.priority = _kwargs.get("priority")
+        self.grib = "https://example.invalid/eps-enfo.grib2"
+        self.idx = "https://example.invalid/eps-enfo.index"
 
-    def xarray(self, _search_pattern: str):
-        lat = np.array([46.0, 45.0], dtype=np.float64)
-        lon = np.array([-101.0, -100.0], dtype=np.float64)
-        members = xr.Dataset(
-            {
-                "t2m": (("number", "latitude", "longitude"), np.array(
-                    [
-                        [[274.15, 275.15], [276.15, 277.15]],
-                        [[278.15, 279.15], [280.15, 281.15]],
-                    ],
-                    dtype=np.float32,
-                ), {"units": "K"}),
-            },
-            coords={
-                "number": np.array([1, 2], dtype=np.int64),
-                "latitude": lat,
-                "longitude": lon,
-            },
+    @property
+    def index_as_dataframe(self):
+        return pd.DataFrame(
+            [
+                {"search_this": ":2t:sfc:g:0001:od:cf:enfo", "type": "cf", "number": np.nan, "start_byte": 0, "end_byte": 9},
+                {"search_this": ":2t:sfc:1:g:0001:od:pf:enfo", "type": "pf", "number": 1, "start_byte": 10, "end_byte": 19},
+                {"search_this": ":2t:sfc:2:g:0001:od:pf:enfo", "type": "pf", "number": 2, "start_byte": 20, "end_byte": 29},
+            ]
         )
-        control = xr.Dataset(
-            {
-                "t2m": (("latitude", "longitude"), np.array([[99.0, 99.0], [99.0, 99.0]], dtype=np.float32)),
-            },
-            coords={
-                "number": np.int64(0),
-                "latitude": lat,
-                "longitude": lon,
-            },
-        )
-        return [members, control]
 
 
 def test_fetch_variable_aggregates_ecmwf_eps_pf_members() -> None:
     fake_herbie_core = ModuleType("herbie.core")
     fake_herbie_core.Herbie = _FakeHerbie
 
+    payload_to_data = {
+        b"member-1": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        b"member-2": np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_range_bytes(**kwargs):
+        start_byte = int(kwargs["start_byte"])
+        if start_byte == 10:
+            return b"member-1"
+        if start_byte == 20:
+            return b"member-2"
+        raise AssertionError(f"unexpected byte-range fetch start={start_byte}")
+
+    def _fake_read_grib_raster(payload):
+        data = payload_to_data[payload]
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform
+
     with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
-        data, crs, transform, meta = fetch_variable(
-            model_id="ifs",
-            product="enfo",
-            search_pattern=":2t:",
-            run_date=datetime(2026, 4, 19, 0, 0),
-            fh=0,
-            herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
-            return_meta=True,
-        )
+        with patch("app.services.builder.fetch._fetch_range_bytes", side_effect=_fake_fetch_range_bytes), patch(
+            "app.services.builder.fetch._read_grib_raster", side_effect=_fake_read_grib_raster
+        ):
+            data, crs, transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":2t:",
+                run_date=datetime(2026, 4, 19, 0, 0),
+                fh=0,
+                herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
+                return_meta=True,
+            )
 
     assert np.array_equal(data, np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32))
     assert crs.to_epsg() == 4326
-    assert transform.c == -101.5
-    assert transform.f == 46.5
-    assert meta["inventory_line"] == "aggregate::2t::pf_mean"
+    assert transform.c == -101.0
+    assert transform.f == 46.0
+    assert meta["inventory_line"] == ":2t:sfc:1:g:0001:od:pf:enfo"
+    assert meta["member_count"] == 2
 
 
 def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path: Path) -> None:

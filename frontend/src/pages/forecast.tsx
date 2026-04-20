@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -322,7 +322,6 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const precipLinePath = bezierPath(precipPts);
   const precipAreaPath = `${precipLinePath} L ${VW} ${PRECIP_B} L 0 ${PRECIP_B} Z`;
 
-  // Label start, peak, and end
   const peakIdx = entries.reduce(
     (maxIdx, e, i, arr) => ((e.temperature_f ?? -999) > (arr[maxIdx].temperature_f ?? -999) ? i : maxIdx),
     0,
@@ -333,8 +332,30 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const hasPrecip = entries.some(e => (e.pop_pct ?? 0) > 0);
   const chartHeight = hasPrecip ? VH : TEMP_B + 10;
 
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  function handleMouseMove(e: MouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * VW;
+    let nearest = 0, minDist = Infinity;
+    for (let i = 0; i < entries.length; i++) {
+      const d = Math.abs(xAt(i) - svgX);
+      if (d < minDist) { minDist = d; nearest = i; }
+    }
+    setHoverIdx(nearest);
+  }
+
+  const hEntry = hoverIdx !== null ? entries[hoverIdx] : null;
+  const hX = hoverIdx !== null ? xAt(hoverIdx) : 0;
+  const hY = hEntry ? yAt(hEntry.temperature_f ?? (minT + range / 2)) : 0;
+  const hAnchor = hoverIdx !== null && hoverIdx <= 1 ? "start" : hoverIdx !== null && hoverIdx >= endIdx - 1 ? "end" : "middle";
+
   return (
-    <svg viewBox={`0 0 ${VW} ${chartHeight}`} className="h-auto w-full" aria-hidden="true">
+    <svg ref={svgRef} viewBox={`0 0 ${VW} ${chartHeight}`} className="h-auto w-full cursor-crosshair"
+      aria-hidden="true" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIdx(null)}>
       <defs>
         <linearGradient id="hTempGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="rgba(103,232,249,0.20)" />
@@ -350,7 +371,7 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
       <path d={linePath} fill="none" stroke="rgba(103,232,249,0.85)"
         strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
 
-      {labelIdx.map(i => {
+      {hoverIdx === null && labelIdx.map(i => {
         const e = entries[i];
         const x = xAt(i);
         const y = yAt(e.temperature_f ?? (minT + range / 2));
@@ -375,6 +396,26 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
             stroke="rgba(52,211,153,0.70)" strokeWidth={1.2}
             strokeLinecap="round" strokeLinejoin="round" />
         </>
+      )}
+
+      {/* Invisible overlay captures mouse events across full area */}
+      <rect x={0} y={0} width={VW} height={chartHeight} fill="transparent" />
+
+      {hoverIdx !== null && hEntry && (
+        <g>
+          <line x1={hX} y1={TEMP_T - 4} x2={hX} y2={chartHeight}
+            stroke="rgba(255,255,255,0.18)" strokeWidth={1} strokeDasharray="3 3" />
+          <circle cx={hX} cy={hY} r={3.5} fill="rgba(103,232,249,1)" />
+          <rect
+            x={hAnchor === "start" ? hX : hAnchor === "end" ? hX - 52 : hX - 26}
+            y={hY - 22} width={52} height={16} rx={3}
+            fill="rgba(7,17,31,0.88)"
+          />
+          <text x={hAnchor === "start" ? hX + 26 : hAnchor === "end" ? hX - 26 : hX}
+            y={hY - 10} textAnchor="middle" fontSize={9.5} fontWeight="500" fill="rgba(255,255,255,0.90)">
+            {hEntry.temperature_f != null ? `${hEntry.temperature_f}°` : "--"} · {formatHour(hEntry.time)}
+          </text>
+        </g>
       )}
     </svg>
   );
@@ -421,12 +462,35 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
   const lowRevPath = bezierPath([...lowPts].reverse()).replace(/^M/, "L");
   const bandPath = `${highPath} ${lowRevPath} Z`;
 
-  // Label every other day if many entries, always include first and last
   const step = n > 10 ? 2 : 1;
   const labelIdxs = [...new Set([0, ...daily.map((_, i) => i).filter(i => i % step === 0), n - 1])].sort((a, b) => a - b);
 
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  function handleMouseMove(e: MouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * VW;
+    let nearest = 0, minDist = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = Math.abs(xAt(i) - svgX);
+      if (d < minDist) { minDist = d; nearest = i; }
+    }
+    setHoverIdx(nearest);
+  }
+
+  const hEntry = hoverIdx !== null ? daily[hoverIdx] : null;
+  const hX = hoverIdx !== null ? xAt(hoverIdx) : 0;
+  const hHighY = hEntry ? yAt(hEntry.high_f ?? rawMax) : 0;
+  const hLowY  = hEntry ? yAt(hEntry.low_f  ?? rawMin) : 0;
+  const hAnchor = hoverIdx !== null && hoverIdx <= 1 ? "start" : hoverIdx !== null && hoverIdx >= n - 2 ? "end" : "middle";
+  const tooltipX = hAnchor === "start" ? hX : hAnchor === "end" ? hX - 64 : hX - 32;
+
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} className="h-auto w-full" aria-hidden="true">
+    <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} className="h-auto w-full cursor-crosshair"
+      aria-hidden="true" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIdx(null)}>
       <defs>
         <linearGradient id="dBandGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="rgba(103,232,249,0.22)" />
@@ -440,7 +504,7 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
       <path d={lowPath} fill="none" stroke="rgba(103,232,249,0.30)"
         strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
 
-      {labelIdxs.map(i => {
+      {hoverIdx === null && labelIdxs.map(i => {
         const e = daily[i];
         const x = xAt(i);
         const anchor = i === 0 ? "start" : i >= n - 1 ? "end" : "middle";
@@ -457,6 +521,24 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
           </g>
         );
       })}
+
+      {/* Invisible overlay captures mouse events */}
+      <rect x={0} y={0} width={VW} height={VH} fill="transparent" />
+
+      {hoverIdx !== null && hEntry && (
+        <g>
+          <line x1={hX} y1={CHART_T - 4} x2={hX} y2={VH}
+            stroke="rgba(255,255,255,0.18)" strokeWidth={1} strokeDasharray="3 3" />
+          <circle cx={hX} cy={hHighY} r={3} fill="rgba(103,232,249,1)" />
+          <circle cx={hX} cy={hLowY}  r={3} fill="rgba(103,232,249,0.4)" />
+          <rect x={tooltipX} y={hHighY - 24} width={64} height={18} rx={3}
+            fill="rgba(7,17,31,0.88)" />
+          <text x={tooltipX + 32} y={hHighY - 11} textAnchor="middle"
+            fontSize={9.5} fontWeight="500" fill="rgba(255,255,255,0.90)">
+            {formatDayLabel(hEntry.date, hoverIdx)} · {hEntry.high_f ?? "--"}° / {hEntry.low_f ?? "--"}°
+          </text>
+        </g>
+      )}
     </svg>
   );
 }
@@ -641,9 +723,9 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
           NWS Official · Generated {formatObservedAt(data.generated_at)}
         </p>
       )}
-      <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((period, i) => (
-          <div key={i} className="py-1">
+          <div key={i} className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
             <div className="text-[11px] uppercase tracking-[0.16em] text-white/40">
               {period.name ?? (period.is_daytime ? "Day" : "Night")}
             </div>
