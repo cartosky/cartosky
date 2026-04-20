@@ -64,7 +64,8 @@ export const MODEL_ORDER_BY_ID: Record<string, number> = {
   aifs: 5,
   aigfs: 6,
   gefs: 7,
-  spc: 7,
+  eps: 8,
+  spc: 9,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -358,6 +359,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   aifs: { label: "AIFS", group: "MODELS", order: 5 },
   aigfs: { label: "AIGFS", group: "MODELS", order: 6 },
   gefs: { label: "GEFS", group: "ENSEMBLES", order: 7 },
+  eps: { label: "EPS", group: "ENSEMBLES", order: 8 },
   mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 11 },
   spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 12 },

@@ -125,6 +125,7 @@ function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | nu
     case "aigfs":
       return 384;
     case "gefs":
+    case "eps":
     case "aifs":
     case "ecmwf":
       return 360;

@@ -73,6 +73,12 @@ try:
 except ImportError as exc:
     logger.warning("GEFS plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .eps import EPS_MODEL
+    MODEL_REGISTRY[EPS_MODEL.id] = EPS_MODEL
+except ImportError as exc:
+    logger.warning("EPS plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)

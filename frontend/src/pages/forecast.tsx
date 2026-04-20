@@ -206,6 +206,21 @@ function precipColor(pct: number | null): string {
   return "text-amber-400";
 }
 
+function feelsLikeF(tempF: number | null, windMph: number | null, humidityPct: number | null): number | null {
+  if (tempF === null) return null;
+  if (tempF <= 50 && windMph !== null && windMph >= 3) {
+    return Math.round(35.74 + 0.6215 * tempF - 35.75 * Math.pow(windMph, 0.16) + 0.4275 * tempF * Math.pow(windMph, 0.16));
+  }
+  if (tempF >= 80 && humidityPct !== null) {
+    const T = tempF, R = humidityPct;
+    const hi = -42.379 + 2.04901523*T + 10.14333127*R - 0.22475541*T*R
+      - 0.00683783*T*T - 0.05481717*R*R + 0.00122874*T*T*R
+      + 0.00085282*T*R*R - 0.00000199*T*T*R*R;
+    return Math.round(hi);
+  }
+  return null;
+}
+
 function viewerHref(lat: number, lon: number): string {
   return `/viewer${buildPermalinkSearch({ region: MAP_VIEW_DEFAULTS.region, lat, lon, z: 7 })}`;
 }
@@ -508,10 +523,10 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
               {formatDayLabel(entry.date, i)}
             </div>
             <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/60" />
-            <div className="w-36 flex-none text-[13px] text-white/55 truncate hidden sm:block">
+            <div className="flex-1 min-w-0 text-[13px] text-white/55 hidden sm:block">
               {entry.short_text ?? ""}
             </div>
-            <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
+            <div className="relative flex-none w-[30%] h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
               <div
                 className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -602,38 +617,53 @@ function SevenDayTab({ daily, textForecast }: {
 // ── Extended Tab ──────────────────────────────────────────────────────
 
 function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution: string | null }) {
+  if (!daily.length) return null;
+
+  const lows  = daily.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
+  const highs = daily.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
+  const globalMin = lows.length  ? Math.min(...lows)  : 0;
+  const globalMax = highs.length ? Math.max(...highs) : 1;
+  const span = globalMax - globalMin || 1;
+
   return (
     <div>
       {attribution && (
         <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
       )}
-      <table className="w-full">
-        <tbody>
-          {daily.map((entry, i) => (
-            <tr
-              key={i}
-              className={i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}
-            >
-              <td className="py-2.5 w-14 text-[13px] font-medium text-white/60">
-                {formatDayLabel(entry.date, i)}
-              </td>
-              <td className="py-2.5 text-[13px] text-white/50">
-                <div className="flex items-center gap-2">
-                  <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/55" />
-                  <span className="truncate">{entry.short_text ?? ""}</span>
-                </div>
-              </td>
-              <td className="py-2.5 text-right whitespace-nowrap text-[13px]">
-                <span className="font-medium text-white">{entry.high_f ?? "--"}°</span>
-                <span className="text-white/30 ml-1.5">{entry.low_f ?? "--"}°</span>
-              </td>
-              <td className={`py-2.5 w-10 text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
-                {entry.pop_pct != null && entry.pop_pct > 0 ? `${entry.pop_pct}%` : ""}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {daily.map((entry, i) => {
+        const low  = entry.low_f  ?? globalMin;
+        const high = entry.high_f ?? globalMax;
+        const leftPct  = ((low  - globalMin) / span) * 100;
+        const widthPct = ((high - low) / span) * 100;
+        const pop = entry.pop_pct ?? 0;
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-3 py-3 ${i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
+          >
+            <div className="w-10 flex-none text-[13px] font-medium text-white/60">
+              {formatDayLabel(entry.date, i)}
+            </div>
+            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/55" />
+            <div className="flex-1 min-w-0 text-[13px] text-white/50 hidden sm:block">
+              {entry.short_text ?? ""}
+            </div>
+            <div className="relative flex-none w-[30%] h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
+              <div
+                className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+              />
+            </div>
+            <div className="flex gap-1.5 w-16 flex-none justify-end text-[13px]">
+              <span className="font-medium text-white">{entry.high_f ?? "--"}°</span>
+              <span className="text-white/30">{entry.low_f ?? "--"}°</span>
+            </div>
+            <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
+              {pop > 0 ? `${pop}%` : ""}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -876,6 +906,12 @@ export default function Forecast() {
             <div className="hidden sm:block self-stretch w-px bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
 
             <div className="flex flex-wrap gap-x-6 gap-y-3">
+              {(() => {
+                const fl = feelsLikeF(f.current.temperature_f, f.current.wind_speed_mph, f.current.humidity_pct);
+                return fl !== null && fl !== f.current.temperature_f
+                  ? <MetaItem label="Feels Like" value={`${fl}°`} />
+                  : null;
+              })()}
               {f.current.dewpoint_f != null && (
                 <MetaItem label="Dew Point" value={`${f.current.dewpoint_f}°`} />
               )}

@@ -28,6 +28,7 @@ const MODEL_LABELS: Record<string, string> = {
   nbm: "NBM",
   rap: "RAP",
   gefs: "GEFS",
+  eps: "EPS",
   ecmwf: "ECMWF",
   aifs: "AIFS",
   aigfs: "AIGFS",

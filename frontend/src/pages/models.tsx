@@ -13,7 +13,7 @@ type ModelReference = {
   notes: string[];
 };
 
-const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs"] as const;
+const CORE_MODEL_ORDER = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs", "eps"] as const;
 const SPECIAL_LAYER_ORDER = ["spc", "nws_hazards", "mrms"] as const;
 
 const MODEL_REFERENCE: Record<string, ModelReference> = {
@@ -112,6 +112,18 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
       "Early detection of temperature spread between traditional and AI global guidance",
     ],
     notes: ["Initial rollout stays intentionally narrow: tmp2m, precip_total, and derived 10m wind speed from the NOAA/Herbie AIGFS surface product, plus tmp850, wspd850, wspd300, and vort500 from the pressure product, while runtime behavior is validated in production."],
+  },
+  eps: {
+    eyebrow: "Ensemble Suite",
+    oneLiner: "ECMWF ensemble guidance rolled out initially with ensemble-mean 2m temperature from the open-data `enfo` stream.",
+    coverage: "Global",
+    cadence: "Every 6 hours",
+    focus: [
+      "Ensemble-mean surface thermal structure from ECMWF upstream guidance",
+      "A second ensemble anchor alongside GEFS for broad temperature spread checks",
+      "Medium-range pattern comparison without jumping straight to deterministic-only reads",
+    ],
+    notes: ["Initial rollout is intentionally narrow: Surface Temp (mean) only, built from the 50 ECMWF perturbed members in the `enfo` product."],
   },
   spc: {
     eyebrow: "Operational Layer",

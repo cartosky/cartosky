@@ -887,6 +887,133 @@ def _inventory_lines_from_rows(inventory: Any) -> list[str]:
     return lines
 
 
+def _regular_latlon_affine(longitude: np.ndarray, latitude: np.ndarray) -> rasterio.transform.Affine:
+    lon = np.asarray(longitude, dtype=np.float64).reshape(-1)
+    lat = np.asarray(latitude, dtype=np.float64).reshape(-1)
+    if lon.size < 2 or lat.size < 2:
+        raise ValueError("Regular lat/lon grid requires at least two points per axis")
+
+    xres = float(np.median(np.diff(lon)))
+    yres = float(np.median(np.diff(lat)))
+    if not np.isfinite(xres) or not np.isfinite(yres) or xres == 0.0 or yres == 0.0:
+        raise ValueError("Unable to derive regular lat/lon resolution from coordinates")
+
+    west = float(lon[0] - (xres / 2.0))
+    north = float(lat[0] - (yres / 2.0))
+    return rasterio.transform.Affine(xres, 0.0, west, 0.0, yres, north)
+
+
+def _ecmwf_pf_mean_from_xarray_result(result: Any) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    datasets = result if isinstance(result, list) else [result]
+    selected = None
+    selected_name = ""
+
+    for dataset in datasets:
+        if dataset is None:
+            continue
+        data_vars = getattr(dataset, "data_vars", None)
+        if not data_vars:
+            continue
+        data_var_names = list(data_vars)
+        if not data_var_names:
+            continue
+        candidate = dataset[data_var_names[0]]
+        if "number" not in getattr(candidate, "dims", ()):  # control dataset lacks a member dimension
+            continue
+        number_coord = getattr(candidate, "coords", {}).get("number")
+        if number_coord is None:
+            continue
+        try:
+            number_values = np.asarray(number_coord.values, dtype=np.int64)
+        except Exception:
+            continue
+        if number_values.ndim != 1 or number_values.size < 2:
+            continue
+        member_indexes = np.where(number_values > 0)[0]
+        if member_indexes.size == 0:
+            continue
+        selected = candidate.isel(number=member_indexes).mean(dim="number", skipna=True)
+        selected_name = str(data_var_names[0])
+        break
+
+    if selected is None:
+        raise RuntimeError("Unable to locate ECMWF EPS perturbed-member dataset for mean aggregation")
+
+    latitude = getattr(selected, "coords", {}).get("latitude")
+    longitude = getattr(selected, "coords", {}).get("longitude")
+    if latitude is None or longitude is None:
+        raise RuntimeError("ECMWF EPS mean aggregation requires latitude/longitude coordinates")
+
+    data = np.asarray(selected.values, dtype=np.float32)
+    if data.ndim != 2:
+        raise RuntimeError(f"ECMWF EPS aggregated field must be 2-D, got {data.ndim}-D for {selected_name}")
+
+    lat_values = np.asarray(latitude.values, dtype=np.float64)
+    if lat_values.ndim == 1 and lat_values.size >= 2 and lat_values[1] > lat_values[0]:
+        data = np.flipud(data)
+        lat_values = lat_values[::-1]
+
+    transform = _regular_latlon_affine(np.asarray(longitude.values, dtype=np.float64), lat_values)
+    return data, rasterio.crs.CRS.from_epsg(4326), transform
+
+
+def _fetch_ecmwf_pf_mean_variable(
+    *,
+    model_id: str,
+    product: str,
+    search_pattern: str,
+    run_date: datetime,
+    fh: int,
+    herbie_kwargs: dict[str, Any] | None,
+    return_meta: bool,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
+    from herbie.core import Herbie
+
+    kwargs: dict[str, Any] = {
+        "model": model_id,
+        "product": product,
+        "fxx": fh,
+    }
+    if herbie_kwargs:
+        kwargs.update(herbie_kwargs)
+
+    herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
+    priority_list = [_priority_normalized(item) for item in _priority_candidates(herbie_kwargs) if str(item).strip()]
+    retries = _retry_count()
+    sleep_s = _retry_sleep_seconds()
+    last_exc: Exception | None = None
+
+    for priority in priority_list:
+        for attempt_idx in range(1, retries + 1):
+            try:
+                run_kwargs = _quiet_herbie_kwargs(kwargs)
+                run_kwargs["priority"] = priority
+                H = Herbie(herbie_date, **run_kwargs)
+                data, crs, transform = _ecmwf_pf_mean_from_xarray_result(H.xarray(search_pattern))
+                meta = {
+                    "inventory_line": f"aggregate:{search_pattern}:pf_mean",
+                    "search_pattern": str(search_pattern),
+                    "fh": int(fh),
+                    "product": str(product),
+                    "priority": str(priority),
+                }
+                if return_meta:
+                    return data, crs, transform, meta
+                return data, crs, transform
+            except Exception as exc:
+                last_exc = exc
+                if sleep_s > 0 and attempt_idx < retries:
+                    time.sleep(sleep_s)
+
+    if last_exc is not None:
+        raise RuntimeError(
+            f"ECMWF EPS pf-mean aggregation failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+        ) from last_exc
+    raise RuntimeError(
+        f"ECMWF EPS pf-mean aggregation failed without a captured exception for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+    )
+
+
 def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
     with _IDX_NEGATIVE_CACHE_LOCK:
@@ -1795,19 +1922,32 @@ def fetch_variable(
     """
     from herbie.core import Herbie  # lazy — not always installed
 
+    raw_herbie_kwargs = dict(herbie_kwargs or {})
+    fetch_aggregation = str(raw_herbie_kwargs.pop("_cartosky_fetch_aggregation", "")).strip().lower()
+    if fetch_aggregation == "ecmwf_pf_mean":
+        return _fetch_ecmwf_pf_mean_variable(
+            model_id=model_id,
+            product=product,
+            search_pattern=search_pattern,
+            run_date=run_date,
+            fh=fh,
+            herbie_kwargs=raw_herbie_kwargs,
+            return_meta=return_meta,
+        )
+
     kwargs: dict[str, Any] = {
         "model": model_id,
         "product": product,
         "fxx": fh,
     }
-    if herbie_kwargs:
-        kwargs.update(herbie_kwargs)
+    if raw_herbie_kwargs:
+        kwargs.update(raw_herbie_kwargs)
 
     # Herbie expects a tz-naive datetime (assumes UTC internally).
     # Strip tzinfo to avoid pandas tz-naive vs tz-aware comparison errors.
     herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
 
-    priority_list = [_priority_normalized(item) for item in _priority_candidates(herbie_kwargs) if str(item).strip()]
+    priority_list = [_priority_normalized(item) for item in _priority_candidates(raw_herbie_kwargs) if str(item).strip()]
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
     lock_enabled = _grib_disk_cache_lock_enabled()

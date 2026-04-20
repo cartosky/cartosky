@@ -16,7 +16,7 @@ import {
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
 
-const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs"] as const;
+const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs", "eps"] as const;
 
 function formatRunLabel(runId?: string | null): string {
   if (!runId) {
