@@ -20,6 +20,7 @@ Usage
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections import OrderedDict
 import hashlib
@@ -69,6 +70,10 @@ ENV_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES = (
     "CARTOSKY_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES",
     "TWF_HERBIE_FETCH_CACHE_MAX_CACHEABLE_BYTES",
 )
+ENV_HERBIE_RANGE_FETCH_WORKERS = (
+    "CARTOSKY_HERBIE_RANGE_FETCH_WORKERS",
+    "TWF_HERBIE_RANGE_FETCH_WORKERS",
+)
 ENV_GRIB_DISK_CACHE_LOCK = (
     "CARTOSKY_GRIB_DISK_CACHE_LOCK",
     "CARTOSKY_V3_GRIB_DISK_CACHE_LOCK",
@@ -83,6 +88,7 @@ DEFAULT_INVENTORY_CACHE_TTL_SECONDS = 600.0
 DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
 DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
 DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES = 4 * 1024 * 1024
+DEFAULT_RANGE_FETCH_WORKERS = 8
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 
 _MISSING_VALUE_TAG_KEYS = (
@@ -484,6 +490,23 @@ def _run_id_from_date(run_date: datetime) -> str:
 
 def _url_hash(url: str) -> str:
     return hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:12]
+
+
+def _env_int_setting(names: tuple[str, ...], default: int, *, minimum: int = 1) -> int:
+    for name in names:
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            continue
+        try:
+            parsed = int(str(raw_value).strip())
+        except (TypeError, ValueError):
+            continue
+        return max(minimum, parsed)
+    return max(minimum, int(default))
+
+
+def _range_fetch_workers() -> int:
+    return _env_int_setting(ENV_HERBIE_RANGE_FETCH_WORKERS, DEFAULT_RANGE_FETCH_WORKERS, minimum=1)
 
 
 def _range_cache_key(
@@ -1123,26 +1146,52 @@ def _download_subset_with_inventory_rows(
     if not row_ranges:
         return None
 
+    ordered_ranges: list[tuple[int, int]] = []
+    seen_ranges: set[tuple[int, int]] = set()
+    for start_byte, end_byte in sorted(row_ranges, key=lambda item: (item[0], item[1])):
+        range_key = (int(start_byte), int(end_byte))
+        if range_key in seen_ranges:
+            continue
+        seen_ranges.add(range_key)
+        ordered_ranges.append(range_key)
+
+    is_remote = str(source_url).startswith(("http://", "https://"))
+
+    def _read_remote_payload(range_key: tuple[int, int]) -> bytes:
+        start_byte, end_byte = range_key
+        return _fetch_range_bytes(
+            source=priority,
+            source_url=str(source_url),
+            model_id=model_id,
+            run_date=run_date,
+            fh=fh,
+            start_byte=start_byte,
+            end_byte=end_byte,
+            bundle_fetch_cache=bundle_fetch_cache,
+        )
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wrote_bytes = False
-    seen_ranges: set[tuple[int, int]] = set()
+    remote_payloads: dict[tuple[int, int], bytes] = {}
+    max_workers = min(len(ordered_ranges), _range_fetch_workers())
+    if is_remote and max_workers > 1:
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eps-range") as executor:
+            future_map = {
+                executor.submit(_read_remote_payload, range_key): range_key
+                for range_key in ordered_ranges
+            }
+            for future in as_completed(future_map):
+                range_key = future_map[future]
+                remote_payloads[range_key] = future.result()
+
     with open(out_path, "wb") as dst:
-        for start_byte, end_byte in sorted(row_ranges, key=lambda item: (item[0], item[1])):
+        for start_byte, end_byte in ordered_ranges:
             range_key = (int(start_byte), int(end_byte))
-            if range_key in seen_ranges:
-                continue
-            seen_ranges.add(range_key)
-            if str(source_url).startswith(("http://", "https://")):
-                payload = _fetch_range_bytes(
-                    source=priority,
-                    source_url=str(source_url),
-                    model_id=model_id,
-                    run_date=run_date,
-                    fh=fh,
-                    start_byte=start_byte,
-                    end_byte=end_byte,
-                    bundle_fetch_cache=bundle_fetch_cache,
-                )
+            if is_remote:
+                if remote_payloads:
+                    payload = remote_payloads.get(range_key, b"")
+                else:
+                    payload = _read_remote_payload(range_key)
             else:
                 with open(source_url, "rb") as src:
                     src.seek(start_byte)
