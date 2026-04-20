@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, buildMapStyle } from "@/components/map-canvas";
+import { MapCanvas, buildMapStyle, type BasemapMode } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import SiteHeader from "@/components/SiteHeader";
@@ -191,6 +191,71 @@ function defaultEnsembleViewForVariable(
     ?? modelEnsemble.default_view
     ?? ""
   ).trim().toLowerCase();
+}
+
+function InitialMapSkeleton({
+  visible,
+  status,
+  basemapMode,
+}: {
+  visible: boolean;
+  status: string;
+  basemapMode: BasemapMode;
+}) {
+  const overlayBackground = basemapMode === "dark"
+    ? "linear-gradient(180deg, rgba(7, 13, 21, 0.08) 0%, rgba(7, 13, 21, 0.32) 100%), radial-gradient(circle at 24% 22%, rgba(56, 189, 248, 0.12), transparent 34%), radial-gradient(circle at 76% 70%, rgba(148, 163, 184, 0.12), transparent 30%)"
+    : "linear-gradient(180deg, rgba(233, 239, 244, 0.12) 0%, rgba(208, 220, 230, 0.26) 100%), radial-gradient(circle at 24% 22%, rgba(14, 116, 144, 0.12), transparent 34%), radial-gradient(circle at 76% 70%, rgba(71, 85, 105, 0.08), transparent 30%)";
+
+  return (
+    <div
+      aria-hidden={!visible}
+      className={`pointer-events-none absolute inset-0 z-20 transition-opacity duration-500 ease-out ${visible ? "opacity-100" : "opacity-0"}`}
+    >
+      <div className="absolute inset-0" style={{ background: overlayBackground }} />
+
+      <div className="absolute inset-x-4 top-[5.25rem] sm:left-6 sm:right-auto sm:w-[22rem]">
+        <div className="glass-overlay rounded-[1.75rem] px-4 py-4 shadow-[0_18px_48px_rgba(0,0,0,0.22)]">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.26em] text-white/52">
+            <span className="h-2 w-2 rounded-full bg-cyan-300/80 animate-pulse" />
+            {status}
+          </div>
+          <div className="mt-3 h-3 w-36 animate-pulse rounded-full bg-white/14" />
+          <div className="mt-2 h-3 w-52 max-w-full animate-pulse rounded-full bg-white/10" />
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="glass-overlay-section h-14 animate-pulse rounded-2xl" />
+            <div className="glass-overlay-section h-14 animate-pulse rounded-2xl" />
+            <div className="glass-overlay-section h-14 animate-pulse rounded-2xl" />
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute inset-x-[8%] top-[20%] hidden h-[44%] rounded-[2rem] border border-white/10 bg-white/[0.045] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] sm:block">
+        <div className="absolute inset-x-[7%] top-[16%] h-px bg-gradient-to-r from-transparent via-white/22 to-transparent" />
+        <div className="absolute inset-x-[12%] top-[34%] h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+        <div className="absolute inset-x-[18%] top-[56%] h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+        <div className="absolute left-[16%] top-[24%] h-24 w-24 rounded-full bg-cyan-300/8 blur-3xl" />
+        <div className="absolute right-[18%] top-[42%] h-28 w-28 rounded-full bg-white/8 blur-3xl" />
+        <div className="absolute inset-x-[10%] bottom-[18%] grid grid-cols-[1.2fr_0.8fr] gap-3">
+          <div className="glass-overlay-section h-16 animate-pulse rounded-[1.4rem]" />
+          <div className="glass-overlay-section h-16 animate-pulse rounded-[1.4rem]" />
+        </div>
+      </div>
+
+      <div className="absolute inset-x-4 bottom-28 sm:left-auto sm:right-6 sm:w-[17rem]">
+        <div className="glass rounded-[1.35rem] px-3 py-3 shadow-[0_12px_34px_rgba(0,0,0,0.2)]">
+          <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.18em] text-white/46">
+            <span>Layers</span>
+            <span className="h-2 w-10 animate-pulse rounded-full bg-white/10" />
+          </div>
+          <div className="mt-3 space-y-2.5">
+            <div className="h-2.5 w-full animate-pulse rounded-full bg-white/12" />
+            <div className="h-2.5 w-4/5 animate-pulse rounded-full bg-white/10" />
+            <div className="h-8 animate-pulse rounded-2xl bg-white/8" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -392,6 +457,12 @@ export default function App() {
     && selectedVariableRenderSubstrates.includes("vector");
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
+  const showInitialMapSkeleton = loading
+    || !isMapReady
+    || (hasRenderableSelection && selectionSupportsGrid && !firstWeatherFramePainted);
+  const initialMapSkeletonStatus = loading || !bootstrapHydrated
+    ? "Loading viewer"
+    : "Preparing first frame";
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
   const overlayFadeOutZoom = useMemo(() => {
@@ -3262,6 +3333,12 @@ export default function App() {
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
           showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
+        />
+
+        <InitialMapSkeleton
+          visible={showInitialMapSkeleton}
+          status={initialMapSkeletonStatus}
+          basemapMode={basemapMode}
         />
 
         {/* Subtle radial vignette — darkens map edges for depth; never blocks interaction */}

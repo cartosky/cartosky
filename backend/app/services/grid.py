@@ -202,6 +202,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("eps", "wspd10m__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
     ("gefs", "tmp850__mean"): {
         "scale": 0.1,
         "offset": -100.0,

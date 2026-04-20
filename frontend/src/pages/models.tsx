@@ -115,15 +115,15 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
   },
   eps: {
     eyebrow: "Ensemble Suite",
-    oneLiner: "ECMWF ensemble guidance rolled out initially with ensemble-mean 2m temperature from the open-data `enfo` stream.",
+    oneLiner: "ECMWF ensemble guidance rolled out initially with ensemble-mean 2m temperature and 10m wind speed from the open-data `enfo` stream.",
     coverage: "Global",
     cadence: "Every 6 hours",
     focus: [
-      "Ensemble-mean surface thermal structure from ECMWF upstream guidance",
-      "A second ensemble anchor alongside GEFS for broad temperature spread checks",
+      "Ensemble-mean surface thermal structure and wind signal from ECMWF upstream guidance",
+      "A second ensemble anchor alongside GEFS for broad pattern and spread checks",
       "Medium-range pattern comparison without jumping straight to deterministic-only reads",
     ],
-    notes: ["Initial rollout is intentionally narrow: Surface Temp (mean) only, built from the 50 ECMWF perturbed members in the `enfo` product."],
+    notes: ["Initial rollout is intentionally narrow: Surface Temp (mean) and 10m Wind Speed (mean), both built from the 50 ECMWF perturbed members in the `enfo` product."],
   },
   spc: {
     eyebrow: "Operational Layer",

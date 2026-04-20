@@ -1167,7 +1167,7 @@ export default function Forecast() {
             if (e.key === "Escape") setShowDropdown(false);
           }}
           onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
-          placeholder="Search city, state, or zip code"
+          placeholder="Search city or zip code"
           className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
           autoComplete="off"
           spellCheck={false}
@@ -1305,7 +1305,7 @@ export default function Forecast() {
                   <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
                     <div className="text-sm font-medium text-white">Fast Entry</div>
                     <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
-                      Search by city, state, zip, or jump straight in with the featured U.S. locations on the left.
+                      Search by city, zip code, or jump straight in with the featured U.S. locations on the left.
                     </div>
                   </div>
                 </div>

@@ -88,6 +88,8 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     run_id = "20260419_00z"
     variable = "tmp2m"
     runtime_var = "tmp2m__mean"
+    wind_variable = "wspd10m"
+    wind_runtime_var = "wspd10m__mean"
 
     manifest_dir = manifests_root / model
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,14 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                 "variables": {
                     variable: {
                         "display_name": "Surface Temp (Mean)",
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-04-19T00:00:00Z"},
+                        ],
+                    },
+                    wind_variable: {
+                        "display_name": "10m Wind Speed (Mean)",
                         "expected_frames": 1,
                         "available_frames": 1,
                         "frames": [
@@ -128,12 +138,26 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
+    wind_var_dir = model_root / run_id / wind_runtime_var
+    wind_var_dir.mkdir(parents=True, exist_ok=True)
+    _write_value_raster(wind_var_dir / "fh000.val.cog.tif")
+    (wind_var_dir / "fh000.json").write_text(
+        json.dumps(
+            {
+                "units": "mph",
+                "valid_time": "2026-04-19T00:00:00Z",
+                "kind": "continuous",
+                "display_name": "10m Wind Speed (Mean)",
+            }
+        )
+    )
+
     build_grid_for_run(
         data_root=data_root,
         model=model,
         run=run_id,
         workers=1,
-        variables=(runtime_var,),
+        variables=(runtime_var, wind_runtime_var),
     )
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
@@ -203,6 +227,46 @@ async def test_eps_frames_sample_and_grid_manifest_use_canonical_var_with_runtim
     assert frame["fh"] == 0
     assert frame["url"].startswith(
         "/api/v4/grid/eps/20260419_00z/tmp2m__mean/fh000.l0.u16.bin?v=20260419_00z-tmp2m__mean-"
+    )
+
+
+async def test_eps_wspd10m_frames_sample_and_grid_manifest_use_canonical_var_with_runtime_mean_artifact(client: httpx.AsyncClient) -> None:
+    frames_response = await client.get("/api/v4/eps/latest/wspd10m/frames")
+    assert frames_response.status_code == 200
+    frames = frames_response.json()
+    assert [frame["fh"] for frame in frames] == [0]
+    assert frames[0]["has_cog"] is True
+    assert frames[0]["meta"]["meta"]["valid_time"] == "2026-04-19T00:00:00Z"
+
+    sample_response = await client.get(
+        "/api/v4/sample",
+        params={
+            "model": "eps",
+            "run": "latest",
+            "var": "wspd10m",
+            "fh": 0,
+            "lat": 45.5,
+            "lon": -100.5,
+        },
+    )
+    assert sample_response.status_code == 200
+    sample_payload = sample_response.json()
+    assert sample_payload["run"] == "20260419_00z"
+    assert sample_payload["var"] == "wspd10m"
+    assert sample_payload["units"] == "mph"
+    assert sample_payload["value"] == 10.0
+
+    manifest_response = await client.get(
+        "/api/v4/eps/latest/wspd10m/grid-manifest",
+        params={"ensemble_view": "mean"},
+    )
+    assert manifest_response.status_code == 200
+    payload = manifest_response.json()
+    assert payload["var"] == "wspd10m"
+    frame = payload["lods"][0]["frames"][0]
+    assert frame["fh"] == 0
+    assert frame["url"].startswith(
+        "/api/v4/grid/eps/20260419_00z/wspd10m__mean/fh000.l0.u16.bin?v=20260419_00z-wspd10m__mean-"
     )
 
 

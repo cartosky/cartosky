@@ -146,7 +146,7 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     manifest = json.loads(manifest_path.read_text())
     assert manifest["subtype"] == "grid"
     assert manifest["grid"]["dtype"] == "uint16"
-    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["grid"]["scale"] == 0.1
     assert manifest["palette"]["kind"] == "discrete"
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
@@ -240,23 +240,24 @@ def test_build_grid_for_run_supports_temperature_family_targets(
 
 
 @pytest.mark.parametrize(
-    ("model", "var"),
+    ("model", "var", "expected_color_map_id"),
     [
-        ("hrrr", "wspd850"),
-        ("hrrr", "wspd300"),
-        ("hrrr", "wspd10m"),
-        ("hrrr", "wgst10m"),
-        ("aigfs", "wspd850"),
-        ("aigfs", "wspd300"),
-        ("gfs", "wspd850"),
-        ("gfs", "wspd300"),
-        ("gfs", "wspd10m"),
-        ("gfs", "wgst10m"),
-        ("nam", "wspd850"),
-        ("nam", "wspd300"),
-        ("nam", "wspd10m"),
-        ("nam", "wgst10m"),
-        ("nbm", "wspd10m"),
+        ("hrrr", "wspd850", "wspd850"),
+        ("hrrr", "wspd300", "wspd300"),
+        ("hrrr", "wspd10m", "wspd10m"),
+        ("hrrr", "wgst10m", "wgst10m"),
+        ("aigfs", "wspd850", "wspd850"),
+        ("aigfs", "wspd300", "wspd300"),
+        ("gfs", "wspd850", "wspd850"),
+        ("gfs", "wspd300", "wspd300"),
+        ("gfs", "wspd10m", "wspd10m"),
+        ("gfs", "wgst10m", "wgst10m"),
+        ("nam", "wspd850", "wspd850"),
+        ("nam", "wspd300", "wspd300"),
+        ("nam", "wspd10m", "wspd10m"),
+        ("nam", "wgst10m", "wgst10m"),
+        ("nbm", "wspd10m", "wspd10m"),
+        ("eps", "wspd10m__mean", "wspd10m"),
     ],
 )
 def test_build_grid_for_run_supports_wind_family_targets(
@@ -264,6 +265,7 @@ def test_build_grid_for_run_supports_wind_family_targets(
     monkeypatch: pytest.MonkeyPatch,
     model: str,
     var: str,
+    expected_color_map_id: str,
 ) -> None:
     data_root = tmp_path / "data"
     run_id = "20260330_12z"
@@ -299,8 +301,8 @@ def test_build_grid_for_run_supports_wind_family_targets(
     assert encoded[1, 1] == 486
 
     manifest = json.loads(manifest_path.read_text())
-    assert manifest["palette"]["color_map_id"] == var
-    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["palette"]["color_map_id"] == expected_color_map_id
+    assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "mph"
     assert manifest["grid"]["width"] == values.shape[1]
