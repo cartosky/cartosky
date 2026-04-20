@@ -380,6 +380,87 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   );
 }
 
+// ── Daily Temp Chart (Extended tab) ──────────────────────────────────
+
+function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
+  if (!daily.length) return null;
+
+  const allTemps = daily.flatMap(e => [e.high_f, e.low_f]).filter((v): v is number => v !== null);
+  if (!allTemps.length) return null;
+
+  const rawMin = Math.min(...allTemps);
+  const rawMax = Math.max(...allTemps);
+  const pad = Math.max((rawMax - rawMin) * 0.2, 4);
+  const minT = rawMin - pad;
+  const maxT = rawMax + pad;
+  const range = maxT - minT;
+
+  const VW = 460;
+  const VH = 110;
+  const CHART_T = 18;
+  const CHART_B = 88;
+
+  const n = daily.length;
+  const xAt = (i: number) => n <= 1 ? VW / 2 : (i / (n - 1)) * VW;
+  const yAt = (t: number) => CHART_T + (1 - (t - minT) / range) * (CHART_B - CHART_T);
+
+  function bezierPath(pts: { x: number; y: number }[]) {
+    return pts.reduce((d, p, i) => {
+      if (i === 0) return `M ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+      const prev = pts[i - 1];
+      const cpx = ((prev.x + p.x) / 2).toFixed(1);
+      return `${d} C ${cpx} ${prev.y.toFixed(1)} ${cpx} ${p.y.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+    }, "");
+  }
+
+  const highPts = daily.map((e, i) => ({ x: xAt(i), y: yAt(e.high_f ?? rawMax) }));
+  const lowPts  = daily.map((e, i) => ({ x: xAt(i), y: yAt(e.low_f  ?? rawMin) }));
+
+  const highPath = bezierPath(highPts);
+  const lowPath  = bezierPath(lowPts);
+  const lowRevPath = bezierPath([...lowPts].reverse()).replace(/^M/, "L");
+  const bandPath = `${highPath} ${lowRevPath} Z`;
+
+  // Label every other day if many entries, always include first and last
+  const step = n > 10 ? 2 : 1;
+  const labelIdxs = [...new Set([0, ...daily.map((_, i) => i).filter(i => i % step === 0), n - 1])].sort((a, b) => a - b);
+
+  return (
+    <svg viewBox={`0 0 ${VW} ${VH}`} className="h-auto w-full" aria-hidden="true">
+      <defs>
+        <linearGradient id="dBandGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(103,232,249,0.22)" />
+          <stop offset="100%" stopColor="rgba(103,232,249,0.04)" />
+        </linearGradient>
+      </defs>
+
+      <path d={bandPath} fill="url(#dBandGrad)" />
+      <path d={highPath} fill="none" stroke="rgba(103,232,249,0.85)"
+        strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={lowPath} fill="none" stroke="rgba(103,232,249,0.30)"
+        strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
+
+      {labelIdxs.map(i => {
+        const e = daily[i];
+        const x = xAt(i);
+        const anchor = i === 0 ? "start" : i >= n - 1 ? "end" : "middle";
+        return (
+          <g key={i}>
+            <text x={x} y={yAt(e.high_f ?? rawMax) - 5} textAnchor={anchor}
+              fontSize={9} fontWeight="500" fill="rgba(255,255,255,0.75)">
+              {e.high_f != null ? `${e.high_f}°` : ""}
+            </text>
+            <text x={x} y={VH - 3} textAnchor={anchor}
+              fontSize={8.5} fill="rgba(255,255,255,0.30)">
+              {formatDayLabel(e.date, i)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // ── Hourly Strip ──────────────────────────────────────────────────────
 
 function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
@@ -523,10 +604,10 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
               {formatDayLabel(entry.date, i)}
             </div>
             <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/60" />
-            <div className="flex-1 min-w-0 text-[13px] text-white/55 hidden sm:block">
+            <div className="flex-none w-52 text-[13px] text-white/55 truncate hidden sm:block">
               {entry.short_text ?? ""}
             </div>
-            <div className="relative flex-none w-[30%] h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
+            <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
               <div
                 className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -626,7 +707,14 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
   const span = globalMax - globalMin || 1;
 
   return (
-    <div>
+    <div className="space-y-6">
+      <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
+        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
+          Temperature · 15-Day Outlook
+        </p>
+        <DailyTempChart daily={daily} />
+      </div>
+      <div>
       {attribution && (
         <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
       )}
@@ -645,10 +733,10 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
               {formatDayLabel(entry.date, i)}
             </div>
             <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/55" />
-            <div className="flex-1 min-w-0 text-[13px] text-white/50 hidden sm:block">
+            <div className="flex-none w-52 text-[13px] text-white/50 truncate hidden sm:block">
               {entry.short_text ?? ""}
             </div>
-            <div className="relative flex-none w-[30%] h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
+            <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
               <div
                 className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -664,6 +752,7 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

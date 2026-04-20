@@ -903,6 +903,13 @@ def _regular_latlon_affine(longitude: np.ndarray, latitude: np.ndarray) -> raste
     return rasterio.transform.Affine(xres, 0.0, west, 0.0, yres, north)
 
 
+def _normalize_temperature_units_for_xarray(data: np.ndarray, units: str | None) -> np.ndarray:
+    normalized_units = str(units or "").strip().lower()
+    if normalized_units in {"k", "kelvin", "degrees_k", "degree_kelvin"}:
+        return data - np.float32(273.15)
+    return data
+
+
 def _ecmwf_pf_mean_from_xarray_result(result: Any) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     datasets = result if isinstance(result, list) else [result]
     selected = None
@@ -947,6 +954,8 @@ def _ecmwf_pf_mean_from_xarray_result(result: Any) -> tuple[np.ndarray, rasterio
     data = np.asarray(selected.values, dtype=np.float32)
     if data.ndim != 2:
         raise RuntimeError(f"ECMWF EPS aggregated field must be 2-D, got {data.ndim}-D for {selected_name}")
+
+    data = _normalize_temperature_units_for_xarray(data, getattr(selected, "attrs", {}).get("units"))
 
     lat_values = np.asarray(latitude.values, dtype=np.float64)
     if lat_values.ndim == 1 and lat_values.size >= 2 and lat_values[1] > lat_values[0]:

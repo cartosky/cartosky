@@ -32,11 +32,11 @@ class _FakeHerbie:
             {
                 "t2m": (("number", "latitude", "longitude"), np.array(
                     [
-                        [[1.0, 2.0], [3.0, 4.0]],
-                        [[5.0, 6.0], [7.0, 8.0]],
+                        [[274.15, 275.15], [276.15, 277.15]],
+                        [[278.15, 279.15], [280.15, 281.15]],
                     ],
                     dtype=np.float32,
-                )),
+                ), {"units": "K"}),
             },
             coords={
                 "number": np.array([1, 2], dtype=np.int64),
