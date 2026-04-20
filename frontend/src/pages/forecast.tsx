@@ -821,8 +821,8 @@ export default function Forecast() {
       <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
 
         {/* Top Bar */}
-        <div className="border-b-[0.5px] border-white/[0.08]">
-          <div className="mx-auto max-w-6xl px-5 md:px-8 py-3 flex items-center gap-3">
+        <div>
+          <div className="mx-auto max-w-6xl px-5 md:px-8 py-3 flex items-center gap-3 border-b-[0.5px] border-white/[0.08]">
             <button
               type="button"
               onClick={clearSearch}
@@ -859,8 +859,8 @@ export default function Forecast() {
         </div>
 
         {/* Conditions Strip */}
-        <div className="border-b-[0.5px] border-white/[0.08]">
-          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5">
+        <div>
+          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5 border-b-[0.5px] border-white/[0.08]">
             <div className="flex items-center gap-3 flex-none">
               <WeatherIcon code={f.current.icon} className="h-8 w-8 text-cyan-200/80" />
               <div>
@@ -897,8 +897,8 @@ export default function Forecast() {
         </div>
 
         {/* Tab Bar */}
-        <div className="border-b-[0.5px] border-white/[0.08]">
-          <div className="mx-auto max-w-6xl px-5 md:px-8">
+        <div>
+          <div className="mx-auto max-w-6xl px-5 md:px-8 border-b-[0.5px] border-white/[0.08]">
             <div className="flex overflow-x-auto -mb-px">
               {TABS.map(tab => (
                 <button
