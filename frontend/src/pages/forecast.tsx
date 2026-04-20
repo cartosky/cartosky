@@ -894,7 +894,7 @@ export default function Forecast() {
   const loadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    function onOut(e: MouseEvent) {
+    function onOut(e: globalThis.MouseEvent) {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
       }

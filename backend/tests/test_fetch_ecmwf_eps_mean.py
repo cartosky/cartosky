@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,9 @@ class _FakeHerbie:
         self.grib = "https://example.invalid/eps-enfo.grib2"
         self.idx = "https://example.invalid/eps-enfo.index"
 
+    def get_localFilePath(self, search_pattern: str) -> str:
+        return f"/tmp/fake-{search_pattern.strip(':') or 'subset'}.grib2"
+
     @property
     def index_as_dataframe(self):
         return pd.DataFrame(
@@ -38,32 +42,31 @@ class _FakeHerbie:
         )
 
 
+class _FakeHerbieBrokenIndex(_FakeHerbie):
+    @property
+    def index_as_dataframe(self):
+        raise RuntimeError("idx parser failed")
+
+
 def test_fetch_variable_aggregates_ecmwf_eps_pf_members() -> None:
     fake_herbie_core = ModuleType("herbie.core")
     fake_herbie_core.Herbie = _FakeHerbie
 
-    payload_to_data = {
-        b"member-1": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
-        b"member-2": np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float32),
-    }
+    def _fake_download_subset(_herbie, **kwargs):
+        inventory = kwargs["inventory"]
+        assert list(inventory["type"].astype(str)) == ["pf", "pf"]
+        assert list(inventory["number"].astype(int)) == [1, 2]
+        return kwargs["out_path"]
 
-    def _fake_fetch_range_bytes(**kwargs):
-        start_byte = int(kwargs["start_byte"])
-        if start_byte == 10:
-            return b"member-1"
-        if start_byte == 20:
-            return b"member-2"
-        raise AssertionError(f"unexpected byte-range fetch start={start_byte}")
-
-    def _fake_read_grib_raster(payload):
-        data = payload_to_data[payload]
+    def _fake_aggregate_subset(_path):
+        data = np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
         crs = rasterio.crs.CRS.from_epsg(4326)
         transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
-        return data, crs, transform
+        return data, crs, transform, 2
 
     with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
-        with patch("app.services.builder.fetch._fetch_range_bytes", side_effect=_fake_fetch_range_bytes), patch(
-            "app.services.builder.fetch._read_grib_raster", side_effect=_fake_read_grib_raster
+        with patch("app.services.builder.fetch._download_subset_with_inventory_rows", side_effect=_fake_download_subset), patch(
+            "app.services.builder.fetch._aggregate_grib_subset_mean", side_effect=_fake_aggregate_subset
         ):
             data, crs, transform, meta = fetch_variable(
                 model_id="ifs",
@@ -71,6 +74,65 @@ def test_fetch_variable_aggregates_ecmwf_eps_pf_members() -> None:
                 search_pattern=":2t:",
                 run_date=datetime(2026, 4, 19, 0, 0),
                 fh=0,
+                herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
+                return_meta=True,
+            )
+
+    assert np.array_equal(data, np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32))
+    assert crs.to_epsg() == 4326
+    assert transform.c == -101.0
+    assert transform.f == 46.0
+    assert meta["inventory_line"] == ":2t:sfc:1:g:0001:od:pf:enfo"
+    assert meta["member_count"] == 2
+
+
+def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _FakeHerbieBrokenIndex
+
+    index_lines = "\n".join(
+        [
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "cf", "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 0, "_length": 10}),
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "pf", "number": 1, "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 10, "_length": 10}),
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "pf", "number": 2, "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 20, "_length": 10}),
+        ]
+    )
+
+    class _FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    def _fake_download_subset(_herbie, **kwargs):
+        inventory = kwargs["inventory"]
+        assert list(inventory["type"].astype(str)) == ["pf", "pf"]
+        assert list(inventory["search_this"].astype(str)) == [
+            ":2t:sfc:1:g:0001:od:pf:enfo",
+            ":2t:sfc:2:g:0001:od:pf:enfo",
+        ]
+        return kwargs["out_path"]
+
+    def _fake_aggregate_subset(_path):
+        data = np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform, 2
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch("app.services.builder.fetch.requests.get", return_value=_FakeResponse(index_lines)), patch(
+            "app.services.builder.fetch._download_subset_with_inventory_rows", side_effect=_fake_download_subset
+        ), patch("app.services.builder.fetch._aggregate_grib_subset_mean", side_effect=_fake_aggregate_subset):
+            data, crs, transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":2t:",
+                run_date=datetime(2026, 4, 20, 0, 0),
+                fh=150,
                 herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
                 return_meta=True,
             )
