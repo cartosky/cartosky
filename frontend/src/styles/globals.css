@@ -111,6 +111,29 @@
     scroll-behavior: smooth;
   }
 
+  .forecast-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(103, 232, 249, 0.18) transparent;
+  }
+
+  .forecast-scroll::-webkit-scrollbar {
+    height: 3px;
+  }
+
+  .forecast-scroll::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 9999px;
+  }
+
+  .forecast-scroll::-webkit-scrollbar-thumb {
+    background: rgba(103, 232, 249, 0.22);
+    border-radius: 9999px;
+  }
+
+  .forecast-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(103, 232, 249, 0.38);
+  }
+
   .legend-scroll {
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.24) transparent;

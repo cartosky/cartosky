@@ -1,18 +1,18 @@
 """ECMWF IFS model plugin.
 
 Phase 1 rollout scope:
-  - IFS `oper`
+    - IFS `oper` / `scda`
             - `tmp2m`, `dp2m`, `tmp850`, `wspd10m`, `wspd850`, `wspd300`, `vort500`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
   - model = "ifs"
-  - product = "oper"
+    - product = `oper` for 00z/12z, `scda` for 06z/18z
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .kuchera import kuchera_hint_overrides
 from .base import (
@@ -28,8 +28,17 @@ from .base import (
 
 class ECMWFPlugin(BaseModelPlugin):
     def target_fhs(self, cycle_hour: int) -> list[int]:
-        del cycle_hour
+        if int(cycle_hour) in ECMWF_SHORT_CUTOFF_CYCLE_HOURS:
+            return list(ECMWF_SCDA_FHS)
         return list(ECMWF_OPER_FHS)
+
+    def _default_product_for_run(self, run_date: datetime | None) -> str:
+        if run_date is None:
+            return str(self.product)
+        run_hour = int(run_date.astimezone(timezone.utc).hour) if run_date.tzinfo else int(run_date.hour)
+        if run_hour in ECMWF_SHORT_CUTOFF_CYCLE_HOURS:
+            return "scda"
+        return "oper"
 
     def normalize_var_id(self, var_id: str) -> str:
         normalized = var_id.strip().lower()
@@ -132,9 +141,12 @@ class ECMWFPlugin(BaseModelPlugin):
             fh=fh,
             search_pattern=search_pattern,
         )
+        resolved_product = str(base_request.product).strip().lower()
+        if resolved_product in {"", "oper", "scda"}:
+            resolved_product = self._default_product_for_run(run_date)
         return HerbieRequest(
             model="ifs",
-            product=base_request.product,
+            product=resolved_product,
             herbie_kwargs=dict(base_request.herbie_kwargs),
         )
 
@@ -163,6 +175,8 @@ class ECMWFPlugin(BaseModelPlugin):
 
 
 ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 361, 6))
+ECMWF_SCDA_FHS = list(range(0, 145, 3))
+ECMWF_SHORT_CUTOFF_CYCLE_HOURS = {6, 18}
 
 
 ECMWF_REGIONS: dict[str, RegionSpec] = {
@@ -974,7 +988,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
         "probe_fhs": [0, 3],
         "probe_enabled": True,
         "probe_attempts": 4,
-        "cycle_cadence_hours": 12,
+        "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
         "allow_grib_without_idx": True,
         "source_priority": ["azure", "aws", "ecmwf"],

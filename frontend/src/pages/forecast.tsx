@@ -548,7 +548,7 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
 function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
   const entries = hourly.slice(0, 24);
   return (
-    <div className="flex gap-1 overflow-x-auto py-1">
+    <div className="flex gap-1 overflow-x-auto py-1 pb-2 forecast-scroll">
       {entries.map((entry, i) => {
         const pop = entry.pop_pct ?? 0;
         const isCurrent = i === 0;
@@ -846,7 +846,7 @@ function ModelsTab() {
     <div className="flex flex-col items-center justify-center py-24 text-center">
       <p className="text-[15px] font-medium text-white/65">Model guidance coming soon</p>
       <p className="mt-2 text-[13px] text-white/35">
-        GFS, NAM, and ECMWF ensemble charts will appear here.
+        Model and ensemble charts, including meteograms, are coming soon. In the meantime, you can view the data directly via the map viewer.
       </p>
     </div>
   );

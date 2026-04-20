@@ -8,6 +8,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.main import _serialize_model_capability
+from datetime import datetime, timezone
+
 from app.models.ecmwf import ECMWF_MODEL
 
 
@@ -19,16 +21,20 @@ def test_ecmwf_run_discovery_invariants() -> None:
         "probe_fhs": [0, 3],
         "probe_enabled": True,
         "probe_attempts": 4,
-        "cycle_cadence_hours": 12,
+        "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
+        "allow_grib_without_idx": True,
         "source_priority": ["azure", "aws", "ecmwf"],
     }
 
 
 def test_ecmwf_target_fhs_invariants() -> None:
-    expected = list(range(0, 145, 3)) + list(range(150, 361, 6))
-    assert ECMWF_MODEL.target_fhs(0) == expected
-    assert ECMWF_MODEL.target_fhs(12) == expected
+    synoptic_expected = list(range(0, 145, 3)) + list(range(150, 361, 6))
+    off_cycle_expected = list(range(0, 145, 3))
+    assert ECMWF_MODEL.target_fhs(0) == synoptic_expected
+    assert ECMWF_MODEL.target_fhs(12) == synoptic_expected
+    assert ECMWF_MODEL.target_fhs(6) == off_cycle_expected
+    assert ECMWF_MODEL.target_fhs(18) == off_cycle_expected
 
 
 def test_ecmwf_alias_and_herbie_request_invariants() -> None:
@@ -78,10 +84,23 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("10v") == "10v"
     assert ECMWF_MODEL.normalize_var_id("v10") == "10v"
 
-    request = ECMWF_MODEL.herbie_request(product="oper", var_key="tmp2m")
-    assert request.model == "ifs"
-    assert request.product == "oper"
-    assert request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
+    synoptic_request = ECMWF_MODEL.herbie_request(
+        product="oper",
+        var_key="tmp2m",
+        run_date=datetime(2026, 4, 20, 0, tzinfo=timezone.utc),
+    )
+    assert synoptic_request.model == "ifs"
+    assert synoptic_request.product == "oper"
+    assert synoptic_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
+
+    off_cycle_request = ECMWF_MODEL.herbie_request(
+        product="oper",
+        var_key="tmp2m",
+        run_date=datetime(2026, 4, 20, 6, tzinfo=timezone.utc),
+    )
+    assert off_cycle_request.model == "ifs"
+    assert off_cycle_request.product == "scda"
+    assert off_cycle_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
 
 
 def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
