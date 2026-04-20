@@ -14,9 +14,12 @@ from app.models.eps import EPS_MODEL
 
 
 def test_eps_target_fhs_invariants() -> None:
-    expected = list(range(0, 361, 6))
-    assert EPS_MODEL.target_fhs(0) == expected
-    assert EPS_MODEL.target_fhs(12) == expected
+    synoptic = list(range(0, 361, 6))
+    off_cycle = list(range(0, 145, 6))
+    assert EPS_MODEL.target_fhs(0) == synoptic
+    assert EPS_MODEL.target_fhs(12) == synoptic
+    assert EPS_MODEL.target_fhs(6) == off_cycle
+    assert EPS_MODEL.target_fhs(18) == off_cycle
 
 
 def test_eps_alias_and_herbie_request_invariants() -> None:

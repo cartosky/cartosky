@@ -19,13 +19,15 @@ from .base import HerbieRequest, ModelCapabilities, VariableCapability
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
 
 
-EPS_FHS = list(range(0, 361, 6))
+EPS_FHS_SYNOPTIC = list(range(0, 361, 6))
+EPS_FHS_OFF_CYCLE = list(range(0, 145, 6))
 
 
 class EPSPlugin(ECMWFPlugin):
     def target_fhs(self, cycle_hour: int) -> list[int]:
-        del cycle_hour
-        return list(EPS_FHS)
+        if cycle_hour in {0, 12}:
+            return list(EPS_FHS_SYNOPTIC)
+        return list(EPS_FHS_OFF_CYCLE)
 
     def normalize_var_id(self, var_id: str) -> str:
         normalized = str(var_id).strip().lower()
