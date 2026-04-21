@@ -17,6 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.builder.fetch import fetch_variable
+from app.services.builder import fetch as fetch_module
 from app.services.builder.pipeline import build_frame
 from app.services.builder.derive import FetchContext
 from app.models.eps import EPS_MODEL
@@ -177,3 +178,102 @@ def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path:
 
     assert captured["model_id"] == "ifs"
     assert captured["product"] == "enfo"
+
+
+def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path) -> None:
+    pattern = ":TMP:2 m above ground:"
+    full_payload = b"0123456789abcdefghij"
+    expected_subset = full_payload[4:10]
+
+    class _FakeHerbieFullCache:
+        def __init__(self, *_args, **kwargs) -> None:
+            self.priority = kwargs.get("priority")
+            self.grib = "https://example.invalid/2026041900-000h-enfo-ef.grib2"
+            self.idx = "https://example.invalid/2026041900-000h-enfo-ef.grib2.idx"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": pattern, "start_byte": 4, "end_byte": 9},
+            ])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(tmp_path / "subset.grib2")
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+            self.headers = {"Content-Length": str(len(payload))}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int = 1024 * 1024):
+            del chunk_size
+            yield self._payload
+
+        def close(self) -> None:
+            return None
+
+    class _FakeDataset:
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.Affine.identity()
+        nodata = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self, _band: int, masked: bool = True):
+            del masked
+            return np.ma.array([[1.0]], mask=[[False]], dtype=np.float32)
+
+        def tags(self, *_args):
+            return {}
+
+    def _fake_rasterio_open(path: str | Path):
+        assert Path(path).read_bytes() == expected_subset
+        return _FakeDataset()
+
+    def _fake_requests_get(url: str, stream: bool = False, timeout: int = 90):
+        assert stream is True
+        assert timeout == 90
+        request_calls.append(url)
+        return _FakeResponse(full_payload)
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _FakeHerbieFullCache
+    request_calls: list[str] = []
+
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "azure")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ENABLE", "1")
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ROOT", str(tmp_path / "full-cache"))
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        monkeypatch.setattr(fetch_module.requests, "get", _fake_requests_get)
+        monkeypatch.setattr(fetch_module.rasterio, "open", _fake_rasterio_open)
+
+        for _ in range(2):
+            data, crs, transform = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=pattern,
+                run_date=datetime(2026, 4, 19, 0, 0),
+                fh=0,
+                herbie_kwargs={"priority": ["azure"]},
+            )
+            assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+            assert crs.to_epsg() == 4326
+            assert transform == rasterio.transform.Affine.identity()
+
+    assert request_calls == ["https://example.invalid/2026041900-000h-enfo-ef.grib2"]
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("eps_full_file_cache_store", 0) == 1
+    assert metrics["counters"].get("eps_full_file_cache_hit", 0) == 1

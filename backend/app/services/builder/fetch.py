@@ -74,6 +74,22 @@ ENV_HERBIE_RANGE_FETCH_WORKERS = (
     "CARTOSKY_HERBIE_RANGE_FETCH_WORKERS",
     "TWF_HERBIE_RANGE_FETCH_WORKERS",
 )
+ENV_EPS_FULL_FILE_CACHE_ENABLE = (
+    "CARTOSKY_EPS_FULL_FILE_CACHE_ENABLE",
+    "TWF_EPS_FULL_FILE_CACHE_ENABLE",
+)
+ENV_EPS_FULL_FILE_CACHE_ROOT = (
+    "CARTOSKY_EPS_FULL_FILE_CACHE_ROOT",
+    "TWF_EPS_FULL_FILE_CACHE_ROOT",
+)
+ENV_EPS_FULL_FILE_CACHE_MAX_BYTES = (
+    "CARTOSKY_EPS_FULL_FILE_CACHE_MAX_BYTES",
+    "TWF_EPS_FULL_FILE_CACHE_MAX_BYTES",
+)
+ENV_EPS_FULL_FILE_CACHE_TTL_SECONDS = (
+    "CARTOSKY_EPS_FULL_FILE_CACHE_TTL_SECONDS",
+    "TWF_EPS_FULL_FILE_CACHE_TTL_SECONDS",
+)
 ENV_GRIB_DISK_CACHE_LOCK = (
     "CARTOSKY_GRIB_DISK_CACHE_LOCK",
     "CARTOSKY_V3_GRIB_DISK_CACHE_LOCK",
@@ -89,7 +105,12 @@ DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
 DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
 DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES = 4 * 1024 * 1024
 DEFAULT_RANGE_FETCH_WORKERS = 8
+DEFAULT_EPS_FULL_FILE_CACHE_MAX_BYTES = 200 * 1024 * 1024 * 1024
+DEFAULT_EPS_FULL_FILE_CACHE_TTL_SECONDS = 2 * 60 * 60
+DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS = 60.0
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
+_EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
+_EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
 
 _MISSING_VALUE_TAG_KEYS = (
     "missing_value",
@@ -507,6 +528,224 @@ def _env_int_setting(names: tuple[str, ...], default: int, *, minimum: int = 1) 
 
 def _range_fetch_workers() -> int:
     return _env_int_setting(ENV_HERBIE_RANGE_FETCH_WORKERS, DEFAULT_RANGE_FETCH_WORKERS, minimum=1)
+
+
+def _eps_full_file_cache_enabled(*, model_id: str, product: str) -> bool:
+    normalized_model = str(model_id).strip().lower()
+    normalized_product = str(product).strip().lower()
+    if normalized_model not in {"ifs", "eps"}:
+        return False
+    if normalized_product != "enfo":
+        return False
+    return _bool_from_env(ENV_EPS_FULL_FILE_CACHE_ENABLE, False)
+
+
+def _eps_full_file_cache_root() -> Path:
+    configured = _env_value(ENV_EPS_FULL_FILE_CACHE_ROOT)
+    if configured:
+        return Path(configured).expanduser()
+    herbie_save_dir = _env_value(("CARTOSKY_HERBIE_SAVE_DIR", "HERBIE_SAVE_DIR"))
+    if herbie_save_dir:
+        return Path(herbie_save_dir).expanduser() / "eps_full_files"
+    return Path("/tmp/cartosky-eps-full-files")
+
+
+def _eps_full_file_cache_max_bytes() -> int:
+    return _int_from_env(
+        ENV_EPS_FULL_FILE_CACHE_MAX_BYTES,
+        DEFAULT_EPS_FULL_FILE_CACHE_MAX_BYTES,
+        minimum=1024 * 1024,
+    )
+
+
+def _eps_full_file_cache_ttl_seconds() -> float:
+    return _float_from_env(
+        ENV_EPS_FULL_FILE_CACHE_TTL_SECONDS,
+        float(DEFAULT_EPS_FULL_FILE_CACHE_TTL_SECONDS),
+        minimum=60.0,
+    )
+
+
+def _eps_full_file_cache_path(*, source_url: str, run_date: datetime, fh: int) -> Path:
+    root = _eps_full_file_cache_root()
+    file_name = Path(str(source_url).split("?", 1)[0]).name or f"eps-fh{int(fh):03d}.grib2"
+    return root / _run_id_from_date(run_date) / f"fh{int(fh):03d}" / f"{_url_hash(source_url)}-{file_name}"
+
+
+def _iter_cache_files(root: Path) -> list[tuple[Path, int, float]]:
+    files: list[tuple[Path, int, float]] = []
+    try:
+        if not root.exists():
+            return files
+    except OSError:
+        return files
+
+    for path in root.rglob("*"):
+        try:
+            if not path.is_file() or path.name.endswith(".lock") or path.name.endswith(".part"):
+                continue
+            stat = path.stat()
+        except OSError:
+            continue
+        files.append((path, int(stat.st_size), float(stat.st_mtime)))
+    return files
+
+
+def _remove_file_quietly(path: Path) -> bool:
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def _remove_empty_parent_dirs(path: Path, *, stop_at: Path) -> None:
+    current = path.parent
+    while True:
+        try:
+            if current == stop_at or current == current.parent:
+                return
+            current.rmdir()
+            current = current.parent
+        except OSError:
+            return
+
+
+def _cleanup_eps_full_file_cache(*, keep_paths: set[Path] | None = None, force: bool = False) -> None:
+    global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS
+    root = _eps_full_file_cache_root()
+    keep = {path.resolve() for path in (keep_paths or set())}
+    now_wall = time.time()
+    with _EPS_FULL_FILE_CACHE_CLEANUP_LOCK:
+        if not force and (now_wall - _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS) < DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS:
+            return
+        _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = now_wall
+
+        files = _iter_cache_files(root)
+        if not files:
+            return
+
+        ttl_seconds = _eps_full_file_cache_ttl_seconds()
+        max_bytes = _eps_full_file_cache_max_bytes()
+        total_bytes = sum(size for _, size, _ in files)
+
+        for path, size, modified_at in sorted(files, key=lambda item: item[2]):
+            resolved = path.resolve()
+            if resolved in keep:
+                continue
+            if (now_wall - modified_at) <= ttl_seconds:
+                continue
+            if _remove_file_quietly(path):
+                total_bytes = max(0, total_bytes - size)
+                _metric_increment("eps_full_file_cache_expired")
+                _remove_empty_parent_dirs(path, stop_at=root)
+
+        if total_bytes <= max_bytes:
+            return
+
+        for path, size, _modified_at in sorted(_iter_cache_files(root), key=lambda item: item[2]):
+            resolved = path.resolve()
+            if resolved in keep:
+                continue
+            if total_bytes <= max_bytes:
+                break
+            if _remove_file_quietly(path):
+                total_bytes = max(0, total_bytes - size)
+                _metric_increment("eps_full_file_cache_evict")
+                _remove_empty_parent_dirs(path, stop_at=root)
+
+
+def _download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_suffix(f"{out_path.suffix}.part")
+    response = requests.get(source_url, stream=True, timeout=90)
+    try:
+        response.raise_for_status()
+        expected_size = _parse_float_tag(response.headers.get("Content-Length"))
+        with open(tmp_path, "wb") as dst:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                dst.write(chunk)
+    finally:
+        response.close()
+
+    file_ok, file_size = _subset_file_status(tmp_path)
+    if not file_ok:
+        _remove_file_quietly(tmp_path)
+        raise RuntimeError(f"EPS full GRIB download produced no file bytes: {source_url}")
+    if expected_size is not None and int(expected_size) > 0 and int(file_size) != int(expected_size):
+        _remove_file_quietly(tmp_path)
+        raise RuntimeError(
+            f"EPS full GRIB download size mismatch for {source_url}: got {file_size}, expected {int(expected_size)}"
+        )
+    tmp_path.replace(out_path)
+    return out_path
+
+
+def _maybe_get_eps_full_grib_path(
+    H: Any,
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    priority: str,
+) -> Path | None:
+    source_url = str(getattr(H, "grib", "") or "").strip()
+    if not source_url.startswith(("http://", "https://")):
+        return None
+    if not _eps_full_file_cache_enabled(model_id=model_id, product=product):
+        return None
+
+    cache_path = _eps_full_file_cache_path(source_url=source_url, run_date=run_date, fh=fh)
+    try:
+        with _path_download_lock(cache_path):
+            cached_ok, cached_size = _subset_file_status(cache_path)
+            if cached_ok:
+                cache_path.touch()
+                logger.info(
+                    "FULL_GRIB_CACHE event=hit source=%s model=%s run=%s fh=%03d file=%s size=%d",
+                    priority,
+                    model_id,
+                    _run_id_from_date(run_date),
+                    int(fh),
+                    cache_path.name,
+                    cached_size,
+                )
+                _metric_increment("eps_full_file_cache_hit")
+            else:
+                _cleanup_eps_full_file_cache(force=True)
+                downloaded_path = _download_full_grib_to_path(source_url=source_url, out_path=cache_path)
+                downloaded_path.touch()
+                logger.info(
+                    "FULL_GRIB_CACHE event=store source=%s model=%s run=%s fh=%03d file=%s size=%d",
+                    priority,
+                    model_id,
+                    _run_id_from_date(run_date),
+                    int(fh),
+                    downloaded_path.name,
+                    downloaded_path.stat().st_size,
+                )
+                _metric_increment("eps_full_file_cache_miss")
+                _metric_increment("eps_full_file_cache_store")
+    except Exception as exc:
+        logger.warning(
+            "FULL_GRIB_CACHE event=error source=%s model=%s run=%s fh=%03d url_hash=%s error=%s",
+            priority,
+            model_id,
+            _run_id_from_date(run_date),
+            int(fh),
+            _url_hash(source_url),
+            exc,
+        )
+        _metric_increment("eps_full_file_cache_error")
+        return None
+
+    _cleanup_eps_full_file_cache(keep_paths={cache_path})
+    return cache_path
 
 
 def _range_cache_key(
@@ -1128,6 +1367,7 @@ def _download_subset_with_inventory_rows(
     inventory: Any,
     out_path: Path,
     model_id: str,
+    product: str,
     run_date: datetime,
     fh: int,
     priority: str,
@@ -1136,6 +1376,16 @@ def _download_subset_with_inventory_rows(
     source_url = getattr(H, "grib", None)
     if source_url is None:
         return None
+    cached_full_path = _maybe_get_eps_full_grib_path(
+        H,
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        priority=priority,
+    )
+    if cached_full_path is not None:
+        source_url = str(cached_full_path)
 
     row_ranges: list[tuple[int, int]] = []
     for _, row in inventory.iterrows():
@@ -1185,21 +1435,26 @@ def _download_subset_with_inventory_rows(
                 remote_payloads[range_key] = future.result()
 
     with open(out_path, "wb") as dst:
-        for start_byte, end_byte in ordered_ranges:
-            range_key = (int(start_byte), int(end_byte))
-            if is_remote:
-                if remote_payloads:
-                    payload = remote_payloads.get(range_key, b"")
+        src = open(source_url, "rb") if not is_remote else None
+        try:
+            for start_byte, end_byte in ordered_ranges:
+                range_key = (int(start_byte), int(end_byte))
+                if is_remote:
+                    if remote_payloads:
+                        payload = remote_payloads.get(range_key, b"")
+                    else:
+                        payload = _read_remote_payload(range_key)
                 else:
-                    payload = _read_remote_payload(range_key)
-            else:
-                with open(source_url, "rb") as src:
+                    assert src is not None
                     src.seek(start_byte)
                     payload = src.read(end_byte - start_byte + 1)
-            if not payload:
-                continue
-            dst.write(payload)
-            wrote_bytes = True
+                if not payload:
+                    continue
+                dst.write(payload)
+                wrote_bytes = True
+        finally:
+            if src is not None:
+                src.close()
 
     if not wrote_bytes:
         return None
@@ -1388,6 +1643,7 @@ def _fetch_ecmwf_pf_mean_variable(
                             inventory=pf_inventory,
                             out_path=subset_path,
                             model_id=model_id,
+                            product=product,
                             run_date=run_date,
                             fh=fh,
                             priority=priority,
@@ -1427,6 +1683,7 @@ def _fetch_ecmwf_pf_mean_variable(
 
 def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
+    global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS
     with _IDX_NEGATIVE_CACHE_LOCK:
         _IDX_NEGATIVE_CACHE.clear()
         _IDX_NEGATIVE_LOG_SUPPRESS.clear()
@@ -1436,6 +1693,8 @@ def reset_herbie_runtime_caches_for_tests() -> None:
     with _FETCH_RUNTIME_METRICS_LOCK:
         _FETCH_RUNTIME_COUNTERS.clear()
         _FETCH_RUNTIME_TIMERS_MS.clear()
+    with _EPS_FULL_FILE_CACHE_CLEANUP_LOCK:
+        _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
 
 
 def inventory_lines_for_pattern(
@@ -1706,7 +1965,7 @@ def _subset_file_status(path: Path) -> tuple[bool, int]:
 
 
 @contextmanager
-def _subset_download_lock(path: Path):
+def _path_download_lock(path: Path):
     if not _grib_disk_cache_lock_enabled():
         yield
         return
@@ -1742,6 +2001,12 @@ def _subset_download_lock(path: Path):
         except Exception:
             pass
         lock_file.close()
+
+
+@contextmanager
+def _subset_download_lock(path: Path):
+    with _path_download_lock(path):
+        yield
 
 
 def _precheck_subset_available(
@@ -2162,6 +2427,17 @@ def _download_subset_with_inventory_byte_range(
     priority: str,
     bundle_fetch_cache: BundleFetchCache | None,
 ) -> Path | None:
+    source_url = str(getattr(H, "grib", "") or "")
+    cached_full_path = _maybe_get_eps_full_grib_path(
+        H,
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        priority=priority,
+    )
+    if cached_full_path is not None:
+        source_url = str(cached_full_path)
     primary_range = _inventory_primary_byte_range(
         H,
         search_pattern=search_pattern,
@@ -2174,7 +2450,9 @@ def _download_subset_with_inventory_byte_range(
     if primary_range is None:
         return None
 
-    source_url, start_byte, end_byte = primary_range
+    primary_source_url, start_byte, end_byte = primary_range
+    if not source_url:
+        source_url = primary_source_url
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if source_url.startswith(("http://", "https://")):
