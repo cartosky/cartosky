@@ -3030,9 +3030,9 @@ export default function App() {
     if (resolvedTotalForecastHour !== null && resolvedAvailableForecastHour !== null) {
       const cappedAvailable = Math.max(0, Math.min(resolvedAvailableForecastHour, resolvedTotalForecastHour));
       const isComplete = cappedAvailable >= resolvedTotalForecastHour && resolvedTotalForecastHour > 0;
-      const description = `${selectedVariableLabel} · latest ${latestLabel} · ${cappedAvailable}/${resolvedTotalForecastHour} ${isComplete ? "complete" : "available"}`;
+      const description = `${selectedVariableLabel} · latest ${latestLabel} · ${cappedAvailable}/${resolvedTotalForecastHour} forecast hours ${isComplete ? "complete" : "available"}`;
       return {
-        label: `${cappedAvailable}/${resolvedTotalForecastHour} ${isComplete ? "complete" : "available"}`,
+        label: `${cappedAvailable}/${resolvedTotalForecastHour} forecast hours ${isComplete ? "complete" : "available"}`,
         description,
         tone: isComplete ? (resolvedTone === "live" ? "live" : resolvedTone) : resolvedTone,
       };
