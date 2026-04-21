@@ -45,6 +45,8 @@ class GEFSPlugin(BaseModelPlugin):
         aliases = {
             "tmp2m": "tmp2m",
             "tmp2m__mean": "tmp2m__mean",
+            "tmp2m_anom": "tmp2m_anom",
+            "tmp2m_anom__mean": "tmp2m_anom__mean",
             "tmp850": "tmp850",
             "tmp850__mean": "tmp850__mean",
             "t850": "tmp850",
@@ -144,6 +146,7 @@ class GEFSPlugin(BaseModelPlugin):
             "pwat__mean",
             "apcp_step__mean",
             "precip_total__mean",
+            "tmp2m_anom__mean",
         }:
             herbie_kwargs["member"] = "mean"
         return HerbieRequest(
@@ -162,6 +165,42 @@ GEFS_VARS: dict[str, VarSpec] = {
         GFS_VARS["tmp2m"],
         id="tmp2m__mean",
         name="Surface Temp (Mean)",
+    ),
+    "tmp2m_anom": VarSpec(
+        id="tmp2m_anom",
+        name="Surface Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp2m",
+                "baseline_field": "tmp2m",
+                "baseline_model_family": "gefs",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
+    ),
+    "tmp2m_anom__mean": VarSpec(
+        id="tmp2m_anom__mean",
+        name="Surface Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp2m",
+                "baseline_field": "tmp2m",
+                "baseline_model_family": "gefs",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
     ),
     "tmp850": replace(
         GFS_VARS["tmp850"],
@@ -454,6 +493,46 @@ GEFS_VARIABLE_CATALOG = {
         order=1,
         group="Temperature",
         conversion="c_to_f",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "tmp2m_anom": VariableCapability(
+        var_key="tmp2m_anom",
+        name=GEFS_VARS["tmp2m_anom"].name,
+        selectors=GEFS_VARS["tmp2m_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp2m_anom",
+        default_fh=0,
+        buildable=True,
+        order=2,
+        group="Temperature",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "tmp2m_anom__mean"},
+        },
+    ),
+    "tmp2m_anom__mean": VariableCapability(
+        var_key="tmp2m_anom__mean",
+        name=GEFS_VARS["tmp2m_anom__mean"].name,
+        selectors=GEFS_VARS["tmp2m_anom__mean"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp2m_anom",
+        default_fh=0,
+        buildable=False,
+        order=2,
+        group="Temperature",
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],

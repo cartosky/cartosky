@@ -290,6 +290,18 @@ TMP2M_F_COLOR_ANCHORS = [
 ]
 
 TMP2M_F_RANGE = (-60.0, 120.0)
+TMP2M_ANOM_F_COLOR_ANCHORS = [
+    (-30.0, "#2a4f8f"),
+    (-20.0, "#4a79b9"),
+    (-10.0, "#8fb5db"),
+    (-5.0, "#c9dcf1"),
+    (0.0, "#f3f0ea"),
+    (5.0, "#f1c9b7"),
+    (10.0, "#e28b6d"),
+    (20.0, "#c34a36"),
+    (30.0, "#8f1d1f"),
+]
+TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
 
 # Total precipitation (inches)
 precip_colors = [
@@ -657,6 +669,14 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP2M_F_COLOR_ANCHORS,
         "display_name": "2m Temperature",
         "legend_title": "Temperature (°F)",
+    },
+    "tmp2m_anom": {
+        "type": "continuous",
+        "units": "F",
+        "range": TMP2M_ANOM_F_RANGE,
+        "anchors": TMP2M_ANOM_F_COLOR_ANCHORS,
+        "display_name": "Surface Temperature Anomaly",
+        "legend_title": "Surface Temperature Anomaly (°F)",
     },
     "dp2m": {
         "type": "continuous",

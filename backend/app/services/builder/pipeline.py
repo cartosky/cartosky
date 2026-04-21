@@ -462,6 +462,7 @@ def build_sidecar_json(
     quality_flags: list[str] | None = None,
     ensemble_view: str | None = None,
     valid_time_override: datetime | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the sidecar metadata dict per the artifact contract.
 
@@ -542,6 +543,13 @@ def build_sidecar_json(
 
     if contours:
         sidecar["contours"] = contours
+
+    if isinstance(extra_metadata, dict):
+        for key, value in extra_metadata.items():
+            normalized_key = str(key).strip()
+            if not normalized_key or normalized_key in sidecar or value is None:
+                continue
+            sidecar[normalized_key] = value
 
     return sidecar
 
@@ -1245,6 +1253,7 @@ def build_frame(
             quality=frame_quality,
             quality_flags=frame_quality_flags,
             ensemble_view=ensemble_view,
+            extra_metadata=quality_meta.get("sidecar_metadata") if isinstance(quality_meta, dict) else None,
         )
         _write_json_atomic(sidecar_path, sidecar)
 

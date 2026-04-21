@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from pathlib import Path
@@ -26,6 +26,7 @@ import rasterio.crs
 from app.services.builder.cog_writer import warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
+from app.services.climatology import load_climatology_baseline
 from app.services.colormaps import (
     RADAR_PTYPE_BREAKS,
     RADAR_PTYPE_ORDER,
@@ -620,6 +621,128 @@ def _record_derive_quality(
     }
     with ctx._lock:
         ctx.derive_quality[(str(var_key), int(fh))] = payload
+
+
+def _record_derive_sidecar_metadata(
+    ctx: FetchContext | None,
+    *,
+    var_key: str,
+    fh: int,
+    sidecar_metadata: dict[str, Any],
+) -> None:
+    if ctx is None:
+        return
+    normalized: dict[str, Any] = {}
+    for key, value in sidecar_metadata.items():
+        normalized_key = str(key).strip()
+        if normalized_key and value is not None:
+            normalized[normalized_key] = value
+    if not normalized:
+        return
+    with ctx._lock:
+        payload = dict(ctx.derive_quality.get((str(var_key), int(fh)), {}))
+        existing = payload.get("sidecar_metadata")
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(normalized)
+        payload["sidecar_metadata"] = merged
+        payload.setdefault("quality", "full")
+        payload.setdefault("quality_flags", [])
+        ctx.derive_quality[(str(var_key), int(fh))] = payload
+
+
+def _canonical_region_for_plugin(model_plugin: Any) -> str:
+    capabilities = getattr(model_plugin, "capabilities", None)
+    region = getattr(capabilities, "canonical_region", None)
+    normalized = str(region or "").strip().lower()
+    return normalized or "conus"
+
+
+def _derive_anomaly_departure(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
+    base_component = str(hints.get("base_component") or "").strip() or "tmp2m"
+    baseline_field = str(hints.get("baseline_field") or "").strip() or base_component.split("__", 1)[0]
+    baseline_model_family = str(hints.get("baseline_model_family") or model_id).strip().lower()
+    baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
+    reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
+
+    target_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
+    if not target_region:
+        target_region = _canonical_region_for_plugin(model_plugin)
+    target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+    if not target_grid_id:
+        target_grid_id = f"{model_id}:{target_region}"
+    resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
+
+    forecast_raw, src_crs, src_transform = _fetch_component_warped(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        var_key=base_component,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        ctx=ctx,
+    )
+    base_capability = model_plugin.get_var_capability(model_plugin.normalize_var_id(base_component))
+    forecast_values = convert_units(
+        forecast_raw,
+        base_component,
+        model_id=model_id,
+        var_capability=base_capability,
+    ).astype(np.float32, copy=False)
+
+    valid_time = (run_date + timedelta(hours=fh)).astimezone(timezone.utc)
+    baseline_values, baseline_crs, baseline_transform, baseline_meta = load_climatology_baseline(
+        version=baseline_version,
+        model_family=baseline_model_family,
+        field=baseline_field,
+        valid_time=valid_time,
+        region=target_region,
+        reference_period=reference_period,
+    )
+    if forecast_values.shape != baseline_values.shape:
+        raise ValueError(
+            f"Anomaly baseline shape mismatch: forecast={forecast_values.shape} baseline={baseline_values.shape}"
+        )
+    if src_crs != baseline_crs:
+        raise ValueError(
+            f"Anomaly baseline CRS mismatch: forecast={src_crs} baseline={baseline_crs}"
+        )
+    if any(
+        abs(float(actual) - float(expected)) > 1.0e-6
+        for actual, expected in zip(src_transform[:6], baseline_transform[:6])
+    ):
+        raise ValueError(
+            f"Anomaly baseline transform mismatch: forecast={src_transform} baseline={baseline_transform}"
+        )
+
+    anomaly = (forecast_values - baseline_values).astype(np.float32, copy=False)
+    _record_derive_sidecar_metadata(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        sidecar_metadata={
+            "anomaly_kind": "departure",
+            **baseline_meta,
+        },
+    )
+    return anomaly, baseline_crs, baseline_transform
 
 
 # ---------------------------------------------------------------------------
@@ -5336,5 +5459,11 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("apcp_step", "tmp850", "tmp700"),
         output_var_key="snowfall_kuchera_total",
         execute=_derive_snowfall_kuchera_total_cumulative,
+    ),
+    "anomaly_departure": DeriveStrategy(
+        id="anomaly_departure",
+        required_inputs=(),
+        output_var_key=None,
+        execute=_derive_anomaly_departure,
     ),
 }
