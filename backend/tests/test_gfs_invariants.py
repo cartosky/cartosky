@@ -54,6 +54,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
         "conus": 25000.0,
+        "na": 25000.0,
         "pnw": 25000.0,
     }
 

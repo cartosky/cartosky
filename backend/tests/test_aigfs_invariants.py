@@ -108,6 +108,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
         "conus": 25000.0,
+        "na": 25000.0,
     }
 
     tmp2m_spec = AIGFS_MODEL.get_var("tmp2m")

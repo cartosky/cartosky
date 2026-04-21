@@ -22,6 +22,11 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 
 from app.config.regions import REGION_PRESETS
 from app.main import LOOP_MANIFEST_BBOX
+from app.models.aigfs import AIGFS_MODEL
+from app.models.aifs import AIFS_MODEL
+from app.models.ecmwf import ECMWF_MODEL
+from app.models.eps import EPS_MODEL
+from app.models.gefs import GEFS_MODEL
 from app.models.gfs import GFS_MODEL
 from app.models.hrrr import HRRR_MODEL
 from app.models.nam import NAM_MODEL
@@ -31,6 +36,8 @@ from app.services.builder.cog_writer import REGION_BBOX_3857, REGION_BBOX_4326
 
 EXPECTED_CONUS_BBOX_4326 = (-134.0, 24.0, -60.0, 55.0)
 EXPECTED_CONUS_BBOX_3857 = (-14916811.77, 2753408.11, -6679169.45, 7361866.11)
+EXPECTED_NA_BBOX_4326 = (-170.0, 5.0, -50.0, 75.0)
+EXPECTED_NA_BBOX_3857 = (-18924313.43, 557305.26, -5565974.54, 12932243.11)
 
 
 def test_conus_bbox_is_consistent_across_builder_and_metadata() -> None:
@@ -44,3 +51,14 @@ def test_conus_bbox_is_consistent_across_builder_and_metadata() -> None:
         region = plugin.get_region("conus")
         assert region is not None
         assert region.bbox_wgs84 == EXPECTED_CONUS_BBOX_4326
+
+
+def test_na_bbox_is_consistent_across_builder_and_global_model_metadata() -> None:
+    assert REGION_BBOX_4326["na"] == EXPECTED_NA_BBOX_4326
+    assert REGION_BBOX_3857["na"] == EXPECTED_NA_BBOX_3857
+    assert tuple(REGION_PRESETS["na"]["bbox"]) == EXPECTED_NA_BBOX_4326
+
+    for plugin in (GFS_MODEL, GEFS_MODEL, ECMWF_MODEL, AIGFS_MODEL, AIFS_MODEL, EPS_MODEL):
+        region = plugin.get_region("na")
+        assert region is not None
+        assert region.bbox_wgs84 == EXPECTED_NA_BBOX_4326

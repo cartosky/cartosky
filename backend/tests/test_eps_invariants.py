@@ -61,7 +61,10 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
-    assert capabilities.grid_meters_by_region == {"conus": 18000.0}
+    assert capabilities.grid_meters_by_region == {
+        "conus": 18000.0,
+        "na": 18000.0,
+    }
 
 
 def test_eps_capabilities_schema_snapshot_invariants() -> None:

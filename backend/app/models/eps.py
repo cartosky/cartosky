@@ -213,6 +213,7 @@ EPS_CAPABILITIES = ModelCapabilities(
     canonical_region="conus",
     grid_meters_by_region={
         "conus": 18_000.0,
+        "na": 18_000.0,
     },
     run_discovery={
         "probe_var_key": "tmp2m",

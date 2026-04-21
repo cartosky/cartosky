@@ -49,12 +49,14 @@ logger = logging.getLogger(__name__)
 
 REGION_BBOX_3857: dict[str, tuple[float, float, float, float]] = {
     "conus": (-14916811.77, 2753408.11, -6679169.45, 7361866.11),
+    "na": (-18924313.43, 557305.26, -5565974.54, 12932243.11),
     "pnw": (-14026255.80, 5096324.37, -12913060.93, 6378137.00),
 }
 
 # WGS84 bounding boxes (for reference / coordinate transforms)
 REGION_BBOX_4326: dict[str, tuple[float, float, float, float]] = {
     "conus": (-134.0, 24.0, -60.0, 55.0),
+    "na": (-170.0, 5.0, -50.0, 75.0),
     "pnw": (-126.0, 41.5, -116.0, 49.5),
 }
 
@@ -70,8 +72,13 @@ TARGET_GRID_METERS: dict[str, dict[str, float]] = {
         "conus": 3_000.0,
         "pnw": 3_000.0,
     },
+    "gefs": {
+        "conus": 25_000.0,
+        "na": 25_000.0,
+    },
     "gfs": {
         "conus": 25_000.0,
+        "na": 25_000.0,
         "pnw": 25_000.0,
     },
     "nam": {
@@ -82,8 +89,21 @@ TARGET_GRID_METERS: dict[str, dict[str, float]] = {
         "conus": 13_000.0,
         "pnw": 13_000.0,
     },
+    "aigfs": {
+        "conus": 25_000.0,
+        "na": 25_000.0,
+    },
+    "aifs": {
+        "conus": 9_000.0,
+        "na": 9_000.0,
+    },
     "ecmwf": {
         "conus": 9_000.0,
+        "na": 9_000.0,
+    },
+    "eps": {
+        "conus": 18_000.0,
+        "na": 18_000.0,
     },
 }
 
@@ -153,15 +173,18 @@ def get_grid_params(
 
     Raises KeyError if the combination is not defined.
     """
-    bbox = REGION_BBOX_3857.get(region)
+    model_key = str(model).strip().lower()
+    region_key = str(region).strip().lower()
+
+    bbox = REGION_BBOX_3857.get(region_key)
     if bbox is None:
         raise KeyError(f"Unknown region: {region!r}")
-    grid_m = _grid_meters_from_capabilities(model, region)
+    grid_m = _grid_meters_from_capabilities(model_key, region_key)
     if grid_m is None:
-        model_grids = TARGET_GRID_METERS.get(model)
+        model_grids = TARGET_GRID_METERS.get(model_key)
         if model_grids is None:
             raise KeyError(f"Unknown model: {model!r}")
-        grid_m = model_grids.get(region)
+        grid_m = model_grids.get(region_key)
     if grid_m is None:
         raise KeyError(f"No grid resolution defined for {model!r}/{region!r}")
     return bbox, grid_m

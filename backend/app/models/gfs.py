@@ -135,6 +135,12 @@ class GFSPlugin(BaseModelPlugin):
 # ---------------------------------------------------------------------------
 
 GFS_REGIONS: dict[str, RegionSpec] = {
+    "na": RegionSpec(
+        id="na",
+        name="North America",
+        bbox_wgs84=(-170.0, 5.0, -50.0, 75.0),
+        clip=True,
+    ),
     "pnw": RegionSpec(
         id="pnw",
         name="Pacific Northwest",
@@ -1012,6 +1018,7 @@ GFS_CAPABILITIES = ModelCapabilities(
     canonical_region="conus",
     grid_meters_by_region={
         "conus": 25_000.0,
+        "na": 25_000.0,
         "pnw": 25_000.0,
     },
     run_discovery={

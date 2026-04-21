@@ -126,11 +126,25 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"precip_total", "pwat", "sbcape", "snowfall_total", "tmp2m", "tmp850", "wspd10m", "wspd300", "wspd850"}
+    assert buildable_var_keys == {
+        "precip_total",
+        "pwat",
+        "sbcape",
+        "snowfall_total",
+        "tmp2m",
+        "tmp2m_anom",
+        "tmp850",
+        "wspd10m",
+        "wspd300",
+        "wspd850",
+    }
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "conus"
-    assert capabilities.grid_meters_by_region == {"conus": 25000.0}
+    assert capabilities.grid_meters_by_region == {
+        "conus": 25000.0,
+        "na": 25000.0,
+    }
 
 
 def test_gefs_capabilities_schema_snapshot_invariants() -> None:

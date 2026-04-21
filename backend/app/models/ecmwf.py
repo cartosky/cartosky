@@ -180,6 +180,13 @@ ECMWF_SHORT_CUTOFF_CYCLE_HOURS = {6, 18}
 
 
 ECMWF_REGIONS: dict[str, RegionSpec] = {
+    "na": RegionSpec(
+        id="na",
+        name="North America",
+        bbox_wgs84=(-170.0, 5.0, -50.0, 75.0),
+        tile_matrix="WebMercatorQuad",
+        clip=True,
+    ),
     "conus": RegionSpec(
         id="conus",
         name="CONUS",
@@ -982,6 +989,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
     canonical_region="conus",
     grid_meters_by_region={
         "conus": 9_000.0,
+        "na": 9_000.0,
     },
     run_discovery={
         "probe_var_key": "tmp2m",

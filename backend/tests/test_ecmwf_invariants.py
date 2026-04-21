@@ -120,6 +120,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
         "conus": 9000.0,
+        "na": 9000.0,
     }
     gust_spec = ECMWF_MODEL.get_var("wgst10m")
     assert gust_spec is not None
