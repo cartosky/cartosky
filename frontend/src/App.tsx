@@ -2932,7 +2932,7 @@ export default function App() {
       && latestRunId
       && resolvedGridLatestRunId !== latestRunId
     ) {
-      return `Latest grid-ready (${formatRunLabel(resolvedGridLatestRunId, selectedTimeAxisMode)})`;
+      return `Latest available (${formatRunLabel(resolvedGridLatestRunId, selectedTimeAxisMode)})`;
     }
     const fromOptions = runOptions.find((entry) => entry.value === run)?.label;
     if (fromOptions) {
