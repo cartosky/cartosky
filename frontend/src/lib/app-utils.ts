@@ -511,6 +511,36 @@ export function makeModelOptions(entries: ModelEntry[]): GroupedOption[] {
   });
 }
 
+function bboxWithin(parent: RegionPreset | undefined, child: RegionPreset | undefined): boolean {
+  if (!parent || !child) {
+    return true;
+  }
+  const [parentWest, parentSouth, parentEast, parentNorth] = parent.bbox;
+  const [childWest, childSouth, childEast, childNorth] = child.bbox;
+  return (
+    childWest >= parentWest
+    && childSouth >= parentSouth
+    && childEast <= parentEast
+    && childNorth <= parentNorth
+  );
+}
+
+export function filterRegionOptionsByCoverage(
+  regionPresets: Record<string, RegionPreset>,
+  canonicalRegionId: string | null | undefined,
+): Option[] {
+  const regionIds = Object.keys(regionPresets);
+  const canonicalRegion = String(canonicalRegionId ?? "").trim().toLowerCase();
+  const canonicalPreset = canonicalRegion ? regionPresets[canonicalRegion] : undefined;
+  const allowedRegionIds = canonicalPreset
+    ? regionIds.filter((regionId) => bboxWithin(canonicalPreset, regionPresets[regionId]))
+    : regionIds;
+  return allowedRegionIds.map((id) => ({
+    value: id,
+    label: makeRegionLabel(id, regionPresets[id]),
+  }));
+}
+
 export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | undefined): VariableEntry[] {
   if (!modelCapability?.variables) {
     return [];

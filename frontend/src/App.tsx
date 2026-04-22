@@ -79,6 +79,7 @@ import {
   withUpdatedLatestRun,
   pickPreferred,
   makeRegionLabel,
+  filterRegionOptionsByCoverage,
   buildFallbackSharePayload,
   toNumberOrNull,
   makeModelOptions,
@@ -1745,20 +1746,17 @@ export default function App() {
         setEnsembleView(nextEnsembleView);
 
         setRegionPresets(regionPresetData);
-        const regionIds = Object.keys(regionPresetData);
-        const regionOptions = regionIds.map((id) => ({
-          value: id,
-          label: makeRegionLabel(id, regionPresetData[id]),
-        }));
-        setRegions(regionOptions);
         const canonicalRegion = String(
           modelCapability?.constraints?.canonical_region
           ?? modelCapability?.canonical_region
           ?? MAP_VIEW_DEFAULTS.region
         ).trim();
-        const nextRegion = requestedRegion && regionIds.includes(requestedRegion)
+        const regionOptions = filterRegionOptionsByCoverage(regionPresetData, canonicalRegion);
+        const allowedRegionIds = regionOptions.map((option) => option.value);
+        setRegions(regionOptions);
+        const nextRegion = requestedRegion && allowedRegionIds.includes(requestedRegion)
           ? requestedRegion
-          : pickPreferred(regionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region);
+          : pickPreferred(allowedRegionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region);
         setRegion(nextRegion);
 
         setRun(requestedRun || "latest");
@@ -1783,6 +1781,30 @@ export default function App() {
       controller.abort();
     };
   }, [initialPermalink]);
+
+  useEffect(() => {
+    const regionIds = Object.keys(regionPresets);
+    if (regionIds.length === 0) {
+      setRegions([]);
+      return;
+    }
+    const canonicalRegion = String(
+      selectedModelCapability?.constraints?.canonical_region
+      ?? selectedModelCapability?.canonical_region
+      ?? MAP_VIEW_DEFAULTS.region
+    ).trim();
+    const nextRegionOptions = filterRegionOptionsByCoverage(regionPresets, canonicalRegion);
+    setRegions(nextRegionOptions);
+    const allowedRegionIds = nextRegionOptions.map((option) => option.value);
+    if (allowedRegionIds.length === 0) {
+      return;
+    }
+    setRegion((currentRegion) => (
+      allowedRegionIds.includes(currentRegion)
+        ? currentRegion
+        : pickPreferred(allowedRegionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region)
+    ));
+  }, [regionPresets, selectedModelCapability]);
 
   useEffect(() => {
     const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled
