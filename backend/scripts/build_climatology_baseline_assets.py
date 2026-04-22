@@ -12,6 +12,7 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
+from rasterio.crs import CRS
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -132,7 +133,7 @@ def _load_and_warp_source(
         src_transform=src_transform,
         src_crs=src_crs,
         dst_transform=dst_transform,
-        dst_crs=rasterio.crs.CRS.from_epsg(3857),
+        dst_crs=CRS.from_epsg(3857),
         resampling=Resampling[resampling],
         src_nodata=src_nodata,
         dst_nodata=float("nan"),
