@@ -1011,15 +1011,15 @@ def build_frame(
         misses = int(local_fetch_ctx.stats.get("misses", 0))
         logger.info("fetch_cache hits=%d misses=%d", hits, misses)
 
-    if region != CANONICAL_COVERAGE:
-        logger.error("Rejected non-canonical coverage for build_frame: %s (expected %s)", region, CANONICAL_COVERAGE)
+    resolved_plugin = model_plugin or _resolve_model_plugin(model)
+    if resolved_plugin.get_region(region) is None:
+        logger.error("Rejected unsupported region for build_frame: model=%s region=%s", model, region)
         _log_fetch_cache_stats_once()
         return None
 
     logger.info("Building frame: %s/%s/%s/%s (coverage=%s)", model, run_id, var_id, fh_str, region)
 
     # --- Resolve specs ---
-    resolved_plugin = model_plugin or _resolve_model_plugin(model)
     var_key = resolved_plugin.normalize_var_id(var_id)
     var_spec_model = _resolve_model_var_spec(model, var_key, resolved_plugin)
     var_capability = _resolve_model_var_capability(model, var_key, resolved_plugin)

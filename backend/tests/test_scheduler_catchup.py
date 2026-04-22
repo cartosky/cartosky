@@ -68,8 +68,8 @@ class _FakeProbePlugin:
             "source_priority": ["azure", "aws"],
         }
 
-    def herbie_request(self, *, product=None, var_key=None, run_date=None, fh=None, search_pattern=None):
-        del var_key, run_date, search_pattern
+    def herbie_request(self, *, product=None, var_key=None, ensemble_view=None, run_date=None, fh=None, search_pattern=None):
+        del var_key, ensemble_view, run_date, fh, search_pattern
         return types.SimpleNamespace(model="ifs", product=product or self.product, herbie_kwargs={"priority": ["azure", "aws"]})
 
 
@@ -224,6 +224,42 @@ def test_resolve_promotion_fhs_uses_model_schedule() -> None:
     assert scheduler_module._resolve_promotion_fhs(_FakeGFSPlugin(), ["tmp2m"], 18) == (0, 3, 6)
 
 
+class _FakeRegionPlugin:
+    id = "gfs"
+
+    def normalize_var_id(self, var_id: str) -> str:
+        return str(var_id).strip().lower()
+
+    def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
+        del var_key, cycle_hour
+        return [0]
+
+    def get_region(self, region_id: str):
+        if region_id in {"conus", "na"}:
+            return types.SimpleNamespace(id=region_id)
+        return None
+
+    def get_var_capability(self, var_key: str):
+        normalized = self.normalize_var_id(var_key)
+        if normalized == "tmp2m":
+            return types.SimpleNamespace(supported_build_regions=["conus", "na"], frontend={})
+        if normalized == "mlcape":
+            return types.SimpleNamespace(frontend={})
+        return None
+
+
+def test_scheduled_targets_for_cycle_expand_region_targets() -> None:
+    plugin = _FakeRegionPlugin()
+
+    targets = scheduler_module._scheduled_targets_for_cycle(plugin, ["tmp2m", "mlcape"], 12)
+
+    assert targets == [
+        ("conus", "tmp2m", 0),
+        ("na", "tmp2m", 0),
+        ("conus", "mlcape", 0),
+    ]
+
+
 def test_resolve_loop_prewarm_targets_use_default_var_and_default_fh() -> None:
     plugin = _FakeCapabilityPlugin()
 
@@ -244,21 +280,24 @@ def test_process_run_uses_resolved_promotion_fhs(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run, var_id, fh
+        del data_root, model, run, var_id, fh, region
         return False
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
+    ) -> tuple[str, str, int, bool]:
         del model_id, run_dt, data_root, plugin
-        return var_id, fh, False
+        return region, var_id, fh, False
 
     def fake_should_promote(
         data_root: Path,
@@ -294,6 +333,7 @@ def test_process_run_uses_resolved_promotion_fhs(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert seen_promotion_fhs
@@ -318,25 +358,28 @@ def test_process_run_catches_up_consecutive_available_hours(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run
+        del data_root, model, run, region
         return (var_id, fh) in built
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         attempted.append((var_id, fh))
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
-        return var_id, fh, ok
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, ok
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -361,6 +404,7 @@ def test_process_run_catches_up_consecutive_available_hours(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert processed_run_id == run_id
@@ -385,24 +429,27 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run
+        del data_root, model, run, region
         return (var_id, fh) in built
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
-        return var_id, fh, ok
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, ok
 
     publish_promote_snapshots: list[list[int]] = []
     manifest_calls = 0
@@ -452,6 +499,7 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert publish_promote_snapshots == [[0, 1, 2], [0, 1, 2, 3]]
@@ -476,9 +524,18 @@ def test_process_run_logs_frame_timing_for_single_and_bundle(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    built: set[tuple[str, str, int]] = set()
 
     monkeypatch.setenv("CARTOSKY_DERIVE_BUNDLE", "1")
-    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_frame_artifacts_exist",
+        lambda data_root, model, run_id, var_id, fh, *, region=scheduler_module.CANONICAL_COVERAGE: (
+            str(region),
+            str(var_id),
+            int(fh),
+        ) in built,
+    )
     monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
     monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -489,12 +546,12 @@ def test_process_run_logs_frame_timing_for_single_and_bundle(
     monkeypatch.setattr(
         scheduler_module,
         "_build_bundle",
-        lambda **kwargs: [("snowfall_total", 0, True, 111)],
+        lambda **kwargs: built.add((str(kwargs["region"]), "snowfall_total", 0)) or [(kwargs["region"], "snowfall_total", 0, True, 111)],
     )
     monkeypatch.setattr(
         scheduler_module,
         "_build_one",
-        lambda **kwargs: (str(kwargs["var_id"]), int(kwargs["fh"]), True, 222),
+        lambda **kwargs: built.add((str(kwargs["region"]), str(kwargs["var_id"]), int(kwargs["fh"]))) or (str(kwargs["region"]), str(kwargs["var_id"]), int(kwargs["fh"]), True, 222),
     )
 
     with caplog.at_level("INFO"):
@@ -516,10 +573,11 @@ def test_process_run_logs_frame_timing_for_single_and_bundle(
             loop_tier1_quality=86,
             loop_tier1_max_dim=2400,
             loop_tier1_fixed_w=2400,
+            rebuild_existing=False,
         )
 
-    assert "Frame timing: run=20260227_12z model=gfs var=snowfall_total fh000 ok=true mode=bundle elapsed_ms=111" in caplog.text
-    assert "Frame timing: run=20260227_12z model=gfs var=tmp2m fh000 ok=true mode=single elapsed_ms=222" in caplog.text
+    assert "Frame timing: run=20260227_12z model=gfs region=conus var=snowfall_total fh000 ok=true mode=bundle elapsed_ms=111" in caplog.text
+    assert "Frame timing: run=20260227_12z model=gfs region=conus var=tmp2m fh000 ok=true mode=single elapsed_ms=222" in caplog.text
 
 
 def test_process_run_republishes_progress_during_long_catchup(
@@ -539,24 +597,27 @@ def test_process_run_republishes_progress_during_long_catchup(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run
+        del data_root, model, run, region
         return (var_id, fh) in built
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
-        return var_id, fh, ok
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, ok
 
     def fake_should_promote(*args: object, **kwargs: object) -> bool:
         del args, kwargs
@@ -593,6 +654,7 @@ def test_process_run_republishes_progress_during_long_catchup(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert publish_promote_snapshots == [
@@ -826,24 +888,27 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run
+        del data_root, model, run, region
         return (var_id, fh) in built
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
-        return var_id, fh, ok
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, ok
 
     def fake_should_promote(*args: object, **kwargs: object) -> bool:
         del args, kwargs
@@ -875,6 +940,7 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert built == {("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2)}
@@ -895,24 +961,27 @@ def test_process_run_does_not_pregenerate_loop_cache_when_run_is_complete(
         run: str,
         var_id: str,
         fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
     ) -> bool:
-        del data_root, model, run
+        del data_root, model, run, region
         return (var_id, fh) in built
 
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
-        return var_id, fh, ok
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, ok
 
     def fake_should_promote(*args: object, **kwargs: object) -> bool:
         del args, kwargs
@@ -944,13 +1013,14 @@ def test_process_run_does_not_pregenerate_loop_cache_when_run_is_complete(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert built == {("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)}
 
 
 def _write_sidecar(tmp_path: Path, run_id: str, var_id: str, fh: int, *, quality: str, quality_flags: list[str]) -> None:
-    sidecar = tmp_path / "staging" / "hrrr" / run_id / var_id / f"fh{fh:03d}.json"
+    sidecar = tmp_path / "staging" / "hrrr" / run_id / scheduler_module.CANONICAL_COVERAGE / var_id / f"fh{fh:03d}.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(
         scheduler_module.json.dumps(
@@ -1007,13 +1077,14 @@ def test_process_run_requeues_only_slr_fallback_degraded_frames(
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, plugin, region
         attempted.append((var_id, fh))
         _write_sidecar(
             data_root,
@@ -1023,7 +1094,7 @@ def test_process_run_requeues_only_slr_fallback_degraded_frames(
             quality="full",
             quality_flags=[],
         )
-        return var_id, fh, True
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, True
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", lambda *args, **kwargs: True)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -1050,6 +1121,7 @@ def test_process_run_requeues_only_slr_fallback_degraded_frames(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert attempted == [("snowfall_kuchera_total", 1)]
@@ -1076,15 +1148,16 @@ def test_process_run_caps_degraded_rebuild_attempts_at_two(
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         attempted.append((var_id, fh))
-        return var_id, fh, False
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, False
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", lambda *args, **kwargs: True)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -1111,12 +1184,84 @@ def test_process_run_caps_degraded_rebuild_attempts_at_two(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert attempted == [
         ("snowfall_kuchera_total", 1),
         ("snowfall_kuchera_total", 1),
     ]
+
+
+def test_process_run_threads_region_targets_into_builds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dt = datetime(2026, 4, 22, 12, tzinfo=timezone.utc)
+    built: set[tuple[str, str, int]] = set()
+    attempted: list[tuple[str, str, int]] = []
+    existence_checks: list[tuple[str, str, int]] = []
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run
+        existence_checks.append((region, var_id, fh))
+        return (region, var_id, fh) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+        **kwargs: object,
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, kwargs
+        attempted.append((region, var_id, fh))
+        built.add((region, var_id, fh))
+        return region, var_id, fh, True
+
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    processed_run_id, available, total = scheduler_module._process_run(
+        plugin=_FakeRegionPlugin(),
+        model_id="gfs",
+        vars_to_build=["tmp2m"],
+        primary_vars=["tmp2m"],
+        run_dt=run_dt,
+        data_root=tmp_path,
+        workers=1,
+        keep_runs=2,
+        loop_pregenerate_enabled=False,
+        loop_cache_root=tmp_path / "loop-cache",
+        loop_workers=1,
+        loop_tier0_quality=82,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
+        loop_tier1_quality=86,
+        loop_tier1_max_dim=2400,
+        loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
+    )
+
+    assert processed_run_id == scheduler_module._run_id_from_dt(run_dt)
+    assert total == 2
+    assert available == 2
+    assert attempted == [("conus", "tmp2m", 0), ("na", "tmp2m", 0)]
+    assert existence_checks[:2] == [("conus", "tmp2m", 0), ("na", "tmp2m", 0)]
 
 
 def test_process_run_abandons_rebuilds_when_superseded(
@@ -1140,15 +1285,16 @@ def test_process_run_abandons_rebuilds_when_superseded(
     def fake_build_one(
         *,
         model_id: str,
+        region: str,
         var_id: str,
         fh: int,
         run_dt: datetime,
         data_root: Path,
         plugin: object,
-    ) -> tuple[str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+    ) -> tuple[str, str, int, bool]:
+        del model_id, run_dt, data_root, plugin, region
         attempted.append((var_id, fh))
-        return var_id, fh, True
+        return scheduler_module.CANONICAL_COVERAGE, var_id, fh, True
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", lambda *args, **kwargs: True)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
@@ -1175,6 +1321,7 @@ def test_process_run_abandons_rebuilds_when_superseded(
         loop_tier1_quality=86,
         loop_tier1_max_dim=2400,
         loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
     )
 
     assert attempted == []

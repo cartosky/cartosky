@@ -142,6 +142,8 @@ DEFAULT_LOOP_SHARPEN_PERCENT = 35
 DEFAULT_LOOP_SHARPEN_THRESHOLD = 3
 DEFAULT_DERIVE_BUNDLE = False
 
+BuildTarget = tuple[str, str, int]
+
 
 class SchedulerConfigError(RuntimeError):
     pass
@@ -318,6 +320,57 @@ def _resolve_vars_to_schedule(plugin, requested: list[str]) -> list[str]:
         if bool(getattr(spec, "primary", False)) or bool(getattr(spec, "derived", False)):
             resolved.append(normalized)
     return _dedupe_preserve_order(resolved)
+
+
+def _default_build_region(plugin: Any) -> str:
+    capabilities = getattr(plugin, "capabilities", None)
+    configured = str(getattr(capabilities, "canonical_region", "") or "").strip().lower()
+    return configured or CANONICAL_COVERAGE
+
+
+def _build_regions_for_var(plugin: Any, var_id: str) -> list[str]:
+    normalized_var = plugin.normalize_var_id(var_id) if hasattr(plugin, "normalize_var_id") else str(var_id)
+    capability = plugin.get_var_capability(normalized_var) if hasattr(plugin, "get_var_capability") else None
+    configured_regions = getattr(capability, "supported_build_regions", None) if capability is not None else None
+    if configured_regions is None:
+        capabilities = getattr(plugin, "capabilities", None)
+        build_regions_by_var = getattr(capabilities, "build_regions_by_var", None)
+        if isinstance(build_regions_by_var, dict):
+            configured_regions = build_regions_by_var.get(normalized_var)
+
+    if isinstance(configured_regions, str):
+        raw_regions: list[object] = [configured_regions]
+    elif isinstance(configured_regions, (list, tuple, set)):
+        raw_regions = list(configured_regions)
+    else:
+        raw_regions = [_default_build_region(plugin)]
+
+    regions: list[str] = []
+    seen: set[str] = set()
+    for raw_region in raw_regions:
+        region = str(raw_region or "").strip().lower()
+        if not region or region in seen:
+            continue
+        if hasattr(plugin, "get_region") and plugin.get_region(region) is None:
+            logger.warning(
+                "Skipping unsupported build region for model=%s var=%s region=%s",
+                getattr(plugin, "id", "unknown"),
+                normalized_var,
+                region,
+            )
+            continue
+        seen.add(region)
+        regions.append(region)
+
+    if regions:
+        return regions
+
+    default_region = _default_build_region(plugin)
+    if hasattr(plugin, "get_region") and plugin.get_region(default_region) is None:
+        raise SchedulerConfigError(
+            f"Model {getattr(plugin, 'id', 'unknown')!r} does not define default build region {default_region!r}"
+        )
+    return [default_region]
 
 
 def _companion_vars_for_var(plugin: Any, var_id: str) -> list[str]:
@@ -550,12 +603,12 @@ def _runtime_var_id(plugin: Any, var_id: str, ensemble_view: str | None = None) 
     return normalized_var
 
 
-def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: int) -> list[tuple[str, int]]:
-    targets: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
+def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: int) -> list[BuildTarget]:
+    targets: list[BuildTarget] = []
+    seen: set[BuildTarget] = set()
 
-    def _append_target(var_id: str, fh: int) -> None:
-        key = (plugin.normalize_var_id(var_id), int(fh))
+    def _append_target(region: str, var_id: str, fh: int) -> None:
+        key = (str(region).strip().lower(), plugin.normalize_var_id(var_id), int(fh))
         if key in seen:
             return
         seen.add(key)
@@ -567,24 +620,42 @@ def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: i
             if hasattr(plugin, "scheduled_fhs_for_var")
             else [int(fh) for fh in plugin.target_fhs(cycle_hour)]
         )
+        normalized_var = plugin.normalize_var_id(var_id)
         for fh in fhs:
-            normalized_var = plugin.normalize_var_id(var_id)
-            _append_target(normalized_var, int(fh))
+            for region in _build_regions_for_var(plugin, normalized_var):
+                _append_target(region, normalized_var, int(fh))
             for companion_var in _companion_vars_for_var(plugin, normalized_var):
-                _append_target(companion_var, int(fh))
+                for region in _build_regions_for_var(plugin, companion_var):
+                    _append_target(region, companion_var, int(fh))
     return targets
 
 
-def _frame_sidecar_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
+def _frame_sidecar_path(
+    data_root: Path,
+    model: str,
+    run_id: str,
+    var_id: str,
+    fh: int,
+    *,
+    region: str = CANONICAL_COVERAGE,
+) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=CANONICAL_COVERAGE) / f"fh{fh:03d}.json"
+    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=region) / f"fh{fh:03d}.json"
 
 
-def _frame_value_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
+def _frame_value_path(
+    data_root: Path,
+    model: str,
+    run_id: str,
+    var_id: str,
+    fh: int,
+    *,
+    region: str = CANONICAL_COVERAGE,
+) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=CANONICAL_COVERAGE) / f"fh{fh:03d}.val.cog.tif"
+    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=region) / f"fh{fh:03d}.val.cog.tif"
 
 
 def _frame_artifacts_exist(
@@ -593,9 +664,11 @@ def _frame_artifacts_exist(
     run_id: str,
     var_id: str,
     fh: int,
+    *,
+    region: str = CANONICAL_COVERAGE,
 ) -> bool:
-    val = _frame_value_path(data_root, model, run_id, var_id, fh)
-    side = _frame_sidecar_path(data_root, model, run_id, var_id, fh)
+    val = _frame_value_path(data_root, model, run_id, var_id, fh, region=region)
+    side = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=region)
 
     def _safe_exists(path: Path) -> bool:
         try:
@@ -613,8 +686,10 @@ def _sidecar_quality(
     run_id: str,
     var_id: str,
     fh: int,
+    *,
+    region: str = CANONICAL_COVERAGE,
 ) -> tuple[str, list[str]]:
-    sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh)
+    sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=region)
     if not sidecar_path.exists():
         return "full", []
     try:
@@ -639,14 +714,14 @@ def _collect_slr_rebuild_candidates(
     data_root: Path,
     model_id: str,
     run_id: str,
-    targets: list[tuple[str, int]],
-    attempts: dict[tuple[str, str, int], int],
+    targets: list[BuildTarget],
+    attempts: dict[tuple[str, str, str, int], int],
     max_attempts: int,
-) -> list[tuple[str, int]]:
-    seen: set[tuple[str, int]] = set()
-    candidates: list[tuple[str, int]] = []
-    for var_id, fh in targets:
-        key = (run_id, str(var_id), int(fh))
+) -> list[BuildTarget]:
+    seen: set[BuildTarget] = set()
+    candidates: list[BuildTarget] = []
+    for region, var_id, fh in targets:
+        key = (run_id, str(region), str(var_id), int(fh))
         if int(attempts.get(key, 0)) >= int(max_attempts):
             continue
         quality, quality_flags = _sidecar_quality(
@@ -655,12 +730,13 @@ def _collect_slr_rebuild_candidates(
             run_id,
             str(var_id),
             int(fh),
+            region=str(region),
         )
         if quality != "degraded":
             continue
         if "slr_fallback_10to1" not in quality_flags:
             continue
-        candidate = (str(var_id), int(fh))
+        candidate = (str(region), str(var_id), int(fh))
         if candidate in seen:
             continue
         seen.add(candidate)
@@ -815,6 +891,7 @@ def _run_is_superseded(*, plugin: Any, run_dt: datetime) -> bool:
 def _build_one(
     *,
     model_id: str,
+    region: str,
     var_id: str,
     fh: int,
     run_dt: datetime,
@@ -824,13 +901,13 @@ def _build_one(
     readiness_cache: dict[str, bool] | None = None,
     log_fetch_cache_stats: bool = True,
     derive_component_warp_cache: bool = False,
-) -> tuple[str, int, bool, int]:
+) -> tuple[str, str, int, bool, int]:
     started_at = time.perf_counter()
     ensemble_view = _var_default_ensemble_view(plugin, var_id)
     runtime_var_id = _runtime_var_id(plugin, var_id, ensemble_view)
     result = build_frame(
         model=model_id,
-        region=CANONICAL_COVERAGE,
+        region=region,
         var_id=runtime_var_id,
         fh=fh,
         run_date=run_dt,
@@ -843,7 +920,7 @@ def _build_one(
         log_fetch_cache_stats=log_fetch_cache_stats,
         derive_component_warp_cache=derive_component_warp_cache,
     )
-    return var_id, fh, result is not None, int((time.perf_counter() - started_at) * 1000)
+    return region, var_id, fh, result is not None, int((time.perf_counter() - started_at) * 1000)
 
 
 def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
@@ -869,12 +946,13 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
 def _build_bundle(
     *,
     model_id: str,
+    region: str,
     var_ids: list[str],
     fh: int,
     run_dt: datetime,
     data_root: Path,
     plugin: Any,
-) -> list[tuple[str, int, bool, int]]:
+) -> list[tuple[str, str, int, bool, int]]:
     normalized_vars: list[tuple[str, str, str | None]] = []
     seen: set[str] = set()
     for var_id in var_ids:
@@ -891,7 +969,7 @@ def _build_bundle(
 
     results, timings_ms = build_frame_bundle(
         model=model_id,
-        region=CANONICAL_COVERAGE,
+        region=region,
         var_keys=[runtime_var_id for _, runtime_var_id, _ in normalized_vars],
         fh=fh,
         run_date=run_dt,
@@ -901,27 +979,29 @@ def _build_bundle(
         include_timings=True,
     )
     return [
-        (var_key, fh, results.get(runtime_var_id) is not None, int(timings_ms.get(runtime_var_id, 0)))
+        (region, var_key, fh, results.get(runtime_var_id) is not None, int(timings_ms.get(runtime_var_id, 0)))
         for var_key, runtime_var_id, _ensemble_view in normalized_vars
     ]
 
 
-def _coerce_build_outcome(outcome: tuple[Any, ...]) -> tuple[str, int, bool, int | None]:
-    if len(outcome) < 3:
+def _coerce_build_outcome(outcome: tuple[Any, ...]) -> tuple[str, str, int, bool, int | None]:
+    if len(outcome) < 4:
         raise ValueError(f"Invalid build outcome: {outcome!r}")
-    var_id = str(outcome[0])
-    fh = int(outcome[1])
-    ok = bool(outcome[2])
+    region = str(outcome[0]).strip().lower()
+    var_id = str(outcome[1])
+    fh = int(outcome[2])
+    ok = bool(outcome[3])
     elapsed_ms: int | None = None
-    if len(outcome) >= 4 and outcome[3] is not None:
-        elapsed_ms = int(outcome[3])
-    return var_id, fh, ok, elapsed_ms
+    if len(outcome) >= 5 and outcome[4] is not None:
+        elapsed_ms = int(outcome[4])
+    return region, var_id, fh, ok, elapsed_ms
 
 
 def _log_frame_timing(
     *,
     run_id: str,
     model_id: str,
+    region: str,
     var_id: str,
     fh: int,
     ok: bool,
@@ -929,9 +1009,10 @@ def _log_frame_timing(
     mode: str,
 ) -> None:
     logger.info(
-        "Frame timing: run=%s model=%s var=%s fh%03d ok=%s mode=%s elapsed_ms=%s",
+        "Frame timing: run=%s model=%s region=%s var=%s fh%03d ok=%s mode=%s elapsed_ms=%s",
         run_id,
         model_id,
+        region,
         var_id,
         fh,
         "true" if ok else "false",
@@ -983,12 +1064,15 @@ def _should_promote(
     primary_vars: list[str],
     promotion_fhs: Iterable[int],
 ) -> bool:
+    plugin = MODEL_REGISTRY.get(model)
     for var_id in primary_vars:
-        for fh in promotion_fhs:
-            val = _frame_value_path(data_root, model, run_id, var_id, int(fh))
-            side = _frame_sidecar_path(data_root, model, run_id, var_id, int(fh))
-            if val.exists() and side.exists():
-                return True
+        regions = _build_regions_for_var(plugin, var_id) if plugin is not None else [CANONICAL_COVERAGE]
+        for region in regions:
+            for fh in promotion_fhs:
+                val = _frame_value_path(data_root, model, run_id, var_id, int(fh), region=region)
+                side = _frame_sidecar_path(data_root, model, run_id, var_id, int(fh), region=region)
+                if val.exists() and side.exists():
+                    return True
     return False
 
 
@@ -1195,11 +1279,11 @@ def _available_target_count(
     data_root: Path,
     model: str,
     run_id: str,
-    targets: list[tuple[str, int]],
+    targets: list[BuildTarget],
 ) -> int:
     available = 0
-    for var_id, fh in targets:
-        if _frame_artifacts_exist(data_root, model, run_id, var_id, fh):
+    for region, var_id, fh in targets:
+        if _frame_artifacts_exist(data_root, model, run_id, var_id, fh, region=region):
             available += 1
     return available
 
@@ -1209,7 +1293,7 @@ def _write_run_manifest(
     data_root: Path,
     model: str,
     run_id: str,
-    targets: list[tuple[str, int]],
+    targets: list[BuildTarget],
     plugin: Any | None = None,
 ) -> None:
     run_dt = _parse_run_id_datetime(run_id)
@@ -1217,8 +1301,14 @@ def _write_run_manifest(
         raise SchedulerConfigError(f"Invalid run id for manifest: {run_id}")
 
     expected_by_var: dict[str, list[int]] = {}
-    for var_id, fh in targets:
-        expected_by_var.setdefault(var_id, []).append(int(fh))
+    for target in targets:
+        if len(target) == 3:
+            _region, var_id, fh = target
+        elif len(target) == 2:
+            var_id, fh = target
+        else:
+            raise SchedulerConfigError(f"Invalid manifest target: {target!r}")
+        expected_by_var.setdefault(str(var_id), []).append(int(fh))
 
     manifest_path = data_root / "manifests" / model / f"{run_id}.json"
     variables: dict[str, dict] = {}
@@ -1424,6 +1514,8 @@ def _process_run(
     run_id = _run_id_from_dt(run_dt)
     cycle_hour = run_dt.hour
     targets = _scheduled_targets_for_cycle(plugin, vars_to_build, cycle_hour)
+    target_regions = sorted({region for region, _var_id, _fh in targets})
+    regions_label = ",".join(target_regions) if target_regions else CANONICAL_COVERAGE
     promotion_fhs = _resolve_promotion_fhs(plugin, primary_vars, cycle_hour)
     logger.info(
         "Promotion gate: run=%s model=%s primary=%s fhs=%s",
@@ -1435,13 +1527,13 @@ def _process_run(
 
     # Catch up within a single poll cycle: for each variable, keep advancing
     # forecast hours until we hit the first unavailable/failed hour.
-    fhs_by_var: dict[str, list[int]] = {}
-    for var_id, fh in targets:
-        fhs_by_var.setdefault(var_id, []).append(int(fh))
+    fhs_by_target: dict[tuple[str, str], list[int]] = {}
+    for region, var_id, fh in targets:
+        fhs_by_target.setdefault((region, var_id), []).append(int(fh))
 
     total = len(targets)
     built_ok = 0
-    blocked_vars: set[str] = set()
+    blocked_targets: set[tuple[str, str]] = set()
     derive_bundle_enabled = _bool_from_env(ENV_DERIVE_BUNDLE, DEFAULT_DERIVE_BUNDLE)
     progress_publish_min_new_frames = _int_from_env(
         ENV_PROGRESS_PUBLISH_MIN_NEW_FRAMES,
@@ -1457,7 +1549,7 @@ def _process_run(
     )
     published_once = False
     built_ok_at_last_publish = -1
-    rebuild_attempts: dict[tuple[str, str, int], int] = {}
+    rebuild_attempts: dict[tuple[str, str, str, int], int] = {}
     rebuild_max_attempts = 2
     rebuild_existing_pending = bool(rebuild_existing)
 
@@ -1507,22 +1599,25 @@ def _process_run(
                 "Run=%s model=%s coverage=%s targets=%d catchup_round=%d pending=%d blocked=%d rebuild_round=%s rebuild_existing=%s",
                 run_id,
                 model_id,
-                CANONICAL_COVERAGE,
+                regions_label,
                 total,
                 rounds,
                 len(round_work),
-                len(blocked_vars),
+                len(blocked_targets),
                 False,
                 True,
             )
 
             round_successes = 0
             if workers == 1:
-                shared_fetch_ctx = FetchContext(coverage=CANONICAL_COVERAGE)
-                shared_readiness_cache: dict[str, bool] = {}
-                for var_id, fh in round_work:
+                shared_fetch_ctx_by_region: dict[str, FetchContext] = {}
+                shared_readiness_cache_by_region: dict[str, dict[str, bool]] = {}
+                for region, var_id, fh in round_work:
+                    shared_fetch_ctx = shared_fetch_ctx_by_region.setdefault(region, FetchContext(coverage=region))
+                    shared_readiness_cache = shared_readiness_cache_by_region.setdefault(region, {})
                     result = _build_one(
                         model_id=model_id,
+                        region=region,
                         var_id=var_id,
                         fh=fh,
                         run_dt=run_dt,
@@ -1533,10 +1628,11 @@ def _process_run(
                         log_fetch_cache_stats=False,
                         derive_component_warp_cache=True,
                     )
-                    var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(result))
+                    region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(result))
                     _log_frame_timing(
                         run_id=run_id,
                         model_id=model_id,
+                        region=region,
                         var_id=str(var_id),
                         fh=int(fh),
                         ok=ok,
@@ -1546,37 +1642,41 @@ def _process_run(
                     if ok:
                         built_ok += 1
                         round_successes += 1
-                        logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                        logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
                     else:
-                        blocked_vars.add(var_id)
-                        logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
-                logger.info(
-                    "rebuild_existing shared_fetch_cache hits=%d misses=%d warp_hits=%d warp_misses=%d",
-                    int(shared_fetch_ctx.stats.get("hits", 0)),
-                    int(shared_fetch_ctx.stats.get("misses", 0)),
-                    int(shared_fetch_ctx.warp_stats.get("hits", 0)),
-                    int(shared_fetch_ctx.warp_stats.get("misses", 0)),
-                )
+                        blocked_targets.add((region, var_id))
+                        logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
+                for region, shared_fetch_ctx in sorted(shared_fetch_ctx_by_region.items()):
+                    logger.info(
+                        "rebuild_existing shared_fetch_cache region=%s hits=%d misses=%d warp_hits=%d warp_misses=%d",
+                        region,
+                        int(shared_fetch_ctx.stats.get("hits", 0)),
+                        int(shared_fetch_ctx.stats.get("misses", 0)),
+                        int(shared_fetch_ctx.warp_stats.get("hits", 0)),
+                        int(shared_fetch_ctx.warp_stats.get("misses", 0)),
+                    )
             else:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = [
                         pool.submit(
                             _build_one,
                             model_id=model_id,
+                            region=region,
                             var_id=var_id,
                             fh=fh,
                             run_dt=run_dt,
                             data_root=data_root,
                             plugin=plugin,
                         )
-                        for var_id, fh in round_work
+                        for region, var_id, fh in round_work
                     ]
 
                     for future in concurrent.futures.as_completed(futures):
-                        var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
+                        region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
                         _log_frame_timing(
                             run_id=run_id,
                             model_id=model_id,
+                            region=region,
                             var_id=str(var_id),
                             fh=int(fh),
                             ok=ok,
@@ -1586,10 +1686,10 @@ def _process_run(
                         if ok:
                             built_ok += 1
                             round_successes += 1
-                            logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                            logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
-                            blocked_vars.add(var_id)
-                            logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
+                            blocked_targets.add((region, var_id))
+                            logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
             if not published_once and _should_promote(data_root, model_id, run_id, primary_vars, promotion_fhs):
                 _publish_run_snapshot(reason="rebuild_existing", pregenerate_loops=False)
@@ -1597,18 +1697,18 @@ def _process_run(
                 built_ok_at_last_publish = built_ok
             continue
 
-        next_missing: list[tuple[str, int]] = []
-        for var_id, fhs in fhs_by_var.items():
-            if var_id in blocked_vars:
+        next_missing: list[BuildTarget] = []
+        for (region, var_id), fhs in fhs_by_target.items():
+            if (region, var_id) in blocked_targets:
                 continue
             for fh in sorted(set(fhs)):
-                if _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh):
+                if _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region):
                     continue
-                next_missing.append((var_id, fh))
+                next_missing.append((region, var_id, fh))
                 break
 
         rebuild_round = False
-        round_work: list[tuple[str, int]]
+        round_work: list[BuildTarget]
         if next_missing:
             round_work = list(next_missing)
         else:
@@ -1630,8 +1730,8 @@ def _process_run(
                 )
                 break
 
-            ready_rebuilds: list[tuple[str, int]] = []
-            for var_id, fh in rebuild_candidates:
+            ready_rebuilds: list[BuildTarget] = []
+            for region, var_id, fh in rebuild_candidates:
                 if not _kuchera_rebuild_profile_ready(
                     plugin=plugin,
                     model_id=model_id,
@@ -1640,9 +1740,9 @@ def _process_run(
                     fh=fh,
                 ):
                     continue
-                key = (run_id, str(var_id), int(fh))
+                key = (run_id, str(region), str(var_id), int(fh))
                 rebuild_attempts[key] = int(rebuild_attempts.get(key, 0)) + 1
-                ready_rebuilds.append((var_id, int(fh)))
+                ready_rebuilds.append((region, var_id, int(fh)))
 
             if not ready_rebuilds:
                 break
@@ -1654,11 +1754,11 @@ def _process_run(
             "Run=%s model=%s coverage=%s targets=%d catchup_round=%d pending=%d blocked=%d rebuild_round=%s",
             run_id,
             model_id,
-            CANONICAL_COVERAGE,
+            regions_label,
             total,
             rounds,
             len(round_work),
-            len(blocked_vars),
+            len(blocked_targets),
             rebuild_round,
         )
 
@@ -1666,19 +1766,20 @@ def _process_run(
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures: list[concurrent.futures.Future] = []
             if derive_bundle_enabled and not rebuild_round:
-                bundle_by_fh: dict[int, list[str]] = {}
-                single_jobs: list[tuple[str, int]] = []
-                for var_id, fh in round_work:
+                bundle_by_region_fh: dict[tuple[str, int], list[str]] = {}
+                single_jobs: list[BuildTarget] = []
+                for region, var_id, fh in round_work:
                     if _is_derive_bundle_candidate(plugin, var_id):
-                        bundle_by_fh.setdefault(int(fh), []).append(var_id)
+                        bundle_by_region_fh.setdefault((region, int(fh)), []).append(var_id)
                         continue
-                    single_jobs.append((var_id, int(fh)))
+                    single_jobs.append((region, var_id, int(fh)))
 
-                for fh, var_ids in sorted(bundle_by_fh.items(), key=lambda item: item[0]):
+                for (region, fh), var_ids in sorted(bundle_by_region_fh.items(), key=lambda item: item[0]):
                     futures.append(
                         pool.submit(
                             _build_bundle,
                             model_id=model_id,
+                            region=region,
                             var_ids=var_ids,
                             fh=fh,
                             run_dt=run_dt,
@@ -1687,11 +1788,12 @@ def _process_run(
                         )
                     )
 
-                for var_id, fh in single_jobs:
+                for region, var_id, fh in single_jobs:
                     futures.append(
                         pool.submit(
                             _build_one,
                             model_id=model_id,
+                            region=region,
                             var_id=var_id,
                             fh=fh,
                             run_dt=run_dt,
@@ -1704,13 +1806,14 @@ def _process_run(
                     pool.submit(
                         _build_one,
                         model_id=model_id,
+                        region=region,
                         var_id=var_id,
                         fh=fh,
                         run_dt=run_dt,
                         data_root=data_root,
                         plugin=plugin,
                     )
-                    for var_id, fh in round_work
+                    for region, var_id, fh in round_work
                 ]
 
             for future in concurrent.futures.as_completed(futures):
@@ -1722,12 +1825,13 @@ def _process_run(
                     round_results = list(future_result)
 
                 for outcome in round_results:
-                    var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(outcome))
-                    rebuild_key = (run_id, str(var_id), int(fh))
+                    region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(outcome))
+                    rebuild_key = (run_id, str(region), str(var_id), int(fh))
                     is_rebuild_job = rebuild_round and rebuild_key in rebuild_attempts
                     _log_frame_timing(
                         run_id=run_id,
                         model_id=model_id,
+                        region=region,
                         var_id=str(var_id),
                         fh=int(fh),
                         ok=ok,
@@ -1744,10 +1848,12 @@ def _process_run(
                                 run_id,
                                 str(var_id),
                                 int(fh),
+                                region=region,
                             )
                             logger.info(
-                                "Rebuild success: %s %s fh%03d quality=%s flags=%s attempt=%d/%d",
+                                "Rebuild success: %s %s/%s fh%03d quality=%s flags=%s attempt=%d/%d",
                                 run_id,
+                                region,
                                 var_id,
                                 fh,
                                 quality,
@@ -1756,27 +1862,28 @@ def _process_run(
                                 rebuild_max_attempts,
                             )
                         else:
-                            logger.info("Build success: %s %s fh%03d", run_id, var_id, fh)
+                            logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
                     else:
                         if is_rebuild_job:
                             logger.warning(
-                                "Rebuild skipped/failed: %s %s fh%03d attempt=%d/%d",
+                                "Rebuild skipped/failed: %s %s/%s fh%03d attempt=%d/%d",
                                 run_id,
+                                region,
                                 var_id,
                                 fh,
                                 int(rebuild_attempts.get(rebuild_key, 0)),
                                 rebuild_max_attempts,
                             )
                         else:
-                            blocked_vars.add(var_id)
-                            logger.warning("Build skipped/failed: %s %s fh%03d", run_id, var_id, fh)
+                            blocked_targets.add((region, var_id))
+                            logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
         if round_successes == 0 and not rebuild_round:
             logger.info(
                 "Catch-up paused: run=%s no progress in round=%d; blocked_vars=%s",
                 run_id,
                 rounds,
-                sorted(blocked_vars),
+                sorted(f"{region}/{var_id}" for region, var_id in blocked_targets),
             )
             break
 
@@ -1837,9 +1944,10 @@ def run_scheduler(
     rebuild_existing: bool,
 ) -> int:
     plugin = _resolve_model(model)
-    if plugin.get_region(CANONICAL_COVERAGE) is None:
+    default_region = _default_build_region(plugin)
+    if plugin.get_region(default_region) is None:
         raise SchedulerConfigError(
-            f"Model {model!r} does not define canonical coverage {CANONICAL_COVERAGE!r}"
+            f"Model {model!r} does not define default build region {default_region!r}"
         )
 
     normalized_vars = _resolve_vars_to_schedule(plugin, vars_to_build)
@@ -1876,9 +1984,9 @@ def run_scheduler(
         workers = 1
 
     logger.info(
-        "Scheduler starting model=%s coverage=%s vars=%s primary=%s probe_var=%s data_root=%s workers=%d poll_incomplete=%ds poll_complete=%ds rebuild_existing=%s",
+        "Scheduler starting model=%s default_region=%s vars=%s primary=%s probe_var=%s data_root=%s workers=%d poll_incomplete=%ds poll_complete=%ds rebuild_existing=%s",
         model,
-        CANONICAL_COVERAGE,
+        default_region,
         normalized_vars,
         resolved_primary,
         resolved_probe_var or "none",
