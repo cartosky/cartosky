@@ -407,6 +407,9 @@ export function TwfShareModal({
     const customForum = forums.find((forum) => forum.id === selectedForumId);
     return customForum?.path ?? customForum?.name ?? `Forum ${selectedForumId}`;
   }, [forums, selectedForumId, showOtherForums]);
+  const showTopicsLoadingState =
+    topicsLoading ||
+    (open && selectedForumId > 0 && topics.length === 0 && (!statusResolved || statusLoading));
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
 
@@ -1340,7 +1343,7 @@ export function TwfShareModal({
                           </div>
                         ) : null}
                       </div>
-                    ) : topicsLoading ? (
+                    ) : showTopicsLoadingState ? (
                       <div className="flex items-center gap-1.5 text-xs text-white/50">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Loading topics...
