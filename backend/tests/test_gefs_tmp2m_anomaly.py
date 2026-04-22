@@ -20,6 +20,7 @@ from app.models.gefs import GEFS_MODEL
 from app.services import climatology
 from app.services.builder.cog_writer import compute_transform_and_shape
 from app.services.builder.derive import FetchContext, derive_variable
+from app.services.builder.pipeline import _resolve_derive_target_grid
 
 
 def _write_baseline(path: Path, data: np.ndarray, transform) -> None:
@@ -40,7 +41,11 @@ def _write_baseline(path: Path, data: np.ndarray, transform) -> None:
 
 
 def test_load_climatology_baseline_validates_expected_grid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(climatology, "get_grid_params", lambda model, region: ((0.0, 0.0, 20.0, 20.0), 10.0))
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
     climatology.configure_data_root(tmp_path)
     valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
     transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
@@ -48,15 +53,17 @@ def test_load_climatology_baseline_validates_expected_grid(monkeypatch: pytest.M
     assert (height, width) == data.shape
     baseline_path = climatology.climatology_baseline_path(
         version="v1",
-        model_family="gefs",
+        baseline_source="era5",
         field="tmp2m",
+        region="conus",
+        reference_period="1991-2020",
         valid_time=valid_time,
     )
     _write_baseline(baseline_path, data, transform)
 
     loaded, crs, loaded_transform, meta = climatology.load_climatology_baseline(
         version="v1",
-        model_family="gefs",
+        baseline_source="era5",
         field="tmp2m",
         valid_time=valid_time,
         region="conus",
@@ -67,15 +74,59 @@ def test_load_climatology_baseline_validates_expected_grid(monkeypatch: pytest.M
     assert crs.to_epsg() == 3857
     assert loaded_transform == transform
     assert meta["baseline_version"] == "v1"
-    assert meta["baseline_model_family"] == "gefs"
+    assert meta["baseline_source"] == "era5"
+    assert meta["baseline_region"] == "conus"
     assert meta["reference_period"] == "1991-2020"
+
+
+def test_shared_baseline_path_is_reused_across_model_families(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
+    climatology.configure_data_root(tmp_path)
+    valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
+    transform, _, _ = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
+    shared_path = climatology.climatology_baseline_path(
+        version="v1",
+        baseline_source="era5",
+        field="tmp2m",
+        region="na",
+        reference_period="1991-2020",
+        valid_time=valid_time,
+    )
+    _write_baseline(shared_path, np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32), transform)
+
+    for consumer_model_family in ("gefs", "eps"):
+        loaded, _, _, meta = climatology.load_climatology_baseline(
+            version="v1",
+            baseline_source="era5",
+            field="tmp2m",
+            valid_time=valid_time,
+            region="na",
+            reference_period="1991-2020",
+            legacy_model_family_fallback=consumer_model_family,
+        )
+        assert np.array_equal(loaded, np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+        assert meta["baseline_source"] == "era5"
+        assert meta["baseline_legacy_fallback"] is False
+
+    assert list((tmp_path / "climatology").rglob("*.tif")) == [shared_path]
 
 
 def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(climatology, "get_grid_params", lambda model, region: ((0.0, 0.0, 20.0, 20.0), 10.0))
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
     climatology.configure_data_root(tmp_path)
     valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
     transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
@@ -85,8 +136,10 @@ def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     _write_baseline(
         climatology.climatology_baseline_path(
             version="v1",
-            model_family="gefs",
+            baseline_source="era5",
             field="tmp2m",
+            region="na",
+            reference_period="1991-2020",
             valid_time=valid_time,
         ),
         baseline_data_f,
@@ -106,6 +159,7 @@ def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     var_capability = GEFS_MODEL.get_var_capability("tmp2m_anom")
     assert var_spec is not None
     assert var_capability is not None
+    assert var_spec.selectors.hints["baseline_region"] == "na"
 
     anomaly, crs, anomaly_transform = derive_variable(
         model_id="gefs",
@@ -117,7 +171,7 @@ def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
         var_capability=var_capability,
         model_plugin=GEFS_MODEL,
         fetch_ctx=ctx,
-        derive_component_target_grid={"region": "conus", "id": "gefs:conus:10.0m"},
+        derive_component_target_grid={"region": "na", "id": "gefs:na:10.0m"},
         derive_component_resampling="bilinear",
     )
 
@@ -133,7 +187,8 @@ def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     assert sidecar_metadata["anomaly_kind"] == "departure"
     assert sidecar_metadata["baseline_kind"] == "climatology"
     assert sidecar_metadata["baseline_version"] == "v1"
-    assert sidecar_metadata["baseline_model_family"] == "gefs"
+    assert sidecar_metadata["baseline_source"] == "era5"
+    assert sidecar_metadata["baseline_region"] == "na"
     assert sidecar_metadata["reference_period"] == "1991-2020"
 
 
@@ -141,7 +196,11 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(climatology, "get_grid_params", lambda model, region: ((0.0, 0.0, 20.0, 20.0), 10.0))
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
     climatology.configure_data_root(tmp_path)
     valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
     transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
@@ -151,8 +210,10 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     _write_baseline(
         climatology.climatology_baseline_path(
             version="v1",
-            model_family="gefs",
+            baseline_source="era5",
             field="hgt500",
+            region="na",
+            reference_period="1991-2020",
             valid_time=valid_time,
         ),
         baseline_data_dam,
@@ -173,6 +234,7 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     var_capability = GEFS_MODEL.get_var_capability("hgt500_anom")
     assert var_spec is not None
     assert var_capability is not None
+    assert var_spec.selectors.hints["baseline_region"] == "na"
     assert var_spec.selectors.hints["contour_component"] == "hgt500__mean"
     assert var_spec.selectors.hints["contour_conversion"] == "m_to_dam"
 
@@ -186,7 +248,7 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
         var_capability=var_capability,
         model_plugin=GEFS_MODEL,
         fetch_ctx=ctx,
-        derive_component_target_grid={"region": "conus", "id": "gefs:conus:10.0m"},
+        derive_component_target_grid={"region": "na", "id": "gefs:na:10.0m"},
         derive_component_resampling="bilinear",
     )
 
@@ -205,3 +267,16 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     assert sidecar_metadata["baseline_kind"] == "climatology"
     assert sidecar_metadata["baseline_version"] == "v1"
     assert sidecar_metadata["baseline_field"] == "hgt500"
+    assert sidecar_metadata["baseline_region"] == "na"
+
+
+def test_resolve_derive_target_grid_uses_baseline_region_for_anomaly_cache() -> None:
+    target_grid, matches_output = _resolve_derive_target_grid(
+        model="gefs",
+        region="conus",
+        hints={"baseline_source": "era5", "baseline_region": "na"},
+        derive_component_warp_cache=True,
+    )
+
+    assert target_grid == {"region": "na", "id": "climatology:era5:na:25000.0m"}
+    assert matches_output is False

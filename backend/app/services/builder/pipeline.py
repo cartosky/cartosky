@@ -51,6 +51,7 @@ from app.services.builder.fetch import (
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
+from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_params, normalize_baseline_source
 from app.services.grid import (
     grid_frame_meta_path_for_run_root,
     grid_frame_path_for_run_root,
@@ -907,6 +908,32 @@ def _ensure_products_ready(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_derive_target_grid(
+    *,
+    model: str,
+    region: str,
+    hints: dict[str, Any],
+    derive_component_warp_cache: bool,
+) -> tuple[dict[str, str] | None, bool]:
+    if not derive_component_warp_cache:
+        return None, False
+
+    output_region = str(region).strip().lower()
+    derive_region = str(hints.get("baseline_region") or output_region).strip().lower() or output_region
+    baseline_source = normalize_baseline_source(
+        str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip() or DEFAULT_BASELINE_SOURCE
+    )
+    _, derive_grid_m = get_baseline_grid_params(
+        baseline_source=baseline_source,
+        region=derive_region,
+    )
+    _, output_grid_m = get_grid_params(model, derive_region)
+    return {
+        "region": derive_region,
+        "id": f"climatology:{baseline_source}:{derive_region}:{derive_grid_m:.1f}m",
+    }, derive_region == output_region and abs(float(derive_grid_m) - float(output_grid_m)) <= 1.0e-6
+
+
 def build_frame(
     *,
     model: str,
@@ -1057,6 +1084,12 @@ def build_frame(
         if getattr(var_spec_model, "derived", False):
             # --- Step 1/2: Derive from component GRIB fields ---
             logger.info("Step 1/6: Deriving variable components")
+            derive_target_grid, derive_grid_matches_output = _resolve_derive_target_grid(
+                model=model,
+                region=region,
+                hints=hints,
+                derive_component_warp_cache=derive_component_warp_cache,
+            )
             converted_data, src_crs, src_transform = derive_variable(
                 model_id=model,
                 var_key=var_key,
@@ -1067,14 +1100,7 @@ def build_frame(
                 var_capability=var_capability,
                 model_plugin=resolved_plugin,
                 fetch_ctx=local_fetch_ctx,
-                derive_component_target_grid=(
-                    {
-                        "region": region,
-                        "id": f"{model}:{region}:{get_grid_params(model, region)[1]:.1f}m",
-                    }
-                    if derive_component_warp_cache
-                    else None
-                ),
+                derive_component_target_grid=derive_target_grid,
                 derive_component_resampling=warp_resampling if derive_component_warp_cache else None,
             )
             quality_meta = local_fetch_ctx.derive_quality.get((var_key, int(fh)), {})
@@ -1158,7 +1184,7 @@ def build_frame(
             )
 
         # --- Step 3: Warp to target grid ---
-        if getattr(var_spec_model, "derived", False) and derive_component_warp_cache:
+        if getattr(var_spec_model, "derived", False) and derive_component_warp_cache and derive_grid_matches_output:
             logger.info("Step 3/6: Warping to target grid (reused cached component warps)")
             warped_data = converted_data.astype(np.float32, copy=False)
             dst_transform = src_transform

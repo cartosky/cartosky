@@ -43,18 +43,17 @@ def test_build_climatology_assets_writes_tmp2m_baseline(monkeypatch, tmp_path: P
     _write_source(source_root / "1991010100_tmp2m.tif", np.array([[0.0, 10.0], [20.0, 30.0]], dtype=np.float32))
     _write_source(source_root / "1992010100_tmp2m.tif", np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32))
 
-    monkeypatch.setattr(build_script, "get_grid_params", lambda model, region: ((0.0, 0.0, 20.0, 20.0), 10.0))
     monkeypatch.setattr(
         build_script,
-        "warp_to_target_grid",
-        lambda data, src_crs, src_transform, **kwargs: (data.astype(np.float32, copy=False), from_origin(0.0, 20.0, 10.0, 10.0)),
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
     )
 
     files_written, missing_buckets = build_script.build_climatology_assets(
         source_root=source_root,
         data_root=data_root,
         version="v1",
-        model_family="gefs",
+        baseline_source="era5",
         field="tmp2m",
         region="conus",
         reference_period="1991-2020",
@@ -71,8 +70,10 @@ def test_build_climatology_assets_writes_tmp2m_baseline(monkeypatch, tmp_path: P
 
     baseline_path = climatology.climatology_baseline_path(
         version="v1",
-        model_family="gefs",
+        baseline_source="era5",
         field="tmp2m",
+        region="conus",
+        reference_period="1991-2020",
         valid_time=build_script.datetime(2026, 1, 1, 0, tzinfo=build_script.timezone.utc),
     )
     assert baseline_path.is_file()

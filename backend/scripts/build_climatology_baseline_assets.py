@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -18,7 +20,12 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params, warp_to_target_grid
+from app.services.builder.cog_writer import compute_transform_and_shape
+from app.services.climatology import (
+    climatology_baseline_root,
+    get_baseline_grid_params,
+    normalize_baseline_source,
+)
 
 TIMESTAMP_RE = re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(?!\d)")
 SUPPORTED_HOURS = (0, 6, 12, 18)
@@ -97,7 +104,7 @@ def _convert_values(values: np.ndarray, *, field: str, units_in: str) -> np.ndar
 def _load_and_warp_source(
     source: SourceRaster,
     *,
-    model_family: str,
+    baseline_source: str,
     region: str,
     field: str,
     units_in: str,
@@ -113,13 +120,20 @@ def _load_and_warp_source(
         raise ValueError(f"Source raster missing CRS: {source.path}")
 
     converted = _convert_values(values, field=field, units_in=units_in)
-    warped, _ = warp_to_target_grid(
-        converted,
-        src_crs,
-        src_transform,
-        model=model_family,
+    target_bbox, target_grid_m = get_baseline_grid_params(
+        baseline_source=baseline_source,
         region=region,
-        resampling=resampling,
+    )
+    dst_transform, dst_h, dst_w = compute_transform_and_shape(target_bbox, target_grid_m)
+    warped = np.full((dst_h, dst_w), np.nan, dtype=np.float32)
+    reproject(
+        source=converted.astype(np.float32, copy=False),
+        destination=warped,
+        src_transform=src_transform,
+        src_crs=src_crs,
+        dst_transform=dst_transform,
+        dst_crs=rasterio.crs.CRS.from_epsg(3857),
+        resampling=Resampling[resampling],
         src_nodata=src_nodata,
         dst_nodata=float("nan"),
     )
@@ -129,7 +143,7 @@ def _load_and_warp_source(
 def _bucket_mean(
     bucket_sources: list[SourceRaster],
     *,
-    model_family: str,
+    baseline_source: str,
     region: str,
     field: str,
     units_in: str,
@@ -141,7 +155,7 @@ def _bucket_mean(
     for source in bucket_sources:
         warped = _load_and_warp_source(
             source,
-            model_family=model_family,
+            baseline_source=baseline_source,
             region=region,
             field=field,
             units_in=units_in,
@@ -232,7 +246,7 @@ def build_climatology_assets(
     source_root: Path,
     data_root: Path,
     version: str,
-    model_family: str,
+    baseline_source: str,
     field: str,
     region: str,
     reference_period: str,
@@ -243,16 +257,28 @@ def build_climatology_assets(
     end_year: int | None,
     require_complete: bool,
 ) -> tuple[int, int]:
-    model_key = str(model_family).strip().lower()
+    source_key = normalize_baseline_source(baseline_source)
     field_key = str(field).strip().lower()
+    region_key = str(region).strip().lower()
+    reference_period_key = str(reference_period).strip()
     buckets = _scan_source_rasters(source_root, start_year=start_year, end_year=end_year)
     if not buckets:
         raise ValueError(f"No source rasters found under {source_root}")
 
-    bbox, grid_m = get_grid_params(model_key, region)
+    bbox, grid_m = get_baseline_grid_params(
+        baseline_source=source_key,
+        region=region_key,
+    )
     transform, height, width = compute_transform_and_shape(bbox, grid_m)
     expected_shape = (height, width)
-    output_root = data_root / "climatology" / str(version).strip() / model_key / "baseline" / field_key
+    output_root = climatology_baseline_root(
+        data_root=data_root,
+        version=version,
+        baseline_source=source_key,
+        field=field_key,
+        region=region_key,
+        reference_period=reference_period_key,
+    )
 
     files_written = 0
     missing_buckets: list[str] = []
@@ -267,8 +293,8 @@ def build_climatology_assets(
                 continue
             bucket_mean = _bucket_mean(
                 bucket_sources,
-                model_family=model_key,
-                region=region,
+                baseline_source=source_key,
+                region=region_key,
                 field=field_key,
                 units_in=units_in,
                 resampling=resampling,
@@ -291,7 +317,7 @@ def build_climatology_assets(
                 values=values,
                 transform=transform,
                 field=field_key,
-                reference_period=reference_period,
+                reference_period=reference_period_key,
                 sample_count=sample_counts[doy - 1],
                 source_year_range=year_range,
             )
@@ -311,7 +337,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-root", required=True, help="Root directory containing historical source GeoTIFFs.")
     parser.add_argument("--data-root", required=True, help="CartoSky data root where climatology assets will be written.")
     parser.add_argument("--version", required=True, help="Climatology asset version, for example v1.")
-    parser.add_argument("--model-family", required=True, help="Model family key, for example gefs or eps.")
+    parser.add_argument("--baseline-source", required=True, help="Shared baseline source key, for example era5.")
     parser.add_argument("--field", required=True, choices=["tmp2m", "tmp850", "hgt500"], help="Baseline field to build.")
     parser.add_argument("--region", default="conus", help="Target region key. Default: conus.")
     parser.add_argument("--reference-period", required=True, help="Reference period label, for example 1991-2020.")
@@ -330,7 +356,7 @@ def main() -> int:
         source_root=Path(args.source_root).resolve(),
         data_root=Path(args.data_root).resolve(),
         version=args.version,
-        model_family=args.model_family,
+        baseline_source=args.baseline_source,
         field=args.field,
         region=args.region,
         reference_period=args.reference_period,
@@ -347,7 +373,7 @@ def main() -> int:
             "files_written": files_written,
             "missing_buckets": missing_buckets,
             "field": args.field,
-            "model_family": args.model_family,
+            "baseline_source": args.baseline_source,
             "version": args.version,
         },
     )

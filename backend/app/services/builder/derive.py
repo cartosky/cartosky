@@ -26,7 +26,12 @@ import rasterio.crs
 from app.services.builder.cog_writer import warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
-from app.services.climatology import load_climatology_baseline
+from app.services.climatology import (
+    DEFAULT_BASELINE_SOURCE,
+    get_baseline_target_grid,
+    load_climatology_baseline,
+    normalize_baseline_source,
+)
 from app.services.colormaps import (
     RADAR_PTYPE_BREAKS,
     RADAR_PTYPE_ORDER,
@@ -675,16 +680,29 @@ def _derive_anomaly_departure(
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     base_component = str(hints.get("base_component") or "").strip() or "tmp2m"
     baseline_field = str(hints.get("baseline_field") or "").strip() or base_component.split("__", 1)[0]
-    baseline_model_family = str(hints.get("baseline_model_family") or model_id).strip().lower()
+    baseline_source = normalize_baseline_source(
+        str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
+        or DEFAULT_BASELINE_SOURCE
+    )
+    legacy_baseline_model_family = str(
+        hints.get("legacy_baseline_model_family") or hints.get("baseline_model_family") or ""
+    ).strip().lower()
+    baseline_region = str(hints.get("baseline_region") or "").strip().lower()
     baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
     reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
 
-    target_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
-    if not target_region:
-        target_region = _canonical_region_for_plugin(model_plugin)
+    if not baseline_region:
+        baseline_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
+    if not baseline_region:
+        baseline_region = _canonical_region_for_plugin(model_plugin)
+    baseline_target_grid = get_baseline_target_grid(
+        baseline_source=baseline_source,
+        region=baseline_region,
+    )
+    target_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower() or baseline_region
     target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
     if not target_grid_id:
-        target_grid_id = f"{model_id}:{target_region}"
+        target_grid_id = str(baseline_target_grid.get("id", "")).strip() or f"{model_id}:{target_region}"
     resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
 
     forecast_raw, src_crs, src_transform = _fetch_component_warped(
@@ -710,11 +728,12 @@ def _derive_anomaly_departure(
     valid_time = (run_date + timedelta(hours=fh)).astimezone(timezone.utc)
     baseline_values, baseline_crs, baseline_transform, baseline_meta = load_climatology_baseline(
         version=baseline_version,
-        model_family=baseline_model_family,
+        baseline_source=baseline_source,
         field=baseline_field,
         valid_time=valid_time,
-        region=target_region,
+        region=baseline_region,
         reference_period=reference_period,
+        legacy_model_family_fallback=legacy_baseline_model_family or None,
     )
     if forecast_values.shape != baseline_values.shape:
         raise ValueError(
@@ -739,6 +758,7 @@ def _derive_anomaly_departure(
         fh=fh,
         sidecar_metadata={
             "anomaly_kind": "departure",
+            "baseline_region": baseline_region,
             **baseline_meta,
         },
     )

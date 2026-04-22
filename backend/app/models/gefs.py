@@ -185,7 +185,9 @@ GEFS_VARS: dict[str, VarSpec] = {
             hints={
                 "base_component": "tmp2m",
                 "baseline_field": "tmp2m",
-                "baseline_model_family": "gefs",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -203,7 +205,9 @@ GEFS_VARS: dict[str, VarSpec] = {
             hints={
                 "base_component": "tmp2m",
                 "baseline_field": "tmp2m",
-                "baseline_model_family": "gefs",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -226,7 +230,9 @@ GEFS_VARS: dict[str, VarSpec] = {
             hints={
                 "base_component": "hgt500__mean",
                 "baseline_field": "hgt500",
-                "baseline_model_family": "gefs",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
                 "contour_component": "hgt500__mean",
@@ -251,7 +257,9 @@ GEFS_VARS: dict[str, VarSpec] = {
             hints={
                 "base_component": "hgt500__mean",
                 "baseline_field": "hgt500",
-                "baseline_model_family": "gefs",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
                 "contour_component": "hgt500__mean",
