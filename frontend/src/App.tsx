@@ -80,6 +80,7 @@ import {
   pickPreferred,
   makeRegionLabel,
   filterRegionOptionsByCoverage,
+  filterRegionOptionsForVariable,
   buildFallbackSharePayload,
   toNumberOrNull,
   makeModelOptions,
@@ -1740,6 +1741,7 @@ export default function App() {
         const nextVariable = requestedVariable && variableIds.includes(requestedVariable)
           ? requestedVariable
           : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? ""));
+        const nextVariableCapability = nextVariable ? modelCapability?.variables?.[nextVariable] : undefined;
         setVariables(variableOptions);
         setVariable(nextVariable);
         const nextEnsembleView = requestedEnsembleView || defaultEnsembleViewForVariable(modelCapability, nextVariable);
@@ -1751,7 +1753,11 @@ export default function App() {
           ?? modelCapability?.canonical_region
           ?? MAP_VIEW_DEFAULTS.region
         ).trim();
-        const regionOptions = filterRegionOptionsByCoverage(regionPresetData, canonicalRegion);
+        const regionOptions = filterRegionOptionsForVariable(
+          regionPresetData,
+          canonicalRegion,
+          nextVariableCapability?.supported_build_regions,
+        );
         const allowedRegionIds = regionOptions.map((option) => option.value);
         setRegions(regionOptions);
         const nextRegion = requestedRegion && allowedRegionIds.includes(requestedRegion)
@@ -1793,7 +1799,11 @@ export default function App() {
       ?? selectedModelCapability?.canonical_region
       ?? MAP_VIEW_DEFAULTS.region
     ).trim();
-    const nextRegionOptions = filterRegionOptionsByCoverage(regionPresets, canonicalRegion);
+    const nextRegionOptions = filterRegionOptionsForVariable(
+      regionPresets,
+      canonicalRegion,
+      selectedVariableCapability?.supported_build_regions,
+    );
     setRegions(nextRegionOptions);
     const allowedRegionIds = nextRegionOptions.map((option) => option.value);
     if (allowedRegionIds.length === 0) {
@@ -1804,7 +1814,7 @@ export default function App() {
         ? currentRegion
         : pickPreferred(allowedRegionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region)
     ));
-  }, [regionPresets, selectedModelCapability]);
+  }, [regionPresets, selectedModelCapability, selectedVariableCapability]);
 
   useEffect(() => {
     const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled

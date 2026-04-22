@@ -151,6 +151,67 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
+def test_build_grid_manifests_for_regioned_run_root_writes_region_manifest(tmp_path: Path) -> None:
+    run_root = tmp_path / "staging" / "gfs" / "20260422_12z"
+    region_root = run_root / "na"
+    var_dir = region_root / "tmp2m"
+    var_dir.mkdir(parents=True, exist_ok=True)
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+
+    write_grid_frame_for_run_root(
+        run_root=region_root,
+        model="gfs",
+        var="tmp2m",
+        fh=0,
+        values=values,
+        transform=from_origin(-14920000.0, 7362000.0, 3000.0, 3000.0),
+    )
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-04-22T12:00:00Z"})
+    )
+
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=run_root,
+        model="gfs",
+        run="20260422_12z",
+        variables=("tmp2m",),
+    )
+
+    assert manifest_ok == 1
+    manifest = json.loads(grid_manifest_path_for_run_root(region_root, "tmp2m").read_text())
+    assert manifest["subtype"] == "grid"
+    assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
+
+
+def test_build_grid_for_run_writes_regioned_manifest_and_frame(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260422_12z"
+    var = "tmp2m"
+    var_dir = data_root / "published" / model / run_id / "na" / var
+    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "valid_time": "2026-04-22T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = grid_dir(data_root, model, run_id, var, region="na")
+    assert (artifacts_dir / "fh000.l0.u16.bin").is_file()
+    assert (artifacts_dir / "manifest.json").is_file()
+
+
 def test_grid_dir_resolves_legacy_grid_v1_for_published_runs(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     legacy_dir = data_root / "published" / "hrrr" / "20260330_12z" / "tmp2m" / "grid_v1"

@@ -44,6 +44,7 @@ export type CapabilityVariable = {
   order?: number | null;
   group?: string | null;
   render_substrates?: WeatherSubstrate[] | null;
+  supported_build_regions?: string[] | null;
   default_fh?: number | null;
   buildable?: boolean;
   color_map_id?: string | null;

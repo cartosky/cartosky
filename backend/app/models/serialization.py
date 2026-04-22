@@ -22,6 +22,12 @@ def _render_substrates_for_variable(model_id: str, capability: Any | None) -> li
 def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, Any]:
     constraints = getattr(capability, "constraints", None)
     constraints_payload = dict(constraints) if isinstance(constraints, dict) else {}
+    supported_build_regions = getattr(capability, "supported_build_regions", None)
+    supported_build_regions_payload = [
+        str(region).strip().lower()
+        for region in supported_build_regions
+        if str(region).strip()
+    ] if isinstance(supported_build_regions, list) else []
     var_key = str(getattr(capability, "var_key", ""))
     ensemble = getattr(capability, "ensemble", None)
     ensemble_payload = dict(ensemble) if isinstance(ensemble, dict) else {}
@@ -38,6 +44,7 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         "color_map_id": getattr(capability, "color_map_id", None),
         "display_resampling_override": display_resampling_override(model_id, var_key),
         "render_substrates": _render_substrates_for_variable(model_id, capability),
+        "supported_build_regions": supported_build_regions_payload,
         "constraints": constraints_payload,
         "derived": bool(getattr(capability, "derived", False)),
         "derive_strategy_id": getattr(capability, "derive_strategy_id", None),

@@ -736,6 +736,34 @@ def resolved_grid_dir_for_run_root(run_root: Path, var: str) -> Path:
     return preferred
 
 
+def _iter_grid_variable_run_roots(run_root: Path, model: str) -> list[tuple[Path, str]]:
+    root = Path(run_root)
+    discovered: list[tuple[Path, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for child in sorted(path for path in root.iterdir() if path.is_dir()):
+        var = child.name.strip().lower()
+        if grid_supported(model, var):
+            key = (str(root), var)
+            if key not in seen:
+                seen.add(key)
+                discovered.append((root, var))
+            continue
+
+        for nested in sorted(path for path in child.iterdir() if path.is_dir()):
+            nested_var = nested.name.strip().lower()
+            if not grid_supported(model, nested_var):
+                continue
+            region_root = child
+            key = (str(region_root), nested_var)
+            if key in seen:
+                continue
+            seen.add(key)
+            discovered.append((region_root, nested_var))
+
+    return discovered
+
+
 def grid_dir(data_root: Path, model: str, run: str, var: str, *, region: str | None = None) -> Path:
     published_run = resolve_existing_run_root(data_root / "published", model, run, region=region)
     if published_run is None:
@@ -1372,14 +1400,11 @@ def build_grid_manifests_for_run_root(
 
     requested_vars = {str(item).strip().lower() for item in (variables or ()) if str(item).strip()}
     manifest_ok = 0
-    for var_dir in sorted(path for path in run_root_path.iterdir() if path.is_dir()):
-        var = var_dir.name.strip().lower()
+    for variable_run_root, var in _iter_grid_variable_run_roots(run_root_path, model):
         if requested_vars and var not in requested_vars:
             continue
-        if not grid_supported(model, var):
-            continue
         try:
-            if _build_manifest_for_var_from_run_root(run_root=run_root_path, model=model, run=run, var=var):
+            if _build_manifest_for_var_from_run_root(run_root=variable_run_root, model=model, run=run, var=var):
                 manifest_ok += 1
         except Exception:
             logger.exception("grid manifest build failed: model=%s run=%s var=%s", model, run, var)
@@ -1394,23 +1419,23 @@ def build_grid_for_run(
     workers: int,
     variables: tuple[str, ...] | None = None,
 ) -> tuple[int, int, int]:
-    published_run = resolve_existing_run_root(data_root / "published", model, run)
-    if published_run is None:
-        published_run = data_root / "published" / model / run
+    published_run = data_root / "published" / model / run
+    if not published_run.is_dir():
+        resolved_run = resolve_existing_run_root(data_root / "published", model, run)
+        if resolved_run is not None:
+            published_run = resolved_run
     if not published_run.is_dir():
         return 0, 0, 0
 
     requested_vars = {str(item).strip().lower() for item in (variables or ()) if str(item).strip()}
-    jobs: list[tuple[str, int, Path]] = []
-    manifest_vars: set[str] = set()
+    jobs: list[tuple[Path, str, int, Path]] = []
+    manifest_roots_by_var: dict[str, set[Path]] = {}
 
-    for var_dir in sorted(path for path in published_run.iterdir() if path.is_dir()):
-        var = var_dir.name.strip().lower()
+    for variable_run_root, var in _iter_grid_variable_run_roots(published_run, model):
+        var_dir = variable_run_root / var
         if requested_vars and var not in requested_vars:
             continue
-        if not grid_supported(model, var):
-            continue
-        manifest_vars.add(var)
+        manifest_roots_by_var.setdefault(var, set()).add(variable_run_root)
         for value_cog_path in sorted(var_dir.glob("fh*.val.cog.tif")):
             if not value_cog_path.is_file():
                 logger.warning(
@@ -1429,7 +1454,7 @@ def build_grid_for_run(
             sidecar_path = var_dir / f"{fh_token}.json"
             if not sidecar_path.is_file():
                 continue
-            jobs.append((var, fh, value_cog_path))
+            jobs.append((variable_run_root, var, fh, value_cog_path))
 
     if not jobs:
         return 0, 0, 0
@@ -1441,13 +1466,13 @@ def build_grid_for_run(
         futures = [
             pool.submit(
                 write_grid_frame_from_value_cog_for_run_root,
-                run_root=published_run,
+                run_root=variable_run_root,
                 model=model,
                 var=var,
                 fh=fh,
                 value_cog_path=value_cog_path,
             )
-            for var, fh, value_cog_path in jobs
+            for variable_run_root, var, fh, value_cog_path in jobs
         ]
         for future in concurrent.futures.as_completed(futures):
             try:
@@ -1458,11 +1483,14 @@ def build_grid_for_run(
                 continue
             ok += 1
 
-    manifest_ok = build_grid_manifests_for_run_root(
-        run_root=published_run,
-        model=model,
-        run=run,
-        variables=tuple(sorted(manifest_vars)),
-    )
+    manifest_ok = 0
+    for var, roots in manifest_roots_by_var.items():
+        for variable_run_root in sorted(roots):
+            manifest_ok += build_grid_manifests_for_run_root(
+                run_root=variable_run_root,
+                model=model,
+                run=run,
+                variables=(var,),
+            )
 
     return ok, fail, manifest_ok

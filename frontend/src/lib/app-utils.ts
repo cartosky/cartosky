@@ -97,6 +97,7 @@ export type VariableEntry = {
   displayResamplingOverride?: string | null;
   group?: string | null;
   renderSubstrates?: WeatherSubstrate[];
+  supportedBuildRegions?: string[];
 };
 
 type VariableUiOverride = {
@@ -541,6 +542,27 @@ export function filterRegionOptionsByCoverage(
   }));
 }
 
+export function filterRegionOptionsForVariable(
+  regionPresets: Record<string, RegionPreset>,
+  canonicalRegionId: string | null | undefined,
+  supportedBuildRegions: readonly string[] | null | undefined,
+): Option[] {
+  const normalizedSupportedRegions = Array.isArray(supportedBuildRegions)
+    ? supportedBuildRegions
+      .map((regionId) => String(regionId ?? "").trim().toLowerCase())
+      .filter((regionId, index, items) => Boolean(regionId) && items.indexOf(regionId) === index)
+    : [];
+  if (normalizedSupportedRegions.length === 0) {
+    return filterRegionOptionsByCoverage(regionPresets, canonicalRegionId);
+  }
+  return normalizedSupportedRegions
+    .filter((regionId) => Boolean(regionPresets[regionId]))
+    .map((id) => ({
+      value: id,
+      label: makeRegionLabel(id, regionPresets[id]),
+    }));
+}
+
 export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | undefined): VariableEntry[] {
   if (!modelCapability?.variables) {
     return [];
@@ -557,6 +579,11 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
         typeof entry.display_resampling_override === "string" ? entry.display_resampling_override : null,
       group: typeof entry.group === "string" ? entry.group : null,
       renderSubstrates: readCapabilityRenderSubstrates(entry),
+      supportedBuildRegions: Array.isArray(entry.supported_build_regions)
+        ? entry.supported_build_regions
+          .map((regionId) => String(regionId ?? "").trim().toLowerCase())
+          .filter((regionId, index, items) => Boolean(regionId) && items.indexOf(regionId) === index)
+        : undefined,
     }))
     .filter((entry) => Boolean(entry.id) && entry.buildable);
 
