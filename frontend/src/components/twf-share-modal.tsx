@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -299,6 +299,7 @@ export function TwfShareModal({
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
   const destinationSavedTimerRef = useRef<number | null>(null);
+  const copyMenuRef = useRef<HTMLDivElement | null>(null);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -342,6 +343,7 @@ export function TwfShareModal({
   const [hasAttemptedAutoScreenshot, setHasAttemptedAutoScreenshot] = useState(false);
   const [showDestinationEditor, setShowDestinationEditor] = useState(false);
   const [destinationSaved, setDestinationSaved] = useState(false);
+  const [showCopyMenu, setShowCopyMenu] = useState(false);
 
 
   const defaultContent = useMemo(() => {
@@ -389,6 +391,7 @@ export function TwfShareModal({
     setContentDirty(false);
     setLinkCopied(false);
     setTextCopied(false);
+    setShowCopyMenu(false);
     setSubmitError(null);
     setSubmitSuccess(null);
     setSubmitTopicSuccess(null);
@@ -451,6 +454,19 @@ export function TwfShareModal({
       document.body.style.overflow = previousOverflow;
     };
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!showCopyMenu) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!copyMenuRef.current?.contains(event.target as Node)) {
+        setShowCopyMenu(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [showCopyMenu]);
 
   useEffect(() => {
     if (!open || hasAttemptedAutoScreenshot || !canPrepareScreenshot) {
@@ -855,6 +871,7 @@ export function TwfShareModal({
   const handleCopyLink = async () => {
     const ok = await writeClipboard(payload.permalink);
     if (ok) {
+      setShowCopyMenu(false);
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 1500);
     }
@@ -864,6 +881,7 @@ export function TwfShareModal({
     const text = `${content.trim() || payload.summary}\n${payload.permalink}`;
     const ok = await writeClipboard(text);
     if (ok) {
+      setShowCopyMenu(false);
       setTextCopied(true);
       setTimeout(() => setTextCopied(false), 1500);
     }
@@ -1226,22 +1244,45 @@ export function TwfShareModal({
 
         {/* Bottom action row */}
         <div className="flex items-center justify-between px-4 pb-6 pt-3">
-          <div className="flex items-center gap-2">
+          <div className="relative" ref={copyMenuRef}>
+            {showCopyMenu && (
+              <div
+                role="menu"
+                className="absolute bottom-[calc(100%+0.5rem)] left-0 z-20 min-w-[180px] overflow-hidden rounded-xl border border-white/10 bg-[#07111f]/95 p-1.5 shadow-[0_18px_36px_rgba(0,0,0,0.35)] backdrop-blur-md"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { void handleCopyText(); }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-white/85 transition-colors hover:bg-white/[0.08]"
+                >
+                  <Copy className="h-3.5 w-3.5 shrink-0" />
+                  {textCopied ? "Copied text" : "Copy text"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { void handleCopyLink(); }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-white/85 transition-colors hover:bg-white/[0.08]"
+                >
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  {linkCopied ? "Copied link" : "Copy link"}
+                </button>
+              </div>
+            )}
             <button
               type="button"
-              onClick={() => { void handleCopyLink(); }}
+              onClick={() => setShowCopyMenu((current) => !current)}
               className="flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.07] px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/[0.11]"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              {linkCopied ? "Copied!" : "Link"}
-            </button>
-            <button
-              type="button"
-              onClick={() => { void handleCopyText(); }}
-              className="flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.07] px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/[0.11]"
+              aria-haspopup="menu"
+              aria-expanded={showCopyMenu}
             >
               <Copy className="h-3.5 w-3.5" />
-              {textCopied ? "Copied!" : "Text"}
+              {linkCopied || textCopied ? "Copied!" : "Copy"}
+              <ChevronDown className={[
+                "h-3.5 w-3.5 transition-transform",
+                showCopyMenu ? "rotate-180" : "rotate-0",
+              ].join(" ")} />
             </button>
           </div>
 
