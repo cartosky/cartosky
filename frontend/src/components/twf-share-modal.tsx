@@ -332,6 +332,7 @@ export function TwfShareModal({
   const destinationSavedTimerRef = useRef<number | null>(null);
   const copyMenuRef = useRef<HTMLDivElement | null>(null);
   const topicCacheRef = useRef<Map<number, TopicCacheEntry>>(new Map());
+  const quickForumPrefetchInFlightRef = useRef<Set<number>>(new Set());
   const selectedTopicIdRef = useRef<number | null>(initialSharePrefs.topicId ?? null);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
   const [statusLoading, setStatusLoading] = useState(false);
@@ -597,6 +598,70 @@ export function TwfShareModal({
       selectedTopicTitle,
     });
   }, [selectedForumId, selectedTopicId, selectedTopicTitle, topics, topicsForumId]);
+
+  useEffect(() => {
+    if (!open || !statusResolved || twfStatus.linked !== true) {
+      return;
+    }
+
+    const controllers: AbortController[] = [];
+    for (const forum of QUICK_FORUMS) {
+      if (forum.id === selectedForumId) {
+        continue;
+      }
+      if (topicCacheRef.current.has(forum.id) || quickForumPrefetchInFlightRef.current.has(forum.id)) {
+        continue;
+      }
+
+      quickForumPrefetchInFlightRef.current.add(forum.id);
+      const controller = new AbortController();
+      controllers.push(controller);
+
+      const prefs = getSharePrefs();
+      const prefsMatchForum = forumIdFromPrefs(prefs) === forum.id;
+      const preferredTopicId = prefsMatchForum ? prefs.topicId ?? null : null;
+      const params = new URLSearchParams({
+        forum_id: String(forum.id),
+        limit: "15",
+      });
+
+      fetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
+        method: "GET",
+        credentials: "include",
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const apiError = await readApiError(response);
+            throw new Error(apiError?.message || `Topics request failed (${response.status})`);
+          }
+          return response.json() as Promise<unknown>;
+        })
+        .then((value) => {
+          const normalized = normalizeTopics(value);
+          const resolvedSelection = resolveTopicSelection(normalized, preferredTopicId);
+          topicCacheRef.current.set(forum.id, {
+            topics: normalized,
+            selectedTopicId: resolvedSelection.topicId,
+            selectedTopicTitle: resolvedSelection.topicTitle,
+          });
+        })
+        .catch((error: unknown) => {
+          if ((error as { name?: string } | undefined)?.name === "AbortError") {
+            return;
+          }
+        })
+        .finally(() => {
+          quickForumPrefetchInFlightRef.current.delete(forum.id);
+        });
+    }
+
+    return () => {
+      for (const controller of controllers) {
+        controller.abort();
+      }
+    };
+  }, [open, selectedForumId, statusResolved, twfStatus]);
 
   useEffect(() => {
     if (!open || twfStatus.linked !== true || !showOtherForums) {
