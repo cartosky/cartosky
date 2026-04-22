@@ -20,6 +20,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .kuchera import kuchera_hint_overrides
 
 
@@ -1010,6 +1011,10 @@ GFS_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in GFS_VARS.items()
 }
+apply_supported_build_regions(
+    GFS_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["gfs"],
+)
 
 GFS_CAPABILITIES = ModelCapabilities(
     model_id="gfs",

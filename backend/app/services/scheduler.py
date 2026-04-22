@@ -21,7 +21,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
-from app.services.artifact_paths import run_root, var_dir
+from app.services.artifact_paths import normalize_region_id, run_root, var_dir
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
 from app.services.builder.derive import FetchContext
@@ -1028,6 +1028,24 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
+def _normalized_publish_region(region: str | None) -> str:
+    return normalize_region_id(region) or CANONICAL_COVERAGE
+
+
+def _latest_pointer_path(data_root: Path, model: str, *, region: str | None = None) -> Path:
+    normalized_region = _normalized_publish_region(region)
+    if normalized_region == CANONICAL_COVERAGE:
+        return data_root / "published" / model / "LATEST.json"
+    return data_root / "published" / model / f"LATEST.{normalized_region}.json"
+
+
+def _manifest_path(data_root: Path, model: str, run_id: str, *, region: str | None = None) -> Path:
+    normalized_region = _normalized_publish_region(region)
+    if normalized_region == CANONICAL_COVERAGE:
+        return data_root / "manifests" / model / f"{run_id}.json"
+    return data_root / "manifests" / model / f"{run_id}.{normalized_region}.json"
+
+
 def _copy_or_link_file(src: str, dst: str) -> str:
     if os.path.exists(dst):
         try:
@@ -1043,18 +1061,45 @@ def _copy_or_link_file(src: str, dst: str) -> str:
     return dst
 
 
-def _write_latest_pointer(data_root: Path, model: str, run_id: str) -> None:
+def _write_latest_pointer(data_root: Path, model: str, run_id: str, *, region: str = CANONICAL_COVERAGE) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
         raise SchedulerConfigError(f"Cannot write LATEST.json for invalid run_id={run_id!r}")
+    normalized_region = _normalized_publish_region(region)
     payload = {
         "run_id": run_id,
         "cycle_utc": run_dt.strftime("%Y-%m-%dT%H:00:00Z"),
         "updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "scheduler_v3",
+        "region": normalized_region,
     }
-    latest_path = data_root / "published" / model / "LATEST.json"
+    latest_path = _latest_pointer_path(data_root, model, region=normalized_region)
     _write_json_atomic(latest_path, payload)
+
+
+def _promotion_ready_regions(
+    data_root: Path,
+    model: str,
+    run_id: str,
+    primary_vars: list[str],
+    promotion_fhs: Iterable[int],
+) -> list[str]:
+    plugin = MODEL_REGISTRY.get(model)
+    ready_regions: list[str] = []
+    seen: set[str] = set()
+    for var_id in primary_vars:
+        regions = _build_regions_for_var(plugin, var_id) if plugin is not None else [CANONICAL_COVERAGE]
+        for region in regions:
+            if region in seen:
+                continue
+            for fh in promotion_fhs:
+                val = _frame_value_path(data_root, model, run_id, var_id, int(fh), region=region)
+                side = _frame_sidecar_path(data_root, model, run_id, var_id, int(fh), region=region)
+                if val.exists() and side.exists():
+                    seen.add(region)
+                    ready_regions.append(region)
+                    break
+    return ready_regions
 
 
 def _should_promote(
@@ -1064,16 +1109,7 @@ def _should_promote(
     primary_vars: list[str],
     promotion_fhs: Iterable[int],
 ) -> bool:
-    plugin = MODEL_REGISTRY.get(model)
-    for var_id in primary_vars:
-        regions = _build_regions_for_var(plugin, var_id) if plugin is not None else [CANONICAL_COVERAGE]
-        for region in regions:
-            for fh in promotion_fhs:
-                val = _frame_value_path(data_root, model, run_id, var_id, int(fh), region=region)
-                side = _frame_sidecar_path(data_root, model, run_id, var_id, int(fh), region=region)
-                if val.exists() and side.exists():
-                    return True
-    return False
+    return bool(_promotion_ready_regions(data_root, model, run_id, primary_vars, promotion_fhs))
 
 
 def _resolve_promotion_fhs(plugin: Any, primary_vars: list[str], cycle_hour: int) -> tuple[int, ...]:
@@ -1295,22 +1331,29 @@ def _write_run_manifest(
     run_id: str,
     targets: list[BuildTarget],
     plugin: Any | None = None,
+    region: str = CANONICAL_COVERAGE,
 ) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
         raise SchedulerConfigError(f"Invalid run id for manifest: {run_id}")
 
+    manifest_region = _normalized_publish_region(region)
+
     expected_by_var: dict[str, list[int]] = {}
     for target in targets:
         if len(target) == 3:
-            _region, var_id, fh = target
+            target_region, var_id, fh = target
+            if _normalized_publish_region(target_region) != manifest_region:
+                continue
         elif len(target) == 2:
             var_id, fh = target
+            if manifest_region != CANONICAL_COVERAGE:
+                continue
         else:
             raise SchedulerConfigError(f"Invalid manifest target: {target!r}")
         expected_by_var.setdefault(str(var_id), []).append(int(fh))
 
-    manifest_path = data_root / "manifests" / model / f"{run_id}.json"
+    manifest_path = _manifest_path(data_root, model, run_id, region=manifest_region)
     variables: dict[str, dict] = {}
     if manifest_path.exists():
         try:
@@ -1350,7 +1393,7 @@ def _write_run_manifest(
                 continue
 
         for fh in expected_fhs:
-            sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh)
+            sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=manifest_region)
             if not sidecar_path.exists():
                 continue
             try:
@@ -1385,6 +1428,7 @@ def _write_run_manifest(
         "contract_version": "3.0",
         "model": model,
         "run": run_id,
+        "region": manifest_region,
         "variables": variables,
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -1555,6 +1599,7 @@ def _process_run(
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
+        ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
         if grid_build_enabled():
             try:
                 manifest_ok = build_grid_manifests_for_run_root(
@@ -1572,21 +1617,26 @@ def _process_run(
             except Exception:
                 logger.exception("grid manifest build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
         _promote_run(data_root, model_id, run_id)
-        _write_run_manifest(
-            data_root=data_root,
-            model=model_id,
-            run_id=run_id,
-            targets=targets,
-            plugin=plugin,
-        )
-        _write_latest_pointer(data_root, model_id, run_id)
+        target_regions = sorted({region for region, _var_id, _fh in targets})
+        for target_region in target_regions:
+            _write_run_manifest(
+                data_root=data_root,
+                model=model_id,
+                run_id=run_id,
+                targets=targets,
+                plugin=plugin,
+                region=target_region,
+            )
+        for ready_region in ready_regions:
+            _write_latest_pointer(data_root, model_id, run_id, region=ready_region)
         logger.info(
-            "Published run snapshot: run=%s model=%s reason=%s built=%d/%d",
+            "Published run snapshot: run=%s model=%s reason=%s built=%d/%d ready_regions=%s",
             run_id,
             model_id,
             reason,
             built_ok,
             total,
+            ready_regions,
         )
 
     rounds = 0

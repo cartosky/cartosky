@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors, VariableCapability
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
 
 
@@ -204,6 +205,10 @@ EPS_VARIABLE_CATALOG = {
         },
     ),
 }
+apply_supported_build_regions(
+    EPS_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["eps"],
+)
 
 
 EPS_CAPABILITIES = ModelCapabilities(

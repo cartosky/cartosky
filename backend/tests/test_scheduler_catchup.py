@@ -459,6 +459,10 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         del args, kwargs
         return ("tmp2m", 2) in built
 
+    def fake_promotion_ready_regions(*args: object, **kwargs: object) -> list[str]:
+        del args, kwargs
+        return [scheduler_module.CANONICAL_COVERAGE] if ("tmp2m", 2) in built else []
+
     def fake_promote_run(data_root: Path, model: str, run_id: str) -> None:
         del data_root, model, run_id
         publish_promote_snapshots.append(sorted(fh for var_id, fh in built if var_id == "tmp2m"))
@@ -468,14 +472,15 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         nonlocal manifest_calls
         manifest_calls += 1
 
-    def fake_write_latest_pointer(data_root: Path, model: str, run_id: str) -> None:
-        del data_root, model, run_id
+    def fake_write_latest_pointer(data_root: Path, model: str, run_id: str, **kwargs: object) -> None:
+        del data_root, model, run_id, kwargs
         nonlocal pointer_calls
         pointer_calls += 1
 
     monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
     monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
     monkeypatch.setattr(scheduler_module, "_should_promote", fake_should_promote)
+    monkeypatch.setattr(scheduler_module, "_promotion_ready_regions", fake_promotion_ready_regions)
     monkeypatch.setattr(scheduler_module, "_promote_run", fake_promote_run)
     monkeypatch.setattr(scheduler_module, "_write_run_manifest", fake_write_run_manifest)
     monkeypatch.setattr(scheduler_module, "_write_latest_pointer", fake_write_latest_pointer)
@@ -871,6 +876,33 @@ def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: 
     assert payload["variables"]["tmp2m"]["units"] == "F"
     assert payload["variables"]["mlcape"]["units"] == "J/kg"
     assert payload["variables"]["mlcape"]["available_frames"] == 1
+
+
+def test_write_run_manifest_writes_region_scoped_manifest(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260406_12z"
+    manifest_path = data_root / "manifests" / model / f"{run_id}.na.json"
+
+    stage_dir = data_root / "staging" / model / run_id / "na" / "tmp2m"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    (stage_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "F", "kind": "continuous", "valid_time": "2026-04-06T12:00:00Z"})
+    )
+
+    scheduler_module._write_run_manifest(
+        data_root=data_root,
+        model=model,
+        run_id=run_id,
+        targets=[("na", "tmp2m", 0)],
+        plugin=None,
+        region="na",
+    )
+
+    payload = json.loads(manifest_path.read_text())
+    assert payload["region"] == "na"
+    assert payload["variables"]["tmp2m"]["available_frames"] == 1
+    assert payload["variables"]["tmp2m"]["frames"] == [{"fh": 0, "valid_time": "2026-04-06T12:00:00Z"}]
 
 
 def test_process_run_skips_loop_pregen_for_incomplete_run(

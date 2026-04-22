@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
 
 
@@ -186,6 +187,11 @@ AIFS_VARIABLE_CATALOG["wspd850"] = replace(
 AIFS_VARIABLE_CATALOG["wspd300"] = replace(
     AIFS_VARIABLE_CATALOG["wspd300"],
     selectors=AIFS_VARS["wspd300"].selectors,
+)
+
+apply_supported_build_regions(
+    AIFS_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["aifs"],
 )
 
 AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(

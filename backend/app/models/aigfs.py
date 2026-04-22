@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .gfs import GFSPlugin, GFS_VARS
 
 
@@ -323,6 +324,10 @@ AIGFS_VARIABLE_CATALOG = {
         conversion="ms_to_mph",
     ),
 }
+apply_supported_build_regions(
+    AIGFS_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["aigfs"],
+)
 
 
 AIGFS_CAPABILITIES = ModelCapabilities(

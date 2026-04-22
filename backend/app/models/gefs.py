@@ -19,6 +19,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from .base import BaseModelPlugin, HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .gfs import GFS_VARS
 
 
@@ -1003,6 +1004,10 @@ GEFS_VARIABLE_CATALOG = {
         },
     ),
 }
+apply_supported_build_regions(
+    GEFS_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["gefs"],
+)
 
 
 GEFS_CAPABILITIES = ModelCapabilities(

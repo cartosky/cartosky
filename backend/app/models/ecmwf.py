@@ -24,6 +24,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 
 
 class ECMWFPlugin(BaseModelPlugin):
@@ -980,6 +981,10 @@ ECMWF_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in ECMWF_VARS.items()
 }
+apply_supported_build_regions(
+    ECMWF_VARIABLE_CATALOG,
+    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["ecmwf"],
+)
 
 
 ECMWF_CAPABILITIES = ModelCapabilities(

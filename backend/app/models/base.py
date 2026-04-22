@@ -59,6 +59,7 @@ class VariableCapability:
     var_key: str
     name: str
     selectors: SelectorInput = field(default_factory=VarSelectors)
+    supported_build_regions: list[str] = field(default_factory=list)
     primary: bool = False
     derived: bool = False
     derive_strategy_id: Optional[str] = None

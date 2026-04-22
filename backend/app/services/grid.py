@@ -736,15 +736,17 @@ def resolved_grid_dir_for_run_root(run_root: Path, var: str) -> Path:
     return preferred
 
 
-def grid_dir(data_root: Path, model: str, run: str, var: str) -> Path:
-    published_run = resolve_existing_run_root(data_root / "published", model, run)
+def grid_dir(data_root: Path, model: str, run: str, var: str, *, region: str | None = None) -> Path:
+    published_run = resolve_existing_run_root(data_root / "published", model, run, region=region)
     if published_run is None:
         published_run = data_root / "published" / model / run
+        if region:
+            published_run = published_run / str(region).strip().lower()
     return resolved_grid_dir_for_run_root(published_run, var)
 
 
-def grid_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
-    return grid_dir(data_root, model, run, var) / "manifest.json"
+def grid_manifest_path(data_root: Path, model: str, run: str, var: str, *, region: str | None = None) -> Path:
+    return grid_dir(data_root, model, run, var, region=region) / "manifest.json"
 
 
 def grid_manifest_path_for_run_root(run_root: Path, var: str) -> Path:
@@ -782,10 +784,11 @@ def grid_frame_path(
     var: str,
     fh: int,
     *,
+    region: str | None = None,
     level: int = GRID_LEVEL,
     dtype: str = GRID_DTYPE,
 ) -> Path:
-    return grid_dir(data_root, model, run, var) / grid_frame_filename(fh, level=level, dtype=dtype)
+    return grid_dir(data_root, model, run, var, region=region) / grid_frame_filename(fh, level=level, dtype=dtype)
 
 
 def grid_frame_path_for_run_root(

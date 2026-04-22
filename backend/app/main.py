@@ -38,7 +38,7 @@ from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
-from .services.artifact_paths import resolve_existing_run_root, resolve_existing_var_dir
+from .services.artifact_paths import normalize_region_id, resolve_existing_run_root, resolve_existing_var_dir
 from .models.registry import list_model_capabilities
 from .models.registry import get_model
 from .models.serialization import (
@@ -1877,6 +1877,7 @@ class SampleBatchIn(BaseModel):
     model: str = Field(..., min_length=1, max_length=64)
     run: str = Field(..., min_length=1, max_length=32)
     variable: str = Field(..., min_length=1, max_length=128)
+    region: str | None = Field(default=None, max_length=32)
     ensemble_view: str | None = Field(default=None, max_length=64)
     forecast_hour: int = Field(..., ge=0)
     points: list[SampleBatchPointIn] = Field(..., min_length=1, max_length=500)
@@ -2019,7 +2020,37 @@ def _get_cached_dataset(path: Path) -> rasterio.DatasetReader:
 
 
 def _latest_run_from_pointer(model: str) -> str | None:
-    latest_path = PUBLISHED_ROOT / model / "LATEST.json"
+    return _latest_run_from_pointer_for_region(model, region=None)
+
+
+def _canonical_region_for_model(model: str) -> str:
+    capability = list_model_capabilities().get(model)
+    return _model_canonical_region(capability)
+
+
+def _normalized_request_region(model: str, region: str | None) -> str:
+    normalized = normalize_region_id(region)
+    if normalized is not None:
+        return normalized
+    return _canonical_region_for_model(model)
+
+
+def _latest_pointer_path(model: str, *, region: str | None = None) -> Path:
+    normalized_region = _normalized_request_region(model, region)
+    if normalized_region == _canonical_region_for_model(model):
+        return PUBLISHED_ROOT / model / "LATEST.json"
+    return PUBLISHED_ROOT / model / f"LATEST.{normalized_region}.json"
+
+
+def _manifest_path(model: str, run: str, *, region: str | None = None) -> Path:
+    normalized_region = _normalized_request_region(model, region)
+    if normalized_region == _canonical_region_for_model(model):
+        return MANIFESTS_ROOT / model / f"{run}.json"
+    return MANIFESTS_ROOT / model / f"{run}.{normalized_region}.json"
+
+
+def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None) -> str | None:
+    latest_path = _latest_pointer_path(model, region=region)
     if not latest_path.is_file():
         return None
     try:
@@ -2036,26 +2067,32 @@ def _latest_run_from_pointer(model: str) -> str | None:
         logger.warning("LATEST.json points to out-of-cycle run for %s: %s", model, run_id)
         return None
 
-    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run_id)
-    manifest_path = MANIFESTS_ROOT / model / f"{run_id}.json"
+    normalized_region = _normalized_request_region(model, region)
+    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run_id, region=normalized_region)
+    manifest_path = _manifest_path(model, run_id, region=normalized_region)
     if run_dir is None or not run_dir.is_dir() or not manifest_path.is_file():
         logger.warning("LATEST.json points to incomplete run state for %s/%s", model, run_id)
         return None
     return run_id
 
 
-def _scan_manifest_runs(model: str) -> list[str]:
-    model_manifest_dir = MANIFESTS_ROOT / model
-    if not model_manifest_dir.is_dir():
+def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:
+    model_root = PUBLISHED_ROOT / model
+    if not model_root.is_dir():
         return []
+    normalized_region = _normalized_request_region(model, region)
     runs: list[str] = []
-    for file_path in model_manifest_dir.glob("*.json"):
-        run_id = file_path.stem
+    for run_dir in model_root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        run_id = run_dir.name
         if not RUN_ID_RE.match(run_id):
             continue
         if not _run_matches_model_cycle(model, run_id):
             continue
-        if resolve_existing_run_root(PUBLISHED_ROOT, model, run_id) is None:
+        if resolve_existing_run_root(PUBLISHED_ROOT, model, run_id, region=normalized_region) is None:
+            continue
+        if not _manifest_path(model, run_id, region=normalized_region).is_file():
             continue
         runs.append(run_id)
     return sorted(
@@ -2087,7 +2124,11 @@ def _manifest_var_available_frames(var_entry: dict[str, Any]) -> int:
 
 
 def _var_has_grid_runtime_ready(model_id: str, run_id: str, var_key: str) -> bool:
-    manifest = _load_grid_manifest(model_id, run_id, var_key)
+    return _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, region=None)
+
+
+def _var_has_grid_runtime_ready_for_region(model_id: str, run_id: str, var_key: str, *, region: str | None = None) -> bool:
+    manifest = _load_grid_manifest(model_id, run_id, var_key, region=region)
     if not isinstance(manifest, dict):
         return False
     lods = manifest.get("lods")
@@ -2107,8 +2148,9 @@ def _ready_runtime_state_for_run(
     run_id: str,
     *,
     model_capability: Any | None,
+    region: str | None = None,
 ) -> tuple[list[str], int]:
-    manifest = _load_manifest(model_id, run_id)
+    manifest = _load_manifest(model_id, run_id, region=region)
     if not isinstance(manifest, dict):
         return [], 0
 
@@ -2136,7 +2178,7 @@ def _ready_runtime_state_for_run(
         available_frames = _manifest_var_available_frames(var_entry)
         if available_frames <= 0:
             continue
-        if grid_supported(model_id, var_key) and not _var_has_grid_runtime_ready(model_id, run_id, var_key):
+        if grid_supported(model_id, var_key) and not _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, region=region):
             continue
         ready_vars.append(var_key)
         ready_frame_count += available_frames
@@ -2150,6 +2192,7 @@ def _latest_run_readiness(
     latest_run: str | None,
     *,
     model_capability: Any | None,
+    region: str | None = None,
 ) -> tuple[bool, list[str], int]:
     if latest_run is None:
         return False, [], 0
@@ -2157,6 +2200,7 @@ def _latest_run_readiness(
         model_id,
         latest_run,
         model_capability=model_capability,
+        region=region,
     )
     return bool(ready_vars), ready_vars, ready_frame_count
 
@@ -2351,6 +2395,7 @@ def _bootstrap_frames_state_token(
     manifest: dict[str, Any] | None,
     *,
     ensemble_view: str | None = None,
+    region: str | None = None,
 ) -> str:
     variables = manifest.get("variables") if isinstance(manifest, dict) else None
     var_entry = variables.get(var) if isinstance(variables, dict) else None
@@ -2359,7 +2404,7 @@ def _bootstrap_frames_state_token(
         return ""
 
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    var_dir = _published_var_dir(model, run, runtime_var)
+    var_dir = _published_var_dir(model, run, runtime_var, region=region)
     frame_state: list[tuple[int, int, int]] = []
     for item in frame_entries:
         if not isinstance(item, dict):
@@ -2396,11 +2441,21 @@ def _bootstrap_selection_state(
 
     model_capability = capabilities_by_model.get(selected_model) if selected_model else None
 
+    default_region = "conus"
+    canonical_region = _model_canonical_region(model_capability)
+    requested_region = (region or "").strip().lower()
+    if requested_region in REGION_PRESETS:
+        selected_region = requested_region
+    elif canonical_region in REGION_PRESETS:
+        selected_region = canonical_region
+    else:
+        selected_region = default_region
+
     if selected_model:
         manifest_started_at = time.perf_counter()
-        selected_run = _resolve_run(selected_model, run) or _resolve_latest_run(selected_model)
+        selected_run = _resolve_run(selected_model, run, region=selected_region) or _resolve_latest_run(selected_model, region=selected_region)
         if selected_run:
-            run_manifest = _load_manifest(selected_model, selected_run)
+            run_manifest = _load_manifest(selected_model, selected_run, region=selected_region)
         manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
 
         requested_var = (var or "").strip()
@@ -2420,16 +2475,6 @@ def _bootstrap_selection_state(
                     selected_var,
                     ensemble_view,
                 ) or ""
-
-    default_region = "conus"
-    canonical_region = _model_canonical_region(model_capability)
-    requested_region = (region or "").strip().lower()
-    if requested_region in REGION_PRESETS:
-        selected_region = requested_region
-    elif canonical_region in REGION_PRESETS:
-        selected_region = canonical_region
-    else:
-        selected_region = default_region
 
     return {
         "selected_model": selected_model,
@@ -2455,7 +2500,11 @@ def _bootstrap_state_etag(
     selected_ensemble_view = str(selection_state.get("selected_ensemble_view") or "")
     selected_region = str(selection_state.get("selected_region") or "")
     run_manifest = selection_state.get("run_manifest")
-    manifest_token = _run_version_token(selected_model, selected_run) if selected_model and selected_run else ""
+    manifest_token = (
+        _run_version_token(selected_model, selected_run, region=selected_region)
+        if selected_model and selected_run
+        else ""
+    )
     frames_token = (
         _bootstrap_frames_state_token(
             selected_model,
@@ -2463,6 +2512,7 @@ def _bootstrap_state_etag(
             selected_var,
             run_manifest,
             ensemble_view=selected_ensemble_view,
+            region=selected_region,
         )
         if selected_model and selected_run and selected_var
         else ""
@@ -2509,49 +2559,49 @@ def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> lis
     return known + unknown
 
 
-def _resolve_latest_run(model: str) -> str | None:
+def _resolve_latest_run(model: str, *, region: str | None = None) -> str | None:
     model_capability = list_model_capabilities().get(model)
-    pointed = _latest_run_from_pointer(model)
+    normalized_region = _normalized_request_region(model, region)
+    pointed = _latest_run_from_pointer_for_region(model, region=normalized_region)
     if pointed is not None:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             pointed,
             model_capability=model_capability,
+            region=normalized_region,
         )
         if ready_vars:
             return pointed
-    runs = _scan_manifest_runs(model)
+    runs = _scan_manifest_runs(model, region=normalized_region)
     for run_id in runs:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             run_id,
             model_capability=model_capability,
+            region=normalized_region,
         )
         if ready_vars:
             return run_id
     return runs[0] if runs else None
 
 
-def _resolve_run(model: str, run: str) -> str | None:
+def _resolve_run(model: str, run: str, *, region: str | None = None) -> str | None:
+    normalized_region = _normalized_request_region(model, region)
     if run == "latest":
-        return _resolve_latest_run(model)
+        return _resolve_latest_run(model, region=normalized_region)
     if not RUN_ID_RE.match(run):
         return None
     if not _run_matches_model_cycle(model, run):
         return None
-    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run)
-    manifest_path = MANIFESTS_ROOT / model / f"{run}.json"
+    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run, region=normalized_region)
+    manifest_path = _manifest_path(model, run, region=normalized_region)
     if run_dir is not None and run_dir.is_dir() and manifest_path.is_file():
         return run
     return None
 
 
-def _manifest_path(model: str, run: str) -> Path:
-    return MANIFESTS_ROOT / model / f"{run}.json"
-
-
-def _load_manifest(model: str, run: str) -> dict | None:
-    path = _manifest_path(model, run)
+def _load_manifest(model: str, run: str, *, region: str | None = None) -> dict | None:
+    path = _manifest_path(model, run, region=region)
     if not path.is_file():
         return None
     return _load_json_cached(path, _manifest_cache)
@@ -2594,8 +2644,8 @@ def _manifest_run_complete(manifest: dict[str, Any]) -> bool:
     return saw_expected
 
 
-def _run_version_token(model: str, run: str) -> str:
-    path = _manifest_path(model, run)
+def _run_version_token(model: str, run: str, *, region: str | None = None) -> str:
+    path = _manifest_path(model, run, region=region)
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
@@ -2603,8 +2653,8 @@ def _run_version_token(model: str, run: str) -> str:
     return f"{run}-{mtime_ns}"
 
 
-def _grid_version_token(model: str, run: str, var: str) -> str:
-    path = grid_manifest_path(DATA_ROOT, model, run, var)
+def _grid_version_token(model: str, run: str, var: str, *, region: str | None = None) -> str:
+    path = grid_manifest_path(DATA_ROOT, model, run, var, region=region)
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
@@ -2658,38 +2708,41 @@ def _runtime_var_id_for_request(model: str, var: str, ensemble_view: str | None)
     return normalized_var
 
 
-def _published_var_dir(model: str, run: str, var: str) -> Path:
-    resolved = resolve_existing_var_dir(PUBLISHED_ROOT, model, run, var)
+def _published_var_dir(model: str, run: str, var: str, *, region: str | None = None) -> Path:
+    normalized_region = _normalized_request_region(model, region)
+    resolved = resolve_existing_var_dir(PUBLISHED_ROOT, model, run, var, region=normalized_region)
     if resolved is not None:
         return resolved
-    return PUBLISHED_ROOT / model / run / "conus" / var
+    return PUBLISHED_ROOT / model / run / normalized_region / var
 
 
-def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> Path | None:
-    resolved = _resolve_run(model, run) or run
+def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> Path | None:
+    normalized_region = _normalized_request_region(model, region)
+    resolved = _resolve_run(model, run, region=normalized_region) or run
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.val.cog.tif"
+    candidate = _published_var_dir(model, resolved, runtime_var, region=normalized_region) / f"fh{fh:03d}.val.cog.tif"
     if candidate.is_file():
         return candidate
     return None
 
 
-def _resolve_sidecar(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> dict | None:
-    resolved = _resolve_run(model, run) or run
+def _resolve_sidecar(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> dict | None:
+    normalized_region = _normalized_request_region(model, region)
+    resolved = _resolve_run(model, run, region=normalized_region) or run
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
+    candidate = _published_var_dir(model, resolved, runtime_var, region=normalized_region) / f"fh{fh:03d}.json"
     if candidate.is_file():
         return _load_json_cached(candidate, _sidecar_cache)
     return None
 
 
-def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> bool:
-    return _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view) is not None
+def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> bool:
+    return _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
 
 
-def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None) -> dict[str, Any] | None:
+def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None, region: str | None = None) -> dict[str, Any] | None:
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var)
+    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var, region=region)
     if not path.is_file():
         return None
     loaded = _load_json_cached(path, _grid_manifest_cache)
@@ -2698,21 +2751,26 @@ def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | 
     return None
 
 
-def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str) -> str:
+def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str, region: str | None = None) -> str:
     safe_filename = Path(filename).name
-    return (
+    url = (
         f"/api/v4/grid/{model}/{run}/{var}/{safe_filename}"
         f"?v={version_token}"
     )
+    normalized_region = normalize_region_id(region)
+    if normalized_region:
+        url = f"{url}&region={normalized_region}"
+    return url
 
 
-def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int) -> Path | None:
+def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, region: str | None = None) -> Path | None:
     del fh
-    resolved = _resolve_run(model, run)
+    normalized_region = _normalized_request_region(model, region)
+    resolved = _resolve_run(model, run, region=normalized_region)
     if resolved is None:
         return None
     runtime_var = _runtime_var_id_for_request(model, var, None)
-    var_dir = _published_var_dir(model, resolved, runtime_var)
+    var_dir = _published_var_dir(model, resolved, runtime_var, region=normalized_region)
     if not var_dir.is_dir():
         return None
     return var_dir
@@ -3394,6 +3452,7 @@ def get_bootstrap_v4(
                             selected_var,
                             fh,
                             ensemble_view=selected_ensemble_view,
+                            region=selected_region,
                         ),
                         "run": selected_run,
                         "meta": {
@@ -3403,6 +3462,7 @@ def get_bootstrap_v4(
                                 selected_var,
                                 fh,
                                 ensemble_view=selected_ensemble_view,
+                                region=selected_region,
                             )
                         },
                     }
@@ -3492,14 +3552,19 @@ def list_runs(request: Request, model: str):
 
 
 @app.get("/api/v4/{model}/{run}/manifest")
-def get_manifest(request: Request, model: str, run: str):
+def get_manifest(
+    request: Request,
+    model: str,
+    run: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
+):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
         "manifest.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run},
     ):
-        resolved = _resolve_run(model, run)
+        resolved = _resolve_run(model, run, region=region)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
@@ -3510,7 +3575,7 @@ def get_manifest(request: Request, model: str, run: str):
         "manifest.load",
         attributes={"cartosky.model": model, "cartosky.run": resolved},
     ):
-        manifest = _load_manifest(model, resolved)
+        manifest = _load_manifest(model, resolved, region=region)
     load_ms = (time.perf_counter() - load_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -3539,13 +3604,13 @@ def get_manifest(request: Request, model: str, run: str):
 
 
 @app.get("/api/v4/{model}/{run}/vars")
-def list_vars(model: str, run: str):
+def list_vars(model: str, run: str, region: str | None = Query(None, description="Optional region preset ID")):
     model_id = model.strip().lower()
-    resolved = _resolve_run(model_id, run)
+    resolved = _resolve_run(model_id, run, region=region)
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
-    manifest = _load_manifest(model_id, resolved)
+    manifest = _load_manifest(model_id, resolved, region=region)
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
@@ -3572,6 +3637,7 @@ def list_frames(
     run: str,
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
+    region: str | None = Query(None, description="Optional region preset ID"),
 ):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
@@ -3579,7 +3645,7 @@ def list_frames(
         "frames.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
     ):
-        resolved = _resolve_run(model, run)
+        resolved = _resolve_run(model, run, region=region)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
@@ -3591,7 +3657,7 @@ def list_frames(
         "frames.manifest",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
     ):
-        manifest = _load_manifest(model, resolved)
+        manifest = _load_manifest(model, resolved, region=region)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -3622,14 +3688,14 @@ def list_frames(
             if not isinstance(fh, int):
                 continue
 
-            meta = _resolve_sidecar(model, resolved, var, fh)
+            meta = _resolve_sidecar(model, resolved, var, fh, ensemble_view=ensemble_view, region=region)
             frames.append(
                 {
                     "fh": fh,
-                    "has_cog": _frame_has_cog(model, resolved, var, fh, ensemble_view=ensemble_view),
+                    "has_cog": _frame_has_cog(model, resolved, var, fh, ensemble_view=ensemble_view, region=region),
                     "run": resolved,
                     "meta": {
-                        "meta": _resolve_sidecar(model, resolved, var, fh, ensemble_view=ensemble_view),
+                        "meta": meta,
                     },
                 }
             )
@@ -3669,6 +3735,7 @@ def get_grid_manifest(
     run: str,
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
+    region: str | None = Query(None, description="Optional region preset ID"),
 ):
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
@@ -3676,7 +3743,7 @@ def get_grid_manifest(
         "grid_manifest.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
     ):
-        resolved = _resolve_run(model, run)
+        resolved = _resolve_run(model, run, region=region)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
@@ -3691,12 +3758,12 @@ def get_grid_manifest(
         "grid_manifest.load",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
     ):
-        manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view)
+        manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view, region=region)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
-    version_token = _grid_version_token(model, resolved, runtime_var)
+    version_token = _grid_version_token(model, resolved, runtime_var, region=region)
     build_started_at = time.perf_counter()
     payload = dict(manifest)
     plugin = get_model(model)
@@ -3720,7 +3787,14 @@ def get_grid_manifest(
                     if not filename or not isinstance(fh, int):
                         continue
                     next_frame = dict(frame)
-                    next_frame["url"] = _grid_file_url(model, resolved, runtime_var, filename, version_token=version_token)
+                    next_frame["url"] = _grid_file_url(
+                        model,
+                        resolved,
+                        runtime_var,
+                        filename,
+                        version_token=version_token,
+                        region=region,
+                    )
                     next_frames.append(next_frame)
             next_frames.sort(key=lambda item: int(item.get("fh", 0)))
             next_lod["frames"] = next_frames
@@ -3753,18 +3827,18 @@ def get_grid_manifest(
     )
 
 
-def _get_grid_file(model: str, run: str, var: str, filename: str):
+def _get_grid_file(model: str, run: str, var: str, filename: str, *, region: str | None = None):
     started_at = time.perf_counter()
-    resolved = _resolve_run(model, run)
+    resolved = _resolve_run(model, run, region=region)
     if resolved is None:
         raise HTTPException(status_code=404, detail="Run not found")
     if not grid_supported(model, var):
         raise HTTPException(status_code=404, detail="Grid artifact not enabled")
     safe_filename = Path(filename).name
-    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0).parent / safe_filename
+    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0, region=region).parent / safe_filename
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Grid artifact not found")
-    manifest = _load_grid_manifest(model, resolved, var)
+    manifest = _load_grid_manifest(model, resolved, var, region=region)
     grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
     width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
@@ -3818,13 +3892,25 @@ def _get_grid_file(model: str, run: str, var: str, filename: str):
 
 
 @app.get("/api/v4/grid/{model}/{run}/{var}/{filename}")
-def get_grid_file(model: str, run: str, var: str, filename: str):
-    return _get_grid_file(model, run, var, filename)
+def get_grid_file(
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
+):
+    return _get_grid_file(model, run, var, filename, region=region)
 
 
 @app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
-def get_grid_file_compat(model: str, run: str, var: str, filename: str):
-    return _get_grid_file(model, run, var, filename)
+def get_grid_file_compat(
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
+):
+    return _get_grid_file(model, run, var, filename, region=region)
 
 
 @app.get("/api/v4/sample")
@@ -3833,6 +3919,7 @@ def sample(
     model: str = Query(..., description="Model ID (e.g. hrrr)"),
     run: str = Query(..., description="Run ID (e.g. 20260217_20z or latest)"),
     var: str = Query(..., description="Variable ID (e.g. tmp2m)"),
+    region: str | None = Query(None, description="Optional region preset ID"),
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     fh: int = Query(..., description="Forecast hour"),
     lat: float = Query(..., ge=-90, le=90, description="Latitude (WGS84)"),
@@ -3859,7 +3946,7 @@ def sample(
         )
 
     with otel_tracing.start_as_current_span("sample.resolve_cog") as _span:
-        val_cog = _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view)
+        val_cog = _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region)
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
@@ -3867,8 +3954,8 @@ def sample(
         with otel_tracing.start_as_current_span("sample.dataset_lookup"):
             ds = _get_cached_dataset(val_cog)
             row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
-            resolved_run = _resolve_run(model, run) or run
-            sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view)
+            resolved_run = _resolve_run(model, run, region=region) or run
+            sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view, region=region)
             units = sidecar.get("units", "") if sidecar else ""
             valid_time = sidecar.get("valid_time", "") if sidecar else ""
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved_run})
@@ -4017,11 +4104,12 @@ def sample_batch(request: Request, body: SampleBatchIn):
             body.variable,
             body.forecast_hour,
             ensemble_view=body.ensemble_view,
+            region=body.region,
         )
     if val_cog is None:
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
-    resolved_run = _resolve_run(body.model, body.run) or body.run
+    resolved_run = _resolve_run(body.model, body.run, region=body.region) or body.run
     key = _sample_batch_cache_key(
         body.model,
         resolved_run,
@@ -4082,6 +4170,7 @@ def sample_batch(request: Request, body: SampleBatchIn):
                 body.variable,
                 body.forecast_hour,
                 ensemble_view=body.ensemble_view,
+                region=body.region,
             )
             units = sidecar.get("units", "") if sidecar else ""
             payload = {
@@ -4127,9 +4216,10 @@ def get_contour_geojson(
     var: str,
     fh: int,
     key: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
 ):
     started_at = time.perf_counter()
-    var_dir = _resolve_frame_var_dir(model, run, var, fh)
+    var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
 
@@ -4191,9 +4281,10 @@ def get_vector_geojson(
     var: str,
     fh: int,
     key: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
 ):
     started_at = time.perf_counter()
-    var_dir = _resolve_frame_var_dir(model, run, var, fh)
+    var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
 
