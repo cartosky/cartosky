@@ -2925,15 +2925,6 @@ export default function App() {
         return `Issued ${issuedAtLabel}`;
       }
     }
-    if (
-      run === "latest"
-      && gridOnlySelection
-      && resolvedGridLatestRunId
-      && latestRunId
-      && resolvedGridLatestRunId !== latestRunId
-    ) {
-      return `Latest available (${formatRunLabel(resolvedGridLatestRunId, selectedTimeAxisMode)})`;
-    }
     const fromOptions = runOptions.find((entry) => entry.value === run)?.label;
     if (fromOptions) {
       return fromOptions;
@@ -2942,7 +2933,7 @@ export default function App() {
       return latestRunLabel(latestRunId, selectedTimeAxisMode);
     }
     return formatRunLabel(run, selectedTimeAxisMode);
-  }, [runOptions, run, latestRunId, selectedTimeAxisMode, gridOnlySelection, resolvedGridLatestRunId, currentFrame, frameRows]);
+  }, [runOptions, run, latestRunId, selectedTimeAxisMode, currentFrame, frameRows]);
   const latestAvailableRunLabel = useMemo(() => {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);
