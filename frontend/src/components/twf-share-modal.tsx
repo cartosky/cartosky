@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { API_ORIGIN } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
@@ -297,6 +298,7 @@ export function TwfShareModal({
 }: TwfShareModalProps) {
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
+  const destinationSavedTimerRef = useRef<number | null>(null);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -339,6 +341,7 @@ export function TwfShareModal({
   const [includeScreenshotInPost, setIncludeScreenshotInPost] = useState(false);
   const [hasAttemptedAutoScreenshot, setHasAttemptedAutoScreenshot] = useState(false);
   const [showDestinationEditor, setShowDestinationEditor] = useState(false);
+  const [destinationSaved, setDestinationSaved] = useState(false);
 
 
   const defaultContent = useMemo(() => {
@@ -403,6 +406,7 @@ export function TwfShareModal({
     setIncludeScreenshotInPost(true);
     setHasAttemptedAutoScreenshot(false);
     setShowDestinationEditor(false);
+    setDestinationSaved(false);
     setScreenshotBlobUrl((previous) => {
       if (previous) {
         URL.revokeObjectURL(previous);
@@ -421,6 +425,9 @@ export function TwfShareModal({
 
   useEffect(() => {
     return () => {
+      if (destinationSavedTimerRef.current !== null) {
+        window.clearTimeout(destinationSavedTimerRef.current);
+      }
       if (screenshotBlobUrl) {
         URL.revokeObjectURL(screenshotBlobUrl);
       }
@@ -878,6 +885,26 @@ export function TwfShareModal({
   const destinationLabel = selectedTopicTitle
     ? `${selectedForumLabel} › ${selectedTopicTitle}`
     : selectedForumLabel;
+  const handleDestinationEditorToggle = () => {
+    if (showDestinationEditor) {
+      setShowDestinationEditor(false);
+      setDestinationSaved(true);
+      if (destinationSavedTimerRef.current !== null) {
+        window.clearTimeout(destinationSavedTimerRef.current);
+      }
+      destinationSavedTimerRef.current = window.setTimeout(() => {
+        setDestinationSaved(false);
+        destinationSavedTimerRef.current = null;
+      }, 1200);
+      return;
+    }
+    if (destinationSavedTimerRef.current !== null) {
+      window.clearTimeout(destinationSavedTimerRef.current);
+      destinationSavedTimerRef.current = null;
+    }
+    setDestinationSaved(false);
+    setShowDestinationEditor(true);
+  };
 
   return (
     <div
@@ -910,63 +937,79 @@ export function TwfShareModal({
         </div>
 
         {/* Screenshot preview */}
-        <div className="px-4">
-          <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
-            {screenshotBlobUrl ? (
-              <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-cover" />
-            ) : screenshotBusy ? (
-              <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
-                <Loader2 className="h-6 w-6 animate-spin text-white/40" />
-              </div>
-            ) : (
-              <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
-            )}
-
-            {screenshotBlobUrl && !screenshotBusy && (
-              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                Screenshot ready
-              </div>
-            )}
-
-            <div className="absolute top-2 right-2 flex items-center gap-1.5">
-              {screenshotBlobUrl && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const link = document.createElement("a");
-                    link.href = screenshotBlobUrl;
-                    link.download = screenshotFilenameValue;
-                    link.rel = "noopener";
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                  }}
-                  className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
-                  aria-label="Download screenshot"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </button>
+        <TooltipProvider delayDuration={250}>
+          <div className="px-4">
+            <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+              {screenshotBlobUrl ? (
+                <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-cover" />
+              ) : screenshotBusy ? (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
+                  <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+                </div>
+              ) : (
+                <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  setHasAttemptedAutoScreenshot(false);
-                  void handlePrepareScreenshot();
-                }}
-                disabled={!canPrepareScreenshot || screenshotBusy}
-                className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
-                aria-label="Refresh screenshot"
-              >
-                {screenshotBusy ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
+
+              {screenshotBlobUrl && !screenshotBusy && (
+                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Screenshot ready
+                </div>
+              )}
+
+              <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                {screenshotBlobUrl && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const link = document.createElement("a");
+                          link.href = screenshotBlobUrl;
+                          link.download = screenshotFilenameValue;
+                          link.rel = "noopener";
+                          document.body.appendChild(link);
+                          link.click();
+                          link.remove();
+                        }}
+                        className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
+                        aria-label="Download screenshot"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                      Download screenshot
+                    </TooltipContent>
+                  </Tooltip>
                 )}
-              </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasAttemptedAutoScreenshot(false);
+                        void handlePrepareScreenshot();
+                      }}
+                      disabled={!canPrepareScreenshot || screenshotBusy}
+                      className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
+                      aria-label="Refresh screenshot"
+                    >
+                      {screenshotBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                    Regenerate screenshot
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             </div>
           </div>
-        </div>
+        </TooltipProvider>
 
         {/* Composer card */}
         <div className="px-4 mt-3">
@@ -974,21 +1017,25 @@ export function TwfShareModal({
 
             {/* Destination row */}
             <div className="flex items-start justify-between gap-2 px-4 py-3">
-              <div className="flex min-w-0 items-start gap-2.5">
-                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-blue-400/30 bg-blue-500/15 text-blue-300">
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <path d="M5 2v6M2 5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <span className="text-sm leading-snug text-white/90">{destinationLabel}</span>
+              <div className="min-w-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">Posting to:</div>
+                <span className="block text-sm leading-snug text-white/90">{destinationLabel}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowDestinationEditor((current) => !current)}
-                className="ml-3 shrink-0 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-white/[0.15]"
-              >
-                {showDestinationEditor ? "Done" : "Change"}
-              </button>
+              <div className="ml-3 flex shrink-0 items-center gap-2">
+                {destinationSaved && (
+                  <div className="flex items-center gap-1 text-xs font-medium text-emerald-200">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    Saved
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleDestinationEditorToggle}
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-white/[0.15]"
+                >
+                  {showDestinationEditor ? "Done" : "Change"}
+                </button>
+              </div>
             </div>
 
             {/* Destination editor */}
@@ -1139,8 +1186,8 @@ export function TwfShareModal({
               maxLength={500}
               placeholder="What do you see in this data…"
               className="w-full resize-none bg-transparent px-4 py-3 text-sm text-white outline-none placeholder:text-white/35"
-              style={{ minHeight: "72px" }}
-              rows={3}
+              style={{ minHeight: "92px" }}
+              rows={4}
             />
 
             {/* Divider */}
