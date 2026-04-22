@@ -715,12 +715,7 @@ export function TwfShareModal({
       return;
     }
 
-    if (twfStatus.linked !== true) {
-      if (!statusResolved) {
-        setTopicsError(null);
-        setTopicsLoading(false);
-        return;
-      }
+    if (statusResolved && twfStatus.linked !== true) {
       setTopics([]);
       setTopicsForumId(selectedForumId);
       setSelectedTopicId(null);
@@ -796,7 +791,9 @@ export function TwfShareModal({
           setSelectedTopicId(null);
           setSelectedTopicTitleFallback(null);
         }
-        setTopicsError((error as Error).message || "Failed to load topics.");
+        if (statusResolved || twfStatus.linked === true) {
+          setTopicsError((error as Error).message || "Failed to load topics.");
+        }
       })
       .finally(() => setTopicsLoading(false));
 
