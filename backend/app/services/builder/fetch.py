@@ -3131,6 +3131,11 @@ def _geopotential_to_height_m(data: np.ndarray) -> np.ndarray:
     return data / 9.80665
 
 
+def _meters_to_decameters(data: np.ndarray) -> np.ndarray:
+    """Convert meters to decameters, preserving NaN."""
+    return data / 10.0
+
+
 # Registry: conversion-key -> converter function.
 # Variables not listed here need no conversion (GRIB units match spec units).
 # NOTE: GDAL's GRIB driver applies GRIB_NORMALIZE_UNITS=YES by default,
@@ -3147,9 +3152,12 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,
     "pressure_pa_to_hpa": _pa_to_hpa,
     "geopotential_to_height_m": _geopotential_to_height_m,
+    "m_to_dam": _meters_to_decameters,
     # Legacy var-key fallback path
     "tmp2m": _celsius_to_fahrenheit,
     "dp2m": _celsius_to_fahrenheit,
+    "hgt500": _meters_to_decameters,
+    "hgt500__mean": _meters_to_decameters,
     "pwat": _kgm2_to_inches,
     "wspd10m": _ms_to_mph,
     "wgst10m": _ms_to_mph,

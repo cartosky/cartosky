@@ -208,6 +208,18 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("gefs", "hgt500_anom"): {
+        "scale": 0.1,
+        "offset": -60.0,
+        "nodata": 65535,
+        "units": "dam",
+    },
+    ("gefs", "hgt500_anom__mean"): {
+        "scale": 0.1,
+        "offset": -60.0,
+        "nodata": 65535,
+        "units": "dam",
+    },
     ("eps", "tmp2m__mean"): {
         "scale": 0.1,
         "offset": -100.0,

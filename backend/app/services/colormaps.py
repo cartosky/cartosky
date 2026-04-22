@@ -302,6 +302,18 @@ TMP2M_ANOM_F_COLOR_ANCHORS = [
     (30.0, "#8f1d1f"),
 ]
 TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
+HGT500_ANOM_DAM_COLOR_ANCHORS = [
+    (-30.0, "#234b8e"),
+    (-20.0, "#4b78b0"),
+    (-10.0, "#8fb3d4"),
+    (-5.0, "#c9dbee"),
+    (0.0, "#f4f0e8"),
+    (5.0, "#f0c7b2"),
+    (10.0, "#df8c67"),
+    (20.0, "#c14f3c"),
+    (30.0, "#8f2426"),
+]
+HGT500_ANOM_DAM_RANGE = (-30.0, 30.0)
 
 # Total precipitation (inches)
 precip_colors = [
@@ -677,6 +689,14 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP2M_ANOM_F_COLOR_ANCHORS,
         "display_name": "Surface Temperature Anomaly",
         "legend_title": "Surface Temperature Anomaly (°F)",
+    },
+    "hgt500_anom": {
+        "type": "continuous",
+        "units": "dam",
+        "range": HGT500_ANOM_DAM_RANGE,
+        "anchors": HGT500_ANOM_DAM_COLOR_ANCHORS,
+        "display_name": "500mb Height Anomaly",
+        "legend_title": "500mb Height Anomaly (dam)",
     },
     "dp2m": {
         "type": "continuous",
