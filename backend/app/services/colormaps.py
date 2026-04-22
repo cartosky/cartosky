@@ -702,7 +702,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": HGT500_ANOM_DAM_COLOR_ANCHORS,
         "display_name": "500mb Height Anomaly",
         "legend_title": "500mb Height Anomaly (dam)",
-        "display_resampling_override": "nearest",
+        "display_resampling_override": "bilinear",
     },
     "dp2m": {
         "type": "continuous",

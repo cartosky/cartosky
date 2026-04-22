@@ -292,7 +292,7 @@ def test_display_resampling_override_for_precip_and_snow(monkeypatch):
     }
 
 
-def test_hgt500_anom_uses_nearest_display_resampling_override(monkeypatch):
+def test_hgt500_anom_uses_bilinear_display_resampling_override(monkeypatch):
     _set_capabilities(
         monkeypatch,
         {
@@ -300,11 +300,11 @@ def test_hgt500_anom_uses_nearest_display_resampling_override(monkeypatch):
         },
     )
 
-    assert render_resampling.display_resampling_override("gfs", "hgt500_anom") == "nearest"
-    assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="hgt500_anom") == "nearest"
+    assert render_resampling.display_resampling_override("gfs", "hgt500_anom") == "bilinear"
+    assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="hgt500_anom") == "bilinear"
     assert render_resampling.rio_tiler_resampling_kwargs(model_id="gfs", var_key="hgt500_anom") == {
-        "resampling_method": "nearest",
-        "reproject_method": "nearest",
+        "resampling_method": "bilinear",
+        "reproject_method": "bilinear",
     }
 
 
