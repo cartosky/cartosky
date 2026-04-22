@@ -1069,6 +1069,7 @@ def build_frame(
     grid_frame_meta_path: Path | None = None
     frame_quality = "full"
     frame_quality_flags: list[str] = []
+    quality_meta: dict[str, Any] = {}
 
     try:
         _ensure_products_ready(

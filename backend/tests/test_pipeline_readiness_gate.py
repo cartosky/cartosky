@@ -22,6 +22,16 @@ class _Plugin:
     def normalize_var_id(self, var_key: str) -> str:
         return str(var_key)
 
+    def search_patterns_for_var(self, *, var_key: str, fh: int, product: str, var_spec) -> list[str]:
+        del var_key, fh, product
+        selectors = getattr(var_spec, "selectors", None)
+        search = getattr(selectors, "search", None) if selectors is not None else None
+        return list(search or [])
+
+    def herbie_request(self, *, product: str, var_key: str, ensemble_view=None, run_date=None, fh: int, search_pattern: str):
+        del var_key, ensemble_view, run_date, fh, search_pattern
+        return SimpleNamespace(model=self.id, product=product, herbie_kwargs=None)
+
 
 def test_build_frame_readiness_gate_short_circuits_derived_fetch(monkeypatch, tmp_path: Path) -> None:
     plugin = _Plugin()
