@@ -304,17 +304,17 @@ TMP2M_ANOM_F_COLOR_ANCHORS = [
 TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
 HGT500_ANOM_DAM_COLOR_ANCHORS = [
     (-40.0, "#081d58"),
-    (-30.0, "#0b3c8c"),
-    (-20.0, "#1f78c8"),
-    (-12.0, "#5ca9e6"),
-    (-6.0, "#b4d7f3"),
-    (-2.0, "#edf4fb"),
-    (0.0, "#f6f3ee"),
-    (2.0, "#f9e3d2"),
-    (6.0, "#f2b489"),
-    (12.0, "#e7784c"),
-    (20.0, "#cf3f2f"),
-    (30.0, "#a11d22"),
+    (-32.0, "#0b3c8c"),
+    (-24.0, "#135ea8"),
+    (-16.0, "#2c8dd6"),
+    (-8.0, "#9fcdf0"),
+    (-3.0, "#edf4fb"),
+    (0.0, "#f7f3ee"),
+    (3.0, "#fae1ce"),
+    (8.0, "#f1a974"),
+    (16.0, "#df6237"),
+    (24.0, "#bf2d26"),
+    (32.0, "#8f1120"),
     (40.0, "#67000d"),
 ]
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
@@ -696,11 +696,13 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "hgt500_anom": {
         "type": "continuous",
+        "display_palette_kind": "discrete",
         "units": "dam",
         "range": HGT500_ANOM_DAM_RANGE,
         "anchors": HGT500_ANOM_DAM_COLOR_ANCHORS,
         "display_name": "500mb Height Anomaly",
         "legend_title": "500mb Height Anomaly (dam)",
+        "display_resampling_override": "nearest",
     },
     "dp2m": {
         "type": "continuous",

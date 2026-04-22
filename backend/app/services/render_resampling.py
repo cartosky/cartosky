@@ -245,6 +245,9 @@ def render_resampling_name(
     var_key: str,
     kind: str | None = None,
 ) -> str:
+    override = display_resampling_override(model_id=model_id, var_key=var_key)
+    if override is not None:
+        return override
     name = resampling_name_for_kind(model_id=model_id, var_key=var_key, kind=kind)
     if name == "nearest" and use_value_render_for_variable(model_id=model_id, var_key=var_key, kind=kind):
         return "bilinear"

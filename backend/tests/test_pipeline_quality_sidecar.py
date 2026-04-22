@@ -63,3 +63,24 @@ def test_build_sidecar_can_override_display_kind_for_precip() -> None:
     assert sidecar["kind"] == "discrete"
     assert sidecar["legend"]["type"] == "discrete"
     assert sidecar["legend"]["stops"] == [[0.01, "#111111"], [0.1, "#222222"]]
+
+
+def test_build_sidecar_uses_discrete_display_kind_for_hgt500_anom() -> None:
+    sidecar = pipeline_module.build_sidecar_json(
+        model="gefs",
+        run_id="20260422_06z",
+        var_id="hgt500_anom__mean",
+        fh=12,
+        run_date=datetime(2026, 4, 22, 6, tzinfo=timezone.utc),
+        colorize_meta={"kind": "continuous", "units": "dam", "min": -18.0, "max": 24.0},
+        var_spec={
+            "type": "continuous",
+            "display_palette_kind": "discrete",
+            "range": [-40.0, 40.0],
+            "anchors": [(-40.0, "#081d58"), (0.0, "#f7f3ee"), (40.0, "#67000d")],
+        },
+    )
+
+    assert sidecar["kind"] == "discrete"
+    assert sidecar["legend"]["type"] == "discrete"
+    assert sidecar["legend"]["stops"] == [[-40.0, "#081d58"], [0.0, "#f7f3ee"], [40.0, "#67000d"]]

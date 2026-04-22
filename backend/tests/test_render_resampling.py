@@ -292,6 +292,22 @@ def test_display_resampling_override_for_precip_and_snow(monkeypatch):
     }
 
 
+def test_hgt500_anom_uses_nearest_display_resampling_override(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {
+            "hgt500_anom": SimpleNamespace(kind="continuous", color_map_id="hgt500_anom"),
+        },
+    )
+
+    assert render_resampling.display_resampling_override("gfs", "hgt500_anom") == "nearest"
+    assert render_resampling.resampling_name_for_kind(model_id="gfs", var_key="hgt500_anom") == "nearest"
+    assert render_resampling.rio_tiler_resampling_kwargs(model_id="gfs", var_key="hgt500_anom") == {
+        "resampling_method": "nearest",
+        "reproject_method": "nearest",
+    }
+
+
 def test_loop_high_quality_resampling_disabled_for_precip_and_snow_totals():
     for var_key in ("precip_total", "snowfall_total", "snowfall_kuchera_total"):
         assert render_resampling.allow_high_quality_loop_resampling(model_id="gfs", var_key=var_key) is False

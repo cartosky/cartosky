@@ -721,6 +721,16 @@ def _build_legend(
             stops = [[float(v), c] for v, c in legend_stops]
             return {"type": "discrete", "stops": stops}
 
+        anchors = (
+            var_spec.get("color_anchors")
+            or var_spec.get("anchors")
+            or colorize_meta.get("color_anchors")
+            or colorize_meta.get("anchors")
+        )
+        if anchors:
+            stops = [[float(v), c] for v, c in anchors]
+            return {"type": "discrete", "stops": stops}
+
         levels = var_spec.get("levels", colorize_meta.get("levels", []))
         colors = var_spec.get("colors", colorize_meta.get("colors", []))
 
