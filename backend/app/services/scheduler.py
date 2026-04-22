@@ -21,7 +21,6 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
-from app.services.artifact_paths import normalize_region_id, run_root, var_dir
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
 from app.services.builder.derive import FetchContext
@@ -329,42 +328,6 @@ def _default_build_region(plugin: Any) -> str:
 
 
 def _build_regions_for_var(plugin: Any, var_id: str) -> list[str]:
-    normalized_var = plugin.normalize_var_id(var_id) if hasattr(plugin, "normalize_var_id") else str(var_id)
-    capability = plugin.get_var_capability(normalized_var) if hasattr(plugin, "get_var_capability") else None
-    configured_regions = getattr(capability, "supported_build_regions", None) if capability is not None else None
-    if configured_regions is None:
-        capabilities = getattr(plugin, "capabilities", None)
-        build_regions_by_var = getattr(capabilities, "build_regions_by_var", None)
-        if isinstance(build_regions_by_var, dict):
-            configured_regions = build_regions_by_var.get(normalized_var)
-
-    if isinstance(configured_regions, str):
-        raw_regions: list[object] = [configured_regions]
-    elif isinstance(configured_regions, (list, tuple, set)):
-        raw_regions = list(configured_regions)
-    else:
-        raw_regions = [_default_build_region(plugin)]
-
-    regions: list[str] = []
-    seen: set[str] = set()
-    for raw_region in raw_regions:
-        region = str(raw_region or "").strip().lower()
-        if not region or region in seen:
-            continue
-        if hasattr(plugin, "get_region") and plugin.get_region(region) is None:
-            logger.warning(
-                "Skipping unsupported build region for model=%s var=%s region=%s",
-                getattr(plugin, "id", "unknown"),
-                normalized_var,
-                region,
-            )
-            continue
-        seen.add(region)
-        regions.append(region)
-
-    if regions:
-        return regions
-
     default_region = _default_build_region(plugin)
     if hasattr(plugin, "get_region") and plugin.get_region(default_region) is None:
         raise SchedulerConfigError(
@@ -641,7 +604,8 @@ def _frame_sidecar_path(
 ) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=region) / f"fh{fh:03d}.json"
+    del region
+    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.json"
 
 
 def _frame_value_path(
@@ -655,7 +619,8 @@ def _frame_value_path(
 ) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=region) / f"fh{fh:03d}.val.cog.tif"
+    del region
+    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.val.cog.tif"
 
 
 def _frame_artifacts_exist(
@@ -1029,21 +994,18 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 
 def _normalized_publish_region(region: str | None) -> str:
-    return normalize_region_id(region) or CANONICAL_COVERAGE
+    normalized = str(region or "").strip().lower()
+    return normalized or CANONICAL_COVERAGE
 
 
 def _latest_pointer_path(data_root: Path, model: str, *, region: str | None = None) -> Path:
-    normalized_region = _normalized_publish_region(region)
-    if normalized_region == CANONICAL_COVERAGE:
-        return data_root / "published" / model / "LATEST.json"
-    return data_root / "published" / model / f"LATEST.{normalized_region}.json"
+    del region
+    return data_root / "published" / model / "LATEST.json"
 
 
 def _manifest_path(data_root: Path, model: str, run_id: str, *, region: str | None = None) -> Path:
-    normalized_region = _normalized_publish_region(region)
-    if normalized_region == CANONICAL_COVERAGE:
-        return data_root / "manifests" / model / f"{run_id}.json"
-    return data_root / "manifests" / model / f"{run_id}.{normalized_region}.json"
+    del region
+    return data_root / "manifests" / model / f"{run_id}.json"
 
 
 def _copy_or_link_file(src: str, dst: str) -> str:
@@ -1246,7 +1208,7 @@ def _resolve_loop_prewarm_fhs(plugin: Any, var_id: str, cycle_hour: int, *, limi
 
 
 def _promote_run(data_root: Path, model: str, run_id: str) -> None:
-    stage_run = run_root(data_root / "staging", model, run_id)
+    stage_run = data_root / "staging" / model / run_id
     if not stage_run.is_dir():
         raise SchedulerConfigError(f"Cannot promote missing staging run dir: {stage_run}")
 
@@ -1342,18 +1304,14 @@ def _write_run_manifest(
     expected_by_var: dict[str, list[int]] = {}
     for target in targets:
         if len(target) == 3:
-            target_region, var_id, fh = target
-            if _normalized_publish_region(target_region) != manifest_region:
-                continue
+            _target_region, var_id, fh = target
         elif len(target) == 2:
             var_id, fh = target
-            if manifest_region != CANONICAL_COVERAGE:
-                continue
         else:
             raise SchedulerConfigError(f"Invalid manifest target: {target!r}")
         expected_by_var.setdefault(str(var_id), []).append(int(fh))
 
-    manifest_path = _manifest_path(data_root, model, run_id, region=manifest_region)
+    manifest_path = _manifest_path(data_root, model, run_id)
     variables: dict[str, dict] = {}
     if manifest_path.exists():
         try:
@@ -1617,26 +1575,26 @@ def _process_run(
             except Exception:
                 logger.exception("grid manifest build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
         _promote_run(data_root, model_id, run_id)
-        target_regions = sorted({region for region, _var_id, _fh in targets})
-        for target_region in target_regions:
-            _write_run_manifest(
-                data_root=data_root,
-                model=model_id,
-                run_id=run_id,
-                targets=targets,
-                plugin=plugin,
-                region=target_region,
-            )
-        for ready_region in ready_regions:
-            _write_latest_pointer(data_root, model_id, run_id, region=ready_region)
+        canonical_region = _default_build_region(plugin)
+        _write_run_manifest(
+            data_root=data_root,
+            model=model_id,
+            run_id=run_id,
+            targets=targets,
+            plugin=plugin,
+            region=canonical_region,
+        )
+        if ready_regions:
+            _write_latest_pointer(data_root, model_id, run_id, region=canonical_region)
         logger.info(
-            "Published run snapshot: run=%s model=%s reason=%s built=%d/%d ready_regions=%s",
+            "Published run snapshot: run=%s model=%s reason=%s built=%d/%d ready_regions=%s canonical_region=%s",
             run_id,
             model_id,
             reason,
             built_ok,
             total,
             ready_regions,
+            canonical_region,
         )
 
     rounds = 0

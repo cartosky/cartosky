@@ -20,7 +20,6 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
-from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .kuchera import kuchera_hint_overrides
 
 
@@ -1011,16 +1010,11 @@ GFS_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in GFS_VARS.items()
 }
-apply_supported_build_regions(
-    GFS_VARIABLE_CATALOG,
-    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["gfs"],
-)
-
 GFS_CAPABILITIES = ModelCapabilities(
     model_id="gfs",
     name="GFS",
     product="pgrb2.0p25",
-    canonical_region="conus",
+    canonical_region="na",
     grid_meters_by_region={
         "conus": 25_000.0,
         "na": 25_000.0,
@@ -1038,7 +1032,7 @@ GFS_CAPABILITIES = ModelCapabilities(
         "default_run": "latest",
     },
     ui_constraints={
-        "canonical_region": "conus",
+        "canonical_region": "na",
         "supports_sampling": True,
         "overlay_fade_out_zoom_start": 6,
         "overlay_fade_out_zoom_end": 7,

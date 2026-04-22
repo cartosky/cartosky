@@ -528,11 +528,15 @@ export async function fetchVars(model: string, run: string, options?: FetchOptio
 export async function fetchManifest(
   model: string,
   run: string,
+  region?: string | null,
   ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<RunManifestResponse> {
   const runKey = run || "latest";
   const query = new URLSearchParams();
+  if (region) {
+    query.set("region", region);
+  }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
   }
@@ -545,6 +549,7 @@ export async function fetchManifest(
         ...(options?.diagnosticMeta ?? {}),
         model_id: model,
         run_id: runKey,
+        region: region ?? null,
       },
     }
   );
@@ -558,11 +563,15 @@ export async function fetchFrames(
   model: string,
   run: string,
   varKey: string,
+  region?: string | null,
   ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<FrameRow[]> {
   const runKey = run || "latest";
   const query = new URLSearchParams();
+  if (region) {
+    query.set("region", region);
+  }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
   }
@@ -576,6 +585,7 @@ export async function fetchFrames(
         model_id: model,
         run_id: runKey,
         variable_id: varKey,
+        region: region ?? null,
       },
     }
   );
@@ -603,11 +613,15 @@ export async function fetchGridManifest(
   model: string,
   run: string,
   varKey: string,
+  region?: string | null,
   ensembleView?: string | null,
   options?: FetchOptions
 ): Promise<GridManifestResponse | null> {
   const runKey = run || "latest";
   const query = new URLSearchParams();
+  if (region) {
+    query.set("region", region);
+  }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
   }
@@ -622,6 +636,7 @@ export async function fetchGridManifest(
           model_id: model,
           run_id: runKey,
           variable_id: varKey,
+          region: region ?? null,
         },
       }
     );

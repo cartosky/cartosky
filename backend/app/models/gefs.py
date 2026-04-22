@@ -19,7 +19,6 @@ from dataclasses import replace
 from datetime import datetime
 
 from .base import BaseModelPlugin, HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
-from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .gfs import GFS_VARS
 
 
@@ -1004,17 +1003,11 @@ GEFS_VARIABLE_CATALOG = {
         },
     ),
 }
-apply_supported_build_regions(
-    GEFS_VARIABLE_CATALOG,
-    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["gefs"],
-)
-
-
 GEFS_CAPABILITIES = ModelCapabilities(
     model_id="gefs",
     name="GEFS",
     product="atmos.5",
-    canonical_region="conus",
+    canonical_region="na",
     grid_meters_by_region={
         "conus": 25_000.0,
         "na": 25_000.0,
@@ -1035,7 +1028,7 @@ GEFS_CAPABILITIES = ModelCapabilities(
         "default_ensemble_view": "mean",
     },
     ui_constraints={
-        "canonical_region": "conus",
+        "canonical_region": "na",
         "supports_sampling": True,
         "overlay_fade_out_zoom_start": 6,
         "overlay_fade_out_zoom_end": 7,

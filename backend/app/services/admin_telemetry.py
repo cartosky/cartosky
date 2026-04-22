@@ -14,7 +14,6 @@ from typing import Any
 import rasterio
 
 from ..models.registry import MODEL_REGISTRY
-from .artifact_paths import resolve_existing_var_dir
 from .grid import expected_grid_frame_size_bytes, grid_manifest_path, grid_supported
 from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
@@ -451,17 +450,11 @@ def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> lis
 
 
 def _value_cog_path(data_root: Path, model_id: str, run_id: str, variable_id: str, forecast_hour: int) -> Path:
-    var_root = resolve_existing_var_dir(data_root / "published", model_id, run_id, variable_id)
-    if var_root is None:
-        return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.val.cog.tif"
-    return var_root / f"fh{forecast_hour:03d}.val.cog.tif"
+    return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.val.cog.tif"
 
 
 def _sidecar_path(data_root: Path, model_id: str, run_id: str, variable_id: str, forecast_hour: int) -> Path:
-    var_root = resolve_existing_var_dir(data_root / "published", model_id, run_id, variable_id)
-    if var_root is None:
-        return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
-    return var_root / f"fh{forecast_hour:03d}.json"
+    return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.json"
 
 
 def _time_axis_mode_for_model(model_id: str) -> str:
@@ -517,9 +510,7 @@ def _vector_artifact_paths(
     vector_layers = sidecar.get("vector_layers")
     if not isinstance(vector_layers, dict):
         return []
-    var_root = resolve_existing_var_dir(data_root / "published", model_id, run_id, variable_id)
-    if var_root is None:
-        var_root = data_root / "published" / model_id / run_id / variable_id
+    var_root = data_root / "published" / model_id / run_id / variable_id
     paths: list[Path] = []
     for layer_meta in vector_layers.values():
         relative_path = layer_meta.get("path") if isinstance(layer_meta, dict) else None
@@ -587,9 +578,7 @@ def _contour_artifact_paths(
     contours = sidecar.get("contours")
     if not isinstance(contours, dict):
         return []
-    var_root = resolve_existing_var_dir(data_root / "published", model_id, run_id, variable_id)
-    if var_root is None:
-        var_root = data_root / "published" / model_id / run_id / variable_id
+    var_root = data_root / "published" / model_id / run_id / variable_id
     paths: list[tuple[str, Path]] = []
     for key in contour_keys:
         contour_meta = contours.get(key)

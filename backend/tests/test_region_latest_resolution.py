@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
-from backend.app import main as main_module
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app import main as main_module
 
 
-def _write_manifest(manifests_root: Path, model: str, run_id: str, *, region: str | None = None) -> None:
-    suffix = "" if not region or region == "conus" else f".{region}"
-    path = manifests_root / model / f"{run_id}{suffix}.json"
+def _write_manifest(manifests_root: Path, model: str, run_id: str, *, region: str = "na") -> None:
+    path = manifests_root / model / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -18,7 +22,7 @@ def _write_manifest(manifests_root: Path, model: str, run_id: str, *, region: st
                 "contract_version": "3.0",
                 "model": model,
                 "run": run_id,
-                "region": region or "conus",
+                "region": region,
                 "variables": {
                     "tmp2m": {
                         "display_name": "Surface Temp",
@@ -52,53 +56,44 @@ def isolated_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pat
     return published_root, manifests_root
 
 
-def test_bootstrap_selection_uses_region_specific_latest_pointer(
+def test_bootstrap_selection_uses_single_latest_pointer_with_region_presets(
     isolated_roots: tuple[Path, Path],
 ) -> None:
     published_root, manifests_root = isolated_roots
     model = "gfs"
-    conus_run = "20260406_06z"
-    na_run = "20260406_12z"
+    run_id = "20260406_12z"
 
-    (published_root / model / conus_run / "conus" / "tmp2m").mkdir(parents=True, exist_ok=True)
-    (published_root / model / na_run / "na" / "tmp2m").mkdir(parents=True, exist_ok=True)
-    _write_manifest(manifests_root, model, conus_run)
-    _write_manifest(manifests_root, model, na_run, region="na")
-
-    (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": conus_run}))
-    (published_root / model / "LATEST.na.json").write_text(json.dumps({"run_id": na_run}))
+    (published_root / model / run_id / "tmp2m").mkdir(parents=True, exist_ok=True)
+    _write_manifest(manifests_root, model, run_id, region="na")
+    (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
 
     selection = main_module._bootstrap_selection_state(
         model=model,
         run="latest",
         var="tmp2m",
         ensemble_view=None,
-        region="na",
+        region="conus",
         capabilities_by_model=main_module.list_model_capabilities(),
     )
 
-    assert selection["selected_region"] == "na"
-    assert selection["selected_run"] == na_run
+    assert selection["selected_region"] == "conus"
+    assert selection["selected_run"] == run_id
     assert selection["selected_var"] == "tmp2m"
 
 
-def test_resolve_sidecar_prefers_requested_region_when_both_exist(
+def test_resolve_sidecar_uses_canonical_published_var_dir(
     isolated_roots: tuple[Path, Path],
 ) -> None:
     published_root, manifests_root = isolated_roots
     model = "gfs"
     run_id = "20260406_12z"
-    conus_dir = published_root / model / run_id / "conus" / "tmp2m"
-    na_dir = published_root / model / run_id / "na" / "tmp2m"
-    conus_dir.mkdir(parents=True, exist_ok=True)
-    na_dir.mkdir(parents=True, exist_ok=True)
-    _write_manifest(manifests_root, model, run_id)
+    var_dir = published_root / model / run_id / "tmp2m"
+    var_dir.mkdir(parents=True, exist_ok=True)
     _write_manifest(manifests_root, model, run_id, region="na")
 
-    (conus_dir / "fh000.json").write_text(json.dumps({"fh": 0, "source_region": "conus"}))
-    (na_dir / "fh000.json").write_text(json.dumps({"fh": 0, "source_region": "na"}))
+    (var_dir / "fh000.json").write_text(json.dumps({"fh": 0, "source_region": "na"}))
 
-    sidecar = main_module._resolve_sidecar(model, run_id, "tmp2m", 0, region="na")
+    sidecar = main_module._resolve_sidecar(model, run_id, "tmp2m", 0, region="conus")
 
     assert sidecar is not None
     assert sidecar["source_region"] == "na"

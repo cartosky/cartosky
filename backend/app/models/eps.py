@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors, VariableCapability
-from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
 
 
@@ -205,17 +204,11 @@ EPS_VARIABLE_CATALOG = {
         },
     ),
 }
-apply_supported_build_regions(
-    EPS_VARIABLE_CATALOG,
-    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["eps"],
-)
-
-
 EPS_CAPABILITIES = ModelCapabilities(
     model_id="eps",
     name="EPS",
     product="enfo",
-    canonical_region="conus",
+    canonical_region="na",
     grid_meters_by_region={
         "conus": 18_000.0,
         "na": 18_000.0,
@@ -236,7 +229,7 @@ EPS_CAPABILITIES = ModelCapabilities(
         "default_ensemble_view": "mean",
     },
     ui_constraints={
-        "canonical_region": "conus",
+        "canonical_region": "na",
         "supports_sampling": True,
         "overlay_fade_out_zoom_start": 6,
         "overlay_fade_out_zoom_end": 7,

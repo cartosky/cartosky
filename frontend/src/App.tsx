@@ -734,7 +734,7 @@ export default function App() {
         // order) that returns a valid manifest.
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, variable, ensembleView, { signal: controller.signal })
+            fetchGridManifest(model, candidateRun, variable, region, ensembleView, { signal: controller.signal })
               .then((manifest) => ({ candidateRun, manifest })),
           ),
         );
@@ -756,7 +756,7 @@ export default function App() {
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, ensembleView, { signal: controller.signal });
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, region, ensembleView, { signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
@@ -874,7 +874,7 @@ export default function App() {
     const controller = new AbortController();
     void Promise.all(
       compositeLayerSpecs.map(async (layer) => {
-        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, ensembleView, { signal: controller.signal });
+        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, region, ensembleView, { signal: controller.signal });
         return [layer.id, manifest] as const;
       })
     ).then((entries) => {
@@ -1865,7 +1865,7 @@ export default function App() {
           : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
-          fetchManifest(model, manifestRunKey, ensembleView, { signal: controller.signal }).catch(() => null),
+          fetchManifest(model, manifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) {
           return;
@@ -1878,7 +1878,7 @@ export default function App() {
           ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : nextRun)
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
-          manifestData = await fetchManifest(model, nextManifestRunKey, ensembleView, { signal: controller.signal }).catch(() => null);
+          manifestData = await fetchManifest(model, nextManifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null);
           if (controller.signal.aborted || generation !== requestGenerationRef.current) {
             return;
           }
@@ -1987,7 +1987,7 @@ export default function App() {
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, variable, ensembleView, { signal: controller.signal });
+        const rows = await fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: controller.signal });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
           if (!current || current.toVariable !== variable) {
@@ -2249,7 +2249,7 @@ export default function App() {
             const manifestRunKey = gridOnlySelection && run === "latest"
               ? (resolvedGridLatestRunId ?? run)
               : run;
-            const manifestData = await fetchManifest(model, manifestRunKey, ensembleView, { signal: tickController.signal });
+            const manifestData = await fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -2282,7 +2282,7 @@ export default function App() {
               const gridRunKey = gridOnlySelection && run === "latest"
                 ? (resolvedGridLatestRunId ?? manifestRunKey)
                 : resolvedRunForRequests;
-              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, ensembleView, { signal: tickController.signal });
+              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
               if (cancelled || tickController?.signal.aborted) {
                 return;
               }
@@ -2318,7 +2318,7 @@ export default function App() {
           if (!framesRunKey) {
             return;
           }
-          const rows = await fetchFrames(model, framesRunKey, variable, ensembleView, { signal: tickController.signal });
+          const rows = await fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: tickController.signal });
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
@@ -2329,7 +2329,7 @@ export default function App() {
             const gridRunKey = gridOnlySelection && run === "latest"
               ? (resolvedGridLatestRunId ?? framesRunKey)
               : resolvedRunForRequests;
-            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, ensembleView, { signal: tickController.signal });
+            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {
               return;
             }

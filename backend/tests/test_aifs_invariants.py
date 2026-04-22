@@ -91,7 +91,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
     assert capabilities.ui_constraints["supports_sampling"] is True
-    assert capabilities.canonical_region == "conus"
+    assert capabilities.canonical_region == "na"
     assert capabilities.grid_meters_by_region == {
         "conus": 9000.0,
         "na": 9000.0,
@@ -278,7 +278,7 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["model_id"] == "aifs"
     assert payload["name"] == "AIFS"
     assert payload["product"] == "oper"
-    assert payload["canonical_region"] == "conus"
+    assert payload["canonical_region"] == "na"
     assert payload["constraints"]["supports_sampling"] is True
 
     tmp2m = payload["variables"]["tmp2m"]

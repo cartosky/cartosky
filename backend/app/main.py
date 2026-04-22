@@ -38,7 +38,6 @@ from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
-from .services.artifact_paths import normalize_region_id, resolve_existing_run_root, resolve_existing_var_dir
 from .models.registry import list_model_capabilities
 from .models.registry import get_model
 from .models.serialization import (
@@ -2029,24 +2028,21 @@ def _canonical_region_for_model(model: str) -> str:
 
 
 def _normalized_request_region(model: str, region: str | None) -> str:
-    normalized = normalize_region_id(region)
+    normalized = str(region or "").strip().lower()
     if normalized is not None:
-        return normalized
+        if normalized:
+            return normalized
     return _canonical_region_for_model(model)
 
 
 def _latest_pointer_path(model: str, *, region: str | None = None) -> Path:
-    normalized_region = _normalized_request_region(model, region)
-    if normalized_region == _canonical_region_for_model(model):
-        return PUBLISHED_ROOT / model / "LATEST.json"
-    return PUBLISHED_ROOT / model / f"LATEST.{normalized_region}.json"
+    del region
+    return PUBLISHED_ROOT / model / "LATEST.json"
 
 
 def _manifest_path(model: str, run: str, *, region: str | None = None) -> Path:
-    normalized_region = _normalized_request_region(model, region)
-    if normalized_region == _canonical_region_for_model(model):
-        return MANIFESTS_ROOT / model / f"{run}.json"
-    return MANIFESTS_ROOT / model / f"{run}.{normalized_region}.json"
+    del region
+    return MANIFESTS_ROOT / model / f"{run}.json"
 
 
 def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None) -> str | None:
@@ -2067,32 +2063,27 @@ def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None
         logger.warning("LATEST.json points to out-of-cycle run for %s: %s", model, run_id)
         return None
 
-    normalized_region = _normalized_request_region(model, region)
-    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run_id, region=normalized_region)
-    manifest_path = _manifest_path(model, run_id, region=normalized_region)
-    if run_dir is None or not run_dir.is_dir() or not manifest_path.is_file():
+    run_dir = PUBLISHED_ROOT / model / run_id
+    manifest_path = _manifest_path(model, run_id)
+    if not run_dir.is_dir() or not manifest_path.is_file():
         logger.warning("LATEST.json points to incomplete run state for %s/%s", model, run_id)
         return None
     return run_id
 
 
 def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:
-    model_root = PUBLISHED_ROOT / model
-    if not model_root.is_dir():
+    del region
+    model_manifest_dir = MANIFESTS_ROOT / model
+    if not model_manifest_dir.is_dir():
         return []
-    normalized_region = _normalized_request_region(model, region)
     runs: list[str] = []
-    for run_dir in model_root.iterdir():
-        if not run_dir.is_dir():
-            continue
-        run_id = run_dir.name
+    for file_path in model_manifest_dir.glob("*.json"):
+        run_id = file_path.stem
         if not RUN_ID_RE.match(run_id):
             continue
         if not _run_matches_model_cycle(model, run_id):
             continue
-        if resolve_existing_run_root(PUBLISHED_ROOT, model, run_id, region=normalized_region) is None:
-            continue
-        if not _manifest_path(model, run_id, region=normalized_region).is_file():
+        if not (PUBLISHED_ROOT / model / run_id).is_dir():
             continue
         runs.append(run_id)
     return sorted(
@@ -2561,24 +2552,23 @@ def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> lis
 
 def _resolve_latest_run(model: str, *, region: str | None = None) -> str | None:
     model_capability = list_model_capabilities().get(model)
-    normalized_region = _normalized_request_region(model, region)
-    pointed = _latest_run_from_pointer_for_region(model, region=normalized_region)
+    pointed = _latest_run_from_pointer_for_region(model, region=region)
     if pointed is not None:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             pointed,
             model_capability=model_capability,
-            region=normalized_region,
+            region=region,
         )
         if ready_vars:
             return pointed
-    runs = _scan_manifest_runs(model, region=normalized_region)
+    runs = _scan_manifest_runs(model, region=region)
     for run_id in runs:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             run_id,
             model_capability=model_capability,
-            region=normalized_region,
+            region=region,
         )
         if ready_vars:
             return run_id
@@ -2586,16 +2576,16 @@ def _resolve_latest_run(model: str, *, region: str | None = None) -> str | None:
 
 
 def _resolve_run(model: str, run: str, *, region: str | None = None) -> str | None:
-    normalized_region = _normalized_request_region(model, region)
+    del region
     if run == "latest":
-        return _resolve_latest_run(model, region=normalized_region)
+        return _resolve_latest_run(model)
     if not RUN_ID_RE.match(run):
         return None
     if not _run_matches_model_cycle(model, run):
         return None
-    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run, region=normalized_region)
-    manifest_path = _manifest_path(model, run, region=normalized_region)
-    if run_dir is not None and run_dir.is_dir() and manifest_path.is_file():
+    run_dir = PUBLISHED_ROOT / model / run
+    manifest_path = _manifest_path(model, run)
+    if run_dir.is_dir() and manifest_path.is_file():
         return run
     return None
 
@@ -2709,28 +2699,25 @@ def _runtime_var_id_for_request(model: str, var: str, ensemble_view: str | None)
 
 
 def _published_var_dir(model: str, run: str, var: str, *, region: str | None = None) -> Path:
-    normalized_region = _normalized_request_region(model, region)
-    resolved = resolve_existing_var_dir(PUBLISHED_ROOT, model, run, var, region=normalized_region)
-    if resolved is not None:
-        return resolved
-    return PUBLISHED_ROOT / model / run / normalized_region / var
+    del region
+    return PUBLISHED_ROOT / model / run / var
 
 
 def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> Path | None:
-    normalized_region = _normalized_request_region(model, region)
-    resolved = _resolve_run(model, run, region=normalized_region) or run
+    del region
+    resolved = _resolve_run(model, run) or run
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var, region=normalized_region) / f"fh{fh:03d}.val.cog.tif"
+    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.val.cog.tif"
     if candidate.is_file():
         return candidate
     return None
 
 
 def _resolve_sidecar(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> dict | None:
-    normalized_region = _normalized_request_region(model, region)
-    resolved = _resolve_run(model, run, region=normalized_region) or run
+    del region
+    resolved = _resolve_run(model, run) or run
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var, region=normalized_region) / f"fh{fh:03d}.json"
+    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
     if candidate.is_file():
         return _load_json_cached(candidate, _sidecar_cache)
     return None
@@ -2741,8 +2728,9 @@ def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: st
 
 
 def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None, region: str | None = None) -> dict[str, Any] | None:
+    del region
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var, region=region)
+    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var)
     if not path.is_file():
         return None
     loaded = _load_json_cached(path, _grid_manifest_cache)
@@ -2752,25 +2740,22 @@ def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | 
 
 
 def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str, region: str | None = None) -> str:
+    del region
     safe_filename = Path(filename).name
-    url = (
+    return (
         f"/api/v4/grid/{model}/{run}/{var}/{safe_filename}"
         f"?v={version_token}"
     )
-    normalized_region = normalize_region_id(region)
-    if normalized_region:
-        url = f"{url}&region={normalized_region}"
-    return url
 
 
 def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, region: str | None = None) -> Path | None:
     del fh
-    normalized_region = _normalized_request_region(model, region)
-    resolved = _resolve_run(model, run, region=normalized_region)
+    del region
+    resolved = _resolve_run(model, run)
     if resolved is None:
         return None
     runtime_var = _runtime_var_id_for_request(model, var, None)
-    var_dir = _published_var_dir(model, resolved, runtime_var, region=normalized_region)
+    var_dir = _published_var_dir(model, resolved, runtime_var)
     if not var_dir.is_dir():
         return None
     return var_dir

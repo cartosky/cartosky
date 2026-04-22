@@ -24,7 +24,6 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
-from .build_regions import FIRST_NA_BUILD_COHORT_BY_MODEL, apply_supported_build_regions
 
 
 class ECMWFPlugin(BaseModelPlugin):
@@ -981,17 +980,11 @@ ECMWF_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in ECMWF_VARS.items()
 }
-apply_supported_build_regions(
-    ECMWF_VARIABLE_CATALOG,
-    var_keys=FIRST_NA_BUILD_COHORT_BY_MODEL["ecmwf"],
-)
-
-
 ECMWF_CAPABILITIES = ModelCapabilities(
     model_id="ecmwf",
     name="ECMWF",
     product="oper",
-    canonical_region="conus",
+    canonical_region="na",
     grid_meters_by_region={
         "conus": 9_000.0,
         "na": 9_000.0,
@@ -1011,7 +1004,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
         "default_run": "latest",
     },
     ui_constraints={
-        "canonical_region": "conus",
+        "canonical_region": "na",
         "supports_sampling": True,
         "overlay_fade_out_zoom_start": 6,
         "overlay_fade_out_zoom_end": 7,

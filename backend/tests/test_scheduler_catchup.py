@@ -226,6 +226,7 @@ def test_resolve_promotion_fhs_uses_model_schedule() -> None:
 
 class _FakeRegionPlugin:
     id = "gfs"
+    capabilities = types.SimpleNamespace(canonical_region="na")
 
     def normalize_var_id(self, var_id: str) -> str:
         return str(var_id).strip().lower()
@@ -242,21 +243,20 @@ class _FakeRegionPlugin:
     def get_var_capability(self, var_key: str):
         normalized = self.normalize_var_id(var_key)
         if normalized == "tmp2m":
-            return types.SimpleNamespace(supported_build_regions=["conus", "na"], frontend={})
+            return types.SimpleNamespace(frontend={})
         if normalized == "mlcape":
             return types.SimpleNamespace(frontend={})
         return None
 
 
-def test_scheduled_targets_for_cycle_expand_region_targets() -> None:
+def test_scheduled_targets_for_cycle_use_model_canonical_region() -> None:
     plugin = _FakeRegionPlugin()
 
     targets = scheduler_module._scheduled_targets_for_cycle(plugin, ["tmp2m", "mlcape"], 12)
 
     assert targets == [
-        ("conus", "tmp2m", 0),
         ("na", "tmp2m", 0),
-        ("conus", "mlcape", 0),
+        ("na", "mlcape", 0),
     ]
 
 
@@ -857,7 +857,7 @@ def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: 
         )
     )
 
-    mlcape_stage = data_root / "staging" / model / run_id / "conus" / "mlcape"
+    mlcape_stage = data_root / "staging" / model / run_id / "mlcape"
     mlcape_stage.mkdir(parents=True, exist_ok=True)
     (mlcape_stage / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "kind": "continuous", "valid_time": "2026-04-06T12:00:00Z"})
@@ -878,13 +878,13 @@ def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: 
     assert payload["variables"]["mlcape"]["available_frames"] == 1
 
 
-def test_write_run_manifest_writes_region_scoped_manifest(tmp_path: Path) -> None:
+def test_write_run_manifest_records_canonical_region_in_single_manifest(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     model = "gfs"
     run_id = "20260406_12z"
-    manifest_path = data_root / "manifests" / model / f"{run_id}.na.json"
+    manifest_path = data_root / "manifests" / model / f"{run_id}.json"
 
-    stage_dir = data_root / "staging" / model / run_id / "na" / "tmp2m"
+    stage_dir = data_root / "staging" / model / run_id / "tmp2m"
     stage_dir.mkdir(parents=True, exist_ok=True)
     (stage_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "kind": "continuous", "valid_time": "2026-04-06T12:00:00Z"})
