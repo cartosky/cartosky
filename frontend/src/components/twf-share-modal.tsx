@@ -52,6 +52,12 @@ type ShareTopicResult = {
   title: string;
 };
 
+type TopicCacheEntry = {
+  topics: TwfTopic[];
+  selectedTopicId: number | null;
+  selectedTopicTitle: string | null;
+};
+
 type ShareMode = "existing" | "new";
 
 type TwfShareModalProps = {
@@ -236,6 +242,31 @@ function resolveMonthlyTopicId(topics: TwfTopic[]): number | null {
   return topics[0]?.id ?? null;
 }
 
+function topicTitleForId(topics: TwfTopic[], topicId: number | null | undefined): string | null {
+  if (!Number.isFinite(topicId) || Number(topicId) <= 0) {
+    return null;
+  }
+  return topics.find((topic) => topic.id === Number(topicId))?.title ?? null;
+}
+
+function resolveTopicSelection(topics: TwfTopic[], preferredTopicId?: number | null): {
+  topicId: number | null;
+  topicTitle: string | null;
+} {
+  const preferredTitle = topicTitleForId(topics, preferredTopicId);
+  if (preferredTitle) {
+    return {
+      topicId: Number(preferredTopicId),
+      topicTitle: preferredTitle,
+    };
+  }
+  const fallbackTopicId = resolveMonthlyTopicId(topics);
+  return {
+    topicId: fallbackTopicId,
+    topicTitle: topicTitleForId(topics, fallbackTopicId),
+  };
+}
+
 function forumIdFromPrefs(prefs: SharePrefs): number {
   if (Number.isFinite(prefs.forumId) && Number(prefs.forumId) > 0) {
     return Number(prefs.forumId);
@@ -300,8 +331,11 @@ export function TwfShareModal({
   const wasOpenRef = useRef(false);
   const destinationSavedTimerRef = useRef<number | null>(null);
   const copyMenuRef = useRef<HTMLDivElement | null>(null);
+  const topicCacheRef = useRef<Map<number, TopicCacheEntry>>(new Map());
+  const selectedTopicIdRef = useRef<number | null>(initialSharePrefs.topicId ?? null);
   const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
   const [statusLoading, setStatusLoading] = useState(false);
+  const [statusResolved, setStatusResolved] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const [selectedForumId, setSelectedForumId] = useState<number>(() => forumIdFromPrefs(initialSharePrefs));
@@ -313,9 +347,11 @@ export function TwfShareModal({
   const [forumsError, setForumsError] = useState<string | null>(null);
 
   const [topics, setTopics] = useState<TwfTopic[]>([]);
+  const [topicsForumId, setTopicsForumId] = useState<number | null>(null);
   const [topicsLoading, setTopicsLoading] = useState(false);
   const [topicsError, setTopicsError] = useState<string | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(initialSharePrefs.topicId ?? null);
+  const [selectedTopicTitleFallback, setSelectedTopicTitleFallback] = useState<string | null>(initialSharePrefs.topicTitle ?? null);
   const [shareMode, setShareMode] = useState<ShareMode>("existing");
 
   const [content, setContent] = useState("");
@@ -354,12 +390,14 @@ export function TwfShareModal({
     if (!Number.isFinite(selectedTopicId) || Number(selectedTopicId) <= 0) {
       return null;
     }
-    const found = topics.find((topic) => topic.id === Number(selectedTopicId));
-    if (found?.title) {
-      return found.title;
+    if (topicsForumId === selectedForumId) {
+      const found = topics.find((topic) => topic.id === Number(selectedTopicId));
+      if (found?.title) {
+        return found.title;
+      }
     }
-    return null;
-  }, [selectedTopicId, topics]);
+    return selectedTopicTitleFallback;
+  }, [selectedForumId, selectedTopicId, selectedTopicTitleFallback, topics, topicsForumId]);
   const selectedForumLabel = useMemo(() => {
     const quickForum = QUICK_FORUMS.find((forum) => forum.id === selectedForumId);
     if (!showOtherForums && quickForum) {
@@ -382,9 +420,16 @@ export function TwfShareModal({
     wasOpenRef.current = true;
     const prefs = getSharePrefs();
     const persistedForumId = forumIdFromPrefs(prefs);
+    const cachedTopics = topicCacheRef.current.get(persistedForumId);
     setSelectedForumId(persistedForumId);
     setShowOtherForums(prefs.forumMode === "other" || !isQuickForumId(persistedForumId));
-    setSelectedTopicId(prefs.topicId ?? null);
+    const initialTopicId = cachedTopics?.selectedTopicId ?? (prefs.forumId === persistedForumId ? prefs.topicId ?? null : null);
+    const initialTopicTitle = cachedTopics?.selectedTopicTitle ?? (prefs.forumId === persistedForumId ? prefs.topicTitle ?? null : null);
+    selectedTopicIdRef.current = initialTopicId;
+    setTopics(cachedTopics?.topics ?? []);
+    setTopicsForumId(cachedTopics ? persistedForumId : null);
+    setSelectedTopicId(initialTopicId);
+    setSelectedTopicTitleFallback(initialTopicTitle);
     setShareMode("existing");
     setContent("");
     setNewTopicTitle(defaultTopicTitle);
@@ -392,6 +437,7 @@ export function TwfShareModal({
     setLinkCopied(false);
     setTextCopied(false);
     setShowCopyMenu(false);
+    setStatusResolved(false);
     setSubmitError(null);
     setSubmitSuccess(null);
     setSubmitTopicSuccess(null);
@@ -418,6 +464,10 @@ export function TwfShareModal({
     });
   }, [open, defaultContent, defaultTopicTitle]);
 
+
+  useEffect(() => {
+    selectedTopicIdRef.current = selectedTopicId;
+  }, [selectedTopicId]);
 
   useEffect(() => {
     if (!open) {
@@ -507,12 +557,16 @@ export function TwfShareModal({
         }
         return response.json() as Promise<unknown>;
       })
-      .then((value) => setTwfStatus(normalizeTwfStatus(value)))
+      .then((value) => {
+        setTwfStatus(normalizeTwfStatus(value));
+        setStatusResolved(true);
+      })
       .catch((error: unknown) => {
         if ((error as { name?: string } | undefined)?.name === "AbortError") {
           return;
         }
         setTwfStatus({ linked: false });
+        setStatusResolved(true);
         setStatusError((error as Error).message || "Failed to load TWF account status.");
       })
       .finally(() => setStatusLoading(false));
@@ -521,12 +575,28 @@ export function TwfShareModal({
   }, [open]);
 
   useEffect(() => {
+    if (!open || topicsLoading || topicsForumId !== selectedForumId) {
+      return;
+    }
+    const validatedTopic = topics.find((topic) => topic.id === selectedTopicId) ?? null;
     setSharePrefs({
       forumMode: forumModeFromSelection(selectedForumId, showOtherForums),
       forumId: selectedForumId > 0 ? selectedForumId : undefined,
-      topicId: selectedTopicId ?? undefined,
+      topicId: validatedTopic?.id,
+      topicTitle: validatedTopic?.title,
     });
-  }, [selectedForumId, showOtherForums, selectedTopicId]);
+  }, [open, selectedForumId, selectedTopicId, showOtherForums, topics, topicsForumId, topicsLoading]);
+
+  useEffect(() => {
+    if (selectedForumId <= 0 || topicsForumId !== selectedForumId) {
+      return;
+    }
+    topicCacheRef.current.set(selectedForumId, {
+      topics,
+      selectedTopicId,
+      selectedTopicTitle,
+    });
+  }, [selectedForumId, selectedTopicId, selectedTopicTitle, topics, topicsForumId]);
 
   useEffect(() => {
     if (!open || twfStatus.linked !== true || !showOtherForums) {
@@ -570,15 +640,48 @@ export function TwfShareModal({
   }, [open, twfStatus, showOtherForums, selectedForumId]);
 
   useEffect(() => {
-    if (!open || twfStatus.linked !== true || selectedForumId <= 0) {
+    if (!open || selectedForumId <= 0) {
       setTopics([]);
+      setTopicsForumId(null);
       setSelectedTopicId(null);
+      setSelectedTopicTitleFallback(null);
+      setTopicsError(null);
+      setTopicsLoading(false);
+      return;
+    }
+
+    if (twfStatus.linked !== true) {
+      if (!statusResolved) {
+        setTopicsError(null);
+        setTopicsLoading(false);
+        return;
+      }
+      setTopics([]);
+      setTopicsForumId(selectedForumId);
+      setSelectedTopicId(null);
+      setSelectedTopicTitleFallback(null);
       setTopicsError(null);
       setTopicsLoading(false);
       return;
     }
 
     const controller = new AbortController();
+    const cachedTopics = topicCacheRef.current.get(selectedForumId);
+    const prefs = getSharePrefs();
+    const persistedSelectionMatchesForum = forumIdFromPrefs(prefs) === selectedForumId;
+    if (cachedTopics) {
+      setTopics(cachedTopics.topics);
+      setTopicsForumId(selectedForumId);
+      setSelectedTopicId(cachedTopics.selectedTopicId);
+      setSelectedTopicTitleFallback(cachedTopics.selectedTopicTitle);
+    } else {
+      const initialTopicId = persistedSelectionMatchesForum ? prefs.topicId ?? null : null;
+      selectedTopicIdRef.current = initialTopicId;
+      setTopics([]);
+      setTopicsForumId(null);
+      setSelectedTopicId(initialTopicId);
+      setSelectedTopicTitleFallback(persistedSelectionMatchesForum ? prefs.topicTitle ?? null : null);
+    }
     const params = new URLSearchParams({
       forum_id: String(selectedForumId),
       limit: "15",
@@ -603,26 +706,37 @@ export function TwfShareModal({
       })
       .then((value) => {
         const normalized = normalizeTopics(value);
+        const latestPrefs = getSharePrefs();
+        const latestPrefsMatchForum = forumIdFromPrefs(latestPrefs) === selectedForumId;
+        const preferredTopicId = topicTitleForId(normalized, selectedTopicIdRef.current)
+          ? selectedTopicIdRef.current
+          : latestPrefsMatchForum
+          ? latestPrefs.topicId ?? null
+          : null;
+        const resolvedSelection = resolveTopicSelection(normalized, preferredTopicId);
         setTopics(normalized);
-        const savedTopicId = getSharePrefs().topicId;
-        if (savedTopicId && normalized.some((topic) => topic.id === savedTopicId)) {
-          setSelectedTopicId(savedTopicId);
-          return;
-        }
-        setSelectedTopicId(resolveMonthlyTopicId(normalized));
+        setTopicsForumId(selectedForumId);
+        selectedTopicIdRef.current = resolvedSelection.topicId;
+        setSelectedTopicId(resolvedSelection.topicId);
+        setSelectedTopicTitleFallback(resolvedSelection.topicTitle);
       })
       .catch((error: unknown) => {
         if ((error as { name?: string } | undefined)?.name === "AbortError") {
           return;
         }
-        setTopics([]);
-        setSelectedTopicId(null);
+        if (!cachedTopics) {
+          setTopics([]);
+          setTopicsForumId(selectedForumId);
+          selectedTopicIdRef.current = null;
+          setSelectedTopicId(null);
+          setSelectedTopicTitleFallback(null);
+        }
         setTopicsError((error as Error).message || "Failed to load topics.");
       })
       .finally(() => setTopicsLoading(false));
 
     return () => controller.abort();
-  }, [open, twfStatus, selectedForumId]);
+  }, [open, selectedForumId, statusResolved, twfStatus]);
 
   const generateScreenshot = async (): Promise<{
     blob: Blob;
@@ -866,6 +980,12 @@ export function TwfShareModal({
   const handleMessageChange = (nextValue: string) => {
     setContent(nextValue);
     setContentDirty(nextValue !== defaultContent);
+  };
+
+  const handleTopicSelectionChange = (nextTopicId: number | null) => {
+    selectedTopicIdRef.current = nextTopicId;
+    setSelectedTopicId(nextTopicId);
+    setSelectedTopicTitleFallback(topicTitleForId(topics, nextTopicId));
   };
 
   const handleCopyLink = async () => {
@@ -1138,23 +1258,31 @@ export function TwfShareModal({
                 {shareMode === "existing" ? (
                   <div>
                     <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-white/50">Topic</div>
-                    {topicsLoading ? (
+                    {topics.length > 0 ? (
+                      <div className="space-y-1.5">
+                        <select
+                          value={selectedTopicId !== null ? String(selectedTopicId) : ""}
+                          onChange={(event) => handleTopicSelectionChange(Number(event.target.value))}
+                          className={fieldClass}
+                        >
+                          {topics.map((topic) => (
+                            <option key={topic.id} value={String(topic.id)}>
+                              {(topic.pinned ? "[PIN] " : "") + topic.title}
+                            </option>
+                          ))}
+                        </select>
+                        {topicsLoading ? (
+                          <div className="flex items-center gap-1.5 text-[11px] text-white/45">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Refreshing topics...
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : topicsLoading ? (
                       <div className="flex items-center gap-1.5 text-xs text-white/50">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Loading topics...
                       </div>
-                    ) : topics.length > 0 ? (
-                      <select
-                        value={selectedTopicId !== null ? String(selectedTopicId) : ""}
-                        onChange={(event) => setSelectedTopicId(Number(event.target.value))}
-                        className={fieldClass}
-                      >
-                        {topics.map((topic) => (
-                          <option key={topic.id} value={String(topic.id)}>
-                            {(topic.pinned ? "[PIN] " : "") + topic.title}
-                          </option>
-                        ))}
-                      </select>
                     ) : (
                       <div className="text-xs text-white/50">No topics loaded.</div>
                     )}

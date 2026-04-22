@@ -2,6 +2,7 @@ export type SharePrefs = {
   forumMode: "west" | "east" | "other";
   forumId?: number;
   topicId?: number;
+  topicTitle?: string;
 };
 
 const SHARE_PREFS_STORAGE_KEY = "twm.share_prefs.v1";
@@ -21,6 +22,17 @@ function sanitizeForumMode(value: unknown): SharePrefs["forumMode"] {
   return "west";
 }
 
+function sanitizeTopicTitle(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.slice(0, 255);
+}
+
 function sanitizeSharePrefs(value: unknown): SharePrefs {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { forumMode: "west" };
@@ -36,6 +48,10 @@ function sanitizeSharePrefs(value: unknown): SharePrefs {
   const topicId = sanitizePositiveInt(record.topicId);
   if (topicId !== undefined) {
     prefs.topicId = topicId;
+  }
+  const topicTitle = sanitizeTopicTitle(record.topicTitle);
+  if (topicTitle !== undefined) {
+    prefs.topicTitle = topicTitle;
   }
   return prefs;
 }
