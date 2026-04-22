@@ -571,7 +571,18 @@ def test_inventory_cache_fetch_error_does_not_poison_cache(monkeypatch: pytest.M
     assert metrics["counters"].get("idx_cache_store", 0) == 1
 
 
-def test_invalid_cached_subset_is_deleted_and_refetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "open_error_message",
+    [
+        "not recognized as being in a supported file format.",
+        "is a grib file, but no raster dataset was successfully identified.",
+    ],
+)
+def test_invalid_cached_subset_is_deleted_and_refetched(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    open_error_message: str,
+) -> None:
     pattern = ":TMP:2 m above ground:"
     cached_subset = tmp_path / "cached_invalid.grib2"
     cached_subset.write_bytes(b"not-grib")
@@ -622,7 +633,7 @@ def test_invalid_cached_subset_is_deleted_and_refetched(monkeypatch: pytest.Monk
         payload = Path(path).read_bytes()
         if payload != b"grib":
             raise fetch_module.rasterio.errors.RasterioIOError(
-                f"{path!s} not recognized as being in a supported file format."
+                f"{path!s} {open_error_message}"
             )
         return _FakeDataset()
 

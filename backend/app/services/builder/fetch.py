@@ -1912,7 +1912,10 @@ def _is_missing_file_error(exc: Exception) -> bool:
 
 def _is_unsupported_file_format_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return "not recognized as being in a supported file format" in text
+    return (
+        "not recognized as being in a supported file format" in text
+        or "no raster dataset was successfully identified" in text
+    )
 
 
 def _is_grib_not_found_error(exc: Exception) -> bool:
