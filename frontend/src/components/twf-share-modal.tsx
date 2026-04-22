@@ -895,7 +895,7 @@ export function TwfShareModal({
       destinationSavedTimerRef.current = window.setTimeout(() => {
         setDestinationSaved(false);
         destinationSavedTimerRef.current = null;
-      }, 1200);
+      }, 2000);
       return;
     }
     if (destinationSavedTimerRef.current !== null) {
