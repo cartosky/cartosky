@@ -409,7 +409,10 @@ export function TwfShareModal({
   }, [forums, selectedForumId, showOtherForums]);
   const showTopicsLoadingState =
     topicsLoading ||
-    (open && selectedForumId > 0 && topics.length === 0 && (!statusResolved || statusLoading));
+    (open &&
+      selectedForumId > 0 &&
+      topics.length === 0 &&
+      (!statusResolved || statusLoading || topicsForumId !== selectedForumId));
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
 
