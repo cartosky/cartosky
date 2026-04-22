@@ -34,6 +34,7 @@ import numpy as np
 import rasterio
 
 from app.config import grid_build_enabled
+from app.services.artifact_paths import run_root as artifact_run_root, var_dir as artifact_var_dir
 from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
@@ -1069,7 +1070,7 @@ def build_frame(
     )
 
     # --- Staging directory ---
-    staging_dir = data_root / "staging" / model / run_id / var_key
+    staging_dir = artifact_var_dir(data_root / "staging", model, run_id, var_key, region=region)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     val_path = staging_dir / f"{fh_str}.val.cog.tif"
@@ -1295,11 +1296,11 @@ def build_frame(
         _write_json_atomic(sidecar_path, sidecar)
 
         if grid_build_enabled():
-            run_root = data_root / "staging" / model / run_id
-            grid_frame_path = grid_frame_path_for_run_root(run_root, var_key, fh)
-            grid_frame_meta_path = grid_frame_meta_path_for_run_root(run_root, var_key, fh)
+            staging_run_root = artifact_run_root(data_root / "staging", model, run_id, region=region)
+            grid_frame_path = grid_frame_path_for_run_root(staging_run_root, var_key, fh)
+            grid_frame_meta_path = grid_frame_meta_path_for_run_root(staging_run_root, var_key, fh)
             write_grid_frame_for_run_root(
-                run_root=run_root,
+                run_root=staging_run_root,
                 model=model,
                 var=var_key,
                 fh=fh,

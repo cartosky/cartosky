@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .run_ids import parse_run_id_datetime
+from .artifact_paths import run_root
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def write_latest_pointer(
 
 
 def promote_run(*, data_root: Path, model: str, run_id: str) -> None:
-    stage_run = data_root / "staging" / model / run_id
+    stage_run = run_root(data_root / "staging", model, run_id)
     if not stage_run.is_dir():
         raise ValueError(f"Cannot promote missing staging run dir: {stage_run}")
 

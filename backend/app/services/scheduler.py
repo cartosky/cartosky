@@ -21,6 +21,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
+from app.services.artifact_paths import run_root, var_dir
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
 from app.services.builder.derive import FetchContext
@@ -577,13 +578,13 @@ def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: i
 def _frame_sidecar_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.json"
+    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=CANONICAL_COVERAGE) / f"fh{fh:03d}.json"
 
 
 def _frame_value_path(data_root: Path, model: str, run_id: str, var_id: str, fh: int) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.val.cog.tif"
+    return var_dir(data_root / "staging", model, run_id, runtime_var_id, region=CANONICAL_COVERAGE) / f"fh{fh:03d}.val.cog.tif"
 
 
 def _frame_artifacts_exist(
@@ -1125,7 +1126,7 @@ def _resolve_loop_prewarm_fhs(plugin: Any, var_id: str, cycle_hour: int, *, limi
 
 
 def _promote_run(data_root: Path, model: str, run_id: str) -> None:
-    stage_run = data_root / "staging" / model / run_id
+    stage_run = run_root(data_root / "staging", model, run_id)
     if not stage_run.is_dir():
         raise SchedulerConfigError(f"Cannot promote missing staging run dir: {stage_run}")
 

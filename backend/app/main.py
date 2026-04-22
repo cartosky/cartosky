@@ -38,6 +38,7 @@ from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config.regions import REGION_PRESETS
+from .services.artifact_paths import resolve_existing_run_root, resolve_existing_var_dir
 from .models.registry import list_model_capabilities
 from .models.registry import get_model
 from .models.serialization import (
@@ -2035,9 +2036,9 @@ def _latest_run_from_pointer(model: str) -> str | None:
         logger.warning("LATEST.json points to out-of-cycle run for %s: %s", model, run_id)
         return None
 
-    run_dir = PUBLISHED_ROOT / model / run_id
+    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run_id)
     manifest_path = MANIFESTS_ROOT / model / f"{run_id}.json"
-    if not run_dir.is_dir() or not manifest_path.is_file():
+    if run_dir is None or not run_dir.is_dir() or not manifest_path.is_file():
         logger.warning("LATEST.json points to incomplete run state for %s/%s", model, run_id)
         return None
     return run_id
@@ -2054,7 +2055,7 @@ def _scan_manifest_runs(model: str) -> list[str]:
             continue
         if not _run_matches_model_cycle(model, run_id):
             continue
-        if not (PUBLISHED_ROOT / model / run_id).is_dir():
+        if resolve_existing_run_root(PUBLISHED_ROOT, model, run_id) is None:
             continue
         runs.append(run_id)
     return sorted(
@@ -2538,9 +2539,9 @@ def _resolve_run(model: str, run: str) -> str | None:
         return None
     if not _run_matches_model_cycle(model, run):
         return None
-    run_dir = PUBLISHED_ROOT / model / run
+    run_dir = resolve_existing_run_root(PUBLISHED_ROOT, model, run)
     manifest_path = MANIFESTS_ROOT / model / f"{run}.json"
-    if run_dir.is_dir() and manifest_path.is_file():
+    if run_dir is not None and run_dir.is_dir() and manifest_path.is_file():
         return run
     return None
 
@@ -2658,7 +2659,10 @@ def _runtime_var_id_for_request(model: str, var: str, ensemble_view: str | None)
 
 
 def _published_var_dir(model: str, run: str, var: str) -> Path:
-    return PUBLISHED_ROOT / model / run / var
+    resolved = resolve_existing_var_dir(PUBLISHED_ROOT, model, run, var)
+    if resolved is not None:
+        return resolved
+    return PUBLISHED_ROOT / model / run / "conus" / var
 
 
 def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None) -> Path | None:

@@ -675,7 +675,7 @@ def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
     model = "gfs"
     run_id = "20260406_12z"
     published_tmp2m = data_root / "published" / model / run_id / "tmp2m"
-    staging_mlcape = data_root / "staging" / model / run_id / "mlcape"
+    staging_mlcape = data_root / "staging" / model / run_id / "conus" / "mlcape"
 
     published_tmp2m.mkdir(parents=True, exist_ok=True)
     staging_mlcape.mkdir(parents=True, exist_ok=True)
@@ -686,22 +686,22 @@ def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
 
     published_run = data_root / "published" / model / run_id
     assert (published_run / "tmp2m" / "fh000.json").read_text() == "published tmp2m"
-    assert (published_run / "mlcape" / "fh000.json").read_text() == "staged mlcape"
+    assert (published_run / "conus" / "mlcape" / "fh000.json").read_text() == "staged mlcape"
 
 
 def test_promote_run_tolerates_same_inode_recopy_during_progress_publish(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     model = "hrrr"
     run_id = "20260407_16z"
-    stage_tmp2m = data_root / "staging" / model / run_id / "tmp2m"
-    stage_mlcape = data_root / "staging" / model / run_id / "mlcape"
+    stage_tmp2m = data_root / "staging" / model / run_id / "conus" / "tmp2m"
+    stage_mlcape = data_root / "staging" / model / run_id / "conus" / "mlcape"
 
     stage_tmp2m.mkdir(parents=True, exist_ok=True)
     (stage_tmp2m / "fh014.json").write_text("stage tmp2m")
 
     scheduler_module._promote_run(data_root, model, run_id)
 
-    published_file = data_root / "published" / model / run_id / "tmp2m" / "fh014.json"
+    published_file = data_root / "published" / model / run_id / "conus" / "tmp2m" / "fh014.json"
     stage_file = stage_tmp2m / "fh014.json"
     assert published_file.stat().st_ino == stage_file.stat().st_ino
 
@@ -711,8 +711,8 @@ def test_promote_run_tolerates_same_inode_recopy_during_progress_publish(tmp_pat
     scheduler_module._promote_run(data_root, model, run_id)
 
     published_run = data_root / "published" / model / run_id
-    assert (published_run / "tmp2m" / "fh014.json").read_text() == "stage tmp2m"
-    assert (published_run / "mlcape" / "fh014.json").read_text() == "stage mlcape"
+    assert (published_run / "conus" / "tmp2m" / "fh014.json").read_text() == "stage tmp2m"
+    assert (published_run / "conus" / "mlcape" / "fh014.json").read_text() == "stage mlcape"
 
 
 def test_scheduler_model_lock_blocks_second_runner(
@@ -790,7 +790,7 @@ def test_write_run_manifest_preserves_existing_vars_for_subset_update(tmp_path: 
         )
     )
 
-    mlcape_stage = data_root / "staging" / model / run_id / "mlcape"
+    mlcape_stage = data_root / "staging" / model / run_id / "conus" / "mlcape"
     mlcape_stage.mkdir(parents=True, exist_ok=True)
     (mlcape_stage / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "kind": "continuous", "valid_time": "2026-04-06T12:00:00Z"})

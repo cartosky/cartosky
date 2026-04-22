@@ -16,6 +16,7 @@ from rasterio.transform import Affine, array_bounds
 from scipy.ndimage import zoom as ndimage_zoom
 
 from ..config import grid_supported_pair
+from .artifact_paths import resolve_existing_run_root
 from .colormaps import get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import resampling_name_for_kind, variable_color_map_id
@@ -736,7 +737,10 @@ def resolved_grid_dir_for_run_root(run_root: Path, var: str) -> Path:
 
 
 def grid_dir(data_root: Path, model: str, run: str, var: str) -> Path:
-    return resolved_grid_dir_for_run_root(data_root / "published" / model / run, var)
+    published_run = resolve_existing_run_root(data_root / "published", model, run)
+    if published_run is None:
+        published_run = data_root / "published" / model / run
+    return resolved_grid_dir_for_run_root(published_run, var)
 
 
 def grid_manifest_path(data_root: Path, model: str, run: str, var: str) -> Path:
@@ -1387,7 +1391,9 @@ def build_grid_for_run(
     workers: int,
     variables: tuple[str, ...] | None = None,
 ) -> tuple[int, int, int]:
-    published_run = data_root / "published" / model / run
+    published_run = resolve_existing_run_root(data_root / "published", model, run)
+    if published_run is None:
+        published_run = data_root / "published" / model / run
     if not published_run.is_dir():
         return 0, 0, 0
 
