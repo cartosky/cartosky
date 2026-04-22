@@ -6,7 +6,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { API_ORIGIN } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
-import { getSharePrefs, setSharePrefs, type SharePrefs } from "@/lib/share_prefs";
+import {
+  getSharePrefs,
+  getSharePrefsTopicCacheEntry,
+  setSharePrefs,
+  setSharePrefsTopicCacheEntry,
+  type SharePrefs,
+} from "@/lib/share_prefs";
 import { formatObservedCompactTime } from "@/lib/time-axis";
 
 export type SharePayload = {
@@ -267,6 +273,18 @@ function resolveTopicSelection(topics: TwfTopic[], preferredTopicId?: number | n
   };
 }
 
+function hydratePersistedTopicCacheEntry(forumId: number): TopicCacheEntry | null {
+  const persisted = getSharePrefsTopicCacheEntry(forumId);
+  if (!persisted) {
+    return null;
+  }
+  return {
+    topics: persisted.topics,
+    selectedTopicId: persisted.selectedTopicId ?? null,
+    selectedTopicTitle: persisted.selectedTopicTitle ?? null,
+  };
+}
+
 function forumIdFromPrefs(prefs: SharePrefs): number {
   if (Number.isFinite(prefs.forumId) && Number(prefs.forumId) > 0) {
     return Number(prefs.forumId);
@@ -382,6 +400,33 @@ export function TwfShareModal({
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
 
+  const getTopicCacheEntry = (forumId: number): TopicCacheEntry | null => {
+    const inMemory = topicCacheRef.current.get(forumId);
+    if (inMemory) {
+      return inMemory;
+    }
+    const persisted = hydratePersistedTopicCacheEntry(forumId);
+    if (!persisted) {
+      return null;
+    }
+    topicCacheRef.current.set(forumId, persisted);
+    return persisted;
+  };
+
+  const storeTopicCacheEntry = (forumId: number, entry: TopicCacheEntry) => {
+    topicCacheRef.current.set(forumId, entry);
+    if (!isQuickForumId(forumId) || entry.topics.length === 0) {
+      return;
+    }
+    setSharePrefsTopicCacheEntry({
+      forumId,
+      topics: entry.topics,
+      selectedTopicId: entry.selectedTopicId ?? undefined,
+      selectedTopicTitle: entry.selectedTopicTitle ?? undefined,
+      savedAt: Date.now(),
+    });
+  };
+
 
   const defaultContent = useMemo(() => {
     return payload.summary;
@@ -427,7 +472,7 @@ export function TwfShareModal({
     wasOpenRef.current = true;
     const prefs = getSharePrefs();
     const persistedForumId = forumIdFromPrefs(prefs);
-    const cachedTopics = topicCacheRef.current.get(persistedForumId);
+    const cachedTopics = getTopicCacheEntry(persistedForumId);
     setSelectedForumId(persistedForumId);
     setShowOtherForums(prefs.forumMode === "other" || !isQuickForumId(persistedForumId));
     const initialTopicId = cachedTopics?.selectedTopicId ?? (prefs.forumId === persistedForumId ? prefs.topicId ?? null : null);
@@ -598,7 +643,7 @@ export function TwfShareModal({
     if (selectedForumId <= 0 || topicsForumId !== selectedForumId) {
       return;
     }
-    topicCacheRef.current.set(selectedForumId, {
+    storeTopicCacheEntry(selectedForumId, {
       topics,
       selectedTopicId,
       selectedTopicTitle,
@@ -615,7 +660,7 @@ export function TwfShareModal({
       if (forum.id === selectedForumId) {
         continue;
       }
-      if (topicCacheRef.current.has(forum.id) || quickForumPrefetchInFlightRef.current.has(forum.id)) {
+      if (getTopicCacheEntry(forum.id) || quickForumPrefetchInFlightRef.current.has(forum.id)) {
         continue;
       }
 
@@ -646,7 +691,7 @@ export function TwfShareModal({
         .then((value) => {
           const normalized = normalizeTopics(value);
           const resolvedSelection = resolveTopicSelection(normalized, preferredTopicId);
-          topicCacheRef.current.set(forum.id, {
+          storeTopicCacheEntry(forum.id, {
             topics: normalized,
             selectedTopicId: resolvedSelection.topicId,
             selectedTopicTitle: resolvedSelection.topicTitle,
@@ -732,7 +777,7 @@ export function TwfShareModal({
     }
 
     const controller = new AbortController();
-    const cachedTopics = topicCacheRef.current.get(selectedForumId);
+  const cachedTopics = getTopicCacheEntry(selectedForumId);
     const prefs = getSharePrefs();
     const persistedSelectionMatchesForum = forumIdFromPrefs(prefs) === selectedForumId;
     if (cachedTopics) {
