@@ -4,17 +4,80 @@ import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
 
-const Home = lazy(() => import("./pages/home"));
-const Forecast = lazy(() => import("./pages/forecast"));
-const Models = lazy(() => import("./pages/models"));
-const Variables = lazy(() => import("./pages/variables"));
-const Login = lazy(() => import("./pages/login"));
-const AdminOverview = lazy(() => import("./pages/admin/overview"));
-const AdminAnalytics = lazy(() => import("./pages/admin/analytics"));
-const AdminObservability = lazy(() => import("./pages/admin/observability"));
-const AdminStatus = lazy(() => import("./pages/admin/status"));
-const AdminTraces = lazy(() => import("./pages/admin/traces"));
-const Viewer = lazy(() => import("./pages/viewer"));
+const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
+
+function isRecoverableChunkError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("dynamically imported module")
+    || message.includes("failed to fetch dynamically imported module")
+    || message.includes("error loading dynamically imported module")
+    || message.includes("importing a module script failed")
+    || message.includes("chunkloaderror")
+  );
+}
+
+function markChunkReloadAttempted(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    if (window.sessionStorage.getItem(CHUNK_RELOAD_SESSION_KEY) === "1") {
+      return false;
+    }
+    window.sessionStorage.setItem(CHUNK_RELOAD_SESSION_KEY, "1");
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function clearChunkReloadAttempt(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.sessionStorage.removeItem(CHUNK_RELOAD_SESSION_KEY);
+  } catch {
+    // Ignore session storage failures and continue without persistence.
+  }
+}
+
+function lazyRoute<T extends React.ComponentType<any>>(
+  loader: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      const module = await loader();
+      clearChunkReloadAttempt();
+      return module;
+    } catch (error) {
+      if (isRecoverableChunkError(error) && markChunkReloadAttempted()) {
+        window.location.reload();
+        return new Promise<never>(() => undefined);
+      }
+      throw error;
+    }
+  });
+}
+
+const Home = lazyRoute(() => import("./pages/home"));
+const Forecast = lazyRoute(() => import("./pages/forecast"));
+const Models = lazyRoute(() => import("./pages/models"));
+const Variables = lazyRoute(() => import("./pages/variables"));
+const Login = lazyRoute(() => import("./pages/login"));
+const AdminOverview = lazyRoute(() => import("./pages/admin/overview"));
+const AdminAnalytics = lazyRoute(() => import("./pages/admin/analytics"));
+const AdminObservability = lazyRoute(() => import("./pages/admin/observability"));
+const AdminStatus = lazyRoute(() => import("./pages/admin/status"));
+const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
+const Viewer = lazyRoute(() => import("./pages/viewer"));
 
 function withSuspense(node: React.ReactNode) {
   return <Suspense fallback={null}>{node}</Suspense>;
