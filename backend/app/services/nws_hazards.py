@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 from shapely.geometry import GeometryCollection, mapping, shape
-from shapely.ops import unary_union
+from shapely.ops import linemerge, unary_union
 
 from app.models.nws_hazards import NWS_HAZARDS_MODEL
 from app.services.nws import NWS_API_BASE, NWS_REQUEST_TIMEOUT, NWS_USER_AGENT
@@ -976,7 +976,7 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
             dissolved.extend(group)
             continue
 
-        merged_boundaries = unary_union([geometry.boundary for geometry in source_geometries])
+        merged_boundaries = linemerge(unary_union([geometry.boundary for geometry in source_geometries]))
 
         geometries = list(merged_geometry.geoms) if isinstance(merged_geometry, GeometryCollection) else [merged_geometry]
         polygon_geometries = [geom for geom in geometries if geom.geom_type in {"Polygon", "MultiPolygon"} and not geom.is_empty]
