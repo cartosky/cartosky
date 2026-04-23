@@ -400,15 +400,18 @@ def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygo
         zone_reference_path=zone_reference,
     )
 
-    assert len(frame.features) == 1
-    feature = frame.features[0]
-    assert feature["properties"]["risk_label"] == "Red Flag Warning"
-    assert feature["properties"]["fill"] == "#FF1493"
-    assert feature["properties"]["alert_count"] == 2
-    assert sorted(feature["properties"]["alert_ids"]) == ["red-1", "red-2"]
-    assert feature["properties"]["hover_label"] == "Red Flag Warning (2 areas)"
-    assert feature["properties"]["zone_codes"] == ["AAZ001", "AAZ002"]
-    assert feature["geometry"]["type"] == "Polygon"
+    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] == "Polygon")
+    outline_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"LineString", "MultiLineString"})
+
+    assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert fill_feature["properties"]["fill"] == "#FF1493"
+    assert fill_feature["properties"]["alert_count"] == 2
+    assert sorted(fill_feature["properties"]["alert_ids"]) == ["red-1", "red-2"]
+    assert fill_feature["properties"]["hover_label"] == "Red Flag Warning (2 areas)"
+    assert fill_feature["properties"]["zone_codes"] == ["AAZ001", "AAZ002"]
+    assert fill_feature["geometry"]["type"] == "Polygon"
+    assert outline_feature["properties"]["geometry_role"] == "outline"
+    assert outline_feature["properties"]["fill_opacity"] == 0.0
 
 
 def test_sync_active_zone_reference_uses_affected_zone_namespace_for_fire_zones(

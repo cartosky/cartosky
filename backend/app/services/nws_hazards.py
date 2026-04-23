@@ -924,6 +924,12 @@ def _geometry_is_area(geometry: dict[str, Any] | None) -> bool:
     return str(geometry.get("type") or "") in {"Polygon", "MultiPolygon"}
 
 
+def _geometry_is_line(geometry: dict[str, Any] | None) -> bool:
+    if not isinstance(geometry, dict):
+        return False
+    return str(geometry.get("type") or "") in {"LineString", "MultiLineString"}
+
+
 def _dissolve_group_key(properties: dict[str, Any]) -> tuple[Any, ...]:
     return (
         properties.get("risk_code"),
@@ -969,6 +975,8 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
         if merged_geometry.is_empty:
             dissolved.extend(group)
             continue
+
+        merged_boundaries = unary_union([geometry.boundary for geometry in source_geometries])
 
         geometries = list(merged_geometry.geoms) if isinstance(merged_geometry, GeometryCollection) else [merged_geometry]
         polygon_geometries = [geom for geom in geometries if geom.geom_type in {"Polygon", "MultiPolygon"} and not geom.is_empty]
@@ -1036,6 +1044,21 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
                     "geometry": mapping(polygon_geometry),
                 }
             )
+
+        boundary_geometries = list(merged_boundaries.geoms) if isinstance(merged_boundaries, GeometryCollection) else [merged_boundaries]
+        line_geometries = [geom for geom in boundary_geometries if geom.geom_type in {"LineString", "MultiLineString"} and not geom.is_empty]
+        if line_geometries:
+            outline_template = dict(template)
+            outline_template["fill_opacity"] = 0.0
+            outline_template["geometry_role"] = "outline"
+            for line_geometry in line_geometries:
+                dissolved.append(
+                    {
+                        "type": "Feature",
+                        "properties": dict(outline_template),
+                        "geometry": mapping(line_geometry),
+                    }
+                )
 
     dissolved.extend(passthrough)
     return dissolved
