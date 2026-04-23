@@ -53,6 +53,12 @@ class HazardStyle:
 
 
 @dataclass(frozen=True)
+class HazardAreaRenderStyle:
+    fill_opacity: float
+    stroke_width: float
+
+
+@dataclass(frozen=True)
 class NormalizedHazardAlert:
     alert_id: str
     event: str
@@ -251,6 +257,13 @@ SPECIAL_EVENT_PRIORITIES: dict[str, int] = {
     "winter storm watch": 255,
     "red flag watch": 250,
     "small craft advisory": 135,
+}
+
+EVENT_AREA_STYLE_OVERRIDES: dict[str, HazardAreaRenderStyle] = {
+    # Fire weather products often arrive as a mix of county and fire-zone alerts.
+    # Keep their map treatment consistent regardless of which upstream area type
+    # a particular office publishes.
+    "red flag warning": HazardAreaRenderStyle(fill_opacity=0.42, stroke_width=1.6),
 }
 
 
@@ -812,6 +825,13 @@ def _prefers_alert_geometry(alert: NormalizedHazardAlert) -> bool:
     return normalized_event in GEOMETRY_PREFERRED_EVENTS
 
 
+def _area_render_style(alert: NormalizedHazardAlert, *, default_fill_opacity: float, default_stroke_width: float) -> HazardAreaRenderStyle:
+    return EVENT_AREA_STYLE_OVERRIDES.get(
+        alert.event.strip().lower(),
+        HazardAreaRenderStyle(fill_opacity=default_fill_opacity, stroke_width=default_stroke_width),
+    )
+
+
 def _build_geometry_feature(
     *,
     geometry: dict[str, Any],
@@ -1102,6 +1122,7 @@ def build_active_hazards_frame(
     for alert in normalized_alerts:
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
         if alert.geometry is not None and _prefers_alert_geometry(alert):
+            render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
             geometry_features.append(
                 _build_geometry_feature(
                     geometry=alert.geometry,
@@ -1109,8 +1130,8 @@ def build_active_hazards_frame(
                     alerts=[alert],
                     hover_name=alert.style.label,
                     area_description=alert.area_description,
-                    fill_opacity=0.42,
-                    stroke_width=1.6,
+                    fill_opacity=render_style.fill_opacity,
+                    stroke_width=render_style.stroke_width,
                 )
             )
             continue
@@ -1123,6 +1144,7 @@ def build_active_hazards_frame(
                 county_buckets.setdefault(geoid, []).append(alert)
             continue
         if alert.geometry is not None:
+            render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
             geometry_features.append(
                 _build_geometry_feature(
                     geometry=alert.geometry,
@@ -1130,8 +1152,8 @@ def build_active_hazards_frame(
                     alerts=[alert],
                     hover_name=alert.headline,
                     area_description=alert.area_description,
-                    fill_opacity=0.42,
-                    stroke_width=1.6,
+                    fill_opacity=render_style.fill_opacity,
+                    stroke_width=render_style.stroke_width,
                 )
             )
             continue
@@ -1155,6 +1177,7 @@ def build_active_hazards_frame(
                 county_buckets.setdefault(geoid, []).append(alert)
             continue
         if alert.geometry is not None:
+            render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
             geometry_features.append(
                 _build_geometry_feature(
                     geometry=alert.geometry,
@@ -1162,8 +1185,8 @@ def build_active_hazards_frame(
                     alerts=[alert],
                     hover_name=alert.headline,
                     area_description=alert.area_description,
-                    fill_opacity=0.42,
-                    stroke_width=1.6,
+                    fill_opacity=render_style.fill_opacity,
+                    stroke_width=render_style.stroke_width,
                 )
             )
 
@@ -1174,6 +1197,7 @@ def build_active_hazards_frame(
             continue
         sorted_alerts = _sort_alerts_by_priority(alerts)
         primary = sorted_alerts[0]
+        render_style = _area_render_style(primary, default_fill_opacity=0.58, default_stroke_width=1.0)
         county_name = str(county.get("name") or geoid)
         active_hazard_labels = _unique_hazard_labels(sorted_alerts)
         county_features.append(
@@ -1184,9 +1208,9 @@ def build_active_hazards_frame(
                     "risk_label": primary.style.label,
                     "hover_label": _build_hover_label(county_name, sorted_alerts),
                     "fill": primary.style.fill,
-                    "fill_opacity": 0.58,
+                    "fill_opacity": render_style.fill_opacity,
                     "stroke": primary.style.stroke,
-                    "stroke_width": 1.0,
+                    "stroke_width": render_style.stroke_width,
                     "sort_rank": int(primary.style.priority),
                     "county_geoid": geoid,
                     "county_name": county_name,
@@ -1208,6 +1232,7 @@ def build_active_hazards_frame(
             continue
         sorted_alerts = _sort_alerts_by_priority(alerts)
         primary = sorted_alerts[0]
+        render_style = _area_render_style(primary, default_fill_opacity=0.42, default_stroke_width=1.6)
         zone_name = str(zone.get("name") or zone_code)
         zone_features.append(
             _build_geometry_feature(
@@ -1216,8 +1241,8 @@ def build_active_hazards_frame(
                 alerts=sorted_alerts,
                 hover_name=zone_name,
                 area_description=zone_name,
-                fill_opacity=0.42,
-                stroke_width=1.6,
+                fill_opacity=render_style.fill_opacity,
+                stroke_width=render_style.stroke_width,
                 extra_properties={
                     "zone_code": zone_code,
                     "zone_name": zone_name,

@@ -400,7 +400,7 @@ def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygo
         zone_reference_path=zone_reference,
     )
 
-    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] == "Polygon")
+    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"Polygon", "MultiPolygon"})
     outline_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"LineString", "MultiLineString"})
 
     assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
@@ -412,6 +412,92 @@ def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygo
     assert fill_feature["geometry"]["type"] == "Polygon"
     assert outline_feature["properties"]["geometry_role"] == "outline"
     assert outline_feature["properties"]["fill_opacity"] == 0.0
+
+
+def test_build_active_hazards_frame_keeps_red_flag_warning_style_consistent_across_county_and_zone_sources(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = tmp_path / "zone_reference.geojson"
+    zone_reference.parent.mkdir(parents=True, exist_ok=True)
+    zone_reference.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AAZ001",
+                            "name": "Alpha Fire Zone",
+                            "state": "AA",
+                            "zone_type": "fire",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-101.0, 35.0], [-100.0, 35.0], [-100.0, 36.0], [-101.0, 36.0], [-101.0, 35.0]]],
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "red-zone-1",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for fire zone",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Alpha Fire Zone",
+                    "affectedZones": ["https://api.weather.gov/zones/fire/AAZ001"],
+                    "geocode": {"UGC": ["AAZ001"]},
+                },
+                "geometry": None,
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "red-county-1",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for county fallback",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+
+    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"Polygon", "MultiPolygon"})
+    outline_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"LineString", "MultiLineString"})
+
+    assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert fill_feature["properties"]["fill_opacity"] == 0.42
+    assert fill_feature["properties"]["stroke_width"] == 0.0
+    assert fill_feature["properties"]["zone_codes"] == ["AAZ001"]
+    assert fill_feature["properties"]["county_geoids"] == ["04013"]
+
+    assert outline_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert outline_feature["properties"]["fill_opacity"] == 0.0
+    assert outline_feature["properties"]["stroke_width"] == 1.6
+    assert outline_feature["properties"]["zone_codes"] == ["AAZ001"]
+    assert outline_feature["properties"]["county_geoids"] == ["04013"]
 
 
 def test_sync_active_zone_reference_uses_affected_zone_namespace_for_fire_zones(
