@@ -62,6 +62,10 @@ class _FakeProbePlugin:
             return None
         return types.SimpleNamespace(selectors=types.SimpleNamespace(search=[":2t:"]))
 
+    def target_fhs(self, cycle_hour: int) -> list[int]:
+        del cycle_hour
+        return [0]
+
     def run_discovery_config(self) -> dict[str, object]:
         return {
             "probe_fhs": [0, 3],
@@ -735,6 +739,86 @@ def test_enforce_herbie_cache_retention_preserves_unparsed_files(tmp_path: Path)
     scheduler_module._enforce_herbie_cache_retention(herbie_root, "gfs", 4)
 
     assert legacy_note.exists()
+
+
+def test_enforce_herbie_cache_retention_supports_nested_day_dirs(tmp_path: Path) -> None:
+    herbie_root = tmp_path / "herbie_cache"
+    model_root = herbie_root / "aifs"
+
+    kept = {
+        "20260228_00z",
+        "20260227_18z",
+        "20260227_12z",
+        "20260227_06z",
+    }
+    removed = {
+        "20260227_00z",
+        "20260226_18z",
+    }
+
+    files = {
+        "20260228_00z": [model_root / "oper" / "20260228" / "aifs.t00z.0p25.f000.grib2"],
+        "20260227_18z": [model_root / "oper" / "20260227" / "aifs.t18z.0p25.f000.grib2"],
+        "20260227_12z": [model_root / "oper" / "20260227" / "aifs.t12z.0p25.f000.grib2"],
+        "20260227_06z": [model_root / "oper" / "20260227" / "aifs.t06z.0p25.f000.grib2"],
+        "20260227_00z": [model_root / "oper" / "20260227" / "aifs.t00z.0p25.f000.grib2"],
+        "20260226_18z": [model_root / "oper" / "20260226" / "aifs.t18z.0p25.f000.grib2"],
+    }
+    for paths in files.values():
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+
+    scheduler_module._enforce_herbie_cache_retention(herbie_root, "aifs", 4)
+
+    for run_id in kept:
+        for path in files[run_id]:
+            assert path.exists()
+    for run_id in removed:
+        for path in files[run_id]:
+            assert not path.exists()
+
+
+def test_process_run_enforces_herbie_retention_for_resolved_cache_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    captured: list[tuple[Path, str, int]] = []
+
+    monkeypatch.setenv("HERBIE_SAVE_DIR", str(tmp_path / "herbie_cache"))
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", lambda *args, **kwargs: True)
+    monkeypatch.setattr(scheduler_module, "_build_one", lambda **kwargs: (scheduler_module.CANONICAL_COVERAGE, kwargs["var_id"], kwargs["fh"], True))
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_enforce_herbie_cache_retention",
+        lambda root, model_id, keep_runs: captured.append((root, model_id, keep_runs)),
+    )
+
+    scheduler_module._process_run(
+        plugin=_FakeProbePlugin(),
+        model_id="ecmwf",
+        vars_to_build=["tmp2m"],
+        primary_vars=["tmp2m"],
+        run_dt=run_dt,
+        data_root=tmp_path,
+        workers=1,
+        keep_runs=4,
+        loop_pregenerate_enabled=False,
+        loop_cache_root=tmp_path / "loop-cache",
+        loop_workers=1,
+        loop_tier0_quality=82,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
+        loop_tier1_quality=86,
+        loop_tier1_max_dim=2400,
+        loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
+    )
+
+    assert captured == [(tmp_path / "herbie_cache", "ifs", 4)]
 
 
 def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:

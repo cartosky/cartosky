@@ -1424,8 +1424,8 @@ def _extract_herbie_run_id(path: Path, *, model_root: Path) -> str | None:
     if len(relative.parts) < 2:
         return None
 
-    day_token = relative.parts[0]
-    if not re.fullmatch(r"\d{8}", day_token):
+    day_token = next((part for part in relative.parts[:-1] if re.fullmatch(r"\d{8}", part)), None)
+    if day_token is None:
         return None
 
     name = path.name.lower()
@@ -1923,7 +1923,15 @@ def _process_run(
     _enforce_run_retention(data_root / "published" / model_id, keep_runs)
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
-        _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), model_id, keep_runs)
+        herbie_model_id = model_id
+        try:
+            herbie_request = plugin.herbie_request(product=getattr(plugin, "product", None), run_date=run_dt)
+            resolved_model = str(getattr(herbie_request, "model", "") or "").strip().lower()
+            if resolved_model:
+                herbie_model_id = resolved_model
+        except Exception:
+            logger.exception("Failed resolving Herbie cache model for retention: scheduler_model=%s", model_id)
+        _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), herbie_model_id, keep_runs)
 
     return run_id, available, total
 
