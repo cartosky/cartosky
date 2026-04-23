@@ -999,5 +999,18 @@ export function buildVectorLayerUrl(params: {
   if (!resolvedRun || !Number.isFinite(fh) || !layerKey) {
     return null;
   }
-  return `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
+  const baseUrl = `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
+  const meta = params.frame?.meta?.meta;
+  const versionToken =
+    typeof meta?.generated_at === "string" && meta.generated_at.trim()
+      ? meta.generated_at.trim()
+      : typeof meta?.issue_time === "string" && meta.issue_time.trim()
+        ? meta.issue_time.trim()
+        : typeof params.frame?.valid_time === "string" && params.frame.valid_time.trim()
+          ? params.frame.valid_time.trim()
+          : "";
+  if (versionToken) {
+    return `${baseUrl}?v=${encodeURIComponent(versionToken)}`;
+  }
+  return baseUrl;
 }
