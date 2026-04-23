@@ -6,6 +6,7 @@ rio-tiler
 scipy
 herbie-data
 pyproj
+shapely
 Pillow
 httpx
 cryptography

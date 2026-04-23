@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from shapely.geometry import GeometryCollection, mapping, shape
+from shapely.ops import unary_union
 
 from app.models.nws_hazards import NWS_HAZARDS_MODEL
 from app.services.nws import NWS_API_BASE, NWS_REQUEST_TIMEOUT, NWS_USER_AGENT
@@ -864,6 +866,129 @@ def _legend_entries_for_features(features: list[dict[str, Any]]) -> list[dict[st
     return entries
 
 
+def _geometry_is_area(geometry: dict[str, Any] | None) -> bool:
+    if not isinstance(geometry, dict):
+        return False
+    return str(geometry.get("type") or "") in {"Polygon", "MultiPolygon"}
+
+
+def _dissolve_group_key(properties: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        properties.get("risk_code"),
+        properties.get("risk_label"),
+        properties.get("fill"),
+        properties.get("fill_opacity"),
+        properties.get("stroke"),
+        properties.get("stroke_width"),
+        properties.get("sort_rank"),
+    )
+
+
+def _dissolve_hover_label(properties_list: list[dict[str, Any]]) -> str:
+    area_names = [str(props.get("area_description") or "").strip() for props in properties_list]
+    area_names = list(dict.fromkeys(name for name in area_names if name))
+    risk_label = str(properties_list[0].get("risk_label") or "").strip()
+    if not area_names:
+        return risk_label
+    if len(area_names) == 1:
+        return f"{area_names[0]}: {risk_label}" if risk_label else area_names[0]
+    return f"{risk_label} ({len(area_names)} areas)" if risk_label else f"{len(area_names)} areas"
+
+
+def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dissolve_candidates: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    passthrough: list[dict[str, Any]] = []
+    for feature in features:
+        properties = feature.get("properties")
+        geometry = feature.get("geometry")
+        if not isinstance(properties, dict) or not _geometry_is_area(geometry):
+            passthrough.append(feature)
+            continue
+        dissolve_candidates.setdefault(_dissolve_group_key(properties), []).append(feature)
+
+    dissolved: list[dict[str, Any]] = []
+    for group in dissolve_candidates.values():
+        if len(group) == 1:
+            dissolved.append(group[0])
+            continue
+
+        source_geometries = [shape(feature["geometry"]) for feature in group]
+        merged_geometry = unary_union(source_geometries)
+        if merged_geometry.is_empty:
+            dissolved.extend(group)
+            continue
+
+        geometries = list(merged_geometry.geoms) if isinstance(merged_geometry, GeometryCollection) else [merged_geometry]
+        polygon_geometries = [geom for geom in geometries if geom.geom_type in {"Polygon", "MultiPolygon"} and not geom.is_empty]
+        if not polygon_geometries:
+            dissolved.extend(group)
+            continue
+
+        properties_list = [feature["properties"] for feature in group]
+        template = dict(properties_list[0])
+        alert_ids = list(dict.fromkeys(
+            str(alert_id)
+            for props in properties_list
+            for alert_id in (props.get("alert_ids") or [])
+            if str(alert_id).strip()
+        ))
+        active_hazards = list(dict.fromkeys(
+            str(label)
+            for props in properties_list
+            for label in (props.get("active_hazards") or [])
+            if str(label).strip()
+        ))
+        area_names = list(dict.fromkeys(
+            str(props.get("area_description") or "").strip()
+            for props in properties_list
+            if str(props.get("area_description") or "").strip()
+        ))
+        states = list(dict.fromkeys(
+            str(props.get("state") or "").strip()
+            for props in properties_list
+            if str(props.get("state") or "").strip()
+        ))
+        zone_codes = list(dict.fromkeys(
+            str(props.get("zone_code") or "").strip()
+            for props in properties_list
+            if str(props.get("zone_code") or "").strip()
+        ))
+        county_geoids = list(dict.fromkeys(
+            str(props.get("county_geoid") or "").strip()
+            for props in properties_list
+            if str(props.get("county_geoid") or "").strip()
+        ))
+        expires_times = [str(props.get("expires_time") or "").strip() for props in properties_list if str(props.get("expires_time") or "").strip()]
+
+        template["alert_ids"] = alert_ids
+        template["alert_count"] = len(alert_ids)
+        template["active_hazards"] = active_hazards
+        template["hover_label"] = _dissolve_hover_label(properties_list)
+        template["area_description"] = area_names[0] if len(area_names) == 1 else ", ".join(area_names)
+        template["state"] = states[0] if len(states) == 1 else ",".join(states)
+        template["expires_time"] = min(expires_times) if expires_times else template.get("expires_time")
+        if zone_codes:
+            template["zone_codes"] = zone_codes
+            template.pop("zone_code", None)
+            template.pop("zone_name", None)
+        if county_geoids:
+            template["county_geoids"] = county_geoids
+            template.pop("county_geoid", None)
+            template.pop("county_name", None)
+
+        for polygon_geometry in polygon_geometries:
+            dissolved.append(
+                {
+                    "type": "Feature",
+                    "properties": dict(template),
+                    "geometry": mapping(polygon_geometry),
+                }
+            )
+
+    dissolved.extend(passthrough)
+    return dissolved
+
+
 def build_active_hazards_frame(
     payload: dict[str, Any],
     *,
@@ -1022,7 +1147,7 @@ def build_active_hazards_frame(
             )
         )
 
-    all_features = county_features + zone_features + geometry_features
+    all_features = _dissolve_area_features(county_features + zone_features + geometry_features)
     all_features.sort(key=lambda feature: int((feature.get("properties") or {}).get("sort_rank") or 0))
     return HazardFramePayload(
         fh=int(fh),

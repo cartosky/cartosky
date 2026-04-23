@@ -318,6 +318,99 @@ def test_build_active_hazards_frame_prefers_zone_geometry_when_alert_has_both_zo
     assert "county_geoid" not in feature["properties"]
 
 
+def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygons(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = tmp_path / "zone_reference.geojson"
+    zone_reference.parent.mkdir(parents=True, exist_ok=True)
+    zone_reference.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AAZ001",
+                            "name": "Alpha Zone",
+                            "state": "AA",
+                            "zone_type": "fire",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0], [0.0, 0.0]]],
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AAZ002",
+                            "name": "Beta Zone",
+                            "state": "AA",
+                            "zone_type": "fire",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[1.0, 0.0], [3.0, 0.0], [3.0, 2.0], [1.0, 2.0], [1.0, 0.0]]],
+                        },
+                    },
+                ],
+            }
+        )
+    )
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "red-1",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for alpha",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Alpha Zone",
+                    "geocode": {"UGC": ["AAZ001"]},
+                },
+                "geometry": None,
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "red-2",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for beta",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:30:00Z",
+                    "areaDesc": "Beta Zone",
+                    "geocode": {"UGC": ["AAZ002"]},
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+
+    assert len(frame.features) == 1
+    feature = frame.features[0]
+    assert feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert feature["properties"]["fill"] == "#FF1493"
+    assert feature["properties"]["alert_count"] == 2
+    assert sorted(feature["properties"]["alert_ids"]) == ["red-1", "red-2"]
+    assert feature["properties"]["hover_label"] == "Red Flag Warning (2 areas)"
+    assert feature["properties"]["zone_codes"] == ["AAZ001", "AAZ002"]
+    assert feature["geometry"]["type"] == "Polygon"
+
+
 def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sidecars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
