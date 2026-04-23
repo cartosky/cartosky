@@ -950,6 +950,10 @@ def _geometry_is_line(geometry: dict[str, Any] | None) -> bool:
     return str(geometry.get("type") or "") in {"LineString", "MultiLineString"}
 
 
+def _is_red_flag_warning_properties(properties: dict[str, Any]) -> bool:
+    return str(properties.get("risk_label") or "").strip().lower() == "red flag warning"
+
+
 def _dissolve_group_key(properties: dict[str, Any]) -> tuple[Any, ...]:
     return (
         properties.get("risk_code"),
@@ -986,7 +990,7 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
 
     dissolved: list[dict[str, Any]] = []
     for group in dissolve_candidates.values():
-        if len(group) == 1:
+        if len(group) == 1 and not _is_red_flag_warning_properties(group[0]["properties"]):
             dissolved.append(group[0])
             continue
 
@@ -996,7 +1000,8 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
             dissolved.extend(group)
             continue
 
-        merged_boundaries = linemerge(unary_union([geometry.boundary for geometry in source_geometries]))
+        boundary_union = unary_union([geometry.boundary for geometry in source_geometries])
+        merged_boundaries = boundary_union if boundary_union.geom_type == "LineString" else linemerge(boundary_union)
 
         geometries = list(merged_geometry.geoms) if isinstance(merged_geometry, GeometryCollection) else [merged_geometry]
         polygon_geometries = [geom for geom in geometries if geom.geom_type in {"Polygon", "MultiPolygon"} and not geom.is_empty]

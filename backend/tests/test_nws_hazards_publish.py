@@ -500,6 +500,49 @@ def test_build_active_hazards_frame_keeps_red_flag_warning_style_consistent_acro
     assert outline_feature["properties"]["county_geoids"] == ["04013"]
 
 
+def test_build_active_hazards_frame_splits_single_red_flag_warning_area_into_fill_and_outline(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "red-county-1",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for county fallback",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+
+    fill_feature = next(feature for feature in frame.features if feature["properties"].get("geometry_role") == "fill")
+    outline_feature = next(feature for feature in frame.features if feature["properties"].get("geometry_role") == "outline")
+
+    assert len(frame.features) == 2
+    assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert fill_feature["properties"]["fill_opacity"] == 0.42
+    assert fill_feature["properties"]["stroke_width"] == 0.0
+    assert outline_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert outline_feature["properties"]["fill_opacity"] == 0.0
+    assert outline_feature["properties"]["stroke_width"] == 1.6
+
+
 def test_sync_active_zone_reference_uses_affected_zone_namespace_for_fire_zones(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
