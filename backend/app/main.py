@@ -4245,7 +4245,14 @@ def get_contour_geojson(
                 ("contour_total", (time.perf_counter() - started_at) * 1000.0),
             ]
         )
-        return Response(content=payload, media_type="application/geo+json", headers={"Server-Timing": timing_header})
+        return Response(
+            content=payload,
+            media_type="application/geo+json",
+            headers={
+                "Cache-Control": "no-store",
+                "Server-Timing": timing_header,
+            },
+        )
     except Exception as exc:
         logger.exception(
             "Failed to read contour GeoJSON: %s/%s/%s/fh%03d/%s (%s)",
@@ -4310,7 +4317,14 @@ def get_vector_geojson(
                 ("vector_total", (time.perf_counter() - started_at) * 1000.0),
             ]
         )
-        return Response(content=payload, media_type="application/geo+json", headers={"Server-Timing": timing_header})
+        return Response(
+            content=payload,
+            media_type="application/geo+json",
+            headers={
+                "Cache-Control": "no-store",
+                "Server-Timing": timing_header,
+            },
+        )
     except Exception as exc:
         logger.exception(
             "Failed to read vector GeoJSON: %s/%s/%s/fh%03d/%s (%s)",

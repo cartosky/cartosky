@@ -341,7 +341,11 @@ export function readCapabilitySupportsSampling(model: CapabilityModel | null | u
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
   const startedAtMs = startNetworkTimer();
-  const response = await fetch(url, { credentials: "omit", signal: options?.signal });
+  const response = await fetch(url, {
+    credentials: "omit",
+    signal: options?.signal,
+    cache: "no-store",
+  });
   if (options?.diagnosticMetricName) {
     trackNetworkFetchDuration({
       metric_name: options.diagnosticMetricName,
