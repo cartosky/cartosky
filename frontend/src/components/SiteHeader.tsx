@@ -381,15 +381,6 @@ function ViewerNavDesktop() {
       <div className="flex shrink-0 items-center gap-1.5">
         {/* Primary selectors */}
         <NavbarSelect
-          value={variable}
-          onValueChange={onVariableChange}
-          options={displayVariables}
-          disabled={disabled}
-          placeholder="Variable"
-          grouped
-          minWidth="min-w-[180px] max-w-[320px]"
-        />
-        <NavbarSelect
           value={model}
           onValueChange={onModelChange}
           options={models}
@@ -397,6 +388,15 @@ function ViewerNavDesktop() {
           placeholder="Model"
           grouped
           minWidth="min-w-[90px] max-w-[140px]"
+        />
+        <NavbarSelect
+          value={variable}
+          onValueChange={onVariableChange}
+          options={displayVariables}
+          disabled={disabled}
+          placeholder="Variable"
+          grouped
+          minWidth="min-w-[180px] max-w-[320px]"
         />
         <NavbarSelect
           value={run}
