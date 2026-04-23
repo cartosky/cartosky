@@ -202,7 +202,16 @@ def stage_era5_source(
             latitudes = np.asarray(ds["latitude"].values, dtype=np.float64)
 
             if "time" not in data_array.coords:
-                raise KeyError(f"Dataset missing time coordinate: {input_path}")
+                if "valid_time" in data_array.coords:
+                    data_array = data_array.rename({"valid_time": "time"})
+                elif "valid_time" in ds.coords:
+                    ds = ds.rename({"valid_time": "time"})
+                    data_array = _select_data_array(ds, spec=spec)
+                else:
+                    raise KeyError(f"Dataset missing time coordinate: {input_path}")
+
+            longitudes = np.asarray(ds["longitude"].values, dtype=np.float64)
+            latitudes = np.asarray(ds["latitude"].values, dtype=np.float64)
 
             for time_value in data_array["time"].values:
                 valid_time = _coerce_valid_time(time_value)
