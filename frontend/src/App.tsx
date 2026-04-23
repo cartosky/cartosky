@@ -1721,7 +1721,7 @@ export default function App() {
         const visibleModelIds = supportedModelIds;
         const modelRows = normalizeModelRows(capabilitiesData, visibleModelIds);
         const orderedVisibleModelIds = modelRows.map((entry) => entry.id);
-        const preferredDefaultModel = orderedVisibleModelIds.includes("hrrr") ? "hrrr" : "";
+        const preferredDefaultModel = orderedVisibleModelIds.includes("nws_hazards") ? "nws_hazards" : "";
         const availableModelId = orderedVisibleModelIds.find((modelId) => {
           const availability = capabilitiesData.availability?.[modelId];
           return Boolean(availability?.latest_run);
