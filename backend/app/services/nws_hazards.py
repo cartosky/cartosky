@@ -561,45 +561,90 @@ def zone_reference_signature_for_path(path: Path) -> str:
     return _zone_reference_signature(zones)
 
 
-def _zone_codes_needed_for_payload(payload: dict[str, Any]) -> set[str]:
+def _zone_lookup_hints_for_properties(props: dict[str, Any]) -> dict[str, str]:
+    affected_zones = props.get("affectedZones")
+    if not isinstance(affected_zones, list):
+        return {}
+    hints: dict[str, str] = {}
+    for entry in affected_zones:
+        text = str(entry or "").strip().rstrip("/")
+        if not text:
+            continue
+        parts = text.split("/")
+        if len(parts) < 2:
+            continue
+        zone_code = parts[-1].strip().upper()
+        zone_type = parts[-2].strip().lower()
+        if zone_code and zone_type:
+            hints[zone_code] = zone_type
+    return hints
+
+
+def _zone_lookup_hints_for_payload(payload: dict[str, Any]) -> dict[str, str]:
     features_raw = payload.get("features") if isinstance(payload, dict) else None
     if not isinstance(features_raw, list):
-        return set()
-    zone_codes: set[str] = set()
+        return {}
+    zone_hints: dict[str, str] = {}
     for feature in features_raw:
-        alert = _normalize_alert(feature) if isinstance(feature, dict) else None
+        if not isinstance(feature, dict):
+            continue
+        alert = _normalize_alert(feature)
         if alert is None:
             continue
-        zone_codes.update(alert.zone_codes)
-    return zone_codes
+        props = feature.get("properties")
+        property_hints = _zone_lookup_hints_for_properties(props) if isinstance(props, dict) else {}
+        for zone_code in alert.zone_codes:
+            zone_hints[zone_code] = property_hints.get(zone_code, zone_hints.get(zone_code, ""))
+    return zone_hints
 
 
-def _fetch_zone_record(zone_code: str, *, timeout_seconds: float, api_base: str, client: httpx.Client) -> dict[str, Any] | None:
+def _fetch_zone_record(
+    zone_code: str,
+    *,
+    timeout_seconds: float,
+    api_base: str,
+    client: httpx.Client,
+    zone_type_hint: str | None = None,
+) -> dict[str, Any] | None:
     normalized_zone = str(zone_code or "").strip().upper()
     if not normalized_zone:
         return None
-    url = f"{api_base.rstrip('/')}/zones/forecast/{normalized_zone}"
-    try:
-        payload = _fetch_geojson_with_retry(
-            url=url,
-            timeout_seconds=timeout_seconds,
-            log_retries=False,
-            client=client,
-        )
-    except NWSHazardsError as exc:
-        logger.warning("NWS Hazards active zone lookup failed for %s: %s", normalized_zone, exc)
-        return None
-    geometry = payload.get("geometry")
-    props = payload.get("properties") if isinstance(payload, dict) else None
-    if not isinstance(geometry, dict) or not isinstance(props, dict):
-        return None
-    return {
-        "zone_code": normalized_zone,
-        "name": str(props.get("name") or normalized_zone).strip(),
-        "state": str(props.get("state") or "").strip(),
-        "zone_type": str(props.get("type") or "").strip(),
-        "geometry": geometry,
-    }
+    ordered_zone_types = [
+        *( [str(zone_type_hint).strip().lower()] if str(zone_type_hint or "").strip() else [] ),
+        "forecast",
+        "public",
+        "fire",
+        "marine",
+    ]
+    seen_zone_types: set[str] = set()
+    for zone_type in ordered_zone_types:
+        normalized_zone_type = str(zone_type or "").strip().lower()
+        if not normalized_zone_type or normalized_zone_type in seen_zone_types:
+            continue
+        seen_zone_types.add(normalized_zone_type)
+        url = f"{api_base.rstrip('/')}/zones/{normalized_zone_type}/{normalized_zone}"
+        try:
+            payload = _fetch_geojson_with_retry(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                log_retries=False,
+                client=client,
+            )
+        except NWSHazardsError:
+            continue
+        geometry = payload.get("geometry")
+        props = payload.get("properties") if isinstance(payload, dict) else None
+        if not isinstance(geometry, dict) or not isinstance(props, dict):
+            continue
+        return {
+            "zone_code": normalized_zone,
+            "name": str(props.get("name") or normalized_zone).strip(),
+            "state": str(props.get("state") or "").strip(),
+            "zone_type": str(props.get("type") or normalized_zone_type).strip(),
+            "geometry": geometry,
+        }
+    logger.warning("NWS Hazards active zone lookup failed for %s: unable to resolve zone geometry from NWS zones endpoints", normalized_zone)
+    return None
 
 
 def sync_active_zone_reference(
@@ -610,7 +655,8 @@ def sync_active_zone_reference(
     api_base: str = NWS_API_BASE,
 ) -> ZoneReferenceSyncResult:
     existing_zones = _load_zone_reference_file_cached(str(zone_reference_path.resolve())) if zone_reference_path.is_file() else {}
-    needed_zone_codes = set(sorted(_zone_codes_needed_for_payload(payload)))
+    zone_lookup_hints = _zone_lookup_hints_for_payload(payload)
+    needed_zone_codes = set(sorted(zone_lookup_hints.keys()))
     active_zones: dict[str, dict[str, Any]] = {
         zone_code: existing_zones[zone_code]
         for zone_code in sorted(needed_zone_codes)
@@ -624,7 +670,13 @@ def sync_active_zone_reference(
             "Accept": "application/geo+json,application/json;q=0.9,*/*;q=0.8",
         }) as client:
             for zone_code in missing_zone_codes:
-                zone = _fetch_zone_record(zone_code, timeout_seconds=timeout_seconds, api_base=api_base, client=client)
+                zone = _fetch_zone_record(
+                    zone_code,
+                    timeout_seconds=timeout_seconds,
+                    api_base=api_base,
+                    client=client,
+                    zone_type_hint=zone_lookup_hints.get(zone_code),
+                )
                 if zone is not None:
                     active_zones[zone_code] = zone
 

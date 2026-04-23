@@ -411,6 +411,67 @@ def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygo
     assert feature["geometry"]["type"] == "Polygon"
 
 
+def test_sync_active_zone_reference_uses_affected_zone_namespace_for_fire_zones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_urls: list[str] = []
+
+    def _fake_fetch_geojson_with_retry(*, url: str, timeout_seconds: float, log_retries: bool, client):
+        del timeout_seconds, log_retries, client
+        observed_urls.append(url)
+        if url.endswith("/zones/fire/COZ220"):
+            return {
+                "type": "Feature",
+                "properties": {
+                    "id": "https://api.weather.gov/zones/fire/COZ220",
+                    "name": "Northwest Colorado Fire Zone 220",
+                    "state": "CO",
+                    "type": "fire",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-108.0, 39.0], [-107.0, 39.0], [-107.0, 40.0], [-108.0, 40.0], [-108.0, 39.0]]],
+                },
+            }
+        raise nws_hazards.NWSHazardsError("unexpected lookup")
+
+    monkeypatch.setattr(nws_hazards, "_fetch_geojson_with_retry", _fake_fetch_geojson_with_retry)
+
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "fire-1",
+                    "status": "Actual",
+                    "event": "Red Flag Warning",
+                    "headline": "Red Flag Warning for Colorado fire zone",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T20:00:00Z",
+                    "areaDesc": "Colorado Fire Weather Zone 220",
+                    "affectedZones": ["https://api.weather.gov/zones/fire/COZ220"],
+                    "geocode": {"UGC": ["COZ220"]},
+                },
+                "geometry": None,
+            }
+        ],
+    }
+
+    result = nws_hazards.sync_active_zone_reference(
+        payload=payload,
+        zone_reference_path=tmp_path / "zone_reference.geojson",
+        timeout_seconds=10.0,
+        api_base="https://api.weather.gov",
+    )
+
+    assert observed_urls == ["https://api.weather.gov/zones/fire/COZ220"]
+    assert result.resolved_zone_codes == ("COZ220",)
+
+
 def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sidecars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
