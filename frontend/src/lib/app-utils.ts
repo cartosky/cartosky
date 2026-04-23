@@ -698,20 +698,22 @@ export function resolveManifestFrames(
   }
 
   const rows: FrameRow[] = [];
+  const manifestGeneratedAt = typeof manifest.last_updated === "string" && manifest.last_updated.trim() ? manifest.last_updated.trim() : undefined;
   for (const frame of varEntry.frames) {
     const fh = Number(frame?.fh);
     if (!Number.isFinite(fh)) {
       continue;
     }
+    const validTime = typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : undefined;
+    const generatedAt = typeof frame?.generated_at === "string" && frame.generated_at.trim()
+      ? frame.generated_at.trim()
+      : manifestGeneratedAt;
     rows.push({
       fh,
       has_cog: false,
       run: manifest.run,
-      valid_time: typeof frame?.valid_time === "string" && frame.valid_time.trim() ? frame.valid_time.trim() : undefined,
-      meta:
-        typeof frame?.valid_time === "string" && frame.valid_time.trim()
-          ? { meta: { valid_time: frame.valid_time.trim() } }
-          : undefined,
+      valid_time: validTime,
+      meta: validTime || generatedAt ? { meta: { valid_time: validTime, generated_at: generatedAt } } : undefined,
     });
   }
   rows.sort((a, b) => Number(a.fh) - Number(b.fh));
@@ -742,7 +744,9 @@ export function mergeManifestRowsWithPrevious(
     }
     return {
       ...row,
-      meta: row.meta ?? previous.meta,
+      meta: row.meta && previous.meta
+        ? { meta: { ...(previous.meta.meta ?? {}), ...(row.meta.meta ?? {}) } }
+        : row.meta ?? previous.meta,
     };
   });
 }

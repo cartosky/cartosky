@@ -255,6 +255,7 @@ export type GridManifestResponse = {
 export type RunManifestFrame = {
   fh: number;
   valid_time?: string;
+  generated_at?: string;
 };
 
 export type RunManifestVariable = {

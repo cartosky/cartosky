@@ -123,6 +123,9 @@ def write_run_manifest(
             frame_entry: dict[str, Any] = {"fh": fh}
             if isinstance(valid_time, str) and valid_time:
                 frame_entry["valid_time"] = valid_time
+            generated_at = sidecar.get("generated_at")
+            if isinstance(generated_at, str) and generated_at:
+                frame_entry["generated_at"] = generated_at
             frames.append(frame_entry)
 
         variables[var_id] = {
