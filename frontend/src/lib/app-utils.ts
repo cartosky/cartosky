@@ -319,11 +319,40 @@ export function writeZoomControlsPreference(visible: boolean): void {
   writeBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, visible);
 }
 
-export function pickPreferred(values: string[], preferred: string): string {
-  if (values.includes(preferred)) {
-    return preferred;
+function regionPriority(regionId: string): number {
+  switch (regionId) {
+    case "na":
+      return 0;
+    case "conus":
+      return 1;
+    default:
+      return 2;
   }
-  return values[0] ?? "";
+}
+
+function sortRegionIds(regionIds: readonly string[]): string[] {
+  return [...regionIds].sort((left, right) => {
+    const priorityDelta = regionPriority(left) - regionPriority(right);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+    return 0;
+  });
+}
+
+export function pickPreferred(values: string[], preferred: string): string {
+  const preferredRegionIds = sortRegionIds(values);
+  if (preferredRegionIds.length === 0) {
+    return "";
+  }
+  const normalizedPreferred = String(preferred ?? "").trim().toLowerCase();
+  if (normalizedPreferred && preferredRegionIds.includes(normalizedPreferred)) {
+    const preferredPriority = regionPriority(normalizedPreferred);
+    if (preferredPriority <= regionPriority(preferredRegionIds[0])) {
+      return normalizedPreferred;
+    }
+  }
+  return preferredRegionIds[0] ?? "";
 }
 
 export function makeRegionLabel(id: string, preset?: RegionPreset): string {
@@ -536,7 +565,7 @@ export function filterRegionOptionsByCoverage(
   const allowedRegionIds = canonicalPreset
     ? regionIds.filter((regionId) => bboxWithin(canonicalPreset, regionPresets[regionId]))
     : regionIds;
-  return allowedRegionIds.map((id) => ({
+  return sortRegionIds(allowedRegionIds).map((id) => ({
     value: id,
     label: makeRegionLabel(id, regionPresets[id]),
   }));
@@ -555,7 +584,7 @@ export function filterRegionOptionsForVariable(
   if (normalizedSupportedRegions.length === 0) {
     return filterRegionOptionsByCoverage(regionPresets, canonicalRegionId);
   }
-  return normalizedSupportedRegions
+  return sortRegionIds(normalizedSupportedRegions)
     .filter((regionId) => Boolean(regionPresets[regionId]))
     .map((id) => ({
       value: id,
