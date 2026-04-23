@@ -49,14 +49,14 @@ logger = logging.getLogger(__name__)
 
 REGION_BBOX_3857: dict[str, tuple[float, float, float, float]] = {
     "conus": (-14916811.77, 2753408.11, -6679169.45, 7361866.11),
-    "na": (-18924313.43, 557305.26, -5565974.54, 12932243.11),
+    "na": (-19814869.36, 557305.26, -2782987.27, 16967796.94),
     "pnw": (-14026255.80, 5096324.37, -12913060.93, 6378137.00),
 }
 
 # WGS84 bounding boxes (for reference / coordinate transforms)
 REGION_BBOX_4326: dict[str, tuple[float, float, float, float]] = {
     "conus": (-134.0, 24.0, -60.0, 55.0),
-    "na": (-170.0, 5.0, -50.0, 75.0),
+    "na": (-178.0, 5.0, -25.0, 82.0),
     "pnw": (-126.0, 41.5, -116.0, 49.5),
 }
 

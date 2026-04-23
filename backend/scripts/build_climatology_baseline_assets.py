@@ -353,13 +353,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    resolved_source = normalize_baseline_source(args.baseline_source)
+    resolved_region = str(args.region).strip().lower()
+    bbox, grid_m = get_baseline_grid_params(
+        baseline_source=resolved_source,
+        region=resolved_region,
+    )
+    _transform, height, width = compute_transform_and_shape(bbox, grid_m)
     files_written, missing_buckets = build_climatology_assets(
         source_root=Path(args.source_root).resolve(),
         data_root=Path(args.data_root).resolve(),
         version=args.version,
-        baseline_source=args.baseline_source,
+        baseline_source=resolved_source,
         field=args.field,
-        region=args.region,
+        region=resolved_region,
         reference_period=args.reference_period,
         units_in=args.units_in,
         smoothing_window_days=int(args.smoothing_window_days),
@@ -374,8 +381,12 @@ def main() -> int:
             "files_written": files_written,
             "missing_buckets": missing_buckets,
             "field": args.field,
-            "baseline_source": args.baseline_source,
+            "baseline_source": resolved_source,
+            "region": resolved_region,
             "version": args.version,
+            "target_bbox_3857": bbox,
+            "target_grid_m": grid_m,
+            "target_shape": [height, width],
         },
     )
     return 0

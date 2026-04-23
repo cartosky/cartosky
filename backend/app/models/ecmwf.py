@@ -183,7 +183,7 @@ ECMWF_REGIONS: dict[str, RegionSpec] = {
     "na": RegionSpec(
         id="na",
         name="North America",
-        bbox_wgs84=(-170.0, 5.0, -50.0, 75.0),
+        bbox_wgs84=(-178.0, 5.0, -25.0, 82.0),
         tile_matrix="WebMercatorQuad",
         clip=True,
     ),
