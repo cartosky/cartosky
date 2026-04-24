@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from app.models.aifs import AIFS_MODEL
 from app.models.ecmwf import ECMWF_MODEL
 from app.models.eps import EPS_MODEL
 from app.models.gfs import GFS_MODEL
@@ -534,6 +535,87 @@ def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
     expected = expected_forecast_dam - baseline_data_dam
     assert np.allclose(anomaly, expected, atol=1.0e-5)
+    assert crs.to_epsg() == 3857
+    assert anomaly_transform == transform
+
+    quality_meta = ctx.derive_quality[("hgt500_anom", 0)]
+    sidecar_metadata = quality_meta.get("sidecar_metadata")
+    assert isinstance(sidecar_metadata, dict)
+    assert sidecar_metadata["anomaly_kind"] == "departure"
+    assert sidecar_metadata["baseline_kind"] == "climatology"
+    assert sidecar_metadata["baseline_version"] == "v1"
+    assert sidecar_metadata["baseline_field"] == "hgt500"
+    assert sidecar_metadata["baseline_region"] == "na"
+
+
+def test_derive_aifs_hgt500_anomaly_uses_geopotential_height_component_and_dam_units(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
+    climatology.configure_data_root(tmp_path)
+    valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
+    transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
+    assert (height, width) == (2, 2)
+
+    baseline_data_dam = np.array([[552.0, 546.0], [540.0, 534.0]], dtype=np.float32)
+    _write_baseline(
+        climatology.climatology_baseline_path(
+            version="v1",
+            baseline_source="era5",
+            field="hgt500",
+            region="na",
+            reference_period="1991-2020",
+            valid_time=valid_time,
+        ),
+        baseline_data_dam,
+        transform,
+    )
+
+    forecast_data_geopotential = np.array(
+        [[54730.987, 54142.087], [53553.187, 52964.287]],
+        dtype=np.float32,
+    )
+    fetch_calls: list[dict[str, object]] = []
+
+    def _fake_fetch_component_warped(**kwargs):
+        fetch_calls.append(dict(kwargs))
+        return forecast_data_geopotential, rasterio.crs.CRS.from_epsg(3857), transform
+
+    monkeypatch.setattr("app.services.builder.derive._fetch_component_warped", _fake_fetch_component_warped)
+
+    ctx = FetchContext()
+    var_spec = AIFS_MODEL.get_var("hgt500_anom")
+    var_capability = AIFS_MODEL.get_var_capability("hgt500_anom")
+    assert var_spec is not None
+    assert var_capability is not None
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+    assert var_spec.selectors.hints["contour_component"] == "hgt500"
+    assert var_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
+
+    anomaly, crs, anomaly_transform = derive_variable(
+        model_id="aifs",
+        var_key="hgt500_anom",
+        product="oper",
+        run_date=valid_time,
+        fh=0,
+        var_spec_model=var_spec,
+        var_capability=var_capability,
+        model_plugin=AIFS_MODEL,
+        fetch_ctx=ctx,
+        derive_component_target_grid={"region": "na", "id": "aifs:na:10.0m"},
+        derive_component_resampling="bilinear",
+    )
+
+    assert fetch_calls
+    assert fetch_calls[0]["var_key"] == "hgt500"
+    expected_forecast_dam = (forecast_data_geopotential / np.float32(9.80665)) / np.float32(10.0)
+    expected = expected_forecast_dam - baseline_data_dam
+    assert np.allclose(anomaly, expected, atol=1.0e-3)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
 

@@ -52,6 +52,11 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert AIFS_MODEL.normalize_var_id("z300") == "hgt300"
     assert AIFS_MODEL.normalize_var_id("gh300") == "hgt300"
+    assert AIFS_MODEL.normalize_var_id("hgt500") == "hgt500"
+    assert AIFS_MODEL.normalize_var_id("z500") == "hgt500"
+    assert AIFS_MODEL.normalize_var_id("gh500") == "hgt500"
+    assert AIFS_MODEL.normalize_var_id("hgt500_anom") == "hgt500_anom"
+    assert AIFS_MODEL.normalize_var_id("500mb_height_anom") == "hgt500_anom"
     assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert AIFS_MODEL.normalize_var_id("qpf") == "precip_total"
@@ -86,7 +91,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "precip_total", "pwat", "snowfall_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "hgt500_anom", "precip_total", "pwat", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -96,6 +101,10 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 9000.0,
         "na": 9000.0,
     }
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("aifs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
     tmp2m_spec = AIFS_MODEL.get_var("tmp2m")
     assert tmp2m_spec is not None
@@ -194,6 +203,29 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert hgt300_spec.primary is False
     assert hgt300_spec.derived is False
     assert hgt300_spec.selectors.search == [":z:300:pl:", ":z:300:"]
+
+    hgt500_spec = AIFS_MODEL.get_var("hgt500")
+    assert hgt500_spec is not None
+    assert hgt500_spec.primary is False
+    assert hgt500_spec.derived is False
+    assert hgt500_spec.selectors.search == [":z:500:pl:", ":z:500:"]
+
+    hgt500_capability = capabilities.variable_catalog["hgt500"]
+    assert hgt500_capability.buildable is False
+    assert hgt500_capability.frontend == {"internal_only": True}
+
+    hgt500_anom_spec = AIFS_MODEL.get_var("hgt500_anom")
+    assert hgt500_anom_spec is not None
+    assert hgt500_anom_spec.primary is True
+    assert hgt500_anom_spec.derived is True
+    assert hgt500_anom_spec.derive == "anomaly_departure"
+    assert hgt500_anom_spec.kind == "continuous"
+    assert hgt500_anom_spec.units == "dam"
+    assert hgt500_anom_spec.selectors.hints["base_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_field"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_region"] == "na"
+    assert hgt500_anom_spec.selectors.hints["contour_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
 
     precip_spec = AIFS_MODEL.get_var("precip_total")
     assert precip_spec is not None
@@ -348,6 +380,21 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]
 
+    hgt500_anom = payload["variables"]["hgt500_anom"]
+    assert hgt500_anom["var_key"] == "hgt500_anom"
+    assert hgt500_anom["display_name"] == "500mb Height Anomaly"
+    assert hgt500_anom["kind"] == "continuous"
+    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["buildable"] is True
+    assert hgt500_anom["derived"] is True
+    assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
+    assert hgt500_anom["color_map_id"] == "hgt500_anom"
+    assert hgt500_anom["order"] == 5
+    assert hgt500_anom["group"] == "Dynamics"
+    assert hgt500_anom["default_fh"] == 0
+    assert hgt500_anom["display_resampling_override"] == "bilinear"
+    assert hgt500_anom["render_substrates"] == ["grid"]
+
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["var_key"] == "precip_total"
     assert precip_total["display_name"] == "Total Precip"
@@ -411,6 +458,7 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert "u300" not in payload["variables"]
     assert "v300" not in payload["variables"]
     assert "hgt300" not in payload["variables"]
+    assert "hgt500" not in payload["variables"]
 
     assert payload["defaults"] == {
         "default_var_key": "tmp2m",

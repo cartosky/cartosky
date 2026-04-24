@@ -39,6 +39,8 @@ class AIFSPlugin(ECMWFPlugin):
             return "hgt850"
         if normalized in {"z300", "gh300"}:
             return "hgt300"
+        if normalized in {"z500", "gh500"}:
+            return "hgt500"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -78,6 +80,8 @@ AIFS_VARS = {
     "v300": ECMWF_VARS["v300"],
     "hgt300": ECMWF_VARS["hgt300"],
     "wspd300": ECMWF_VARS["wspd300"],
+    "hgt500": ECMWF_VARS["hgt500"],
+    "hgt500_anom": ECMWF_VARS["hgt500_anom"],
     "precip_total": ECMWF_VARS["precip_total"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
@@ -173,6 +177,34 @@ AIFS_VARS["wspd300"] = replace(
     ),
 )
 
+AIFS_VARS["hgt500"] = replace(
+    AIFS_VARS["hgt500"],
+    selectors=VarSelectors(
+        search=[":z:500:pl:", ":z:500:"],
+        filter_by_keys={
+            "shortName": "z",
+            "typeOfLevel": "isobaricInhPa",
+            "level": "500",
+        },
+        hints={
+            "upstream_var": "z500",
+            "cf_var": "z",
+            "short_name": "z",
+        },
+    ),
+)
+
+AIFS_VARS["hgt500_anom"] = replace(
+    AIFS_VARS["hgt500_anom"],
+    selectors=replace(
+        AIFS_VARS["hgt500_anom"].selectors,
+        hints={
+            **AIFS_VARS["hgt500_anom"].selectors.hints,
+            "contour_conversion": "geopotential_to_height_m",
+        },
+    ),
+)
+
 AIFS_VARIABLE_CATALOG["pwat"] = replace(
     AIFS_VARIABLE_CATALOG["pwat"],
     selectors=AIFS_VARS["pwat"].selectors,
@@ -186,6 +218,17 @@ AIFS_VARIABLE_CATALOG["wspd850"] = replace(
 AIFS_VARIABLE_CATALOG["wspd300"] = replace(
     AIFS_VARIABLE_CATALOG["wspd300"],
     selectors=AIFS_VARS["wspd300"].selectors,
+)
+
+AIFS_VARIABLE_CATALOG["hgt500"] = replace(
+    _capability_from_var_spec("hgt500", AIFS_VARS["hgt500"]),
+    buildable=False,
+    frontend={"internal_only": True},
+)
+
+AIFS_VARIABLE_CATALOG["hgt500_anom"] = replace(
+    _capability_from_var_spec("hgt500_anom", AIFS_VARS["hgt500_anom"]),
+    selectors=AIFS_VARS["hgt500_anom"].selectors,
 )
 
 AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(
