@@ -149,6 +149,12 @@ def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
 
 def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: Path) -> None:
     class _FakeHerbieDirectMean(_FakeHerbie):
+        def __init__(self, *_args, **kwargs) -> None:
+            self.priority = kwargs.get("priority")
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = f"https://example.invalid/2026041900-{self.fxx}h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/2026041900-{self.fxx}h-enfo-ef.grib2.index"
+
         def get_localFilePath(self, search_pattern: str) -> str:
             return str(tmp_path / f"direct-{search_pattern.strip(':').replace(':', '-')}.grib2")
 
@@ -156,7 +162,8 @@ def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: P
         def index_as_dataframe(self):
             return pd.DataFrame(
                 [
-                    {"search_this": ":gh:500:pl:em:enfo", "type": "em", "start_byte": 0, "end_byte": 9},
+                    {"search_this": ":gh:500:pl:em:enfo", "type": "em", "step": "6", "start_byte": 0, "end_byte": 9},
+                    {"search_this": ":gh:500:pl:em:enfo", "type": "em", "step": "12", "start_byte": 30, "end_byte": 39},
                     {"search_this": ":gh:500:pl:1:pf:enfo", "type": "pf", "number": 1, "start_byte": 10, "end_byte": 19},
                     {"search_this": ":gh:500:pl:2:pf:enfo", "type": "pf", "number": 2, "start_byte": 20, "end_byte": 29},
                 ]
@@ -169,7 +176,11 @@ def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: P
     def _fake_download_subset(_herbie, **kwargs):
         calls["download"] += 1
         inventory = kwargs["inventory"]
+        assert _herbie.fxx == 240
+        assert str(_herbie.grib).endswith("-240h-enfo-ep.grib2")
+        assert str(_herbie.idx).endswith("-240h-enfo-ep.grib2.index")
         assert list(inventory["type"].astype(str)) == ["em"]
+        assert list(inventory["step"].astype(str)) == ["6"]
         return kwargs["out_path"]
 
     def _fake_read_grib_raster(_path):

@@ -1681,6 +1681,54 @@ def _fetch_ecmwf_pf_mean_variable(
     )
 
 
+def _ecmwf_eps_statistics_file_fh(fh: int) -> int:
+    return 240 if int(fh) <= 240 else 360
+
+
+def _ecmwf_eps_statistics_url(url: Any, *, requested_fh: int, statistics_fh: int) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    suffix = f"-{int(requested_fh)}h-enfo-ef.grib2"
+    replacement = f"-{int(statistics_fh)}h-enfo-ep.grib2"
+    if suffix in text:
+        return text.replace(suffix, replacement, 1)
+    return re.sub(r"-\d+h-enfo-ef\.grib2", replacement, text, count=1)
+
+
+def _point_herbie_at_ecmwf_eps_statistics_file(H: Any, *, requested_fh: int, statistics_fh: int) -> None:
+    try:
+        grib_url = _ecmwf_eps_statistics_url(
+            getattr(H, "grib", ""),
+            requested_fh=requested_fh,
+            statistics_fh=statistics_fh,
+        )
+        if grib_url:
+            setattr(H, "grib", grib_url)
+    except Exception:
+        pass
+    try:
+        idx_url = _ecmwf_eps_statistics_url(
+            getattr(H, "idx", ""),
+            requested_fh=requested_fh,
+            statistics_fh=statistics_fh,
+        )
+        if idx_url:
+            setattr(H, "idx", idx_url)
+    except Exception:
+        pass
+
+
+def _filter_inventory_step(inventory: Any, *, fh: int) -> Any:
+    try:
+        if "step" not in inventory.columns:
+            return inventory
+        step_values = np.to_numeric(inventory["step"], errors="coerce")
+        return inventory.loc[step_values == int(fh)]
+    except Exception:
+        return inventory
+
+
 def _fetch_ecmwf_direct_mean_variable(
     *,
     model_id: str,
@@ -1712,9 +1760,16 @@ def _fetch_ecmwf_direct_mean_variable(
     for priority in priority_list:
         for attempt_idx in range(1, retries + 1):
             try:
+                direct_fh = _ecmwf_eps_statistics_file_fh(fh)
                 run_kwargs = _quiet_herbie_kwargs(kwargs)
                 run_kwargs["priority"] = priority
+                run_kwargs["fxx"] = direct_fh
                 H = Herbie(herbie_date, **run_kwargs)
+                _point_herbie_at_ecmwf_eps_statistics_file(
+                    H,
+                    requested_fh=fh,
+                    statistics_fh=direct_fh,
+                )
                 inv_result = _inventory_search(
                     H,
                     search_pattern=search_pattern,
@@ -1735,6 +1790,7 @@ def _fetch_ecmwf_direct_mean_variable(
                     direct_inventory = inventory.loc[type_series == "em"]
                 else:
                     direct_inventory = inventory.iloc[0:0]
+                direct_inventory = _filter_inventory_step(direct_inventory, fh=fh)
 
                 if len(direct_inventory) == 0:
                     raise RuntimeError(
