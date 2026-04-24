@@ -53,6 +53,10 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
     assert ECMWF_MODEL.normalize_var_id("wspd300") == "wspd300"
     assert ECMWF_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
+    assert ECMWF_MODEL.normalize_var_id("hgt500") == "hgt500"
+    assert ECMWF_MODEL.normalize_var_id("500mb_height") == "hgt500"
+    assert ECMWF_MODEL.normalize_var_id("hgt500_anom") == "hgt500_anom"
+    assert ECMWF_MODEL.normalize_var_id("500mb_height_anom") == "hgt500_anom"
     assert ECMWF_MODEL.normalize_var_id("vort500") == "vort500"
     assert ECMWF_MODEL.normalize_var_id("500mb_vorticity") == "vort500"
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
@@ -112,7 +116,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "vort500", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -122,6 +126,10 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 9000.0,
         "na": 9000.0,
     }
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("ecmwf", "hgt500_anom") in _PACKING_BY_MODEL_VAR
     gust_spec = ECMWF_MODEL.get_var("wgst10m")
     assert gust_spec is not None
     assert gust_spec.selectors.search == [":10fg:", ":10fg3:"]
@@ -172,6 +180,19 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd300_spec.selectors.hints["contour_component"] == "hgt300"
     assert wspd300_spec.selectors.hints["contour_interval"] == "120"
     assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
+
+    hgt500_anom_spec = ECMWF_MODEL.get_var("hgt500_anom")
+    assert hgt500_anom_spec is not None
+    assert hgt500_anom_spec.primary is True
+    assert hgt500_anom_spec.derived is True
+    assert hgt500_anom_spec.derive == "anomaly_departure"
+    assert hgt500_anom_spec.kind == "continuous"
+    assert hgt500_anom_spec.units == "dam"
+    assert hgt500_anom_spec.selectors.hints["base_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_field"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_region"] == "na"
+    assert hgt500_anom_spec.selectors.hints["contour_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["contour_conversion"] == "m_to_dam"
 
     vort500_spec = ECMWF_MODEL.get_var("vort500")
     assert vort500_spec is not None
@@ -335,6 +356,21 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["group"] == "Temperature"
     assert tmp850["default_fh"] == 0
     assert tmp850["render_substrates"] == ["grid"]
+
+    hgt500_anom = payload["variables"]["hgt500_anom"]
+    assert hgt500_anom["var_key"] == "hgt500_anom"
+    assert hgt500_anom["display_name"] == "500mb Height Anomaly"
+    assert hgt500_anom["kind"] == "continuous"
+    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["buildable"] is True
+    assert hgt500_anom["derived"] is True
+    assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
+    assert hgt500_anom["color_map_id"] == "hgt500_anom"
+    assert hgt500_anom["order"] == 5
+    assert hgt500_anom["group"] == "Dynamics"
+    assert hgt500_anom["default_fh"] == 0
+    assert hgt500_anom["display_resampling_override"] == "bilinear"
+    assert hgt500_anom["render_substrates"] == ["grid"]
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["var_key"] == "wspd850"
