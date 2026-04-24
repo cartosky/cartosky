@@ -80,6 +80,46 @@ async def test_sample_batch_cors_preflight_allows_content_type(client: httpx.Asy
     assert "content-type" in allow_headers
 
 
+def test_resolve_cors_origins_uses_local_dev_fallbacks_when_unset() -> None:
+    origins = main_module._resolve_cors_origins(None, "https://cartosky.com/admin/status")
+
+    assert "https://cartosky.com" in origins
+    assert "http://localhost:5173" in origins
+    assert "http://127.0.0.1:5173" in origins
+
+
+def test_resolve_cors_origins_prefers_explicit_allowlist() -> None:
+    origins = main_module._resolve_cors_origins(
+        "https://app.cartosky.com, https://admin.cartosky.com/",
+        "https://cartosky.com/admin/status",
+    )
+
+    assert origins == [
+        "https://admin.cartosky.com",
+        "https://app.cartosky.com",
+        "https://cartosky.com",
+        "https://www.cartosky.com",
+    ]
+
+
+def test_resolve_cors_origins_adds_www_alias_for_apex_host() -> None:
+    origins = main_module._resolve_cors_origins(
+        "https://cartosky.com",
+        None,
+    )
+
+    assert origins == ["https://cartosky.com", "https://www.cartosky.com"]
+
+
+def test_resolve_cors_origins_adds_apex_alias_for_www_host() -> None:
+    origins = main_module._resolve_cors_origins(
+        "https://www.cartosky.com",
+        None,
+    )
+
+    assert origins == ["https://cartosky.com", "https://www.cartosky.com"]
+
+
 async def test_twf_share_post_invalid_payload_is_enveloped(client: httpx.AsyncClient) -> None:
     response = await client.post("/twf/share/post", json={"topic_id": 1})
 

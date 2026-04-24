@@ -409,9 +409,69 @@ def _format_server_timing(metrics: list[tuple[str, float]]) -> str:
     return ", ".join(parts)
 
 
+def _origin_from_url(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    parsed = urlsplit(value.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
+
+
+def _cors_origin_aliases(origin: str) -> set[str]:
+    parsed = urlsplit(origin)
+    host = parsed.hostname
+    if not host:
+        return {origin}
+
+    aliases = {origin.rstrip("/")}
+    if host in {"localhost", "127.0.0.1"}:
+        return aliases
+    if host.startswith("www."):
+        alias_host = host[4:]
+    elif host.count(".") == 1:
+        alias_host = f"www.{host}"
+    else:
+        return aliases
+
+    alias_netloc = alias_host
+    if parsed.port is not None:
+        alias_netloc = f"{alias_host}:{parsed.port}"
+    aliases.add(urlunsplit((parsed.scheme, alias_netloc, "", "", "")).rstrip("/"))
+    return aliases
+
+
+def _resolve_cors_origins(raw_origins: str | None, frontend_return: str | None) -> list[str]:
+    configured_raw = False
+    configured: set[str] = set()
+    for origin in (raw_origins or "").split(","):
+        normalized = _origin_from_url(origin) or origin.strip().rstrip("/")
+        if not normalized:
+            continue
+        configured_raw = True
+        configured.update(_cors_origin_aliases(normalized))
+
+    frontend_origin = _origin_from_url(frontend_return)
+    if frontend_origin:
+        configured.update(_cors_origin_aliases(frontend_origin))
+
+    if configured_raw and configured:
+        return sorted(configured)
+
+    fallback_origins = {
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://localhost:5173",
+    }
+    if frontend_origin:
+        fallback_origins.update(_cors_origin_aliases(frontend_origin))
+    return sorted(fallback_origins)
+
+
 app = FastAPI(title="CartoSky API", version="4.0.0")
 
-origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+origins = _resolve_cors_origins(os.getenv("CORS_ORIGINS"), twf_oauth.FRONTEND_RETURN)
 cors_allow_headers = [
     "Accept",
     "Accept-Language",
