@@ -225,7 +225,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert hgt500_anom_spec.selectors.hints["baseline_field"] == "hgt500"
     assert hgt500_anom_spec.selectors.hints["baseline_region"] == "na"
     assert hgt500_anom_spec.selectors.hints["contour_component"] == "hgt500"
-    assert hgt500_anom_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
+    assert hgt500_anom_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_dam"
 
     precip_spec = AIFS_MODEL.get_var("precip_total")
     assert precip_spec is not None

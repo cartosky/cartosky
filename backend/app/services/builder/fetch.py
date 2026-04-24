@@ -3376,6 +3376,11 @@ def _geopotential_to_height_m(data: np.ndarray) -> np.ndarray:
     return data / 9.80665
 
 
+def _geopotential_to_height_dam(data: np.ndarray) -> np.ndarray:
+    """Convert geopotential (m^2/s^2) to geopotential height in decameters."""
+    return _meters_to_decameters(_geopotential_to_height_m(data))
+
+
 def _aifs_geopotential_to_height_dam(data: np.ndarray) -> np.ndarray:
     """Convert AIFS geopotential at 500 mb to geopotential height in dam."""
     return _meters_to_decameters(_geopotential_to_height_m(data))
@@ -3402,6 +3407,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,
     "pressure_pa_to_hpa": _pa_to_hpa,
     "geopotential_to_height_m": _geopotential_to_height_m,
+    "geopotential_to_height_dam": _geopotential_to_height_dam,
     "m_to_dam": _meters_to_decameters,
     ("aifs", "hgt500"): _aifs_geopotential_to_height_dam,
     # Legacy var-key fallback path

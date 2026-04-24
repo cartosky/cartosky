@@ -595,7 +595,7 @@ def test_derive_aifs_hgt500_anomaly_uses_geopotential_height_component_and_dam_u
     assert var_capability is not None
     assert var_spec.selectors.hints["baseline_region"] == "na"
     assert var_spec.selectors.hints["contour_component"] == "hgt500"
-    assert var_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_m"
+    assert var_spec.selectors.hints["contour_conversion"] == "geopotential_to_height_dam"
 
     anomaly, crs, anomaly_transform = derive_variable(
         model_id="aifs",

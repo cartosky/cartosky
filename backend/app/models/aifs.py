@@ -200,7 +200,7 @@ AIFS_VARS["hgt500_anom"] = replace(
         AIFS_VARS["hgt500_anom"].selectors,
         hints={
             **AIFS_VARS["hgt500_anom"].selectors.hints,
-            "contour_conversion": "geopotential_to_height_m",
+            "contour_conversion": "geopotential_to_height_dam",
         },
     ),
 )
