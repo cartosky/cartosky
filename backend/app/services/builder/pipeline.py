@@ -160,7 +160,7 @@ def _build_contour_metadata_for_variable(
                 search_pattern=search_pattern,
             )
             component_data, src_crs, src_transform = fetch_variable(
-                model_id=model,
+                model_id=contour_request.model,
                 product=contour_request.product,
                 search_pattern=search_pattern,
                 run_date=run_date,

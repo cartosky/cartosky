@@ -18,7 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.builder.fetch import fetch_variable
 from app.services.builder import fetch as fetch_module
-from app.services.builder.pipeline import build_frame
+from app.services.builder.pipeline import _build_contour_metadata_for_variable, build_frame
 from app.services.builder.derive import FetchContext
 from app.models.eps import EPS_MODEL
 
@@ -178,6 +178,61 @@ def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path:
 
     assert captured["model_id"] == "ifs"
     assert captured["product"] == "enfo"
+
+
+def test_build_contour_metadata_uses_underlying_herbie_model_for_eps_anomaly(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_fetch_variable(*, model_id: str, product: str, search_pattern: str, run_date: datetime, fh: int, herbie_kwargs=None, bundle_fetch_cache=None, return_meta=False):
+        del run_date, fh, bundle_fetch_cache, return_meta
+        captured["model_id"] = model_id
+        captured["product"] = product
+        captured["search_pattern"] = search_pattern
+        captured["fetch_aggregation"] = dict(herbie_kwargs or {}).get("_cartosky_fetch_aggregation")
+        data = np.array([[5580.0, 5520.0], [5460.0, 5400.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(3857)
+        transform = rasterio.transform.from_origin(0.0, 20.0, 10.0, 10.0)
+        return data, crs, transform
+
+    def _fake_build_iso_contour_geojson(*, value_data, value_transform, value_crs, out_geojson_path, levels):
+        del value_data, value_transform, value_crs, levels
+        out_geojson_path.parent.mkdir(parents=True, exist_ok=True)
+        out_geojson_path.write_text('{"type":"FeatureCollection","features":[]}')
+
+    def _fake_warp_to_target_grid(data, src_crs, src_transform, *, model, region, resampling="bilinear", src_nodata=None, dst_nodata=float("nan")):
+        del src_crs, model, region, resampling, src_nodata, dst_nodata
+        return data, src_transform
+
+    monkeypatch.setattr("app.services.builder.pipeline.fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr("app.services.builder.pipeline.build_iso_contour_geojson", _fake_build_iso_contour_geojson)
+    monkeypatch.setattr("app.services.builder.pipeline.warp_to_target_grid", _fake_warp_to_target_grid)
+
+    var_spec = EPS_MODEL.get_var("hgt500_anom")
+    assert var_spec is not None
+
+    contours_meta, contour_dir = _build_contour_metadata_for_variable(
+        model="eps",
+        run_date=datetime(2026, 4, 24, 6, 0),
+        fh=0,
+        product="enfo",
+        var_key="hgt500_anom",
+        region="na",
+        model_plugin=EPS_MODEL,
+        var_spec_model=var_spec,
+        dst_transform=rasterio.transform.from_origin(0.0, 20.0, 10.0, 10.0),
+        staging_dir=tmp_path,
+        fetch_ctx=None,
+        ensemble_view="mean",
+    )
+
+    assert captured["model_id"] == "ifs"
+    assert captured["product"] == "enfo"
+    assert captured["search_pattern"] == ":gh:500:"
+    assert captured["fetch_aggregation"] == "ecmwf_pf_mean"
+    assert isinstance(contours_meta, dict)
+    assert contour_dir is not None
 
 
 def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path) -> None:
