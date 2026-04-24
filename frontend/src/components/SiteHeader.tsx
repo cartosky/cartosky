@@ -861,20 +861,20 @@ function ViewerNavMobile() {
           {/* Sheet panel */}
           <div
             style={isPhoneLayout ? {
-              height: sheetSnap === "full" ? "88svh" : "48svh",
-              transition: "height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+              maxHeight: sheetSnap === "full" ? "88svh" : "60svh",
+              transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
-              "fixed z-[66] flex flex-col overflow-hidden border border-white/10 bg-[#0b1628]/[0.94] shadow-[0_24px_70px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl",
+              "glass-overlay fixed z-[66] flex flex-col overflow-hidden",
               isTabletTouchLayout
                 ? "right-3 top-[4.5rem] bottom-3 w-[min(28rem,82vw)] rounded-[1.4rem]"
-                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)]"
+                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] !border-x-0 !border-b-0 pb-[env(safe-area-inset-bottom)]"
             )}
           >
             {/* Drag handle — phone only, tap to toggle peek/full */}
             {isPhoneLayout ? (
               <div
-                className="flex touch-none select-none justify-center pt-3 pb-2 active:opacity-70"
+                className="flex touch-none select-none justify-center pt-3 pb-1 active:opacity-70"
                 onTouchStart={handleDragStart}
                 onTouchEnd={handleDragEnd}
                 onClick={handleHandleClick}
@@ -885,54 +885,60 @@ function ViewerNavMobile() {
               </div>
             ) : null}
 
-            {/* Header: tabs + close button */}
+            {/* Header: underline tabs + close button */}
             <div className={cn(
-              "flex shrink-0 items-center justify-between gap-3",
-              isTabletTouchLayout ? "px-5 pb-3 pt-4" : "px-4 pb-2 pt-1"
+              "flex shrink-0 items-center justify-between border-b border-white/[0.08]",
+              isTabletTouchLayout ? "px-5 pt-4" : "px-4 pt-2"
             )}>
-              {/* Segmented tab bar */}
-              <div className="flex gap-0.5 rounded-xl border border-white/[0.08] bg-white/[0.05] p-0.5">
+              <div className="flex">
                 <button
                   type="button"
                   onClick={() => setActiveTab("selection")}
                   className={cn(
-                    "rounded-[0.6rem] px-3.5 py-1.5 text-xs font-semibold transition-all duration-150",
-                    activeTab === "selection"
-                      ? "bg-white/[0.12] text-white shadow-sm"
-                      : "text-white/46 hover:text-white/70"
+                    "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                    activeTab === "selection" ? "text-white" : "text-white/40 hover:text-white/65"
                   )}
                 >
                   Selection
+                  {activeTab === "selection" && (
+                    <span className="absolute bottom-0 left-0 right-5 h-[2px] rounded-full bg-cyan-400" />
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab("display")}
                   className={cn(
-                    "rounded-[0.6rem] px-3.5 py-1.5 text-xs font-semibold transition-all duration-150",
-                    activeTab === "display"
-                      ? "bg-white/[0.12] text-white shadow-sm"
-                      : "text-white/46 hover:text-white/70"
+                    "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                    activeTab === "display" ? "text-white" : "text-white/40 hover:text-white/65"
                   )}
                 >
                   Display
+                  {activeTab === "display" && (
+                    <span className="absolute bottom-0 left-0 right-5 h-[2px] rounded-full bg-cyan-400" />
+                  )}
                 </button>
               </div>
 
               <button
                 type="button"
                 onClick={closeSheet}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
+                className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
                 aria-label="Close controls"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            {/* Scrollable content */}
-            <div className={cn(
-              "flex-1 overflow-y-auto",
-              isTabletTouchLayout ? "px-5 pb-5 pt-1" : "px-4 pb-6 pt-2"
-            )}>
+            {/* Scrollable content — explicit max-height keeps container content-sized (no dead space) */}
+            <div
+              style={isPhoneLayout ? {
+                maxHeight: sheetSnap === "full" ? "calc(88svh - 5.5rem)" : "calc(60svh - 5.5rem)",
+              } : undefined}
+              className={cn(
+                "overflow-y-auto",
+                isTabletTouchLayout ? "h-[calc(100%-4.5rem)] px-5 pb-5 pt-3" : "px-4 pb-6 pt-3"
+              )}
+            >
               {activeTab === "selection" ? selectionContent : displayContent}
             </div>
           </div>
