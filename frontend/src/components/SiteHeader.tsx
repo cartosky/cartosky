@@ -592,7 +592,9 @@ function ViewerNavDesktop() {
 // ─── Viewer toolbar mobile/tablet (slide-up sheet) ───────────────────────────
 function ViewerNavMobile() {
   const toolbar = useViewerToolbar();
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetSnap, setSheetSnap] = useState<"closed" | "peek" | "full">("closed");
+  const [activeTab, setActiveTab] = useState<"selection" | "display">("selection");
+  const dragStartY = useRef<number | null>(null);
 
   if (!toolbar) return null;
 
@@ -609,6 +611,7 @@ function ViewerNavMobile() {
 
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isPhoneLayout = !isTabletTouchLayout;
+  const sheetOpen = sheetSnap !== "closed";
 
   const displayVariables = model === "spc"
     ? variables.map((o) => ({ ...o, label: spcVariableLabel(o) }))
@@ -635,24 +638,175 @@ function ViewerNavMobile() {
     };
   }, [sheetOpen]);
 
+  const closeSheet = () => setSheetSnap("closed");
+
+  // Drag-to-snap gesture handlers (phone only)
+  const handleDragStart = (e: React.TouchEvent) => {
+    dragStartY.current = e.touches[0]?.clientY ?? null;
+  };
+  const handleDragEnd = (e: React.TouchEvent) => {
+    if (dragStartY.current == null) return;
+    const deltaY = (e.changedTouches[0]?.clientY ?? 0) - dragStartY.current;
+    dragStartY.current = null;
+    if (sheetSnap === "peek") {
+      if (deltaY < -40) setSheetSnap("full");
+      else if (deltaY > 40) closeSheet();
+    } else if (sheetSnap === "full") {
+      if (deltaY > 60) setSheetSnap("peek");
+    }
+  };
+  const handleHandleClick = () => {
+    if (sheetSnap === "peek") setSheetSnap("full");
+    else if (sheetSnap === "full") setSheetSnap("peek");
+  };
+
   const summaryPillClass = "rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 font-medium whitespace-nowrap";
+
+  const statusBadge = runAvailabilityLabel ? (
+    <AvailabilityReadout label={runAvailabilityLabel} description={runAvailabilityDescription} tone={runAvailabilityTone} />
+  ) : sourceStatusLabel ? (
+    <AvailabilityReadout label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
+  ) : null;
+
+  const selectionContent = (
+    <>
+      {statusBadge ? (
+        <div className="mb-4 flex items-center">{statusBadge}</div>
+      ) : null}
+      <div className={cn("grid gap-3", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
+        <div className={cn("space-y-1.5", isTabletTouchLayout ? "col-span-2" : "")}>
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <Layers className="h-3 w-3" /> Product
+          </span>
+          <NavbarSelect
+            value={variable}
+            onValueChange={(v) => { onVariableChange(v); closeSheet(); }}
+            options={displayVariables}
+            disabled={disabled}
+            placeholder="Variable"
+            grouped
+            minWidth="w-full"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <Boxes className="h-3 w-3" /> Model
+          </span>
+          <NavbarSelect
+            value={model}
+            onValueChange={(v) => { onModelChange(v); closeSheet(); }}
+            options={models}
+            disabled={disabled}
+            placeholder="Model"
+            grouped
+            minWidth="w-full"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <CalendarClock className="h-3 w-3" /> Run
+          </span>
+          <NavbarSelect
+            value={run}
+            onValueChange={(v) => { onRunChange(v); closeSheet(); }}
+            options={runMenuOptions}
+            disabled={disabled || runSelectionLocked}
+            placeholder="Run"
+            selectedLabelOverride={runDisplayLabel}
+            highlightState={!runSelectionLocked && hasNewerRunAvailable}
+            menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
+            menuActionDescription={
+              !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
+                ? `${latestAvailableRunLabel} available`
+                : null
+            }
+            onMenuAction={
+              !runSelectionLocked && hasNewerRunAvailable
+                ? () => { onViewLatestRun?.(); closeSheet(); }
+                : undefined
+            }
+            minWidth="w-full"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <MapPin className="h-3 w-3" /> Region
+          </span>
+          <NavbarSelect
+            value={region}
+            onValueChange={(v) => { onRegionChange(v); closeSheet(); }}
+            options={regions}
+            disabled={disabled}
+            placeholder="Region"
+            minWidth="w-full"
+          />
+        </div>
+      </div>
+    </>
+  );
+
+  const displayContent = (
+    <>
+      <div className={cn("grid gap-2", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
+        <DisplayRow
+          label="City Labels"
+          icon={MapPin}
+          checked={pointLabelsEnabled}
+          onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
+        />
+        <DisplayRow
+          label="Legend"
+          icon={Eye}
+          checked={legendVisible}
+          onToggle={() => onLegendVisibleChange(!legendVisible)}
+        />
+        <DisplayRow
+          label="Zoom Controls"
+          icon={SlidersHorizontal}
+          checked={zoomControlsVisible}
+          onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
+        />
+        <button
+          type="button"
+          onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
+          className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
+        >
+          <div className="flex items-center gap-2 text-sm font-semibold text-white">
+            {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
+            Basemap
+          </div>
+          <span className="text-xs font-semibold text-[#98c9b2]">
+            {basemapMode === "dark" ? "Dark" : "Light"}
+          </span>
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-semibold text-white">Opacity</span>
+          <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
+        </div>
+        <Slider
+          value={[Math.round(opacity * 100)]}
+          onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
+          min={0}
+          max={100}
+          step={1}
+          className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+        />
+      </div>
+    </>
+  );
 
   return (
     <>
       {/* Compact summary + controls icon */}
       <div className="flex flex-1 items-center justify-end gap-2">
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {isTabletTouchLayout ? (
-            runAvailabilityLabel ? (
-              <AvailabilityReadout
-                label={runAvailabilityLabel}
-                description={runAvailabilityDescription}
-                tone={runAvailabilityTone}
-              />
-            ) : sourceStatusLabel ? (
-              <AvailabilityReadout label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
-            ) : null
-          ) : null}
+          {isTabletTouchLayout ? statusBadge : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
           </span>
@@ -678,7 +832,7 @@ function ViewerNavMobile() {
 
         <button
           type="button"
-          onClick={() => setSheetOpen(true)}
+          onClick={() => setSheetSnap("peek")}
           aria-label="Open controls"
           className={cn(
             "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/72",
@@ -692,36 +846,81 @@ function ViewerNavMobile() {
       {/* Slide-up sheet */}
       {sheetOpen ? createPortal(
         <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-[65] bg-black/42 backdrop-blur-[6px]"
-            onClick={() => setSheetOpen(false)}
-            aria-hidden="true"
-          />
+          {/* Backdrop — subtler in peek, full blur when expanded */}
           <div
             className={cn(
-              "fixed z-[66] overflow-hidden border border-white/10 bg-[#0b1628]/[0.94] shadow-[0_24px_70px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl",
+              "fixed inset-0 z-[65] transition-[background-color,backdrop-filter] duration-300",
+              sheetSnap === "full"
+                ? "bg-black/42 backdrop-blur-[6px]"
+                : "bg-black/20"
+            )}
+            onClick={closeSheet}
+            aria-hidden="true"
+          />
+
+          {/* Sheet panel */}
+          <div
+            style={isPhoneLayout ? {
+              height: sheetSnap === "full" ? "88svh" : "48svh",
+              transition: "height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+            } : undefined}
+            className={cn(
+              "fixed z-[66] flex flex-col overflow-hidden border border-white/10 bg-[#0b1628]/[0.94] shadow-[0_24px_70px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl",
               isTabletTouchLayout
                 ? "right-3 top-[4.5rem] bottom-3 w-[min(28rem,82vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)]"
             )}
           >
+            {/* Drag handle — phone only, tap to toggle peek/full */}
             {isPhoneLayout ? (
-              <div className="flex justify-center pt-3 pb-1">
-                <div className="h-1 w-10 rounded-full bg-white/20" />
+              <div
+                className="flex touch-none select-none justify-center pt-3 pb-2 active:opacity-70"
+                onTouchStart={handleDragStart}
+                onTouchEnd={handleDragEnd}
+                onClick={handleHandleClick}
+                aria-label={sheetSnap === "peek" ? "Expand controls" : "Collapse controls"}
+                role="button"
+              >
+                <div className="h-1 w-10 rounded-full bg-white/25" />
               </div>
             ) : null}
 
-            <div className={cn("flex items-center justify-between", isTabletTouchLayout ? "px-5 pb-3 pt-4" : "px-4 pb-3 pt-1")}>
-              <div>
-                <div className="text-sm font-semibold text-white">Controls</div>
-                <div className="mt-0.5 text-[11px] text-white/45">
-                  Product, run, and display settings.
-                </div>
+            {/* Header: tabs + close button */}
+            <div className={cn(
+              "flex shrink-0 items-center justify-between gap-3",
+              isTabletTouchLayout ? "px-5 pb-3 pt-4" : "px-4 pb-2 pt-1"
+            )}>
+              {/* Segmented tab bar */}
+              <div className="flex gap-0.5 rounded-xl border border-white/[0.08] bg-white/[0.05] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("selection")}
+                  className={cn(
+                    "rounded-[0.6rem] px-3.5 py-1.5 text-xs font-semibold transition-all duration-150",
+                    activeTab === "selection"
+                      ? "bg-white/[0.12] text-white shadow-sm"
+                      : "text-white/46 hover:text-white/70"
+                  )}
+                >
+                  Selection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("display")}
+                  className={cn(
+                    "rounded-[0.6rem] px-3.5 py-1.5 text-xs font-semibold transition-all duration-150",
+                    activeTab === "display"
+                      ? "bg-white/[0.12] text-white shadow-sm"
+                      : "text-white/46 hover:text-white/70"
+                  )}
+                >
+                  Display
+                </button>
               </div>
+
               <button
                 type="button"
-                onClick={() => setSheetOpen(false)}
+                onClick={closeSheet}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
                 aria-label="Close controls"
               >
@@ -729,161 +928,12 @@ function ViewerNavMobile() {
               </button>
             </div>
 
-            <div className={cn("overflow-y-auto", isTabletTouchLayout ? "h-[calc(100%-4.25rem)] px-5 pb-5" : "max-h-[78svh] px-4 pb-6")}>
-              {(runAvailabilityLabel || sourceStatusLabel) ? (
-                <div className="mb-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
-                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/38">
-                      Status
-                    </div>
-                    <div className="mt-2">
-                      {runAvailabilityLabel ? (
-                        <AvailabilityReadout
-                          label={runAvailabilityLabel}
-                          description={runAvailabilityDescription}
-                          tone={runAvailabilityTone}
-                        />
-                      ) : sourceStatusLabel ? (
-                        <AvailabilityReadout
-                          label={sourceStatusLabel}
-                          description={sourceStatusDescription}
-                          tone={sourceStatusTone}
-                        />
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">
-                Selection
-              </div>
-              <div className={cn("grid gap-3", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
-                <div className="space-y-1.5">
-                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-                    <Layers className="h-3 w-3" /> Product
-                  </span>
-                  <NavbarSelect
-                    value={variable}
-                    onValueChange={(v) => { onVariableChange(v); setSheetOpen(false); }}
-                    options={displayVariables}
-                    disabled={disabled}
-                    placeholder="Variable"
-                    grouped
-                    minWidth="w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-                    <Boxes className="h-3 w-3" /> Model
-                  </span>
-                  <NavbarSelect
-                    value={model}
-                    onValueChange={(v) => { onModelChange(v); setSheetOpen(false); }}
-                    options={models}
-                    disabled={disabled}
-                    placeholder="Model"
-                    grouped
-                    minWidth="w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-                    <CalendarClock className="h-3 w-3" /> Run
-                  </span>
-                  <NavbarSelect
-                    value={run}
-                    onValueChange={(v) => { onRunChange(v); setSheetOpen(false); }}
-                    options={runMenuOptions}
-                    disabled={disabled || runSelectionLocked}
-                    placeholder="Run"
-                    selectedLabelOverride={runDisplayLabel}
-                    highlightState={!runSelectionLocked && hasNewerRunAvailable}
-                    menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-                    menuActionDescription={
-                      !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                        ? `${latestAvailableRunLabel} available`
-                        : null
-                    }
-                    onMenuAction={
-                      !runSelectionLocked && hasNewerRunAvailable
-                        ? () => { onViewLatestRun?.(); setSheetOpen(false); }
-                        : undefined
-                    }
-                    minWidth="w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-                    <MapPin className="h-3 w-3" /> Region
-                  </span>
-                  <NavbarSelect
-                    value={region}
-                    onValueChange={(v) => { onRegionChange(v); setSheetOpen(false); }}
-                    options={regions}
-                    disabled={disabled}
-                    placeholder="Region"
-                    minWidth="w-full"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-5 border-t border-white/10 pt-4">
-                <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/42">
-                  Map Display
-                </div>
-                <div className={cn("grid gap-2", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
-                  <DisplayRow
-                    label="City Labels"
-                    icon={MapPin}
-                    checked={pointLabelsEnabled}
-                    onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
-                  />
-                  <DisplayRow
-                    label="Legend"
-                    icon={Eye}
-                    checked={legendVisible}
-                    onToggle={() => onLegendVisibleChange(!legendVisible)}
-                  />
-                  <DisplayRow
-                    label="Zoom Controls"
-                    icon={SlidersHorizontal}
-                    checked={zoomControlsVisible}
-                    onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
-                  >
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
-                      Basemap
-                    </div>
-                    <span className="text-xs font-semibold text-[#98c9b2]">
-                      {basemapMode === "dark" ? "Dark" : "Light"}
-                    </span>
-                  </button>
-                </div>
-
-                <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white">Opacity</span>
-                    <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
-                  </div>
-                  <Slider
-                    value={[Math.round(opacity * 100)]}
-                    onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                  />
-                </div>
-              </div>
+            {/* Scrollable content */}
+            <div className={cn(
+              "flex-1 overflow-y-auto",
+              isTabletTouchLayout ? "px-5 pb-5 pt-1" : "px-4 pb-6 pt-2"
+            )}>
+              {activeTab === "selection" ? selectionContent : displayContent}
             </div>
           </div>
         </>
