@@ -20,7 +20,7 @@ from app.models.eps import EPS_MODEL
 from app.models.gefs import GEFS_MODEL
 from app.services import climatology
 from app.services.builder.cog_writer import compute_transform_and_shape
-from app.services.builder.derive import FetchContext, derive_variable
+from app.services.builder.derive import FetchContext, _warp_component_to_target_grid, derive_variable
 from app.services.builder.pipeline import _resolve_derive_target_grid
 
 
@@ -359,3 +359,25 @@ def test_resolve_derive_target_grid_uses_baseline_region_for_anomaly_cache() -> 
 
     assert target_grid == {"region": "na", "id": "climatology:era5:na:25000.0m"}
     assert matches_output is False
+
+
+def test_warp_component_to_target_grid_honors_climatology_grid_id() -> None:
+    data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    src_transform = from_origin(0.0, 20.0, 10.0, 10.0)
+
+    warped_data, warped_transform = _warp_component_to_target_grid(
+        raw_data=data,
+        raw_crs=rasterio.crs.CRS.from_epsg(3857),
+        raw_transform=src_transform,
+        model_id="eps",
+        target_region="na",
+        target_grid_id="climatology:era5:na:25000.0m",
+        resampling="bilinear",
+    )
+
+    expected_transform, expected_height, expected_width = compute_transform_and_shape(
+        climatology.REGION_BBOX_3857["na"],
+        25000.0,
+    )
+    assert warped_data.shape == (expected_height, expected_width)
+    assert warped_transform == expected_transform

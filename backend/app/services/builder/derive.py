@@ -22,12 +22,15 @@ import numpy as np
 import rasterio
 import rasterio.transform
 import rasterio.crs
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 
-from app.services.builder.cog_writer import warp_to_target_grid
+from app.services.builder.cog_writer import compute_transform_and_shape, warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.climatology import (
     DEFAULT_BASELINE_SOURCE,
+    get_baseline_grid_params,
     get_baseline_target_grid,
     load_climatology_baseline,
     normalize_baseline_source,
@@ -2172,15 +2175,14 @@ def _fetch_component_warped(
         ctx=ctx,
         return_meta=True,
     )
-    warped_data, dst_transform = warp_to_target_grid(
-        raw_data,
-        raw_crs,
-        raw_transform,
-        model=model_id,
-        region=target_region,
+    warped_data, dst_transform = _warp_component_to_target_grid(
+        raw_data=raw_data,
+        raw_crs=raw_crs,
+        raw_transform=raw_transform,
+        model_id=model_id,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
         resampling=resampling,
-        src_nodata=None,
-        dst_nodata=float("nan"),
     )
     resolved = (
         warped_data.astype(np.float32, copy=False),
@@ -2194,6 +2196,55 @@ def _fetch_component_warped(
     if return_meta:
         return resolved[0], resolved[1], resolved[2], dict(raw_meta)
     return resolved
+
+
+def _warp_component_to_target_grid(
+    *,
+    raw_data: np.ndarray,
+    raw_crs: Any,
+    raw_transform: rasterio.transform.Affine,
+    model_id: str,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+) -> tuple[np.ndarray, rasterio.transform.Affine]:
+    target_grid_id_normalized = str(target_grid_id).strip()
+    if target_grid_id_normalized.startswith("climatology:"):
+        parts = target_grid_id_normalized.split(":", 3)
+        if len(parts) == 4:
+            _, baseline_source, baseline_region, grid_label = parts
+            expected_bbox, expected_grid_m = get_baseline_grid_params(
+                baseline_source=baseline_source,
+                region=baseline_region,
+            )
+            expected_label = f"{expected_grid_m:.1f}m"
+            if grid_label == expected_label:
+                dst_transform, dst_h, dst_w = compute_transform_and_shape(expected_bbox, expected_grid_m)
+                dst_crs = rasterio.crs.CRS.from_epsg(3857)
+                dst_data = np.full((dst_h, dst_w), float("nan"), dtype=np.float32)
+                reproject(
+                    source=raw_data.astype(np.float64),
+                    destination=dst_data,
+                    src_transform=raw_transform,
+                    src_crs=raw_crs,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    resampling=Resampling[resampling],
+                    src_nodata=None,
+                    dst_nodata=float("nan"),
+                )
+                return dst_data.astype(np.float32, copy=False), dst_transform
+
+    return warp_to_target_grid(
+        raw_data,
+        raw_crs,
+        raw_transform,
+        model=model_id,
+        region=target_region,
+        resampling=resampling,
+        src_nodata=None,
+        dst_nodata=float("nan"),
+    )
 
 
 def _cadence_hint_suffix(hints: dict[str, Any]) -> str:
