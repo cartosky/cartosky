@@ -56,6 +56,8 @@ class AIGFSPlugin(GFSPlugin):
             return "hgt850"
         if normalized in {"z300", "gh300", "300height", "300mbheight", "300mbheights", "300_heights"}:
             return "hgt300"
+        if normalized in {"hgt500_anom", "500hgt_anom", "500_hgt_anom", "500mb_height_anom", "height500_anom"}:
+            return "hgt500_anom"
         if normalized == "gh500":
             return "hgt500"
         return super().normalize_var_id(var_id)
@@ -208,6 +210,7 @@ AIGFS_VARS = {
     "u500": _aigfs_pres_wind_component("u", 500),
     "v500": _aigfs_pres_wind_component("v", 500),
     "hgt500": _with_pres_product(GFS_VARS["hgt500"]),
+    "hgt500_anom": _with_pres_product(GFS_VARS["hgt500_anom"]),
     "vort500": _aigfs_vort500_spec(),
 }
 
@@ -289,6 +292,22 @@ AIGFS_VARIABLE_CATALOG = {
         order=18,
         group="Wind",
         conversion="ms_to_kt",
+    ),
+    "hgt500_anom": VariableCapability(
+        var_key="hgt500_anom",
+        name=AIGFS_VARS["hgt500_anom"].name,
+        selectors=AIGFS_VARS["hgt500_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="dam",
+        color_map_id="hgt500_anom",
+        default_fh=0,
+        buildable=True,
+        order=5,
+        group="Dynamics",
+        conversion="m_to_dam",
     ),
     "vort500": VariableCapability(
         var_key="vort500",

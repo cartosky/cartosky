@@ -376,6 +376,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "dam",
     },
+    ("aigfs", "hgt500_anom"): {
+        "scale": 0.1,
+        "offset": -60.0,
+        "nodata": 65535,
+        "units": "dam",
+    },
     ("aigfs", "wspd300"): {
         "scale": 0.1,
         "offset": 0.0,

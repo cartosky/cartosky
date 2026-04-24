@@ -52,6 +52,8 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
     assert AIGFS_MODEL.normalize_var_id("z300") == "hgt300"
     assert AIGFS_MODEL.normalize_var_id("gh300") == "hgt300"
+    assert AIGFS_MODEL.normalize_var_id("hgt500_anom") == "hgt500_anom"
+    assert AIGFS_MODEL.normalize_var_id("500mb_height_anom") == "hgt500_anom"
     assert AIGFS_MODEL.normalize_var_id("vort500") == "vort500"
     assert AIGFS_MODEL.normalize_var_id("500mb_vorticity") == "vort500"
     assert AIGFS_MODEL.normalize_var_id("absv500") == "vort500"
@@ -100,7 +102,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "precip_total", "tmp850", "wspd850", "wspd300", "vort500", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "precip_total", "tmp850", "wspd850", "wspd300", "hgt500_anom", "vort500", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -110,6 +112,10 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 25000.0,
         "na": 25000.0,
     }
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("aigfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
     tmp2m_spec = AIGFS_MODEL.get_var("tmp2m")
     assert tmp2m_spec is not None
@@ -181,6 +187,20 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert wspd300_spec.selectors.hints["contour_interval"] == "120"
     assert wspd300_spec.selectors.hints["contour_key"] == "height_300mb"
     assert wspd300_spec.selectors.hints["product"] == "pres"
+
+    hgt500_anom_spec = AIGFS_MODEL.get_var("hgt500_anom")
+    assert hgt500_anom_spec is not None
+    assert hgt500_anom_spec.primary is True
+    assert hgt500_anom_spec.derived is True
+    assert hgt500_anom_spec.derive == "anomaly_departure"
+    assert hgt500_anom_spec.kind == "continuous"
+    assert hgt500_anom_spec.units == "dam"
+    assert hgt500_anom_spec.selectors.hints["base_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_field"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["baseline_region"] == "na"
+    assert hgt500_anom_spec.selectors.hints["contour_component"] == "hgt500"
+    assert hgt500_anom_spec.selectors.hints["contour_conversion"] == "m_to_dam"
+    assert hgt500_anom_spec.selectors.hints["product"] == "pres"
 
     vort500_spec = AIGFS_MODEL.get_var("vort500")
     assert vort500_spec is not None
@@ -416,6 +436,21 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["group"] == "Wind"
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]
+
+    hgt500_anom = payload["variables"]["hgt500_anom"]
+    assert hgt500_anom["var_key"] == "hgt500_anom"
+    assert hgt500_anom["display_name"] == "500mb Height Anomaly"
+    assert hgt500_anom["kind"] == "continuous"
+    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["buildable"] is True
+    assert hgt500_anom["derived"] is True
+    assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
+    assert hgt500_anom["color_map_id"] == "hgt500_anom"
+    assert hgt500_anom["order"] == 5
+    assert hgt500_anom["group"] == "Dynamics"
+    assert hgt500_anom["default_fh"] == 0
+    assert hgt500_anom["display_resampling_override"] == "bilinear"
+    assert hgt500_anom["render_substrates"] == ["grid"]
 
     vort500 = payload["variables"]["vort500"]
     assert vort500["var_key"] == "vort500"
