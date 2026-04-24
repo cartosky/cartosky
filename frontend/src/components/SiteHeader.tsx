@@ -865,10 +865,10 @@ function ViewerNavMobile() {
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
-              "glass-overlay fixed z-[66] flex flex-col overflow-hidden",
+              "glass-strong fixed z-[66] flex flex-col overflow-hidden",
               isTabletTouchLayout
-                ? "right-3 top-[4.5rem] bottom-3 w-[min(28rem,82vw)] rounded-[1.4rem]"
-                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] !border-x-0 !border-b-0 pb-[env(safe-area-inset-bottom)]"
+                ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(28rem,82vw)] rounded-[1.4rem]"
+                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
             )}
           >
             {/* Drag handle — phone only, tap to toggle peek/full */}
@@ -936,7 +936,7 @@ function ViewerNavMobile() {
               } : undefined}
               className={cn(
                 "overflow-y-auto",
-                isTabletTouchLayout ? "h-[calc(100%-4.5rem)] px-5 pb-5 pt-3" : "px-4 pb-6 pt-3"
+                isTabletTouchLayout ? "max-h-[calc(100svh-10rem)] px-5 pb-5 pt-3" : "px-4 pb-6 pt-3"
               )}
             >
               {activeTab === "selection" ? selectionContent : displayContent}
