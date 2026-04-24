@@ -33,6 +33,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "hgt500_anom",
         "wspd850",
         "wspd300",
         "vort500",
@@ -57,6 +58,10 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "na": 25000.0,
         "pnw": 25000.0,
     }
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
 
 def test_gfs_capabilities_schema_snapshot_invariants() -> None:
@@ -90,6 +95,18 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["units"] == "C"
     assert tmp850["display_name"] == "850mb Temp"
     assert tmp850["order"] == 3
+
+    hgt500_anom = payload["variables"]["hgt500_anom"]
+    assert hgt500_anom["buildable"] is True
+    assert hgt500_anom["derived"] is True
+    assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
+    assert hgt500_anom["kind"] == "continuous"
+    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["display_name"] == "500mb Height Anomaly"
+    assert hgt500_anom["group"] == "Dynamics"
+    assert hgt500_anom["color_map_id"] == "hgt500_anom"
+    assert hgt500_anom["order"] == 5
+    assert hgt500_anom["display_resampling_override"] == "bilinear"
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["buildable"] is True
@@ -245,6 +262,21 @@ def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("wgst10m") == "wgst10m"
     assert GFS_MODEL.normalize_var_id("gust") == "wgst10m"
     assert GFS_MODEL.normalize_var_id("gust10m") == "wgst10m"
+
+
+def test_gfs_hgt500_anom_uses_hgt500_component_and_height_contours() -> None:
+    var_spec = GFS_MODEL.get_var("hgt500_anom")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "anomaly_departure"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "dam"
+    assert var_spec.selectors.hints["base_component"] == "hgt500"
+    assert var_spec.selectors.hints["baseline_field"] == "hgt500"
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+    assert var_spec.selectors.hints["contour_component"] == "hgt500"
+    assert var_spec.selectors.hints["contour_conversion"] == "m_to_dam"
 
 
 def test_gfs_sbcape_selector_invariants() -> None:
