@@ -152,6 +152,14 @@ def climatology_baseline_path(
     return root / f"doy_{doy:03d}_h{hour:02d}.tif"
 
 
+def _synoptic_bucket_valid_time(valid_time):
+    hour = int(valid_time.hour)
+    bucket_hour = (hour // 6) * 6
+    if bucket_hour == hour:
+        return valid_time
+    return valid_time.replace(hour=bucket_hour, minute=0, second=0, microsecond=0)
+
+
 def load_climatology_baseline(
     *,
     version: str,
@@ -172,15 +180,30 @@ def load_climatology_baseline(
         reference_period=reference_period,
         valid_time=valid_time,
     )
+    requested_hour = int(valid_time.hour)
+    resolved_valid_time = valid_time
     used_legacy_fallback = False
     if not path.is_file():
+        synoptic_valid_time = _synoptic_bucket_valid_time(valid_time)
+        if int(synoptic_valid_time.hour) != requested_hour:
+            synoptic_path = climatology_baseline_path(
+                version=version,
+                baseline_source=source_key,
+                field=field,
+                region=region_key,
+                reference_period=reference_period,
+                valid_time=synoptic_valid_time,
+            )
+            if synoptic_path.is_file():
+                path = synoptic_path
+                resolved_valid_time = synoptic_valid_time
         fallback_family = str(legacy_model_family_fallback or "").strip().lower()
         if fallback_family:
             fallback_path = legacy_climatology_baseline_path(
                 version=version,
                 model_family=fallback_family,
                 field=field,
-                valid_time=valid_time,
+                valid_time=resolved_valid_time,
             )
             if fallback_path.is_file():
                 path = fallback_path
@@ -233,5 +256,7 @@ def load_climatology_baseline(
         "baseline_alignment": "valid_time",
         "reference_period": str(reference_period).strip(),
         "baseline_legacy_fallback": used_legacy_fallback,
+        "baseline_requested_hour": requested_hour,
+        "baseline_resolved_hour": int(resolved_valid_time.hour),
     }
     return data, CRS.from_epsg(3857), transform, metadata

@@ -120,6 +120,46 @@ def test_shared_baseline_path_is_reused_across_model_families(
     assert list((tmp_path / "climatology").rglob("*.tif")) == [shared_path]
 
 
+def test_load_climatology_baseline_falls_back_to_synoptic_hour_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
+    climatology.configure_data_root(tmp_path)
+    requested_valid_time = datetime(2026, 4, 24, 9, tzinfo=timezone.utc)
+    synoptic_valid_time = datetime(2026, 4, 24, 6, tzinfo=timezone.utc)
+    transform, _, _ = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
+    baseline_path = climatology.climatology_baseline_path(
+        version="v1",
+        baseline_source="era5",
+        field="hgt500",
+        region="na",
+        reference_period="1991-2020",
+        valid_time=synoptic_valid_time,
+    )
+    _write_baseline(baseline_path, np.array([[552.0, 546.0], [540.0, 534.0]], dtype=np.float32), transform)
+
+    loaded, crs, loaded_transform, meta = climatology.load_climatology_baseline(
+        version="v1",
+        baseline_source="era5",
+        field="hgt500",
+        valid_time=requested_valid_time,
+        region="na",
+        reference_period="1991-2020",
+    )
+
+    assert np.array_equal(loaded, np.array([[552.0, 546.0], [540.0, 534.0]], dtype=np.float32))
+    assert crs.to_epsg() == 3857
+    assert loaded_transform == transform
+    assert meta["baseline_requested_hour"] == 9
+    assert meta["baseline_resolved_hour"] == 6
+    assert meta["baseline_legacy_fallback"] is False
+
+
 def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
