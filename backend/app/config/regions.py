@@ -13,7 +13,7 @@ REGION_PRESETS: dict[str, dict] = {
         "label": "North America",
         "bbox": [-178.0, 5.0, -25.0, 82.0],
         "defaultCenter": [-101.5, 45.0],
-        "defaultZoom": 2,
+        "defaultZoom": 1,
         "minZoom": 0,
         "maxZoom": 7,
     },

@@ -1689,11 +1689,20 @@ def _ecmwf_eps_statistics_url(url: Any, *, requested_fh: int, statistics_fh: int
     text = str(url or "").strip()
     if not text:
         return ""
-    suffix = f"-{int(requested_fh)}h-enfo-ef.grib2"
-    replacement = f"-{int(statistics_fh)}h-enfo-ep.grib2"
-    if suffix in text:
-        return text.replace(suffix, replacement, 1)
-    return re.sub(r"-\d+h-enfo-ef\.grib2", replacement, text, count=1)
+    replacements = (
+        (f"-{int(requested_fh)}h-enfo-ef.grib2.index", f"-{int(statistics_fh)}h-enfo-ep.grib2.index"),
+        (f"-{int(requested_fh)}h-enfo-ef.grib2", f"-{int(statistics_fh)}h-enfo-ep.grib2"),
+        (f"-{int(requested_fh)}h-enfo-ef.index", f"-{int(statistics_fh)}h-enfo-ep.index"),
+    )
+    for suffix, replacement in replacements:
+        if suffix in text:
+            return text.replace(suffix, replacement, 1)
+    return re.sub(
+        r"-\d+h-enfo-ef(\.grib2\.index|\.grib2|\.index)",
+        lambda match: f"-{int(statistics_fh)}h-enfo-ep{match.group(1)}",
+        text,
+        count=1,
+    )
 
 
 def _point_herbie_at_ecmwf_eps_statistics_file(H: Any, *, requested_fh: int, statistics_fh: int) -> None:

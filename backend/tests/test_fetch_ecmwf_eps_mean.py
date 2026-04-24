@@ -147,13 +147,32 @@ def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
     assert meta["member_count"] == 2
 
 
+def test_ecmwf_eps_statistics_url_rewrites_grib_and_index_forms() -> None:
+    base = "https://example.invalid/20260424120000-42h-enfo-ef"
+    assert fetch_module._ecmwf_eps_statistics_url(
+        f"{base}.grib2",
+        requested_fh=42,
+        statistics_fh=240,
+    ).endswith("-240h-enfo-ep.grib2")
+    assert fetch_module._ecmwf_eps_statistics_url(
+        f"{base}.index",
+        requested_fh=42,
+        statistics_fh=240,
+    ).endswith("-240h-enfo-ep.index")
+    assert fetch_module._ecmwf_eps_statistics_url(
+        f"{base}.grib2.index",
+        requested_fh=42,
+        statistics_fh=240,
+    ).endswith("-240h-enfo-ep.grib2.index")
+
+
 def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: Path) -> None:
     class _FakeHerbieDirectMean(_FakeHerbie):
         def __init__(self, *_args, **kwargs) -> None:
             self.priority = kwargs.get("priority")
             self.fxx = int(kwargs.get("fxx"))
             self.grib = f"https://example.invalid/2026041900-{self.fxx}h-enfo-ef.grib2"
-            self.idx = f"https://example.invalid/2026041900-{self.fxx}h-enfo-ef.grib2.index"
+            self.idx = f"https://example.invalid/2026041900-{self.fxx}h-enfo-ef.index"
 
         def get_localFilePath(self, search_pattern: str) -> str:
             return str(tmp_path / f"direct-{search_pattern.strip(':').replace(':', '-')}.grib2")
@@ -178,7 +197,7 @@ def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: P
         inventory = kwargs["inventory"]
         assert _herbie.fxx == 240
         assert str(_herbie.grib).endswith("-240h-enfo-ep.grib2")
-        assert str(_herbie.idx).endswith("-240h-enfo-ep.grib2.index")
+        assert str(_herbie.idx).endswith("-240h-enfo-ep.index")
         assert list(inventory["type"].astype(str)) == ["em"]
         assert list(inventory["step"].astype(str)) == ["6"]
         return kwargs["out_path"]

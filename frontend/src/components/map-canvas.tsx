@@ -1778,7 +1778,11 @@ export function MapCanvas({
     }
     if (view.bbox) {
       const [west, south, east, north] = view.bbox;
-      map.fitBounds([[west, south], [east, north]], { duration: 600, padding: 24 });
+      map.fitBounds([[west, south], [east, north]], {
+        duration: 600,
+        padding: 24,
+        ...(Number.isFinite(view.zoom) ? { maxZoom: view.zoom } : {}),
+      });
     } else {
       map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
     }
