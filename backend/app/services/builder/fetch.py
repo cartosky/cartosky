@@ -1681,6 +1681,148 @@ def _fetch_ecmwf_pf_mean_variable(
     )
 
 
+def _fetch_ecmwf_direct_mean_variable(
+    *,
+    model_id: str,
+    product: str,
+    search_pattern: str,
+    run_date: datetime,
+    fh: int,
+    herbie_kwargs: dict[str, Any] | None,
+    bundle_fetch_cache: BundleFetchCache | None,
+    return_meta: bool,
+    fallback_to_pf_mean: bool = False,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
+    from herbie.core import Herbie
+
+    kwargs: dict[str, Any] = {
+        "model": model_id,
+        "product": product,
+        "fxx": fh,
+    }
+    if herbie_kwargs:
+        kwargs.update(herbie_kwargs)
+
+    herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
+    priority_list = [_priority_normalized(item) for item in _priority_candidates(herbie_kwargs) if str(item).strip()]
+    retries = _retry_count()
+    sleep_s = _retry_sleep_seconds()
+    last_exc: Exception | None = None
+
+    for priority in priority_list:
+        for attempt_idx in range(1, retries + 1):
+            try:
+                run_kwargs = _quiet_herbie_kwargs(kwargs)
+                run_kwargs["priority"] = priority
+                H = Herbie(herbie_date, **run_kwargs)
+                inv_result = _inventory_search(
+                    H,
+                    search_pattern=search_pattern,
+                    priority=priority,
+                    model_id=model_id,
+                    run_date=run_date,
+                    product=product,
+                    fh=fh,
+                )
+                inventory = inv_result.inventory
+                if inv_result.reason != "ok" or inventory is None or len(inventory) == 0:
+                    raise RuntimeError(
+                        f"ECMWF EPS direct mean inventory unavailable for {model_id} fh{fh:03d} pattern={search_pattern!r}: {inv_result.reason}"
+                    )
+
+                if "type" in inventory.columns:
+                    type_series = inventory["type"].astype(str).str.strip().str.lower()
+                    direct_inventory = inventory.loc[type_series == "em"]
+                else:
+                    direct_inventory = inventory.iloc[0:0]
+
+                if len(direct_inventory) == 0:
+                    raise RuntimeError(
+                        f"ECMWF EPS direct mean inventory contained no em record for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                    )
+
+                first_inventory_line = ""
+                try:
+                    first_inventory_line = _inventory_line_from_row(direct_inventory.iloc[0])
+                except Exception:
+                    first_inventory_line = ""
+
+                subset_hint: Path | None = None
+                try:
+                    subset_hint = Path(H.get_localFilePath(search_pattern))
+                except Exception:
+                    subset_hint = None
+                if subset_hint is None:
+                    fallback_name = hashlib.sha1(
+                        f"{model_id}|{product}|{fh}|{search_pattern}|{priority}|em".encode("utf-8")
+                    ).hexdigest()[:16]
+                    subset_hint = Path(os.getcwd()) / f"eps_direct_mean_{fallback_name}.grib2"
+
+                subset_path = _aggregation_subset_path(subset_hint, "cartosky_em")
+                with _subset_download_lock(subset_path):
+                    cached_ok, _cached_size = _subset_file_status(subset_path)
+                    if not cached_ok:
+                        downloaded_subset = _download_subset_with_inventory_rows(
+                            H,
+                            inventory=direct_inventory.iloc[0:1],
+                            out_path=subset_path,
+                            model_id=model_id,
+                            product=product,
+                            run_date=run_date,
+                            fh=fh,
+                            priority=priority,
+                            bundle_fetch_cache=bundle_fetch_cache,
+                        )
+                        if downloaded_subset is None:
+                            raise RuntimeError(
+                                f"ECMWF EPS direct mean subset download failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                            )
+                    data, crs, transform = _read_grib_raster(subset_path)
+
+                meta = {
+                    "inventory_line": first_inventory_line or f"direct:{search_pattern}:em",
+                    "search_pattern": str(search_pattern),
+                    "fh": int(fh),
+                    "product": str(product),
+                    "priority": str(priority),
+                    "aggregation": "ecmwf_direct_mean",
+                    "member_count": 1,
+                }
+                if return_meta:
+                    return data, crs, transform, meta
+                return data, crs, transform
+            except Exception as exc:
+                last_exc = exc
+                if sleep_s > 0 and attempt_idx < retries:
+                    time.sleep(sleep_s)
+
+    if fallback_to_pf_mean:
+        logger.warning(
+            "ECMWF EPS direct mean unavailable; falling back to PF mean aggregation for %s fh%03d pattern=%s",
+            model_id,
+            int(fh),
+            search_pattern,
+        )
+        return _fetch_ecmwf_pf_mean_variable(
+            model_id=model_id,
+            product=product,
+            search_pattern=search_pattern,
+            run_date=run_date,
+            fh=fh,
+            herbie_kwargs=herbie_kwargs,
+            bundle_fetch_cache=bundle_fetch_cache,
+            return_meta=return_meta,
+        )
+
+    if last_exc is not None:
+        raise RuntimeError(
+            f"ECMWF EPS direct mean fetch failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+        ) from last_exc
+    raise RuntimeError(
+        f"ECMWF EPS direct mean fetch failed without a captured exception for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+    )
+
+
 def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
     global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS
@@ -2616,6 +2758,29 @@ def fetch_variable(
 
     raw_herbie_kwargs = dict(herbie_kwargs or {})
     fetch_aggregation = str(raw_herbie_kwargs.pop("_cartosky_fetch_aggregation", "")).strip().lower()
+    if fetch_aggregation == "ecmwf_direct_mean_or_pf_mean":
+        return _fetch_ecmwf_direct_mean_variable(
+            model_id=model_id,
+            product=product,
+            search_pattern=search_pattern,
+            run_date=run_date,
+            fh=fh,
+            herbie_kwargs=raw_herbie_kwargs,
+            bundle_fetch_cache=bundle_fetch_cache,
+            return_meta=return_meta,
+            fallback_to_pf_mean=True,
+        )
+    if fetch_aggregation == "ecmwf_direct_mean":
+        return _fetch_ecmwf_direct_mean_variable(
+            model_id=model_id,
+            product=product,
+            search_pattern=search_pattern,
+            run_date=run_date,
+            fh=fh,
+            herbie_kwargs=raw_herbie_kwargs,
+            bundle_fetch_cache=bundle_fetch_cache,
+            return_meta=return_meta,
+        )
     if fetch_aggregation == "ecmwf_pf_mean":
         return _fetch_ecmwf_pf_mean_variable(
             model_id=model_id,

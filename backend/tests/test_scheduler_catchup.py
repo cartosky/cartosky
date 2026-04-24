@@ -77,12 +77,34 @@ class _FakeProbePlugin:
         return types.SimpleNamespace(model="ifs", product=product or self.product, herbie_kwargs={"priority": ["azure", "aws"]})
 
 
+class _FakeEPSBundlePlugin(_FakePlugin):
+    id = "eps"
+
+
+class _FakeGFSBundlePlugin(_FakePlugin):
+    id = "gfs"
+
+    def get_var_capability(self, var_key: str):
+        del var_key
+        return types.SimpleNamespace(derive_strategy_id="wspd10m")
+
+    def get_var(self, var_key: str):
+        del var_key
+        return types.SimpleNamespace(derive="wspd10m")
+
+
 def test_parse_vars_or_auto_supports_auto_tokens() -> None:
     assert scheduler_module._parse_vars_or_auto(None) == []
     assert scheduler_module._parse_vars_or_auto("") == []
     assert scheduler_module._parse_vars_or_auto("auto") == []
     assert scheduler_module._parse_vars_or_auto("ALL") == []
     assert scheduler_module._parse_vars_or_auto("tmp2m, mlcape") == ["tmp2m", "mlcape"]
+
+
+def test_eps_targets_are_derive_bundle_candidates() -> None:
+    assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "tmp2m")
+    assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "hgt500_anom")
+    assert not scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "wspd10m")
 
 
 def test_main_uses_auto_vars_when_env_is_absent(

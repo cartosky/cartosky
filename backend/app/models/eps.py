@@ -77,7 +77,9 @@ class EPSPlugin(ECMWFPlugin):
         )
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
         herbie_kwargs = dict(base_request.herbie_kwargs)
-        if runtime_var in {"tmp2m__mean", "10u__mean", "10v__mean", "hgt500__mean"}:
+        if runtime_var == "hgt500__mean":
+            herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_direct_mean_or_pf_mean"
+        elif runtime_var in {"tmp2m__mean", "10u__mean", "10v__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
         return HerbieRequest(
             model="ifs",

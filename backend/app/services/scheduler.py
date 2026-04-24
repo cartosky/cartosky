@@ -891,6 +891,9 @@ def _build_one(
 def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     normalize = getattr(plugin, "normalize_var_id", None)
     normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
+    plugin_id = str(getattr(plugin, "id", "") or "").strip().lower()
+    if plugin_id == "eps":
+        return True
     if normalized == "precip_total":
         return False
     if normalized == "snowfall_total" or normalized.startswith("snowfall_"):

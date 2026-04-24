@@ -2198,6 +2198,40 @@ def _fetch_component_warped(
     return resolved
 
 
+def get_cached_warped_component(
+    *,
+    ctx: FetchContext | None,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    model_plugin: Any,
+    var_key: str,
+    target_grid_id: str,
+    resampling: str,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+    """Return a previously warped component from a shared derive context."""
+    if ctx is None:
+        return None
+    normalized_var_key, selector_fingerprint = _resolve_component_cache_identity(model_plugin, var_key)
+    run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    cache_key = (
+        str(model_id),
+        str(product),
+        run_date_utc.isoformat(),
+        int(fh),
+        str(normalized_var_key),
+        str(selector_fingerprint),
+        str(target_grid_id),
+        str(resampling),
+    )
+    cached = ctx.warp_cache.get(cache_key)
+    if cached is None:
+        return None
+    _record_warp_stat(ctx, "hits")
+    return cached
+
+
 def _warp_component_to_target_grid(
     *,
     raw_data: np.ndarray,

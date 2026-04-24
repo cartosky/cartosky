@@ -42,7 +42,7 @@ from app.services.builder.cog_writer import (
     warp_to_target_grid,
 )
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.derive import FetchContext, derive_variable
+from app.services.builder.derive import FetchContext, derive_variable, get_cached_warped_component
 from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,
@@ -148,44 +148,89 @@ def _build_contour_metadata_for_variable(
     component_data = None
     src_crs = None
     src_transform = None
+    contour_resampling = _warp_resampling_for_variable(
+        model_id=model,
+        var_key=var_key,
+        kind=str(getattr(var_spec_model, "kind", "") or "continuous"),
+    )
+    derive_target_grid, _derive_grid_matches_output = _resolve_derive_target_grid(
+        model=model,
+        region=region,
+        hints=hints,
+        derive_component_warp_cache=True,
+    )
+    derive_target_grid_id = str((derive_target_grid or {}).get("id", "")).strip()
+    if derive_target_grid_id:
+        cached_component = get_cached_warped_component(
+            ctx=fetch_ctx,
+            model_id=model,
+            product=contour_product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=contour_component,
+            target_grid_id=derive_target_grid_id,
+            resampling=contour_resampling,
+        )
+        if cached_component is not None:
+            component_data, src_crs, src_transform = cached_component
+            logger.info(
+                "Contour source reused cached warped component: model=%s var=%s component=%s fh%03d",
+                model,
+                var_key,
+                contour_component,
+                int(fh),
+            )
     last_exc: Exception | None = None
-    for search_pattern in component_patterns:
-        try:
-            contour_request = model_plugin.herbie_request(
-                product=contour_product,
-                var_key=contour_component,
-                ensemble_view=ensemble_view,
-                run_date=run_date,
-                fh=fh,
-                search_pattern=search_pattern,
-            )
-            component_data, src_crs, src_transform = fetch_variable(
-                model_id=contour_request.model,
-                product=contour_request.product,
-                search_pattern=search_pattern,
-                run_date=run_date,
-                fh=fh,
-                herbie_kwargs=getattr(contour_request, "herbie_kwargs", None),
-                bundle_fetch_cache=getattr(fetch_ctx, "bundle_fetch_cache", None),
-            )
-            break
-        except (HerbieTransientUnavailableError, RuntimeError) as exc:
-            last_exc = exc
-            continue
+    if component_data is None:
+        for search_pattern in component_patterns:
+            try:
+                contour_request = model_plugin.herbie_request(
+                    product=contour_product,
+                    var_key=contour_component,
+                    ensemble_view=ensemble_view,
+                    run_date=run_date,
+                    fh=fh,
+                    search_pattern=search_pattern,
+                )
+                component_data, src_crs, src_transform = fetch_variable(
+                    model_id=contour_request.model,
+                    product=contour_request.product,
+                    search_pattern=search_pattern,
+                    run_date=run_date,
+                    fh=fh,
+                    herbie_kwargs=getattr(contour_request, "herbie_kwargs", None),
+                    bundle_fetch_cache=getattr(fetch_ctx, "bundle_fetch_cache", None),
+                )
+                break
+            except (HerbieTransientUnavailableError, RuntimeError) as exc:
+                last_exc = exc
+                continue
     if component_data is None or src_crs is None or src_transform is None:
         if last_exc is not None:
             raise last_exc
         return None, None
-    warped_component, _ = warp_to_target_grid(
-        component_data,
-        src_crs,
-        src_transform,
-        model=model,
-        region=region,
-        resampling="bilinear",
-        src_nodata=None,
-        dst_nodata=float("nan"),
-    )
+    same_output_transform = False
+    try:
+        same_output_transform = all(
+            abs(float(actual) - float(expected)) <= 1.0e-6
+            for actual, expected in zip(src_transform[:6], dst_transform[:6])
+        )
+    except Exception:
+        same_output_transform = False
+    if getattr(src_crs, "to_epsg", lambda: None)() == 3857 and same_output_transform:
+        warped_component = component_data.astype(np.float32, copy=False)
+    else:
+        warped_component, _ = warp_to_target_grid(
+            component_data,
+            src_crs,
+            src_transform,
+            model=model,
+            region=region,
+            resampling="bilinear",
+            src_nodata=None,
+            dst_nodata=float("nan"),
+        )
     if contour_conversion:
         contour_capability = type("_ContourCapability", (), {"conversion": contour_conversion})()
         warped_component = convert_units(
@@ -1380,6 +1425,9 @@ def build_frame_bundle(
             data_root=data_root,
             product=product,
             model_plugin=resolved_plugin,
+            ensemble_view=resolved_plugin.default_ensemble_view(var_key)
+            if hasattr(resolved_plugin, "default_ensemble_view")
+            else None,
             fetch_ctx=shared_ctx,
             readiness_cache=readiness_cache,
             log_fetch_cache_stats=False,

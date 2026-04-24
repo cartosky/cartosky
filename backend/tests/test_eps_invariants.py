@@ -51,7 +51,7 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     hgt500_request = EPS_MODEL.herbie_request(product="enfo", var_key="hgt500", ensemble_view="mean")
     assert hgt500_request.model == "ifs"
     assert hgt500_request.product == "enfo"
-    assert hgt500_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_pf_mean"
+    assert hgt500_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
 
     u10_request = EPS_MODEL.herbie_request(product="enfo", var_key="10u", ensemble_view="mean")
     assert u10_request.model == "ifs"

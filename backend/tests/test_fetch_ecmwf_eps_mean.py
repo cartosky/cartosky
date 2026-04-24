@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
@@ -18,6 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.builder.fetch import fetch_variable
 from app.services.builder import fetch as fetch_module
+from app.services.builder import derive as derive_module
 from app.services.builder.pipeline import _build_contour_metadata_for_variable, build_frame
 from app.services.builder.derive import FetchContext
 from app.models.eps import EPS_MODEL
@@ -146,6 +147,64 @@ def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
     assert meta["member_count"] == 2
 
 
+def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: Path) -> None:
+    class _FakeHerbieDirectMean(_FakeHerbie):
+        def get_localFilePath(self, search_pattern: str) -> str:
+            return str(tmp_path / f"direct-{search_pattern.strip(':').replace(':', '-')}.grib2")
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame(
+                [
+                    {"search_this": ":gh:500:pl:em:enfo", "type": "em", "start_byte": 0, "end_byte": 9},
+                    {"search_this": ":gh:500:pl:1:pf:enfo", "type": "pf", "number": 1, "start_byte": 10, "end_byte": 19},
+                    {"search_this": ":gh:500:pl:2:pf:enfo", "type": "pf", "number": 2, "start_byte": 20, "end_byte": 29},
+                ]
+            )
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _FakeHerbieDirectMean
+    calls: dict[str, int] = {"download": 0, "aggregate": 0, "read": 0}
+
+    def _fake_download_subset(_herbie, **kwargs):
+        calls["download"] += 1
+        inventory = kwargs["inventory"]
+        assert list(inventory["type"].astype(str)) == ["em"]
+        return kwargs["out_path"]
+
+    def _fake_read_grib_raster(_path):
+        calls["read"] += 1
+        data = np.array([[5580.0, 5520.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform
+
+    def _fake_aggregate_subset(_path):
+        calls["aggregate"] += 1
+        raise AssertionError("PF aggregation should not run when direct em exists")
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch("app.services.builder.fetch._download_subset_with_inventory_rows", side_effect=_fake_download_subset), patch(
+            "app.services.builder.fetch._read_grib_raster", side_effect=_fake_read_grib_raster
+        ), patch("app.services.builder.fetch._aggregate_grib_subset_mean", side_effect=_fake_aggregate_subset):
+            data, crs, transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":gh:500:",
+                run_date=datetime(2026, 4, 19, 0, 0),
+                fh=6,
+                herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_direct_mean_or_pf_mean", "priority": ["azure"]},
+                return_meta=True,
+            )
+
+    assert np.array_equal(data, np.array([[5580.0, 5520.0]], dtype=np.float32))
+    assert crs.to_epsg() == 4326
+    assert transform.c == -101.0
+    assert meta["aggregation"] == "ecmwf_direct_mean"
+    assert meta["member_count"] == 1
+    assert calls == {"download": 1, "aggregate": 0, "read": 1}
+
+
 def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -230,7 +289,69 @@ def test_build_contour_metadata_uses_underlying_herbie_model_for_eps_anomaly(
     assert captured["model_id"] == "ifs"
     assert captured["product"] == "enfo"
     assert captured["search_pattern"] == ":gh:500:"
-    assert captured["fetch_aggregation"] == "ecmwf_pf_mean"
+    assert captured["fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
+    assert isinstance(contours_meta, dict)
+    assert contour_dir is not None
+
+
+def test_build_contour_metadata_reuses_cached_warped_eps_anomaly_component(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fetch_calls = {"count": 0}
+
+    def _fake_fetch_variable(**_kwargs):
+        fetch_calls["count"] += 1
+        raise AssertionError("contour component should come from derive warp cache")
+
+    def _fake_build_iso_contour_geojson(*, value_data, value_transform, value_crs, out_geojson_path, levels):
+        assert np.nanmax(value_data) == 558.0
+        del value_transform, value_crs, levels
+        out_geojson_path.parent.mkdir(parents=True, exist_ok=True)
+        out_geojson_path.write_text('{"type":"FeatureCollection","features":[]}')
+
+    monkeypatch.setattr("app.services.builder.pipeline.fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr("app.services.builder.pipeline.build_iso_contour_geojson", _fake_build_iso_contour_geojson)
+
+    var_spec = EPS_MODEL.get_var("hgt500_anom")
+    assert var_spec is not None
+    component_spec = EPS_MODEL.get_var("hgt500__mean")
+    assert component_spec is not None
+    selectors = component_spec.selectors
+    target_grid_id = "climatology:era5:na:25000.0m"
+    run_date = datetime(2026, 4, 24, 6, 0, tzinfo=timezone.utc)
+    ctx = FetchContext(coverage="na")
+    cache_key = (
+        "eps",
+        "enfo",
+        run_date.isoformat(),
+        6,
+        "hgt500__mean",
+        derive_module._selector_fingerprint(selectors),
+        target_grid_id,
+        "bilinear",
+    )
+    ctx.warp_cache[cache_key] = (
+        np.array([[5580.0, 5520.0], [5460.0, 5400.0]], dtype=np.float32),
+        rasterio.crs.CRS.from_epsg(3857),
+        rasterio.transform.from_origin(0.0, 20.0, 10.0, 10.0),
+    )
+
+    contours_meta, contour_dir = _build_contour_metadata_for_variable(
+        model="eps",
+        run_date=run_date,
+        fh=6,
+        product="enfo",
+        var_key="hgt500_anom__mean",
+        region="na",
+        model_plugin=EPS_MODEL,
+        var_spec_model=var_spec,
+        dst_transform=rasterio.transform.from_origin(0.0, 20.0, 10.0, 10.0),
+        staging_dir=tmp_path,
+        fetch_ctx=ctx,
+        ensemble_view="mean",
+    )
+
+    assert fetch_calls["count"] == 0
     assert isinstance(contours_meta, dict)
     assert contour_dir is not None
 
