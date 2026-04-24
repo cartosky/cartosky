@@ -779,6 +779,73 @@ def test_enforce_herbie_cache_retention_supports_nested_day_dirs(tmp_path: Path)
             assert not path.exists()
 
 
+def test_enforce_herbie_cache_retention_supports_ecmwf_open_data_filenames(tmp_path: Path) -> None:
+    herbie_root = tmp_path / "herbie_cache"
+    model_root = herbie_root / "ifs"
+
+    kept = {
+        "20260424_00z",
+        "20260423_18z",
+        "20260423_12z",
+        "20260423_06z",
+    }
+    removed = {
+        "20260423_00z",
+        "20260422_18z",
+    }
+
+    files = {
+        "20260424_00z": [
+            model_root / "20260424" / "20260424000000-0h-oper-fc.grib2",
+            model_root / "20260424" / "subset_aabbccdd__20260424000000-3h-oper-fc.grib2",
+            model_root / "20260424" / "20260424000000-0h-oper-fc.grib2.index",
+        ],
+        "20260423_18z": [model_root / "20260423" / "20260423180000-0h-scda-fc.grib2"],
+        "20260423_12z": [model_root / "20260423" / "20260423120000-0h-oper-fc.grib2"],
+        "20260423_06z": [model_root / "20260423" / "subset_11223344__20260423060000-0h-scda-fc.grib2.lock"],
+        "20260423_00z": [model_root / "20260423" / "20260423000000-0h-oper-fc.grib2"],
+        "20260422_18z": [
+            model_root / "20260422" / "20260422180000-0h-scda-fc.grib2",
+            model_root / "20260422" / "subset_deadbeef__20260422180000-6h-scda-fc.grib2",
+        ],
+    }
+    for paths in files.values():
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+
+    scheduler_module._enforce_herbie_cache_retention(herbie_root, "ifs", 4)
+
+    for run_id in kept:
+        for path in files[run_id]:
+            assert path.exists()
+    for run_id in removed:
+        for path in files[run_id]:
+            assert not path.exists()
+
+
+def test_enforce_herbie_cache_retention_matches_cache_model_case_insensitively(tmp_path: Path) -> None:
+    herbie_root = tmp_path / "herbie_cache"
+    model_root = herbie_root / "AIFS"
+
+    for stamp in [
+        "20260424000000",
+        "20260423180000",
+        "20260423120000",
+        "20260423060000",
+        "20260423000000",
+    ]:
+        day = stamp[:8]
+        path = model_root / day / f"{stamp}-0h-oper-fc.grib2"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+    scheduler_module._enforce_herbie_cache_retention(herbie_root, "aifs", 4)
+
+    assert (model_root / "20260424" / "20260424000000-0h-oper-fc.grib2").exists()
+    assert not (model_root / "20260423" / "20260423000000-0h-oper-fc.grib2").exists()
+
+
 def test_process_run_enforces_herbie_retention_for_resolved_cache_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -1431,6 +1431,23 @@ def _extract_herbie_run_id(path: Path, *, model_root: Path) -> str | None:
     name = path.name.lower()
     if name.endswith(".lock"):
         name = name[:-5]
+
+    timestamp_match = re.search(r"(?P<stamp>\d{14})-\d+h-", name)
+    if timestamp_match is not None:
+        stamp = timestamp_match.group("stamp")
+        try:
+            return _run_id_from_dt(
+                datetime(
+                    int(stamp[0:4]),
+                    int(stamp[4:6]),
+                    int(stamp[6:8]),
+                    int(stamp[8:10]),
+                    tzinfo=timezone.utc,
+                )
+            )
+        except ValueError:
+            return None
+
     match = re.search(r"t(?P<hour>\d{2})z", name)
     if match is None:
         return None
@@ -1459,38 +1476,48 @@ def _enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -
     if keep_runs < 1:
         return
 
-    model_root = root / model_id
-    if not model_root.is_dir():
-        return
-
-    run_files: dict[str, list[Path]] = {}
-    for path in model_root.rglob("*"):
-        if not path.is_file():
-            continue
-        run_id = _extract_herbie_run_id(path, model_root=model_root)
-        if run_id is None:
-            continue
-        run_files.setdefault(run_id, []).append(path)
-
-    if len(run_files) <= keep_runs:
-        return
-
-    sorted_runs = sorted(
-        run_files,
-        key=lambda run_id: _parse_run_id_datetime(run_id) or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
+    normalized_model_id = str(model_id).strip().lower()
+    model_roots = (
+        [
+            child
+            for child in root.iterdir()
+            if child.is_dir() and child.name.strip().lower() == normalized_model_id
+        ]
+        if root.is_dir() and normalized_model_id
+        else []
     )
-    keep_run_ids = set(sorted_runs[:keep_runs])
-    for run_id in sorted_runs[keep_runs:]:
-        for path in run_files.get(run_id, []):
-            logger.info("Removing old Herbie cache file: %s", path)
-            try:
-                path.unlink()
-            except FileNotFoundError:
+    if not model_roots:
+        return
+
+    for model_root in model_roots:
+        run_files: dict[str, list[Path]] = {}
+        for path in model_root.rglob("*"):
+            if not path.is_file():
                 continue
-            except OSError:
-                logger.warning("Failed removing old Herbie cache file: %s", path)
-    _prune_empty_dirs(model_root)
+            run_id = _extract_herbie_run_id(path, model_root=model_root)
+            if run_id is None:
+                continue
+            run_files.setdefault(run_id, []).append(path)
+
+        if len(run_files) <= keep_runs:
+            continue
+
+        sorted_runs = sorted(
+            run_files,
+            key=lambda run_id: _parse_run_id_datetime(run_id) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        for run_id in sorted_runs[keep_runs:]:
+            for path in run_files.get(run_id, []):
+                logger.info("Removing old Herbie cache file: %s", path)
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    logger.warning("Failed removing old Herbie cache file: %s", path)
+        _prune_empty_dirs(model_root)
+
 
 def _process_run(
     *,
