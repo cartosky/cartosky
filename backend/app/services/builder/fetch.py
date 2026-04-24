@@ -1732,7 +1732,17 @@ def _filter_inventory_step(inventory: Any, *, fh: int) -> Any:
     try:
         if "step" not in inventory.columns:
             return inventory
-        step_values = np.to_numeric(inventory["step"], errors="coerce")
+        step_series = inventory["step"]
+        step_values = None
+        try:
+            import pandas as pd
+
+            if pd.api.types.is_timedelta64_dtype(step_series):
+                step_values = step_series.dt.total_seconds() / 3600.0
+        except Exception:
+            step_values = None
+        if step_values is None:
+            step_values = np.to_numeric(step_series, errors="coerce")
         return inventory.loc[step_values == int(fh)]
     except Exception:
         return inventory
@@ -1862,11 +1872,13 @@ def _fetch_ecmwf_direct_mean_variable(
                     time.sleep(sleep_s)
 
     if fallback_to_pf_mean:
+        reason = f"{type(last_exc).__name__}: {last_exc}" if last_exc is not None else "unknown"
         logger.warning(
-            "ECMWF EPS direct mean unavailable; falling back to PF mean aggregation for %s fh%03d pattern=%s",
+            "ECMWF EPS direct mean unavailable; falling back to PF mean aggregation for %s fh%03d pattern=%s reason=%s",
             model_id,
             int(fh),
             search_pattern,
+            reason,
         )
         return _fetch_ecmwf_pf_mean_variable(
             model_id=model_id,

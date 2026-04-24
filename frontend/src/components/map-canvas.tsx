@@ -1776,6 +1776,15 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    map.setMinZoom(view.minZoom ?? 3);
+    map.setMaxZoom(view.maxZoom ?? 11);
+  }, [isLoaded, view.maxZoom, view.minZoom]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
     if (view.bbox) {
       const [west, south, east, north] = view.bbox;
       map.fitBounds([[west, south], [east, north]], {
