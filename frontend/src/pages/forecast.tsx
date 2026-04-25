@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  CloudSun,
   MapPinned,
   RefreshCw,
   Search,
