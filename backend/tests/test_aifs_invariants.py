@@ -31,6 +31,20 @@ def test_aifs_target_fhs_invariants() -> None:
     assert AIFS_MODEL.target_fhs(12) == expected
 
 
+def test_aifs_wspd850_grid_packing_config() -> None:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    key = ("aifs", "wspd850")
+    assert key in _PACKING_BY_MODEL_VAR, (
+        f"Expected grid packing config for {key}"
+    )
+    config = _PACKING_BY_MODEL_VAR[key]
+    assert config["scale"] == 0.1
+    assert config["offset"] == 0.0
+    assert config["nodata"] == 65535
+    assert config["units"] == "kt"
+
+
 def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert AIFS_MODEL.normalize_var_id("tmp2m_anom") == "tmp2m_anom"
