@@ -49,8 +49,8 @@ const DEFAULT_ANCHOR_DISPLAY_RULE: AnchorDisplayRule = Object.freeze({ mode: "al
 
 export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> = Object.freeze({
   tmp2m: { mode: "always" },
-  tmp2m_anom: { mode: "hidden" },
-  tmp2m_anom__mean: { mode: "hidden" },
+  tmp2m_anom: { mode: "always" },
+  tmp2m_anom__mean: { mode: "always" },
   dpt2m: { mode: "always" },
   dewpoint2m: { mode: "always" },
   dewpoint: { mode: "always" },

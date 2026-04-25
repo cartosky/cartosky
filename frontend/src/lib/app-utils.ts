@@ -369,6 +369,7 @@ export function makeRegionLabel(id: string, preset?: RegionPreset): string {
 
 const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
+  tmp2m_anom: { label: "Surface Temp Anomaly", group: "SURFACE", order: 0.5 },
   dp2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
   td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
   tmp850: { label: "850mb Temp", group: "UPPER AIR", order: 30 },
