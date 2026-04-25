@@ -564,6 +564,12 @@ def _grid_runtime_frames_by_hour(
     return frames_by_hour, unreadable_count
 
 
+def _artifact_validation_hours(frame_hours: list[int], *, include_details: bool) -> list[int]:
+    if include_details or len(frame_hours) <= 2:
+        return frame_hours
+    return sorted({frame_hours[0], frame_hours[-1]})
+
+
 def _contour_artifact_paths(
     *,
     data_root: Path,
@@ -1846,7 +1852,9 @@ def _scan_run_issue(
                     if isinstance(contours, dict):
                         contour_keys = [str(key) for key in contours.keys() if str(key).strip()]
 
-        for fh in frame_hours:
+        validation_hours = _artifact_validation_hours(frame_hours, include_details=include_details)
+
+        for fh in validation_hours:
             value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_exists = sidecar_path.is_file()

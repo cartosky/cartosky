@@ -393,12 +393,12 @@ function ViewerNavDesktop() {
 
   return (
     /* flex-1 so this fills all space after the logo; spacer pushes controls to the right */
-    <div className="flex flex-1 items-center">
+    <div className="flex h-full flex-1 items-end">
       {/* Flex spacer — pushes everything to the right */}
       <div className="flex-1" />
 
       {/* Controls group: selectors + divider + icons — all right-aligned */}
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-end gap-1.5">
         {/* Primary selectors */}
         <HeaderSelectField label="Product" icon={Boxes}>
           <NavbarSelect
@@ -1102,7 +1102,9 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
         className={cn(
           "relative z-10",
           isAppVariant
-            ? "flex h-14 items-center gap-3 px-4 md:px-5"
+            ? isViewerDesktop
+              ? "flex h-[4.5rem] items-end gap-3 px-4 pb-2 md:px-5"
+              : "flex h-14 items-center gap-3 px-4 md:px-5"
             : "mx-auto flex h-16 max-w-6xl items-center gap-3 px-5 md:gap-6 md:px-8"
         )}
       >
