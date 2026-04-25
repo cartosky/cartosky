@@ -234,6 +234,49 @@ function weatherIconUrl(path: string): string {
   return `${path}?v=${WEATHER_ICON_VERSION}`;
 }
 
+const weatherIconMarkupCache = new Map<string, string>();
+const weatherIconRequestCache = new Map<string, Promise<string>>();
+
+function normalizeWeatherIconSvg(svgMarkup: string): string {
+  return svgMarkup
+    .trim()
+    .replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
+    .replace(/<svg\b([^>]*)>/i, (_match, attrs: string) => {
+      const cleanedAttrs = attrs
+        .replace(/\s(?:width|height)=("[^"]*"|'[^']*')/gi, "")
+        .replace(/\sstyle=("[^"]*"|'[^']*')/i, "");
+      return `<svg${cleanedAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision" style="display:block;width:100%;height:100%;min-width:100%;min-height:100%;transform:none;shape-rendering:geometricPrecision;">`;
+    });
+}
+
+async function loadWeatherIconMarkup(src: string): Promise<string> {
+  const cachedMarkup = weatherIconMarkupCache.get(src);
+  if (cachedMarkup) return cachedMarkup;
+
+  const pendingRequest = weatherIconRequestCache.get(src);
+  if (pendingRequest) return pendingRequest;
+
+  const request = fetch(src)
+    .then(async response => {
+      if (!response.ok) {
+        throw new Error(`Unable to load weather icon: ${src}`);
+      }
+      return normalizeWeatherIconSvg(await response.text());
+    })
+    .then(markup => {
+      weatherIconMarkupCache.set(src, markup);
+      weatherIconRequestCache.delete(src);
+      return markup;
+    })
+    .catch(error => {
+      weatherIconRequestCache.delete(src);
+      throw error;
+    });
+
+  weatherIconRequestCache.set(src, request);
+  return request;
+}
+
 const WEATHER_ICON_SRC: Record<string, string> = {
   "clear-day": weatherIconUrl("/assets/weather-icons/sunny_day.svg"),
   "clear-night": weatherIconUrl("/assets/weather-icons/clear_night.svg"),
@@ -257,10 +300,50 @@ const WEATHER_ICON_SRC: Record<string, string> = {
   wind: weatherIconUrl("/assets/weather-icons/wind.svg"),
 };
 
-function WeatherIcon({ code, className }: { code: string; className?: string }) {
-  const cls = className ?? "h-5 w-5";
+function WeatherIcon({ code, size = 20, className }: { code: string; size?: number; className?: string }) {
   const src = WEATHER_ICON_SRC[code] ?? WEATHER_ICON_SRC.cloudy;
-  return <img src={src} alt="" aria-hidden="true" className={cls} />;
+  const [markup, setMarkup] = useState<string | null>(() => weatherIconMarkupCache.get(src) ?? null);
+
+  useEffect(() => {
+    let isActive = true;
+    setMarkup(weatherIconMarkupCache.get(src) ?? null);
+
+    void loadWeatherIconMarkup(src)
+      .then(svgMarkup => {
+        if (isActive) {
+          setMarkup(svgMarkup);
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setMarkup(null);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [src]);
+
+  return (
+    <span
+      aria-hidden="true"
+      className={className}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        minWidth: `${size}px`,
+        minHeight: `${size}px`,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        lineHeight: 0,
+        transform: "none",
+      }}
+      dangerouslySetInnerHTML={markup ? { __html: markup } : undefined}
+    />
+  );
 }
 
 // ── Section label ─────────────────────────────────────────────────────
@@ -581,7 +664,7 @@ function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
             }`}
           >
             <span className="text-[11px] text-white/40">{formatHour(entry.time)}</span>
-            <WeatherIcon code={entry.weather_code} className="h-4 w-4 text-cyan-200/65" />
+            <WeatherIcon code={entry.weather_code} size={16} />
             <span className="text-[13px] font-medium text-white">{entry.temperature_f ?? "--"}°</span>
             {pop > 0
               ? <span className={`text-[10px] ${precipColor(pop)}`}>{pop}%</span>
@@ -704,7 +787,7 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
             <div className="w-10 flex-none text-[13px] font-medium text-white/60">
               {formatDayLabel(entry.date, i)}
             </div>
-            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/60" />
+            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
             <div className="flex-none w-52 text-[13px] text-white/55 truncate hidden sm:block">
               {entry.short_text ?? ""}
             </div>
@@ -833,7 +916,7 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
             <div className="w-10 flex-none text-[13px] font-medium text-white/60">
               {formatDayLabel(entry.date, i)}
             </div>
-            <WeatherIcon code={entry.icon} className="h-4 w-4 flex-none text-cyan-200/55" />
+            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
             <div className="flex-none w-52 text-[13px] text-white/50 truncate hidden sm:block">
               {entry.short_text ?? ""}
             </div>
@@ -1169,7 +1252,7 @@ export default function Forecast() {
         <div>
           <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5 border-b-[0.5px] border-white/[0.08]">
             <div className="flex items-center gap-3 flex-none">
-              <WeatherIcon code={f.current.icon} className="h-8 w-8 text-cyan-200/80" />
+              <WeatherIcon code={f.current.icon} size={32} className="flex-none" />
               <div>
                 <div className="text-[36px] font-medium leading-none text-white">
                   {f.current.temperature_f ?? "--"}°
