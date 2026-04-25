@@ -137,7 +137,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert vort500["derived"] is False
     assert vort500["kind"] == "continuous"
     assert vort500["units"] == "10^-5 s^-1"
-    assert vort500["display_name"] == "500mb Absolute Vorticity"
+    assert vort500["display_name"] == "500mb Heights + Vorticity"
     assert vort500["group"] == "Dynamics"
     assert vort500["color_map_id"] == "vort500"
     assert vort500["order"] == 5

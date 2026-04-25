@@ -265,7 +265,7 @@ def _gfs_absv_level_component(level_hpa: int) -> VarSpec:
     level = int(level_hpa)
     return VarSpec(
         id=f"vort{level}",
-        name=f"{level}mb Absolute Vorticity",
+        name=(f"{level}mb Heights + Vorticity" if level == 500 else f"{level}mb Absolute Vorticity"),
         selectors=VarSelectors(
             search=[f":ABSV:{level} mb:"],
             filter_by_keys={

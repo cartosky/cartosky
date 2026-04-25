@@ -531,7 +531,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
     ),
     "vort500": VarSpec(
         id="vort500",
-        name="500mb Vorticity",
+        name="500mb Heights + Vorticity",
         selectors=VarSelectors(
             search=[":vo:500:", ":vo:500:pl:"],
             filter_by_keys={

@@ -454,7 +454,7 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
 
     vort500 = payload["variables"]["vort500"]
     assert vort500["var_key"] == "vort500"
-    assert vort500["display_name"] == "500mb Relative Vorticity"
+    assert vort500["display_name"] == "500mb Heights + Vorticity"
     assert vort500["kind"] == "continuous"
     assert vort500["units"] == "10^-5 s^-1"
     assert vort500["buildable"] is True

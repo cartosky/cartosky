@@ -151,7 +151,7 @@ def _aigfs_pres_wind_component(axis: str, level_hpa: int) -> VarSpec:
 def _aigfs_vort500_spec() -> VarSpec:
     return VarSpec(
         id="vort500",
-        name="500mb Relative Vorticity",
+        name="500mb Heights + Vorticity",
         selectors=VarSelectors(
             hints={
                 "u_component": "u500",

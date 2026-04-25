@@ -606,7 +606,7 @@ function ViewerNavMobile() {
     runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
     onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange, layoutMode,
+    zoomControlsVisible, onZoomControlsVisibleChange, layoutMode, legend,
   } = toolbar;
 
   const isTabletTouchLayout = layoutMode === "tablet-touch";
@@ -673,10 +673,10 @@ function ViewerNavMobile() {
       {statusBadge ? (
         <div className="mb-4 flex items-center">{statusBadge}</div>
       ) : null}
-      <div className={cn("grid gap-3", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
-        <div className={cn("space-y-1.5", isTabletTouchLayout ? "col-span-2" : "")}>
+      <div className="grid grid-cols-1 gap-3">
+        <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <Layers className="h-3 w-3" /> Product
+            <Layers className="h-3 w-3" /> Variable
           </span>
           <NavbarSelect
             value={variable}
@@ -750,7 +750,7 @@ function ViewerNavMobile() {
 
   const displayContent = (
     <>
-      <div className={cn("grid gap-2", isTabletTouchLayout ? "grid-cols-2" : "grid-cols-1")}>
+      <div className="grid grid-cols-1 gap-2">
         <DisplayRow
           label="City Labels"
           icon={MapPin}
@@ -805,7 +805,7 @@ function ViewerNavMobile() {
     <>
       {/* Compact summary + controls icon */}
       <div className="flex flex-1 items-center justify-end gap-2">
-        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {isTabletTouchLayout ? statusBadge : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
@@ -865,7 +865,7 @@ function ViewerNavMobile() {
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
-              "glass-strong fixed z-[66] flex flex-col overflow-hidden",
+              "glass-navy fixed z-[66] flex flex-col overflow-hidden",
               isTabletTouchLayout
                 ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(28rem,82vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
@@ -943,6 +943,20 @@ function ViewerNavMobile() {
             </div>
           </div>
         </>
+      , document.body) : null}
+
+      {/* Legend — portal-rendered below the header, mirrors desktop placement */}
+      {legendVisible && legend ? createPortal(
+        <div className="fixed left-3 top-[calc(3.5rem+0.75rem)] z-[55] w-auto min-w-[140px] max-w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+          <MapLegend
+            legend={legend}
+            onOpacityChange={onOpacityChange}
+            showOpacityControl={false}
+            displayPanelOpen={false}
+            defaultExpanded={true}
+            inline={true}
+          />
+        </div>
       , document.body) : null}
     </>
   );

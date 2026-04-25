@@ -45,9 +45,9 @@ export function useDisplaySettings(
   const [legendPreferenceVisible, setLegendPreferenceVisible] = useState<boolean | null>(() => readLegendVisibilityPreference());
   const [displayPanelOpen, setDisplayPanelOpen] = useState(false);
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
-  const legendVisible = viewerLayoutMode === "desktop"
-    ? (legendPreferenceVisible ?? true)
-    : false;
+  // Default to visible on desktop, hidden on compact layouts until the user
+  // explicitly toggles it on. Mobile/tablet now fully honour the preference.
+  const legendVisible = legendPreferenceVisible ?? (viewerLayoutMode === "desktop");
 
   const setLegendVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
     setLegendPreferenceVisible((current) => {

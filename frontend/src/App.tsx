@@ -3355,7 +3355,7 @@ export default function App() {
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
-          showZoomControls={isDesktopViewerLayout && zoomControlsVisible}
+          showZoomControls={zoomControlsVisible}
         />
 
         <InitialMapSkeleton
