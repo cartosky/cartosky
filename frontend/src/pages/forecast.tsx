@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -237,16 +237,83 @@ function weatherIconUrl(path: string): string {
 const weatherIconMarkupCache = new Map<string, string>();
 const weatherIconRequestCache = new Map<string, Promise<string>>();
 
+function parseWeatherIconSvg(svgMarkup: string): SVGSVGElement | null {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(
+    svgMarkup.trim().replace(/^<\?xml[\s\S]*?\?>\s*/i, ""),
+    "image/svg+xml"
+  );
+  const svg = document.documentElement;
+  if (svg.nodeName.toLowerCase() !== "svg") {
+    return null;
+  }
+  return svg as unknown as SVGSVGElement;
+}
+
+function serializeWeatherIconSvg(svg: SVGSVGElement): string {
+  return new XMLSerializer().serializeToString(svg);
+}
+
 function normalizeWeatherIconSvg(svgMarkup: string): string {
-  return svgMarkup
-    .trim()
-    .replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
-    .replace(/<svg\b([^>]*)>/i, (_match, attrs: string) => {
-      const cleanedAttrs = attrs
-        .replace(/\s(?:width|height)=("[^"]*"|'[^']*')/gi, "")
-        .replace(/\sstyle=("[^"]*"|'[^']*')/i, "");
-      return `<svg${cleanedAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision" style="display:block;width:100%;height:100%;min-width:100%;min-height:100%;transform:none;shape-rendering:geometricPrecision;">`;
+  const svg = parseWeatherIconSvg(svgMarkup);
+  if (!svg) return svgMarkup.trim();
+
+  svg.removeAttribute("width");
+  svg.removeAttribute("height");
+  svg.removeAttribute("style");
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svg.setAttribute("shape-rendering", "geometricPrecision");
+  svg.setAttribute(
+    "style",
+    "display:block;width:100%;height:100%;min-width:100%;min-height:100%;transform:none;shape-rendering:geometricPrecision;"
+  );
+
+  svg.querySelectorAll("filter").forEach(element => element.remove());
+  svg.querySelectorAll("[filter]").forEach(element => element.removeAttribute("filter"));
+
+  return serializeWeatherIconSvg(svg);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function scopeWeatherIconSvg(svgMarkup: string, scopeId: string): string {
+  const svg = parseWeatherIconSvg(svgMarkup);
+  if (!svg) return svgMarkup;
+
+  const idMap = new Map<string, string>();
+  svg.querySelectorAll("[id]").forEach(element => {
+    const existingId = element.getAttribute("id");
+    if (!existingId) return;
+    const scopedId = `${scopeId}-${existingId}`;
+    idMap.set(existingId, scopedId);
+    element.setAttribute("id", scopedId);
+  });
+
+  if (idMap.size === 0) {
+    return serializeWeatherIconSvg(svg);
+  }
+
+  svg.querySelectorAll("*").forEach(element => {
+    Array.from(element.attributes).forEach(attribute => {
+      let nextValue = attribute.value;
+      for (const [existingId, scopedId] of idMap.entries()) {
+        nextValue = nextValue.replace(new RegExp(`url\\(#${escapeRegExp(existingId)}\\)`, "g"), `url(#${scopedId})`);
+        nextValue = nextValue.replace(new RegExp(`(["'\\s(])#${escapeRegExp(existingId)}(?=["'\\s)])`, "g"), `$1#${scopedId}`);
+        if (nextValue === `#${existingId}`) {
+          nextValue = `#${scopedId}`;
+        }
+      }
+      if (nextValue !== attribute.value) {
+        element.setAttribute(attribute.name, nextValue);
+      }
     });
+  });
+
+  return serializeWeatherIconSvg(svg);
 }
 
 async function loadWeatherIconMarkup(src: string): Promise<string> {
@@ -302,21 +369,22 @@ const WEATHER_ICON_SRC: Record<string, string> = {
 
 function WeatherIcon({ code, size = 20, className }: { code: string; size?: number; className?: string }) {
   const src = WEATHER_ICON_SRC[code] ?? WEATHER_ICON_SRC.cloudy;
-  const [markup, setMarkup] = useState<string | null>(() => weatherIconMarkupCache.get(src) ?? null);
+  const iconScopeId = useId().replace(/:/g, "_");
+  const [rawMarkup, setRawMarkup] = useState<string | null>(() => weatherIconMarkupCache.get(src) ?? null);
 
   useEffect(() => {
     let isActive = true;
-    setMarkup(weatherIconMarkupCache.get(src) ?? null);
+    setRawMarkup(weatherIconMarkupCache.get(src) ?? null);
 
     void loadWeatherIconMarkup(src)
       .then(svgMarkup => {
         if (isActive) {
-          setMarkup(svgMarkup);
+          setRawMarkup(svgMarkup);
         }
       })
       .catch(() => {
         if (isActive) {
-          setMarkup(null);
+          setRawMarkup(null);
         }
       });
 
@@ -324,6 +392,8 @@ function WeatherIcon({ code, size = 20, className }: { code: string; size?: numb
       isActive = false;
     };
   }, [src]);
+
+  const markup = rawMarkup ? scopeWeatherIconSvg(rawMarkup, iconScopeId) : null;
 
   return (
     <span
