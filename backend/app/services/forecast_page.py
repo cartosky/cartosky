@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -458,6 +459,81 @@ def _minutes_between(older: datetime | None, newer: datetime | None) -> float | 
     return max((newer - older).total_seconds() / 60.0, 0.0)
 
 
+def _localize_datetime(value: str | None, timezone_name: str | None) -> datetime | None:
+    dt = _parse_iso_datetime(value)
+    if dt is None or not timezone_name:
+        return dt
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=zone)
+    return dt.astimezone(zone)
+
+
+def _infer_is_day_for_current(
+    observed_at: str | None,
+    *,
+    timezone_name: str | None,
+    om_payload: dict[str, Any] | None,
+) -> bool | None:
+    if not om_payload:
+        return None
+
+    observed_local = _localize_datetime(observed_at, timezone_name)
+    daily = om_payload.get("daily") or {}
+    current = om_payload.get("current") or {}
+
+    if observed_local is not None:
+        target_date = observed_local.date().isoformat()
+        dates = daily.get("time") or []
+        sunrises = daily.get("sunrise") or []
+        sunsets = daily.get("sunset") or []
+        for index, date_value in enumerate(dates):
+            if _coerce_str(date_value) != target_date:
+                continue
+            sunrise_local = _localize_datetime((sunrises or [None])[index], timezone_name)
+            sunset_local = _localize_datetime((sunsets or [None])[index], timezone_name)
+            if sunrise_local is not None and sunset_local is not None:
+                return sunrise_local <= observed_local < sunset_local
+            break
+
+    explicit_is_day = _safe_int(current.get("is_day"))
+    if explicit_is_day is None:
+        return None
+
+    current_local = _localize_datetime(_coerce_str(current.get("time")), timezone_name)
+    if observed_local is not None and current_local is not None:
+        if observed_local.date() == current_local.date() and abs((observed_local - current_local).total_seconds()) <= 12 * 3600:
+            return bool(explicit_is_day)
+        return None
+    return bool(explicit_is_day)
+
+
+def _apply_current_icon_day_night(
+    current_payload: dict[str, Any] | None,
+    *,
+    timezone_name: str | None,
+    om_payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not current_payload or _coerce_str(current_payload.get("source")) != "nws":
+        return current_payload
+    short_text = _coerce_str(current_payload.get("short_text"))
+    if short_text is None:
+        return current_payload
+    is_day = _infer_is_day_for_current(
+        _coerce_str(current_payload.get("observed_at")),
+        timezone_name=timezone_name,
+        om_payload=om_payload,
+    )
+    if is_day is None:
+        return current_payload
+    updated_payload = dict(current_payload)
+    updated_payload["icon"] = _icon_from_text(short_text, is_day=is_day)
+    return updated_payload
+
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     radius_km = 6371.0
     lat1_rad = math.radians(lat1)
@@ -523,30 +599,30 @@ def _icon_from_wmo(code: int | None, *, is_day: bool = True) -> str:
     if code == 3:
         return "cloudy"
     if code in {45, 48}:
-        return "fog"
+        return "fog-day" if is_day else "fog-night"
     if code in {51, 53, 55, 56, 57}:
-        return "drizzle"
+        return "drizzle-day" if is_day else "drizzle-night"
     if code in {61, 63, 65, 66, 67, 80, 81, 82}:
-        return "rain"
+        return "rain-day" if is_day else "rain-night"
     if code in {71, 73, 75, 77, 85, 86}:
-        return "snow"
+        return "snow-day" if is_day else "snow-night"
     if code in {95, 96, 99}:
-        return "thunderstorm"
+        return "thunderstorm-day" if is_day else "thunderstorm-night"
     return "cloudy"
 
 
 def _icon_from_text(text: str | None, *, is_day: bool = True) -> str:
     normalized = (text or "").lower()
     if "thunder" in normalized:
-        return "thunderstorm"
+        return "thunderstorm-day" if is_day else "thunderstorm-night"
     if "snow" in normalized:
-        return "snow"
+        return "snow-day" if is_day else "snow-night"
     if "sleet" in normalized or "ice" in normalized:
-        return "sleet"
+        return "sleet-day" if is_day else "sleet-night"
     if "rain" in normalized or "shower" in normalized:
-        return "rain"
+        return "rain-day" if is_day else "rain-night"
     if "fog" in normalized or "haze" in normalized:
-        return "fog"
+        return "fog-day" if is_day else "fog-night"
     if "wind" in normalized or "breezy" in normalized:
         return "wind"
     if "cloud" in normalized or "overcast" in normalized:
@@ -905,6 +981,7 @@ async def _fetch_open_meteo_forecast(client: httpx.AsyncClient, location: Resolv
                     "precipitation",
                     "snowfall",
                     "weather_code",
+                    "is_day",
                 ]
             ),
             "daily": ",".join(
@@ -1190,6 +1267,7 @@ def _normalize_open_meteo_hourly(payload: dict[str, Any]) -> tuple[list[dict[str
     entries: list[dict[str, Any]] = []
     for index, time_value in enumerate(times):
         weather_code = _safe_int((hourly.get("weather_code") or [None])[index])
+        is_day = bool(_safe_int((hourly.get("is_day") or [None])[index]) or 0)
         entries.append(
             {
                 "time": time_value,
@@ -1208,8 +1286,8 @@ def _normalize_open_meteo_hourly(payload: dict[str, Any]) -> tuple[list[dict[str
                     _safe_float((hourly.get("snowfall") or [None])[index]),
                     _coerce_str(hourly_units.get("snowfall")),
                 ),
-                "weather_code": _icon_from_wmo(weather_code, is_day=True),
-                "short_text": _weather_text_from_wmo(weather_code, is_day=True),
+                "weather_code": _icon_from_wmo(weather_code, is_day=is_day),
+                "short_text": _weather_text_from_wmo(weather_code, is_day=is_day),
             }
         )
     freshness = {
@@ -1610,6 +1688,13 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         daily_payload = _normalize_open_meteo_daily(om_payload)
     else:
         daily_payload = []
+
+    timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
+    current_payload = _apply_current_icon_day_night(
+        current_payload,
+        timezone_name=timezone_name,
+        om_payload=om_payload,
+    )
 
     if current_payload is None:
         raise ForecastPageError("FORECAST_PAGE_EMPTY", "No forecast data could be assembled for this location.")

@@ -79,6 +79,7 @@ def _open_meteo_payload(*, timezone_name: str) -> dict:
             "precipitation": [0.0, 0.01],
             "snowfall": [0.0, 0.0],
             "weather_code": [1, 2],
+            "is_day": [1, 0],
         },
         "daily_units": {
             "precipitation_sum": "inch",
@@ -155,11 +156,11 @@ def _nws_hourly_payload() -> dict:
                 },
                 {
                     "startTime": "2026-04-18T14:00:00-05:00",
-                    "isDaytime": True,
+                    "isDaytime": False,
                     "temperature": 62,
                     "windSpeed": "18 mph",
                     "windDirection": "NW",
-                    "shortForecast": "Partly Sunny",
+                    "shortForecast": "Rain Showers",
                     "probabilityOfPrecipitation": {"value": 10},
                 },
             ],
@@ -307,6 +308,7 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
     assert payload["current"]["source"] == "nws"
     assert payload["current"]["station"]["id"] == "K9V9"
     assert payload["hourly"][0]["source"] == "nws"
+    assert payload["hourly"][1]["weather_code"] == "rain-night"
     assert payload["daily"][0]["source"] == "open_meteo"
     assert payload["official_text_forecast"]["periods"][0]["name"] == "Tonight"
     assert payload["afd"]["product_id"] == "AFDFSD"
@@ -396,6 +398,71 @@ async def test_get_forecast_page_by_query_falls_back_to_open_meteo_current_when_
     assert payload["current"]["short_text"] == "Partly Cloudy"
 
 
+async def test_get_forecast_page_by_query_uses_night_icon_for_nws_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    frozen = datetime(2026, 4, 19, 3, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(forecast_page_service, "_utcnow", lambda: frozen)
+
+    async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
+        return nws_service.AfdResult(
+            wfo=office,
+            office_name="FSD",
+            issued_at="2026-04-18T16:42:00-05:00",
+            product_text="Area forecast discussion text.",
+            product_id="AFDFSD",
+        )
+
+    monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "geocoding-api.open-meteo.com" and path == "/v1/search":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": "Sioux Falls",
+                            "latitude": 43.55,
+                            "longitude": -96.73,
+                            "elevation": 438.0,
+                            "timezone": "America/Chicago",
+                            "country_code": "US",
+                            "country": "United States",
+                            "admin1": "South Dakota",
+                            "postcodes": ["57104"],
+                            "population": 202078,
+                            "feature_code": "PPL",
+                        }
+                    ]
+                },
+            )
+        if host == "api.open-meteo.com" and path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
+            return httpx.Response(200, json=_nws_points_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast":
+            return httpx.Response(200, json=_nws_forecast_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast/hourly":
+            return httpx.Response(200, json=_nws_hourly_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/stations":
+            return httpx.Response(200, json=_nws_station_collection())
+        if host == "api.weather.gov" and path == "/stations/KFSD/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-19T00:30:00+00:00", description="Mostly Cloudy"))
+        if host == "api.weather.gov" and path == "/stations/K9V9/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-19T02:15:00+00:00", description="Partly Cloudy"))
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.get_forecast_page_by_query("57104")
+
+    assert payload["current"]["source"] == "nws"
+    assert payload["current"]["icon"] == "partly-cloudy-night"
+
+
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
 
@@ -440,6 +507,7 @@ async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatc
     assert payload["afd"] is None
     assert payload["alerts"] == []
     assert payload["current"]["source"] == "open_meteo"
+    assert payload["hourly"][1]["weather_code"] == "partly-cloudy-night"
 
 
 async def test_search_locations_city_state_query_falls_back_to_city_search(

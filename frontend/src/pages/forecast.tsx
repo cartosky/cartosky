@@ -6,19 +6,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
-  Cloud,
-  CloudDrizzle,
-  CloudLightning,
-  CloudMoon,
-  CloudRain,
-  CloudSnow,
-  CloudSun,
   MapPinned,
-  Moon,
   RefreshCw,
   Search,
-  Sun,
-  Wind,
   X,
 } from "lucide-react";
 
@@ -236,21 +226,33 @@ function readFiniteSearchParam(searchParams: URLSearchParams, key: string): numb
 
 // ── Weather Icon ──────────────────────────────────────────────────────
 
+const WEATHER_ICON_SRC: Record<string, string> = {
+  "clear-day": "/assets/weather-icons/sunny_day.svg",
+  "clear-night": "/assets/weather-icons/clear_night.svg",
+  "partly-cloudy-day": "/assets/weather-icons/pcloudy_day.svg",
+  "partly-cloudy-night": "/assets/weather-icons/pcloudy_night.svg",
+  cloudy: "/assets/weather-icons/mcloudy_day.svg",
+  "fog-day": "/assets/weather-icons/foggy_day.svg",
+  "fog-night": "/assets/weather-icons/foggy_night.svg",
+  "drizzle-day": "/assets/weather-icons/light_rain_day.svg",
+  "drizzle-night": "/assets/weather-icons/light_rain_night.svg",
+  "rain-day": "/assets/weather-icons/rain_day.svg",
+  "rain-night": "/assets/weather-icons/rain_night.svg",
+  sleet: "/assets/weather-icons/sleet.svg",
+  "sleet-day": "/assets/weather-icons/sleet_day.svg",
+  "sleet-night": "/assets/weather-icons/sleet_night.svg",
+  snow: "/assets/weather-icons/snow.svg",
+  "snow-day": "/assets/weather-icons/snow_day.svg",
+  "snow-night": "/assets/weather-icons/snow_night.svg",
+  "thunderstorm-day": "/assets/weather-icons/tstorm_day.svg",
+  "thunderstorm-night": "/assets/weather-icons/tstorm_night.svg",
+  wind: "/assets/weather-icons/wind.svg",
+};
+
 function WeatherIcon({ code, className }: { code: string; className?: string }) {
   const cls = className ?? "h-5 w-5";
-  switch (code) {
-    case "clear-day":           return <Sun className={cls} />;
-    case "clear-night":         return <Moon className={cls} />;
-    case "partly-cloudy-day":   return <CloudSun className={cls} />;
-    case "partly-cloudy-night": return <CloudMoon className={cls} />;
-    case "cloudy": case "fog":  return <Cloud className={cls} />;
-    case "drizzle":             return <CloudDrizzle className={cls} />;
-    case "rain": case "sleet":  return <CloudRain className={cls} />;
-    case "snow":                return <CloudSnow className={cls} />;
-    case "thunderstorm":        return <CloudLightning className={cls} />;
-    case "wind":                return <Wind className={cls} />;
-    default:                    return <Cloud className={cls} />;
-  }
+  const src = WEATHER_ICON_SRC[code] ?? WEATHER_ICON_SRC.cloudy;
+  return <img src={src} alt="" aria-hidden="true" className={cls} />;
 }
 
 // ── Section label ─────────────────────────────────────────────────────
