@@ -803,9 +803,9 @@ function ViewerNavMobile() {
 
   return (
     <>
-      {/* Compact summary + controls icon */}
-      <div className="flex flex-1 items-center justify-end gap-2">
-        <div className="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Compact summary + share icon — controls button is now a floating FAB */}
+      <div className="flex flex-1 items-center justify-end gap-2 pr-10">
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {isTabletTouchLayout ? statusBadge : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
@@ -829,19 +829,24 @@ function ViewerNavMobile() {
             <Send className="h-3.5 w-3.5" />
           </button>
         ) : null}
+      </div>
 
+      {/* Floating controls button — always in top-right, never pushed off-screen */}
+      {createPortal(
         <button
           type="button"
-          onClick={() => setSheetSnap("peek")}
-          aria-label="Open controls"
+          onClick={() => setSheetSnap(sheetOpen ? "closed" : "peek")}
+          aria-label={sheetOpen ? "Close controls" : "Open controls"}
           className={cn(
-            "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/72",
-            sheetOpen && "border-white/20 bg-white/12 text-white"
+            "fixed right-3 top-[calc(3.5rem+0.5rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150",
+            sheetOpen
+              ? "border-white/20 bg-white/[0.14] text-white shadow-[0_4px_16px_rgba(0,0,0,0.35)] backdrop-blur-md"
+              : "border-white/12 bg-black/30 text-white/70 shadow-[0_4px_16px_rgba(0,0,0,0.3)] backdrop-blur-md hover:bg-white/[0.10] hover:text-white"
           )}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
         </button>
-      </div>
+      , document.body)}
 
       {/* Slide-up sheet */}
       {sheetOpen ? createPortal(
@@ -867,7 +872,7 @@ function ViewerNavMobile() {
             className={cn(
               "glass-navy fixed z-[66] flex flex-col overflow-hidden",
               isTabletTouchLayout
-                ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(28rem,82vw)] rounded-[1.4rem]"
+                ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
             )}
           >

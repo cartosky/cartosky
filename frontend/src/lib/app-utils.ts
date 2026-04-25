@@ -311,8 +311,16 @@ export function writePointLabelsPreference(enabled: boolean): void {
   writeBooleanPreference(POINT_LABELS_STORAGE_KEY, enabled);
 }
 
-export function readZoomControlsPreference(): boolean {
-  return readBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, false);
+export function readZoomControlsPreference(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = window.localStorage.getItem(ZOOM_CONTROLS_STORAGE_KEY);
+    if (stored === "true") return true;
+    if (stored === "false") return false;
+    return null; // never explicitly set
+  } catch {
+    return null;
+  }
 }
 
 export function writeZoomControlsPreference(visible: boolean): void {

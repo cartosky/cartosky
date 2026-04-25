@@ -29,11 +29,15 @@ export interface UseDisplaySettingsReturn {
 }
 
 /**
- * Manages the viewer display settings panel state:
- * basemap mode (with localStorage persistence), point-label toggle, zoom
- * controls toggle, legend visibility (persisted for desktop and auto-hidden
- * on compact viewports), the display panel itself (auto-closed on
- * non-desktop), and overlay opacity.
+ * Manages viewer display settings with localStorage persistence.
+ *
+ * Zoom controls and legend default behaviour by layout:
+ *   - Desktop:        default ON  (null preference → true)
+ *   - Mobile/tablet:  default OFF (null preference → false)
+ *
+ * Once a user explicitly toggles either setting on any layout, that choice is
+ * persisted and restored on the next load — including on mobile/tablet. The
+ * layout-specific default only applies when no preference has ever been saved.
  */
 export function useDisplaySettings(
   viewerLayoutMode: ViewerLayoutMode,
@@ -41,48 +45,50 @@ export function useDisplaySettings(
 ): UseDisplaySettingsReturn {
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
   const [pointLabelsEnabled, setPointLabelsEnabled] = useState(() => readPointLabelsPreference());
-  const [zoomControlsVisible, setZoomControlsVisible] = useState(() => readZoomControlsPreference());
-  const [legendPreferenceVisible, setLegendPreferenceVisible] = useState<boolean | null>(() => readLegendVisibilityPreference());
+
+  // null = never explicitly set; resolve to layout-appropriate default below.
+  const [zoomPreference, setZoomPreference] = useState<boolean | null>(
+    () => readZoomControlsPreference(),
+  );
+  const [legendPreference, setLegendPreference] = useState<boolean | null>(
+    () => readLegendVisibilityPreference(),
+  );
+
   const [displayPanelOpen, setDisplayPanelOpen] = useState(false);
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
-  // Default to visible on desktop, hidden on compact layouts until the user
-  // explicitly toggles it on. Mobile/tablet now fully honour the preference.
-  const legendVisible = legendPreferenceVisible ?? (viewerLayoutMode === "desktop");
 
-  const setLegendVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
-    setLegendPreferenceVisible((current) => {
-      const effectiveCurrent = current ?? true;
-      return typeof value === "function" ? value(effectiveCurrent) : value;
+  // Resolve null → layout default. Explicit true/false is always honoured.
+  const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? false : false);
+  const legendVisible = legendPreference ?? (isDesktopViewerLayout ? true : false);
+
+  const setZoomControlsVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
+    setZoomPreference((current) => {
+      const effective = current ?? (isDesktopViewerLayout ? false : false);
+      return typeof value === "function" ? value(effective) : value;
     });
   };
 
-  // Persist basemap mode preference.
-  useEffect(() => {
-    writeBasemapModePreference(basemapMode);
-  }, [basemapMode]);
+  const setLegendVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
+    setLegendPreference((current) => {
+      const effective = current ?? (isDesktopViewerLayout ? true : false);
+      return typeof value === "function" ? value(effective) : value;
+    });
+  };
+
+  useEffect(() => { writeBasemapModePreference(basemapMode); }, [basemapMode]);
+  useEffect(() => { writePointLabelsPreference(pointLabelsEnabled); }, [pointLabelsEnabled]);
 
   useEffect(() => {
-    writePointLabelsPreference(pointLabelsEnabled);
-  }, [pointLabelsEnabled]);
+    if (zoomPreference !== null) writeZoomControlsPreference(zoomPreference);
+  }, [zoomPreference]);
 
   useEffect(() => {
-    writeZoomControlsPreference(zoomControlsVisible);
-  }, [zoomControlsVisible]);
-
-  // Persist the user's desktop legend preference while compact layouts keep
-  // the legend hidden transiently.
-  useEffect(() => {
-    if (legendPreferenceVisible === null) {
-      return;
-    }
-    writeLegendVisibilityPreference(legendPreferenceVisible);
-  }, [legendPreferenceVisible]);
+    if (legendPreference !== null) writeLegendVisibilityPreference(legendPreference);
+  }, [legendPreference]);
 
   // Auto-close the display panel when leaving desktop layout.
   useEffect(() => {
-    if (isDesktopViewerLayout || !displayPanelOpen) {
-      return;
-    }
+    if (isDesktopViewerLayout || !displayPanelOpen) return;
     setDisplayPanelOpen(false);
   }, [displayPanelOpen, isDesktopViewerLayout]);
 

@@ -877,7 +877,7 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 // ── Main Page ─────────────────────────────────────────────────────────
 
 export default function Forecast() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -904,10 +904,30 @@ export default function Forecast() {
   }, []);
 
   useEffect(() => {
-    const q = searchParams.get("q");
-    if (q) { setQuery(q); void loadByQuery(q); }
+    const lat = Number(searchParams.get("lat"));
+    const lon = Number(searchParams.get("lon"));
+    const displayName = searchParams.get("name")?.trim() || searchParams.get("q")?.trim() || undefined;
+    const q = searchParams.get("q")?.trim();
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      if (displayName) setQuery(displayName);
+      void loadByCoords(lat, lon, displayName);
+      return;
+    }
+    if (q) {
+      setQuery(q);
+      void loadByQuery(q);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function syncLocationSearchParams(lat: number, lon: number, name: string) {
+    setSearchParams({
+      lat: String(lat),
+      lon: String(lon),
+      name,
+      q: name,
+    }, { replace: true });
+  }
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -957,6 +977,7 @@ export default function Forecast() {
       setQuery(name);
       setPendingName(name);
       setActiveTab("hourly");
+      syncLocationSearchParams(data.location.latitude, data.location.longitude, name);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
@@ -982,6 +1003,7 @@ export default function Forecast() {
       setQuery(name);
       setPendingName(name);
       setActiveTab("hourly");
+      syncLocationSearchParams(data.location.latitude, data.location.longitude, name);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
@@ -1002,6 +1024,7 @@ export default function Forecast() {
     setQuery(""); setPendingName(null); setForecast(null); setError(null);
     setSearchResults([]); setShowDropdown(false);
     if (loadAbortRef.current) loadAbortRef.current.abort();
+    setSearchParams({}, { replace: true });
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
