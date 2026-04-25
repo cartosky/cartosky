@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 
-import { API_V4_BASE, MAP_VIEW_DEFAULTS } from "@/lib/config";
+import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -227,27 +227,34 @@ function readFiniteSearchParam(searchParams: URLSearchParams, key: string): numb
 
 // ── Weather Icon ──────────────────────────────────────────────────────
 
+const WEATHER_ICON_VERSION = getReleaseSha() ?? (import.meta.env.DEV ? String(Date.now()) : null);
+
+function weatherIconUrl(path: string): string {
+  if (!WEATHER_ICON_VERSION) return path;
+  return `${path}?v=${WEATHER_ICON_VERSION}`;
+}
+
 const WEATHER_ICON_SRC: Record<string, string> = {
-  "clear-day": "/assets/weather-icons/sunny_day.svg",
-  "clear-night": "/assets/weather-icons/clear_night.svg",
-  "partly-cloudy-day": "/assets/weather-icons/pcloudy_day.svg",
-  "partly-cloudy-night": "/assets/weather-icons/pcloudy_night.svg",
-  cloudy: "/assets/weather-icons/mcloudy_day.svg",
-  "fog-day": "/assets/weather-icons/foggy_day.svg",
-  "fog-night": "/assets/weather-icons/foggy_night.svg",
-  "drizzle-day": "/assets/weather-icons/light_rain_day.svg",
-  "drizzle-night": "/assets/weather-icons/light_rain_night.svg",
-  "rain-day": "/assets/weather-icons/rain_day.svg",
-  "rain-night": "/assets/weather-icons/rain_night.svg",
-  sleet: "/assets/weather-icons/sleet.svg",
-  "sleet-day": "/assets/weather-icons/sleet_day.svg",
-  "sleet-night": "/assets/weather-icons/sleet_night.svg",
-  snow: "/assets/weather-icons/snow.svg",
-  "snow-day": "/assets/weather-icons/snow_day.svg",
-  "snow-night": "/assets/weather-icons/snow_night.svg",
-  "thunderstorm-day": "/assets/weather-icons/tstorm_day.svg",
-  "thunderstorm-night": "/assets/weather-icons/tstorm_night.svg",
-  wind: "/assets/weather-icons/wind.svg",
+  "clear-day": weatherIconUrl("/assets/weather-icons/sunny_day.svg"),
+  "clear-night": weatherIconUrl("/assets/weather-icons/clear_night.svg"),
+  "partly-cloudy-day": weatherIconUrl("/assets/weather-icons/pcloudy_day.svg"),
+  "partly-cloudy-night": weatherIconUrl("/assets/weather-icons/pcloudy_night.svg"),
+  cloudy: weatherIconUrl("/assets/weather-icons/mcloudy_day.svg"),
+  "fog-day": weatherIconUrl("/assets/weather-icons/foggy_day.svg"),
+  "fog-night": weatherIconUrl("/assets/weather-icons/foggy_night.svg"),
+  "drizzle-day": weatherIconUrl("/assets/weather-icons/light_rain_day.svg"),
+  "drizzle-night": weatherIconUrl("/assets/weather-icons/light_rain_night.svg"),
+  "rain-day": weatherIconUrl("/assets/weather-icons/rain_day.svg"),
+  "rain-night": weatherIconUrl("/assets/weather-icons/rain_night.svg"),
+  sleet: weatherIconUrl("/assets/weather-icons/sleet.svg"),
+  "sleet-day": weatherIconUrl("/assets/weather-icons/sleet_day.svg"),
+  "sleet-night": weatherIconUrl("/assets/weather-icons/sleet_night.svg"),
+  snow: weatherIconUrl("/assets/weather-icons/snow.svg"),
+  "snow-day": weatherIconUrl("/assets/weather-icons/snow_day.svg"),
+  "snow-night": weatherIconUrl("/assets/weather-icons/snow_night.svg"),
+  "thunderstorm-day": weatherIconUrl("/assets/weather-icons/tstorm_day.svg"),
+  "thunderstorm-night": weatherIconUrl("/assets/weather-icons/tstorm_night.svg"),
+  wind: weatherIconUrl("/assets/weather-icons/wind.svg"),
 };
 
 function WeatherIcon({ code, className }: { code: string; className?: string }) {
