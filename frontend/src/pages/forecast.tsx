@@ -734,7 +734,7 @@ function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
             }`}
           >
             <span className="text-[11px] text-white/40">{formatHour(entry.time)}</span>
-            <WeatherIcon code={entry.weather_code} size={22} />
+            <WeatherIcon code={entry.weather_code} size={30} />
             <span className="text-[13px] font-medium text-white">{entry.temperature_f ?? "--"}°</span>
             {pop > 0
               ? <span className={`text-[10px] ${precipColor(pop)}`}>{pop}%</span>
