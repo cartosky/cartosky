@@ -1322,7 +1322,7 @@ export default function Forecast() {
         <div>
           <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5 border-b-[0.5px] border-white/[0.08]">
             <div className="flex items-center gap-3 flex-none">
-              <WeatherIcon code={f.current.icon} size={32} className="flex-none" />
+              <WeatherIcon code={f.current.icon} size={40} className="flex-none" />
               <div>
                 <div className="text-[36px] font-medium leading-none text-white">
                   {f.current.temperature_f ?? "--"}°
