@@ -878,13 +878,19 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 
 export default function Forecast() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialRestorePending = (() => {
+    const lat = Number(searchParams.get("lat"));
+    const lon = Number(searchParams.get("lon"));
+    const q = searchParams.get("q")?.trim();
+    return (Number.isFinite(lat) && Number.isFinite(lon)) || Boolean(q);
+  })();
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [pendingName, setPendingName] = useState<string | null>(null);
   const [forecast, setForecast] = useState<ForecastPayload | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(initialRestorePending);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("hourly");
 
@@ -892,6 +898,7 @@ export default function Forecast() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const initialRestorePendingRef = useRef(initialRestorePending);
 
   useEffect(() => {
     function onOut(e: globalThis.MouseEvent) {
@@ -916,7 +923,10 @@ export default function Forecast() {
     if (q) {
       setQuery(q);
       void loadByQuery(q);
+      return;
     }
+    initialRestorePendingRef.current = false;
+    setIsLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -983,6 +993,7 @@ export default function Forecast() {
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
     } finally {
       if (loadAbortRef.current === ctrl) setIsLoading(false);
+      if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
     }
   }
 
@@ -1009,6 +1020,7 @@ export default function Forecast() {
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
     } finally {
       if (loadAbortRef.current === ctrl) setIsLoading(false);
+      if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
     }
   }
 
@@ -1024,8 +1036,32 @@ export default function Forecast() {
     setQuery(""); setPendingName(null); setForecast(null); setError(null);
     setSearchResults([]); setShowDropdown(false);
     if (loadAbortRef.current) loadAbortRef.current.abort();
+    initialRestorePendingRef.current = false;
+    setIsLoading(false);
     setSearchParams({}, { replace: true });
     setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  if (initialRestorePendingRef.current && forecast === null && !error) {
+    return (
+      <div className="relative left-1/2 right-1/2 -mt-12 w-screen min-h-screen -translate-x-1/2 bg-[#07111f] pt-16 text-white md:-mt-16">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-6 md:px-8">
+          <div className="h-10 w-48 animate-pulse rounded-xl bg-white/[0.06]" />
+          <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
+            <div className="space-y-4 rounded-[1.6rem] border border-white/[0.08] bg-white/[0.03] p-6">
+              <div className="h-5 w-36 animate-pulse rounded-lg bg-white/[0.07]" />
+              <div className="h-12 w-64 animate-pulse rounded-xl bg-white/[0.08]" />
+              <div className="h-24 animate-pulse rounded-[1.25rem] bg-white/[0.05]" />
+            </div>
+            <div className="space-y-4 rounded-[1.6rem] border border-white/[0.08] bg-white/[0.03] p-6">
+              <div className="h-4 w-24 animate-pulse rounded-lg bg-white/[0.07]" />
+              <div className="h-20 animate-pulse rounded-[1.1rem] bg-white/[0.05]" />
+              <div className="h-20 animate-pulse rounded-[1.1rem] bg-white/[0.05]" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // ── LOADED STATE ───────────────────────────────────────────────────

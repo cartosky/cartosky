@@ -804,7 +804,7 @@ function ViewerNavMobile() {
   return (
     <>
       {/* Compact summary + share icon — controls button is now a floating FAB */}
-      <div className="flex flex-1 items-center justify-end gap-2 pr-10">
+      <div className="flex flex-1 items-center justify-end gap-2">
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {isTabletTouchLayout ? statusBadge : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
@@ -838,10 +838,10 @@ function ViewerNavMobile() {
           onClick={() => setSheetSnap(sheetOpen ? "closed" : "peek")}
           aria-label={sheetOpen ? "Close controls" : "Open controls"}
           className={cn(
-            "fixed right-3 top-[calc(3.5rem+0.5rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150",
+            "glass-navy fixed right-3 top-[calc(3.5rem+0.5rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150",
             sheetOpen
-              ? "border-white/20 bg-white/[0.14] text-white shadow-[0_4px_16px_rgba(0,0,0,0.35)] backdrop-blur-md"
-              : "border-white/12 bg-black/30 text-white/70 shadow-[0_4px_16px_rgba(0,0,0,0.3)] backdrop-blur-md hover:bg-white/[0.10] hover:text-white"
+              ? "bg-white/[0.12] text-white"
+              : "text-white/70 hover:bg-white/[0.07] hover:text-white"
           )}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
