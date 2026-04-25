@@ -471,6 +471,83 @@ def test_derive_gfs_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     assert sidecar_metadata["baseline_region"] == "na"
 
 
+def test_derive_gfs_tmp2m_anomaly_uses_raw_tmp2m_component_and_era5_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
+    climatology.configure_data_root(tmp_path)
+    valid_time = datetime(2026, 4, 21, 12, tzinfo=timezone.utc)
+    transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
+    assert (height, width) == (2, 2)
+
+    baseline_data_f = np.array([[50.0, 48.0], [46.0, 44.0]], dtype=np.float32)
+    _write_baseline(
+        climatology.climatology_baseline_path(
+            version="v1",
+            baseline_source="era5",
+            field="tmp2m",
+            region="na",
+            reference_period="1991-2020",
+            valid_time=valid_time,
+        ),
+        baseline_data_f,
+        transform,
+    )
+
+    forecast_data_c = np.array([[10.0, 9.0], [8.0, 7.0]], dtype=np.float32)
+    fetch_calls: list[dict[str, object]] = []
+
+    def _fake_fetch_component_warped(**kwargs):
+        fetch_calls.append(dict(kwargs))
+        return forecast_data_c, rasterio.crs.CRS.from_epsg(3857), transform
+
+    monkeypatch.setattr("app.services.builder.derive._fetch_component_warped", _fake_fetch_component_warped)
+
+    ctx = FetchContext()
+    var_spec = GFS_MODEL.get_var("tmp2m_anom")
+    var_capability = GFS_MODEL.get_var_capability("tmp2m_anom")
+    assert var_spec is not None
+    assert var_capability is not None
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+
+    anomaly, crs, anomaly_transform = derive_variable(
+        model_id="gfs",
+        var_key="tmp2m_anom",
+        product="pgrb2.0p25",
+        run_date=valid_time,
+        fh=0,
+        var_spec_model=var_spec,
+        var_capability=var_capability,
+        model_plugin=GFS_MODEL,
+        fetch_ctx=ctx,
+        derive_component_target_grid={"region": "na", "id": "gfs:na:10.0m"},
+        derive_component_resampling="bilinear",
+    )
+
+    assert fetch_calls
+    assert fetch_calls[0]["var_key"] == "tmp2m"
+    expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
+    expected = expected_forecast_f - baseline_data_f
+    assert np.allclose(anomaly, expected, atol=1.0e-5)
+    assert crs.to_epsg() == 3857
+    assert anomaly_transform == transform
+
+    quality_meta = ctx.derive_quality[("tmp2m_anom", 0)]
+    sidecar_metadata = quality_meta.get("sidecar_metadata")
+    assert isinstance(sidecar_metadata, dict)
+    assert sidecar_metadata["anomaly_kind"] == "departure"
+    assert sidecar_metadata["baseline_kind"] == "climatology"
+    assert sidecar_metadata["baseline_version"] == "v1"
+    assert sidecar_metadata["baseline_source"] == "era5"
+    assert sidecar_metadata["baseline_field"] == "tmp2m"
+    assert sidecar_metadata["baseline_region"] == "na"
+
+
 def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -48,6 +48,11 @@ class GFSPlugin(BaseModelPlugin):
             "t2m": "tmp2m",
             "2t": "tmp2m",
             "tmp2m": "tmp2m",
+            "tmp2m_anom": "tmp2m_anom",
+            "t2m_anom": "tmp2m_anom",
+            "2m_temp_anom": "tmp2m_anom",
+            "surface_temp_anom": "tmp2m_anom",
+            "temperature_anomaly": "tmp2m_anom",
             "dp2m": "dp2m",
             "d2m": "dp2m",
             "2d": "dp2m",
@@ -416,6 +421,25 @@ GFS_VARS: dict[str, VarSpec] = {
         derive="anomaly_departure",
         kind="continuous",
         units="dam",
+    ),
+    "tmp2m_anom": VarSpec(
+        id="tmp2m_anom",
+        name="Surface Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp2m",
+                "baseline_field": "tmp2m",
+                "baseline_source": "era5",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
     ),
     "vort500": _gfs_absv_level_component(500),
     "sbcape": VarSpec(
@@ -886,6 +910,7 @@ GFS_VARS: dict[str, VarSpec] = {
 
 GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
+    "tmp2m_anom": "tmp2m_anom",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "hgt500_anom": "hgt500_anom",
@@ -922,6 +947,7 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
 
 GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
+    "tmp2m_anom": 2,
     "dp2m": 2,
     "tmp850": 3,
     "hgt500_anom": 5,
@@ -944,6 +970,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
 
 GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
+    "tmp2m_anom": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "hgt500_anom": "Dynamics",

@@ -31,6 +31,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     }
     assert buildable_var_keys == {
         "tmp2m",
+        "tmp2m_anom",
         "dp2m",
         "tmp850",
         "hgt500_anom",
@@ -61,6 +62,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
 
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
+    assert ("gfs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
 
@@ -95,6 +97,17 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["units"] == "C"
     assert tmp850["display_name"] == "850mb Temp"
     assert tmp850["order"] == 3
+
+    tmp2m_anom = payload["variables"]["tmp2m_anom"]
+    assert tmp2m_anom["buildable"] is True
+    assert tmp2m_anom["derived"] is True
+    assert tmp2m_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp2m_anom["kind"] == "continuous"
+    assert tmp2m_anom["units"] == "F"
+    assert tmp2m_anom["display_name"] == "Surface Temperature Anomaly"
+    assert tmp2m_anom["group"] == "Temperature"
+    assert tmp2m_anom["color_map_id"] == "tmp2m_anom"
+    assert tmp2m_anom["order"] == 2
 
     hgt500_anom = payload["variables"]["hgt500_anom"]
     assert hgt500_anom["buildable"] is True
@@ -250,6 +263,8 @@ def test_gfs_precip_total_aliases_normalize() -> None:
 
 def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("tmp850") == "tmp850"
+    assert GFS_MODEL.normalize_var_id("tmp2m_anom") == "tmp2m_anom"
+    assert GFS_MODEL.normalize_var_id("surface_temp_anom") == "tmp2m_anom"
     assert GFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert GFS_MODEL.normalize_var_id("t850mb") == "tmp850"
     assert GFS_MODEL.normalize_var_id("wspd850") == "wspd850"
@@ -277,6 +292,22 @@ def test_gfs_hgt500_anom_uses_hgt500_component_and_height_contours() -> None:
     assert var_spec.selectors.hints["baseline_region"] == "na"
     assert var_spec.selectors.hints["contour_component"] == "hgt500"
     assert var_spec.selectors.hints["contour_conversion"] == "m_to_dam"
+
+
+def test_gfs_tmp2m_anom_uses_tmp2m_component_and_era5_baseline() -> None:
+    var_spec = GFS_MODEL.get_var("tmp2m_anom")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "anomaly_departure"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "F"
+    assert var_spec.selectors.hints["base_component"] == "tmp2m"
+    assert var_spec.selectors.hints["baseline_field"] == "tmp2m"
+    assert var_spec.selectors.hints["baseline_source"] == "era5"
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+    assert var_spec.selectors.hints["baseline_version"] == "v1"
+    assert var_spec.selectors.hints["reference_period"] == "1991-2020"
 
 
 def test_gfs_sbcape_selector_invariants() -> None:

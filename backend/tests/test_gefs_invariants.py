@@ -133,6 +133,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         "sbcape",
         "snowfall_total",
         "tmp2m",
+        "tmp2m_anom",
         "tmp850",
         "wspd10m",
         "wspd300",
@@ -174,6 +175,18 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    tmp2m_anom = payload["variables"]["tmp2m_anom"]
+    assert tmp2m_anom["var_key"] == "tmp2m_anom"
+    assert tmp2m_anom["display_name"] == "Surface Temperature Anomaly"
+    assert tmp2m_anom["buildable"] is True
+    assert tmp2m_anom["derived"] is True
+    assert tmp2m_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp2m_anom["color_map_id"] == "tmp2m_anom"
+    assert tmp2m_anom["default_fh"] == 0
+    assert tmp2m_anom["group"] == "Temperature"
+    assert tmp2m_anom["ensemble"]["default_view"] == "mean"
+    assert tmp2m_anom["ensemble"]["supported_views"] == ["mean"]
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["var_key"] == "tmp850"
