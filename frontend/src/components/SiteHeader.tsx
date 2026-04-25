@@ -676,21 +676,6 @@ function ViewerNavMobile() {
       <div className="grid grid-cols-1 gap-3">
         <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <Layers className="h-3 w-3" /> Variable
-          </span>
-          <NavbarSelect
-            value={variable}
-            onValueChange={(v) => { onVariableChange(v); closeSheet(); }}
-            options={displayVariables}
-            disabled={disabled}
-            placeholder="Variable"
-            grouped
-            minWidth="w-full"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Boxes className="h-3 w-3" /> Model
           </span>
           <NavbarSelect
@@ -699,6 +684,21 @@ function ViewerNavMobile() {
             options={models}
             disabled={disabled}
             placeholder="Model"
+            grouped
+            minWidth="w-full"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <Layers className="h-3 w-3" /> Variable
+          </span>
+          <NavbarSelect
+            value={variable}
+            onValueChange={(v) => { onVariableChange(v); closeSheet(); }}
+            options={displayVariables}
+            disabled={disabled}
+            placeholder="Variable"
             grouped
             minWidth="w-full"
           />

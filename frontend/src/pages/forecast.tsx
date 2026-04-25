@@ -227,6 +227,13 @@ function viewerHref(lat: number, lon: number): string {
   return `/viewer${buildPermalinkSearch({ region: MAP_VIEW_DEFAULTS.region, lat, lon, z: 7 })}`;
 }
 
+function readFiniteSearchParam(searchParams: URLSearchParams, key: string): number | null {
+  const rawValue = searchParams.get(key);
+  if (rawValue === null) return null;
+  const value = Number(rawValue);
+  return Number.isFinite(value) ? value : null;
+}
+
 // ── Weather Icon ──────────────────────────────────────────────────────
 
 function WeatherIcon({ code, className }: { code: string; className?: string }) {
@@ -881,10 +888,10 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 export default function Forecast() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialRestorePending = (() => {
-    const lat = Number(searchParams.get("lat"));
-    const lon = Number(searchParams.get("lon"));
+    const lat = readFiniteSearchParam(searchParams, "lat");
+    const lon = readFiniteSearchParam(searchParams, "lon");
     const q = searchParams.get("q")?.trim();
-    return (Number.isFinite(lat) && Number.isFinite(lon)) || Boolean(q);
+    return (lat !== null && lon !== null) || Boolean(q);
   })();
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
@@ -913,15 +920,15 @@ export default function Forecast() {
   }, []);
 
   useEffect(() => {
-    const lat = Number(searchParams.get("lat"));
-    const lon = Number(searchParams.get("lon"));
+    const lat = readFiniteSearchParam(searchParams, "lat");
+    const lon = readFiniteSearchParam(searchParams, "lon");
     const displayName = searchParams.get("name")?.trim() || searchParams.get("q")?.trim() || undefined;
     const timezone = searchParams.get("timezone")?.trim() || undefined;
     const countryCode = searchParams.get("country_code")?.trim() || undefined;
     const admin1 = searchParams.get("admin1")?.trim() || undefined;
     const country = searchParams.get("country")?.trim() || undefined;
     const q = searchParams.get("q")?.trim();
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    if (lat !== null && lon !== null) {
       if (displayName) setQuery(displayName);
       void loadByCoords(lat, lon, displayName, {
         display_name: displayName,
