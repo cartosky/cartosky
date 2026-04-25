@@ -175,6 +175,7 @@ def _aigfs_vort500_spec() -> VarSpec:
 
 AIGFS_VARS = {
     "tmp2m": GFS_VARS["tmp2m"],
+    "tmp2m_anom": GFS_VARS["tmp2m_anom"],
     "precip_total": VarSpec(
         id="precip_total",
         name="Total Precip",
@@ -246,6 +247,21 @@ AIGFS_VARIABLE_CATALOG = {
         group="Precipitation",
         conversion="kgm2_to_in",
         constraints={"min_fh": 6},
+    ),
+    "tmp2m_anom": VariableCapability(
+        var_key="tmp2m_anom",
+        name=AIGFS_VARS["tmp2m_anom"].name,
+        selectors=AIGFS_VARS["tmp2m_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp2m_anom",
+        default_fh=0,
+        buildable=True,
+        order=2,
+        group="Temperature",
     ),
     "tmp850": VariableCapability(
         var_key="tmp850",

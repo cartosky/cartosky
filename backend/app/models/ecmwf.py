@@ -47,6 +47,11 @@ class ECMWFPlugin(BaseModelPlugin):
             "tm2m": "tmp2m",
             "t2m": "tmp2m",
             "2t": "tmp2m",
+            "tmp2m_anom": "tmp2m_anom",
+            "t2m_anom": "tmp2m_anom",
+            "2m_temp_anom": "tmp2m_anom",
+            "surface_temp_anom": "tmp2m_anom",
+            "temperature_anomaly": "tmp2m_anom",
             "dp2m": "dp2m",
             "d2m": "dp2m",
             "2d": "dp2m",
@@ -529,6 +534,25 @@ ECMWF_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="dam",
     ),
+    "tmp2m_anom": VarSpec(
+        id="tmp2m_anom",
+        name="Surface Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp2m",
+                "baseline_field": "tmp2m",
+                "baseline_source": "era5",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
+    ),
     "vort500": VarSpec(
         id="vort500",
         name="500mb Heights + Vorticity",
@@ -869,6 +893,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
 
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
+    "tmp2m_anom": "tmp2m_anom",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
     "wspd850": "wspd850",
@@ -890,6 +915,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 
 ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 0,
+    "tmp2m_anom": 0,
     "dp2m": 0,
     "tmp850": 0,
     "wspd850": 0,
@@ -911,6 +937,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
 
 ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "tmp2m": 1,
+    "tmp2m_anom": 2,
     "dp2m": 2,
     "tmp850": 3,
     "wspd850": 4,
@@ -929,6 +956,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
 
 ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
+    "tmp2m_anom": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
     "wspd850": "Wind",

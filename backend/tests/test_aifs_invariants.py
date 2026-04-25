@@ -33,6 +33,8 @@ def test_aifs_target_fhs_invariants() -> None:
 
 def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
+    assert AIFS_MODEL.normalize_var_id("tmp2m_anom") == "tmp2m_anom"
+    assert AIFS_MODEL.normalize_var_id("surface_temp_anom") == "tmp2m_anom"
     assert AIFS_MODEL.normalize_var_id("tm2m") == "tmp2m"
     assert AIFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert AIFS_MODEL.normalize_var_id("2t") == "tmp2m"
@@ -91,7 +93,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "tmp850", "wspd850", "wspd300", "hgt500_anom", "precip_total", "pwat", "snowfall_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "tmp850", "wspd850", "wspd300", "hgt500_anom", "precip_total", "pwat", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -104,6 +106,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
 
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
+    assert ("aifs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("aifs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
     tmp2m_spec = AIFS_MODEL.get_var("tmp2m")
@@ -117,6 +120,20 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         "shortName": "2t",
         "typeOfLevel": "surface",
     }
+
+    tmp2m_anom_spec = AIFS_MODEL.get_var("tmp2m_anom")
+    assert tmp2m_anom_spec is not None
+    assert tmp2m_anom_spec.primary is True
+    assert tmp2m_anom_spec.derived is True
+    assert tmp2m_anom_spec.derive == "anomaly_departure"
+    assert tmp2m_anom_spec.kind == "continuous"
+    assert tmp2m_anom_spec.units == "F"
+    assert tmp2m_anom_spec.selectors.hints["base_component"] == "tmp2m"
+    assert tmp2m_anom_spec.selectors.hints["baseline_field"] == "tmp2m"
+    assert tmp2m_anom_spec.selectors.hints["baseline_source"] == "era5"
+    assert tmp2m_anom_spec.selectors.hints["baseline_region"] == "na"
+    assert tmp2m_anom_spec.selectors.hints["baseline_version"] == "v1"
+    assert tmp2m_anom_spec.selectors.hints["reference_period"] == "1991-2020"
 
     dp2m_spec = AIFS_MODEL.get_var("dp2m")
     assert dp2m_spec is not None
@@ -325,6 +342,20 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["default_fh"] == 0
     assert tmp2m["render_substrates"] == ["grid"]
+
+    tmp2m_anom = payload["variables"]["tmp2m_anom"]
+    assert tmp2m_anom["var_key"] == "tmp2m_anom"
+    assert tmp2m_anom["display_name"] == "Surface Temperature Anomaly"
+    assert tmp2m_anom["kind"] == "continuous"
+    assert tmp2m_anom["units"] == "F"
+    assert tmp2m_anom["buildable"] is True
+    assert tmp2m_anom["derived"] is True
+    assert tmp2m_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp2m_anom["color_map_id"] == "tmp2m_anom"
+    assert tmp2m_anom["order"] == 2
+    assert tmp2m_anom["group"] == "Temperature"
+    assert tmp2m_anom["default_fh"] == 0
+    assert tmp2m_anom["render_substrates"] == ["grid"]
 
     dp2m = payload["variables"]["dp2m"]
     assert dp2m["var_key"] == "dp2m"

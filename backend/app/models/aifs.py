@@ -70,6 +70,7 @@ class AIFSPlugin(ECMWFPlugin):
 
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
+    "tmp2m_anom": ECMWF_VARS["tmp2m_anom"],
     "dp2m": ECMWF_VARS["dp2m"],
     "tmp850": ECMWF_VARS["tmp850"],
     "u850": ECMWF_VARS["u850"],
@@ -103,6 +104,14 @@ AIFS_VARIABLE_CATALOG = {
 AIFS_VARIABLE_CATALOG["precip_total"] = replace(
     AIFS_VARIABLE_CATALOG["precip_total"],
     conversion="kgm2_to_in",
+)
+
+AIFS_VARIABLE_CATALOG["tmp2m_anom"] = replace(
+    AIFS_VARIABLE_CATALOG["tmp2m_anom"],
+    color_map_id="tmp2m_anom",
+    default_fh=0,
+    order=2,
+    group="Temperature",
 )
 
 AIFS_VARS["pwat"] = replace(
