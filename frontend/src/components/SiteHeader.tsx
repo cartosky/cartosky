@@ -806,7 +806,6 @@ function ViewerNavMobile() {
       {/* Compact summary + share icon — controls button is now a floating FAB */}
       <div className="flex flex-1 items-center justify-end gap-2">
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {isTabletTouchLayout ? statusBadge : null}
           <span className={cn(summaryPillClass, "text-white/82")}>
             {selectedVariableLabel}
           </span>

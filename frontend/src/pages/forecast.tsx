@@ -110,7 +110,9 @@ type ForecastPayload = {
     display_name: string;
     latitude: number;
     longitude: number;
+    timezone: string | null;
     country_code: string | null;
+    admin1: string | null;
     resolved_by: string;
   };
   source_status: { primary_region_mode: string; nws: string; open_meteo: string };
@@ -914,10 +916,20 @@ export default function Forecast() {
     const lat = Number(searchParams.get("lat"));
     const lon = Number(searchParams.get("lon"));
     const displayName = searchParams.get("name")?.trim() || searchParams.get("q")?.trim() || undefined;
+    const timezone = searchParams.get("timezone")?.trim() || undefined;
+    const countryCode = searchParams.get("country_code")?.trim() || undefined;
+    const admin1 = searchParams.get("admin1")?.trim() || undefined;
+    const country = searchParams.get("country")?.trim() || undefined;
     const q = searchParams.get("q")?.trim();
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
       if (displayName) setQuery(displayName);
-      void loadByCoords(lat, lon, displayName);
+      void loadByCoords(lat, lon, displayName, {
+        display_name: displayName,
+        timezone,
+        country_code: countryCode,
+        admin1,
+        country,
+      });
       return;
     }
     if (q) {
@@ -930,13 +942,18 @@ export default function Forecast() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function syncLocationSearchParams(lat: number, lon: number, name: string) {
-    setSearchParams({
+  function syncLocationSearchParams(lat: number, lon: number, name: string, locationHint?: Partial<LocationResult>) {
+    const nextParams: Record<string, string> = {
       lat: String(lat),
       lon: String(lon),
       name,
       q: name,
-    }, { replace: true });
+    };
+    if (locationHint?.timezone) nextParams.timezone = locationHint.timezone;
+    if (locationHint?.country_code) nextParams.country_code = locationHint.country_code;
+    if (locationHint?.admin1) nextParams.admin1 = locationHint.admin1;
+    if (locationHint?.country) nextParams.country = locationHint.country;
+    setSearchParams(nextParams, { replace: true });
   }
 
   useEffect(() => {
@@ -983,11 +1000,18 @@ export default function Forecast() {
       const name = isCoordString(data.location.display_name) && preferredName
         ? preferredName
         : data.location.display_name;
+      const persistedHint: Partial<LocationResult> = {
+        display_name: name,
+        timezone: locationHint?.timezone ?? data.location.timezone,
+        country_code: locationHint?.country_code ?? data.location.country_code,
+        admin1: locationHint?.admin1 ?? data.location.admin1,
+        country: locationHint?.country,
+      };
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
       setActiveTab("hourly");
-      syncLocationSearchParams(data.location.latitude, data.location.longitude, name);
+      syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
@@ -1010,11 +1034,17 @@ export default function Forecast() {
       }
       const data = (await res.json()) as ForecastPayload;
       const name = isCoordString(data.location.display_name) ? q : data.location.display_name;
+      const persistedHint: Partial<LocationResult> = {
+        display_name: name,
+        timezone: data.location.timezone,
+        country_code: data.location.country_code,
+        admin1: data.location.admin1,
+      };
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
       setActiveTab("hourly");
-      syncLocationSearchParams(data.location.latitude, data.location.longitude, name);
+      syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
