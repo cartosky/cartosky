@@ -212,6 +212,26 @@ function NavbarSelect(props: {
   );
 }
 
+function HeaderSelectField({
+  label,
+  icon: Icon,
+  children,
+}: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="flex items-center gap-1.5 pl-1 text-[9px] font-medium uppercase tracking-[0.18em] text-white/44">
+        <Icon className="h-3 w-3" />
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 // ─── Display toggle row ───────────────────────────────────────────────────────
 function DisplayRow({
   label,
@@ -380,41 +400,47 @@ function ViewerNavDesktop() {
       {/* Controls group: selectors + divider + icons — all right-aligned */}
       <div className="flex shrink-0 items-center gap-1.5">
         {/* Primary selectors */}
-        <NavbarSelect
-          value={model}
-          onValueChange={onModelChange}
-          options={models}
-          disabled={disabled}
-          placeholder="Model"
-          grouped
-          minWidth="min-w-[90px] max-w-[140px]"
-        />
-        <NavbarSelect
-          value={variable}
-          onValueChange={onVariableChange}
-          options={displayVariables}
-          disabled={disabled}
-          placeholder="Variable"
-          grouped
-          minWidth="min-w-[180px] max-w-[320px]"
-        />
-        <NavbarSelect
-          value={run}
-          onValueChange={onRunChange}
-          options={runMenuOptions}
-          disabled={disabled || runSelectionLocked}
-          placeholder="Run"
-          selectedLabelOverride={runDisplayLabel}
-          highlightState={!runSelectionLocked && hasNewerRunAvailable}
-          menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-          menuActionDescription={
-            !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-              ? `${latestAvailableRunLabel} available`
-              : null
-          }
-          onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-          minWidth="min-w-[148px] max-w-[220px]"
-        />
+        <HeaderSelectField label="Product" icon={Boxes}>
+          <NavbarSelect
+            value={model}
+            onValueChange={onModelChange}
+            options={models}
+            disabled={disabled}
+            placeholder="Model"
+            grouped
+            minWidth="min-w-[90px] max-w-[140px]"
+          />
+        </HeaderSelectField>
+        <HeaderSelectField label="Variable" icon={Layers}>
+          <NavbarSelect
+            value={variable}
+            onValueChange={onVariableChange}
+            options={displayVariables}
+            disabled={disabled}
+            placeholder="Variable"
+            grouped
+            minWidth="min-w-[180px] max-w-[320px]"
+          />
+        </HeaderSelectField>
+        <HeaderSelectField label="Run Time" icon={CalendarClock}>
+          <NavbarSelect
+            value={run}
+            onValueChange={onRunChange}
+            options={runMenuOptions}
+            disabled={disabled || runSelectionLocked}
+            placeholder="Run"
+            selectedLabelOverride={runDisplayLabel}
+            highlightState={!runSelectionLocked && hasNewerRunAvailable}
+            menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
+            menuActionDescription={
+              !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
+                ? `${latestAvailableRunLabel} available`
+                : null
+            }
+            onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
+            minWidth="min-w-[148px] max-w-[220px]"
+          />
+        </HeaderSelectField>
 
         {runAvailabilityLabel ? (
           <AvailabilityReadout
