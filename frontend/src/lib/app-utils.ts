@@ -442,12 +442,12 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
 }
 
 export function makeVariableLabel(id: string, preferredLabel?: string | null): string {
-  if (preferredLabel && preferredLabel.trim()) {
-    return preferredLabel.trim();
-  }
   const override = variableUiOverride(id);
   if (override?.label) {
     return override.label;
+  }
+  if (preferredLabel && preferredLabel.trim()) {
+    return preferredLabel.trim();
   }
   return id;
 }
