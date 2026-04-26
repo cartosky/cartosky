@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -151,6 +152,42 @@ def _resolve_time_coord(data_array: Any, ds: Any) -> tuple[Any, str]:
     raise KeyError("Dataset missing time or valid_time coordinate")
 
 
+def _transpose_time_lat_lon(data_array: Any, *, time_coord: str) -> Any:
+    dims = tuple(getattr(data_array, "dims", ()))
+    if dims == (time_coord, "latitude", "longitude"):
+        return data_array
+    if time_coord not in dims or "latitude" not in dims or "longitude" not in dims:
+        raise ValueError(
+            "ERA5 precip array must have time, latitude, and longitude dimensions; "
+            f"found dims={dims}"
+        )
+    return data_array.transpose(time_coord, "latitude", "longitude")
+
+
+def _valid_times_for_month(
+    time_values: np.ndarray,
+    *,
+    start_year: int | None,
+    end_year: int | None,
+) -> list[tuple[int, datetime]]:
+    valid_times: list[tuple[int, datetime]] = []
+    for index, time_value in enumerate(time_values):
+        valid_time = _coerce_valid_time(time_value)
+        if start_year is not None and valid_time.year < int(start_year):
+            continue
+        if end_year is not None and valid_time.year > int(end_year):
+            continue
+        valid_times.append((index, valid_time))
+    return valid_times
+
+
+def _daily_groups(valid_times: list[tuple[int, datetime]]) -> list[tuple[date, np.ndarray]]:
+    by_date: dict[date, list[int]] = {}
+    for source_index, valid_time in valid_times:
+        by_date.setdefault(valid_time.date(), []).append(source_index)
+    return [(valid_date, np.asarray(indices, dtype=np.int64)) for valid_date, indices in sorted(by_date.items())]
+
+
 def _write_daily_raster(
     path: Path,
     *,
@@ -212,6 +249,7 @@ def stage_era5_precip_daily_source(
     total_skipped = 0
 
     for file_index, input_path in enumerate(input_files, start=1):
+        file_start = time.monotonic()
         file_written = 0
         file_skipped = 0
         file_days = 0
@@ -222,6 +260,7 @@ def stage_era5_precip_daily_source(
         )
         with xr.open_dataset(input_path) as ds:
             data_array, time_coord = _resolve_time_coord(_select_precip_data_array(ds), ds)
+            data_array = _transpose_time_lat_lon(data_array, time_coord=time_coord)
             file_longitudes = np.asarray(ds["longitude"].values, dtype=np.float64)
             file_latitudes = np.asarray(ds["latitude"].values, dtype=np.float64)
             if reference_longitudes is None:
@@ -230,81 +269,87 @@ def stage_era5_precip_daily_source(
             elif not np.array_equal(reference_longitudes, file_longitudes) or not np.array_equal(reference_latitudes, file_latitudes):
                 raise ValueError(f"ERA5 precip input grid changed within archive: {input_path}")
 
-            current_date: date | None = None
-            current_values: np.ndarray | None = None
-            current_hour_count = 0
-            current_output_path: Path | None = None
-            current_skip = False
+            valid_times = _valid_times_for_month(
+                np.asarray(data_array[time_coord].values),
+                start_year=start_year,
+                end_year=end_year,
+            )
+            daily_groups = _daily_groups(valid_times)
+            file_days = len(daily_groups)
+            if not daily_groups:
+                print(
+                    "Finished ERA5 precip file:",
+                    {
+                        "index": file_index,
+                        "total": len(input_files),
+                        "path": str(input_path),
+                        "written": 0,
+                        "skipped": 0,
+                        "processed_days": 0,
+                        "elapsed_seconds": round(time.monotonic() - file_start, 3),
+                    },
+                    flush=True,
+                )
+                continue
 
-            def flush_current_day() -> None:
-                nonlocal current_date
-                nonlocal current_values
-                nonlocal current_hour_count
-                nonlocal current_output_path
-                nonlocal current_skip
-                nonlocal file_written
-                nonlocal file_days
-                nonlocal total_written
-                if current_date is None or current_skip:
-                    current_date = None
-                    current_values = None
-                    current_hour_count = 0
-                    current_output_path = None
-                    current_skip = False
-                    return
-                if current_values is None or current_output_path is None:
-                    raise ValueError(f"No hourly precip values accumulated for {current_date:%Y-%m-%d}")
-                if require_24_hours and current_hour_count != 24:
+            output_by_date = {
+                valid_date: _output_path(stage_root, valid_date=valid_date)
+                for valid_date, _indices in daily_groups
+            }
+            skip_dates = {
+                valid_date
+                for valid_date, output_path in output_by_date.items()
+                if output_path.exists() and not overwrite
+            }
+            file_skipped = len(skip_dates)
+            total_skipped += file_skipped
+            if len(skip_dates) == len(daily_groups):
+                print(
+                    "Finished ERA5 precip file:",
+                    {
+                        "index": file_index,
+                        "total": len(input_files),
+                        "path": str(input_path),
+                        "written": 0,
+                        "skipped": file_skipped,
+                        "processed_days": file_days,
+                        "elapsed_seconds": round(time.monotonic() - file_start, 3),
+                    },
+                    flush=True,
+                )
+                continue
+
+            monthly_values_inches = _convert_precip_to_inches(np.asarray(data_array.values), units_in=units_in)
+            if monthly_values_inches.ndim != 3:
+                raise ValueError(
+                    "ERA5 precip array must load as a 3-D time/latitude/longitude cube; "
+                    f"found shape={monthly_values_inches.shape}"
+                )
+            if monthly_values_inches.shape[0] < max(int(indices.max()) for _date, indices in daily_groups) + 1:
+                raise ValueError(
+                    "ERA5 precip time dimension does not cover grouped daily indices: "
+                    f"values={monthly_values_inches.shape[0]}"
+                )
+
+            for valid_date, hour_indices in daily_groups:
+                if valid_date in skip_dates:
+                    continue
+                source_hours = int(hour_indices.size)
+                if require_24_hours and source_hours != 24:
                     raise ValueError(
-                        f"Incomplete hourly coverage for {current_date:%Y-%m-%d}: "
-                        f"expected 24, found {current_hour_count}"
+                        f"Incomplete hourly coverage for {valid_date:%Y-%m-%d}: "
+                        f"expected 24, found {source_hours}"
                     )
+                daily_total_inches = np.sum(monthly_values_inches[hour_indices, :, :], axis=0, dtype=np.float32)
                 _write_daily_raster(
-                    current_output_path,
-                    values_inches=current_values,
+                    output_by_date[valid_date],
+                    values_inches=daily_total_inches,
                     longitudes=file_longitudes,
                     latitudes=file_latitudes,
-                    source_hours=current_hour_count,
+                    source_hours=source_hours,
                 )
                 file_written += 1
-                file_days += 1
                 total_written += 1
-                current_date = None
-                current_values = None
-                current_hour_count = 0
-                current_output_path = None
-                current_skip = False
-
-            time_values = sorted(data_array[time_coord].values, key=_coerce_valid_time)
-            for time_value in time_values:
-                valid_time = _coerce_valid_time(time_value)
-                if start_year is not None and valid_time.year < int(start_year):
-                    continue
-                if end_year is not None and valid_time.year > int(end_year):
-                    continue
-                valid_date = valid_time.date()
-                if current_date != valid_date:
-                    flush_current_day()
-                    current_date = valid_date
-                    current_output_path = _output_path(stage_root, valid_date=valid_date)
-                    current_skip = current_output_path.exists() and not overwrite
-                    if current_skip:
-                        file_skipped += 1
-                        file_days += 1
-                        total_skipped += 1
-                    else:
-                        current_values = None
-                    current_hour_count = 0
-
-                if current_skip:
-                    continue
-                time_slice = data_array.sel({time_coord: time_value})
-                values_inches = _convert_precip_to_inches(np.asarray(time_slice.values), units_in=units_in)
-                if current_values is None:
-                    current_values = np.zeros_like(values_inches, dtype=np.float32)
-                current_values += values_inches.astype(np.float32, copy=False)
-                current_hour_count += 1
-            flush_current_day()
 
         print(
             "Finished ERA5 precip file:",
@@ -315,6 +360,7 @@ def stage_era5_precip_daily_source(
                 "written": file_written,
                 "skipped": file_skipped,
                 "processed_days": file_days,
+                "elapsed_seconds": round(time.monotonic() - file_start, 3),
             },
             flush=True,
         )

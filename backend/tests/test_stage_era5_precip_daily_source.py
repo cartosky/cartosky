@@ -24,34 +24,56 @@ class Coord:
 
 class FakeDataArray:
     dims = ("time", "latitude", "longitude")
-    coords = {"time": True}
 
-    def __init__(self, values: dict[np.datetime64, np.ndarray], *, fail_on_sel: bool = False):
+    def __init__(
+        self,
+        values: dict[np.datetime64, np.ndarray],
+        *,
+        time_coord: str = "time",
+        fail_on_values: bool = False,
+    ):
         self._values = values
-        self._fail_on_sel = fail_on_sel
+        self._time_coord = time_coord
+        self._fail_on_values = fail_on_values
+        self.coords = {time_coord: True}
+        self.dims = (time_coord, "latitude", "longitude")
+        first_value = next(iter(values.values()))
+        self.sizes = {
+            time_coord: len(values),
+            "latitude": first_value.shape[0],
+            "longitude": first_value.shape[1],
+        }
 
     def __getitem__(self, key: str):
-        assert key == "time"
-        return self
+        assert key == self._time_coord
+        return Coord(np.array(list(self._values.keys())))
 
     @property
     def values(self):
-        return np.array(list(self._values.keys()))
+        if self._fail_on_values:
+            raise AssertionError("Existing daily output should be skipped before loading monthly values")
+        return np.stack([self._values[key] for key in self._values], axis=0)
 
-    def sel(self, selector):
-        if self._fail_on_sel:
-            raise AssertionError("Existing daily output should be skipped before loading hourly values")
-        time_value = selector["time"]
+    def rename(self, mapping):
+        if self._time_coord in mapping:
+            return FakeDataArray(self._values, time_coord=mapping[self._time_coord], fail_on_values=self._fail_on_values)
+        return self
 
-        class Slice:
-            values = self._values[time_value]
-
-        return Slice()
+    def transpose(self, *dims):
+        assert dims == self.dims
+        return self
 
 
 class FakeDataset:
-    def __init__(self, values: dict[np.datetime64, np.ndarray], *, fail_on_sel: bool = False):
-        self.array = FakeDataArray(values, fail_on_sel=fail_on_sel)
+    def __init__(
+        self,
+        values: dict[np.datetime64, np.ndarray],
+        *,
+        time_coord: str = "time",
+        fail_on_values: bool = False,
+    ):
+        self.array = FakeDataArray(values, time_coord=time_coord, fail_on_values=fail_on_values)
+        self.coords = {time_coord: True}
 
     def __enter__(self):
         return self
@@ -198,7 +220,7 @@ def test_stage_skips_existing_daily_output_without_loading_hourly_values(monkeyp
                     np.datetime64("1991-01-01T00:00:00"): np.array([[0.001]], dtype=np.float32),
                     np.datetime64("1991-01-01T01:00:00"): np.array([[0.002]], dtype=np.float32),
                 },
-                fail_on_sel=True,
+                fail_on_values=True,
             )
 
     monkeypatch.setattr(stage_script, "_import_xarray", lambda: FakeXarray)
@@ -215,3 +237,43 @@ def test_stage_skips_existing_daily_output_without_loading_hourly_values(monkeyp
     )
 
     assert (written, skipped) == (0, 1)
+
+
+def test_stage_vectorized_monthly_processing_handles_valid_time(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    input_file = tmp_path / "raw" / "era5_tp_199103.nc"
+    written_payloads: list[tuple[Path, np.ndarray, int]] = []
+    monkeypatch.setattr(stage_script, "_iter_input_files", lambda input_root: [input_file])
+
+    class FakeXarray:
+        @staticmethod
+        def open_dataset(_path):
+            return FakeDataset(
+                {
+                    np.datetime64("1991-03-01T00:00:00"): np.array([[0.001]], dtype=np.float32),
+                    np.datetime64("1991-03-01T01:00:00"): np.array([[0.002]], dtype=np.float32),
+                    np.datetime64("1991-03-01T02:00:00"): np.array([[0.003]], dtype=np.float32),
+                },
+                time_coord="valid_time",
+            )
+
+    monkeypatch.setattr(stage_script, "_import_xarray", lambda: FakeXarray)
+
+    def fake_write(path: Path, *, values_inches: np.ndarray, longitudes, latitudes, source_hours: int) -> None:
+        written_payloads.append((path, values_inches.copy(), source_hours))
+
+    monkeypatch.setattr(stage_script, "_write_daily_raster", fake_write)
+
+    written, skipped = stage_script.stage_era5_precip_daily_source(
+        input_root=tmp_path / "raw",
+        stage_root=tmp_path / "stage",
+        start_year=1991,
+        end_year=1991,
+        units_in="meters",
+        overwrite=True,
+        require_24_hours=False,
+    )
+
+    assert (written, skipped) == (1, 0)
+    assert written_payloads[0][0].name == "19910301_precip_daily.tif"
+    assert written_payloads[0][2] == 3
+    assert np.allclose(written_payloads[0][1], np.array([[0.006 * 39.37007874015748]], dtype=np.float32))
