@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -207,59 +206,123 @@ def stage_era5_precip_daily_source(
     if not input_files:
         raise ValueError(f"No ERA5 NetCDF files found under {input_root}")
 
-    daily_values: dict[date, np.ndarray] = {}
-    daily_hour_counts: dict[date, int] = defaultdict(int)
-    longitudes: np.ndarray | None = None
-    latitudes: np.ndarray | None = None
+    reference_longitudes: np.ndarray | None = None
+    reference_latitudes: np.ndarray | None = None
+    total_written = 0
+    total_skipped = 0
 
-    for input_path in input_files:
+    for file_index, input_path in enumerate(input_files, start=1):
+        file_written = 0
+        file_skipped = 0
+        file_days = 0
+        print(
+            "Processing ERA5 precip file:",
+            {"index": file_index, "total": len(input_files), "path": str(input_path)},
+            flush=True,
+        )
         with xr.open_dataset(input_path) as ds:
             data_array, time_coord = _resolve_time_coord(_select_precip_data_array(ds), ds)
             file_longitudes = np.asarray(ds["longitude"].values, dtype=np.float64)
             file_latitudes = np.asarray(ds["latitude"].values, dtype=np.float64)
-            if longitudes is None:
-                longitudes = file_longitudes
-                latitudes = file_latitudes
-            elif not np.array_equal(longitudes, file_longitudes) or not np.array_equal(latitudes, file_latitudes):
+            if reference_longitudes is None:
+                reference_longitudes = file_longitudes
+                reference_latitudes = file_latitudes
+            elif not np.array_equal(reference_longitudes, file_longitudes) or not np.array_equal(reference_latitudes, file_latitudes):
                 raise ValueError(f"ERA5 precip input grid changed within archive: {input_path}")
 
-            for time_value in data_array[time_coord].values:
+            current_date: date | None = None
+            current_values: np.ndarray | None = None
+            current_hour_count = 0
+            current_output_path: Path | None = None
+            current_skip = False
+
+            def flush_current_day() -> None:
+                nonlocal current_date
+                nonlocal current_values
+                nonlocal current_hour_count
+                nonlocal current_output_path
+                nonlocal current_skip
+                nonlocal file_written
+                nonlocal file_days
+                nonlocal total_written
+                if current_date is None or current_skip:
+                    current_date = None
+                    current_values = None
+                    current_hour_count = 0
+                    current_output_path = None
+                    current_skip = False
+                    return
+                if current_values is None or current_output_path is None:
+                    raise ValueError(f"No hourly precip values accumulated for {current_date:%Y-%m-%d}")
+                if require_24_hours and current_hour_count != 24:
+                    raise ValueError(
+                        f"Incomplete hourly coverage for {current_date:%Y-%m-%d}: "
+                        f"expected 24, found {current_hour_count}"
+                    )
+                _write_daily_raster(
+                    current_output_path,
+                    values_inches=current_values,
+                    longitudes=file_longitudes,
+                    latitudes=file_latitudes,
+                    source_hours=current_hour_count,
+                )
+                file_written += 1
+                file_days += 1
+                total_written += 1
+                current_date = None
+                current_values = None
+                current_hour_count = 0
+                current_output_path = None
+                current_skip = False
+
+            time_values = sorted(data_array[time_coord].values, key=_coerce_valid_time)
+            for time_value in time_values:
                 valid_time = _coerce_valid_time(time_value)
                 if start_year is not None and valid_time.year < int(start_year):
                     continue
                 if end_year is not None and valid_time.year > int(end_year):
                     continue
+                valid_date = valid_time.date()
+                if current_date != valid_date:
+                    flush_current_day()
+                    current_date = valid_date
+                    current_output_path = _output_path(stage_root, valid_date=valid_date)
+                    current_skip = current_output_path.exists() and not overwrite
+                    if current_skip:
+                        file_skipped += 1
+                        file_days += 1
+                        total_skipped += 1
+                    else:
+                        current_values = None
+                    current_hour_count = 0
+
+                if current_skip:
+                    continue
                 time_slice = data_array.sel({time_coord: time_value})
                 values_inches = _convert_precip_to_inches(np.asarray(time_slice.values), units_in=units_in)
-                valid_date = valid_time.date()
-                if valid_date not in daily_values:
-                    daily_values[valid_date] = np.zeros_like(values_inches, dtype=np.float32)
-                daily_values[valid_date] += values_inches.astype(np.float32, copy=False)
-                daily_hour_counts[valid_date] += 1
+                if current_values is None:
+                    current_values = np.zeros_like(values_inches, dtype=np.float32)
+                current_values += values_inches.astype(np.float32, copy=False)
+                current_hour_count += 1
+            flush_current_day()
 
-    if longitudes is None or latitudes is None:
+        print(
+            "Finished ERA5 precip file:",
+            {
+                "index": file_index,
+                "total": len(input_files),
+                "path": str(input_path),
+                "written": file_written,
+                "skipped": file_skipped,
+                "processed_days": file_days,
+            },
+            flush=True,
+        )
+
+    if reference_longitudes is None or reference_latitudes is None:
         raise ValueError("No ERA5 precip time slices matched the requested year range")
 
-    written = 0
-    skipped = 0
-    for valid_date in sorted(daily_values):
-        hour_count = int(daily_hour_counts[valid_date])
-        if require_24_hours and hour_count != 24:
-            raise ValueError(f"Incomplete hourly coverage for {valid_date:%Y-%m-%d}: expected 24, found {hour_count}")
-        output_path = _output_path(stage_root, valid_date=valid_date)
-        if output_path.exists() and not overwrite:
-            skipped += 1
-            continue
-        _write_daily_raster(
-            output_path,
-            values_inches=daily_values[valid_date],
-            longitudes=longitudes,
-            latitudes=latitudes,
-            source_hours=hour_count,
-        )
-        written += 1
-
-    return written, skipped
+    return total_written, total_skipped
 
 
 def parse_args() -> argparse.Namespace:
