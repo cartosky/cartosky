@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Layers } from "lucide-react";
 import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
@@ -73,6 +74,7 @@ const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
+const CONTOUR_LABEL_LAYER_ID = "twf-contour-labels";
 const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
 const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
@@ -89,6 +91,38 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+function contourLabelFromValue(value: unknown): string | null {
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return String(Math.round(numericValue));
+}
+
+function withContourLabels(payload: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
+  if (!payload || payload.type !== "FeatureCollection" || !Array.isArray(payload.features)) {
+    return EMPTY_FEATURE_COLLECTION;
+  }
+
+  return {
+    ...payload,
+    features: payload.features.map((feature) => {
+      const properties = feature.properties && typeof feature.properties === "object" ? feature.properties : {};
+      const label = contourLabelFromValue((properties as Record<string, unknown>).value);
+      if (!label) {
+        return feature;
+      }
+      return {
+        ...feature,
+        properties: {
+          ...properties,
+          label,
+        },
+      };
+    }),
+  };
+}
 
 function isMobileDevice(): boolean {
   if (typeof navigator === "undefined") {
@@ -408,6 +442,7 @@ export function buildMapStyle(
 
   return {
     version: 8,
+    glyphs: "https://basemaps.cartocdn.com/gl/fonts/{fontstack}/{range}.pbf",
     sources: {
       "twf-basemap": {
         type: "raster",
@@ -561,6 +596,32 @@ export function buildMapStyle(
           "line-color": boundaryLineColor,
           "line-opacity": 0.9,
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
+        },
+      },
+      {
+        id: CONTOUR_LABEL_LAYER_ID,
+        type: "symbol",
+        source: CONTOUR_SOURCE_ID,
+        layout: {
+          visibility: contourGeoJsonUrl ? "visible" : "none",
+          "symbol-placement": "line",
+          "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 4, 420, 7, 360, 10, 300],
+          "text-field": ["get", "label"],
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 8, 11.5, 12, 13],
+          "text-rotation-alignment": "map",
+          "text-pitch-alignment": "viewport",
+          "text-keep-upright": true,
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-padding": 8,
+        },
+        paint: {
+          "text-color": basemapMode === "dark" ? "rgba(248,250,252,0.72)" : "rgba(17,24,39,0.66)",
+          "text-halo-color": basemapMode === "dark" ? "rgba(3,7,18,0.58)" : "rgba(255,255,255,0.7)",
+          "text-halo-width": 1,
+          "text-halo-blur": 0.7,
+          "text-opacity": ["interpolate", ["linear"], ["zoom"], 3, 0.45, 5, 0.64, 8, 0.72],
         },
       },
       {
@@ -1068,6 +1129,9 @@ export function MapCanvas({
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
     }
+    if (map.getLayer(CONTOUR_LABEL_LAYER_ID)) {
+      map.moveLayer(CONTOUR_LABEL_LAYER_ID, "twf-labels");
+    }
     map.moveLayer("twf-labels");
   }, []);
 
@@ -1163,6 +1227,7 @@ export function MapCanvas({
         }
       }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
+      setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, Boolean(contourGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
@@ -1189,6 +1254,7 @@ export function MapCanvas({
     contourAbortRef.current?.abort();
     contourAbortRef.current = null;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
+    setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, Boolean(normalizedUrl));
 
     if (!normalizedUrl) {
       source.setData(EMPTY_FEATURE_COLLECTION as any);
@@ -1222,7 +1288,7 @@ export function MapCanvas({
             contour_url_path: normalizedUrl,
           },
         });
-        return payload;
+        return withContourLabels(payload);
       })
       .then((payload) => {
         if (controller.signal.aborted || contourRequestTokenRef.current !== requestToken) {
@@ -1284,7 +1350,7 @@ export function MapCanvas({
             if (!response.ok) {
               throw new Error(`Contour prefetch failed: ${response.status}`);
             }
-            return (await response.json()) as GeoJSON.FeatureCollection;
+            return withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
           })
           .then((payload) => {
             if (controller.signal.aborted) {
@@ -1914,12 +1980,12 @@ export function MapCanvas({
 
       {(showZoomControls || legendButtonVisible) && (
         <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50">
-          <div className="pointer-events-auto overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          <div className="glass pointer-events-auto overflow-hidden rounded-xl">
             {showZoomControls && (
               <>
                 <button
                   type="button"
-                  className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   onClick={handleZoomIn}
                   aria-label="Zoom in"
                   title="Zoom in"
@@ -1928,7 +1994,7 @@ export function MapCanvas({
                 </button>
                 <button
                   type="button"
-                  className="flex h-[34px] w-[34px] items-center justify-center border-t border-white/10 text-xl font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="flex h-[34px] w-[34px] items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   onClick={handleZoomOut}
                   aria-label="Zoom out"
                   title="Zoom out"
@@ -1940,19 +2006,12 @@ export function MapCanvas({
             {legendButtonVisible && (
               <button
                 type="button"
-                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${showZoomControls ? "border-t border-white/10" : ""} ${legendButtonActive ? "bg-white/15 text-white" : "text-white/70 hover:bg-white/10 hover:text-white/95"}`}
+                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${showZoomControls ? "border-t border-[#1a3a5c]/60" : ""} ${legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90"}`}
                 onClick={onLegendButtonClick}
                 aria-label="Toggle legend"
                 title="Legend"
               >
-                <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
-                  <rect x="0" y="0" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
-                  <rect x="5.5" y="0.625" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
-                  <rect x="0" y="4.5" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
-                  <rect x="5.5" y="5.125" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
-                  <rect x="0" y="9" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
-                  <rect x="5.5" y="9.625" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
-                </svg>
+                <Layers className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
