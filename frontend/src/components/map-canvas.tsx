@@ -74,7 +74,6 @@ const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
-const CONTOUR_LABEL_LAYER_ID = "twf-contour-labels";
 const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
 const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
@@ -138,6 +137,16 @@ type GridPaintSettings = {
   brightnessMax: number;
 };
 
+type ContourScreenLabel = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  angle: number;
+};
+
+type LngLatPair = [number, number];
+
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
   return {
     contrast: 0,
@@ -149,6 +158,99 @@ function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "lig
 
 function getBoundaryLineColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#f3f4f6" : "#000000";
+}
+
+function readContourLineStrings(geometry: GeoJSON.Geometry | null | undefined): LngLatPair[][] {
+  if (!geometry) {
+    return [];
+  }
+  if (geometry.type === "LineString") {
+    return [geometry.coordinates as LngLatPair[]];
+  }
+  if (geometry.type === "MultiLineString") {
+    return geometry.coordinates as LngLatPair[][];
+  }
+  return [];
+}
+
+function longestLineString(lines: LngLatPair[][]): LngLatPair[] | null {
+  let best: LngLatPair[] | null = null;
+  let bestLength = 0;
+  for (const line of lines) {
+    if (!Array.isArray(line) || line.length < 2) {
+      continue;
+    }
+    if (line.length > bestLength) {
+      best = line;
+      bestLength = line.length;
+    }
+  }
+  return best;
+}
+
+function buildContourScreenLabels(
+  payload: GeoJSON.FeatureCollection | null,
+  map: maplibregl.Map
+): ContourScreenLabel[] {
+  if (!payload || !Array.isArray(payload.features)) {
+    return [];
+  }
+
+  const canvas = map.getCanvas();
+  const width = canvas.clientWidth || canvas.width;
+  const height = canvas.clientHeight || canvas.height;
+  const labels: ContourScreenLabel[] = [];
+  const minDistancePx = 118;
+  const marginPx = 32;
+
+  payload.features.forEach((feature, index) => {
+    const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
+    if (!label) {
+      return;
+    }
+    const line = longestLineString(readContourLineStrings(feature.geometry));
+    if (!line || line.length < 2) {
+      return;
+    }
+    const midIndex = Math.max(0, Math.min(line.length - 2, Math.floor(line.length / 2)));
+    const start = line[midIndex];
+    const end = line[midIndex + 1];
+    const lng = (Number(start[0]) + Number(end[0])) / 2;
+    const lat = (Number(start[1]) + Number(end[1])) / 2;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+      return;
+    }
+    const point = map.project([lng, lat]);
+    if (
+      point.x < -marginPx ||
+      point.y < -marginPx ||
+      point.x > width + marginPx ||
+      point.y > height + marginPx
+    ) {
+      return;
+    }
+    for (const existing of labels) {
+      const dx = existing.x - point.x;
+      const dy = existing.y - point.y;
+      if ((dx * dx) + (dy * dy) < minDistancePx * minDistancePx) {
+        return;
+      }
+    }
+    const startPoint = map.project(start);
+    const endPoint = map.project(end);
+    let angle = Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180 / Math.PI;
+    if (angle > 90) angle -= 180;
+    if (angle < -90) angle += 180;
+    labels.push({
+      id: `${label}-${index}`,
+      label,
+      x: point.x,
+      y: point.y,
+      angle,
+    });
+  });
+
+  return labels.slice(0, 80);
 }
 
 function getLakeFillColor(basemapMode: BasemapMode): string {
@@ -442,7 +544,6 @@ export function buildMapStyle(
 
   return {
     version: 8,
-    glyphs: "https://basemaps.cartocdn.com/gl/fonts/{fontstack}/{range}.pbf",
     sources: {
       "twf-basemap": {
         type: "raster",
@@ -599,32 +700,6 @@ export function buildMapStyle(
         },
       },
       {
-        id: CONTOUR_LABEL_LAYER_ID,
-        type: "symbol",
-        source: CONTOUR_SOURCE_ID,
-        layout: {
-          visibility: contourGeoJsonUrl ? "visible" : "none",
-          "symbol-placement": "line",
-          "symbol-spacing": 380,
-          "text-field": ["get", "label"],
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 8, 11.5, 12, 13],
-          "text-rotation-alignment": "map",
-          "text-pitch-alignment": "viewport",
-          "text-keep-upright": true,
-          "text-allow-overlap": false,
-          "text-ignore-placement": false,
-          "text-padding": 8,
-        },
-        paint: {
-          "text-color": basemapMode === "dark" ? "rgba(248,250,252,0.72)" : "rgba(17,24,39,0.66)",
-          "text-halo-color": basemapMode === "dark" ? "rgba(3,7,18,0.58)" : "rgba(255,255,255,0.7)",
-          "text-halo-width": 1,
-          "text-halo-blur": 0.7,
-          "text-opacity": ["interpolate", ["linear"], ["zoom"], 3, 0.45, 5, 0.64, 8, 0.72],
-        },
-      },
-      {
         id: "twf-labels",
         type: "raster",
         source: "twf-labels",
@@ -732,6 +807,7 @@ export function MapCanvas({
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
+  const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
 
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
@@ -746,6 +822,7 @@ export function MapCanvas({
   const contourRequestTokenRef = useRef(0);
   const contourAbortRef = useRef<AbortController | null>(null);
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
+  const activeContourPayloadRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const vectorRequestTokenRef = useRef(0);
   const vectorAbortRef = useRef<AbortController | null>(null);
   const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
@@ -760,6 +837,15 @@ export function MapCanvas({
       zoom: MAP_VIEW_DEFAULTS.zoom,
     };
   }, [region, regionViews]);
+
+  const refreshContourScreenLabels = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !activeContourPayloadRef.current) {
+      setContourScreenLabels([]);
+      return;
+    }
+    setContourScreenLabels(buildContourScreenLabels(activeContourPayloadRef.current, map));
+  }, []);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const gridPrefetchUrls = useMemo(() => {
@@ -1129,9 +1215,6 @@ export function MapCanvas({
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
     }
-    if (map.getLayer(CONTOUR_LABEL_LAYER_ID)) {
-      map.moveLayer(CONTOUR_LABEL_LAYER_ID, "twf-labels");
-    }
     map.moveLayer("twf-labels");
   }, []);
 
@@ -1227,7 +1310,6 @@ export function MapCanvas({
         }
       }
       setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
-      setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, Boolean(contourGeoJsonUrl));
       enforceLayerOrder(map);
     };
 
@@ -1254,16 +1336,19 @@ export function MapCanvas({
     contourAbortRef.current?.abort();
     contourAbortRef.current = null;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
-    setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, Boolean(normalizedUrl));
 
     if (!normalizedUrl) {
+      activeContourPayloadRef.current = null;
+      setContourScreenLabels([]);
       source.setData(EMPTY_FEATURE_COLLECTION as any);
       return;
     }
 
     const cached = contourCacheRef.current.get(normalizedUrl);
     if (cached) {
+      activeContourPayloadRef.current = cached;
       source.setData(cached as any);
+      refreshContourScreenLabels();
       return;
     }
 
@@ -1302,7 +1387,9 @@ export function MapCanvas({
           }
           contourCacheRef.current.delete(oldestKey);
         }
+        activeContourPayloadRef.current = payload;
         source.setData(payload as any);
+        refreshContourScreenLabels();
       })
       .catch((error) => {
         if (controller.signal.aborted) {
@@ -1322,7 +1409,39 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [basemapMode, contourGeoJsonUrl, isLoaded]);
+  }, [basemapMode, contourGeoJsonUrl, isLoaded, refreshContourScreenLabels]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+
+    let rafId: number | null = null;
+    const scheduleRefresh = () => {
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        refreshContourScreenLabels();
+      });
+    };
+
+    map.on("move", scheduleRefresh);
+    map.on("zoom", scheduleRefresh);
+    map.on("resize", scheduleRefresh);
+    scheduleRefresh();
+
+    return () => {
+      map.off("move", scheduleRefresh);
+      map.off("zoom", scheduleRefresh);
+      map.off("resize", scheduleRefresh);
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [isLoaded, refreshContourScreenLabels]);
 
   useEffect(() => {
     if (!isLoaded || contourPrefetchUrls.length === 0) {
@@ -1977,6 +2096,24 @@ export function MapCanvas({
           {anchorTooltip.cityName}
         </div>
       )}
+
+      {contourScreenLabels.map((item) => (
+        <div
+          key={item.id}
+          className="pointer-events-none absolute z-[35] rounded-[3px] px-1 font-mono text-[10px] font-semibold leading-none tracking-normal shadow-sm"
+          style={{
+            left: item.x,
+            top: item.y,
+            transform: `translate(-50%, -50%) rotate(${item.angle}deg)`,
+            color: basemapMode === "dark" ? "rgba(248,250,252,0.70)" : "rgba(17,24,39,0.64)",
+            backgroundColor: basemapMode === "dark" ? "rgba(3,7,18,0.34)" : "rgba(255,255,255,0.50)",
+            textShadow: basemapMode === "dark" ? "0 1px 2px rgba(0,0,0,0.65)" : "0 1px 2px rgba(255,255,255,0.75)",
+          }}
+          aria-hidden="true"
+        >
+          {item.label}
+        </div>
+      ))}
 
       {(showZoomControls || legendButtonVisible) && (
         <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50">

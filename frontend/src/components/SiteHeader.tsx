@@ -4,16 +4,16 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   Boxes,
   CalendarClock,
-  Eye,
   Globe,
   Layers,
   MapPin,
   Moon,
+  Palette,
   Send,
   Settings,
-  SlidersHorizontal,
   Sun,
   X,
+  ZoomIn,
 } from "lucide-react";
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
@@ -479,7 +479,7 @@ function ViewerNavDesktop() {
                 : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
             )}
           >
-            <Layers className="h-3.5 w-3.5" />
+            <Palette className="h-3.5 w-3.5" />
           </button>
 
           {legendPanelOpen ? createPortal(
@@ -561,7 +561,7 @@ function ViewerNavDesktop() {
                 />
                 <DisplayRow
                   label="Zoom Controls"
-                  icon={SlidersHorizontal}
+                  icon={ZoomIn}
                   checked={zoomControlsVisible}
                   onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
                 />
@@ -786,13 +786,13 @@ function ViewerNavMobile() {
         />
         <DisplayRow
           label="Legend"
-          icon={Eye}
+          icon={Palette}
           checked={legendVisible}
           onToggle={() => onLegendVisibleChange(!legendVisible)}
         />
         <DisplayRow
           label="Zoom Controls"
-          icon={SlidersHorizontal}
+          icon={ZoomIn}
           checked={zoomControlsVisible}
           onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
         />
@@ -870,7 +870,7 @@ function ViewerNavMobile() {
               : "text-white/70 hover:bg-white/[0.07] hover:text-white"
           )}
         >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
+          <Settings className="h-3.5 w-3.5" />
         </button>
       , document.body)}
 

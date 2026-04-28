@@ -3359,9 +3359,9 @@ export default function App() {
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
           showZoomControls={zoomControlsVisible}
-          legendButtonVisible={legendVisible}
-          legendButtonActive={legendVisible && legendPopoverOpen}
-          onLegendButtonClick={() => setLegendPopoverOpen(v => !v)}
+          legendButtonVisible={!isDesktopViewerLayout && legendVisible}
+          legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
+          onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
         />
 
         <InitialMapSkeleton
