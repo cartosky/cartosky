@@ -977,7 +977,7 @@ function ViewerNavMobile() {
 
       {/* Legend — portal-rendered below the header, mirrors desktop placement */}
       {legendVisible && legend ? createPortal(
-        <div className="fixed left-3 top-[calc(3.5rem+0.75rem)] z-[55] w-auto min-w-[140px] max-w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+        <div className="fixed right-3 top-[calc(3.5rem+0.75rem)] z-[55] w-auto min-w-[140px] max-w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
           <MapLegend
             legend={legend}
             onOpacityChange={onOpacityChange}
