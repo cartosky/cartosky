@@ -864,7 +864,7 @@ function ViewerNavMobile() {
           onClick={() => setSheetSnap(sheetOpen ? "closed" : "peek")}
           aria-label={sheetOpen ? "Close controls" : "Open controls"}
           className={cn(
-            "glass fixed right-3 top-[calc(3.5rem+0.5rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150",
+            "glass fixed right-3 top-[calc(3.5rem+1rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150",
             sheetOpen
               ? "bg-white/[0.12] text-white"
               : "text-white/70 hover:bg-white/[0.07] hover:text-white"

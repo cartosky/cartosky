@@ -203,22 +203,86 @@ function longestLineStringIndex(lines: LngLatPair[][]): number {
   return bestIndex;
 }
 
-function splitContourLabelLine(line: LngLatPair[]): LngLatPair[][] {
-  if (!Array.isArray(line) || line.length < 10) {
+function interpolateLngLat(start: LngLatPair, end: LngLatPair, t: number): LngLatPair {
+  return [
+    Number(start[0]) + (Number(end[0]) - Number(start[0])) * t,
+    Number(start[1]) + (Number(end[1]) - Number(start[1])) * t,
+  ];
+}
+
+function splitContourLabelLine(line: LngLatPair[], map: maplibregl.Map): LngLatPair[][] {
+  if (!Array.isArray(line) || line.length < 2) {
     return [line];
   }
-  const midIndex = Math.max(0, Math.min(line.length - 2, Math.floor(line.length / 2)));
-  const gapHalfSpan = Math.max(2, Math.min(8, Math.floor(line.length * 0.035)));
-  const gapStart = Math.max(1, midIndex - gapHalfSpan);
-  const gapEnd = Math.min(line.length - 1, midIndex + gapHalfSpan + 1);
-  const segments = [
-    line.slice(0, gapStart),
-    line.slice(gapEnd),
-  ].filter((segment) => segment.length >= 2);
+
+  const projected = line.map((coord) => map.project(coord));
+  const distances: number[] = [0];
+  for (let index = 1; index < projected.length; index += 1) {
+    const previous = projected[index - 1];
+    const current = projected[index];
+    const dx = current.x - previous.x;
+    const dy = current.y - previous.y;
+    distances.push(distances[index - 1] + Math.hypot(dx, dy));
+  }
+
+  const totalDistance = distances[distances.length - 1] ?? 0;
+  if (!Number.isFinite(totalDistance) || totalDistance < 24) {
+    return [line];
+  }
+
+  const gapHalfPx = 13;
+  const centerDistance = totalDistance / 2;
+  const gapStartDistance = Math.max(0, centerDistance - gapHalfPx);
+  const gapEndDistance = Math.min(totalDistance, centerDistance + gapHalfPx);
+
+  const before: LngLatPair[] = [];
+  const after: LngLatPair[] = [];
+  for (let index = 0; index < line.length - 1; index += 1) {
+    const startDistance = distances[index];
+    const endDistance = distances[index + 1];
+    const start = line[index];
+    const end = line[index + 1];
+    const segmentDistance = endDistance - startDistance;
+    if (!Number.isFinite(segmentDistance) || segmentDistance <= 0) {
+      continue;
+    }
+
+    if (endDistance <= gapStartDistance) {
+      if (before.length === 0) {
+        before.push(start);
+      }
+      before.push(end);
+      continue;
+    }
+
+    if (startDistance >= gapEndDistance) {
+      if (after.length === 0) {
+        after.push(start);
+      }
+      after.push(end);
+      continue;
+    }
+
+    if (startDistance < gapStartDistance && gapStartDistance < endDistance) {
+      const t = (gapStartDistance - startDistance) / segmentDistance;
+      if (before.length === 0) {
+        before.push(start);
+      }
+      before.push(interpolateLngLat(start, end, t));
+    }
+
+    if (startDistance < gapEndDistance && gapEndDistance < endDistance) {
+      const t = (gapEndDistance - startDistance) / segmentDistance;
+      after.push(interpolateLngLat(start, end, t));
+      after.push(end);
+    }
+  }
+
+  const segments = [before, after].filter((segment) => segment.length >= 2);
   return segments.length > 0 ? segments : [line];
 }
 
-function buildContourLineDisplayPayload(payload: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
+function buildContourLineDisplayPayload(payload: GeoJSON.FeatureCollection, map: maplibregl.Map): GeoJSON.FeatureCollection {
   return {
     ...payload,
     features: payload.features.map((feature) => {
@@ -233,7 +297,7 @@ function buildContourLineDisplayPayload(payload: GeoJSON.FeatureCollection): Geo
       }
 
       const nextLines = lines.flatMap((line, index) => (
-        index === targetIndex ? splitContourLabelLine(line) : [line]
+        index === targetIndex ? splitContourLabelLine(line, map) : [line]
       ));
       if (nextLines.length === 0) {
         return feature;
@@ -1409,7 +1473,7 @@ export function MapCanvas({
     const cached = contourCacheRef.current.get(normalizedUrl);
     if (cached) {
       activeContourPayloadRef.current = cached;
-      source.setData(buildContourLineDisplayPayload(cached) as any);
+      source.setData(buildContourLineDisplayPayload(cached, map) as any);
       refreshContourScreenLabels();
       return;
     }
@@ -1450,7 +1514,7 @@ export function MapCanvas({
           contourCacheRef.current.delete(oldestKey);
         }
         activeContourPayloadRef.current = payload;
-        source.setData(buildContourLineDisplayPayload(payload) as any);
+        source.setData(buildContourLineDisplayPayload(payload, map) as any);
         refreshContourScreenLabels();
       })
       .catch((error) => {
