@@ -147,6 +147,13 @@ type ContourScreenLabel = {
 
 type LngLatPair = [number, number];
 
+type ContourLinePlacement = {
+  coord: LngLatPair;
+  angle: number;
+  distancePx: number;
+  totalDistancePx: number;
+};
+
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
   return {
     contrast: 0,
@@ -210,9 +217,9 @@ function interpolateLngLat(start: LngLatPair, end: LngLatPair, t: number): LngLa
   ];
 }
 
-function splitContourLabelLine(line: LngLatPair[], map: maplibregl.Map): LngLatPair[][] {
+function contourLinePlacement(line: LngLatPair[], map: maplibregl.Map): ContourLinePlacement | null {
   if (!Array.isArray(line) || line.length < 2) {
-    return [line];
+    return null;
   }
 
   const projected = line.map((coord) => map.project(coord));
@@ -226,12 +233,56 @@ function splitContourLabelLine(line: LngLatPair[], map: maplibregl.Map): LngLatP
   }
 
   const totalDistance = distances[distances.length - 1] ?? 0;
-  if (!Number.isFinite(totalDistance) || totalDistance < 24) {
+  if (!Number.isFinite(totalDistance) || totalDistance <= 0) {
+    return null;
+  }
+
+  const targetDistance = totalDistance / 2;
+  for (let index = 0; index < line.length - 1; index += 1) {
+    const startDistance = distances[index];
+    const endDistance = distances[index + 1];
+    if (targetDistance < startDistance || targetDistance > endDistance) {
+      continue;
+    }
+    const start = line[index];
+    const end = line[index + 1];
+    const segmentDistance = endDistance - startDistance;
+    const t = segmentDistance > 0 ? (targetDistance - startDistance) / segmentDistance : 0;
+    const coord = interpolateLngLat(start, end, Math.max(0, Math.min(1, t)));
+    const startPoint = projected[index];
+    const endPoint = projected[index + 1];
+    let angle = Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180 / Math.PI;
+    if (angle > 90) angle -= 180;
+    if (angle < -90) angle += 180;
+    return {
+      coord,
+      angle,
+      distancePx: targetDistance,
+      totalDistancePx: totalDistance,
+    };
+  }
+
+  return null;
+}
+
+function splitContourLabelLine(line: LngLatPair[], map: maplibregl.Map): LngLatPair[][] {
+  const placement = contourLinePlacement(line, map);
+  if (!placement || placement.totalDistancePx < 24) {
     return [line];
   }
 
   const gapHalfPx = 13;
-  const centerDistance = totalDistance / 2;
+  const centerDistance = placement.distancePx;
+  const projected = line.map((coord) => map.project(coord));
+  const distances: number[] = [0];
+  for (let index = 1; index < projected.length; index += 1) {
+    const previous = projected[index - 1];
+    const current = projected[index];
+    const dx = current.x - previous.x;
+    const dy = current.y - previous.y;
+    distances.push(distances[index - 1] + Math.hypot(dx, dy));
+  }
+  const totalDistance = placement.totalDistancePx;
   const gapStartDistance = Math.max(0, centerDistance - gapHalfPx);
   const gapEndDistance = Math.min(totalDistance, centerDistance + gapHalfPx);
 
@@ -338,11 +389,12 @@ function buildContourScreenLabels(
     if (!line || line.length < 2) {
       return;
     }
-    const midIndex = Math.max(0, Math.min(line.length - 2, Math.floor(line.length / 2)));
-    const start = line[midIndex];
-    const end = line[midIndex + 1];
-    const lng = (Number(start[0]) + Number(end[0])) / 2;
-    const lat = (Number(start[1]) + Number(end[1])) / 2;
+    const placement = contourLinePlacement(line, map);
+    if (!placement) {
+      return;
+    }
+    const lng = Number(placement.coord[0]);
+    const lat = Number(placement.coord[1]);
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
       return;
     }
@@ -362,17 +414,12 @@ function buildContourScreenLabels(
         return;
       }
     }
-    const startPoint = map.project(start);
-    const endPoint = map.project(end);
-    let angle = Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180 / Math.PI;
-    if (angle > 90) angle -= 180;
-    if (angle < -90) angle += 180;
     labels.push({
       id: `${label}-${index}`,
       label,
       x: point.x,
       y: point.y,
-      angle,
+      angle: placement.angle,
     });
   });
 
