@@ -632,7 +632,8 @@ function ViewerNavMobile() {
     runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
     onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange, layoutMode, legend,
+    zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
+    layoutMode, legend,
   } = toolbar;
 
   const isTabletTouchLayout = layoutMode === "tablet-touch";
@@ -975,18 +976,25 @@ function ViewerNavMobile() {
         </>
       , document.body) : null}
 
-      {/* Legend — portal-rendered below the header, mirrors desktop placement */}
-      {legendVisible && legend ? createPortal(
-        <div className="fixed right-3 top-[calc(3.5rem+0.75rem)] z-[55] w-auto min-w-[140px] max-w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
-          <MapLegend
-            legend={legend}
-            onOpacityChange={onOpacityChange}
-            showOpacityControl={false}
-            displayPanelOpen={false}
-            defaultExpanded={true}
-            inline={true}
+      {/* Legend popover — opens to the right of the zoom control cluster */}
+      {legendVisible && legendPopoverOpen && legend ? createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-[54]"
+            onClick={() => onLegendPopoverOpenChange(false)}
+            aria-hidden="true"
           />
-        </div>
+          <div className="fixed left-[58px] top-[calc(3.5rem+1rem)] z-[55] w-auto min-w-[140px] max-w-[200px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+            <MapLegend
+              legend={legend}
+              onOpacityChange={onOpacityChange}
+              showOpacityControl={false}
+              displayPanelOpen={false}
+              defaultExpanded={true}
+              inline={true}
+            />
+          </div>
+        </>
       , document.body) : null}
     </>
   );

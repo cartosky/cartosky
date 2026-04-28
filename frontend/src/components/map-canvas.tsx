@@ -598,6 +598,9 @@ type MapCanvasProps = {
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
   showZoomControls?: boolean;
+  legendButtonVisible?: boolean;
+  legendButtonActive?: boolean;
+  onLegendButtonClick?: () => void;
   region: string;
   regionViews?: Record<string, RegionView>;
   opacity: number;
@@ -636,6 +639,9 @@ export function MapCanvas({
   anchorGeoJson = null,
   pointLabelsEnabled = true,
   showZoomControls = false,
+  legendButtonVisible = false,
+  legendButtonActive = false,
+  onLegendButtonClick,
   region,
   regionViews,
   opacity,
@@ -1906,30 +1912,52 @@ export function MapCanvas({
         </div>
       )}
 
-      <div
-        className={`pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50 ${showZoomControls ? "block" : "hidden"}`}
-      >
-        <div className="pointer-events-auto overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
-          <button
-            type="button"
-            className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={handleZoomIn}
-            aria-label="Zoom in"
-            title="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="flex h-[34px] w-[34px] items-center justify-center border-t border-white/10 text-xl font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={handleZoomOut}
-            aria-label="Zoom out"
-            title="Zoom out"
-          >
-            -
-          </button>
+      {(showZoomControls || legendButtonVisible) && (
+        <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50">
+          <div className="pointer-events-auto overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+            {showZoomControls && (
+              <>
+                <button
+                  type="button"
+                  className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={handleZoomIn}
+                  aria-label="Zoom in"
+                  title="Zoom in"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="flex h-[34px] w-[34px] items-center justify-center border-t border-white/10 text-xl font-semibold text-white/95 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={handleZoomOut}
+                  aria-label="Zoom out"
+                  title="Zoom out"
+                >
+                  -
+                </button>
+              </>
+            )}
+            {legendButtonVisible && (
+              <button
+                type="button"
+                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${showZoomControls ? "border-t border-white/10" : ""} ${legendButtonActive ? "bg-white/15 text-white" : "text-white/70 hover:bg-white/10 hover:text-white/95"}`}
+                onClick={onLegendButtonClick}
+                aria-label="Toggle legend"
+                title="Legend"
+              >
+                <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
+                  <rect x="0" y="0" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
+                  <rect x="5.5" y="0.625" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
+                  <rect x="0" y="4.5" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
+                  <rect x="5.5" y="5.125" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
+                  <rect x="0" y="9" width="4" height="3" rx="0.75" fill="currentColor" opacity="0.85"/>
+                  <rect x="5.5" y="9.625" width="8.5" height="1.75" rx="0.5" fill="currentColor" opacity="0.45"/>
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

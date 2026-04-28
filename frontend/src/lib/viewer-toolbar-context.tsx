@@ -47,6 +47,8 @@ export type ViewerToolbarProps = {
   onOpacityChange: (next: number) => void;
   zoomControlsVisible: boolean;
   onZoomControlsVisibleChange: (next: boolean) => void;
+  legendPopoverOpen: boolean;
+  onLegendPopoverOpenChange: (next: boolean) => void;
   // Display panel open state
   displayPanelOpen: boolean;
   onDisplayPanelOpenChange: (next: boolean) => void;

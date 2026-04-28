@@ -326,6 +326,7 @@ export default function App() {
     displayPanelOpen, setDisplayPanelOpen,
     opacity, setOpacity,
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
+  const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3299,6 +3300,8 @@ export default function App() {
     onOpacityChange: setOpacity,
     zoomControlsVisible,
     onZoomControlsVisibleChange: setZoomControlsVisible,
+    legendPopoverOpen,
+    onLegendPopoverOpenChange: setLegendPopoverOpen,
     displayPanelOpen,
     onDisplayPanelOpenChange: setDisplayPanelOpen,
     legend,
@@ -3310,7 +3313,7 @@ export default function App() {
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
-    displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
+    legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour,
   ]);
 
@@ -3356,6 +3359,9 @@ export default function App() {
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
           showZoomControls={zoomControlsVisible}
+          legendButtonVisible={legendVisible}
+          legendButtonActive={legendVisible && legendPopoverOpen}
+          onLegendButtonClick={() => setLegendPopoverOpen(v => !v)}
         />
 
         <InitialMapSkeleton
