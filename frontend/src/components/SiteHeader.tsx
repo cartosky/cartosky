@@ -702,14 +702,14 @@ function ViewerNavMobile() {
       <div className="grid grid-cols-1 gap-3">
         <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <Boxes className="h-3 w-3" /> Model
+            <Boxes className="h-3 w-3" /> Product
           </span>
           <NavbarSelect
             value={model}
             onValueChange={(v) => { onModelChange(v); closeSheet(); }}
             options={models}
             disabled={disabled}
-            placeholder="Model"
+            placeholder="Product"
             grouped
             minWidth="w-full"
           />
@@ -732,14 +732,14 @@ function ViewerNavMobile() {
 
         <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <CalendarClock className="h-3 w-3" /> Run
+            <CalendarClock className="h-3 w-3" /> Run Time
           </span>
           <NavbarSelect
             value={run}
             onValueChange={(v) => { onRunChange(v); closeSheet(); }}
             options={runMenuOptions}
             disabled={disabled || runSelectionLocked}
-            placeholder="Run"
+            placeholder="Run Time"
             selectedLabelOverride={runDisplayLabel}
             highlightState={!runSelectionLocked && hasNewerRunAvailable}
             menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
