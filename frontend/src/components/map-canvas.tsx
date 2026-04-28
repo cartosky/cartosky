@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layers } from "lucide-react";
+import { Palette } from "lucide-react";
 import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
@@ -2105,9 +2105,9 @@ export function MapCanvas({
             left: item.x,
             top: item.y,
             transform: `translate(-50%, -50%) rotate(${item.angle}deg)`,
-            color: basemapMode === "dark" ? "rgba(248,250,252,0.70)" : "rgba(17,24,39,0.64)",
-            backgroundColor: basemapMode === "dark" ? "rgba(3,7,18,0.34)" : "rgba(255,255,255,0.50)",
-            textShadow: basemapMode === "dark" ? "0 1px 2px rgba(0,0,0,0.65)" : "0 1px 2px rgba(255,255,255,0.75)",
+            color: "rgba(255,255,255,0.86)",
+            backgroundColor: "rgba(3,7,18,0.42)",
+            textShadow: "0 1px 2px rgba(0,0,0,0.72)",
           }}
           aria-hidden="true"
         >
@@ -2148,7 +2148,7 @@ export function MapCanvas({
                 aria-label="Toggle legend"
                 title="Legend"
               >
-                <Layers className="h-3.5 w-3.5" />
+                <Palette className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
