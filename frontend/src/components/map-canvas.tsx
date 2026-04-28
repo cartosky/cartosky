@@ -605,7 +605,7 @@ export function buildMapStyle(
         layout: {
           visibility: contourGeoJsonUrl ? "visible" : "none",
           "symbol-placement": "line",
-          "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 4, 420, 7, 360, 10, 300],
+          "symbol-spacing": 380,
           "text-field": ["get", "label"],
           "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 8, 11.5, 12, 13],
