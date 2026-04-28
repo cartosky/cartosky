@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layers } from "lucide-react";
+import { Palette } from "lucide-react";
 import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
@@ -186,6 +186,68 @@ function longestLineString(lines: LngLatPair[][]): LngLatPair[] | null {
     }
   }
   return best;
+}
+
+function longestLineStringIndex(lines: LngLatPair[][]): number {
+  let bestIndex = -1;
+  let bestLength = 0;
+  lines.forEach((line, index) => {
+    if (!Array.isArray(line) || line.length < 2) {
+      return;
+    }
+    if (line.length > bestLength) {
+      bestIndex = index;
+      bestLength = line.length;
+    }
+  });
+  return bestIndex;
+}
+
+function splitContourLabelLine(line: LngLatPair[]): LngLatPair[][] {
+  if (!Array.isArray(line) || line.length < 10) {
+    return [line];
+  }
+  const midIndex = Math.max(0, Math.min(line.length - 2, Math.floor(line.length / 2)));
+  const gapHalfSpan = Math.max(2, Math.min(8, Math.floor(line.length * 0.035)));
+  const gapStart = Math.max(1, midIndex - gapHalfSpan);
+  const gapEnd = Math.min(line.length - 1, midIndex + gapHalfSpan + 1);
+  const segments = [
+    line.slice(0, gapStart),
+    line.slice(gapEnd),
+  ].filter((segment) => segment.length >= 2);
+  return segments.length > 0 ? segments : [line];
+}
+
+function buildContourLineDisplayPayload(payload: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
+  return {
+    ...payload,
+    features: payload.features.map((feature) => {
+      const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
+      if (!label) {
+        return feature;
+      }
+      const lines = readContourLineStrings(feature.geometry);
+      const targetIndex = longestLineStringIndex(lines);
+      if (targetIndex < 0) {
+        return feature;
+      }
+
+      const nextLines = lines.flatMap((line, index) => (
+        index === targetIndex ? splitContourLabelLine(line) : [line]
+      ));
+      if (nextLines.length === 0) {
+        return feature;
+      }
+
+      return {
+        ...feature,
+        geometry: {
+          type: "MultiLineString",
+          coordinates: nextLines,
+        },
+      };
+    }),
+  };
 }
 
 function buildContourScreenLabels(
@@ -1347,7 +1409,7 @@ export function MapCanvas({
     const cached = contourCacheRef.current.get(normalizedUrl);
     if (cached) {
       activeContourPayloadRef.current = cached;
-      source.setData(cached as any);
+      source.setData(buildContourLineDisplayPayload(cached) as any);
       refreshContourScreenLabels();
       return;
     }
@@ -1388,7 +1450,7 @@ export function MapCanvas({
           contourCacheRef.current.delete(oldestKey);
         }
         activeContourPayloadRef.current = payload;
-        source.setData(payload as any);
+        source.setData(buildContourLineDisplayPayload(payload) as any);
         refreshContourScreenLabels();
       })
       .catch((error) => {
@@ -2147,7 +2209,7 @@ export function MapCanvas({
                 aria-label="Toggle legend"
                 title="Legend"
               >
-                <Layers className="h-3.5 w-3.5" />
+                <Palette className="h-3.5 w-3.5" />
               </button>
             </div>
           )}
