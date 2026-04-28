@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Palette } from "lucide-react";
+import { Layers } from "lucide-react";
 import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
@@ -2105,9 +2105,8 @@ export function MapCanvas({
             left: item.x,
             top: item.y,
             transform: `translate(-50%, -50%) rotate(${item.angle}deg)`,
-            color: "rgba(255,255,255,0.86)",
-            backgroundColor: "rgba(3,7,18,0.42)",
-            textShadow: "0 1px 2px rgba(0,0,0,0.72)",
+            color: basemapMode === "dark" ? "rgba(255,255,255,0.82)" : "rgba(0,0,0,0.72)",
+            textShadow: basemapMode === "dark" ? "0 1px 2px rgba(0,0,0,0.62)" : "0 1px 2px rgba(255,255,255,0.62)",
           }}
           aria-hidden="true"
         >
@@ -2116,42 +2115,42 @@ export function MapCanvas({
       ))}
 
       {(showZoomControls || legendButtonVisible) && (
-        <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50">
-          <div className="glass pointer-events-auto overflow-hidden rounded-xl">
-            {showZoomControls && (
-              <>
-                <button
-                  type="button"
-                  className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={handleZoomIn}
-                  aria-label="Zoom in"
-                  title="Zoom in"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  className="flex h-[34px] w-[34px] items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={handleZoomOut}
-                  aria-label="Zoom out"
-                  title="Zoom out"
-                >
-                  -
-                </button>
-              </>
-            )}
-            {legendButtonVisible && (
+        <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50 flex flex-col gap-2">
+          {showZoomControls && (
+            <div className="glass pointer-events-auto overflow-hidden rounded-xl">
               <button
                 type="button"
-                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${showZoomControls ? "border-t border-[#1a3a5c]/60" : ""} ${legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90"}`}
+                className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={handleZoomIn}
+                aria-label="Zoom in"
+                title="Zoom in"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="flex h-[34px] w-[34px] items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={handleZoomOut}
+                aria-label="Zoom out"
+                title="Zoom out"
+              >
+                -
+              </button>
+            </div>
+          )}
+          {legendButtonVisible && (
+            <div className="glass pointer-events-auto overflow-hidden rounded-xl">
+              <button
+                type="button"
+                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90"}`}
                 onClick={onLegendButtonClick}
                 aria-label="Toggle legend"
                 title="Legend"
               >
-                <Palette className="h-3.5 w-3.5" />
+                <Layers className="h-3.5 w-3.5" />
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </>
