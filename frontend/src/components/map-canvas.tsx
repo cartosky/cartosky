@@ -147,65 +147,6 @@ type ContourScreenLabel = {
 
 type LngLatPair = [number, number];
 
-const WEB_MERCATOR_RADIUS = 6378137;
-const WEB_MERCATOR_MAX_LAT = 85.05112878;
-
-function isFiniteBbox(value: unknown): value is [number, number, number, number] {
-  return Array.isArray(value)
-    && value.length === 4
-    && value.every((entry) => Number.isFinite(Number(entry)));
-}
-
-function isLngLatBbox(value: [number, number, number, number]): boolean {
-  const [west, south, east, north] = value;
-  return (
-    Math.abs(west) <= 180
-    && Math.abs(east) <= 180
-    && Math.abs(south) <= 90
-    && Math.abs(north) <= 90
-    && south < north
-    && west < east
-  );
-}
-
-function mercatorXToLng(x: number): number {
-  return (x / WEB_MERCATOR_RADIUS) * (180 / Math.PI);
-}
-
-function mercatorYToLat(y: number): number {
-  const lat = (2 * Math.atan(Math.exp(y / WEB_MERCATOR_RADIUS)) - (Math.PI / 2)) * (180 / Math.PI);
-  return Math.max(-WEB_MERCATOR_MAX_LAT, Math.min(WEB_MERCATOR_MAX_LAT, lat));
-}
-
-function normalizeViewportBbox(
-  bbox: unknown,
-  projection?: string | null,
-): [number, number, number, number] | null {
-  if (!isFiniteBbox(bbox)) {
-    return null;
-  }
-  const numericBbox: [number, number, number, number] = [
-    Number(bbox[0]),
-    Number(bbox[1]),
-    Number(bbox[2]),
-    Number(bbox[3]),
-  ];
-  if (isLngLatBbox(numericBbox)) {
-    return numericBbox;
-  }
-  const normalizedProjection = String(projection ?? "").trim().toLowerCase();
-  if (!/(3857|900913|3785)/.test(normalizedProjection)) {
-    return null;
-  }
-  const converted: [number, number, number, number] = [
-    mercatorXToLng(numericBbox[0]),
-    mercatorYToLat(numericBbox[1]),
-    mercatorXToLng(numericBbox[2]),
-    mercatorYToLat(numericBbox[3]),
-  ];
-  return isLngLatBbox(converted) ? converted : null;
-}
-
 type ContourLinePlacement = {
   coord: LngLatPair;
   angle: number;
@@ -1069,17 +1010,6 @@ export function MapCanvas({
       zoom: MAP_VIEW_DEFAULTS.zoom,
     };
   }, [region, regionViews]);
-
-  const viewportView = useMemo(() => {
-    const manifestViewportBbox = normalizeViewportBbox(gridManifest?.bbox, gridManifest?.projection);
-    if (gridActive && manifestViewportBbox) {
-      return {
-        ...view,
-        bbox: manifestViewportBbox,
-      };
-    }
-    return view;
-  }, [gridActive, gridManifest?.bbox, gridManifest?.projection, view]);
 
   const refreshContourScreenLabels = useCallback(() => {
     const map = mapRef.current;
@@ -2210,26 +2140,26 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
-    map.setMinZoom(viewportView.minZoom ?? 3);
-    map.setMaxZoom(viewportView.maxZoom ?? 11);
-  }, [isLoaded, viewportView.maxZoom, viewportView.minZoom]);
+    map.setMinZoom(view.minZoom ?? 3);
+    map.setMaxZoom(view.maxZoom ?? 11);
+  }, [isLoaded, view.maxZoom, view.minZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
       return;
     }
-    if (viewportView.bbox) {
-      const [west, south, east, north] = viewportView.bbox;
+    if (view.bbox) {
+      const [west, south, east, north] = view.bbox;
       map.fitBounds([[west, south], [east, north]], {
         duration: 600,
         padding: 24,
-        ...(Number.isFinite(viewportView.maxZoom) ? { maxZoom: viewportView.maxZoom } : {}),
+        ...(Number.isFinite(view.maxZoom) ? { maxZoom: view.maxZoom } : {}),
       });
     } else {
-      map.easeTo({ center: viewportView.center, zoom: viewportView.zoom, duration: 600 });
+      map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
     }
-  }, [isLoaded, viewportView]);
+  }, [isLoaded, view]);
 
   const onMapHoverRef = useRef(onMapHover);
   onMapHoverRef.current = onMapHover;

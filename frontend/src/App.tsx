@@ -476,7 +476,7 @@ export default function App() {
         {
           center: [preset.defaultCenter[0], preset.defaultCenter[1]] as [number, number],
           zoom: preset.defaultZoom,
-          bbox: preset.bbox,
+          bbox: id === "na" ? [-154, 12, -48, 72] as [number, number, number, number] : preset.bbox,
           minZoom: preset.minZoom,
           maxZoom: preset.maxZoom,
         },
