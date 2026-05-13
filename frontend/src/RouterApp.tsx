@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
+import { SiteLoadingOverlay } from "./components/site-loading-overlay";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
 
@@ -80,7 +81,11 @@ const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
 const Viewer = lazyRoute(() => import("./pages/viewer"));
 
 function withSuspense(node: React.ReactNode) {
-  return <Suspense fallback={null}>{node}</Suspense>;
+  return (
+    <Suspense fallback={<SiteLoadingOverlay visible label="Loading page" />}>
+      {node}
+    </Suspense>
+  );
 }
 
 function getPageTitle(pathname: string) {

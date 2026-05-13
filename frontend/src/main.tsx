@@ -5,6 +5,7 @@ import RouterApp from "./RouterApp";
 import { PostHogBridge } from "./components/PostHogBridge";
 import { initPostHogAnalytics } from "./lib/posthog";
 import { initRumTelemetry } from "./lib/rum";
+import { SiteLoadingProvider } from "./lib/site-loading";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles/globals.css";
 
@@ -14,8 +15,10 @@ initPostHogAnalytics();
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <PostHogBridge />
-      <RouterApp />
+      <SiteLoadingProvider>
+        <PostHogBridge />
+        <RouterApp />
+      </SiteLoadingProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
