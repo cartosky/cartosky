@@ -147,6 +147,12 @@ type ContourScreenLabel = {
 
 type LngLatPair = [number, number];
 
+function isFiniteBbox(value: unknown): value is [number, number, number, number] {
+  return Array.isArray(value)
+    && value.length === 4
+    && value.every((entry) => Number.isFinite(Number(entry)));
+}
+
 type ContourLinePlacement = {
   coord: LngLatPair;
   angle: number;
@@ -1010,6 +1016,16 @@ export function MapCanvas({
       zoom: MAP_VIEW_DEFAULTS.zoom,
     };
   }, [region, regionViews]);
+
+  const viewportView = useMemo(() => {
+    if (gridActive && isFiniteBbox(gridManifest?.bbox)) {
+      return {
+        ...view,
+        bbox: gridManifest.bbox,
+      };
+    }
+    return view;
+  }, [gridActive, gridManifest?.bbox, view]);
 
   const refreshContourScreenLabels = useCallback(() => {
     const map = mapRef.current;
@@ -2140,26 +2156,26 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
-    map.setMinZoom(view.minZoom ?? 3);
-    map.setMaxZoom(view.maxZoom ?? 11);
-  }, [isLoaded, view.maxZoom, view.minZoom]);
+    map.setMinZoom(viewportView.minZoom ?? 3);
+    map.setMaxZoom(viewportView.maxZoom ?? 11);
+  }, [isLoaded, viewportView.maxZoom, viewportView.minZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
       return;
     }
-    if (view.bbox) {
-      const [west, south, east, north] = view.bbox;
+    if (viewportView.bbox) {
+      const [west, south, east, north] = viewportView.bbox;
       map.fitBounds([[west, south], [east, north]], {
         duration: 600,
         padding: 24,
-        ...(Number.isFinite(view.maxZoom) ? { maxZoom: view.maxZoom } : {}),
+        ...(Number.isFinite(viewportView.maxZoom) ? { maxZoom: viewportView.maxZoom } : {}),
       });
     } else {
-      map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
+      map.easeTo({ center: viewportView.center, zoom: viewportView.zoom, duration: 600 });
     }
-  }, [isLoaded, view]);
+  }, [isLoaded, viewportView]);
 
   const onMapHoverRef = useRef(onMapHover);
   onMapHoverRef.current = onMapHover;
