@@ -654,7 +654,7 @@ export default function App() {
   const selectionRunKey = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? lastResolvedGridRunRef.current ?? "pending-grid")
     : resolvedRunForRequests;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}:${ensembleView || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}`;
   const telemetryRunId = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
@@ -666,6 +666,18 @@ export default function App() {
       lastResolvedGridRunRef.current = null;
     }
   }, [gridOnlySelection, model, run, variable, ensembleView]);
+
+  const previousRegionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const previousRegion = previousRegionRef.current;
+    previousRegionRef.current = region;
+    if (previousRegion === null || previousRegion === region) {
+      return;
+    }
+    setGridManifest(null);
+    setCompositeGridManifests({});
+  }, [region]);
 
   useEffect(() => {
     if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGrid) {
@@ -2773,7 +2785,7 @@ export default function App() {
     const fromVariable = visualVariable || variable;
     pendingVariableSwitchRef.current = {
       toVariableId: nextVariable,
-      expectedSelectionKey: `${model}:${resolvedRunForRequests}:${nextVariable}`,
+      expectedSelectionKey: `${model}:${selectionRunKey}:${nextVariable}:${region}:${ensembleView || "-"}`,
     };
     setVariableSwitchState({
       fromVariable,
@@ -2789,7 +2801,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, selectionRunKey, ensembleView]);
 
   useEffect(() => {
     if (
