@@ -147,10 +147,63 @@ type ContourScreenLabel = {
 
 type LngLatPair = [number, number];
 
+const WEB_MERCATOR_RADIUS = 6378137;
+const WEB_MERCATOR_MAX_LAT = 85.05112878;
+
 function isFiniteBbox(value: unknown): value is [number, number, number, number] {
   return Array.isArray(value)
     && value.length === 4
     && value.every((entry) => Number.isFinite(Number(entry)));
+}
+
+function isLngLatBbox(value: [number, number, number, number]): boolean {
+  const [west, south, east, north] = value;
+  return (
+    Math.abs(west) <= 180
+    && Math.abs(east) <= 180
+    && Math.abs(south) <= 90
+    && Math.abs(north) <= 90
+    && south < north
+    && west < east
+  );
+}
+
+function mercatorXToLng(x: number): number {
+  return (x / WEB_MERCATOR_RADIUS) * (180 / Math.PI);
+}
+
+function mercatorYToLat(y: number): number {
+  const lat = (2 * Math.atan(Math.exp(y / WEB_MERCATOR_RADIUS)) - (Math.PI / 2)) * (180 / Math.PI);
+  return Math.max(-WEB_MERCATOR_MAX_LAT, Math.min(WEB_MERCATOR_MAX_LAT, lat));
+}
+
+function normalizeViewportBbox(
+  bbox: unknown,
+  projection?: string | null,
+): [number, number, number, number] | null {
+  if (!isFiniteBbox(bbox)) {
+    return null;
+  }
+  const numericBbox: [number, number, number, number] = [
+    Number(bbox[0]),
+    Number(bbox[1]),
+    Number(bbox[2]),
+    Number(bbox[3]),
+  ];
+  if (isLngLatBbox(numericBbox)) {
+    return numericBbox;
+  }
+  const normalizedProjection = String(projection ?? "").trim().toLowerCase();
+  if (!/(3857|900913|3785)/.test(normalizedProjection)) {
+    return null;
+  }
+  const converted: [number, number, number, number] = [
+    mercatorXToLng(numericBbox[0]),
+    mercatorYToLat(numericBbox[1]),
+    mercatorXToLng(numericBbox[2]),
+    mercatorYToLat(numericBbox[3]),
+  ];
+  return isLngLatBbox(converted) ? converted : null;
 }
 
 type ContourLinePlacement = {
@@ -1018,14 +1071,15 @@ export function MapCanvas({
   }, [region, regionViews]);
 
   const viewportView = useMemo(() => {
-    if (gridActive && isFiniteBbox(gridManifest?.bbox)) {
+    const manifestViewportBbox = normalizeViewportBbox(gridManifest?.bbox, gridManifest?.projection);
+    if (gridActive && manifestViewportBbox) {
       return {
         ...view,
-        bbox: gridManifest.bbox,
+        bbox: manifestViewportBbox,
       };
     }
     return view;
-  }, [gridActive, gridManifest?.bbox, view]);
+  }, [gridActive, gridManifest?.bbox, gridManifest?.projection, view]);
 
   const refreshContourScreenLabels = useCallback(() => {
     const map = mapRef.current;
