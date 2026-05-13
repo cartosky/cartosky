@@ -1061,16 +1061,15 @@ def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, An
             template.pop("county_geoid", None)
             template.pop("county_name", None)
 
-        fill_template = dict(template)
-        fill_template["geometry_role"] = "fill"
-        fill_template["stroke_width"] = 0.0
-
-        for polygon_geometry in polygon_geometries:
+        for feature in group:
+            fill_properties = dict(feature["properties"])
+            fill_properties["geometry_role"] = "fill"
+            fill_properties["stroke_width"] = 0.0
             dissolved.append(
                 {
                     "type": "Feature",
-                    "properties": dict(fill_template),
-                    "geometry": mapping(polygon_geometry),
+                    "properties": fill_properties,
+                    "geometry": feature["geometry"],
                 }
             )
 

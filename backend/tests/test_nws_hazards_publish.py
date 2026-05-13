@@ -400,18 +400,21 @@ def test_build_active_hazards_frame_dissolves_overlapping_same_style_zone_polygo
         zone_reference_path=zone_reference,
     )
 
-    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"Polygon", "MultiPolygon"})
+    fill_features = [feature for feature in frame.features if feature["properties"].get("geometry_role") == "fill"]
     outline_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"LineString", "MultiLineString"})
 
-    assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
-    assert fill_feature["properties"]["fill"] == "#FF1493"
-    assert fill_feature["properties"]["alert_count"] == 2
-    assert sorted(fill_feature["properties"]["alert_ids"]) == ["red-1", "red-2"]
-    assert fill_feature["properties"]["hover_label"] == "Red Flag Warning (2 areas)"
-    assert fill_feature["properties"]["zone_codes"] == ["AAZ001", "AAZ002"]
-    assert fill_feature["geometry"]["type"] == "Polygon"
+    assert len(fill_features) == 2
+    assert {feature["properties"]["risk_label"] for feature in fill_features} == {"Red Flag Warning"}
+    assert {feature["properties"]["fill"] for feature in fill_features} == {"#FF1493"}
+    assert {feature["properties"]["alert_count"] for feature in fill_features} == {1}
+    assert sorted(feature["properties"]["alert_ids"] for feature in fill_features) == [["red-1"], ["red-2"]]
+    assert {feature["properties"]["hover_label"] for feature in fill_features} == {"Alpha Zone: Red Flag Warning", "Beta Zone: Red Flag Warning"}
+    assert sorted(feature["properties"]["zone_code"] for feature in fill_features) == ["AAZ001", "AAZ002"]
+    assert {feature["properties"]["stroke_width"] for feature in fill_features} == {0.0}
     assert outline_feature["properties"]["geometry_role"] == "outline"
     assert outline_feature["properties"]["fill_opacity"] == 0.0
+    assert outline_feature["properties"]["hover_label"] == "Red Flag Warning (2 areas)"
+    assert outline_feature["properties"]["zone_codes"] == ["AAZ001", "AAZ002"]
 
 
 def test_build_active_hazards_frame_keeps_red_flag_warning_style_consistent_across_county_and_zone_sources(tmp_path: Path) -> None:
@@ -484,14 +487,19 @@ def test_build_active_hazards_frame_keeps_red_flag_warning_style_consistent_acro
         zone_reference_path=zone_reference,
     )
 
-    fill_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"Polygon", "MultiPolygon"})
+    zone_fill_feature = next(feature for feature in frame.features if feature["properties"].get("zone_code") == "AAZ001")
+    county_fill_feature = next(feature for feature in frame.features if feature["properties"].get("county_geoid") == "04013")
     outline_feature = next(feature for feature in frame.features if feature["geometry"]["type"] in {"LineString", "MultiLineString"})
 
-    assert fill_feature["properties"]["risk_label"] == "Red Flag Warning"
-    assert fill_feature["properties"]["fill_opacity"] == 0.42
-    assert fill_feature["properties"]["stroke_width"] == 0.0
-    assert fill_feature["properties"]["zone_codes"] == ["AAZ001"]
-    assert fill_feature["properties"]["county_geoids"] == ["04013"]
+    assert zone_fill_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert zone_fill_feature["properties"]["fill_opacity"] == 0.42
+    assert zone_fill_feature["properties"]["stroke_width"] == 0.0
+    assert zone_fill_feature["properties"]["zone_code"] == "AAZ001"
+
+    assert county_fill_feature["properties"]["risk_label"] == "Red Flag Warning"
+    assert county_fill_feature["properties"]["fill_opacity"] == 0.42
+    assert county_fill_feature["properties"]["stroke_width"] == 0.0
+    assert county_fill_feature["properties"]["county_geoid"] == "04013"
 
     assert outline_feature["properties"]["risk_label"] == "Red Flag Warning"
     assert outline_feature["properties"]["fill_opacity"] == 0.0
