@@ -2154,7 +2154,7 @@ export function MapCanvas({
       map.fitBounds([[west, south], [east, north]], {
         duration: 600,
         padding: 24,
-        ...(Number.isFinite(view.zoom) ? { maxZoom: view.zoom } : {}),
+        ...(Number.isFinite(view.maxZoom) ? { maxZoom: view.maxZoom } : {}),
       });
     } else {
       map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
