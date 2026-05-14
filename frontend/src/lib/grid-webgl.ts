@@ -1118,9 +1118,7 @@ export class GridWebglLayerController {
         gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
       }
     `;
-    const derivativesSupported = this.isWebGL2 || Boolean(gl.getExtension("OES_standard_derivatives"));
     const fragmentSource = `
-      ${derivativesSupported && !this.isWebGL2 ? "#extension GL_OES_standard_derivatives : enable" : ""}
       precision mediump float;
       varying vec2 v_texCoord;
       uniform sampler2D u_data;
@@ -1222,8 +1220,8 @@ export class GridWebglLayerController {
           return 0.0;
         }
         float phase = abs(fract(value / u_contourInterval + 0.5) - 0.5);
-        float width = 0.022;
-        ${derivativesSupported ? "width = max(width, fwidth(value / u_contourInterval) * 1.25);" : ""}
+        float texelWidth = max(1.0 / max(u_contourTexSize.x, 1.0), 1.0 / max(u_contourTexSize.y, 1.0));
+        float width = max(0.022, texelWidth * 2.0);
         return 1.0 - smoothstep(0.0, width, phase);
       }
 
