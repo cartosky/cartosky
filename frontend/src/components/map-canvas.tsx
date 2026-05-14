@@ -377,7 +377,6 @@ function buildContourScreenLabels(
   const width = canvas.clientWidth || canvas.width;
   const height = canvas.clientHeight || canvas.height;
   const labels: ContourScreenLabel[] = [];
-  const minDistancePx = 118;
   const marginPx = 32;
 
   payload.features.forEach((feature, index) => {
@@ -407,13 +406,6 @@ function buildContourScreenLabels(
     ) {
       return;
     }
-    for (const existing of labels) {
-      const dx = existing.x - point.x;
-      const dy = existing.y - point.y;
-      if ((dx * dx) + (dy * dy) < minDistancePx * minDistancePx) {
-        return;
-      }
-    }
     labels.push({
       id: `${label}-${index}`,
       label,
@@ -423,7 +415,7 @@ function buildContourScreenLabels(
     });
   });
 
-  return labels.slice(0, 80);
+  return labels;
 }
 
 function getLakeFillColor(basemapMode: BasemapMode): string {
