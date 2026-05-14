@@ -290,43 +290,38 @@ TMP2M_F_COLOR_ANCHORS = [
 ]
 
 TMP2M_F_RANGE = (-60.0, 120.0)
-TMP2M_ANOM_F_COLOR_ANCHORS = [
-    (-30.0, "#2a4f8f"),
-    (-20.0, "#4a79b9"),
-    (-10.0, "#8fb5db"),
-    (-5.0, "#c9dcf1"),
-    (0.0, "#f3f0ea"),
-    (5.0, "#f1c9b7"),
-    (10.0, "#e28b6d"),
-    (20.0, "#c34a36"),
-    (30.0, "#8f1d1f"),
+TMP2M_ANOM_F_LEVELS = [
+    -30.0, -28.0, -24.0, -20.0, -18.0, -16.0, -14.0, -12.0, -10.0, -8.0,
+    -7.0, -6.0, -5.0, -4.0, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5,
+    0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0,
+    7.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 30.0,
 ]
+TMP2M_ANOM_F_COLORS = [
+    "#fbcdba", "#f8bac5", "#f3a8d2", "#eb95dd", "#e684e8", "#df71f4",
+    "#b65bec", "#9157db", "#6c52ca", "#484fb8", "#244ba6", "#174693",
+    "#205ead", "#2874c6", "#3b8adf", "#64b7f8", "#78cdf7", "#8ce3f6",
+    "#9ff8f4", "#ffffff", "#ffffff", "#fefebe", "#fceaa0", "#fbd283",
+    "#f9b365", "#f78b50", "#ef633e", "#dd3d2c", "#c21c26", "#9d253a",
+    "#ba4354", "#d96073", "#f186a8", "#f9a7dd", "#e497c0", "#cc86a5",
+    "#b27488", "#99646c", "#80544e", "#66442f",
+]
+TMP2M_ANOM_F_LEGEND_STOPS = list(zip(TMP2M_ANOM_F_LEVELS[:-1], TMP2M_ANOM_F_COLORS))
+TMP2M_ANOM_F_COLOR_ANCHORS = TMP2M_ANOM_F_LEGEND_STOPS
 TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
-HGT500_ANOM_DAM_COLOR_ANCHORS = [
-    (-40.0, "#081d58"),
-    (-36.0, "#09296f"),
-    (-32.0, "#0b3c8c"),
-    (-28.0, "#0f4c9c"),
-    (-24.0, "#135ea8"),
-    (-20.0, "#1d74be"),
-    (-16.0, "#2c8dd6"),
-    (-12.0, "#5aa8e6"),
-    (-8.0, "#9fcdf0"),
-    (-4.0, "#d8e8f8"),
-    (-2.0, "#edf4fb"),
-    (0.0, "#f7f3ee"),
-    (2.0, "#fbead8"),
-    (4.0, "#fae1ce"),
-    (8.0, "#f1a974"),
-    (12.0, "#ea8351"),
-    (16.0, "#df6237"),
-    (20.0, "#cf452d"),
-    (24.0, "#bf2d26"),
-    (28.0, "#a81f22"),
-    (32.0, "#8f1120"),
-    (36.0, "#78061a"),
-    (40.0, "#67000d"),
+HGT500_ANOM_DAM_LEVELS = [
+    -40.0, -36.0, -34.0, -30.0, -26.0, -24.0, -20.0, -18.0, -14.0,
+    -12.0, -10.0, -6.0, -4.0, 0.0, 4.0, 6.0, 10.0, 12.0,
+    16.0, 18.0, 20.0, 24.0, 26.0, 30.0, 34.0, 36.0, 40.0,
 ]
+HGT500_ANOM_DAM_COLORS = [
+    "#061652", "#0c2f5f", "#14437b", "#1c5695", "#2368ad", "#307ab6",
+    "#3c8abe", "#4f9ac7", "#6eadd1", "#8ac0db", "#a2cde2", "#bad9e9",
+    "#ffffff", "#ffffff", "#fcdbc6", "#f9c7ae", "#f6b293", "#f19e7b",
+    "#e6856a", "#da6a55", "#cf5246", "#c2383a", "#b41c2b", "#9c1028",
+    "#810622", "#790378",
+]
+HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM_DAM_COLORS))
+HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
 
 # Total precipitation (inches)
@@ -697,22 +692,27 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Temperature (°F)",
     },
     "tmp2m_anom": {
-        "type": "continuous",
+        "type": "discrete",
         "units": "F",
         "range": TMP2M_ANOM_F_RANGE,
-        "anchors": TMP2M_ANOM_F_COLOR_ANCHORS,
+        "levels": TMP2M_ANOM_F_LEVELS,
+        "colors": TMP2M_ANOM_F_COLORS,
         "display_name": "Surface Temperature Anomaly",
         "legend_title": "Surface Temperature Anomaly (°F)",
+        "legend_stops": TMP2M_ANOM_F_LEGEND_STOPS,
+        "transparent_below_min": False,
     },
     "hgt500_anom": {
-        "type": "continuous",
-        "display_palette_kind": "discrete",
+        "type": "discrete",
         "units": "dam",
         "range": HGT500_ANOM_DAM_RANGE,
-        "anchors": HGT500_ANOM_DAM_COLOR_ANCHORS,
+        "levels": HGT500_ANOM_DAM_LEVELS,
+        "colors": HGT500_ANOM_DAM_COLORS,
         "display_name": "500mb Height Anomaly",
         "legend_title": "500mb Height Anomaly (dam)",
+        "legend_stops": HGT500_ANOM_DAM_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
     },
     "dp2m": {
         "type": "continuous",
@@ -971,7 +971,12 @@ def encode_to_byte_and_alpha(
 
         bins = np.digitize(np.where(finite_mask, values, levels[0]), levels, right=False) - 1
         bins = np.clip(bins, 0, len(colors) - 1).astype(np.uint8)
-        alpha = np.where(finite_mask & (values >= levels[0]), 255, 0).astype(np.uint8)
+        transparent_below_min = spec.get("transparent_below_min", True)
+        if transparent_below_min:
+            valid_mask = finite_mask & (values >= levels[0])
+        else:
+            valid_mask = finite_mask
+        alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
         byte_band = np.where(alpha == 255, bins, 0).astype(np.uint8)
 
         meta = {
