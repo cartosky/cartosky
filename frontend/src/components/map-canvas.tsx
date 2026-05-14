@@ -997,6 +997,7 @@ export function MapCanvas({
   const contourRequestTokenRef = useRef(0);
   const contourAbortRef = useRef<AbortController | null>(null);
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
+  const contourPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const activeContourPayloadRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const vectorRequestTokenRef = useRef(0);
   const vectorAbortRef = useRef<AbortController | null>(null);
@@ -1555,7 +1556,7 @@ export function MapCanvas({
           return;
         }
         contourCacheRef.current.set(normalizedUrl, payload);
-        while (contourCacheRef.current.size > 16) {
+        while (contourCacheRef.current.size > 32) {
           const oldestKey = contourCacheRef.current.keys().next().value;
           if (!oldestKey) {
             break;
@@ -1623,53 +1624,53 @@ export function MapCanvas({
       return;
     }
 
-    const normalizedActiveUrl = String(contourGeoJsonUrl ?? "").trim();
-    if (normalizedActiveUrl && !contourCacheRef.current.has(normalizedActiveUrl)) {
-      return;
+    const controller = new AbortController();
+    for (const rawUrl of contourPrefetchUrls) {
+      const normalizedUrl = String(rawUrl ?? "").trim();
+      if (
+        !normalizedUrl
+        || contourCacheRef.current.has(normalizedUrl)
+        || contourPrefetchInFlightRef.current.has(normalizedUrl)
+      ) {
+        continue;
+      }
+
+      contourPrefetchInFlightRef.current.add(normalizedUrl);
+      void fetch(normalizedUrl, {
+        credentials: "omit",
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Contour prefetch failed: ${response.status}`);
+          }
+          return withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
+        })
+        .then((payload) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          contourCacheRef.current.set(normalizedUrl, payload);
+          while (contourCacheRef.current.size > 40) {
+            const oldestKey = contourCacheRef.current.keys().next().value;
+            if (!oldestKey) {
+              break;
+            }
+            contourCacheRef.current.delete(oldestKey);
+          }
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          console.warn("[map] contour prefetch failed", { contourGeoJsonUrl: normalizedUrl, error });
+        })
+        .finally(() => {
+          contourPrefetchInFlightRef.current.delete(normalizedUrl);
+        });
     }
 
-    const controller = new AbortController();
-    const startPrefetchTimer = window.setTimeout(() => {
-      for (const rawUrl of contourPrefetchUrls) {
-        const normalizedUrl = String(rawUrl ?? "").trim();
-        if (!normalizedUrl || contourCacheRef.current.has(normalizedUrl)) {
-          continue;
-        }
-
-        void fetch(normalizedUrl, {
-          credentials: "omit",
-          signal: controller.signal,
-        })
-          .then(async (response) => {
-            if (!response.ok) {
-              throw new Error(`Contour prefetch failed: ${response.status}`);
-            }
-            return withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
-          })
-          .then((payload) => {
-            if (controller.signal.aborted) {
-              return;
-            }
-            contourCacheRef.current.set(normalizedUrl, payload);
-            while (contourCacheRef.current.size > 24) {
-              const oldestKey = contourCacheRef.current.keys().next().value;
-              if (!oldestKey) {
-                break;
-              }
-              contourCacheRef.current.delete(oldestKey);
-            }
-          })
-          .catch((error) => {
-            if (controller.signal.aborted) {
-              return;
-            }
-            console.warn("[map] contour prefetch failed", { contourGeoJsonUrl: normalizedUrl, error });
-          });
-      }
-    }, 120);
-
     return () => {
-      window.clearTimeout(startPrefetchTimer);
       controller.abort();
     };
   }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded]);

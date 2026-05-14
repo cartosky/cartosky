@@ -4378,7 +4378,7 @@ def get_contour_geojson(
             content=payload,
             media_type="application/geo+json",
             headers={
-                "Cache-Control": "no-store",
+                "Cache-Control": "public, max-age=31536000, immutable",
                 "Server-Timing": timing_header,
             },
         )

@@ -1177,48 +1177,15 @@ export default function App() {
     }
     return currentFrame;
   }, [currentFrame, frameByHour, visibleOverlayHour]);
-  const gridContour = useMemo<GridContourLayerConfig | null>(() => {
-    if (!gridManifest?.contours || !Number.isFinite(resolvedGridDisplayHour)) {
-      return null;
-    }
-    for (const contourMeta of Object.values(gridManifest.contours)) {
-      if (!contourMeta?.grid || !Array.isArray(contourMeta.lods)) {
-        continue;
-      }
-      const lod = contourMeta.lods.find((entry) => Number(entry?.level) === Number(selectedGridLod?.level))
-        ?? contourMeta.lods.find((entry) => Number(entry?.level) === 0)
-        ?? contourMeta.lods[0];
-      const frames = Array.isArray(lod?.frames) ? lod.frames : [];
-      const targetHour = Number(resolvedGridDisplayHour);
-      const frame = frames.find((entry) => Number(entry?.fh) === targetHour) ?? null;
-      const rawUrl = frame?.url;
-      if (!lod || !frame || !rawUrl) {
-        continue;
-      }
-      const frameUrl = normalizeGridFrameUrl(rawUrl);
-      if (!frameUrl) {
-        continue;
-      }
-      return {
-        frameUrl,
-        frameHour: targetHour,
-        grid: contourMeta.grid,
-        width: Math.max(1, Math.floor(Number(lod.width) || Number(contourMeta.grid.width) || 1)),
-        height: Math.max(1, Math.floor(Number(lod.height) || Number(contourMeta.grid.height) || 1)),
-        interval: Number(contourMeta.interval ?? contourMeta.level ?? 0),
-        color: basemapMode === "dark" ? [0.95, 0.97, 1, 0.84] : [0, 0, 0, 0.82],
-      };
-    }
-    return null;
-  }, [basemapMode, gridManifest, normalizeGridFrameUrl, resolvedGridDisplayHour, selectedGridLod]);
+  // Keep the legacy GeoJSON contour renderer as the production path for now.
+  // The companion-grid shader path regressed line quality and frame availability
+  // for GFS-style products, even though the shaded grid playback itself is good.
+  const gridContour: GridContourLayerConfig | null = null;
 
   // During a variable switch the old variable's imagery is still on screen;
   // keep its paint settings in effect until the new variable is promoting.
   const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
   const contourGeoJsonUrl = useMemo(() => {
-    if (gridContour) {
-      return null;
-    }
     if (!model || !displayedOverlayVariable || !visibleOverlayFrame || !resolvedRunForRequests) {
       return null;
     }
@@ -1238,11 +1205,8 @@ export default function App() {
       fh: Number(visibleOverlayFrame.fh),
       key: contourKey,
     });
-  }, [displayedOverlayVariable, frameRows, gridContour, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame]);
+  }, [displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame]);
   const contourPrefetchUrls = useMemo(() => {
-    if (gridContour) {
-      return [] as string[];
-    }
     if (!model || !displayedOverlayVariable || frameRows.length <= 1 || !resolvedRunForRequests) {
       return [] as string[];
     }
@@ -1250,11 +1214,11 @@ export default function App() {
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
     const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
     const candidateRows = pivotIndex >= 0
-      ? orderedRows.filter((_, index) => {
-          const distance = Math.abs(index - pivotIndex);
-          return distance >= 1 && distance <= 2;
-        })
-      : orderedRows.slice(1, 5);
+      ? [
+          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 9),
+          ...orderedRows.slice(Math.max(0, pivotIndex - 2), pivotIndex).reverse(),
+        ]
+      : orderedRows.slice(1, 11);
     const urls: string[] = [];
     for (const row of candidateRows) {
       const meta = extractLegendMeta(row);
@@ -1278,7 +1242,7 @@ export default function App() {
       }
     }
     return urls;
-  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, gridContour, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;
