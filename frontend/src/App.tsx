@@ -1326,7 +1326,10 @@ export default function App() {
   const hoverSampleHour = selectedModelSupportsSampling && selectionSupportsGrid
     ? (Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : Number.NaN)
     : (Number.isFinite(hoverSampleFrame?.fh) ? Number(hoverSampleFrame?.fh) : Number.NaN);
+  const hoverSamplingVariable = String(variable ?? "").trim().toLowerCase();
+  const hoverSamplingDisabled = hoverSamplingVariable === "hgt500_anom";
   const hoverSamplingEnabled = selectedModelSupportsSampling
+    && !hoverSamplingDisabled
     && Boolean(variable)
     && Number.isFinite(hoverSampleHour)
     && Boolean((effectiveRunId ?? "").trim())
