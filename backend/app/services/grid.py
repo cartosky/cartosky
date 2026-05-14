@@ -32,6 +32,11 @@ GRID_ENDIANNESS = "little"
 GRID_LEVEL = 0
 GRID_DIRNAME = "grid"
 LEGACY_GRID_DIRNAME = "grid_v1"
+CONTOUR_GRID_DTYPE = GRID_DTYPE_UINT16
+CONTOUR_GRID_SCALE = 0.25
+CONTOUR_GRID_OFFSET = -1000.0
+CONTOUR_GRID_NODATA = 65535
+CONTOUR_GRID_UNITS = ""
 
 _GRID_LOD_CONFIG_BY_MODEL_VAR: dict[tuple[str, str], tuple[dict[str, Any], ...]] = {
     ("mrms", "reflectivity"): (
@@ -878,6 +883,21 @@ def grid_frame_filename(fh: int, *, level: int = GRID_LEVEL, dtype: str = GRID_D
     return f"fh{int(fh):03d}.l{int(level)}.{grid_frame_dtype_token(dtype)}.bin"
 
 
+def _safe_contour_key(key: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(key or "").strip())
+    return safe or "contour"
+
+
+def contour_grid_frame_filename(
+    fh: int,
+    key: str,
+    *,
+    level: int = GRID_LEVEL,
+    dtype: str = CONTOUR_GRID_DTYPE,
+) -> str:
+    return f"fh{int(fh):03d}.contour-{_safe_contour_key(key)}.l{int(level)}.{grid_frame_dtype_token(dtype)}.bin"
+
+
 def grid_frame_path(
     data_root: Path,
     model: str,
@@ -907,12 +927,39 @@ def grid_frame_meta_filename(fh: int, *, level: int = GRID_LEVEL) -> str:
     return f"fh{int(fh):03d}.l{int(level)}.meta.json"
 
 
+def contour_grid_frame_meta_filename(fh: int, key: str, *, level: int = GRID_LEVEL) -> str:
+    return f"fh{int(fh):03d}.contour-{_safe_contour_key(key)}.l{int(level)}.meta.json"
+
+
 def grid_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
     return grid_dir(data_root, model, run, var) / grid_frame_meta_filename(fh, level=level)
 
 
 def grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
     return grid_dir_for_run_root(run_root, var) / grid_frame_meta_filename(fh, level=level)
+
+
+def contour_grid_frame_path_for_run_root(
+    run_root: Path,
+    var: str,
+    fh: int,
+    key: str,
+    *,
+    level: int = GRID_LEVEL,
+    dtype: str = CONTOUR_GRID_DTYPE,
+) -> Path:
+    return grid_dir_for_run_root(run_root, var) / contour_grid_frame_filename(fh, key, level=level, dtype=dtype)
+
+
+def contour_grid_frame_meta_path_for_run_root(
+    run_root: Path,
+    var: str,
+    fh: int,
+    key: str,
+    *,
+    level: int = GRID_LEVEL,
+) -> Path:
+    return grid_dir_for_run_root(run_root, var) / contour_grid_frame_meta_filename(fh, key, level=level)
 
 
 def resolved_grid_frame_path_for_run_root(
@@ -1192,6 +1239,83 @@ def write_grid_frames_for_run_root(
     return written
 
 
+def write_contour_grid_frames_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    var: str,
+    fh: int,
+    key: str,
+    values: np.ndarray,
+    interval: float,
+    levels: list[float] | tuple[float, ...],
+    label: str,
+    transform: Affine | None = None,
+    bbox: list[float] | tuple[float, float, float, float] | None = None,
+    projection: str = GRID_PROJECTION,
+) -> list[dict[str, Any]]:
+    values_array = np.asarray(values, dtype=np.float32)
+    if bbox is None:
+        if transform is None:
+            raise ValueError(f"Missing transform/bbox for contour grid frame: {model}/{var}/fh{int(fh):03d}/{key}")
+        source_height, source_width = values_array.shape[:2]
+        left, bottom, right, top = array_bounds(source_height, source_width, transform)
+        bounds = [float(left), float(bottom), float(right), float(top)]
+    else:
+        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+
+    written: list[dict[str, Any]] = []
+    for lod_spec in grid_lod_specs(model, var):
+        level = int(lod_spec.get("level", GRID_LEVEL))
+        scale_factor = max(1, int(lod_spec.get("scale_factor", 1)))
+        lod_values = _values_for_lod(values_array, model=model, var=var, scale_factor=scale_factor)
+        encoded = _encode_values(
+            lod_values,
+            scale=CONTOUR_GRID_SCALE,
+            offset=CONTOUR_GRID_OFFSET,
+            nodata=CONTOUR_GRID_NODATA,
+            dtype=CONTOUR_GRID_DTYPE,
+        )
+        height, width = encoded.shape
+        encoded_bytes = encoded.astype("<u2", copy=False).tobytes(order="C")
+        out_path = contour_grid_frame_path_for_run_root(
+            run_root,
+            var,
+            fh,
+            key,
+            level=level,
+            dtype=CONTOUR_GRID_DTYPE,
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+        tmp_path.write_bytes(encoded_bytes)
+        tmp_path.replace(out_path)
+        if GRID_GZIP_SIDECARS_ENABLED:
+            write_grid_gzip_sidecar(out_path, encoded_bytes)
+        if GRID_BROTLI_SIDECARS_ENABLED:
+            write_grid_brotli_sidecar(out_path, encoded_bytes)
+
+        frame_meta = {
+            "fh": int(fh),
+            "level": int(level),
+            "key": _safe_contour_key(key),
+            "file": out_path.name,
+            "width": width,
+            "height": height,
+            "bbox": bounds,
+            "projection": str(projection or GRID_PROJECTION),
+            "interval": float(interval),
+            "levels": [float(item) for item in levels],
+            "label": str(label or key),
+        }
+        write_json_atomic(
+            contour_grid_frame_meta_path_for_run_root(run_root, var, fh, key, level=level),
+            frame_meta,
+        )
+        written.append(frame_meta)
+    return written
+
+
 def write_grid_frame_from_value_cog_for_run_root(
     *,
     run_root: Path,
@@ -1301,6 +1425,7 @@ def _build_manifest_for_var_from_run_root(
     manifest_display_name: str | None = None
     manifest_legend: dict[str, Any] | None = None
     manifest_contours: dict[str, Any] | None = None
+    contour_lod_entries: dict[str, dict[int, dict[str, Any]]] = {}
     lod_entries: dict[int, dict[str, Any]] = {}
 
     for sidecar_path in sorted(var_dir.glob("fh*.json")):
@@ -1334,6 +1459,8 @@ def _build_manifest_for_var_from_run_root(
             valid_time_by_fh[fh] = valid_time.strip()
 
     for frame_meta_path in sorted(grid_dir_path.glob("fh*.l*.meta.json")):
+        if ".contour-" in frame_meta_path.name:
+            continue
         try:
             frame_meta = json.loads(frame_meta_path.read_text())
         except (OSError, json.JSONDecodeError):
@@ -1397,6 +1524,61 @@ def _build_manifest_for_var_from_run_root(
         if display_prep is None and level == GRID_LEVEL and isinstance(frame_meta.get("display_prep"), dict):
             display_prep = dict(frame_meta["display_prep"])
 
+    for frame_meta_path in sorted(grid_dir_path.glob("fh*.contour-*.l*.meta.json")):
+        try:
+            frame_meta = json.loads(frame_meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        raw_fh = frame_meta.get("fh")
+        raw_level = frame_meta.get("level")
+        key = str(frame_meta.get("key") or "").strip()
+        fh = int(raw_fh) if raw_fh is not None else -1
+        level = int(raw_level) if raw_level is not None else GRID_LEVEL
+        filename = str(frame_meta.get("file") or "").strip()
+        frame_width = int(frame_meta.get("width") or 0)
+        frame_height = int(frame_meta.get("height") or 0)
+        frame_bbox = frame_meta.get("bbox")
+        frame_projection = str(frame_meta.get("projection") or GRID_PROJECTION)
+        if not key or fh < 0 or not filename or frame_width <= 0 or frame_height <= 0:
+            continue
+
+        frame_path = grid_dir_path / filename
+        if not frame_path.is_file():
+            continue
+        expected_size_bytes = expected_grid_frame_size_bytes(
+            width=frame_width,
+            height=frame_height,
+            dtype=CONTOUR_GRID_DTYPE,
+        )
+        if frame_path.stat().st_size != expected_size_bytes:
+            continue
+
+        key_entries = contour_lod_entries.setdefault(key, {})
+        next_level = key_entries.setdefault(
+            level,
+            {
+                "level": level,
+                "width": frame_width,
+                "height": frame_height,
+                "bbox": [float(frame_bbox[0]), float(frame_bbox[1]), float(frame_bbox[2]), float(frame_bbox[3])]
+                if isinstance(frame_bbox, list) and len(frame_bbox) == 4
+                else None,
+                "projection": frame_projection,
+                "interval": float(frame_meta.get("interval") or 0.0),
+                "levels": frame_meta.get("levels") if isinstance(frame_meta.get("levels"), list) else [],
+                "label": str(frame_meta.get("label") or key),
+                "frames": [],
+            },
+        )
+        next_level["frames"].append(
+            {
+                "fh": fh,
+                "file": filename,
+                **({"valid_time": valid_time_by_fh[fh]} if fh in valid_time_by_fh else {}),
+            }
+        )
+
     if not lod_entries:
         return False
 
@@ -1449,8 +1631,44 @@ def _build_manifest_for_var_from_run_root(
         manifest["display_name"] = manifest_display_name
     if manifest_legend:
         manifest["legend"] = manifest_legend
-    if manifest_contours:
-        manifest["contours"] = manifest_contours
+    if manifest_contours or contour_lod_entries:
+        next_contours = dict(manifest_contours or {})
+        for key, entries_by_level in contour_lod_entries.items():
+            if not entries_by_level:
+                continue
+            sorted_contour_levels = sorted(entries_by_level)
+            base_contour_level = GRID_LEVEL if GRID_LEVEL in entries_by_level else sorted_contour_levels[0]
+            base_contour_lod = entries_by_level[base_contour_level]
+            contour_lods: list[dict[str, Any]] = []
+            for level in sorted_contour_levels:
+                lod_entry = entries_by_level[level]
+                contour_lods.append(
+                    {
+                        "level": int(level),
+                        "width": int(lod_entry["width"]),
+                        "height": int(lod_entry["height"]),
+                        "frames": sorted(lod_entry["frames"], key=lambda item: int(item["fh"])),
+                    }
+                )
+            contour_meta = dict(next_contours.get(key) if isinstance(next_contours.get(key), dict) else {})
+            contour_meta["grid"] = {
+                "width": int(base_contour_lod["width"]),
+                "height": int(base_contour_lod["height"]),
+                "dtype": CONTOUR_GRID_DTYPE,
+                "endianness": GRID_ENDIANNESS,
+                "scale": CONTOUR_GRID_SCALE,
+                "offset": CONTOUR_GRID_OFFSET,
+                "nodata": CONTOUR_GRID_NODATA,
+                "units": CONTOUR_GRID_UNITS,
+            }
+            contour_meta["lods"] = contour_lods
+            contour_meta["interval"] = float(base_contour_lod.get("interval") or contour_meta.get("level") or 0.0)
+            if "levels" not in contour_meta and isinstance(base_contour_lod.get("levels"), list):
+                contour_meta["levels"] = base_contour_lod["levels"]
+            if "label" not in contour_meta and base_contour_lod.get("label"):
+                contour_meta["label"] = base_contour_lod["label"]
+            next_contours[key] = contour_meta
+        manifest["contours"] = next_contours
     composite_meta = _read_composite_sidecar_metadata(run_root, var)
     if composite_meta:
         manifest.update(composite_meta)

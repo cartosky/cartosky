@@ -55,6 +55,7 @@ from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_
 from app.services.grid import (
     grid_frame_meta_path_for_run_root,
     grid_frame_path_for_run_root,
+    write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
 from app.services.render_resampling import resampling_name_for_kind
@@ -275,6 +276,20 @@ def _build_contour_metadata_for_variable(
         out_geojson_path=contour_path,
         levels=levels,
     )
+    if grid_build_enabled():
+        write_contour_grid_frames_for_run_root(
+            run_root=staging_dir.parent,
+            model=model,
+            var=var_key,
+            fh=fh,
+            key=contour_key,
+            values=warped_component,
+            interval=contour_interval,
+            levels=levels,
+            label=contour_label,
+            transform=dst_transform,
+            projection="EPSG:3857",
+        )
     metadata = {
         contour_key: {
             "format": "geojson",

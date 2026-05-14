@@ -7,7 +7,7 @@ import type { LegendPayload } from "@/components/map-legend";
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import type { GridManifestResponse } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
-import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
+import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 
@@ -900,6 +900,7 @@ type MapCanvasProps = {
   gridPrefetchPivotHour?: number | null;
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
+  gridContour?: GridContourLayerConfig | null;
   contourGeoJsonUrl?: string | null;
   contourPrefetchUrls?: string[];
   vectorGeoJsonUrl?: string | null;
@@ -941,6 +942,7 @@ export function MapCanvas({
   gridPrefetchPivotHour = null,
   gridLegend = null,
   gridActive = false,
+  gridContour = null,
   contourGeoJsonUrl,
   contourPrefetchUrls = [],
   vectorGeoJsonUrl,
@@ -1975,6 +1977,7 @@ export function MapCanvas({
       selectionEpoch,
       selectionKey,
       prefetchUrls: gridPrefetchUrls,
+      contour: gridContour,
       rasterPaint: getGridPaintSettings(variable, basemapMode),
       onFrameVisible: onGridFrameVisible,
       onFrameReady: onGridFrameReady,
@@ -2004,6 +2007,7 @@ export function MapCanvas({
         selectionEpoch,
         selectionKey: `${selectionKey}:${layer.id}`,
         prefetchUrls: [],
+        contour: layer.id === compositeGridLayers[compositeGridLayers.length - 1]?.id ? gridContour : null,
         rasterPaint: getGridPaintSettings(variable, basemapMode),
         onFrameVisible: onGridFrameVisible,
         onFrameReady: onGridFrameReady,
@@ -2026,6 +2030,7 @@ export function MapCanvas({
     gridFrameHour,
     gridFrameUrl,
     gridLegend,
+    gridContour,
     gridLodLevel,
     gridManifest,
     gridPrefetchUrls,

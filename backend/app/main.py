@@ -3845,6 +3845,47 @@ def get_grid_manifest(
             next_lod["frames"] = next_frames
             next_lods.append(next_lod)
         payload["lods"] = next_lods
+    contours = payload.get("contours")
+    if isinstance(contours, dict):
+        next_contours: dict[str, Any] = {}
+        for contour_key, contour_meta in contours.items():
+            if not isinstance(contour_meta, dict):
+                next_contours[contour_key] = contour_meta
+                continue
+            next_meta = dict(contour_meta)
+            contour_lods = contour_meta.get("lods")
+            if isinstance(contour_lods, list):
+                next_contour_lods: list[dict[str, Any]] = []
+                for lod in contour_lods:
+                    if not isinstance(lod, dict):
+                        continue
+                    next_lod = dict(lod)
+                    frames = lod.get("frames")
+                    next_frames: list[dict[str, Any]] = []
+                    if isinstance(frames, list):
+                        for frame in frames:
+                            if not isinstance(frame, dict):
+                                continue
+                            filename = str(frame.get("file") or "").strip()
+                            fh = frame.get("fh")
+                            if not filename or not isinstance(fh, int):
+                                continue
+                            next_frame = dict(frame)
+                            next_frame["url"] = _grid_file_url(
+                                model,
+                                resolved,
+                                runtime_var,
+                                filename,
+                                version_token=version_token,
+                                region=region,
+                            )
+                            next_frames.append(next_frame)
+                    next_frames.sort(key=lambda item: int(item.get("fh", 0)))
+                    next_lod["frames"] = next_frames
+                    next_contour_lods.append(next_lod)
+                next_meta["lods"] = next_contour_lods
+            next_contours[contour_key] = next_meta
+        payload["contours"] = next_contours
     build_ms = (time.perf_counter() - build_started_at) * 1000.0
 
     cache_control = "public, max-age=60"
@@ -3889,6 +3930,7 @@ def _get_grid_file(model: str, run: str, var: str, filename: str, *, region: str
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
     dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
     lods = manifest.get("lods") if isinstance(manifest, dict) else None
+    matched_manifest_file = False
     if isinstance(lods, list):
         for lod in lods:
             if not isinstance(lod, dict):
@@ -3899,7 +3941,34 @@ def _get_grid_file(model: str, run: str, var: str, filename: str, *, region: str
             if any(isinstance(frame, dict) and str(frame.get("file") or "").strip() == safe_filename for frame in frames):
                 width = int(lod.get("width") or width)
                 height = int(lod.get("height") or height)
+                matched_manifest_file = True
                 break
+    if not matched_manifest_file and isinstance(manifest, dict):
+        contours = manifest.get("contours")
+        if isinstance(contours, dict):
+            for contour_meta in contours.values():
+                if not isinstance(contour_meta, dict):
+                    continue
+                contour_grid = contour_meta.get("grid")
+                contour_lods = contour_meta.get("lods")
+                if not isinstance(contour_grid, dict) or not isinstance(contour_lods, list):
+                    continue
+                for lod in contour_lods:
+                    if not isinstance(lod, dict):
+                        continue
+                    frames = lod.get("frames")
+                    if not isinstance(frames, list):
+                        continue
+                    if any(isinstance(frame, dict) and str(frame.get("file") or "").strip() == safe_filename for frame in frames):
+                        width = int(lod.get("width") or contour_grid.get("width") or 0)
+                        height = int(lod.get("height") or contour_grid.get("height") or 0)
+                        dtype = str(contour_grid.get("dtype") or dtype)
+                        matched_manifest_file = True
+                        break
+                if matched_manifest_file:
+                    break
+    if not matched_manifest_file:
+        raise HTTPException(status_code=404, detail="Grid artifact not listed in manifest")
     if width > 0 and height > 0:
         expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
         actual_size_bytes = candidate.stat().st_size

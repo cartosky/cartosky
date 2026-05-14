@@ -53,6 +53,16 @@ export type GridRasterPaint = {
   brightnessMax: number;
 };
 
+export type GridContourLayerConfig = {
+  frameUrl: string | null;
+  frameHour: number | null;
+  grid: GridManifestResponse["grid"] | null;
+  width: number;
+  height: number;
+  interval: number;
+  color?: [number, number, number, number] | null;
+};
+
 export type GridWebglLayerConfig = {
   active: boolean;
   manifest: GridManifestResponse | null;
@@ -65,6 +75,7 @@ export type GridWebglLayerConfig = {
   selectionEpoch: number;
   selectionKey: string;
   prefetchUrls?: string[];
+  contour?: GridContourLayerConfig | null;
   rasterPaint?: GridRasterPaint | null;
   /** When true, the controller deprioritizes background texture warming to
    *  avoid competing with the animation/scrub for main-thread and GPU time. */
@@ -719,6 +730,15 @@ type ProgramBindings = {
   saturationFactorLocation: WebGLUniformLocation | null;
   brightnessLowLocation: WebGLUniformLocation | null;
   brightnessHighLocation: WebGLUniformLocation | null;
+  contourDataLocation: WebGLUniformLocation | null;
+  contourEnabledLocation: WebGLUniformLocation | null;
+  contourScaleLocation: WebGLUniformLocation | null;
+  contourOffsetLocation: WebGLUniformLocation | null;
+  contourNodataLocation: WebGLUniformLocation | null;
+  contourDataEncodingLocation: WebGLUniformLocation | null;
+  contourTexSizeLocation: WebGLUniformLocation | null;
+  contourIntervalLocation: WebGLUniformLocation | null;
+  contourColorLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -741,6 +761,7 @@ export class GridWebglLayerController {
   private selectionEpoch = 0;
   private selectionKey = "";
   private prefetchUrls: string[] = [];
+  private contour: GridContourLayerConfig | null = null;
   private animating = false;
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
@@ -776,6 +797,10 @@ export class GridWebglLayerController {
   private lutMax = 1;
   private lutDirty = true;
   private currentTexture: WebGLTexture | null = null;
+  private currentContourTexture: WebGLTexture | null = null;
+  private currentContourTextureUrl: string | null = null;
+  private currentContourTextureWidth = 1;
+  private currentContourTextureHeight = 1;
   private previousTexture: WebGLTexture | null = null;
   private currentTextureWidth = 1;
   private currentTextureHeight = 1;
@@ -842,6 +867,7 @@ export class GridWebglLayerController {
       || normalized === this.frameUrl
       || normalized === this.pendingFrameUrl
       || normalized === this.currentTextureUrl
+      || normalized === this.currentContourTextureUrl
       || normalized === this.previousTextureUrl
       || this.frameFetches.has(normalized)
       || this.textureWarmQueued.has(normalized)
@@ -977,6 +1003,8 @@ export class GridWebglLayerController {
       // variable's new LUT to the previous variable's raw data bytes, producing
       // a mis-colored flash (typically orange from the colormap edge values).
       this.currentTexture = null;
+      this.currentContourTexture = null;
+      this.currentContourTextureUrl = null;
       this.currentTextureSignature = null;
       this.hasPreviousTexture = false;
       this.previousTexture = null;
@@ -992,6 +1020,7 @@ export class GridWebglLayerController {
     this.selectionEpoch = config.selectionEpoch;
     this.selectionKey = config.selectionKey;
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
+    this.contour = config.contour?.frameUrl && config.contour.grid ? config.contour : null;
     this.animating = config.isAnimating ?? false;
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
@@ -1042,7 +1071,8 @@ export class GridWebglLayerController {
     if (!frameUrl) {
       return null;
     }
-    return `${this.selectionEpoch}:${this.selectionKey}:${this.frameHour ?? "na"}:${frameUrl}`;
+    const contourUrl = this.contour?.frameUrl ?? "";
+    return `${this.selectionEpoch}:${this.selectionKey}:${this.frameHour ?? "na"}:${frameUrl}:${contourUrl}`;
   }
 
   private textureWarmLimit(): number {
@@ -1088,12 +1118,15 @@ export class GridWebglLayerController {
         gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
       }
     `;
+    const derivativesSupported = this.isWebGL2 || Boolean(gl.getExtension("OES_standard_derivatives"));
     const fragmentSource = `
+      ${derivativesSupported && !this.isWebGL2 ? "#extension GL_OES_standard_derivatives : enable" : ""}
       precision mediump float;
       varying vec2 v_texCoord;
       uniform sampler2D u_data;
       uniform sampler2D u_prevData;
       uniform sampler2D u_lut;
+      uniform sampler2D u_contourData;
       uniform float u_scale;
       uniform float u_offset;
       uniform float u_nodata;
@@ -1116,6 +1149,14 @@ export class GridWebglLayerController {
       uniform float u_saturationFactor;
       uniform float u_brightnessLow;
       uniform float u_brightnessHigh;
+      uniform float u_contourEnabled;
+      uniform float u_contourScale;
+      uniform float u_contourOffset;
+      uniform float u_contourNodata;
+      uniform float u_contourDataEncoding;
+      uniform vec2 u_contourTexSize;
+      uniform float u_contourInterval;
+      uniform vec4 u_contourColor;
 
       // Decode a single texel from raw R/G bytes to a physical value.
       // Returns the decoded value, or -1e30 if nodata.
@@ -1130,6 +1171,60 @@ export class GridWebglLayerController {
           return -1e30;
         }
         return encoded * u_scale + u_offset;
+      }
+
+      float decodeContourSample(vec4 sample) {
+        float low = floor(sample.r * 255.0 + 0.5);
+        float encoded = low;
+        if (u_contourDataEncoding > 0.5) {
+          float high = floor(sample.g * 255.0 + 0.5);
+          encoded += high * 256.0;
+        }
+        if (abs(encoded - u_contourNodata) < 0.5) {
+          return -1e30;
+        }
+        return encoded * u_contourScale + u_contourOffset;
+      }
+
+      float sampleContourBilinear(vec2 uv) {
+        vec2 texel = uv * u_contourTexSize - 0.5;
+        vec2 f = fract(texel);
+        vec2 base = (floor(texel) + 0.5) / u_contourTexSize;
+        vec2 step = 1.0 / u_contourTexSize;
+        float v00 = decodeContourSample(texture2D(u_contourData, base));
+        float v10 = decodeContourSample(texture2D(u_contourData, base + vec2(step.x, 0.0)));
+        float v01 = decodeContourSample(texture2D(u_contourData, base + vec2(0.0, step.y)));
+        float v11 = decodeContourSample(texture2D(u_contourData, base + step));
+        float w00 = v00 > -1e29 ? 1.0 : 0.0;
+        float w10 = v10 > -1e29 ? 1.0 : 0.0;
+        float w01 = v01 > -1e29 ? 1.0 : 0.0;
+        float w11 = v11 > -1e29 ? 1.0 : 0.0;
+        float bw00 = (1.0 - f.x) * (1.0 - f.y) * w00;
+        float bw10 = f.x * (1.0 - f.y) * w10;
+        float bw01 = (1.0 - f.x) * f.y * w01;
+        float bw11 = f.x * f.y * w11;
+        float wSum = bw00 + bw10 + bw01 + bw11;
+        if (wSum <= 0.0) {
+          return -1e30;
+        }
+        return ((v00 > -1e29 ? v00 : 0.0) * bw00
+          + (v10 > -1e29 ? v10 : 0.0) * bw10
+          + (v01 > -1e29 ? v01 : 0.0) * bw01
+          + (v11 > -1e29 ? v11 : 0.0) * bw11) / wSum;
+      }
+
+      float contourLineAlpha(vec2 uv) {
+        if (u_contourEnabled < 0.5 || u_contourInterval <= 0.0) {
+          return 0.0;
+        }
+        float value = sampleContourBilinear(uv);
+        if (value <= -1e29) {
+          return 0.0;
+        }
+        float phase = abs(fract(value / u_contourInterval + 0.5) - 0.5);
+        float width = 0.022;
+        ${derivativesSupported ? "width = max(width, fwidth(value / u_contourInterval) * 1.25);" : ""}
+        return 1.0 - smoothstep(0.0, width, phase);
       }
 
       // Bilinear interpolation in decoded value space, then LUT lookup.
@@ -1299,7 +1394,8 @@ export class GridWebglLayerController {
             : sampleBilinear(u_prevData, v_texCoord))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
-        if (mixed.a <= 0.0) {
+        float contourAlpha = contourLineAlpha(v_texCoord) * u_contourColor.a * u_opacity;
+        if (mixed.a <= 0.0 && contourAlpha <= 0.0) {
           discard;
         }
         vec3 rgb = mixed.rgb;
@@ -1313,8 +1409,11 @@ export class GridWebglLayerController {
         // brightness
         rgb = mix(vec3(u_brightnessLow), vec3(u_brightnessHigh), rgb);
 
-        float finalAlpha = mixed.a * u_opacity;
-        gl_FragColor = vec4(rgb * finalAlpha, finalAlpha);
+        float fillAlpha = mixed.a * u_opacity;
+        vec3 premultiplied = rgb * fillAlpha;
+        premultiplied = premultiplied * (1.0 - contourAlpha) + u_contourColor.rgb * contourAlpha;
+        float finalAlpha = contourAlpha + fillAlpha * (1.0 - contourAlpha);
+        gl_FragColor = vec4(premultiplied, finalAlpha);
       }
     `;
 
@@ -1359,6 +1458,15 @@ export class GridWebglLayerController {
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
       brightnessLowLocation: gl.getUniformLocation(this.program, "u_brightnessLow"),
       brightnessHighLocation: gl.getUniformLocation(this.program, "u_brightnessHigh"),
+      contourDataLocation: gl.getUniformLocation(this.program, "u_contourData"),
+      contourEnabledLocation: gl.getUniformLocation(this.program, "u_contourEnabled"),
+      contourScaleLocation: gl.getUniformLocation(this.program, "u_contourScale"),
+      contourOffsetLocation: gl.getUniformLocation(this.program, "u_contourOffset"),
+      contourNodataLocation: gl.getUniformLocation(this.program, "u_contourNodata"),
+      contourDataEncodingLocation: gl.getUniformLocation(this.program, "u_contourDataEncoding"),
+      contourTexSizeLocation: gl.getUniformLocation(this.program, "u_contourTexSize"),
+      contourIntervalLocation: gl.getUniformLocation(this.program, "u_contourInterval"),
+      contourColorLocation: gl.getUniformLocation(this.program, "u_contourColor"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -1404,9 +1512,14 @@ export class GridWebglLayerController {
     this.lutDirty = false;
   }
 
-  private createTextureFromBytes(frameUrl: string, bytes: Uint8Array<ArrayBufferLike> | null): WebGLTexture | null {
+  private createTextureFromBytes(
+    frameUrl: string,
+    bytes: Uint8Array<ArrayBufferLike> | null,
+    sourceGrid: GridManifestResponse["grid"] | null = this.manifest?.grid ?? null,
+    sourceSize?: { width: number; height: number } | null,
+  ): WebGLTexture | null {
     const gl = this.gl;
-    const grid = this.manifest?.grid;
+    const grid = sourceGrid;
     if (!gl || !grid) {
       return null;
     }
@@ -1429,8 +1542,8 @@ export class GridWebglLayerController {
     }
 
     const selectedLod = this.resolveSelectedLod();
-    const width = selectedLod?.width ?? Math.max(1, Math.floor(Number(grid.width) || 1));
-    const height = selectedLod?.height ?? Math.max(1, Math.floor(Number(grid.height) || 1));
+    const width = sourceSize?.width ?? selectedLod?.width ?? Math.max(1, Math.floor(Number(grid.width) || 1));
+    const height = sourceSize?.height ?? selectedLod?.height ?? Math.max(1, Math.floor(Number(grid.height) || 1));
     const gridDtype = resolveGridDtype(grid.dtype);
     const expectedBytes = expectedPackedFrameByteLength(width, height, gridDtype);
     if (bytes.byteLength < expectedBytes) {
@@ -1564,13 +1677,33 @@ export class GridWebglLayerController {
     return targetTexture;
   }
 
-  private activateFrameTexture(frameUrl: string, bytes: Uint8Array<ArrayBufferLike> | null, signature: string) {
+  private activateFrameTexture(
+    frameUrl: string,
+    bytes: Uint8Array<ArrayBufferLike> | null,
+    signature: string,
+    contourBytes: Uint8Array<ArrayBufferLike> | null = null,
+  ) {
     const targetTexture = this.createTextureFromBytes(frameUrl, bytes);
     if (!targetTexture) {
       this.pendingFrameBytes = bytes;
       this.pendingFrameSignature = signature;
       this.pendingFrameUrl = frameUrl;
       return;
+    }
+    let contourTexture: WebGLTexture | null = null;
+    if (this.contour?.frameUrl && this.contour.grid) {
+      contourTexture = this.createTextureFromBytes(
+        this.contour.frameUrl,
+        contourBytes ?? this.frameCache.get(this.contour.frameUrl)?.bytes ?? null,
+        this.contour.grid,
+        { width: this.contour.width, height: this.contour.height },
+      );
+      if (!contourTexture) {
+        this.pendingFrameBytes = bytes;
+        this.pendingFrameSignature = signature;
+        this.pendingFrameUrl = frameUrl;
+        return;
+      }
     }
 
     this.pendingFrameBytes = bytes ?? this.frameCache.get(frameUrl)?.bytes ?? null;
@@ -1581,6 +1714,10 @@ export class GridWebglLayerController {
     this.hasPreviousTexture = false;
     this.currentTexture = targetTexture;
     this.currentTextureUrl = frameUrl;
+    this.currentContourTexture = contourTexture;
+    this.currentContourTextureUrl = this.contour?.frameUrl ?? null;
+    this.currentContourTextureWidth = Math.max(1, Math.floor(Number(this.contour?.width) || 1));
+    this.currentContourTextureHeight = Math.max(1, Math.floor(Number(this.contour?.height) || 1));
     const cachedTexture = this.textureCache.get(frameUrl);
     this.currentTextureWidth = cachedTexture?.width ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.width) || 1));
     this.currentTextureHeight = cachedTexture?.height ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.height) || 1));
@@ -1597,26 +1734,48 @@ export class GridWebglLayerController {
     if (this.invalidFrameUrls.has(frameUrl)) {
       return;
     }
+    const contourUrl = this.contour?.frameUrl ?? null;
+    const contourGrid = this.contour?.grid ?? null;
     const warmTexture = this.textureCache.touch(frameUrl);
     if (warmTexture) {
-      this.activateFrameTexture(frameUrl, this.frameCache.get(frameUrl)?.bytes ?? new Uint8Array(), signature);
+      let contourBytes: Uint8Array<ArrayBufferLike> | null = null;
+      if (contourUrl && contourGrid) {
+        contourBytes = await this.fetchFrameBytes(contourUrl);
+        if (!contourBytes || signature !== this.currentFrameSignature) {
+          return;
+        }
+      }
+      this.activateFrameTexture(frameUrl, this.frameCache.get(frameUrl)?.bytes ?? new Uint8Array(), signature, contourBytes);
       return;
     }
     const cached = this.frameCache.touch(frameUrl);
     if (cached) {
-      this.activateFrameTexture(frameUrl, cached.bytes, signature);
+      let contourBytes: Uint8Array<ArrayBufferLike> | null = null;
+      if (contourUrl && contourGrid) {
+        contourBytes = await this.fetchFrameBytes(contourUrl);
+        if (!contourBytes || signature !== this.currentFrameSignature) {
+          return;
+        }
+      }
+      this.activateFrameTexture(frameUrl, cached.bytes, signature, contourBytes);
       return;
     }
 
     try {
-      const bytes = await this.fetchFrameBytes(frameUrl);
+      const [bytes, contourBytes] = await Promise.all([
+        this.fetchFrameBytes(frameUrl),
+        contourUrl && contourGrid ? this.fetchFrameBytes(contourUrl) : Promise.resolve(null),
+      ]);
       if (!bytes) {
+        return;
+      }
+      if (contourUrl && contourGrid && !contourBytes) {
         return;
       }
       if (signature !== this.currentFrameSignature) {
         return;
       }
-      this.activateFrameTexture(frameUrl, bytes, signature);
+      this.activateFrameTexture(frameUrl, bytes, signature, contourBytes);
     } catch {
       // Keep the previously-visible frame on screen if the new one fails.
     }
@@ -1989,6 +2148,29 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.saturationFactorLocation, saturationFactor(this.rasterPaint.saturation));
     gl.uniform1f(bindings.brightnessLowLocation, this.rasterPaint.brightnessMin);
     gl.uniform1f(bindings.brightnessHighLocation, this.rasterPaint.brightnessMax);
+    const contourGrid = this.contour?.grid ?? null;
+    const contourEnabled = Boolean(
+      this.currentContourTexture
+      && this.contour?.frameUrl
+      && this.contour.frameUrl === this.currentContourTextureUrl
+      && contourGrid
+      && Number(this.contour?.interval) > 0
+    );
+    gl.uniform1f(bindings.contourEnabledLocation, contourEnabled ? 1 : 0);
+    gl.uniform1f(bindings.contourScaleLocation, Number(contourGrid?.scale) || 1);
+    gl.uniform1f(bindings.contourOffsetLocation, Number(contourGrid?.offset) || 0);
+    gl.uniform1f(bindings.contourNodataLocation, Number(contourGrid?.nodata) || 65535);
+    gl.uniform1f(bindings.contourDataEncodingLocation, resolveGridDtype(contourGrid?.dtype) === "uint16" ? 1 : 0);
+    gl.uniform2f(bindings.contourTexSizeLocation, this.currentContourTextureWidth, this.currentContourTextureHeight);
+    gl.uniform1f(bindings.contourIntervalLocation, Number(this.contour?.interval) || 0);
+    const contourColor = this.contour?.color ?? [0, 0, 0, 0.82];
+    gl.uniform4f(
+      bindings.contourColorLocation,
+      contourColor[0],
+      contourColor[1],
+      contourColor[2],
+      contourColor[3],
+    );
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.currentTexture);
@@ -2001,6 +2183,10 @@ export class GridWebglLayerController {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.lutTexture);
     gl.uniform1i(bindings.lutLocation, 2);
+
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, contourEnabled ? this.currentContourTexture : this.currentTexture);
+    gl.uniform1i(bindings.contourDataLocation, 3);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     if (this.hasPreviousTexture && mixAmount < 1) {
@@ -2065,11 +2251,15 @@ export class GridWebglLayerController {
     this.recentFrameUrls = [];
     this.recentFrameUrlSet.clear();
     this.currentTexture = null;
+    this.currentContourTexture = null;
+    this.currentContourTextureUrl = null;
     this.previousTexture = null;
     this.currentTextureUrl = null;
     this.previousTextureUrl = null;
     this.currentTextureWidth = 1;
     this.currentTextureHeight = 1;
+    this.currentContourTextureWidth = 1;
+    this.currentContourTextureHeight = 1;
     this.pendingFrameUrl = null;
     this.quadSignature = null;
     this.gl = null;

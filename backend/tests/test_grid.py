@@ -37,6 +37,7 @@ from app.services.grid import (
     grid_dir,
     grid_manifest_path_for_run_root,
     resolved_grid_dir_for_run_root,
+    write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
 
@@ -99,6 +100,57 @@ def test_write_grid_frame_for_run_root_writes_manifest_without_value_cog(tmp_pat
     assert brotli_sidecar_path.is_file()
     assert gzip.decompress(sidecar_path.read_bytes()) == frame_path.read_bytes()
     assert brotli.decompress(brotli_sidecar_path.read_bytes()) == frame_path.read_bytes()
+
+
+def test_grid_manifest_includes_contour_grid_companion(tmp_path: Path) -> None:
+    run_root = tmp_path / "staging" / "gfs" / "20260330_12z"
+    var_dir = run_root / "ptype_intensity"
+    var_dir.mkdir(parents=True, exist_ok=True)
+    transform = from_origin(-14920000.0, 7362000.0, 13000.0, 13000.0)
+
+    write_grid_frame_for_run_root(
+        run_root=run_root,
+        model="gfs",
+        var="ptype_intensity",
+        fh=0,
+        values=np.array([[0.0, 16.0], [np.nan, 42.0]], dtype=np.float32),
+        transform=transform,
+    )
+    write_contour_grid_frames_for_run_root(
+        run_root=run_root,
+        model="gfs",
+        var="ptype_intensity",
+        fh=0,
+        key="mslp",
+        values=np.array([[1000.0, 1004.0], [1008.0, 1012.0]], dtype=np.float32),
+        interval=4,
+        levels=[1000, 1004, 1008, 1012],
+        label="MSLP",
+        transform=transform,
+    )
+    (var_dir / "fh000.json").write_text(
+        json.dumps({
+            "fh": 0,
+            "units": "index",
+            "valid_time": "2026-03-30T12:00:00Z",
+            "contours": {"mslp": {"format": "geojson", "level": 4, "label": "MSLP"}},
+        })
+    )
+
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=run_root,
+        model="gfs",
+        run="20260330_12z",
+        variables=("ptype_intensity",),
+    )
+
+    assert manifest_ok == 1
+    manifest = json.loads(grid_manifest_path_for_run_root(run_root, "ptype_intensity").read_text())
+    contour = manifest["contours"]["mslp"]
+    assert contour["grid"]["scale"] == 0.25
+    assert contour["interval"] == 4.0
+    assert contour["lods"][0]["frames"][0]["file"] == "fh000.contour-mslp.l0.u16.bin"
+    assert (run_root / "ptype_intensity" / "grid" / "fh000.contour-mslp.l0.u16.bin").is_file()
 
 
 def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

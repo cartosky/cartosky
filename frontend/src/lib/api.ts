@@ -202,6 +202,18 @@ export type GridManifestGrid = {
   units?: string;
 };
 
+export type GridManifestContour = {
+  format?: string;
+  path?: string;
+  srs?: string;
+  level?: number;
+  interval?: number;
+  levels?: number[];
+  label?: string;
+  grid?: GridManifestGrid;
+  lods?: GridManifestLod[];
+};
+
 export type GridManifestPalette = {
   color_map_id?: string | null;
   kind?: string | null;
@@ -238,15 +250,7 @@ export type GridManifestResponse = {
   display_prep?: GridManifestDisplayPrep | null;
   display_name?: string;
   legend?: { type?: string; stops?: LegendStops };
-  contours?: Record<
-    string,
-    {
-      format?: string;
-      path?: string;
-      srs?: string;
-      level?: number;
-    }
-  >;
+  contours?: Record<string, GridManifestContour>;
   composite_mode?: string | null;
   composite_layers?: GridManifestCompositeLayer[];
   lods: GridManifestLod[];
