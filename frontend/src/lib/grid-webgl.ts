@@ -33,6 +33,12 @@ const SUPPORT_COVERAGE_THRESHOLD_DISABLED_COLOR_MAP_IDS = new Set<string>([
   "precip_total",
   "snowfall_total",
 ]);
+// Prune only the first visible accumulated precip/snow bin when bilinear
+// sampling is mostly interpolating from transparent neighbours.
+const LOW_END_EDGE_CLEANUP_BY_COLOR_MAP_ID = new Map<string, { maxValue: number; supportCoverageThreshold: number }>([
+  ["precip_total", { maxValue: 0.05, supportCoverageThreshold: 0.5 }],
+  ["snowfall_total", { maxValue: 0.5, supportCoverageThreshold: 0.5 }],
+]);
 
 export type GridFrameVisiblePayload = {
   frameHour: number;
@@ -457,6 +463,12 @@ function supportCoverageThresholdForManifest(manifest: GridManifestResponse | nu
   return 0;
 }
 
+function lowEndEdgeCleanupForManifest(manifest: GridManifestResponse | null): { maxValue: number; supportCoverageThreshold: number } {
+  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
+  return LOW_END_EDGE_CLEANUP_BY_COLOR_MAP_ID.get(colorMapId)
+    ?? { maxValue: Number.NEGATIVE_INFINITY, supportCoverageThreshold: 0 };
+}
+
 function isObservedGridManifest(manifest: GridManifestResponse | null): boolean {
   return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
 }
@@ -700,6 +712,8 @@ type ProgramBindings = {
   categoricalLocation: WebGLUniformLocation | null;
   categoricalNearestLocation: WebGLUniformLocation | null;
   supportCoverageThresholdLocation: WebGLUniformLocation | null;
+  lowEndEdgeMaxLocation: WebGLUniformLocation | null;
+  lowEndEdgeSupportCoverageThresholdLocation: WebGLUniformLocation | null;
   transparentZeroLocation: WebGLUniformLocation | null;
   contrastFactorLocation: WebGLUniformLocation | null;
   saturationFactorLocation: WebGLUniformLocation | null;
@@ -1095,6 +1109,8 @@ export class GridWebglLayerController {
       uniform float u_categorical;
       uniform float u_categoricalNearest;
       uniform float u_supportCoverageThreshold;
+      uniform float u_lowEndEdgeMax;
+      uniform float u_lowEndEdgeSupportCoverageThreshold;
       uniform float u_transparentZero;
       uniform float u_contrastFactor;
       uniform float u_saturationFactor;
@@ -1166,6 +1182,28 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
 
+        float supportCoverage = 1.0;
+        if (
+          u_transparentBelowMin > -1e20
+          && (u_supportCoverageThreshold > 0.0 || u_lowEndEdgeSupportCoverageThreshold > 0.0)
+        ) {
+          float sw00 = v00 > u_transparentBelowMin ? bw00 : 0.0;
+          float sw10 = v10 > u_transparentBelowMin ? bw10 : 0.0;
+          float sw01 = v01 > u_transparentBelowMin ? bw01 : 0.0;
+          float sw11 = v11 > u_transparentBelowMin ? bw11 : 0.0;
+          supportCoverage = (sw00 + sw10 + sw01 + sw11) / wSum;
+          if (u_supportCoverageThreshold > 0.0 && supportCoverage < u_supportCoverageThreshold) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
+          if (
+            u_lowEndEdgeSupportCoverageThreshold > 0.0
+            && decoded < u_lowEndEdgeMax
+            && supportCoverage < u_lowEndEdgeSupportCoverageThreshold
+          ) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
+        }
+
         // Normalise to [0,1] and apply power-norm gamma.
         float denom = max(0.000001, u_valueMax - u_valueMin);
         float t = clamp((decoded - u_valueMin) / denom, 0.0, 1.0);
@@ -1173,16 +1211,6 @@ export class GridWebglLayerController {
           t = pow(t, u_powerNormGamma);
         }
 
-        if (u_transparentBelowMin > -1e20 && u_supportCoverageThreshold > 0.0) {
-          float sw00 = v00 > u_transparentBelowMin ? bw00 : 0.0;
-          float sw10 = v10 > u_transparentBelowMin ? bw10 : 0.0;
-          float sw01 = v01 > u_transparentBelowMin ? bw01 : 0.0;
-          float sw11 = v11 > u_transparentBelowMin ? bw11 : 0.0;
-          float supportCoverage = (sw00 + sw10 + sw01 + sw11) / wSum;
-          if (supportCoverage < u_supportCoverageThreshold) {
-            return vec4(0.0, 0.0, 0.0, 0.0);
-          }
-        }
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
         return color;
       }
@@ -1321,6 +1349,11 @@ export class GridWebglLayerController {
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
       supportCoverageThresholdLocation: gl.getUniformLocation(this.program, "u_supportCoverageThreshold"),
+      lowEndEdgeMaxLocation: gl.getUniformLocation(this.program, "u_lowEndEdgeMax"),
+      lowEndEdgeSupportCoverageThresholdLocation: gl.getUniformLocation(
+        this.program,
+        "u_lowEndEdgeSupportCoverageThreshold",
+      ),
       transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
       contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
       saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
@@ -1934,6 +1967,12 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.supportCoverageThresholdLocation, supportCoverageThresholdForManifest(this.manifest));
+    const lowEndEdgeCleanup = lowEndEdgeCleanupForManifest(this.manifest);
+    gl.uniform1f(bindings.lowEndEdgeMaxLocation, lowEndEdgeCleanup.maxValue);
+    gl.uniform1f(
+      bindings.lowEndEdgeSupportCoverageThresholdLocation,
+      lowEndEdgeCleanup.supportCoverageThreshold,
+    );
     gl.uniform1f(bindings.transparentZeroLocation, transparentZeroForManifest(this.manifest) ? 1 : 0);
     gl.uniform2f(
       bindings.texSizeLocation,
