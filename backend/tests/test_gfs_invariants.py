@@ -9,6 +9,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.main import _serialize_model_capability
 from app.models.gfs import GFS_MODEL
+from app.services.colormaps import get_color_map_spec
 
 
 def test_gfs_target_fhs_invariants() -> None:
@@ -47,8 +48,13 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "wgst10m",
         "ptype_intensity",
         "precip_total",
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
         "snowfall_total",
         "snowfall_kuchera_total",
+        "ice_total",
     }
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
@@ -66,6 +72,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     assert ("gfs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
+    assert ("gfs", "ice_total") in _PACKING_BY_MODEL_VAR
 
 
 def test_gfs_capabilities_schema_snapshot_invariants() -> None:
@@ -261,6 +268,17 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["default_fh"] == 6
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
     assert snowfall_kuchera_total["order"] == 17
+
+    ice_total = payload["variables"]["ice_total"]
+    assert ice_total["buildable"] is True
+    assert ice_total["derived"] is False
+    assert ice_total["units"] == "in"
+    assert ice_total["constraints"]["min_fh"] == 3
+    assert ice_total["default_fh"] == 6
+    assert ice_total["display_name"] == "Total Ice"
+    assert ice_total["group"] == "Precipitation"
+    assert ice_total["color_map_id"] == "ice_total"
+    assert ice_total["order"] == 11.5
 
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
@@ -500,6 +518,48 @@ def test_gfs_dewpoint_and_snow_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
     assert GFS_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert GFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
+    assert GFS_MODEL.normalize_var_id("ice_total") == "ice_total"
+    assert GFS_MODEL.normalize_var_id("total_ice") == "ice_total"
+    assert GFS_MODEL.normalize_var_id("icetk") == "ice_total"
+
+
+def test_gfs_ice_total_selector_and_palette_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("ice_total")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is False
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "in"
+    assert var_spec.selectors.search == [":ICETK:surface:"]
+    assert var_spec.selectors.filter_by_keys == {
+        "shortName": "icetk",
+        "typeOfLevel": "surface",
+    }
+
+    color_map = get_color_map_spec("ice_total")
+    assert color_map is not None
+    assert color_map["type"] == "discrete"
+    assert color_map["units"] == "in"
+    assert color_map["range"] == (0.0, 2.0)
+    assert color_map["levels"] == [
+        0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
+        0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.25, 1.50, 2.00,
+    ]
+    assert color_map["colors"] == [
+        "#fef7f3", "#fdebe8", "#fce0dd", "#fbd2ce", "#fac5c0", "#f9b2ba",
+        "#f89eb5", "#f783ab", "#f666a1", "#ea4d9c", "#dc3397", "#c4188a",
+        "#ad007e", "#93007a", "#790077", "#600070", "#49006a",
+    ]
+    assert color_map["legend_entries"][0] == {
+        "value": 0.05,
+        "color": "#fef7f3",
+        "label": "0.05-0.10",
+    }
+    assert color_map["legend_entries"][-1] == {
+        "value": 1.5,
+        "color": "#49006a",
+        "label": "1.50-2",
+    }
 
 
 def test_gfs_snowfall_total_search_patterns_include_upstream_fallback() -> None:

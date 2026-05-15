@@ -377,6 +377,30 @@ snow_levels = [
 SNOWFALL_TOTAL_COLOR_ANCHORS = list(zip(snow_levels, snow_colors))
 SNOWFALL_TOTAL_RANGE = (0.0, 48.0)
 
+ICE_TOTAL_LEVELS = [
+    0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
+    0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.25, 1.50, 2.00,
+]
+ICE_TOTAL_COLORS = [
+    "#fef7f3", "#fdebe8", "#fce0dd", "#fbd2ce", "#fac5c0", "#f9b2ba",
+    "#f89eb5", "#f783ab", "#f666a1", "#ea4d9c", "#dc3397", "#c4188a",
+    "#ad007e", "#93007a", "#790077", "#600070", "#49006a",
+]
+ICE_TOTAL_LEGEND_STOPS = list(zip(ICE_TOTAL_LEVELS[:-1], ICE_TOTAL_COLORS))
+ICE_TOTAL_LEGEND_LABELS = [
+    "0.05-0.10", "0.10-0.15", "0.15-0.20", "0.20-0.25", "0.25-0.30", "0.30-0.35",
+    "0.35-0.40", "0.40-0.45", "0.45-0.50", "0.50-0.60", "0.60-0.70", "0.70-0.80",
+    "0.80-0.90", "0.90-1", "1-1.25", "1.25-1.50", "1.50-2",
+]
+ICE_TOTAL_LEGEND_ENTRIES = [
+    {
+        "value": float(ICE_TOTAL_LEVELS[index]),
+        "color": color,
+        "label": ICE_TOTAL_LEGEND_LABELS[index],
+    }
+    for index, color in enumerate(ICE_TOTAL_COLORS)
+]
+
 # 10m wind speed (mph) continuous palette anchors
 WSPD10M_COLOR_ANCHORS = [
     (0, "#ffffff"), (4, "#e1e1e1"), (6, "#d1d1d1"), (8, "#b3b3b3"),
@@ -694,6 +718,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Total Snowfall (in)",
         "allow_dry_frame": True,
         "transparent_below_min": 0.1,
+    },
+    "ice_total": {
+        "type": "discrete",
+        "units": "in",
+        "range": (0.0, 2.0),
+        "levels": ICE_TOTAL_LEVELS,
+        "colors": ICE_TOTAL_COLORS,
+        "display_name": "Total Ice",
+        "legend_title": "Total Ice (in)",
+        "legend_stops": ICE_TOTAL_LEGEND_STOPS,
+        "legend_entries": ICE_TOTAL_LEGEND_ENTRIES,
+        "allow_dry_frame": True,
+        "transparent_below_min": True,
     },
     "tmp2m": {
         "type": "continuous",

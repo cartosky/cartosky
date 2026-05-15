@@ -157,6 +157,18 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Still inherits upstream QPF errors and boundary-layer issues, so treat it as guidance rather than observed depth.",
     ],
   },
+  ice_total: {
+    definition: "Accumulated ice accretion guidance from the model surface ice-thickness field.",
+    bestFor: [
+      "Freezing-rain accretion placement and magnitude awareness",
+      "Comparing ice-risk corridors against precipitation type and surface temperature",
+      "Winter-storm impact screening where glaze accumulation is possible",
+    ],
+    interpretation: [
+      "Pair it with precipitation type, surface temperature, and QPF to evaluate marginal freezing-rain zones.",
+      "Small spatial shifts matter, so compare runs and nearby guidance before treating the axis as fixed.",
+    ],
+  },
   wspd10m: {
     definition: "Sustained wind speed at 10 meters above ground, used for gradient wind and near-surface flow context.",
     bestFor: [
@@ -309,6 +321,7 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   snow10to1: "PRECIPITATION",
   snowfall_kuchera_total: "PRECIPITATION",
   snowkuchera: "PRECIPITATION",
+  ice_total: "PRECIPITATION",
   ptype_intensity: "PRECIPITATION",
   radar_ptype: "PRECIPITATION",
   precip_5d_anom: "PRECIP ANOMALIES",

@@ -136,6 +136,9 @@ class GFSPlugin(BaseModelPlugin):
             "snow10": "snowfall_total",
             "total_snow": "snowfall_total",
             "totalsnow": "snowfall_total",
+            "ice_total": "ice_total",
+            "total_ice": "ice_total",
+            "icetk": "ice_total",
             "crain": "crain",
             "csnow": "csnow",
             "cicep": "cicep",
@@ -922,6 +925,24 @@ GFS_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
+    "ice_total": VarSpec(
+        id="ice_total",
+        name="Total Ice",
+        selectors=VarSelectors(
+            search=[":ICETK:surface:"],
+            filter_by_keys={
+                "shortName": "icetk",
+                "typeOfLevel": "surface",
+            },
+            hints={
+                "upstream_var": "icetk",
+                "short_name": "icetk",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="in",
+    ),
     "qpf6h": VarSpec(
         id="qpf6h",
         name="6-hr Precip",
@@ -1015,6 +1036,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "precip_15d_anom": "precip_anom",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
+    "ice_total": "ice_total",
     "qpf6h": "qpf6h",
 }
 
@@ -1030,6 +1052,7 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_15d_anom": 360,
     "snowfall_total": 6,
     "snowfall_kuchera_total": 6,
+    "ice_total": 6,
     "qpf6h": 6,
 }
 
@@ -1053,6 +1076,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "precip_10d_anom": 10.3,
     "precip_15d_anom": 10.4,
     "snowfall_total": 11,
+    "ice_total": 11.5,
     "wspd10m": 12,
     "wgst10m": 13,
     "ptype_intensity": 15,
@@ -1082,6 +1106,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "precip_15d_anom": "Anomalies",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
+    "ice_total": "Precipitation",
     "qpf6h": "Precipitation",
     "ptype_intensity": "Radar & Precipitation Type",
     "wspd10m": "Wind",
@@ -1100,6 +1125,7 @@ GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
     "precip_total": "kgm2_to_in",
+    "ice_total": "m_to_in",
     "qpf6h": "kgm2_to_in",
 }
 
@@ -1111,6 +1137,9 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 3,
     },
     "snowfall_kuchera_total": {
+        "min_fh": 3,
+    },
+    "ice_total": {
         "min_fh": 3,
     },
     "qpf6h": {
