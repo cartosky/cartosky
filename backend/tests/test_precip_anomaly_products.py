@@ -160,6 +160,30 @@ def test_precip_anomaly_target_lead_constraints_and_unsupported_model_gating() -
             assert unsupported_model.get_var_capability(var_key) is None
 
 
+def test_precip_anomaly_colormap_and_legend_steps() -> None:
+    from app.services.colormaps import get_color_map_spec
+
+    expected_top_down_steps = [
+        (4.0, "#35a3b8"),
+        (3.0, "#2a8a8a"),
+        (2.0, "#33ad42"),
+        (1.0, "#41d700"),
+        (0.0, "#ffffff"),
+        (-1.0, "#ffffff"),
+        (-2.0, "#c17922"),
+        (-3.0, "#975025"),
+        (-4.0, "#923a1d"),
+    ]
+    expected_ascending_steps = list(reversed(expected_top_down_steps))
+
+    spec = get_color_map_spec("precip_anom")
+
+    assert spec["range"] == (-4.0, 4.0)
+    assert list(zip(spec["levels"], spec["colors"])) == expected_ascending_steps
+    assert spec["legend_stops"] == expected_ascending_steps
+    assert list(reversed(spec["legend_stops"])) == expected_top_down_steps
+
+
 def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
     pytest.importorskip("brotli")
 
