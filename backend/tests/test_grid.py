@@ -1627,6 +1627,85 @@ async def test_grid_manifest_endpoint_returns_urls_and_server_timing(client: htt
     assert frame["url"].startswith("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin?v=20260330_12z-tmp2m-")
 
 
+async def test_grid_manifest_endpoint_filters_missing_or_invalid_frames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+    model = "hrrr"
+    run_id = "20260330_12z"
+    var = "tmp2m"
+    var_dir = published_root / model / run_id / var
+    var_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    valid_frame = np.array([[1320, 1405], [65535, 877]], dtype="<u2")
+    (artifacts_dir / "fh000.l0.u16.bin").write_bytes(valid_frame.tobytes(order="C"))
+    (artifacts_dir / "fh002.l0.u16.bin").write_bytes(b"bad")
+    (artifacts_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "subtype": "grid",
+                "model": model,
+                "run": run_id,
+                "var": var,
+                "projection": "EPSG:3857",
+                "bbox": [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+                "grid": {
+                    "width": 2,
+                    "height": 2,
+                    "dtype": "uint16",
+                    "endianness": "little",
+                    "scale": 0.1,
+                    "offset": -100.0,
+                    "nodata": 65535,
+                    "units": "F",
+                },
+                "palette": {"color_map_id": "tmp2m"},
+                "lods": [
+                    {
+                        "level": 0,
+                        "width": 2,
+                        "height": 2,
+                        "frames": [
+                            {"fh": 0, "file": "fh000.l0.u16.bin"},
+                            {"fh": 1, "file": "fh001.l0.u16.bin"},
+                            {"fh": 2, "file": "fh002.l0.u16.bin"},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    write_manifest = manifests_root / model
+    write_manifest.mkdir(parents=True, exist_ok=True)
+    (write_manifest / f"{run_id}.json").write_text(
+        json.dumps({"variables": {var: {"expected_frames": 3, "available_frames": 3, "frames": [{"fh": 0}]}}})
+    )
+    (published_root / model / "LATEST.json").parent.mkdir(parents=True, exist_ok=True)
+    (published_root / model / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    main_module._manifest_cache.clear()
+    main_module._sidecar_cache.clear()
+    main_module._grid_manifest_cache.clear()
+
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        response = await test_client.get("/api/v4/hrrr/20260330_12z/tmp2m/grid-manifest")
+
+    assert response.status_code == 200
+    frames = response.json()["lods"][0]["frames"]
+    assert [frame["fh"] for frame in frames] == [0]
+    assert frames[0]["url"].startswith("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
+
+
 async def test_grid_frame_endpoint_serves_binary_payload(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/grid/hrrr/20260330_12z/tmp2m/fh000.l0.u16.bin")
 

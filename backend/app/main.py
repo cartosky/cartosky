@@ -2808,6 +2808,30 @@ def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_tok
     )
 
 
+def _grid_manifest_frame_file_is_valid(
+    *,
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    width: int,
+    height: int,
+    dtype: str,
+    region: str | None = None,
+) -> bool:
+    safe_filename = Path(filename).name
+    if not safe_filename or width <= 0 or height <= 0:
+        return False
+    candidate = grid_frame_path(DATA_ROOT, model, run, var, 0, region=region).parent / safe_filename
+    if not candidate.is_file():
+        return False
+    expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
+    try:
+        return candidate.stat().st_size == expected_size_bytes
+    except OSError:
+        return False
+
+
 def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, region: str | None = None) -> Path | None:
     del fh
     del region
@@ -3815,6 +3839,8 @@ def get_grid_manifest(
     canonical_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
     payload["var"] = canonical_var
     lods = payload.get("lods")
+    grid_meta = payload.get("grid")
+    grid_dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
     if isinstance(lods, list):
         next_lods: list[dict[str, Any]] = []
         for lod in lods:
@@ -3831,6 +3857,19 @@ def get_grid_manifest(
                     fh = frame.get("fh")
                     if not filename or not isinstance(fh, int):
                         continue
+                    frame_width = int(lod.get("width") or 0)
+                    frame_height = int(lod.get("height") or 0)
+                    if not _grid_manifest_frame_file_is_valid(
+                        model=model,
+                        run=resolved,
+                        var=runtime_var,
+                        filename=filename,
+                        width=frame_width,
+                        height=frame_height,
+                        dtype=grid_dtype,
+                        region=region,
+                    ):
+                        continue
                     next_frame = dict(frame)
                     next_frame["url"] = _grid_file_url(
                         model,
@@ -3842,6 +3881,8 @@ def get_grid_manifest(
                     )
                     next_frames.append(next_frame)
             next_frames.sort(key=lambda item: int(item.get("fh", 0)))
+            if not next_frames:
+                continue
             next_lod["frames"] = next_frames
             next_lods.append(next_lod)
         payload["lods"] = next_lods
@@ -3853,6 +3894,8 @@ def get_grid_manifest(
                 next_contours[contour_key] = contour_meta
                 continue
             next_meta = dict(contour_meta)
+            contour_grid = contour_meta.get("grid")
+            contour_dtype = str(contour_grid.get("dtype") or "uint16") if isinstance(contour_grid, dict) else "uint16"
             contour_lods = contour_meta.get("lods")
             if isinstance(contour_lods, list):
                 next_contour_lods: list[dict[str, Any]] = []
@@ -3870,6 +3913,19 @@ def get_grid_manifest(
                             fh = frame.get("fh")
                             if not filename or not isinstance(fh, int):
                                 continue
+                            frame_width = int(lod.get("width") or 0)
+                            frame_height = int(lod.get("height") or 0)
+                            if not _grid_manifest_frame_file_is_valid(
+                                model=model,
+                                run=resolved,
+                                var=runtime_var,
+                                filename=filename,
+                                width=frame_width,
+                                height=frame_height,
+                                dtype=contour_dtype,
+                                region=region,
+                            ):
+                                continue
                             next_frame = dict(frame)
                             next_frame["url"] = _grid_file_url(
                                 model,
@@ -3881,6 +3937,8 @@ def get_grid_manifest(
                             )
                             next_frames.append(next_frame)
                     next_frames.sort(key=lambda item: int(item.get("fh", 0)))
+                    if not next_frames:
+                        continue
                     next_lod["frames"] = next_frames
                     next_contour_lods.append(next_lod)
                 next_meta["lods"] = next_contour_lods
