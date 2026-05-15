@@ -229,9 +229,9 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["kind"] == "continuous"
     assert pwat["units"] == "in"
     assert pwat["display_name"] == "Precipitable Water"
-    assert pwat["group"] == "Moisture"
+    assert pwat["group"] == "Precipitation"
     assert pwat["color_map_id"] == "pwat"
-    assert pwat["order"] == 9
+    assert pwat["order"] == 18
     assert pwat["display_resampling_override"] is None
 
     wgst10m = payload["variables"]["wgst10m"]
@@ -271,14 +271,15 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
 
     ice_total = payload["variables"]["ice_total"]
     assert ice_total["buildable"] is True
-    assert ice_total["derived"] is False
+    assert ice_total["derived"] is True
+    assert ice_total["derive_strategy_id"] == "ptype_accumulation_cumulative"
     assert ice_total["units"] == "in"
     assert ice_total["constraints"]["min_fh"] == 3
     assert ice_total["default_fh"] == 6
     assert ice_total["display_name"] == "Total Ice"
     assert ice_total["group"] == "Precipitation"
     assert ice_total["color_map_id"] == "ice_total"
-    assert ice_total["order"] == 11.5
+    assert ice_total["order"] == 17.5
 
     qpf6h = payload["variables"]["qpf6h"]
     assert qpf6h["buildable"] is False
@@ -520,21 +521,22 @@ def test_gfs_dewpoint_and_snow_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("snow10") == "snowfall_total"
     assert GFS_MODEL.normalize_var_id("ice_total") == "ice_total"
     assert GFS_MODEL.normalize_var_id("total_ice") == "ice_total"
-    assert GFS_MODEL.normalize_var_id("icetk") == "ice_total"
 
 
 def test_gfs_ice_total_selector_and_palette_invariants() -> None:
     var_spec = GFS_MODEL.get_var("ice_total")
     assert var_spec is not None
     assert var_spec.primary is True
-    assert var_spec.derived is False
+    assert var_spec.derived is True
+    assert var_spec.derive == "ptype_accumulation_cumulative"
     assert var_spec.kind == "continuous"
     assert var_spec.units == "in"
-    assert var_spec.selectors.search == [":ICETK:surface:"]
-    assert var_spec.selectors.filter_by_keys == {
-        "shortName": "icetk",
-        "typeOfLevel": "surface",
-    }
+    assert var_spec.selectors.search == []
+    assert var_spec.selectors.hints["apcp_component"] == "apcp_step"
+    assert var_spec.selectors.hints["ptype_component"] == "cfrzr"
+    assert var_spec.selectors.hints["step_transition_fh"] == "240"
+    assert var_spec.selectors.hints["ptype_interval_sample_mode"] == "three_point"
+    assert var_spec.selectors.hints["ptype_mask_threshold"] == "0.5"
 
     color_map = get_color_map_spec("ice_total")
     assert color_map is not None

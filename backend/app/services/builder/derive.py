@@ -46,6 +46,7 @@ _EARTH_RADIUS_M = np.float64(6_371_000.0)
 _EARTH_ANGULAR_VELOCITY_RAD_S = np.float64(7.2921159e-5)
 _MIN_COS_LAT = np.float64(1.0e-6)
 _MISSING_CSNOW_SAMPLE_LOG_COUNT = 0
+_MISSING_PTYPE_SAMPLE_LOG_COUNT = 0
 _KUCHERA_PTYPE_GATE_WARN_INTERVAL_SECONDS = 60.0
 _KUCHERA_PTYPE_GATE_LAST_WARN_TS = 0.0
 _KUCHERA_PTYPE_GATE_WARN_LOCK = threading.Lock()
@@ -3540,6 +3541,31 @@ def _log_missing_csnow_sample(
         )
 
 
+def _log_missing_ptype_sample(
+    *,
+    model_id: str,
+    var_key: str,
+    component: str,
+    step_fh: int,
+    sample_fh: int,
+    exc: Exception,
+) -> None:
+    global _MISSING_PTYPE_SAMPLE_LOG_COUNT
+    _MISSING_PTYPE_SAMPLE_LOG_COUNT += 1
+    count = _MISSING_PTYPE_SAMPLE_LOG_COUNT
+    if count <= 5 or count % 25 == 0:
+        logger.debug(
+            "Skipping unavailable ptype sample for %s/%s component=%s at step fh%03d sample fh%03d (%s); missing_count=%d",
+            model_id,
+            var_key,
+            component,
+            step_fh,
+            sample_fh,
+            exc.__class__.__name__,
+            count,
+        )
+
+
 def _neighbor_count_3x3(mask: np.ndarray) -> np.ndarray:
     """Return count of True values in each 3x3 neighborhood (including center)."""
     padded = np.pad(mask.astype(np.uint8, copy=False), 1, mode="constant", constant_values=0)
@@ -5701,6 +5727,332 @@ def _derive_snowfall_kuchera_total_cumulative(
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _derive_ptype_accumulation_cumulative(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_capability
+    frame_start = time.perf_counter()
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    apcp_component = str(hints.get("apcp_component", "apcp_step"))
+    ptype_component = str(hints.get("ptype_component", "cfrzr"))
+    sample_mode = str(hints.get("ptype_interval_sample_mode", "auto")).strip().lower() or "auto"
+    threshold_raw = hints.get("ptype_mask_threshold", "0.5")
+    min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
+
+    try:
+        ptype_threshold = min(max(float(threshold_raw), 0.0), 1.0)
+    except (TypeError, ValueError):
+        ptype_threshold = 0.5
+    try:
+        min_step_lwe = max(float(min_step_lwe_raw), 0.0)
+    except (TypeError, ValueError):
+        min_step_lwe = 0.01
+
+    use_inventory_resolution = (
+        str(model_id).strip().lower() in {"gfs", "nam"}
+        and str(apcp_component).strip() == "apcp_step"
+    )
+    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    cadence_sample_fhs: set[int] | None = None
+    if str(model_id).strip().lower() == "gfs" and sample_mode == "three_point":
+        cadence_sample_fhs = {0, *[int(step_fh) for step_fh in step_fhs]}
+
+    interval_plan: dict[int, tuple[int, list[int]]] = {}
+    ptype_sample_fhs: list[int] = []
+    prev_step_fh = 0
+    for step_fh in step_fhs:
+        step_len = int(step_fh) - int(prev_step_fh)
+        prev_step_fh = int(step_fh)
+        if step_len <= 0:
+            raise ValueError(
+                f"Non-increasing cumulative ptype step sequence for {model_id}/{var_key}: "
+                f"step_len={step_len} at fh{step_fh:03d}"
+            )
+        sample_fhs = _filter_sample_fhs_to_available_steps(
+            _interval_sample_fhs(int(step_fh), step_len, sample_mode=sample_mode),
+            available_fhs=cadence_sample_fhs,
+        )
+        interval_plan[int(step_fh)] = (step_len, sample_fhs)
+        for sample_fh in sample_fhs:
+            if sample_fh not in ptype_sample_fhs:
+                ptype_sample_fhs.append(sample_fh)
+
+    logger.info(
+        "derive %s fh%03d apcp_steps=%d ptype_samples=%d component=%s%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        len(ptype_sample_fhs),
+        ptype_component,
+        _cadence_hint_suffix(hints),
+    )
+    logger.debug("derive %s fh%03d apcp_steps=%s ptype_samples=%s", var_key, fh, step_fhs, ptype_sample_fhs)
+
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid, derive_component_resampling, model_id,
+    )
+    cumulative_cache_grid_key = _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        cache_version=cache_version,
+    )
+
+    active_step_fhs = list(step_fhs)
+    reused_prev_cumulative = False
+    base_fh: int | None = None
+    base_cumulative_kgm2: np.ndarray | None = None
+    base_crs: rasterio.crs.CRS | None = None
+    base_transform: rasterio.transform.Affine | None = None
+    first_step_expected_start_fh: int | None = None
+    initial_apcp_cumulative: tuple[
+        np.ndarray,
+        np.ndarray,
+        rasterio.crs.CRS,
+        rasterio.transform.Affine,
+        int,
+    ] | None = None
+
+    if len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior_ptype = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+            scale_divisor=0.03937007874015748,
+        )
+        prior_precip = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key="precip_total",
+            fh=prev_fh,
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+            scale_divisor=0.03937007874015748,
+        )
+        if prior_ptype is not None and prior_precip is not None:
+            prior_ptype_data, prior_ptype_crs, prior_ptype_transform, _ = prior_ptype
+            prior_precip_data, prior_precip_crs, prior_precip_transform, _ = prior_precip
+            same_shape = prior_ptype_data.shape == prior_precip_data.shape
+            same_crs = prior_ptype_crs == prior_precip_crs
+            same_transform = prior_ptype_transform == prior_precip_transform
+            if same_shape and same_crs and same_transform:
+                active_step_fhs = [int(step_fhs[-1])]
+                reused_prev_cumulative = True
+                base_fh = prev_fh
+                base_cumulative_kgm2 = prior_ptype_data.astype(np.float32, copy=False)
+                base_crs = prior_ptype_crs
+                base_transform = prior_ptype_transform
+                first_step_expected_start_fh = prev_fh
+                initial_apcp_cumulative = (
+                    prior_precip_data.astype(np.float32, copy=False),
+                    np.isfinite(prior_precip_data),
+                    prior_precip_crs,
+                    prior_precip_transform,
+                    prev_fh,
+                )
+
+    active_sample_fhs: list[int] = []
+    for active_step_fh in active_step_fhs:
+        for sample_fh in interval_plan[int(active_step_fh)][1]:
+            if sample_fh not in active_sample_fhs:
+                active_sample_fhs.append(sample_fh)
+
+    _prefetch_components_parallel(
+        [
+            _PrefetchTask(
+                model_id=model_id, product=product, run_date=run_date,
+                fh=sample_fh, model_plugin=model_plugin, var_key=ptype_component,
+                warped=use_warped, target_region=target_region,
+                target_grid_id=target_grid_id, resampling=resampling,
+            )
+            for sample_fh in active_sample_fhs
+        ],
+        ctx,
+        label=f"{var_key} fh{fh:03d}",
+    )
+
+    def _process_step(
+        step_fh: int,
+        step_data: np.ndarray,
+        apcp_valid_hint: np.ndarray | None,
+        step_crs: rasterio.crs.CRS,
+        step_transform: rasterio.transform.Affine,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if apcp_valid_hint is None:
+            apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
+        else:
+            apcp_valid = np.asarray(apcp_valid_hint, dtype=bool)
+        step_apcp_clean = np.where(apcp_valid, step_data, 0.0).astype(np.float32, copy=False)
+        if min_step_lwe > 0.0:
+            step_apcp_clean = np.where(step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0).astype(np.float32, copy=False)
+
+        _step_len, sample_fhs = interval_plan[int(step_fh)]
+        sample_masks: list[np.ndarray] = []
+        for sample_fh in sample_fhs:
+            try:
+                ptype_mask, _, _ = _fetch_step_component(
+                    model_id=model_id, product=product, run_date=run_date,
+                    step_fh=sample_fh, model_plugin=model_plugin,
+                    var_key=ptype_component,
+                    use_warped=use_warped, target_region=target_region,
+                    target_grid_id=target_grid_id, resampling=resampling,
+                    ctx=ctx,
+                )
+            except (HerbieTransientUnavailableError, RuntimeError, ValueError) as exc:
+                _log_missing_ptype_sample(
+                    model_id=model_id, var_key=var_key, component=ptype_component,
+                    step_fh=int(step_fh), sample_fh=int(sample_fh), exc=exc,
+                )
+                continue
+            if ptype_mask.shape != step_apcp_clean.shape:
+                raise ValueError(
+                    f"Ptype mask shape mismatch for {model_id}/{var_key} component={ptype_component} "
+                    f"at fh{sample_fh:03d}: {ptype_mask.shape} != {step_apcp_clean.shape}"
+                )
+            ptype_valid = np.isfinite(ptype_mask) & (ptype_mask >= 0.0) & (ptype_mask <= 1.0)
+            sample_masks.append(np.where(ptype_valid, ptype_mask, np.nan).astype(np.float32, copy=False))
+
+        if sample_masks:
+            sample_stack = np.stack(sample_masks, axis=0).astype(np.float32, copy=False)
+            sample_valid_counts = np.sum(np.isfinite(sample_stack), axis=0).astype(np.int32, copy=False)
+            sample_sum = np.nansum(sample_stack, axis=0).astype(np.float32, copy=False)
+            interval_mask = np.zeros(step_apcp_clean.shape, dtype=np.float32)
+            np.divide(
+                sample_sum,
+                sample_valid_counts.astype(np.float32, copy=False),
+                out=interval_mask,
+                where=sample_valid_counts > 0,
+            )
+            interval_mask = np.where(
+                interval_mask >= np.float32(ptype_threshold),
+                np.float32(1.0),
+                np.float32(0.0),
+            ).astype(np.float32, copy=False)
+            ptype_valid = sample_valid_counts > 0
+        else:
+            interval_mask = np.zeros(step_apcp_clean.shape, dtype=np.float32)
+            ptype_valid = np.zeros(step_apcp_clean.shape, dtype=bool)
+
+        step_ptype_kgm2 = (step_apcp_clean * interval_mask).astype(np.float32, copy=False)
+        step_valid = apcp_valid & ptype_valid
+        return step_ptype_kgm2, step_valid
+
+    try:
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative ptype accumulation source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            first_step_expected_start_fh=first_step_expected_start_fh,
+            initial_apcp_cumulative=initial_apcp_cumulative,
+        )
+    except ValueError as exc:
+        if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
+            raise
+        logger.warning(
+            "%s incremental APCP state unusable at fh=%03d; retrying full rebuild reason=\"%s\"",
+            var_key,
+            fh,
+            str(exc).replace('"', "'"),
+        )
+        active_step_fhs = list(step_fhs)
+        reused_prev_cumulative = False
+        base_fh = None
+        base_cumulative_kgm2 = None
+        base_crs = None
+        base_transform = None
+        cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
+            model_id=model_id,
+            var_key=var_key,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            step_fhs=active_step_fhs,
+            model_plugin=model_plugin,
+            ctx=ctx,
+            apcp_component=apcp_component,
+            apcp_product=None,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            use_inventory_resolution=use_inventory_resolution,
+            process_step=_process_step,
+            error_label=f"No cumulative ptype accumulation source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+        )
+
+    if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
+        shape_match = base_cumulative_kgm2.shape == cumulative_kgm2.shape
+        crs_match = base_crs == src_crs
+        transform_match = base_transform == src_transform
+        if not (shape_match and crs_match and transform_match):
+            raise ValueError(
+                f"Ptype accumulation incremental base-grid mismatch for {model_id}/{var_key} fh{fh:03d}: "
+                f"shape_match={shape_match} crs_match={crs_match} transform_match={transform_match}"
+            )
+        base_valid = np.isfinite(base_cumulative_kgm2)
+        base_clean = np.where(base_valid, base_cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+        current_valid = np.isfinite(cumulative_kgm2)
+        current_clean = np.where(current_valid, cumulative_kgm2, 0.0).astype(np.float32, copy=False)
+        cumulative_kgm2 = (base_clean + current_clean).astype(np.float32, copy=False)
+        cumulative_kgm2 = np.where(base_valid | current_valid, cumulative_kgm2, np.nan).astype(np.float32, copy=False)
+
+    _kuchera_store_cumulative_cache(
+        model_id=model_id,
+        run_date=run_date,
+        var_key=var_key,
+        fh=fh,
+        data=cumulative_kgm2,
+        crs=src_crs,
+        transform=src_transform,
+        ctx=ctx,
+        grid_cache_key=cumulative_cache_grid_key,
+    )
+    logger.info(
+        "%s incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
+        "base_fh=%s compute_ms=%d",
+        var_key,
+        model_id,
+        _run_id_from_date(run_date),
+        fh,
+        len(step_fhs),
+        len(active_step_fhs),
+        "true" if reused_prev_cumulative else "false",
+        f"{base_fh:03d}" if base_fh is not None else "none",
+        int((time.perf_counter() - frame_start) * 1000),
+    )
+    return (cumulative_kgm2 * 0.03937007874015748).astype(np.float32, copy=False), src_crs, src_transform
+
+
 DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
     "wspd10m": DeriveStrategy(
         id="wspd10m",
@@ -5761,6 +6113,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("apcp_step", "tmp850", "tmp700"),
         output_var_key="snowfall_kuchera_total",
         execute=_derive_snowfall_kuchera_total_cumulative,
+    ),
+    "ptype_accumulation_cumulative": DeriveStrategy(
+        id="ptype_accumulation_cumulative",
+        required_inputs=("apcp_step",),
+        output_var_key=None,
+        execute=_derive_ptype_accumulation_cumulative,
     ),
     "anomaly_departure": DeriveStrategy(
         id="anomaly_departure",

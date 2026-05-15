@@ -158,7 +158,7 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
     ],
   },
   ice_total: {
-    definition: "Accumulated ice accretion guidance from the model surface ice-thickness field.",
+    definition: "Accumulated freezing-rain liquid equivalent derived from precipitation steps gated by the model freezing-rain precipitation type.",
     bestFor: [
       "Freezing-rain accretion placement and magnitude awareness",
       "Comparing ice-risk corridors against precipitation type and surface temperature",
