@@ -267,8 +267,11 @@ def test_precip_anomaly_colormap_and_legend_steps() -> None:
         (3.0, "#2a8a8a"),
         (2.0, "#33ad42"),
         (1.0, "#41d700"),
-        (0.0, "#ffffff"),
-        (-1.0, "#ffffff"),
+        (0.5, "#a8ed8f"),
+        (0.1, "#e6f7d6"),
+        (-0.1, "#ffffff"),
+        (-0.5, "#fff26a"),
+        (-1.0, "#e6b428"),
         (-2.0, "#c17922"),
         (-3.0, "#975025"),
         (-4.0, "#923a1d"),
@@ -281,6 +284,10 @@ def test_precip_anomaly_colormap_and_legend_steps() -> None:
     assert list(zip(spec["levels"], spec["colors"])) == expected_ascending_steps
     assert spec["legend_stops"] == expected_ascending_steps
     assert list(reversed(spec["legend_stops"])) == expected_top_down_steps
+
+    color_by_level = dict(spec["legend_stops"])
+    assert color_by_level[-0.5] == "#fff26a"
+    assert color_by_level[0.5] == "#a8ed8f"
 
 
 def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
