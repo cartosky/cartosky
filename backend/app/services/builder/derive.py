@@ -32,6 +32,7 @@ from app.services.climatology import (
     DEFAULT_BASELINE_SOURCE,
     get_baseline_grid_params,
     get_baseline_target_grid,
+    load_accumulation_climatology_baseline,
     load_climatology_baseline,
     normalize_baseline_source,
 )
@@ -770,6 +771,141 @@ def _derive_anomaly_departure(
         sidecar_metadata={
             "anomaly_kind": "departure",
             "baseline_region": baseline_region,
+            **baseline_meta,
+        },
+    )
+    return anomaly, baseline_crs, baseline_transform
+
+
+def _derive_precip_accum_anomaly_departure(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
+    base_component = str(hints.get("base_component") or "precip_total").strip() or "precip_total"
+    baseline_field = str(hints.get("baseline_field") or var_key.removesuffix("_anom")).strip().lower()
+    baseline_source = normalize_baseline_source(
+        str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
+        or DEFAULT_BASELINE_SOURCE
+    )
+    baseline_region = str(hints.get("baseline_region") or "").strip().lower()
+    baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
+    reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
+    target_fh_raw = str(hints.get("target_fh") or "").strip()
+    try:
+        target_fh = int(target_fh_raw) if target_fh_raw else int(fh)
+    except ValueError:
+        target_fh = int(fh)
+
+    if not baseline_region:
+        baseline_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
+    if not baseline_region:
+        baseline_region = _canonical_region_for_plugin(model_plugin)
+    baseline_target_grid = get_baseline_target_grid(
+        baseline_source=baseline_source,
+        region=baseline_region,
+    )
+    target_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower() or baseline_region
+    target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+    if not target_grid_id:
+        target_grid_id = str(baseline_target_grid.get("id", "")).strip() or f"{model_id}:{target_region}"
+    resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
+
+    normalized_base_component = model_plugin.normalize_var_id(base_component)
+    base_spec = model_plugin.get_var(normalized_base_component)
+    base_capability = model_plugin.get_var_capability(normalized_base_component)
+    if base_spec is None and base_capability is None:
+        raise ValueError(f"Precip anomaly base component not found: {normalized_base_component!r}")
+
+    base_is_derived = bool(
+        getattr(base_spec, "derived", False)
+        or getattr(base_capability, "derived", False)
+        or getattr(base_spec, "derive", None)
+        or getattr(base_capability, "derive_strategy_id", None)
+    )
+    if base_is_derived:
+        if base_spec is None:
+            base_spec = base_capability.to_var_spec()
+        forecast_values, src_crs, src_transform = derive_variable(
+            model_id=model_id,
+            var_key=normalized_base_component,
+            product=product,
+            run_date=run_date,
+            fh=target_fh,
+            var_spec_model=base_spec,
+            var_capability=base_capability,
+            model_plugin=model_plugin,
+            fetch_ctx=ctx,
+            derive_component_target_grid={"region": target_region, "id": target_grid_id},
+            derive_component_resampling=resampling,
+        )
+        forecast_values = forecast_values.astype(np.float32, copy=False)
+    else:
+        forecast_raw, src_crs, src_transform = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=target_fh,
+            model_plugin=model_plugin,
+            var_key=normalized_base_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+        forecast_values = convert_units(
+            forecast_raw,
+            normalized_base_component,
+            model_id=model_id,
+            var_capability=base_capability,
+        ).astype(np.float32, copy=False)
+
+    init_date = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    baseline_values, baseline_crs, baseline_transform, baseline_meta = load_accumulation_climatology_baseline(
+        version=baseline_version,
+        baseline_source=baseline_source,
+        field=baseline_field,
+        reference_date=init_date,
+        region=baseline_region,
+        reference_period=reference_period,
+    )
+    if forecast_values.shape != baseline_values.shape:
+        raise ValueError(
+            f"Precip anomaly baseline shape mismatch: forecast={forecast_values.shape} baseline={baseline_values.shape}"
+        )
+    if src_crs != baseline_crs:
+        raise ValueError(
+            f"Precip anomaly baseline CRS mismatch: forecast={src_crs} baseline={baseline_crs}"
+        )
+    if any(
+        abs(float(actual) - float(expected)) > 1.0e-6
+        for actual, expected in zip(src_transform[:6], baseline_transform[:6])
+    ):
+        raise ValueError(
+            f"Precip anomaly baseline transform mismatch: forecast={src_transform} baseline={baseline_transform}"
+        )
+
+    anomaly = (forecast_values - baseline_values).astype(np.float32, copy=False)
+    _record_derive_sidecar_metadata(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        sidecar_metadata={
+            "anomaly_kind": "accumulated_precip_departure",
+            "baseline_region": baseline_region,
+            "target_fh": target_fh,
+            "model_accumulation_units": "in",
             **baseline_meta,
         },
     )
@@ -5578,5 +5714,11 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=(),
         output_var_key=None,
         execute=_derive_anomaly_departure,
+    ),
+    "precip_accum_anomaly_departure": DeriveStrategy(
+        id="precip_accum_anomaly_departure",
+        required_inputs=("precip_total",),
+        output_var_key=None,
+        execute=_derive_precip_accum_anomaly_departure,
     ),
 }

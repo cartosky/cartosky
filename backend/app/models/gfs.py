@@ -125,6 +125,10 @@ class GFSPlugin(BaseModelPlugin):
             "apcp": "precip_total",
             "qpf": "precip_total",
             "total_qpf": "precip_total",
+            "precip_5d_anom": "precip_5d_anom",
+            "precip_7d_anom": "precip_7d_anom",
+            "precip_10d_anom": "precip_10d_anom",
+            "precip_15d_anom": "precip_15d_anom",
             "qpf6h": "qpf6h",
             "snowfall_total": "snowfall_total",
             "snowfall_kuchera_total": "snowfall_kuchera_total",
@@ -933,6 +937,46 @@ GFS_VARS: dict[str, VarSpec] = {
     ),
 }
 
+
+PRECIP_ANOM_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+    "precip_5d_anom": 120,
+    "precip_7d_anom": 168,
+    "precip_10d_anom": 240,
+    "precip_15d_anom": 360,
+}
+
+
+def _precip_anomaly_var_spec(var_key: str, days: int, target_fh: int, *, base_component: str = "precip_total") -> VarSpec:
+    return VarSpec(
+        id=var_key,
+        name=f"{days}-Day Precip Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": base_component,
+                "baseline_field": f"precip_{days}d",
+                "baseline_source": "era5",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+                "target_fh": str(target_fh),
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="precip_accum_anomaly_departure",
+        kind="continuous",
+        units="in",
+    )
+
+
+for _precip_anom_days, _precip_anom_fh in ((5, 120), (7, 168), (10, 240), (15, 360)):
+    _precip_anom_key = f"precip_{_precip_anom_days}d_anom"
+    GFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
+        _precip_anom_key,
+        _precip_anom_days,
+        _precip_anom_fh,
+    )
+
 GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "tmp2m_anom": "tmp2m_anom",
@@ -955,6 +999,10 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "ptype_intensity_snow": "ptype_intensity_snow",
     "ptype_intensity_ice": "ptype_intensity_ice",
     "precip_total": "precip_total",
+    "precip_5d_anom": "precip_anom",
+    "precip_7d_anom": "precip_anom",
+    "precip_10d_anom": "precip_anom",
+    "precip_15d_anom": "precip_anom",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
     "qpf6h": "qpf6h",
@@ -966,6 +1014,10 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "ptype_intensity_snow": 6,
     "ptype_intensity_ice": 6,
     "precip_total": 6,
+    "precip_5d_anom": 120,
+    "precip_7d_anom": 168,
+    "precip_10d_anom": 240,
+    "precip_15d_anom": 360,
     "snowfall_total": 6,
     "snowfall_kuchera_total": 6,
     "qpf6h": 6,
@@ -986,6 +1038,10 @@ GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "mucape": 8,
     "pwat": 9,
     "precip_total": 10,
+    "precip_5d_anom": 10.1,
+    "precip_7d_anom": 10.2,
+    "precip_10d_anom": 10.3,
+    "precip_15d_anom": 10.4,
     "snowfall_total": 11,
     "wspd10m": 12,
     "wgst10m": 13,
@@ -1010,6 +1066,10 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "mucape": "Instability",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
+    "precip_5d_anom": "Anomalies",
+    "precip_7d_anom": "Anomalies",
+    "precip_10d_anom": "Anomalies",
+    "precip_15d_anom": "Anomalies",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
     "qpf6h": "Precipitation",
@@ -1047,6 +1107,12 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 6,
     },
 }
+
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    GFS_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = {
+        "min_fh": _precip_anom_fh,
+        "max_fh": _precip_anom_fh,
+    }
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:

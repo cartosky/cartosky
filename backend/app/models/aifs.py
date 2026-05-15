@@ -24,6 +24,7 @@ from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
+from .gfs import PRECIP_ANOM_TARGET_FH_BY_VAR_KEY
 
 
 class AIFSPlugin(ECMWFPlugin):
@@ -85,6 +86,10 @@ AIFS_VARS = {
     "hgt500": ECMWF_VARS["hgt500"],
     "hgt500_anom": ECMWF_VARS["hgt500_anom"],
     "precip_total": ECMWF_VARS["precip_total"],
+    "precip_5d_anom": ECMWF_VARS["precip_5d_anom"],
+    "precip_7d_anom": ECMWF_VARS["precip_7d_anom"],
+    "precip_10d_anom": ECMWF_VARS["precip_10d_anom"],
+    "precip_15d_anom": ECMWF_VARS["precip_15d_anom"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
     "10u": ECMWF_VARS["10u"],
@@ -106,6 +111,16 @@ AIFS_VARIABLE_CATALOG["precip_total"] = replace(
     AIFS_VARIABLE_CATALOG["precip_total"],
     conversion="kgm2_to_in",
 )
+
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    if _precip_anom_key in AIFS_VARIABLE_CATALOG:
+        AIFS_VARIABLE_CATALOG[_precip_anom_key] = replace(
+            AIFS_VARIABLE_CATALOG[_precip_anom_key],
+            default_fh=_precip_anom_fh,
+            constraints={"min_fh": _precip_anom_fh, "max_fh": _precip_anom_fh},
+            group="Anomalies",
+            color_map_id="precip_anom",
+        )
 
 AIFS_VARIABLE_CATALOG["tmp2m_anom"] = replace(
     AIFS_VARIABLE_CATALOG["tmp2m_anom"],

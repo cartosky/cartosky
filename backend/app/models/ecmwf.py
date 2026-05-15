@@ -24,6 +24,7 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
+from .gfs import PRECIP_ANOM_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
 
 
 class ECMWFPlugin(BaseModelPlugin):
@@ -108,6 +109,10 @@ class ECMWFPlugin(BaseModelPlugin):
             "apcp": "precip_total",
             "qpf": "precip_total",
             "total_qpf": "precip_total",
+            "precip_5d_anom": "precip_5d_anom",
+            "precip_7d_anom": "precip_7d_anom",
+            "precip_10d_anom": "precip_10d_anom",
+            "precip_15d_anom": "precip_15d_anom",
             "snowfall_total": "snowfall_total",
             "asnow": "snowfall_total",
             "snow10": "snowfall_total",
@@ -915,6 +920,14 @@ ECMWF_VARS: dict[str, VarSpec] = {
     ),
 }
 
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
+    ECMWF_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
+        _precip_anom_key,
+        _days,
+        _precip_anom_fh,
+    )
+
 
 ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
@@ -927,6 +940,10 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "hgt500_anom": "hgt500_anom",
     "vort500": "vort500",
     "precip_total": "precip_total",
+    "precip_5d_anom": "precip_anom",
+    "precip_7d_anom": "precip_anom",
+    "precip_10d_anom": "precip_anom",
+    "precip_15d_anom": "precip_anom",
     "ptype_intensity": "ptype_intensity",
     "ptype_intensity_rain": "ptype_intensity_rain",
     "ptype_intensity_snow": "ptype_intensity_snow",
@@ -950,6 +967,10 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "hgt500_anom": 0,
     "vort500": 0,
     "precip_total": 3,
+    "precip_5d_anom": 120,
+    "precip_7d_anom": 168,
+    "precip_10d_anom": 240,
+    "precip_15d_anom": 360,
     "ptype_intensity": 6,
     "ptype_intensity_rain": 6,
     "ptype_intensity_snow": 6,
@@ -973,6 +994,10 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, float] = {
     "vort500": 5,
     "pwat": 9,
     "precip_total": 10,
+    "precip_5d_anom": 10.1,
+    "precip_7d_anom": 10.2,
+    "precip_10d_anom": 10.3,
+    "precip_15d_anom": 10.4,
     "snowfall_total": 11,
     "snowfall_kuchera_total": 14,
     "ptype_intensity": 15,
@@ -994,6 +1019,10 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "vort500": "Dynamics",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
+    "precip_5d_anom": "Anomalies",
+    "precip_7d_anom": "Anomalies",
+    "precip_10d_anom": "Anomalies",
+    "precip_15d_anom": "Anomalies",
     "ptype_intensity": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
@@ -1033,6 +1062,12 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
         "min_fh": 3,
     },
 }
+
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    ECMWF_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = {
+        "min_fh": _precip_anom_fh,
+        "max_fh": _precip_anom_fh,
+    }
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:

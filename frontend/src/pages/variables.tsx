@@ -288,7 +288,7 @@ type VariableSummary = {
   limitations: string[];
 };
 
-const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "SEVERE", "UPPER AIR", "OBSERVATIONS"] as const;
+const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "OBSERVATIONS"] as const;
 const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   tmp2m: "SURFACE",
   dp2m: "SURFACE",
@@ -311,6 +311,10 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   snowkuchera: "PRECIPITATION",
   ptype_intensity: "PRECIPITATION",
   radar_ptype: "PRECIPITATION",
+  precip_5d_anom: "PRECIP ANOMALIES",
+  precip_7d_anom: "PRECIP ANOMALIES",
+  precip_10d_anom: "PRECIP ANOMALIES",
+  precip_15d_anom: "PRECIP ANOMALIES",
   convective: "OBSERVATIONS",
   tornado: "OBSERVATIONS",
   wind: "OBSERVATIONS",
@@ -328,7 +332,7 @@ function groupSortKey(group: string): number {
 function groupIcon(group: string) {
   if (group === "SURFACE" || group === "SEVERE") return <Flame className="h-5 w-5" />;
   if (group === "UPPER AIR") return <Wind className="h-5 w-5" />;
-  if (group === "PRECIPITATION") return <Droplets className="h-5 w-5" />;
+  if (group === "PRECIPITATION" || group === "PRECIP ANOMALIES") return <Droplets className="h-5 w-5" />;
   if (group === "OBSERVATIONS") return <Snowflake className="h-5 w-5" />;
   return <Layers3 className="h-5 w-5" />;
 }
@@ -348,6 +352,9 @@ function canonicalViewerGroup(varKey: string, backendGroup?: string | null): str
     case "radar & precipitation type":
     case "radar":
       return "PRECIPITATION";
+    case "anomalies":
+    case "precip anomalies":
+      return "PRECIP ANOMALIES";
     case "severe":
     case "instability":
       return "SEVERE";

@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
-from .gfs import GFSPlugin, GFS_VARS
+from .gfs import GFSPlugin, GFS_VARS, PRECIP_ANOM_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
 
 
 class AIGFSPlugin(GFSPlugin):
@@ -217,6 +217,14 @@ AIGFS_VARS = {
     "vort500": _aigfs_vort500_spec(),
 }
 
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
+    AIGFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
+        _precip_anom_key,
+        _days,
+        _precip_anom_fh,
+    )
+
 
 AIGFS_VARIABLE_CATALOG = {
     "tmp2m": VariableCapability(
@@ -375,6 +383,25 @@ AIGFS_VARIABLE_CATALOG = {
         conversion="ms_to_mph",
     ),
 }
+
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+    _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
+    AIGFS_VARIABLE_CATALOG[_precip_anom_key] = VariableCapability(
+        var_key=_precip_anom_key,
+        name=f"{_days}-Day Precip Anomaly",
+        selectors=AIGFS_VARS[_precip_anom_key].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_accum_anomaly_departure",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_anom",
+        default_fh=_precip_anom_fh,
+        buildable=True,
+        order=10.0 + (_days / 100.0),
+        group="Anomalies",
+        constraints={"min_fh": _precip_anom_fh, "max_fh": _precip_anom_fh},
+    )
 AIGFS_CAPABILITIES = ModelCapabilities(
     model_id="aigfs",
     name="AIGFS",

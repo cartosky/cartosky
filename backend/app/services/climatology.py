@@ -152,6 +152,28 @@ def climatology_baseline_path(
     return root / f"doy_{doy:03d}_h{hour:02d}.tif"
 
 
+def climatology_accumulation_baseline_path(
+    *,
+    data_root: Path | None = None,
+    version: str,
+    baseline_source: str,
+    field: str,
+    region: str,
+    reference_period: str,
+    reference_date,
+) -> Path:
+    doy = int(reference_date.timetuple().tm_yday)
+    root = climatology_baseline_root(
+        data_root=data_root,
+        version=version,
+        baseline_source=baseline_source,
+        field=field,
+        region=region,
+        reference_period=reference_period,
+    )
+    return root / f"doy_{doy:03d}.tif"
+
+
 def _synoptic_bucket_valid_time(valid_time):
     hour = int(valid_time.hour)
     bucket_hour = (hour // 6) * 6
@@ -258,5 +280,75 @@ def load_climatology_baseline(
         "baseline_legacy_fallback": used_legacy_fallback,
         "baseline_requested_hour": requested_hour,
         "baseline_resolved_hour": int(resolved_valid_time.hour),
+    }
+    return data, CRS.from_epsg(3857), transform, metadata
+
+
+def load_accumulation_climatology_baseline(
+    *,
+    version: str,
+    baseline_source: str,
+    field: str,
+    reference_date,
+    region: str,
+    reference_period: str,
+) -> tuple[np.ndarray, CRS, rasterio.transform.Affine, dict[str, Any]]:
+    source_key = normalize_baseline_source(baseline_source)
+    region_key = str(region).strip().lower()
+    path = climatology_accumulation_baseline_path(
+        version=version,
+        baseline_source=source_key,
+        field=field,
+        region=region_key,
+        reference_period=reference_period,
+        reference_date=reference_date,
+    )
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing accumulation climatology baseline asset: {path}")
+
+    expected_bbox, expected_grid_m = get_baseline_grid_params(
+        baseline_source=source_key,
+        region=region_key,
+    )
+    expected_transform, expected_height, expected_width = compute_transform_and_shape(
+        expected_bbox,
+        expected_grid_m,
+    )
+
+    with rasterio.open(path) as ds:
+        data = ds.read(1).astype(np.float32, copy=False)
+        crs = ds.crs
+        transform = ds.transform
+        width = int(ds.width)
+        height = int(ds.height)
+
+    if crs is None:
+        raise ValueError(f"Accumulation climatology baseline asset missing CRS: {path}")
+    if CRS.from_user_input(crs) != CRS.from_epsg(3857):
+        raise ValueError(f"Accumulation climatology baseline asset must use EPSG:3857: {path}")
+    if height != expected_height or width != expected_width:
+        raise ValueError(
+            "Accumulation climatology baseline asset grid shape mismatch: "
+            f"expected={(expected_height, expected_width)} actual={(height, width)} path={path}"
+        )
+    if any(
+        abs(float(actual) - float(expected)) > 1.0e-6
+        for actual, expected in zip(transform[:6], expected_transform[:6])
+    ):
+        raise ValueError(
+            "Accumulation climatology baseline asset transform mismatch: "
+            f"expected={expected_transform} actual={transform} path={path}"
+        )
+
+    metadata = {
+        "baseline_kind": "climatology",
+        "baseline_version": str(version).strip(),
+        "baseline_source": source_key,
+        "baseline_field": str(field).strip().lower(),
+        "baseline_region": region_key,
+        "baseline_alignment": "init_date",
+        "baseline_temporal_resolution": "daily_accumulation_window",
+        "reference_period": str(reference_period).strip(),
+        "baseline_reference_doy": int(reference_date.timetuple().tm_yday),
     }
     return data, CRS.from_epsg(3857), transform, metadata

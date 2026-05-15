@@ -381,6 +381,10 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   ptype_intensity: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
   qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
+  precip_5d_anom: { label: "5-Day Precip Anomaly", group: "PRECIP ANOMALIES", order: 40 },
+  precip_7d_anom: { label: "7-Day Precip Anomaly", group: "PRECIP ANOMALIES", order: 41 },
+  precip_10d_anom: { label: "10-Day Precip Anomaly", group: "PRECIP ANOMALIES", order: 42 },
+  precip_15d_anom: { label: "15-Day Precip Anomaly", group: "PRECIP ANOMALIES", order: 43 },
   snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
   snowkuchera: { label: "Total Snowfall (Kuchera)", group: "PRECIPITATION", order: 14 },
   pwat: { label: "Precipitable Water", group: "PRECIPITATION", order: 9999 },
@@ -421,6 +425,9 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
 
   const normalizedGroup = group?.trim().toLowerCase();
   switch (normalizedGroup) {
+    case "anomalies":
+    case "precip anomalies":
+      return "PRECIP ANOMALIES";
     case "surface":
       return "SURFACE";
     case "temperature":

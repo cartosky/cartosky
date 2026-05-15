@@ -323,6 +323,19 @@ HGT500_ANOM_DAM_COLORS = [
 HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM_DAM_COLORS))
 HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
+PRECIP_ANOM_IN_LEVELS = [
+    -8.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.75, -0.5,
+    -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0,
+    5.0, 6.0, 8.0,
+]
+PRECIP_ANOM_IN_COLORS = [
+    "#5b2a86", "#7042a0", "#8159b3", "#9270c5", "#a68bd4", "#bba8e1",
+    "#cbc0ea", "#d9d3f1", "#e7e4f7", "#f3f2fb", "#ffffff", "#ffffff",
+    "#e9f7dc", "#d2efbc", "#b4e19a", "#94d078", "#6fba5f", "#4c9f50",
+    "#2f8547", "#f4d35e", "#ee9b42", "#d95d39",
+]
+PRECIP_ANOM_IN_LEGEND_STOPS = list(zip(PRECIP_ANOM_IN_LEVELS[:-1], PRECIP_ANOM_IN_COLORS))
+PRECIP_ANOM_IN_RANGE = (-8.0, 8.0)
 
 # Total precipitation (inches)
 precip_colors = [
@@ -722,6 +735,18 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "500mb Height Anomaly",
         "legend_title": "500mb Height Anomaly (dam)",
         "legend_stops": HGT500_ANOM_DAM_LEGEND_STOPS,
+        "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
+    },
+    "precip_anom": {
+        "type": "discrete",
+        "units": "in",
+        "range": PRECIP_ANOM_IN_RANGE,
+        "levels": PRECIP_ANOM_IN_LEVELS,
+        "colors": PRECIP_ANOM_IN_COLORS,
+        "display_name": "Precip Anomaly",
+        "legend_title": "Precip Anomaly (in)",
+        "legend_stops": PRECIP_ANOM_IN_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
