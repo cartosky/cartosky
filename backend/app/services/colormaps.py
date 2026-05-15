@@ -324,11 +324,14 @@ HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM
 HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
 PRECIP_ANOM_IN_LEVELS = [
-    -4.0, -3.0, -2.0, -1.0, -0.5, -0.1, 0.1, 0.5, 1.0, 2.0, 3.0, 4.0,
+    -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.75, -0.5, -0.25, -0.1,
+    0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0,
 ]
 PRECIP_ANOM_IN_COLORS = [
-    "#923a1d", "#975025", "#c17922", "#e6b428", "#fff26a", "#ffffff",
-    "#e6f7d6", "#a8ed8f", "#41d700", "#33ad42", "#2a8a8a", "#35a3b8",
+    "#923a1d", "#8e451f", "#975025", "#aa6524", "#c17922", "#d99528",
+    "#e6b428", "#f1cf3a", "#fff26a", "#fff9ae", "#ffffff", "#f1fbeb",
+    "#d8f6c8", "#a8ed8f", "#74e15a", "#41d700", "#3bcf13", "#35c42b",
+    "#33ad42", "#2f9e63", "#2a8a8a", "#3095a1", "#35a3b8",
 ]
 PRECIP_ANOM_IN_LEGEND_STOPS = list(zip(PRECIP_ANOM_IN_LEVELS, PRECIP_ANOM_IN_COLORS))
 PRECIP_ANOM_IN_RANGE = (-4.0, 4.0)
