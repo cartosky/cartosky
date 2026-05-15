@@ -479,11 +479,11 @@ Business
 - [X] Add NWS hazards per county
 - [X] Add selected new core variables
 - [X] Add Kuchera to NAM and GFS
-- [ ] Add selected new core models
+- [X] Add selected new core models
 - [X] Redesign frontend
 - [ ] Add selected new secondary variables
 - [X] Add groups/titles in dropdown
-- [ ] Expand to North America domain for certain variables
+- [X] Expand to North America domain for certain variables
 - [ ] Add lightweight feedback collection/ability
 - [ ] Add Forecast page MVP (search + obs/forecast/AFDs/hazards)
 - [ ] Beta polish and consistency pass

@@ -12,9 +12,9 @@ Map-first weather analysis built around fast model switching, forecast-time scru
 
 ## Overview
 
-CartoSky is a weather guidance platform with a React and MapLibre frontend, a FastAPI backend, and a set of scheduler and publishing workflows for forecast data. The repository combines the public-facing viewer with the operational pieces needed to ingest, publish, observe, and validate model output.
+CartoSky is a weather guidance platform with a React and MapLibre frontend, a FastAPI backend, and a set of scheduler and publishing workflows for forecast data. The repository combines the public-facing map viewer, a location-first forecast page, and the operational pieces needed to ingest, publish, observe, and validate model output.
 
-The current product surface is centered on a technical, map-dominant workflow: open the viewer, switch between supported models, scrub forecast hours quickly, inspect derived products, and keep run freshness visible. The repo also includes a location-first forecast page, admin telemetry dashboards, boundary/vector tile support, and The Weather Forums sharing integration.
+The current product surface is centered on a technical, map-dominant workflow: open the viewer, switch between supported deterministic and ensemble models, scrub forecast hours quickly, inspect derived products and anomalies, and keep run freshness visible. The repo also includes a location-first forecast page with normalized NWS/Open-Meteo data, admin telemetry dashboards, boundary/vector tile support, and The Weather Forums sharing integration.
 
 > [!IMPORTANT]
 > The frontend defaults to `https://api.cartosky.com` when `VITE_API_BASE` is not set. For local development, point it at your local API explicitly.
@@ -23,8 +23,11 @@ The current product surface is centered on a technical, map-dominant workflow: o
 
 - Map-first viewer built with React 19, Vite, and MapLibre GL.
 - FastAPI API serving manifests, frames, grid binaries, point sampling, contours, vectors, and bootstrap metadata under `api/v4`.
-- Supported guidance catalog includes core models and operational layers such as HRRR, NAM, GFS, NBM, ECMWF, AIFS, SPC outlooks, NWS hazards, and MRMS.
-- Forecast and anchor workflows for location-based weather summaries and handoff into the map viewer.
+- Supported guidance catalog includes HRRR, NAM, GFS, NBM, ECMWF, AIFS, AIGFS, GEFS, EPS, SPC outlooks, NWS hazards, and MRMS.
+- Location-first Forecast page backed by geocoding, current conditions, hourly/daily forecasts, alerts, NWS forecast discussions, attribution, and freshness metadata.
+- Forecast and anchor workflows for location-based weather summaries, NWS anchor-city modals, and handoff into the map viewer.
+- Derived and advanced variables such as 10m/upper-level wind speed, 500 mb height/vorticity overlays, total precipitation, precipitation-type intensity, 10:1 and Kuchera snowfall, ice accumulation, and ERA5-baseline anomaly products.
+- Ensemble-aware products for GEFS and EPS, including mean fields and temperature/height/precipitation anomaly workflows.
 - Admin surfaces for performance telemetry, usage summaries, operational health, analytics, and observability rollouts.
 - Share and auth flows integrated with The Weather Forums.
 - Production-oriented deployment assets for systemd, nginx, Prometheus, Tempo, and Grafana.
@@ -52,6 +55,7 @@ The current product surface is centered on a technical, map-dominant workflow: o
 - `frontend/src/App.tsx`: main weather viewer.
 - `frontend/src/pages/home.tsx`: marketing and product overview surface.
 - `frontend/src/pages/forecast.tsx`: location-first forecast workflow.
+- `frontend/src/pages/models.tsx` and `frontend/src/pages/variables.tsx`: public catalog surfaces for supported guidance and variables.
 - `frontend/src/pages/admin/`: admin shell for performance, usage, analytics, status, and observability.
 
 ## Getting Started
@@ -100,7 +104,7 @@ Open `http://127.0.0.1:5173` in your browser.
 
 ### 3. Expected local flow
 
-With both services running, the frontend talks to the FastAPI backend at `api/v4`. The API serves capability/bootstrap metadata, frame manifests, grid files, sample endpoints, forecast-anchor responses, admin telemetry summaries, and health endpoints.
+With both services running, the frontend talks to the FastAPI backend at `api/v4`. The API serves capability/bootstrap metadata, frame manifests, grid files, sample endpoints, Forecast page responses, forecast-anchor responses, admin telemetry summaries, and health endpoints.
 
 If you want to work with published artifacts or scheduler output locally, keep `CARTOSKY_DATA_ROOT` pointed at the repo `data/` directory or another compatible data root.
 
@@ -149,9 +153,13 @@ Operational features already present in the codebase include:
 The `docs/` directory is the operational memory of the project. A few especially useful entry points:
 
 - `docs/ROADMAP.md`: current product and platform roadmap.
+- `docs/FORECAST_PAGE_BACKEND.md`: Forecast page API contract and provider routing.
 - `docs/PERFORMANCE_SCALING_IMPLEMENTATION_PLAN.md`: API and deployment performance work.
 - `docs/TELEMETRY_OVERHAUL.md`: telemetry ownership and rollout direction.
 - `docs/VARIABLE_ROLLOUT.md`: supported-variable expansion planning.
+- `docs/ANOMALY_VARIABLES_IMPLEMENTATION_PLAN.md`: ERA5-baseline anomaly product architecture.
+- `docs/ERA5_CLIMATOLOGY_RUNBOOK.md`: off-prod climatology asset generation workflow.
+- `docs/KUCHERA_PROFILE_LEVELS.md`: operational Kuchera profile-level guidance.
 - `docs/MRMS_RADAR_IMPLEMENTATION_PLAN.md`: MRMS rollout details.
 - `docs/SPC_PROBABILISTIC_OUTLOOKS_IMPLEMENTATION_PLAN.md`: SPC product rollout notes.
 - `docs/BOUNDARY_TILESET.md`: boundary tile generation and serving details.
