@@ -132,7 +132,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["kind"] == "continuous"
     assert wspd300["units"] == "kt"
     assert wspd300["display_name"] == "300mb Heights + Winds"
-    assert wspd300["order"] == 15
+    assert wspd300["order"] == 999
     assert wspd300["group"] == "Wind"
     assert wspd300["color_map_id"] == "wspd300"
     assert wspd300["display_resampling_override"] is None

@@ -757,7 +757,7 @@ NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
     "dp2m": 2,
     "tmp850": 3,
     "wspd850": 4,
-    "wspd300": 15,
+    "wspd300": 999,
     "vort500": 5,
     "sbcape": 6,
     "mlcape": 7,

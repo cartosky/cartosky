@@ -427,7 +427,7 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["derived"] is True
     assert wspd300["derive_strategy_id"] == "wspd10m"
     assert wspd300["color_map_id"] == "wspd300"
-    assert wspd300["order"] == 18
+    assert wspd300["order"] == 999
     assert wspd300["group"] == "Wind"
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]

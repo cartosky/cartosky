@@ -979,7 +979,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "tmp850_anom": 3.5,
     "hgt500_anom": 5,
     "wspd850": 4,
-    "wspd300": 18,
+    "wspd300": 999,
     "vort500": 5,
     "sbcape": 6,
     "mlcape": 7,

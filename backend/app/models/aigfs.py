@@ -305,7 +305,7 @@ AIGFS_VARIABLE_CATALOG = {
         color_map_id="wspd300",
         default_fh=0,
         buildable=True,
-        order=18,
+        order=999,
         group="Wind",
         conversion="ms_to_kt",
     ),

@@ -375,7 +375,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp850: { label: "850mb Temp", group: "UPPER AIR", order: 30 },
   tmp850_anom: { label: "850mb Temp Anomaly", group: "UPPER AIR", order: 30.5 },
   wspd850: { label: "850mb Heights + Winds", group: "UPPER AIR", order: 31 },
-  wspd300: { label: "300mb Heights + Winds", group: "UPPER AIR", order: 32 },
+  wspd300: { label: "300mb Heights + Winds", group: "UPPER AIR", order: 999 },
   wspd10m: { label: "10m Wind Speed", group: "SURFACE", order: 2 },
   wgst10m: { label: "10m Wind Gusts", group: "SURFACE", order: 3 },
   ptype_intensity: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },

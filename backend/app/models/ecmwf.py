@@ -950,7 +950,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
     "ptype_intensity": 15,
     "wspd10m": 12,
     "wgst10m": 13,
-    "wspd300": 18,
+    "wspd300": 999,
     "mucape": 20,
 }
 
