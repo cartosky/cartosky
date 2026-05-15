@@ -73,7 +73,12 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     tmp850_anom_request = EPS_MODEL.herbie_request(product="enfo", var_key="tmp850_anom", ensemble_view="mean")
     assert tmp850_anom_request.model == "ifs"
     assert tmp850_anom_request.product == "enfo"
-    assert tmp850_anom_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
+    assert tmp850_anom_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_pf_mean"
+
+    tmp850_mean_request = EPS_MODEL.herbie_request(product="enfo", var_key="tmp850__mean", ensemble_view="mean")
+    assert tmp850_mean_request.model == "ifs"
+    assert tmp850_mean_request.product == "enfo"
+    assert tmp850_mean_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_pf_mean"
 
     u10_request = EPS_MODEL.herbie_request(product="enfo", var_key="10u", ensemble_view="mean")
     assert u10_request.model == "ifs"
