@@ -73,6 +73,7 @@ AIFS_VARS = {
     "tmp2m_anom": ECMWF_VARS["tmp2m_anom"],
     "dp2m": ECMWF_VARS["dp2m"],
     "tmp850": ECMWF_VARS["tmp850"],
+    "tmp850_anom": ECMWF_VARS["tmp850_anom"],
     "u850": ECMWF_VARS["u850"],
     "v850": ECMWF_VARS["v850"],
     "hgt850": ECMWF_VARS["hgt850"],

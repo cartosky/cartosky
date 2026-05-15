@@ -63,6 +63,11 @@ class ECMWFPlugin(BaseModelPlugin):
             "t850mb": "tmp850",
             "temp850": "tmp850",
             "temp850mb": "tmp850",
+            "tmp850_anom": "tmp850_anom",
+            "t850_anom": "tmp850_anom",
+            "850mb_temp_anom": "tmp850_anom",
+            "temp850_anom": "tmp850_anom",
+            "temp850mb_anom": "tmp850_anom",
             "wspd850": "wspd850",
             "wind850": "wspd850",
             "850wind": "wspd850",
@@ -467,6 +472,26 @@ ECMWF_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="C",
+    ),
+    "tmp850_anom": VarSpec(
+        id="tmp850_anom",
+        name="850mb Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp850",
+                "base_conversion": "c_to_f",
+                "baseline_field": "tmp850",
+                "baseline_source": "era5",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
     ),
     "wspd850": VarSpec(
         id="wspd850",
@@ -896,6 +921,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m_anom": "tmp2m_anom",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "tmp850_anom": "tmp850_anom",
     "wspd850": "wspd850",
     "wspd300": "wspd300",
     "hgt500_anom": "hgt500_anom",
@@ -918,6 +944,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "tmp2m_anom": 0,
     "dp2m": 0,
     "tmp850": 0,
+    "tmp850_anom": 0,
     "wspd850": 0,
     "wspd300": 0,
     "hgt500_anom": 0,
@@ -935,11 +962,12 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "mucape": 0,
 }
 
-ECMWF_ORDER_BY_VAR_KEY: dict[str, int] = {
+ECMWF_ORDER_BY_VAR_KEY: dict[str, float] = {
     "tmp2m": 1,
     "tmp2m_anom": 2,
     "dp2m": 2,
     "tmp850": 3,
+    "tmp850_anom": 3.5,
     "wspd850": 4,
     "hgt500_anom": 5,
     "vort500": 5,
@@ -959,6 +987,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m_anom": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "tmp850_anom": "Temperature",
     "wspd850": "Wind",
     "wspd300": "Wind",
     "hgt500_anom": "Dynamics",
