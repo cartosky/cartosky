@@ -294,7 +294,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "base_conversion": "c_to_f",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
-                "baseline_region": "conus",
+                "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
                 "product": "prs",

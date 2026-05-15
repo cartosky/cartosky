@@ -297,6 +297,28 @@ def test_hrrr_pwat_selector_and_alias_invariants() -> None:
     }
 
 
+def test_hrrr_tmp850_anom_uses_pressure_tmp850_component_and_na_baseline() -> None:
+    var_spec = HRRR_MODEL.get_var("tmp850_anom")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "anomaly_departure"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "F"
+    assert var_spec.selectors.hints["base_component"] == "tmp850"
+    assert var_spec.selectors.hints["base_conversion"] == "c_to_f"
+    assert var_spec.selectors.hints["baseline_field"] == "tmp850"
+    assert var_spec.selectors.hints["baseline_source"] == "era5"
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+    assert var_spec.selectors.hints["baseline_version"] == "v1"
+    assert var_spec.selectors.hints["reference_period"] == "1991-2020"
+    assert var_spec.selectors.hints["product"] == "prs"
+
+    base_spec = HRRR_MODEL.get_var("tmp850")
+    assert base_spec is not None
+    assert base_spec.selectors.hints["product"] == "prs"
+
+
 def test_hrrr_wspd850_uses_850mb_components_and_height_contours() -> None:
     wspd_spec = HRRR_MODEL.get_var("wspd850")
     assert wspd_spec is not None

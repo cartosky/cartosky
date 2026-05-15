@@ -998,7 +998,7 @@ def _resolve_derive_target_grid(
         baseline_source=baseline_source,
         region=derive_region,
     )
-    _, output_grid_m = get_grid_params(model, derive_region)
+    _, output_grid_m = get_grid_params(model, output_region)
     return {
         "region": derive_region,
         "id": f"climatology:{baseline_source}:{derive_region}:{derive_grid_m:.1f}m",

@@ -703,7 +703,7 @@ def test_derive_gfs_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline(
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_conus_era5_baseline(
+def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_na_era5_baseline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -723,7 +723,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_conus_era5_bas
             version="v1",
             baseline_source="era5",
             field="tmp850",
-            region="conus",
+            region="na",
             reference_period="1991-2020",
             valid_time=valid_time,
         ),
@@ -745,7 +745,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_conus_era5_bas
     var_capability = HRRR_MODEL.get_var_capability("tmp850_anom")
     assert var_spec is not None
     assert var_capability is not None
-    assert var_spec.selectors.hints["baseline_region"] == "conus"
+    assert var_spec.selectors.hints["baseline_region"] == "na"
     assert var_spec.selectors.hints["product"] == "prs"
 
     anomaly, crs, anomaly_transform = derive_variable(
@@ -758,7 +758,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_conus_era5_bas
         var_capability=var_capability,
         model_plugin=HRRR_MODEL,
         fetch_ctx=ctx,
-        derive_component_target_grid={"region": "conus", "id": "hrrr:conus:10.0m"},
+        derive_component_target_grid={"region": "na", "id": "climatology:era5:na:10.0m"},
         derive_component_resampling="bilinear",
     )
 
@@ -779,7 +779,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_conus_era5_bas
     assert sidecar_metadata["baseline_version"] == "v1"
     assert sidecar_metadata["baseline_source"] == "era5"
     assert sidecar_metadata["baseline_field"] == "tmp850"
-    assert sidecar_metadata["baseline_region"] == "conus"
+    assert sidecar_metadata["baseline_region"] == "na"
 
 
 def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_dam_units(
