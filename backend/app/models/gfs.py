@@ -971,12 +971,12 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "qpf6h": 6,
 }
 
-GFS_ORDER_BY_VAR_KEY: dict[str, int] = {
+GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "tmp2m": 1,
     "tmp2m_anom": 2,
     "dp2m": 2,
     "tmp850": 3,
-    "tmp850_anom": 4,
+    "tmp850_anom": 3.5,
     "hgt500_anom": 5,
     "wspd850": 4,
     "wspd300": 18,

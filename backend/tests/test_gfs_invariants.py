@@ -109,7 +109,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
     assert tmp850_anom["group"] == "Temperature"
     assert tmp850_anom["color_map_id"] == "tmp850_anom"
-    assert tmp850_anom["order"] == 4
+    assert tmp850_anom["order"] == 3.5
 
     tmp2m_anom = payload["variables"]["tmp2m_anom"]
     assert tmp2m_anom["buildable"] is True
