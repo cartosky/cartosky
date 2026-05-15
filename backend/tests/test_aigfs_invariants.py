@@ -44,6 +44,9 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert AIGFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert AIGFS_MODEL.normalize_var_id("temp850") == "tmp850"
+    assert AIGFS_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
+    assert AIGFS_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
+    assert AIGFS_MODEL.normalize_var_id("850mb_temp_anom") == "tmp850_anom"
     assert AIGFS_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert AIGFS_MODEL.normalize_var_id("wind850") == "wspd850"
     assert AIGFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
@@ -79,6 +82,11 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     assert tmp850_request.product == "pres"
     assert tmp850_request.herbie_kwargs["priority"] == ["nomads"]
 
+    tmp850_anom_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="tmp850_anom")
+    assert tmp850_anom_request.model == "aigfs"
+    assert tmp850_anom_request.product == "pres"
+    assert tmp850_anom_request.herbie_kwargs["priority"] == ["nomads"]
+
     wspd850_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="wspd850")
     assert wspd850_request.model == "aigfs"
     assert wspd850_request.product == "pres"
@@ -104,7 +112,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "precip_total", "tmp850", "wspd850", "wspd300", "hgt500_anom", "vort500", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "precip_total", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -118,6 +126,7 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
     assert ("aigfs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
+    assert ("aigfs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("aigfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
     tmp2m_spec = AIGFS_MODEL.get_var("tmp2m")
@@ -174,6 +183,22 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         "level": "850",
     }
     assert tmp850_spec.selectors.hints["product"] == "pres"
+
+    tmp850_anom_spec = AIGFS_MODEL.get_var("tmp850_anom")
+    assert tmp850_anom_spec is not None
+    assert tmp850_anom_spec.primary is True
+    assert tmp850_anom_spec.derived is True
+    assert tmp850_anom_spec.derive == "anomaly_departure"
+    assert tmp850_anom_spec.kind == "continuous"
+    assert tmp850_anom_spec.units == "F"
+    assert tmp850_anom_spec.selectors.hints["base_component"] == "tmp850"
+    assert tmp850_anom_spec.selectors.hints["base_conversion"] == "c_to_f"
+    assert tmp850_anom_spec.selectors.hints["baseline_field"] == "tmp850"
+    assert tmp850_anom_spec.selectors.hints["baseline_source"] == "era5"
+    assert tmp850_anom_spec.selectors.hints["baseline_region"] == "na"
+    assert tmp850_anom_spec.selectors.hints["baseline_version"] == "v1"
+    assert tmp850_anom_spec.selectors.hints["reference_period"] == "1991-2020"
+    assert tmp850_anom_spec.selectors.hints["product"] == "pres"
 
     wspd850_spec = AIGFS_MODEL.get_var("wspd850")
     assert wspd850_spec is not None
@@ -425,6 +450,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["group"] == "Temperature"
     assert tmp850["default_fh"] == 0
     assert tmp850["render_substrates"] == ["grid"]
+
+    tmp850_anom = payload["variables"]["tmp850_anom"]
+    assert tmp850_anom["var_key"] == "tmp850_anom"
+    assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
+    assert tmp850_anom["kind"] == "continuous"
+    assert tmp850_anom["units"] == "F"
+    assert tmp850_anom["buildable"] is True
+    assert tmp850_anom["derived"] is True
+    assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp850_anom["color_map_id"] == "tmp850_anom"
+    assert tmp850_anom["order"] == 3.5
+    assert tmp850_anom["group"] == "Temperature"
+    assert tmp850_anom["default_fh"] == 0
+    assert tmp850_anom["render_substrates"] == ["grid"]
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["var_key"] == "wspd850"

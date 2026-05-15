@@ -7,6 +7,7 @@ Initial rollout scope:
       - `precip_total`
   - AIGFS `pres`
       - `tmp850`
+            - `tmp850_anom`
       - `wspd850`
       - `wspd300`
             - `vort500`
@@ -39,7 +40,7 @@ from .gfs import GFSPlugin, GFS_VARS
 
 class AIGFSPlugin(GFSPlugin):
     _PRES_VAR_KEYS = frozenset({
-        "tmp850", "u850", "v850", "hgt850", "wspd850",
+        "tmp850", "tmp850_anom", "u850", "v850", "hgt850", "wspd850",
         "u300", "v300", "hgt300", "wspd300",
         "u500", "v500", "hgt500", "vort500",
     })
@@ -197,6 +198,7 @@ AIGFS_VARS = {
         units="in",
     ),
     "tmp850": _with_pres_product(GFS_VARS["tmp850"]),
+    "tmp850_anom": _with_pres_product(GFS_VARS["tmp850_anom"]),
     "10u": GFS_VARS["10u"],
     "10v": GFS_VARS["10v"],
     "wspd10m": GFS_VARS["wspd10m"],
@@ -275,6 +277,21 @@ AIGFS_VARIABLE_CATALOG = {
         default_fh=0,
         buildable=True,
         order=3,
+        group="Temperature",
+    ),
+    "tmp850_anom": VariableCapability(
+        var_key="tmp850_anom",
+        name=AIGFS_VARS["tmp850_anom"].name,
+        selectors=AIGFS_VARS["tmp850_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp850_anom",
+        default_fh=0,
+        buildable=True,
+        order=3.5,
         group="Temperature",
     ),
     "wspd850": VariableCapability(
