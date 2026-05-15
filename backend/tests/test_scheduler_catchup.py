@@ -929,6 +929,33 @@ def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
     assert (published_run / "conus" / "mlcape" / "fh000.json").read_text() == "staged mlcape"
 
 
+def test_promote_run_skips_published_transient_files(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    model = "gfs"
+    run_id = "20260515_12z"
+    published_wgst = data_root / "published" / model / run_id / "wgst10m"
+    published_tmp2m = data_root / "published" / model / run_id / "tmp2m"
+    staging_ice = data_root / "staging" / model / run_id / "na" / "ice_total"
+
+    published_wgst.mkdir(parents=True, exist_ok=True)
+    published_tmp2m.mkdir(parents=True, exist_ok=True)
+    staging_ice.mkdir(parents=True, exist_ok=True)
+    (published_wgst / "fh000.json").write_text("published wind gust")
+    (published_wgst / "tmp0iszhk_6").write_text("stale scratch")
+    (published_wgst / "fh000.json.tmp").write_text("stale atomic write")
+    (published_tmp2m / "fh000.json").write_text("published temp")
+    (staging_ice / "fh384.json").write_text("staged ice")
+
+    scheduler_module._promote_run(data_root, model, run_id)
+
+    published_run = data_root / "published" / model / run_id
+    assert (published_run / "wgst10m" / "fh000.json").read_text() == "published wind gust"
+    assert not (published_run / "wgst10m" / "tmp0iszhk_6").exists()
+    assert not (published_run / "wgst10m" / "fh000.json.tmp").exists()
+    assert (published_run / "tmp2m" / "fh000.json").read_text() == "published temp"
+    assert (published_run / "na" / "ice_total" / "fh384.json").read_text() == "staged ice"
+
+
 def test_promote_run_tolerates_same_inode_recopy_during_progress_publish(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     model = "hrrr"

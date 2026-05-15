@@ -1026,6 +1026,27 @@ def _copy_or_link_file(src: str, dst: str) -> str:
     return dst
 
 
+def _is_transient_promotion_artifact(path: Path) -> bool:
+    name = path.name
+    if name.endswith(".tmp") or (name.startswith(".") and name.endswith(".tmp")):
+        return True
+    if name.startswith("tmp") and (path.is_file() or path.is_symlink()):
+        return True
+    return False
+
+
+def _promotion_copy_ignore(directory: str, names: list[str]) -> set[str]:
+    ignored: set[str] = set()
+    parent = Path(directory)
+    for name in names:
+        try:
+            if _is_transient_promotion_artifact(parent / name):
+                ignored.add(name)
+        except OSError:
+            ignored.add(name)
+    return ignored
+
+
 def _write_latest_pointer(data_root: Path, model: str, run_id: str, *, region: str = CANONICAL_COVERAGE) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
@@ -1227,10 +1248,26 @@ def _promote_run(data_root: Path, model: str, run_id: str) -> None:
         raise SchedulerConfigError(f"Cannot clear temporary promotion dir: {tmp_run}")
 
     if published_run.exists():
-        shutil.copytree(published_run, tmp_run, copy_function=_copy_or_link_file)
-        shutil.copytree(stage_run, tmp_run, dirs_exist_ok=True, copy_function=_copy_or_link_file)
+        shutil.copytree(
+            published_run,
+            tmp_run,
+            ignore=_promotion_copy_ignore,
+            copy_function=_copy_or_link_file,
+        )
+        shutil.copytree(
+            stage_run,
+            tmp_run,
+            dirs_exist_ok=True,
+            ignore=_promotion_copy_ignore,
+            copy_function=_copy_or_link_file,
+        )
     else:
-        shutil.copytree(stage_run, tmp_run, copy_function=_copy_or_link_file)
+        shutil.copytree(
+            stage_run,
+            tmp_run,
+            ignore=_promotion_copy_ignore,
+            copy_function=_copy_or_link_file,
+        )
 
     if published_run.exists():
         shutil.rmtree(published_run, ignore_errors=True)
