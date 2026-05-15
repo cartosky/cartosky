@@ -11,6 +11,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.main import _resolve_requested_ensemble_view, _runtime_var_id_for_request, _serialize_model_capability
 from app.models.eps import EPS_MODEL
+from app.services.scheduler import _resolve_vars_to_schedule
 
 
 def test_eps_target_fhs_invariants() -> None:
@@ -97,6 +98,9 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 18000.0,
         "na": 18000.0,
     }
+    auto_schedule_vars = _resolve_vars_to_schedule(EPS_MODEL, [])
+    assert "tmp850" not in auto_schedule_vars
+    assert "tmp850_anom" in auto_schedule_vars
 
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
@@ -210,9 +214,13 @@ def test_eps_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:
     var_spec = EPS_MODEL.get_var("tmp850_anom")
     runtime_spec = EPS_MODEL.get_var("tmp850_anom__mean")
     component_spec = EPS_MODEL.get_var("tmp850__mean")
+    public_component_spec = EPS_MODEL.get_var("tmp850")
     assert var_spec is not None
     assert runtime_spec is not None
     assert component_spec is not None
+    assert public_component_spec is not None
+    assert public_component_spec.primary is False
+    assert public_component_spec.derived is False
     assert component_spec.primary is True
     assert component_spec.derived is False
     assert component_spec.selectors.search == [":t:850:pl:"]

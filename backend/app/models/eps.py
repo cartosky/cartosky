@@ -222,6 +222,7 @@ EPS_VARS = {
     "tmp850": replace(
         ECMWF_VARS["tmp850"],
         name="850mb Temp (Mean)",
+        primary=False,
     ),
     "tmp850__mean": replace(
         ECMWF_VARS["tmp850"],
