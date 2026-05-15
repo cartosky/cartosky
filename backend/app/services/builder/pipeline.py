@@ -919,7 +919,8 @@ def _required_products_for_var(
         _push(profile_product)
         return required
 
-    _push(default_norm)
+    product_hint = str(hints.get("product", "")).strip()
+    _push(product_hint or default_norm)
     return required
 
 
@@ -1164,7 +1165,7 @@ def build_frame(
             converted_data, src_crs, src_transform = derive_variable(
                 model_id=model,
                 var_key=var_key,
-                product=product,
+                product=source_product,
                 run_date=run_date,
                 fh=fh,
                 var_spec_model=var_spec_model,

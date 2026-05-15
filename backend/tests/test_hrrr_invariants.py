@@ -45,6 +45,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "dp2m",
         "tmp850",
+        "tmp850_anom",
         "wspd850",
         "wspd300",
         "sbcape",
@@ -67,6 +68,10 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 3000.0,
         "pnw": 3000.0,
     }
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("hrrr", "tmp850_anom") in _PACKING_BY_MODEL_VAR
 
 
 def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
@@ -124,6 +129,19 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["group"] == "Wind"
     assert wspd850["color_map_id"] == "wspd850"
     assert wspd850["display_resampling_override"] is None
+
+    tmp850_anom = payload["variables"]["tmp850_anom"]
+    assert tmp850_anom["var_key"] == "tmp850_anom"
+    assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
+    assert tmp850_anom["kind"] == "continuous"
+    assert tmp850_anom["units"] == "F"
+    assert tmp850_anom["buildable"] is True
+    assert tmp850_anom["derived"] is True
+    assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp850_anom["color_map_id"] == "tmp850_anom"
+    assert tmp850_anom["order"] == 3.5
+    assert tmp850_anom["group"] == "Temperature"
+    assert tmp850_anom["display_resampling_override"] is None
 
     wspd300 = payload["variables"]["wspd300"]
     assert wspd300["buildable"] is True
@@ -260,6 +278,9 @@ def test_hrrr_mucape_selector_and_alias_invariants() -> None:
 def test_hrrr_pwat_selector_and_alias_invariants() -> None:
     assert HRRR_MODEL.normalize_var_id("pwat") == "pwat"
     assert HRRR_MODEL.normalize_var_id("precipitable_water") == "pwat"
+    assert HRRR_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
+    assert HRRR_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
+    assert HRRR_MODEL.normalize_var_id("850mb_temp_anom") == "tmp850_anom"
     assert HRRR_MODEL.normalize_var_id("wspd300") == "wspd300"
     assert HRRR_MODEL.normalize_var_id("300mb_heights_winds") == "wspd300"
 

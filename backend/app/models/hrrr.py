@@ -41,6 +41,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "snowfall_kuchera_total"
         if normalized in {"tmp850", "t850", "t850mb", "temp850", "temp850mb"}:
             return "tmp850"
+        if normalized in {"tmp850_anom", "t850_anom", "850mb_temp_anom", "temp850_anom", "temp850mb_anom"}:
+            return "tmp850_anom"
         if normalized in {"vort500", "500vort", "500_vort", "500mb_vort", "500mb_vorticity", "500_vorticity", "absv500", "avor500"}:
             return "vort500"
         if normalized in {"hgt500", "z500", "500hgt", "500_height", "500mb_height", "500mb_heights", "500_heights"}:
@@ -276,11 +278,33 @@ HRRR_VARS: dict[str, VarSpec] = {
             },
             hints={
                 "upstream_var": "t850",
+                "product": "prs",
             },
         ),
         primary=True,
         kind="continuous",
         units="C",
+    ),
+    "tmp850_anom": VarSpec(
+        id="tmp850_anom",
+        name="850mb Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp850",
+                "base_conversion": "c_to_f",
+                "baseline_field": "tmp850",
+                "baseline_source": "era5",
+                "baseline_region": "conus",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+                "product": "prs",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
     ),
     "wspd850": VarSpec(
         id="wspd850",
@@ -662,6 +686,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
     "tmp850": "tmp850",
+    "tmp850_anom": "tmp850_anom",
     "wspd850": "wspd850",
     "wspd300": "wspd300",
     "vort500": "vort500",
@@ -685,11 +710,12 @@ HRRR_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "snowfall_kuchera_total": 1,
 }
 
-HRRR_ORDER_BY_VAR_KEY: dict[str, int] = {
+HRRR_ORDER_BY_VAR_KEY: dict[str, float] = {
     "radar_ptype": 0,
     "tmp2m": 1,
     "dp2m": 2,
     "tmp850": 3,
+    "tmp850_anom": 3.5,
     "wspd850": 4,
     "wspd300": 999,
     "vort500": 5,
@@ -709,6 +735,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
     "tmp850": "Temperature",
+    "tmp850_anom": "Temperature",
     "wspd850": "Wind",
     "wspd300": "Wind",
     "vort500": "Dynamics",
