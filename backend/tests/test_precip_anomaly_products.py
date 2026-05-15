@@ -137,7 +137,99 @@ def test_precip_anomaly_uses_init_doy_target_lead_and_inches(
     assert sidecar_metadata["baseline_alignment"] == "init_date"
     assert sidecar_metadata["baseline_reference_doy"] == 1
     assert sidecar_metadata["target_fh"] == 120
+    assert sidecar_metadata["window_start_fh"] == 0
+    assert sidecar_metadata["window_end_fh"] == 120
+    assert sidecar_metadata["accumulation_window_hours"] == 120
+    assert sidecar_metadata["baseline_reference_fh"] == 0
     assert sidecar_metadata["model_accumulation_units"] == "in"
+
+
+def test_precip_anomaly_rolls_accumulation_window_and_baseline_start_doy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        climatology,
+        "get_baseline_grid_params",
+        lambda baseline_source, region: ((0.0, 0.0, 20.0, 20.0), 10.0),
+    )
+    climatology.configure_data_root(tmp_path)
+    transform, height, width = compute_transform_and_shape((0.0, 0.0, 20.0, 20.0), 10.0)
+    assert (height, width) == (2, 2)
+
+    run_date = datetime(2026, 1, 1, 0, tzinfo=timezone.utc)
+    window_start_date = datetime(2026, 1, 2, 0, tzinfo=timezone.utc)
+    _write_baseline(
+        climatology.climatology_accumulation_baseline_path(
+            version="v1",
+            baseline_source="era5",
+            field="precip_5d",
+            region="na",
+            reference_period="1991-2020",
+            reference_date=run_date,
+        ),
+        np.full((2, 2), 99.0, dtype=np.float32),
+        transform,
+    )
+    _write_baseline(
+        climatology.climatology_accumulation_baseline_path(
+            version="v1",
+            baseline_source="era5",
+            field="precip_5d",
+            region="na",
+            reference_period="1991-2020",
+            reference_date=window_start_date,
+        ),
+        np.full((2, 2), 0.25, dtype=np.float32),
+        transform,
+    )
+
+    fetch_calls: list[dict[str, object]] = []
+
+    def _fake_fetch_component_warped(**kwargs):
+        fetch_calls.append(dict(kwargs))
+        fh = int(kwargs["fh"])
+        value_by_fh = {
+            24: 25.4,
+            144: 50.8,
+        }
+        return np.full((2, 2), value_by_fh[fh], dtype=np.float32), rasterio.crs.CRS.from_epsg(3857), transform
+
+    monkeypatch.setattr("app.services.builder.derive._fetch_component_warped", _fake_fetch_component_warped)
+
+    ctx = FetchContext()
+    var_spec = AIGFS_MODEL.get_var("precip_5d_anom")
+    var_capability = AIGFS_MODEL.get_var_capability("precip_5d_anom")
+    assert var_spec is not None
+    assert var_capability is not None
+
+    anomaly, crs, anomaly_transform = derive_variable(
+        model_id="aigfs",
+        var_key="precip_5d_anom",
+        product="sfc",
+        run_date=run_date,
+        fh=144,
+        var_spec_model=var_spec,
+        var_capability=var_capability,
+        model_plugin=AIGFS_MODEL,
+        fetch_ctx=ctx,
+        derive_component_target_grid={"region": "na", "id": "aigfs:na:10.0m"},
+        derive_component_resampling="bilinear",
+    )
+
+    assert [call["fh"] for call in fetch_calls] == [144, 24]
+    assert np.allclose(anomaly, np.full((2, 2), 0.75, dtype=np.float32), atol=1.0e-5)
+    assert crs.to_epsg() == 3857
+    assert anomaly_transform == transform
+
+    sidecar_metadata = ctx.derive_quality[("precip_5d_anom", 144)]["sidecar_metadata"]
+    assert sidecar_metadata["baseline_alignment"] == "window_start_date"
+    assert sidecar_metadata["baseline_reference_doy"] == 2
+    assert sidecar_metadata["target_fh"] == 144
+    assert sidecar_metadata["window_start_fh"] == 24
+    assert sidecar_metadata["window_end_fh"] == 144
+    assert sidecar_metadata["accumulation_window_hours"] == 120
+    assert sidecar_metadata["baseline_reference_fh"] == 24
 
 
 def test_precip_anomaly_target_lead_constraints_and_unsupported_model_gating() -> None:
@@ -152,8 +244,15 @@ def test_precip_anomaly_target_lead_constraints_and_unsupported_model_gating() -
         assert capability is not None
         assert capability.default_fh == target_fh
         assert capability.derive_strategy_id == "precip_accum_anomaly_departure"
-        assert capability.constraints == {"min_fh": target_fh, "max_fh": target_fh}
-        assert GFS_MODEL.scheduled_fhs_for_var(var_key, 0) == [target_fh]
+        if var_key == "precip_15d_anom":
+            assert capability.constraints == {"min_fh": target_fh, "max_fh": target_fh}
+            assert GFS_MODEL.scheduled_fhs_for_var(var_key, 0) == [target_fh]
+        else:
+            assert capability.constraints == {"min_fh": target_fh}
+            scheduled_fhs = GFS_MODEL.scheduled_fhs_for_var(var_key, 0)
+            assert scheduled_fhs[0] == target_fh
+            assert scheduled_fhs[-1] == GFS_MODEL.target_fhs(0)[-1]
+            assert len(scheduled_fhs) > 1
 
     for unsupported_model in (NAM_MODEL, NBM_MODEL):
         for var_key in expected:

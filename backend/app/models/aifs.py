@@ -24,7 +24,10 @@ from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
-from .gfs import PRECIP_ANOM_TARGET_FH_BY_VAR_KEY
+from .gfs import (
+    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+)
 
 
 class AIFSPlugin(ECMWFPlugin):
@@ -114,10 +117,13 @@ AIFS_VARIABLE_CATALOG["precip_total"] = replace(
 
 for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
     if _precip_anom_key in AIFS_VARIABLE_CATALOG:
+        _precip_anom_constraint = {"min_fh": _precip_anom_fh}
+        if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+            _precip_anom_constraint["max_fh"] = _precip_anom_fh
         AIFS_VARIABLE_CATALOG[_precip_anom_key] = replace(
             AIFS_VARIABLE_CATALOG[_precip_anom_key],
             default_fh=_precip_anom_fh,
-            constraints={"min_fh": _precip_anom_fh, "max_fh": _precip_anom_fh},
+            constraints=_precip_anom_constraint,
             group="Anomalies",
             color_map_id="precip_anom",
         )

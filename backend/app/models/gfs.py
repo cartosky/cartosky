@@ -944,23 +944,33 @@ PRECIP_ANOM_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_10d_anom": 240,
     "precip_15d_anom": 360,
 }
+PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+    "precip_15d_anom": 360,
+}
 
 
-def _precip_anomaly_var_spec(var_key: str, days: int, target_fh: int, *, base_component: str = "precip_total") -> VarSpec:
+def _precip_anomaly_var_spec(
+    var_key: str,
+    days: int,
+    target_fh: int | None = None,
+    *,
+    base_component: str = "precip_total",
+) -> VarSpec:
+    hints = {
+        "base_component": base_component,
+        "baseline_field": f"precip_{days}d",
+        "baseline_source": "era5",
+        "baseline_region": "na",
+        "baseline_version": "v1",
+        "reference_period": "1991-2020",
+        "accumulation_window_hours": str(days * 24),
+    }
+    if target_fh is not None:
+        hints["target_fh"] = str(target_fh)
     return VarSpec(
         id=var_key,
         name=f"{days}-Day Precip Anomaly",
-        selectors=VarSelectors(
-            hints={
-                "base_component": base_component,
-                "baseline_field": f"precip_{days}d",
-                "baseline_source": "era5",
-                "baseline_region": "na",
-                "baseline_version": "v1",
-                "reference_period": "1991-2020",
-                "target_fh": str(target_fh),
-            }
-        ),
+        selectors=VarSelectors(hints=hints),
         primary=True,
         derived=True,
         derive="precip_accum_anomaly_departure",
@@ -974,7 +984,7 @@ for _precip_anom_days, _precip_anom_fh in ((5, 120), (7, 168), (10, 240), (15, 3
     GFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _precip_anom_days,
-        _precip_anom_fh,
+        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
@@ -1109,10 +1119,12 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
 }
 
 for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
-    GFS_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = {
+    _precip_anom_constraint: dict[str, int] = {
         "min_fh": _precip_anom_fh,
-        "max_fh": _precip_anom_fh,
     }
+    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+        _precip_anom_constraint["max_fh"] = _precip_anom_fh
+    GFS_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:

@@ -19,7 +19,12 @@ from dataclasses import replace
 from datetime import datetime
 
 from .base import BaseModelPlugin, HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
-from .gfs import GFS_VARS, PRECIP_ANOM_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
+from .gfs import (
+    GFS_VARS,
+    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    _precip_anomaly_var_spec,
+)
 
 
 GEFS_REGIONS: dict[str, RegionSpec] = {
@@ -598,7 +603,7 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items(
     GEFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        _precip_anom_fh,
+        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
         base_component="precip_total__mean",
     )
     GEFS_VARS[f"{_precip_anom_key}__mean"] = replace(
@@ -611,6 +616,9 @@ def _gefs_precip_anomaly_capability(var_key: str, *, internal: bool = False) -> 
     public_key = var_key.removesuffix("__mean")
     target_fh = PRECIP_ANOM_TARGET_FH_BY_VAR_KEY[public_key]
     days = int(public_key.split("_", 2)[1].removesuffix("d"))
+    constraints = {"min_fh": target_fh}
+    if public_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+        constraints["max_fh"] = target_fh
     return VariableCapability(
         var_key=var_key,
         name=f"{days}-Day Precip Anomaly",
@@ -625,7 +633,7 @@ def _gefs_precip_anomaly_capability(var_key: str, *, internal: bool = False) -> 
         buildable=not internal,
         order=10.0 + (days / 100.0),
         group="Anomalies",
-        constraints={"min_fh": target_fh, "max_fh": target_fh},
+        constraints=constraints,
         frontend={"internal_only": True} if internal else {},
         ensemble={
             "supported_views": ["mean"],

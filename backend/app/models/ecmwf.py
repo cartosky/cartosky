@@ -24,7 +24,11 @@ from .base import (
     VarSpec,
     VariableCapability,
 )
-from .gfs import PRECIP_ANOM_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
+from .gfs import (
+    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    _precip_anomaly_var_spec,
+)
 
 
 class ECMWFPlugin(BaseModelPlugin):
@@ -925,7 +929,7 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items(
     ECMWF_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        _precip_anom_fh,
+        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 
@@ -1064,10 +1068,12 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
 }
 
 for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
-    ECMWF_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = {
+    _precip_anom_constraint: dict[str, int] = {
         "min_fh": _precip_anom_fh,
-        "max_fh": _precip_anom_fh,
     }
+    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+        _precip_anom_constraint["max_fh"] = _precip_anom_fh
+    ECMWF_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:

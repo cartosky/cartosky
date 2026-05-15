@@ -791,7 +791,6 @@ def _derive_precip_accum_anomaly_departure(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     base_component = str(hints.get("base_component") or "precip_total").strip() or "precip_total"
     baseline_field = str(hints.get("baseline_field") or var_key.removesuffix("_anom")).strip().lower()
@@ -807,6 +806,23 @@ def _derive_precip_accum_anomaly_departure(
         target_fh = int(target_fh_raw) if target_fh_raw else int(fh)
     except ValueError:
         target_fh = int(fh)
+    window_hours_raw = str(hints.get("accumulation_window_hours") or "").strip()
+    try:
+        accumulation_window_hours = int(window_hours_raw) if window_hours_raw else 0
+    except ValueError:
+        accumulation_window_hours = 0
+    if accumulation_window_hours <= 0:
+        match = re.match(r"^precip_(\d+)d$", baseline_field)
+        if match:
+            accumulation_window_hours = int(match.group(1)) * 24
+    if accumulation_window_hours <= 0:
+        accumulation_window_hours = target_fh
+    window_start_fh = target_fh - accumulation_window_hours
+    if window_start_fh < 0:
+        raise ValueError(
+            f"Precip anomaly target fh{target_fh:03d} is shorter than accumulation window "
+            f"{accumulation_window_hours}h for {var_key}"
+        )
 
     if not baseline_region:
         baseline_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
@@ -837,46 +853,78 @@ def _derive_precip_accum_anomaly_departure(
     if base_is_derived:
         if base_spec is None:
             base_spec = base_capability.to_var_spec()
-        forecast_values, src_crs, src_transform = derive_variable(
-            model_id=model_id,
-            var_key=normalized_base_component,
-            product=product,
-            run_date=run_date,
-            fh=target_fh,
-            var_spec_model=base_spec,
-            var_capability=base_capability,
-            model_plugin=model_plugin,
-            fetch_ctx=ctx,
-            derive_component_target_grid={"region": target_region, "id": target_grid_id},
-            derive_component_resampling=resampling,
-        )
-        forecast_values = forecast_values.astype(np.float32, copy=False)
+
+        def _load_cumulative(cumulative_fh: int) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+            values, crs, transform = derive_variable(
+                model_id=model_id,
+                var_key=normalized_base_component,
+                product=product,
+                run_date=run_date,
+                fh=cumulative_fh,
+                var_spec_model=base_spec,
+                var_capability=base_capability,
+                model_plugin=model_plugin,
+                fetch_ctx=ctx,
+                derive_component_target_grid={"region": target_region, "id": target_grid_id},
+                derive_component_resampling=resampling,
+            )
+            return values.astype(np.float32, copy=False), crs, transform
     else:
-        forecast_raw, src_crs, src_transform = _fetch_component_warped(
-            model_id=model_id,
-            product=product,
-            run_date=run_date,
-            fh=target_fh,
-            model_plugin=model_plugin,
-            var_key=normalized_base_component,
-            target_region=target_region,
-            target_grid_id=target_grid_id,
-            resampling=resampling,
-            ctx=ctx,
-        )
-        forecast_values = convert_units(
-            forecast_raw,
-            normalized_base_component,
-            model_id=model_id,
-            var_capability=base_capability,
+
+        def _load_cumulative(cumulative_fh: int) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+            forecast_raw, crs, transform = _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=cumulative_fh,
+                model_plugin=model_plugin,
+                var_key=normalized_base_component,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                ctx=ctx,
+            )
+            values = convert_units(
+                forecast_raw,
+                normalized_base_component,
+                model_id=model_id,
+                var_capability=base_capability,
+            ).astype(np.float32, copy=False)
+            return values, crs, transform
+
+    target_values, src_crs, src_transform = _load_cumulative(target_fh)
+    if window_start_fh > 0:
+        start_values, start_crs, start_transform = _load_cumulative(window_start_fh)
+        if target_values.shape != start_values.shape:
+            raise ValueError(
+                f"Precip anomaly rolling window shape mismatch: target={target_values.shape} start={start_values.shape}"
+            )
+        if src_crs != start_crs:
+            raise ValueError(f"Precip anomaly rolling window CRS mismatch: target={src_crs} start={start_crs}")
+        if any(
+            abs(float(actual) - float(expected)) > 1.0e-6
+            for actual, expected in zip(src_transform[:6], start_transform[:6])
+        ):
+            raise ValueError(
+                f"Precip anomaly rolling window transform mismatch: target={src_transform} start={start_transform}"
+            )
+        target_valid = np.isfinite(target_values)
+        start_valid = np.isfinite(start_values)
+        forecast_values = np.where(
+            target_valid & start_valid,
+            np.maximum(target_values - start_values, 0.0),
+            np.nan,
         ).astype(np.float32, copy=False)
+    else:
+        forecast_values = target_values.astype(np.float32, copy=False)
 
     init_date = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    baseline_reference_date = init_date + timedelta(hours=window_start_fh)
     baseline_values, baseline_crs, baseline_transform, baseline_meta = load_accumulation_climatology_baseline(
         version=baseline_version,
         baseline_source=baseline_source,
         field=baseline_field,
-        reference_date=init_date,
+        reference_date=baseline_reference_date,
         region=baseline_region,
         reference_period=reference_period,
     )
@@ -902,11 +950,16 @@ def _derive_precip_accum_anomaly_departure(
         var_key=var_key,
         fh=fh,
         sidecar_metadata={
+            **baseline_meta,
             "anomaly_kind": "accumulated_precip_departure",
+            "baseline_alignment": "init_date" if window_start_fh == 0 else "window_start_date",
             "baseline_region": baseline_region,
             "target_fh": target_fh,
+            "window_start_fh": window_start_fh,
+            "window_end_fh": target_fh,
+            "accumulation_window_hours": accumulation_window_hours,
+            "baseline_reference_fh": window_start_fh,
             "model_accumulation_units": "in",
-            **baseline_meta,
         },
     )
     return anomaly, baseline_crs, baseline_transform

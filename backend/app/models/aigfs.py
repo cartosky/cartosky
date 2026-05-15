@@ -35,7 +35,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
-from .gfs import GFSPlugin, GFS_VARS, PRECIP_ANOM_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
+from .gfs import (
+    GFSPlugin,
+    GFS_VARS,
+    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    _precip_anomaly_var_spec,
+)
 
 
 class AIGFSPlugin(GFSPlugin):
@@ -222,7 +228,7 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items(
     AIGFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        _precip_anom_fh,
+        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 
@@ -386,6 +392,9 @@ AIGFS_VARIABLE_CATALOG = {
 
 for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
     _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
+    _precip_anom_constraint = {"min_fh": _precip_anom_fh}
+    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+        _precip_anom_constraint["max_fh"] = _precip_anom_fh
     AIGFS_VARIABLE_CATALOG[_precip_anom_key] = VariableCapability(
         var_key=_precip_anom_key,
         name=f"{_days}-Day Precip Anomaly",
@@ -400,7 +409,7 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items(
         buildable=True,
         order=10.0 + (_days / 100.0),
         group="Anomalies",
-        constraints={"min_fh": _precip_anom_fh, "max_fh": _precip_anom_fh},
+        constraints=_precip_anom_constraint,
     )
 AIGFS_CAPABILITIES = ModelCapabilities(
     model_id="aigfs",
