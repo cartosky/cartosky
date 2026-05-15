@@ -34,6 +34,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m_anom",
         "dp2m",
         "tmp850",
+        "tmp850_anom",
         "hgt500_anom",
         "wspd850",
         "wspd300",
@@ -63,6 +64,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
     assert ("gfs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
+    assert ("gfs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
 
 
@@ -97,6 +99,17 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["units"] == "C"
     assert tmp850["display_name"] == "850mb Temp"
     assert tmp850["order"] == 3
+
+    tmp850_anom = payload["variables"]["tmp850_anom"]
+    assert tmp850_anom["buildable"] is True
+    assert tmp850_anom["derived"] is True
+    assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp850_anom["kind"] == "continuous"
+    assert tmp850_anom["units"] == "F"
+    assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
+    assert tmp850_anom["group"] == "Temperature"
+    assert tmp850_anom["color_map_id"] == "tmp850_anom"
+    assert tmp850_anom["order"] == 4
 
     tmp2m_anom = payload["variables"]["tmp2m_anom"]
     assert tmp2m_anom["buildable"] is True
@@ -263,6 +276,9 @@ def test_gfs_precip_total_aliases_normalize() -> None:
 
 def test_gfs_temp850_and_gust_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("tmp850") == "tmp850"
+    assert GFS_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
+    assert GFS_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
+    assert GFS_MODEL.normalize_var_id("850mb_temp_anom") == "tmp850_anom"
     assert GFS_MODEL.normalize_var_id("tmp2m_anom") == "tmp2m_anom"
     assert GFS_MODEL.normalize_var_id("surface_temp_anom") == "tmp2m_anom"
     assert GFS_MODEL.normalize_var_id("t850") == "tmp850"
@@ -304,6 +320,23 @@ def test_gfs_tmp2m_anom_uses_tmp2m_component_and_era5_baseline() -> None:
     assert var_spec.units == "F"
     assert var_spec.selectors.hints["base_component"] == "tmp2m"
     assert var_spec.selectors.hints["baseline_field"] == "tmp2m"
+    assert var_spec.selectors.hints["baseline_source"] == "era5"
+    assert var_spec.selectors.hints["baseline_region"] == "na"
+    assert var_spec.selectors.hints["baseline_version"] == "v1"
+    assert var_spec.selectors.hints["reference_period"] == "1991-2020"
+
+
+def test_gfs_tmp850_anom_uses_tmp850_component_and_era5_baseline() -> None:
+    var_spec = GFS_MODEL.get_var("tmp850_anom")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is True
+    assert var_spec.derive == "anomaly_departure"
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "F"
+    assert var_spec.selectors.hints["base_component"] == "tmp850"
+    assert var_spec.selectors.hints["base_conversion"] == "c_to_f"
+    assert var_spec.selectors.hints["baseline_field"] == "tmp850"
     assert var_spec.selectors.hints["baseline_source"] == "era5"
     assert var_spec.selectors.hints["baseline_region"] == "na"
     assert var_spec.selectors.hints["baseline_version"] == "v1"

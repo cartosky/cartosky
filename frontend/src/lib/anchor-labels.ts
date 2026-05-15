@@ -51,6 +51,7 @@ export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> =
   tmp2m: { mode: "always" },
   tmp2m_anom: { mode: "always" },
   tmp2m_anom__mean: { mode: "always" },
+  tmp850_anom: { mode: "always" },
   dpt2m: { mode: "always" },
   dewpoint2m: { mode: "always" },
   dewpoint: { mode: "always" },

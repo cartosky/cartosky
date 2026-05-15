@@ -702,6 +702,17 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": TMP2M_ANOM_F_LEGEND_STOPS,
         "transparent_below_min": False,
     },
+    "tmp850_anom": {
+        "type": "discrete",
+        "units": "F",
+        "range": TMP2M_ANOM_F_RANGE,
+        "levels": TMP2M_ANOM_F_LEVELS,
+        "colors": TMP2M_ANOM_F_COLORS,
+        "display_name": "850mb Temperature Anomaly",
+        "legend_title": "850mb Temperature Anomaly (°F)",
+        "legend_stops": TMP2M_ANOM_F_LEGEND_STOPS,
+        "transparent_below_min": False,
+    },
     "hgt500_anom": {
         "type": "discrete",
         "units": "dam",

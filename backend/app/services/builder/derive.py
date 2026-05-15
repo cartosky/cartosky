@@ -107,6 +107,11 @@ class DeriveStrategy:
     execute: Callable[..., tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]]
 
 
+@dataclass(frozen=True)
+class _ConversionCapabilityOverride:
+    conversion: str
+
+
 def _parse_hint_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -682,6 +687,7 @@ def _derive_anomaly_departure(
     del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     base_component = str(hints.get("base_component") or "").strip() or "tmp2m"
+    base_conversion = str(hints.get("base_conversion") or "").strip()
     baseline_field = str(hints.get("baseline_field") or "").strip() or base_component.split("__", 1)[0]
     baseline_source = normalize_baseline_source(
         str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
@@ -721,6 +727,8 @@ def _derive_anomaly_departure(
         ctx=ctx,
     )
     base_capability = model_plugin.get_var_capability(model_plugin.normalize_var_id(base_component))
+    if base_conversion:
+        base_capability = _ConversionCapabilityOverride(conversion=base_conversion)
     forecast_values = convert_units(
         forecast_raw,
         base_component,
