@@ -158,3 +158,29 @@ def test_precip_anomaly_target_lead_constraints_and_unsupported_model_gating() -
     for unsupported_model in (NAM_MODEL, NBM_MODEL):
         for var_key in expected:
             assert unsupported_model.get_var_capability(var_key) is None
+
+
+def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
+    pytest.importorskip("brotli")
+
+    from app.services.grid import _PACKING_BY_MODEL_VAR, grid_code_supported
+
+    expected_vars = (
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
+    )
+    for model_id in ("gfs", "ecmwf", "aifs", "aigfs"):
+        for var_key in expected_vars:
+            assert grid_code_supported(model_id, var_key)
+            assert _PACKING_BY_MODEL_VAR[(model_id, var_key)] == {
+                "scale": 0.01,
+                "offset": -128.0,
+                "nodata": 65535,
+                "units": "in",
+            }
+
+    for var_key in expected_vars:
+        assert grid_code_supported("gefs", var_key)
+        assert grid_code_supported("gefs", f"{var_key}__mean")

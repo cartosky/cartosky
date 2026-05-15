@@ -853,6 +853,25 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     },
 }
 
+_PRECIP_ANOM_PACKING = {
+    "scale": 0.01,
+    "offset": -128.0,
+    "nodata": 65535,
+    "units": "in",
+}
+_PRECIP_ANOM_VARS = (
+    "precip_5d_anom",
+    "precip_7d_anom",
+    "precip_10d_anom",
+    "precip_15d_anom",
+)
+for _precip_anom_model in ("gfs", "ecmwf", "aifs", "aigfs"):
+    for _precip_anom_var in _PRECIP_ANOM_VARS:
+        _PACKING_BY_MODEL_VAR[(_precip_anom_model, _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
+for _precip_anom_var in _PRECIP_ANOM_VARS:
+    _PACKING_BY_MODEL_VAR[("gefs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
+    _PACKING_BY_MODEL_VAR[("gefs", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
+
 
 def grid_code_supported(model_id: str, var_key: str) -> bool:
     normalized_model = str(model_id or "").strip().lower()
