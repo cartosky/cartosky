@@ -144,6 +144,59 @@ def test_ecmwf_ptype_intensity_marks_freezing_rain_transition(monkeypatch) -> No
     assert ice_values[0, 0] > 0.0
 
 
+def test_ecmwf_ice_total_accumulates_unscaled_ice_steps(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    cumulative = {
+        ("precip_total", 6): np.array([[0.0060, 0.0060]], dtype=np.float32),
+        ("precip_total", 12): np.array([[0.0180, 0.0180]], dtype=np.float32),
+        ("sf", 6): np.array([[0.0003, 0.0050]], dtype=np.float32),
+        ("sf", 12): np.array([[0.0006, 0.0160]], dtype=np.float32),
+    }
+    thermal = {
+        "tmp2m": np.array([[-2.0, -5.0]], dtype=np.float32),
+        "tmp925": np.array([[2.5, -4.0]], dtype=np.float32),
+        "tmp850": np.array([[3.0, -7.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_step_component(**kwargs):
+        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+
+    def _fake_fetch_component(**kwargs):
+        return thermal[str(kwargs["var_key"])], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    values, out_crs, out_transform = derive_module._derive_ptype_accumulation_ecmwf(
+        model_id="ecmwf",
+        var_key="ice_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=12,
+        var_spec_model=SimpleNamespace(
+            selectors=SimpleNamespace(
+                hints={
+                    "ptype_component": "ice",
+                    "precip_component": "precip_total",
+                    "snow_component": "sf",
+                    "surface_temp_component": "tmp2m",
+                    "low_temp_component": "tmp925",
+                    "mid_temp_component": "tmp850",
+                    "step_hours": "6",
+                }
+            )
+        ),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    expected = np.array([[0.0180 * 39.37007874015748, 0.0]], dtype=np.float32)
+    np.testing.assert_allclose(values, expected, rtol=1e-5, atol=1e-5)
+
+
 def test_ecmwf_ptype_intensity_keeps_warm_precip_as_rain(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

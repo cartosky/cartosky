@@ -943,6 +943,8 @@ def test_promote_run_skips_published_transient_files(tmp_path: Path) -> None:
     (published_wgst / "fh000.json").write_text("published wind gust")
     (published_wgst / "tmp0iszhk_6").write_text("stale scratch")
     (published_wgst / "fh000.json.tmp").write_text("stale atomic write")
+    (published_wgst / "tmpdir_stale").mkdir()
+    (published_wgst / "tmpdir_stale" / "partial").write_text("stale directory scratch")
     (published_tmp2m / "fh000.json").write_text("published temp")
     (staging_ice / "fh384.json").write_text("staged ice")
 
@@ -952,6 +954,7 @@ def test_promote_run_skips_published_transient_files(tmp_path: Path) -> None:
     assert (published_run / "wgst10m" / "fh000.json").read_text() == "published wind gust"
     assert not (published_run / "wgst10m" / "tmp0iszhk_6").exists()
     assert not (published_run / "wgst10m" / "fh000.json.tmp").exists()
+    assert not (published_run / "wgst10m" / "tmpdir_stale").exists()
     assert (published_run / "tmp2m" / "fh000.json").read_text() == "published temp"
     assert (published_run / "na" / "ice_total" / "fh384.json").read_text() == "staged ice"
 

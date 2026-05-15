@@ -1670,6 +1670,7 @@ def _ptype_intensity_fetch_direct_cumulative_step(
     target_region: str,
     target_grid_id: str,
     resampling: str,
+    normalize_to_3h: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     step_fhs = _resolve_cumulative_step_fhs(
         hints=hints,
@@ -1734,7 +1735,7 @@ def _ptype_intensity_fetch_direct_cumulative_step(
         duration_hours = max(1, int(fh) - int(prev_fh))
 
     step_inches = (step_clean * np.float32(39.37007874015748)).astype(np.float32, copy=False)
-    if duration_hours != 3:
+    if normalize_to_3h and duration_hours != 3:
         step_inches = (step_inches * (np.float32(3.0) / np.float32(duration_hours))).astype(np.float32, copy=False)
         logger.info(
             "ptype_intensity cumulative step normalised model=%s component=%s fh=%03d duration=%dh target=3h",
@@ -4155,6 +4156,137 @@ def _derive_ptype_intensity_component_ecmwf(
     return values.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _derive_ptype_accumulation_ecmwf(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    component = str(hints.get("ptype_component") or "ice").strip().lower()
+    precip_component = str(hints.get("precip_component") or "precip_total")
+    snow_component = str(hints.get("snow_component") or "sf")
+    step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=3)
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid,
+        derive_component_resampling,
+        model_id,
+    )
+
+    logger.info(
+        "derive %s fh%03d ecmwf_ptype_steps=%d component=%s%s",
+        var_key,
+        fh,
+        len(step_fhs),
+        component,
+        _cadence_hint_suffix(hints),
+    )
+    logger.debug("derive %s fh%03d ecmwf_ptype_steps=%s", var_key, fh, step_fhs)
+
+    cumulative: np.ndarray | None = None
+    valid_mask: np.ndarray | None = None
+    src_crs: rasterio.crs.CRS | None = None
+    src_transform: rasterio.transform.Affine | None = None
+    for step_fh in step_fhs:
+        total_step, total_valid, step_crs, step_transform = _ptype_intensity_fetch_direct_cumulative_step(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=int(step_fh),
+            model_plugin=model_plugin,
+            ctx=ctx,
+            hints=hints,
+            component_var_key=precip_component,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            normalize_to_3h=False,
+        )
+        try:
+            snow_step, snow_valid, snow_crs, snow_transform = _ptype_intensity_fetch_direct_cumulative_step(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=int(step_fh),
+                model_plugin=model_plugin,
+                ctx=ctx,
+                hints=hints,
+                component_var_key=snow_component,
+                use_warped=use_warped,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                normalize_to_3h=False,
+            )
+            if snow_step.shape != total_step.shape or snow_crs != step_crs or snow_transform != step_transform:
+                raise ValueError(f"ptype accumulation ECMWF snow/precip grid mismatch for fh{int(step_fh):03d}")
+        except Exception:
+            logger.debug(
+                "ptype accumulation ECMWF snow component unavailable: model=%s fh=%03d var=%s",
+                model_id,
+                int(step_fh),
+                snow_component,
+                exc_info=True,
+            )
+            snow_step = np.zeros(total_step.shape, dtype=np.float32)
+            snow_step[~np.isfinite(total_step)] = np.nan
+            snow_valid = np.isfinite(total_step)
+
+        deep_cold, surface_cold, warm_nose = _ptype_intensity_ecmwf_phase_signals(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=int(step_fh),
+            model_plugin=model_plugin,
+            ctx=ctx,
+            hints=hints,
+            expected_shape=total_step.shape,
+        )
+        _, rain_step, snow_family_step, ice_step = _ptype_intensity_family_rates_ecmwf(
+            intensity=total_step,
+            snow_lwe=snow_step,
+            deep_cold=deep_cold,
+            surface_cold=surface_cold,
+            warm_nose=warm_nose,
+        )
+        component_steps = {
+            "rain": rain_step,
+            "snow": snow_family_step,
+            "ice": ice_step,
+        }
+        step_values = component_steps.get(component)
+        if step_values is None:
+            step_values = np.zeros(total_step.shape, dtype=np.float32)
+            step_values[~np.isfinite(total_step)] = np.nan
+        step_valid = np.asarray(total_valid, dtype=bool) & np.asarray(snow_valid, dtype=bool) & np.isfinite(step_values)
+        step_clean = np.where(step_valid, np.maximum(step_values, 0.0), 0.0).astype(np.float32, copy=False)
+
+        if cumulative is None:
+            cumulative = step_clean
+            valid_mask = step_valid
+            src_crs = step_crs
+            src_transform = step_transform
+            continue
+        if cumulative.shape != step_clean.shape or src_crs != step_crs or src_transform != step_transform:
+            raise ValueError(f"ptype accumulation ECMWF grid mismatch for {model_id}/{var_key} fh{int(step_fh):03d}")
+        cumulative = (cumulative + step_clean).astype(np.float32, copy=False)
+        valid_mask = np.logical_or(valid_mask, step_valid)  # type: ignore[arg-type]
+
+    if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
+        raise ValueError(f"No cumulative ECMWF ptype source steps resolved for {model_id}/{var_key} fh{fh:03d}")
+    return np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False), src_crs, src_transform
+
+
 def _derive_precip_total_cumulative(
     *,
     model_id: str,
@@ -6119,6 +6251,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("apcp_step",),
         output_var_key=None,
         execute=_derive_ptype_accumulation_cumulative,
+    ),
+    "ptype_accumulation_ecmwf": DeriveStrategy(
+        id="ptype_accumulation_ecmwf",
+        required_inputs=("precip_total", "sf", "tmp2m", "tmp925", "tmp850"),
+        output_var_key=None,
+        execute=_derive_ptype_accumulation_ecmwf,
     ),
     "anomaly_departure": DeriveStrategy(
         id="anomaly_departure",

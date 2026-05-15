@@ -73,6 +73,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("total_snow") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
     assert ECMWF_MODEL.normalize_var_id("snowkuchera") == "snowfall_kuchera_total"
+    assert ECMWF_MODEL.normalize_var_id("ice_total") == "ice_total"
+    assert ECMWF_MODEL.normalize_var_id("total_ice") == "ice_total"
     assert ECMWF_MODEL.normalize_var_id("wspd10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wind10m") == "wspd10m"
     assert ECMWF_MODEL.normalize_var_id("wgst10m") == "wgst10m"
@@ -121,7 +123,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "ice_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -137,6 +139,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert ("ecmwf", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "hgt500_anom") in _PACKING_BY_MODEL_VAR
+    assert ("ecmwf", "ice_total") in _PACKING_BY_MODEL_VAR
 
     tmp2m_anom_spec = ECMWF_MODEL.get_var("tmp2m_anom")
     assert tmp2m_anom_spec is not None
@@ -248,6 +251,19 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert snowfall_kuchera_spec.selectors.hints["kuchera_lwe_component"] == "sf"
     assert snowfall_kuchera_spec.selectors.hints["cumulative_cache_version"] == "ecmwf_sf_v2"
     assert snowfall_kuchera_spec.selectors.hints["kuchera_profile_mode"] == "simplified"
+
+    ice_total_spec = ECMWF_MODEL.get_var("ice_total")
+    assert ice_total_spec is not None
+    assert ice_total_spec.primary is True
+    assert ice_total_spec.derived is True
+    assert ice_total_spec.derive == "ptype_accumulation_ecmwf"
+    assert ice_total_spec.kind == "continuous"
+    assert ice_total_spec.units == "in"
+    assert ice_total_spec.selectors.search == []
+    assert ice_total_spec.selectors.hints["ptype_component"] == "ice"
+    assert ice_total_spec.selectors.hints["precip_component"] == "precip_total"
+    assert ice_total_spec.selectors.hints["snow_component"] == "sf"
+    assert ice_total_spec.selectors.hints["surface_temp_component"] == "tmp2m"
 
     mucape_spec = ECMWF_MODEL.get_var("mucape")
     assert mucape_spec is not None
@@ -548,6 +564,21 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["default_fh"] == 3
     assert snowfall_kuchera_total["constraints"] == {"min_fh": 3}
     assert snowfall_kuchera_total["render_substrates"] == ["grid"]
+
+    ice_total = payload["variables"]["ice_total"]
+    assert ice_total["var_key"] == "ice_total"
+    assert ice_total["display_name"] == "Total Ice"
+    assert ice_total["kind"] == "continuous"
+    assert ice_total["units"] == "in"
+    assert ice_total["buildable"] is True
+    assert ice_total["derived"] is True
+    assert ice_total["derive_strategy_id"] == "ptype_accumulation_ecmwf"
+    assert ice_total["color_map_id"] == "ice_total"
+    assert ice_total["order"] == 14.5
+    assert ice_total["group"] == "Precipitation"
+    assert ice_total["default_fh"] == 6
+    assert ice_total["constraints"] == {"min_fh": 3}
+    assert ice_total["render_substrates"] == ["grid"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"

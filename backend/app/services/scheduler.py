@@ -1026,11 +1026,26 @@ def _copy_or_link_file(src: str, dst: str) -> str:
     return dst
 
 
+_TEMPFILE_NAME_RE = re.compile(r"^tmp[a-z0-9_]{6,}$", re.IGNORECASE)
+_TEMPFILE_VAR_DIR_ALLOWLIST = {
+    "tmp2m",
+    "tmp2m_anom",
+    "tmp925",
+    "tmp850",
+    "tmp850_anom",
+    "tmp700",
+    "tmp600",
+    "tmp500",
+}
+
+
 def _is_transient_promotion_artifact(path: Path) -> bool:
     name = path.name
     if name.endswith(".tmp") or (name.startswith(".") and name.endswith(".tmp")):
         return True
-    if name.startswith("tmp") and (path.is_file() or path.is_symlink()):
+    if name in _TEMPFILE_VAR_DIR_ALLOWLIST:
+        return False
+    if _TEMPFILE_NAME_RE.match(name):
         return True
     return False
 
