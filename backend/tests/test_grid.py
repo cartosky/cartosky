@@ -1353,15 +1353,20 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
     frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
     manifest_path = artifacts_dir / "manifest.json"
     assert frame_path.is_file()
+    assert frame_meta_path.is_file()
     assert manifest_path.is_file()
 
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
-    assert encoded[0, 0] == 0
-    assert encoded[0, 1] == 2
-    assert encoded[1, 0] == 65535
-    assert encoded[1, 1] == 9
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+        values.shape[0] * 3,
+        values.shape[1] * 3,
+    )
+    assert np.all(encoded[0:3, 0:3] == 0)
+    assert np.all(encoded[0:3, 3:6] == 2)
+    assert np.all(encoded[3:6, 0:3] == 65535)
+    assert np.all(encoded[3:6, 3:6] == 9)
 
     frame_meta = json.loads(frame_meta_path.read_text())
     assert frame_meta["width"] == values.shape[1] * 3

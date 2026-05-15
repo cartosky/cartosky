@@ -711,10 +711,11 @@ NAM_VARS: dict[str, VarSpec] = {
                 "snow_component": "csnow",
                 "sleet_component": "cicep",
                 "frzr_component": "cfrzr",
-                # NAM ptype masks can be noisy at low signal; tighten gates.
-                "min_visible_dbz": "15.0",
+                # NAM ptype masks can be noisy at low signal; keep modest gates
+                # while preserving light precip that should remain visible.
+                "min_visible_dbz": "10.0",
                 "min_mask_value": "0.5",
-                "despeckle_min_neighbors": "3",
+                "despeckle_min_neighbors": "2",
             },
         ),
         derived=True,
@@ -849,8 +850,8 @@ NAM_CAPABILITIES = ModelCapabilities(
     product="conusnest.hiresf",
     canonical_region="conus",
     grid_meters_by_region={
-        "conus": 5_000.0,
-        "pnw": 5_000.0,
+        "conus": 3_000.0,
+        "pnw": 3_000.0,
     },
     run_discovery={
         "probe_var_key": "tmp2m",

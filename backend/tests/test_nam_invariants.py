@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+os.environ.setdefault("TWF_BASE", "https://example.com")
+os.environ.setdefault("TWF_CLIENT_ID", "client-id")
+os.environ.setdefault("TWF_CLIENT_SECRET", "client-secret")
+os.environ.setdefault("TWF_REDIRECT_URI", "https://example.com/callback")
+os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
+os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
+os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app.main import _serialize_model_capability
 from app.models.nam import NAM_MODEL
@@ -33,6 +42,7 @@ def test_nam_buildable_var_set_and_defaults_invariants() -> None:
         "tmp850",
         "wspd850",
         "wspd300",
+        "vort500",
         "sbcape",
         "mlcape",
         "mucape",
@@ -50,8 +60,8 @@ def test_nam_buildable_var_set_and_defaults_invariants() -> None:
     assert capabilities.ui_constraints["supports_sampling"] is True
     assert capabilities.canonical_region == "conus"
     assert capabilities.grid_meters_by_region == {
-        "conus": 5000.0,
-        "pnw": 5000.0,
+        "conus": 3000.0,
+        "pnw": 3000.0,
     }
 
 
@@ -221,9 +231,9 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["order"] == 0
     radar_ptype_spec = NAM_MODEL.get_var("radar_ptype")
     assert radar_ptype_spec is not None
-    assert radar_ptype_spec.selectors.hints["min_visible_dbz"] == "15.0"
+    assert radar_ptype_spec.selectors.hints["min_visible_dbz"] == "10.0"
     assert radar_ptype_spec.selectors.hints["min_mask_value"] == "0.5"
-    assert radar_ptype_spec.selectors.hints["despeckle_min_neighbors"] == "3"
+    assert radar_ptype_spec.selectors.hints["despeckle_min_neighbors"] == "2"
 
     u10 = payload["variables"]["10u"]
     assert u10["buildable"] is False
