@@ -26,6 +26,10 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert GEFS_MODEL.normalize_var_id("t850") == "tmp850"
+    assert GEFS_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
+    assert GEFS_MODEL.normalize_var_id("tmp850_anom__mean") == "tmp850_anom__mean"
+    assert GEFS_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
+    assert GEFS_MODEL.normalize_var_id("850mb_temp_anom") == "tmp850_anom"
     assert GEFS_MODEL.normalize_var_id("wspd850") == "wspd850"
     assert GEFS_MODEL.normalize_var_id("wind850") == "wspd850"
     assert GEFS_MODEL.normalize_var_id("850mb_heights_winds") == "wspd850"
@@ -45,6 +49,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
     assert GEFS_MODEL.default_ensemble_view("tmp850") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("tmp850_anom") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd850") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd300") == "mean"
     assert GEFS_MODEL.default_ensemble_view("sbcape") == "mean"
@@ -54,6 +59,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("tmp850") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("tmp850_anom") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd850") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd300") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("sbcape") == ["mean"]
@@ -63,6 +69,7 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("tmp850", "mean") == "tmp850__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("tmp850_anom", "mean") == "tmp850_anom__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd850", "mean") == "wspd850__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd300", "mean") == "wspd300__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("sbcape", "mean") == "sbcape__mean"
@@ -80,6 +87,11 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert tmp850_request.model == "gefs"
     assert tmp850_request.product == "atmos.5"
     assert tmp850_request.herbie_kwargs["member"] == "mean"
+
+    tmp850_anom_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="tmp850_anom", ensemble_view="mean")
+    assert tmp850_anom_request.model == "gefs"
+    assert tmp850_anom_request.product == "atmos.5"
+    assert tmp850_anom_request.herbie_kwargs["member"] == "mean"
 
     wspd850_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="wspd850", ensemble_view="mean")
     assert wspd850_request.model == "gefs"
@@ -135,6 +147,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "tmp2m_anom",
         "tmp850",
+        "tmp850_anom",
         "wspd10m",
         "wspd300",
         "wspd850",
@@ -161,6 +174,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert "pwat__mean" not in payload["variables"]
     assert "tmp2m__mean" not in payload["variables"]
     assert "tmp850__mean" not in payload["variables"]
+    assert "tmp850_anom__mean" not in payload["variables"]
     assert "wspd850__mean" not in payload["variables"]
     assert "wspd300__mean" not in payload["variables"]
     assert "sbcape__mean" not in payload["variables"]
@@ -198,6 +212,18 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["group"] == "Temperature"
     assert tmp850["ensemble"]["default_view"] == "mean"
     assert tmp850["ensemble"]["supported_views"] == ["mean"]
+
+    tmp850_anom = payload["variables"]["tmp850_anom"]
+    assert tmp850_anom["var_key"] == "tmp850_anom"
+    assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
+    assert tmp850_anom["buildable"] is True
+    assert tmp850_anom["derived"] is True
+    assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp850_anom["color_map_id"] == "tmp850_anom"
+    assert tmp850_anom["default_fh"] == 0
+    assert tmp850_anom["group"] == "Temperature"
+    assert tmp850_anom["ensemble"]["default_view"] == "mean"
+    assert tmp850_anom["ensemble"]["supported_views"] == ["mean"]
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["var_key"] == "wspd850"
@@ -285,6 +311,7 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "tmp850", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "tmp850_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd850", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd300", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "sbcape", None) == "mean"
@@ -294,6 +321,7 @@ def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
     assert _runtime_var_id_for_request("gefs", "tmp850", "mean") == "tmp850__mean"
+    assert _runtime_var_id_for_request("gefs", "tmp850_anom", "mean") == "tmp850_anom__mean"
     assert _runtime_var_id_for_request("gefs", "wspd850", "mean") == "wspd850__mean"
     assert _runtime_var_id_for_request("gefs", "wspd300", "mean") == "wspd300__mean"
     assert _runtime_var_id_for_request("gefs", "sbcape", "mean") == "sbcape__mean"
@@ -322,6 +350,27 @@ def test_gefs_sbcape_selector_matches_live_inventory_shape() -> None:
 def test_gefs_tmp850_selector_matches_live_inventory_shape() -> None:
     pattern = GEFS_MODEL.get_var("tmp850__mean").selectors.search[0]
     assert re.search(pattern, ":TMP:850 mb:6 hour fcst:ens mean") is not None
+
+
+def test_gefs_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:
+    var_spec = GEFS_MODEL.get_var("tmp850_anom")
+    runtime_spec = GEFS_MODEL.get_var("tmp850_anom__mean")
+    assert var_spec is not None
+    assert runtime_spec is not None
+    for spec in (var_spec, runtime_spec):
+        assert spec.primary is True
+        assert spec.derived is True
+        assert spec.derive == "anomaly_departure"
+        assert spec.kind == "continuous"
+        assert spec.units == "F"
+        assert spec.selectors.hints["base_component"] == "tmp850__mean"
+        assert spec.selectors.hints["base_conversion"] == "c_to_f"
+        assert spec.selectors.hints["baseline_field"] == "tmp850"
+        assert spec.selectors.hints["baseline_source"] == "era5"
+        assert spec.selectors.hints["legacy_baseline_model_family"] == "gefs"
+        assert spec.selectors.hints["baseline_region"] == "na"
+        assert spec.selectors.hints["baseline_version"] == "v1"
+        assert spec.selectors.hints["reference_period"] == "1991-2020"
 
 
 def test_gefs_wspd850_inputs_match_live_inventory_shape() -> None:

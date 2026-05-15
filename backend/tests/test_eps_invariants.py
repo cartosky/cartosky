@@ -29,6 +29,13 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert EPS_MODEL.normalize_var_id("surface_temp_anom") == "tmp2m_anom"
     assert EPS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert EPS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert EPS_MODEL.normalize_var_id("tmp850") == "tmp850"
+    assert EPS_MODEL.normalize_var_id("tmp850__mean") == "tmp850__mean"
+    assert EPS_MODEL.normalize_var_id("t850") == "tmp850"
+    assert EPS_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
+    assert EPS_MODEL.normalize_var_id("tmp850_anom__mean") == "tmp850_anom__mean"
+    assert EPS_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
+    assert EPS_MODEL.normalize_var_id("850mb_temp_anom") == "tmp850_anom"
     assert EPS_MODEL.normalize_var_id("hgt500") == "hgt500__mean"
     assert EPS_MODEL.normalize_var_id("z500") == "hgt500__mean"
     assert EPS_MODEL.normalize_var_id("hgt500_anom") == "hgt500_anom"
@@ -38,14 +45,17 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert EPS_MODEL.normalize_var_id("10v") == "10v__mean"
     assert EPS_MODEL.default_ensemble_view("tmp2m") == "mean"
     assert EPS_MODEL.default_ensemble_view("tmp2m_anom") == "mean"
+    assert EPS_MODEL.default_ensemble_view("tmp850_anom") == "mean"
     assert EPS_MODEL.default_ensemble_view("wspd10m") == "mean"
     assert EPS_MODEL.default_ensemble_view("hgt500_anom") == "mean"
     assert EPS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("tmp2m_anom") == ["mean"]
+    assert EPS_MODEL.supported_ensemble_views("tmp850_anom") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("hgt500_anom") == ["mean"]
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m_anom", "mean") == "tmp2m_anom__mean"
+    assert EPS_MODEL.resolve_runtime_var_id("tmp850_anom", "mean") == "tmp850_anom__mean"
     assert EPS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
     assert EPS_MODEL.resolve_runtime_var_id("hgt500_anom", "mean") == "hgt500_anom__mean"
 
@@ -58,6 +68,11 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert hgt500_request.model == "ifs"
     assert hgt500_request.product == "enfo"
     assert hgt500_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
+
+    tmp850_anom_request = EPS_MODEL.herbie_request(product="enfo", var_key="tmp850_anom", ensemble_view="mean")
+    assert tmp850_anom_request.model == "ifs"
+    assert tmp850_anom_request.product == "enfo"
+    assert tmp850_anom_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
 
     u10_request = EPS_MODEL.herbie_request(product="enfo", var_key="10u", ensemble_view="mean")
     assert u10_request.model == "ifs"
@@ -74,7 +89,7 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "hgt500_anom", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "tmp850_anom", "hgt500_anom", "wspd10m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "na"
@@ -88,6 +103,9 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
     assert ("eps", "hgt500__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp2m_anom__mean") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "tmp850__mean") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "tmp850_anom") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "tmp850_anom__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "hgt500_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "hgt500_anom__mean") in _PACKING_BY_MODEL_VAR
 
@@ -104,6 +122,8 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "tmp2m__mean" not in payload["variables"]
     assert "tmp2m_anom__mean" not in payload["variables"]
+    assert "tmp850__mean" not in payload["variables"]
+    assert "tmp850_anom__mean" not in payload["variables"]
     assert "hgt500__mean" not in payload["variables"]
     assert "hgt500_anom__mean" not in payload["variables"]
     assert "wspd10m__mean" not in payload["variables"]
@@ -129,6 +149,18 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m_anom["group"] == "Temperature"
     assert tmp2m_anom["ensemble"]["default_view"] == "mean"
     assert tmp2m_anom["ensemble"]["supported_views"] == ["mean"]
+
+    tmp850_anom = payload["variables"]["tmp850_anom"]
+    assert tmp850_anom["var_key"] == "tmp850_anom"
+    assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
+    assert tmp850_anom["buildable"] is True
+    assert tmp850_anom["derived"] is True
+    assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
+    assert tmp850_anom["color_map_id"] == "tmp850_anom"
+    assert tmp850_anom["default_fh"] == 0
+    assert tmp850_anom["group"] == "Temperature"
+    assert tmp850_anom["ensemble"]["default_view"] == "mean"
+    assert tmp850_anom["ensemble"]["supported_views"] == ["mean"]
 
     wspd10m = payload["variables"]["wspd10m"]
     assert wspd10m["var_key"] == "wspd10m"
@@ -158,10 +190,12 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
 def test_eps_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("eps", "tmp2m", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "tmp2m_anom", None) == "mean"
+    assert _resolve_requested_ensemble_view("eps", "tmp850_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "wspd10m", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "hgt500_anom", None) == "mean"
     assert _runtime_var_id_for_request("eps", "tmp2m", "mean") == "tmp2m__mean"
     assert _runtime_var_id_for_request("eps", "tmp2m_anom", "mean") == "tmp2m_anom__mean"
+    assert _runtime_var_id_for_request("eps", "tmp850_anom", "mean") == "tmp850_anom__mean"
     assert _runtime_var_id_for_request("eps", "wspd10m", "mean") == "wspd10m__mean"
     assert _runtime_var_id_for_request("eps", "hgt500_anom", "mean") == "hgt500_anom__mean"
     try:
@@ -170,3 +204,29 @@ def test_eps_runtime_resolution_helpers() -> None:
         assert exc.status_code == 404
     else:
         raise AssertionError("Expected unsupported EPS ensemble view to raise HTTPException")
+
+
+def test_eps_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:
+    var_spec = EPS_MODEL.get_var("tmp850_anom")
+    runtime_spec = EPS_MODEL.get_var("tmp850_anom__mean")
+    component_spec = EPS_MODEL.get_var("tmp850__mean")
+    assert var_spec is not None
+    assert runtime_spec is not None
+    assert component_spec is not None
+    assert component_spec.primary is True
+    assert component_spec.derived is False
+    assert component_spec.selectors.search == [":t:850:pl:"]
+    for spec in (var_spec, runtime_spec):
+        assert spec.primary is True
+        assert spec.derived is True
+        assert spec.derive == "anomaly_departure"
+        assert spec.kind == "continuous"
+        assert spec.units == "F"
+        assert spec.selectors.hints["base_component"] == "tmp850__mean"
+        assert spec.selectors.hints["base_conversion"] == "c_to_f"
+        assert spec.selectors.hints["baseline_field"] == "tmp850"
+        assert spec.selectors.hints["baseline_source"] == "era5"
+        assert spec.selectors.hints["legacy_baseline_model_family"] == "gefs"
+        assert spec.selectors.hints["baseline_region"] == "na"
+        assert spec.selectors.hints["baseline_version"] == "v1"
+        assert spec.selectors.hints["reference_period"] == "1991-2020"

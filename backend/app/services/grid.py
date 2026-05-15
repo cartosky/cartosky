@@ -327,6 +327,36 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("gefs", "tmp850_anom"): {
+        "scale": 0.1,
+        "offset": -80.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("gefs", "tmp850_anom__mean"): {
+        "scale": 0.1,
+        "offset": -80.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("eps", "tmp850__mean"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("eps", "tmp850_anom"): {
+        "scale": 0.1,
+        "offset": -80.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("eps", "tmp850_anom__mean"): {
+        "scale": 0.1,
+        "offset": -80.0,
+        "nodata": 65535,
+        "units": "F",
+    },
     ("gefs", "wspd850__mean"): {
         "scale": 0.1,
         "offset": 0.0,

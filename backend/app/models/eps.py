@@ -40,6 +40,18 @@ class EPSPlugin(ECMWFPlugin):
             "surface_temp_anom": "tmp2m_anom",
             "temperature_anomaly": "tmp2m_anom",
             "tmp2m_anom__mean": "tmp2m_anom__mean",
+            "tmp850": "tmp850",
+            "tmp850__mean": "tmp850__mean",
+            "t850": "tmp850",
+            "t850mb": "tmp850",
+            "temp850": "tmp850",
+            "temp850mb": "tmp850",
+            "tmp850_anom": "tmp850_anom",
+            "tmp850_anom__mean": "tmp850_anom__mean",
+            "t850_anom": "tmp850_anom",
+            "850mb_temp_anom": "tmp850_anom",
+            "temp850_anom": "tmp850_anom",
+            "temp850mb_anom": "tmp850_anom",
             "hgt500": "hgt500__mean",
             "z500": "hgt500__mean",
             "500hgt": "hgt500__mean",
@@ -83,7 +95,7 @@ class EPSPlugin(ECMWFPlugin):
         )
         runtime_var = self.resolve_runtime_var_id(var_key or "", ensemble_view)
         herbie_kwargs = dict(base_request.herbie_kwargs)
-        if runtime_var == "hgt500__mean":
+        if runtime_var in {"tmp850__mean", "tmp850_anom__mean", "hgt500__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_direct_mean_or_pf_mean"
         elif runtime_var in {"tmp2m__mean", "10u__mean", "10v__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
@@ -206,6 +218,59 @@ EPS_VARS = {
         derive="anomaly_departure",
         kind="continuous",
         units="dam",
+    ),
+    "tmp850": replace(
+        ECMWF_VARS["tmp850"],
+        name="850mb Temp (Mean)",
+    ),
+    "tmp850__mean": replace(
+        ECMWF_VARS["tmp850"],
+        id="tmp850__mean",
+        name="850mb Temp (Mean)",
+    ),
+    "tmp850_anom": replace(
+        ECMWF_VARS["tmp850_anom"],
+        id="tmp850_anom",
+        name="850mb Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp850__mean",
+                "base_conversion": "c_to_f",
+                "baseline_field": "tmp850",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
+    ),
+    "tmp850_anom__mean": replace(
+        ECMWF_VARS["tmp850_anom"],
+        id="tmp850_anom__mean",
+        name="850mb Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "base_component": "tmp850__mean",
+                "base_conversion": "c_to_f",
+                "baseline_field": "tmp850",
+                "baseline_source": "era5",
+                "legacy_baseline_model_family": "gefs",
+                "baseline_region": "na",
+                "baseline_version": "v1",
+                "reference_period": "1991-2020",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="anomaly_departure",
+        kind="continuous",
+        units="F",
     ),
     "10u__mean": replace(
         ECMWF_VARS["10u"],
@@ -376,6 +441,65 @@ EPS_VARIABLE_CATALOG = {
         order=3,
         group="Dynamics",
         conversion="m_to_dam",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "tmp850__mean": VariableCapability(
+        var_key="tmp850__mean",
+        name=EPS_VARS["tmp850__mean"].name,
+        selectors=EPS_VARS["tmp850__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="C",
+        color_map_id="tmp850",
+        default_fh=0,
+        buildable=False,
+        order=3,
+        group="Temperature",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "tmp850_anom": VariableCapability(
+        var_key="tmp850_anom",
+        name=EPS_VARS["tmp850_anom"].name,
+        selectors=EPS_VARS["tmp850_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp850_anom",
+        default_fh=0,
+        buildable=True,
+        order=3.5,
+        group="Temperature",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "tmp850_anom__mean"},
+        },
+    ),
+    "tmp850_anom__mean": VariableCapability(
+        var_key="tmp850_anom__mean",
+        name=EPS_VARS["tmp850_anom__mean"].name,
+        selectors=EPS_VARS["tmp850_anom__mean"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="anomaly_departure",
+        kind="continuous",
+        units="F",
+        color_map_id="tmp850_anom",
+        default_fh=0,
+        buildable=False,
+        order=3.5,
+        group="Temperature",
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],
