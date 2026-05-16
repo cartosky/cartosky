@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -240,3 +241,56 @@ async def test_admin_feedback_returns_aggregate_metadata(
     assert filtered_payload["total"] == 1
     assert filtered_payload["summary"]["by_category"]["bug"] == 1
     assert filtered_payload["filters"]["display_name"] == "alp"
+
+
+def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status = 201
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+            del exc_type, exc, tb
+
+    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(feedback_service.urllib.request, "urlopen", fake_urlopen)
+
+    submission = {
+        "category": "bug",
+        "submitted_at": "2026-05-16T12:00:00Z",
+        "forums_display_name": "Beta Tester",
+        "member_id": 777,
+        "message": "Production smoke test",
+        "page_context": "/viewer",
+        "model_context": "hrrr",
+        "fhr_context": 12,
+        "app_version": "test-sha",
+        "user_agent": "pytest-browser",
+    }
+    settings = feedback_service.Settings(
+        feedback_notify_email="ops@example.com",
+        smtp_password="resend-api-key",
+        smtp_from="feedback@cartosky.com",
+        cartosky_admin_base_url="https://cartosky.com",
+    )
+
+    feedback_service.send_feedback_notification(submission, settings)
+
+    request = captured["request"]
+    assert captured["timeout"] == 10
+    assert request.full_url == "https://api.resend.com/emails"  # type: ignore[attr-defined]
+    assert request.get_header("Authorization") == "Bearer resend-api-key"  # type: ignore[attr-defined]
+    assert request.get_header("Content-type") == "application/json"  # type: ignore[attr-defined]
+    payload = json.loads(request.data.decode())  # type: ignore[attr-defined]
+    assert payload["from"] == "feedback@cartosky.com"
+    assert payload["to"] == ["ops@example.com"]
+    assert payload["subject"] == "[CartoSky Beta Feedback] [BUG] from Beta Tester"
+    assert "Production smoke test" in payload["text"]
+    assert "Admin: https://cartosky.com/admin/feedback" in payload["text"]

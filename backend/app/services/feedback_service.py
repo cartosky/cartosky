@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
-import smtplib
+import json
 import sqlite3
 import threading
+import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,23 @@ FEEDBACK_CATEGORIES = ("bug", "performance", "feature", "data_accuracy", "ui_ux"
 
 _db_initialized = False
 _db_init_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class Settings:
+    feedback_notify_email: str
+    smtp_password: str
+    smtp_from: str
+    cartosky_admin_base_url: str
+
+
+def notification_settings_from_env() -> Settings:
+    return Settings(
+        feedback_notify_email=os.environ.get("FEEDBACK_NOTIFY_EMAIL", "").strip(),
+        smtp_password=os.environ.get("SMTP_PASSWORD", ""),
+        smtp_from=os.environ.get("SMTP_FROM", "").strip() or os.environ.get("SMTP_USER", "").strip(),
+        cartosky_admin_base_url=os.environ.get("CARTOSKY_ADMIN_BASE_URL", "").strip().rstrip("/"),
+    )
 
 
 def _ensure_parent_dir(path: Path) -> None:
@@ -361,62 +379,53 @@ def get_admin_feedback(
     }
 
 
-def send_feedback_notification(record: dict[str, Any]) -> None:
-    notify_email = os.environ.get("FEEDBACK_NOTIFY_EMAIL", "").strip()
-    smtp_host = os.environ.get("SMTP_HOST", "").strip()
-    smtp_port_raw = os.environ.get("SMTP_PORT", "587").strip()
-    smtp_user = os.environ.get("SMTP_USER", "").strip()
-    smtp_password = os.environ.get("SMTP_PASSWORD", "")
-    smtp_from = os.environ.get("SMTP_FROM", "").strip() or smtp_user
-    if not notify_email or not smtp_host or not smtp_from:
-        logger.info("Feedback notification email skipped; SMTP destination, host, or from address is not configured")
-        return
-    try:
-        smtp_port = int(smtp_port_raw)
-    except ValueError:
-        logger.warning("Feedback notification email skipped; invalid SMTP_PORT=%r", smtp_port_raw)
-        return
-
-    message = EmailMessage()
-    category = str(record.get("category") or "unknown").upper()
-    display_name = str(record.get("forums_display_name") or "unknown")
-    message["Subject"] = f"[CartoSky Beta Feedback] [{category}] from {display_name}"
-    message["From"] = smtp_from
-    message["To"] = notify_email
-    admin_base_url = os.environ.get("CARTOSKY_ADMIN_BASE_URL", "").strip().rstrip("/")
-    admin_link = f"{admin_base_url}/admin/feedback" if admin_base_url else None
-
+def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
+    admin_link = f"{settings.cartosky_admin_base_url}/admin/feedback" if settings.cartosky_admin_base_url else None
     body_lines = [
-        f"Category: {record.get('category')}",
-        f"Submitted at: {record.get('submitted_at')} UTC",
-        f"Forums display name: {record.get('forums_display_name')}",
-        f"Member id: {record.get('member_id')}",
+        f"Category: {submission.get('category')}",
+        f"Submitted at: {submission.get('submitted_at')} UTC",
+        f"Forums display name: {submission.get('forums_display_name')}",
+        f"Member id: {submission.get('member_id')}",
         "",
         "Message:",
-        str(record.get("message") or ""),
+        str(submission.get("message") or ""),
         "",
-        f"Page context: {record.get('page_context')}",
-        f"Model context: {record.get('model_context') or 'n/a'}",
-        f"Forecast hour context: {record.get('fhr_context') if record.get('fhr_context') is not None else 'n/a'}",
-        f"App version: {record.get('app_version') or 'n/a'}",
-        f"User agent: {record.get('user_agent') or 'n/a'}",
+        f"Page context: {submission.get('page_context')}",
+        f"Model context: {submission.get('model_context') or 'n/a'}",
+        f"Forecast hour context: {submission.get('fhr_context') if submission.get('fhr_context') is not None else 'n/a'}",
+        f"App version: {submission.get('app_version') or 'n/a'}",
+        f"User agent: {submission.get('user_agent') or 'n/a'}",
     ]
     if admin_link:
         body_lines.extend(["", f"Admin: {admin_link}"])
-    message.set_content("\n".join(body_lines))
+    return "\n".join(body_lines)
+
+
+def send_feedback_notification(submission: dict[str, Any], settings: Settings) -> None:
+    if not settings.feedback_notify_email or not settings.smtp_password or not settings.smtp_from:
+        logger.info("Feedback notification email skipped; Resend destination, API key, or from address is not configured")
+        return
+
+    payload = json.dumps({
+        "from": settings.smtp_from,
+        "to": [settings.feedback_notify_email],
+        "subject": f"[CartoSky Beta Feedback] [{submission['category'].upper()}] from {submission['forums_display_name']}",
+        "text": _build_email_body(submission, settings),
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {settings.smtp_password}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
 
     try:
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as smtp:
-                if smtp_user or smtp_password:
-                    smtp.login(smtp_user, smtp_password)
-                smtp.send_message(message)
-            return
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
-            if smtp_port != 25:
-                smtp.starttls()
-            if smtp_user or smtp_password:
-                smtp.login(smtp_user, smtp_password)
-            smtp.send_message(message)
-    except Exception:
-        logger.exception("Failed to send feedback notification email")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status not in (200, 201):
+                logger.error("Resend API returned %s", resp.status)
+    except Exception as exc:
+        logger.error("Failed to send feedback notification email: %s", exc)

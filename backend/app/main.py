@@ -1291,7 +1291,11 @@ async def post_feedback(
         )
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_FEEDBACK", message=str(exc)) from exc
-    background_tasks.add_task(feedback_service.send_feedback_notification, record)
+    background_tasks.add_task(
+        feedback_service.send_feedback_notification,
+        record,
+        feedback_service.notification_settings_from_env(),
+    )
     return {
         "ok": True,
         "id": record["id"],
