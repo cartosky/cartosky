@@ -18,12 +18,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,7 +75,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services import admin_telemetry, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app.auth import twf_oauth
 
@@ -287,6 +287,7 @@ _TWF_RATE_LIMIT_MESSAGE = "Too many requests. Try again shortly."
 _TWF_RATE_LIMIT_PATHS = {"/twf/share/topic", "/twf/share/post"}
 _TWF_GUARDED_PATHS = _TWF_RATE_LIMIT_PATHS
 _TWF_ERROR_PATHS = {
+    "/api/v4/feedback",
     "/auth/twf/status",
     "/auth/twf/disconnect",
     "/twf/forums",
@@ -1239,6 +1240,65 @@ class RumTelemetryIn(TelemetryEventBase):
     sample_rate: float | None = Field(default=None, gt=0, le=1)
 
 
+FeedbackCategory = Literal["bug", "performance", "feature", "data_accuracy", "ui_ux"]
+
+
+class FeedbackSubmission(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    category: FeedbackCategory
+    message: str = Field(min_length=1, max_length=1000)
+    page_context: str = Field(min_length=1, max_length=300)
+    model_context: str | None = Field(default=None, max_length=64)
+    fhr_context: int | None = Field(default=None, ge=0, le=1000)
+    app_version: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def require_non_blank_text(self) -> "FeedbackSubmission":
+        if not self.message.strip():
+            raise ValueError("message must not be blank")
+        if not self.page_context.strip():
+            raise ValueError("page_context must not be blank")
+        return self
+
+
+@app.post("/api/v4/feedback", status_code=201)
+async def post_feedback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: FeedbackSubmission,
+) -> dict[str, Any]:
+    sess = _require_twf_session(request)
+    retry_after = feedback_service.check_rate_limit(sess.member_id)
+    if retry_after > 0:
+        raise TwfApiError(
+            status_code=429,
+            code="FEEDBACK_RATE_LIMITED",
+            message="Too many feedback submissions. Please try again later.",
+        )
+    display_name = sess.display_name.strip() if sess.display_name and sess.display_name.strip() else f"member-{sess.member_id}"
+    try:
+        record = feedback_service.insert_feedback(
+            category=payload.category,
+            message=payload.message.strip(),
+            member_id=sess.member_id,
+            forums_display_name=display_name,
+            page_context=payload.page_context.strip(),
+            model_context=payload.model_context.strip() if payload.model_context and payload.model_context.strip() else None,
+            fhr_context=payload.fhr_context,
+            user_agent=(request.headers.get("user-agent") or "unknown")[:512],
+            app_version=payload.app_version.strip() if payload.app_version and payload.app_version.strip() else None,
+        )
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_FEEDBACK", message=str(exc)) from exc
+    background_tasks.add_task(feedback_service.send_feedback_notification, record)
+    return {
+        "ok": True,
+        "id": record["id"],
+        "submitted_at": record["submitted_at"],
+    }
+
+
 @app.post("/api/v4/telemetry/perf", status_code=204)
 async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Response:
     if not _legacy_telemetry_write_enabled():
@@ -1396,6 +1456,34 @@ async def admin_usage_summary(request: Request, window: str = Query("30d")) -> d
         "window": normalized_window,
         **admin_telemetry.get_usage_summary(since_ts=since_ts),
     }
+
+
+@app.get("/api/v4/admin/feedback")
+async def admin_feedback(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    category: str | None = Query(None),
+    since: str | None = Query(None),
+    until: str | None = Query(None),
+    display_name: str | None = Query(None),
+) -> dict[str, Any]:
+    _require_admin_session(request)
+    try:
+        normalized_since = feedback_service.normalize_datetime_filter(since)
+        normalized_until = feedback_service.normalize_datetime_filter(until)
+        if normalized_since and normalized_until and normalized_since > normalized_until:
+            raise ValueError("since must be before until")
+        return feedback_service.get_admin_feedback(
+            page=page,
+            page_size=page_size,
+            category=category,
+            since=normalized_since,
+            until=normalized_until,
+            display_name=display_name,
+        )
+    except ValueError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_FEEDBACK_QUERY", message=str(exc)) from exc
 
 
 @app.get("/api/v4/admin/overview/summary")
