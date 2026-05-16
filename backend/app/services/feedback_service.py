@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import http.client
 import json
 import sqlite3
 import threading
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -404,7 +403,7 @@ def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
 
 def send_feedback_notification(submission: dict[str, Any], settings: Settings) -> None:
     if not settings.feedback_notify_email or not settings.smtp_password or not settings.smtp_from:
-        logger.info("Feedback notification email skipped; Resend destination, API key, or from address is not configured")
+        logger.info("Feedback notification skipped; not configured")
         return
 
     payload = json.dumps({
@@ -414,26 +413,26 @@ def send_feedback_notification(submission: dict[str, Any], settings: Settings) -
         "text": _build_email_body(submission, settings),
     }).encode()
 
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {settings.smtp_password}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
+    conn: http.client.HTTPSConnection | None = None
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status not in (200, 201):
-                logger.error("Resend API returned %s", resp.status)
-    except urllib.error.HTTPError as exc:
-        body = ""
-        try:
-            body = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            body = "<unable to read response body>"
-        logger.error("Failed to send feedback notification email: Resend API returned %s: %s", exc.code, body)
+        conn = http.client.HTTPSConnection("api.resend.com", timeout=10)
+        conn.request(
+            "POST",
+            "/emails",
+            body=payload,
+            headers={
+                "Authorization": f"Bearer {settings.smtp_password}",
+                "Content-Type": "application/json",
+            },
+        )
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")
+        if resp.status not in (200, 201):
+            logger.error("Resend API returned %s: %s", resp.status, body)
+        else:
+            logger.info("Feedback notification sent, Resend id: %s", body)
     except Exception as exc:
         logger.error("Failed to send feedback notification email: %s", exc)
+    finally:
+        if conn is not None:
+            conn.close()

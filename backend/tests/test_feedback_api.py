@@ -249,18 +249,28 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
     class FakeResponse:
         status = 201
 
-        def __enter__(self) -> "FakeResponse":
-            return self
+        def read(self) -> bytes:
+            return b'{"id":"email-id"}'
 
-        def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-            del exc_type, exc, tb
+    class FakeHTTPSConnection:
+        def __init__(self, host: str, timeout: int) -> None:
+            captured["host"] = host
+            captured["timeout"] = timeout
+            captured["closed"] = False
 
-    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
-        captured["request"] = request
-        captured["timeout"] = timeout
-        return FakeResponse()
+        def request(self, method: str, path: str, *, body: bytes, headers: dict[str, str]) -> None:
+            captured["method"] = method
+            captured["path"] = path
+            captured["body"] = body
+            captured["headers"] = headers
 
-    monkeypatch.setattr(feedback_service.urllib.request, "urlopen", fake_urlopen)
+        def getresponse(self) -> FakeResponse:
+            return FakeResponse()
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(feedback_service.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
     submission = {
         "category": "bug",
@@ -283,12 +293,16 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
 
     feedback_service.send_feedback_notification(submission, settings)
 
-    request = captured["request"]
+    assert captured["host"] == "api.resend.com"
     assert captured["timeout"] == 10
-    assert request.full_url == "https://api.resend.com/emails"  # type: ignore[attr-defined]
-    assert request.get_header("Authorization") == "Bearer resend-api-key"  # type: ignore[attr-defined]
-    assert request.get_header("Content-type") == "application/json"  # type: ignore[attr-defined]
-    payload = json.loads(request.data.decode())  # type: ignore[attr-defined]
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/emails"
+    assert captured["headers"] == {
+        "Authorization": "Bearer resend-api-key",
+        "Content-Type": "application/json",
+    }
+    assert captured["closed"] is True
+    payload = json.loads(bytes(captured["body"]).decode())
     assert payload["from"] == "feedback@cartosky.com"
     assert payload["to"] == ["ops@example.com"]
     assert payload["subject"] == "[CartoSky Beta Feedback] [BUG] from Beta Tester"
