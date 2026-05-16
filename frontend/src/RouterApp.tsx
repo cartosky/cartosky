@@ -78,6 +78,7 @@ const AdminAnalytics = lazyRoute(() => import("./pages/admin/analytics"));
 const AdminObservability = lazyRoute(() => import("./pages/admin/observability"));
 const AdminStatus = lazyRoute(() => import("./pages/admin/status"));
 const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
+const AdminFeedback = lazyRoute(() => import("./pages/admin/feedback"));
 const Viewer = lazyRoute(() => import("./pages/viewer"));
 
 function withSuspense(node: React.ReactNode) {
@@ -95,6 +96,7 @@ function getPageTitle(pathname: string) {
     ["/admin/observability", "Admin Observability"],
     ["/admin/traces", "Admin Traces"],
     ["/admin/status", "Admin Status"],
+    ["/admin/feedback", "Admin Feedback"],
     ["/admin", "Admin"],
     ["/viewer", "Viewer"],
     ["/forecast", "Forecast"],
@@ -135,6 +137,7 @@ export default function RouterApp() {
           <Route path="observability" element={withSuspense(<AdminObservability />)} />
           <Route path="traces" element={withSuspense(<AdminTraces />)} />
           <Route path="status" element={withSuspense(<AdminStatus />)} />
+          <Route path="feedback" element={withSuspense(<AdminFeedback />)} />
           <Route path="legacy-performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="usage" element={<Navigate to="/admin/analytics" replace />} />

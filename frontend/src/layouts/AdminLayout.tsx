@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Activity, BarChart3, ClipboardCheck, Gauge, Waypoints } from "lucide-react";
+import { Activity, BarChart3, ClipboardCheck, Gauge, MessageSquareText, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
@@ -56,6 +56,7 @@ export default function AdminLayout() {
               <AdminNavItem to="/admin/observability" label="Observability" icon={Activity} />
               <AdminNavItem to="/admin/traces" label="Traces" icon={Waypoints} />
               <AdminNavItem to="/admin/status" label="Pipeline Status" icon={ClipboardCheck} />
+              <AdminNavItem to="/admin/feedback" label="Feedback" icon={MessageSquareText} />
             </nav>
           </div>
         </div>

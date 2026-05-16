@@ -200,6 +200,45 @@ export type AdminTracesSummaryResponse = {
   }>;
 };
 
+export type FeedbackCategory = "bug" | "performance" | "feature" | "data_accuracy" | "ui_ux";
+
+export type AdminFeedbackItem = {
+  id: number;
+  submitted_at: string;
+  category: FeedbackCategory;
+  message: string;
+  member_id: number;
+  forums_display_name: string;
+  page_context: string;
+  model_context: string | null;
+  fhr_context: number | null;
+  user_agent: string;
+  app_version: string | null;
+};
+
+export type AdminFeedbackResponse = {
+  items: AdminFeedbackItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  summary: {
+    total: number;
+    last_24h: number;
+    last_7d: number;
+    by_category: Record<FeedbackCategory, number>;
+  };
+  daily_volume: Array<{
+    date: string;
+    count: number;
+  }>;
+  filters: {
+    category: FeedbackCategory | null;
+    since: string | null;
+    until: string | null;
+    display_name: string | null;
+  };
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: "include",
@@ -242,6 +281,24 @@ export async function fetchAdminObservabilitySummary(): Promise<AdminObservabili
 
 export async function fetchAdminTracesSummary(): Promise<AdminTracesSummaryResponse> {
   return fetchJson<AdminTracesSummaryResponse>(`${API_ORIGIN}/api/v4/admin/traces/summary`);
+}
+
+export async function fetchAdminFeedback(params: {
+  page: number;
+  pageSize: number;
+  category?: FeedbackCategory | "all";
+  since?: string;
+  until?: string;
+  displayName?: string;
+}): Promise<AdminFeedbackResponse> {
+  const search = new URLSearchParams();
+  search.set("page", String(params.page));
+  search.set("page_size", String(params.pageSize));
+  if (params.category && params.category !== "all") search.set("category", params.category);
+  if (params.since?.trim()) search.set("since", params.since.trim());
+  if (params.until?.trim()) search.set("until", params.until.trim());
+  if (params.displayName?.trim()) search.set("display_name", params.displayName.trim());
+  return fetchJson<AdminFeedbackResponse>(`${API_ORIGIN}/api/v4/admin/feedback?${search.toString()}`);
 }
 
 export async function fetchAdminStatusResults(params: {
