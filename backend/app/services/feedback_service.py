@@ -5,6 +5,7 @@ import os
 import json
 import sqlite3
 import threading
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -427,5 +428,12 @@ def send_feedback_notification(submission: dict[str, Any], settings: Settings) -
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status not in (200, 201):
                 logger.error("Resend API returned %s", resp.status)
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = "<unable to read response body>"
+        logger.error("Failed to send feedback notification email: Resend API returned %s: %s", exc.code, body)
     except Exception as exc:
         logger.error("Failed to send feedback notification email: %s", exc)
