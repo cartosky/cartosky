@@ -43,6 +43,7 @@ import {
   isDeferredNonCriticalBootstrapEnabled,
   MAP_VIEW_DEFAULTS,
 } from "@/lib/config";
+import { useFeedbackContext } from "@/lib/feedback-context";
 import { buildRunOptions, formatRunLabel, latestRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { type ScreenshotExportState } from "@/lib/screenshot_export";
 import {
@@ -199,6 +200,7 @@ function defaultEnsembleViewForVariable(
 
 export default function App() {
   const { start: startSiteLoading } = useSiteLoading();
+  const { setViewerContext, clearViewerContext } = useFeedbackContext();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
@@ -256,6 +258,18 @@ export default function App() {
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
   const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
+
+  useEffect(() => {
+    return () => clearViewerContext();
+  }, [clearViewerContext]);
+
+  useEffect(() => {
+    setViewerContext({
+      modelContext: model || null,
+      fhrContext: Number.isFinite(forecastHour) ? Number(forecastHour) : null,
+    });
+  }, [forecastHour, model, setViewerContext]);
+
   const {
     basemapMode, setBasemapMode,
     pointLabelsEnabled, setPointLabelsEnabled,
