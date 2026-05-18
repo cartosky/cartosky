@@ -1027,6 +1027,7 @@ def _copy_or_link_file(src: str, dst: str) -> str:
 
 
 _TEMPFILE_NAME_RE = re.compile(r"^tmp[a-z0-9_]{6,}$", re.IGNORECASE)
+_RUNTIME_VAR_NAME_RE = re.compile(r"^[a-z0-9_]+__[a-z0-9_]+$", re.IGNORECASE)
 _TEMPFILE_VAR_DIR_ALLOWLIST = {
     "tmp2m",
     "tmp2m_anom",
@@ -1043,6 +1044,8 @@ def _is_transient_promotion_artifact(path: Path) -> bool:
     name = path.name
     if name.endswith(".tmp") or (name.startswith(".") and name.endswith(".tmp")):
         return True
+    if _RUNTIME_VAR_NAME_RE.match(name):
+        return False
     if name in _TEMPFILE_VAR_DIR_ALLOWLIST:
         return False
     if _TEMPFILE_NAME_RE.match(name):

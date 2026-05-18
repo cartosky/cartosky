@@ -107,6 +107,27 @@ def test_eps_targets_are_derive_bundle_candidates() -> None:
     assert not scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "wspd10m")
 
 
+def test_promotion_filter_keeps_ensemble_runtime_variable_dirs(tmp_path: Path) -> None:
+    runtime_vars = [
+        "tmp2m__mean",
+        "tmp2m_anom__mean",
+        "tmp850__mean",
+        "tmp850_anom__mean",
+    ]
+    for name in runtime_vars:
+        path = tmp_path / name
+        path.mkdir()
+        assert scheduler_module._is_transient_promotion_artifact(path) is False
+
+
+def test_promotion_filter_still_ignores_temp_artifacts(tmp_path: Path) -> None:
+    temp_path = tmp_path / "tmpabc123"
+    temp_path.write_text("partial")
+
+    assert scheduler_module._is_transient_promotion_artifact(temp_path) is True
+    assert scheduler_module._is_transient_promotion_artifact(tmp_path / ".20260518_06z.tmp") is True
+
+
 def test_main_uses_auto_vars_when_env_is_absent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
