@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Clock, Pause, Play } from "lucide-react";
+import { AlertCircle, Clock, Pause, Play, Send, Settings } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import {
   formatObservedCompactTime,
   formatObservedValidTime,
@@ -144,6 +145,9 @@ export function BottomForecastControls({
   modelLabel = null,
   variableLabel = null,
 }: BottomForecastControlsProps) {
+  const toolbar = useViewerToolbar();
+  const onShare = toolbar?.onShare;
+  const onOpenControls = toolbar?.onMobileControlsOpenChange;
   const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -268,10 +272,10 @@ export function BottomForecastControls({
                       </span>
                     ) : null}
                     {modelLabel && variableLabel ? (
-                      <span className="text-[9px] text-white/24">·</span>
+                      <span className="text-[9px] text-cyan-300/40">·</span>
                     ) : null}
                     {variableLabel ? (
-                      <span className="min-w-0 truncate text-[10px] font-medium text-white/52">
+                      <span className="min-w-0 truncate text-[10px] font-medium text-cyan-200/70">
                         {variableLabel}
                       </span>
                     ) : null}
@@ -285,7 +289,7 @@ export function BottomForecastControls({
                   </div>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1.5">
                 {sourceStatusLabel ? (
                   <div
                     className={cn(
@@ -296,14 +300,34 @@ export function BottomForecastControls({
                     {sourceStatusLabel}
                   </div>
                 ) : null}
-                {transientStatus ? (
-                  <div className="flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
-                    <AlertCircle className="h-3 w-3" />
-                    {transientStatus}
-                  </div>
+                {onOpenControls ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenControls(true)}
+                    aria-label="Open controls"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                {onShare ? (
+                  <button
+                    type="button"
+                    onClick={onShare}
+                    aria-label="Share"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </button>
                 ) : null}
               </div>
             </div>
+            {transientStatus ? (
+              <div className="flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
+                <AlertCircle className="h-3 w-3" />
+                {transientStatus}
+              </div>
+            ) : null}
 
             <div className={cn("flex items-center", isTabletTouchLayout ? "gap-2.5" : "gap-3")}>
               <Tooltip>

@@ -631,12 +631,22 @@ function ViewerNavMobile() {
     runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
-    layoutMode, legend,
+    layoutMode, legend, mobileControlsOpen, onMobileControlsOpenChange,
   } = toolbar;
 
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isPhoneLayout = !isTabletTouchLayout;
   const sheetOpen = sheetSnap !== "closed";
+
+  // Sync external open requests (e.g. from the bottom bar) into local sheetSnap
+  useEffect(() => {
+    if (mobileControlsOpen && sheetSnap === "closed") {
+      setSheetSnap("peek");
+    } else if (!mobileControlsOpen && sheetSnap !== "closed") {
+      setSheetSnap("closed");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileControlsOpen]);
 
   const displayVariables = model === "spc"
     ? variables.map((o) => ({ ...o, label: spcVariableLabel(o) }))
@@ -661,7 +671,10 @@ function ViewerNavMobile() {
     };
   }, [sheetOpen]);
 
-  const closeSheet = () => setSheetSnap("closed");
+  const closeSheet = () => {
+    setSheetSnap("closed");
+    onMobileControlsOpenChange?.(false);
+  };
 
   // Drag-to-snap gesture handlers (phone only)
   const handleDragStart = (e: React.TouchEvent) => {
@@ -815,37 +828,8 @@ function ViewerNavMobile() {
 
   return (
     <>
-      {/* Share icon — only remaining right-side item in the navbar */}
-      <div className="flex flex-1 items-center justify-end gap-2">
-        {onShare ? (
-          <button
-            type="button"
-            onClick={onShare}
-            title="Share"
-            aria-label="Share"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/72"
-          >
-            <Send className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
-      </div>
-
-      {/* Floating controls button — always in top-right, never pushed off-screen */}
-      {createPortal(
-        <button
-          type="button"
-          onClick={() => setSheetSnap(sheetOpen ? "closed" : "peek")}
-          aria-label={sheetOpen ? "Close controls" : "Open controls"}
-          className={cn(
-            "glass fixed right-3 top-[calc(3.5rem+1rem)] z-[62] inline-flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150",
-            sheetOpen
-              ? "bg-white/[0.12] text-white"
-              : "text-white/70 hover:bg-white/[0.07] hover:text-white"
-          )}
-        >
-          <Settings className="h-3.5 w-3.5" />
-        </button>
-      , document.body)}
+      {/* Spacer so logo stays left-aligned with nothing on the right */}
+      <div className="flex-1" />
 
       {/* Slide-up sheet */}
       {sheetOpen ? createPortal(

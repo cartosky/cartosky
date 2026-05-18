@@ -56,6 +56,9 @@ export type ViewerToolbarProps = {
   legend: LegendPayload | null;
   // Share
   onShare?: () => void;
+  // Mobile controls sheet
+  mobileControlsOpen?: boolean;
+  onMobileControlsOpenChange?: (open: boolean) => void;
   // Layout
   layoutMode?: ViewerLayoutMode;
 };

@@ -283,6 +283,7 @@ export default function App() {
     opacity, setOpacity,
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
   const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3407,6 +3408,8 @@ export default function App() {
     onDisplayPanelOpenChange: setDisplayPanelOpen,
     legend,
     onShare: handleOpenShareModal,
+    mobileControlsOpen,
+    onMobileControlsOpenChange: setMobileControlsOpen,
     layoutMode: viewerLayoutMode,
   }), [
     region, handleRegionChange, model, handleModelChange, run, handleRunChange,
@@ -3415,7 +3418,7 @@ export default function App() {
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
-    telemetryRunId, forecastHour,
+    telemetryRunId, forecastHour, mobileControlsOpen,
   ]);
 
   return (
