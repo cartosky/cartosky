@@ -8,6 +8,9 @@ export type FeedbackViewerContext = {
 type FeedbackContextValue = FeedbackViewerContext & {
   setViewerContext: (context: FeedbackViewerContext) => void;
   clearViewerContext: () => void;
+  isFeedbackOpen: boolean;
+  openFeedback: () => void;
+  closeFeedback: () => void;
 };
 
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
@@ -25,6 +28,7 @@ function normalizeViewerContext(context: FeedbackViewerContext): FeedbackViewerC
 
 export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [viewerContext, setViewerContextState] = useState<FeedbackViewerContext>(emptyViewerContext);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   const setViewerContext = useCallback((context: FeedbackViewerContext) => {
     setViewerContextState(normalizeViewerContext(context));
@@ -34,11 +38,17 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     setViewerContextState(emptyViewerContext);
   }, []);
 
+  const openFeedback = useCallback(() => setIsFeedbackOpen(true), []);
+  const closeFeedback = useCallback(() => setIsFeedbackOpen(false), []);
+
   const value = useMemo<FeedbackContextValue>(() => ({
     ...viewerContext,
     setViewerContext,
     clearViewerContext,
-  }), [clearViewerContext, setViewerContext, viewerContext]);
+    isFeedbackOpen,
+    openFeedback,
+    closeFeedback,
+  }), [clearViewerContext, setViewerContext, viewerContext, isFeedbackOpen, openFeedback, closeFeedback]);
 
   return <FeedbackContext.Provider value={value}>{children}</FeedbackContext.Provider>;
 }

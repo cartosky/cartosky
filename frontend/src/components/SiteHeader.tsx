@@ -7,6 +7,7 @@ import {
   Globe,
   Layers,
   MapPin,
+  MessageSquareText,
   Moon,
   Palette,
   Send,
@@ -18,6 +19,7 @@ import {
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { cn } from "@/lib/utils";
+import { useFeedbackContext } from "@/lib/feedback-context";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import {
   Select,
@@ -313,7 +315,7 @@ function RegionUtilitySelect({
 }
 
 // ─── Viewer toolbar inline (desktop) ─────────────────────────────────────────
-function ViewerNavDesktop() {
+function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
   const toolbar = useViewerToolbar();
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
@@ -511,6 +513,18 @@ function ViewerNavDesktop() {
           </button>
         ) : null}
 
+        {onFeedback ? (
+          <button
+            type="button"
+            onClick={onFeedback}
+            title="Send feedback"
+            aria-label="Send feedback"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+          >
+            <MessageSquareText className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+
         {/* Settings / Display panel */}
         <div className="relative shrink-0" ref={settingsRef}>
           <button
@@ -616,7 +630,7 @@ function ViewerNavDesktop() {
 }
 
 // ─── Viewer toolbar mobile/tablet (slide-up sheet) ───────────────────────────
-function ViewerNavMobile() {
+function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const toolbar = useViewerToolbar();
   const [sheetSnap, setSheetSnap] = useState<"closed" | "peek" | "full">("closed");
   const [activeTab, setActiveTab] = useState<"selection" | "display">("selection");
@@ -831,6 +845,18 @@ function ViewerNavMobile() {
       {/* Spacer so logo stays left-aligned with nothing on the right */}
       <div className="flex-1" />
 
+      {onFeedback ? (
+        <button
+          type="button"
+          onClick={onFeedback}
+          title="Send feedback"
+          aria-label="Send feedback"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+        >
+          <MessageSquareText className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+
       {/* Slide-up sheet */}
       {sheetOpen ? createPortal(
         <>
@@ -999,6 +1025,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const location = useLocation();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const toolbar = useViewerToolbar();
+  const { openFeedback } = useFeedbackContext();
 
   const isAppVariant = variant === "app";
   const isMarketingVariant = variant === "marketing";
@@ -1084,12 +1111,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {/* Viewer route — desktop inline toolbar */}
         {isViewerRoute && isViewerDesktop ? (
-          <ViewerNavDesktop />
+          <ViewerNavDesktop onFeedback={openFeedback} />
         ) : null}
 
         {/* Viewer route — mobile compact controls */}
         {isViewerRoute && isViewerMobile ? (
-          <ViewerNavMobile />
+          <ViewerNavMobile onFeedback={openFeedback} />
         ) : null}
 
         {/* Marketing nav — desktop */}
@@ -1103,6 +1130,15 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             </NavLink>
             <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
+            <button
+              type="button"
+              onClick={openFeedback}
+              title="Send feedback"
+              aria-label="Send feedback"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+            </button>
             <NavLink
               to="/login"
               className="ml-3 rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
@@ -1122,6 +1158,15 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
           <nav className="ml-auto hidden items-center gap-1 md:flex">
             <NavItem to="/viewer" label="Viewer" />
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
+            <button
+              type="button"
+              onClick={openFeedback}
+              title="Send feedback"
+              aria-label="Send feedback"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+            </button>
           </nav>
         ) : null}
 
@@ -1162,6 +1207,15 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                   {adminEnabled ? (
                     <NavItem to="/admin" label="Admin" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   ) : null}
+                  <div className="my-1 h-px bg-white/10" />
+                  <button
+                    type="button"
+                    onClick={() => { setMobileMenuOpen(false); openFeedback(); }}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm font-medium text-white/90 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <MessageSquareText className="h-4 w-4" />
+                    Feedback
+                  </button>
                   <div className="my-1 h-px bg-white/10" />
                   <NavItem to="/login" label={accountLabel} onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                 </div>

@@ -76,8 +76,8 @@ function buildPageContext(location: ReturnType<typeof useLocation>): string {
 export function FeedbackWidget() {
   const location = useLocation();
   const feedbackContext = useFeedbackContext();
+  const { isFeedbackOpen, closeFeedback } = feedbackContext;
   const closeTimerRef = useRef<number | null>(null);
-  const [open, setOpen] = useState(false);
   const [capturedContext, setCapturedContext] = useState<CapturedContext | null>(null);
   const [twfStatus, setTwfStatus] = useState<TwfStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -106,6 +106,25 @@ export function FeedbackWidget() {
     return "Log in to your TWF account before submitting feedback.";
   }, [statusLoading, twfStatus]);
 
+  // Capture page/viewer context and reset form state when the widget opens
+  useEffect(() => {
+    if (!isFeedbackOpen) return;
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setCapturedContext({
+      pageContext: buildPageContext(location),
+      modelContext: feedbackContext.modelContext,
+      fhrContext: feedbackContext.fhrContext,
+    });
+    setCategory(null);
+    setMessage("");
+    setSubmitState("idle");
+    setSubmitMessage(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFeedbackOpen]);
+
   useEffect(() => {
     return () => {
       if (closeTimerRef.current !== null) {
@@ -115,7 +134,7 @@ export function FeedbackWidget() {
   }, []);
 
   useEffect(() => {
-    if (!open) {
+    if (!isFeedbackOpen) {
       return;
     }
 
@@ -146,27 +165,10 @@ export function FeedbackWidget() {
       .finally(() => setStatusLoading(false));
 
     return () => controller.abort();
-  }, [open]);
-
-  function openWidget() {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    setCapturedContext({
-      pageContext: buildPageContext(location),
-      modelContext: feedbackContext.modelContext,
-      fhrContext: feedbackContext.fhrContext,
-    });
-    setCategory(null);
-    setMessage("");
-    setSubmitState("idle");
-    setSubmitMessage(null);
-    setOpen(true);
-  }
+  }, [isFeedbackOpen]);
 
   function closeWidget() {
-    setOpen(false);
+    closeFeedback();
     setSubmitState("idle");
     setSubmitMessage(null);
   }
@@ -222,17 +224,7 @@ export function FeedbackWidget() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openWidget}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+4.25rem)] right-3 z-[44] inline-flex h-12 w-12 items-center justify-center rounded-full border border-cyan-200/25 bg-[#0c1a2d]/92 text-cyan-100 shadow-[0_18px_42px_rgba(0,0,0,0.35)] backdrop-blur-md transition hover:border-cyan-100/40 hover:bg-[#10243d] focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:right-4"
-        aria-label="Send feedback"
-        title="Send feedback"
-      >
-        <MessageSquareText className="h-5 w-5" />
-      </button>
-
-      {open ? (
+      {isFeedbackOpen ? (
         <div
           className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm backdrop-brightness-[0.62] backdrop-saturate-75 sm:items-center sm:p-4"
           role="dialog"
