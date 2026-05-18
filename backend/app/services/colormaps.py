@@ -86,6 +86,22 @@ def _expand_hex_ramp(colors_hex: list[str], n: int) -> list[str]:
     return [_rgb_to_hex(np.array([rr, gg, bb], dtype=np.float64)) for rr, gg, bb in zip(r, g, b)]
 
 
+def _expand_color_anchors(levels: list[float], anchors: list[tuple[float, str]]) -> list[str]:
+    if not levels:
+        return []
+    if not anchors:
+        raise ValueError("anchors must not be empty")
+
+    ordered = sorted((float(value), color) for value, color in anchors)
+    anchor_values = np.array([value for value, _ in ordered], dtype=np.float64)
+    anchor_colors = np.stack([_hex_to_rgb(color) for _, color in ordered], axis=0)
+    target_values = np.array(levels, dtype=np.float64)
+    r = np.interp(target_values, anchor_values, anchor_colors[:, 0])
+    g = np.interp(target_values, anchor_values, anchor_colors[:, 1])
+    b = np.interp(target_values, anchor_values, anchor_colors[:, 2])
+    return [_rgb_to_hex(np.array([rr, gg, bb], dtype=np.float64)) for rr, gg, bb in zip(r, g, b)]
+
+
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
     "rain": [0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0],
@@ -227,22 +243,27 @@ RADAR_PTYPE_LEVELS_BY_TYPE = {
 
 
 def _build_mrms_reflectivity_palette() -> tuple[list[float], list[str]]:
-    levels = [float(value) for value in range(10, 61)]
-    colors = _expand_hex_ramp(
+    levels = [float(value) for value in range(5, 81)]
+    colors = _expand_color_anchors(
+        levels,
         [
-            "#8dff7a",
-            "#48ef52",
-            "#1ebc33",
-            "#0f7a21",
-            "#cfff2f",
-            "#ffe14a",
-            "#ff9a3d",
-            "#f54b32",
-            "#bf1631",
-            "#a3007f",
-            "#ff33cc",
+            (5.0, "#04e9e7"),
+            (10.0, "#019ff4"),
+            (15.0, "#0300f4"),
+            (20.0, "#02fd02"),
+            (25.0, "#01c501"),
+            (30.0, "#008e00"),
+            (35.0, "#fdf802"),
+            (40.0, "#e5bc00"),
+            (45.0, "#fd9500"),
+            (50.0, "#fd0000"),
+            (55.0, "#d40000"),
+            (60.0, "#bc0000"),
+            (65.0, "#f800fd"),
+            (70.0, "#9854c6"),
+            (75.0, "#fdfdfd"),
+            (80.0, "#fdfdfd"),
         ],
-        len(levels),
     )
     return levels, colors
 

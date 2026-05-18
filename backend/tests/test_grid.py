@@ -1302,7 +1302,7 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mrms_reflectivity"
     assert manifest["palette"]["kind"] == "discrete"
-    assert manifest["palette"]["transparent_below_min"] == 10.0
+    assert manifest["palette"]["transparent_below_min"] == 5.0
     assert manifest["grid"]["dtype"] == "uint8"
     assert manifest["grid"]["scale"] == 0.5
     assert manifest["grid"]["offset"] == -10.0

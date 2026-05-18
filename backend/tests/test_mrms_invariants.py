@@ -123,3 +123,21 @@ def test_mrms_reflectivity_grid_packing_config() -> None:
     assert config["scale"] == 0.5
     assert config["offset"] == -10.0
     assert config["nodata"] == 255
+
+
+def test_mrms_reflectivity_palette_uses_nws_enhanced_low_end() -> None:
+    from app.services.colormaps import get_color_map_spec
+
+    spec = get_color_map_spec("mrms_reflectivity")
+    levels = spec["levels"]
+    colors = spec["colors"]
+
+    assert levels[0] == 5.0
+    assert levels[-1] == 80.0
+    assert colors[levels.index(5.0)] == "#04e9e7"
+    assert colors[levels.index(10.0)] == "#019ff4"
+    assert colors[levels.index(15.0)] == "#0300f4"
+    assert colors[levels.index(20.0)] == "#02fd02"
+    assert colors[levels.index(35.0)] == "#fdf802"
+    assert colors[levels.index(65.0)] == "#f800fd"
+    assert spec["transparent_below_min"] is True
