@@ -104,14 +104,31 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert synoptic_request.product == "oper"
     assert synoptic_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
 
-    off_cycle_request = ECMWF_MODEL.herbie_request(
+    legacy_off_cycle_request = ECMWF_MODEL.herbie_request(
         product="oper",
         var_key="tmp2m",
         run_date=datetime(2026, 4, 20, 6, tzinfo=timezone.utc),
     )
-    assert off_cycle_request.model == "ifs"
-    assert off_cycle_request.product == "scda"
-    assert off_cycle_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
+    assert legacy_off_cycle_request.model == "ifs"
+    assert legacy_off_cycle_request.product == "scda"
+    assert legacy_off_cycle_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
+
+    post_50r1_off_cycle_request = ECMWF_MODEL.herbie_request(
+        product="oper",
+        var_key="tmp2m",
+        run_date=datetime(2026, 5, 12, 6, tzinfo=timezone.utc),
+    )
+    assert post_50r1_off_cycle_request.model == "ifs"
+    assert post_50r1_off_cycle_request.product == "oper"
+    assert post_50r1_off_cycle_request.herbie_kwargs["priority"] == ["azure", "aws", "ecmwf"]
+
+    post_50r1_explicit_scda_request = ECMWF_MODEL.herbie_request(
+        product="scda",
+        var_key="tmp2m",
+        run_date=datetime(2026, 5, 18, 18, tzinfo=timezone.utc),
+    )
+    assert post_50r1_explicit_scda_request.model == "ifs"
+    assert post_50r1_explicit_scda_request.product == "oper"
 
 
 def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:

@@ -1,13 +1,14 @@
 """ECMWF IFS model plugin.
 
 Phase 1 rollout scope:
-    - IFS `oper` / `scda`
+    - IFS `oper` with legacy `scda` support before IFS Cycle 50r1
             - `tmp2m`, `dp2m`, `tmp850`, `wspd10m`, `wspd850`, `wspd300`, `vort500`, `wgst10m`, `precip_total`, `ptype_intensity`, `mucape`, `pwat`, `snowfall_total`
   - realtime publishing only
 
 Herbie wiring:
   - model = "ifs"
-    - product = `oper` for 00z/12z, `scda` for 06z/18z
+        - product = `oper`
+        - product = `scda` for 06z/18z runs before 2026-05-12 06 UTC
 """
 
 from __future__ import annotations
@@ -40,10 +41,15 @@ class ECMWFPlugin(BaseModelPlugin):
     def _default_product_for_run(self, run_date: datetime | None) -> str:
         if run_date is None:
             return str(self.product)
-        run_hour = int(run_date.astimezone(timezone.utc).hour) if run_date.tzinfo else int(run_date.hour)
-        if run_hour in ECMWF_SHORT_CUTOFF_CYCLE_HOURS:
+        if self._uses_legacy_scda_stream(run_date):
             return "scda"
         return "oper"
+
+    def _uses_legacy_scda_stream(self, run_date: datetime) -> bool:
+        run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+        if int(run_date_utc.hour) not in ECMWF_SHORT_CUTOFF_CYCLE_HOURS:
+            return False
+        return run_date_utc < ECMWF_SCDA_RETIREMENT_RUN
 
     def normalize_var_id(self, var_id: str) -> str:
         normalized = var_id.strip().lower()
@@ -209,6 +215,7 @@ class ECMWFPlugin(BaseModelPlugin):
 ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 361, 6))
 ECMWF_SCDA_FHS = list(range(0, 145, 3))
 ECMWF_SHORT_CUTOFF_CYCLE_HOURS = {6, 18}
+ECMWF_SCDA_RETIREMENT_RUN = datetime(2026, 5, 12, 6, tzinfo=timezone.utc)
 
 
 ECMWF_REGIONS: dict[str, RegionSpec] = {

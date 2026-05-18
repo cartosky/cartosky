@@ -4181,6 +4181,13 @@ def _derive_ptype_accumulation_ecmwf(
         derive_component_resampling,
         model_id,
     )
+    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
+    cumulative_cache_grid_key = _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        cache_version=cache_version,
+    )
 
     logger.info(
         "derive %s fh%03d ecmwf_ptype_steps=%d component=%s%s",
@@ -4196,7 +4203,35 @@ def _derive_ptype_accumulation_ecmwf(
     valid_mask: np.ndarray | None = None
     src_crs: rasterio.crs.CRS | None = None
     src_transform: rasterio.transform.Affine | None = None
-    for step_fh in step_fhs:
+    start_index = 0
+    reused_prev_cumulative = False
+    base_fh: int | None = None
+    if len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+        )
+        if prior is not None:
+            unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
+            if unpacked_prior is None:
+                prior = None
+            else:
+                prior_data, prior_crs, prior_transform, _ = unpacked_prior
+        if prior is not None:
+            cumulative = prior_data.astype(np.float32, copy=False)
+            valid_mask = np.isfinite(prior_data)
+            src_crs = prior_crs
+            src_transform = prior_transform
+            start_index = len(step_fhs) - 1
+            reused_prev_cumulative = True
+            base_fh = prev_fh
+    subset_step_fhs = step_fhs[start_index:]
+    for step_fh in subset_step_fhs:
         total_step, total_valid, step_crs, step_transform = _ptype_intensity_fetch_direct_cumulative_step(
             model_id=model_id,
             product=product,
@@ -4284,7 +4319,30 @@ def _derive_ptype_accumulation_ecmwf(
 
     if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
         raise ValueError(f"No cumulative ECMWF ptype source steps resolved for {model_id}/{var_key} fh{fh:03d}")
-    return np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False), src_crs, src_transform
+    result = np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False)
+    logger.info(
+        "ptype_accumulation_ecmwf incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s base_fh=%s",
+        model_id,
+        _run_id_from_date(run_date),
+        fh,
+        len(step_fhs),
+        len(subset_step_fhs),
+        "true" if reused_prev_cumulative else "false",
+        f"{base_fh:03d}" if base_fh is not None else "none",
+    )
+    _kuchera_store_cumulative_cache(
+        model_id=model_id,
+        run_date=run_date,
+        var_key=var_key,
+        fh=fh,
+        data=cumulative,
+        crs=src_crs,
+        transform=src_transform,
+        ctx=ctx,
+        grid_cache_key=cumulative_cache_grid_key,
+        coverage_start_fh=0,
+    )
+    return result, src_crs, src_transform
 
 
 def _derive_precip_total_cumulative(
