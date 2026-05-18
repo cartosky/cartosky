@@ -1438,8 +1438,6 @@ export function TwfShareModal({
 
             {/* Textarea */}
             <textarea
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
               value={content}
               onChange={(event) => handleMessageChange(event.target.value)}
               maxLength={500}

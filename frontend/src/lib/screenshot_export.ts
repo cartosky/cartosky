@@ -36,10 +36,7 @@ export type ScreenshotExportOptions = {
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_PIXEL_RATIO = 2;
-const MOBILE_SHARE_WIDTH = 1600;
-const MOBILE_SHARE_HEIGHT = 900;
 const MOBILE_VIEWPORT_MAX_WIDTH = 720;
-const MOBILE_VIEWPORT_MAX_ASPECT = 1.15;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_LOAD_TIMEOUT_MS = 15_000;
 const MAP_IDLE_TIMEOUT_MS = 15_000;
@@ -353,20 +350,21 @@ function drawMapImageCover(
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   lines: string[],
-  width: number
+  width: number,
+  compact = false
 ): void {
   const cleaned = lines.map((line) => line.trim()).filter(Boolean);
   if (cleaned.length === 0) {
     return;
   }
 
-  const paddingX = 14;
-  const paddingY = 12;
-  const lineHeight = 21;
-  const boxX = 18;
-  const boxY = 18;
+  const paddingX = compact ? 8 : 14;
+  const paddingY = compact ? 7 : 12;
+  const lineHeight = compact ? 14 : 21;
+  const boxX = compact ? 10 : 18;
+  const boxY = compact ? 10 : 18;
   const maxWidth = Math.max(280, width * 0.6);
-  const font = "700 16px system-ui, -apple-system, Segoe UI, sans-serif";
+  const font = `${compact ? "700 10px" : "700 16px"} system-ui, -apple-system, Segoe UI, sans-serif`;
 
   ctx.save();
   ctx.font = font;
@@ -377,7 +375,7 @@ function drawOverlay(
   const boxWidth = Math.min(maxWidth, Math.ceil(textWidth) + paddingX * 2);
   const boxHeight = cleaned.length * lineHeight + paddingY * 2 - 2;
 
-  drawDarkCard(ctx, boxX, boxY, boxWidth, boxHeight, 11);
+  drawDarkCard(ctx, boxX, boxY, boxWidth, boxHeight, compact ? 7 : 11);
 
   ctx.fillStyle = "rgba(255,255,255,0.96)";
   ctx.textBaseline = "top";
@@ -704,22 +702,22 @@ function drawBottomLegend(
   ctx.restore();
 }
 
-async function drawLogo(ctx: CanvasRenderingContext2D, width: number): Promise<void> {
+async function drawLogo(ctx: CanvasRenderingContext2D, width: number, compact = false): Promise<void> {
   const logo = await loadImage(SCREENSHOT_LOGO_SRC);
-  const padding = 18;
-  const maxWidth = width <= 720 ? 172 : 162;
-  const maxHeight = width <= 720 ? 50 : 46;
+  const padding = compact ? 10 : 18;
+  const maxWidth = compact ? 104 : 162;
+  const maxHeight = compact ? 30 : 46;
   const scale = Math.min(maxWidth / logo.width, maxHeight / logo.height);
   const drawWidth = Math.max(1, Math.round(logo.width * scale));
   const drawHeight = Math.max(1, Math.round(logo.height * scale));
-  const cardPaddingX = width <= 720 ? 14 : 12;
-  const cardPaddingY = width <= 720 ? 10 : 8;
+  const cardPaddingX = compact ? 7 : 12;
+  const cardPaddingY = compact ? 5 : 8;
   const cardWidth = drawWidth + cardPaddingX * 2;
   const cardHeight = drawHeight + cardPaddingY * 2;
   const cardX = width - padding - cardWidth;
   const cardY = padding;
 
-  drawDarkCard(ctx, cardX, cardY, cardWidth, cardHeight, 11);
+  drawDarkCard(ctx, cardX, cardY, cardWidth, cardHeight, compact ? 7 : 11);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
@@ -735,13 +733,23 @@ function drawAnchors(
   ctx: CanvasRenderingContext2D,
   anchors: Array<{ x: number; y: number; label: string; cityName: string }>,
   width: number,
-  height: number
+  height: number,
+  compact = false
 ): void {
   if (anchors.length === 0) {
     return;
   }
 
   const margin = 10;
+  const occupiedRects: Array<{ x: number; y: number; width: number; height: number }> = [];
+  const intersects = (rect: { x: number; y: number; width: number; height: number }) =>
+    occupiedRects.some((other) =>
+      rect.x < other.x + other.width &&
+      rect.x + rect.width > other.x &&
+      rect.y < other.y + other.height &&
+      rect.y + rect.height > other.y
+    );
+
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -754,16 +762,25 @@ function drawAnchors(
       continue;
     }
 
-    const chipPaddingX = 8;
-    const chipHeight = 22;
-    ctx.font = "700 12px system-ui, -apple-system, Segoe UI, sans-serif";
+    const chipPaddingX = compact ? 6 : 8;
+    const chipHeight = compact ? 17 : 22;
+    ctx.font = `${compact ? "700 10px" : "700 12px"} system-ui, -apple-system, Segoe UI, sans-serif`;
     const chipWidth = Math.max(30, Math.ceil(ctx.measureText(anchor.label).width) + chipPaddingX * 2);
     const chipX = anchor.x - chipWidth / 2;
-    const chipY = anchor.y - 30;
+    const chipY = compact ? anchor.y - chipHeight / 2 : anchor.y - 30;
+    const chipRect = { x: chipX - 2, y: chipY - 2, width: chipWidth + 4, height: chipHeight + (compact ? 4 : 20) };
+    if (compact && intersects(chipRect)) {
+      continue;
+    }
+    occupiedRects.push(chipRect);
 
-    drawDarkCard(ctx, chipX, chipY, chipWidth, chipHeight, 11);
+    drawDarkCard(ctx, chipX, chipY, chipWidth, chipHeight, compact ? 8.5 : 11);
     ctx.fillStyle = "rgba(255,255,255,0.98)";
     ctx.fillText(anchor.label, anchor.x, chipY + chipHeight / 2 + 0.5);
+
+    if (compact) {
+      continue;
+    }
 
     ctx.font = "600 11px system-ui, -apple-system, Segoe UI, sans-serif";
     ctx.lineWidth = 4;
@@ -786,24 +803,17 @@ export async function exportViewerScreenshotPng(
 
   const stateViewportWidth = Number.isFinite(state.viewportWidth) ? Number(state.viewportWidth) : null;
   const stateViewportHeight = Number.isFinite(state.viewportHeight) ? Number(state.viewportHeight) : null;
-  const sourceViewportAspect = stateViewportWidth && stateViewportHeight
-    ? stateViewportWidth / stateViewportHeight
-    : null;
-  const shouldUseMobileShareFrame = !Number.isFinite(opts.width) && !Number.isFinite(opts.height)
+  const isMobileViewport = !Number.isFinite(opts.width) && !Number.isFinite(opts.height)
     && stateViewportWidth !== null
     && stateViewportHeight !== null
-    && (stateViewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH || (sourceViewportAspect !== null && sourceViewportAspect <= MOBILE_VIEWPORT_MAX_ASPECT));
+    && stateViewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH;
 
-  const width = shouldUseMobileShareFrame
-    ? MOBILE_SHARE_WIDTH
-    : Number.isFinite(opts.width)
+  const width = Number.isFinite(opts.width)
     ? Math.max(1, Math.round(Number(opts.width)))
     : Number.isFinite(state.viewportWidth)
       ? Math.max(1, Math.round(Number(state.viewportWidth)))
       : DEFAULT_WIDTH;
-  const height = shouldUseMobileShareFrame
-    ? MOBILE_SHARE_HEIGHT
-    : Number.isFinite(opts.height)
+  const height = Number.isFinite(opts.height)
     ? Math.max(1, Math.round(Number(opts.height)))
     : Number.isFinite(state.viewportHeight)
       ? Math.max(1, Math.round(Number(state.viewportHeight)))
@@ -812,7 +822,6 @@ export async function exportViewerScreenshotPng(
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
-  const drawPointLabels = !shouldUseMobileShareFrame;
 
   const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
     const outputCanvas = document.createElement("canvas");
@@ -828,13 +837,11 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     drawMapImageCover(outputCtx, mapImage, width, height);
-    if (drawPointLabels) {
-      drawAnchors(outputCtx, state.anchors ?? [], width, height);
-    }
-    drawOverlay(outputCtx, overlayLines, width);
+    drawAnchors(outputCtx, state.anchors ?? [], width, height, isMobileViewport);
+    drawOverlay(outputCtx, overlayLines, width, isMobileViewport);
 
     try {
-      await drawLogo(outputCtx, width);
+      await drawLogo(outputCtx, width, isMobileViewport);
     } catch (error) {
       console.warn("[screenshot] Logo load failed; continuing without logo.", error);
     }
