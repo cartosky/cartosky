@@ -3534,6 +3534,8 @@ export default function App() {
           playDisabled={loading || selectableFrameHours.length === 0}
           transientStatus={frameStatusMessage}
           layoutMode={viewerLayoutMode}
+          modelLabel={selectedModelLabel}
+          variableLabel={selectedVariableLabel}
         />
       </div>
 

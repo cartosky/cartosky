@@ -815,22 +815,8 @@ function ViewerNavMobile() {
 
   return (
     <>
-      {/* Compact summary + share icon — controls button is now a floating FAB */}
+      {/* Share icon — only remaining right-side item in the navbar */}
       <div className="flex flex-1 items-center justify-end gap-2">
-        <div
-          data-testid="viewer-mobile-summary"
-          className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-2"
-          aria-label={`${selectedModelLabel}, ${selectedVariableLabel}`}
-          title={`${selectedModelLabel} - ${selectedVariableLabel}`}
-        >
-          <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-50/92">
-            {selectedModelLabel}
-          </span>
-          <span className="min-w-0 max-w-[min(44vw,16rem)] truncate rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-white/84">
-            {selectedVariableLabel}
-          </span>
-        </div>
-
         {onShare ? (
           <button
             type="button"

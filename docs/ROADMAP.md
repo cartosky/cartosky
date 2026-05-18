@@ -484,8 +484,8 @@ Business
 - [ ] Add selected new secondary variables
 - [X] Add groups/titles in dropdown
 - [X] Expand to North America domain for certain variables
-- [ ] Add lightweight feedback collection/ability
-- [ ] Add Forecast page MVP (search + obs/forecast/AFDs/hazards)
+- [X] Add lightweight feedback collection/ability
+- [X] Add Forecast page MVP (search + obs/forecast/AFDs/hazards)
 - [ ] Beta polish and consistency pass
 
 **LAUNCH PUBLIC BETA TO TWF**

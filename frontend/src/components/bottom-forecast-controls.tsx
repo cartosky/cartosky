@@ -36,6 +36,8 @@ type BottomForecastControlsProps = {
   playDisabled?: boolean;
   transientStatus?: string | null;
   layoutMode?: ViewerLayoutMode;
+  modelLabel?: string | null;
+  variableLabel?: string | null;
 };
 
 function formatTimelineDisplay(params: {
@@ -139,6 +141,8 @@ export function BottomForecastControls({
   playDisabled = false,
   transientStatus,
   layoutMode = "desktop",
+  modelLabel = null,
+  variableLabel = null,
 }: BottomForecastControlsProps) {
   const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
@@ -254,6 +258,20 @@ export function BottomForecastControls({
           />
           {/* Content sits above the blur layer */}
           <div className={cn("relative z-10", isDesktopLayout ? "hidden" : "block")}>
+            {(modelLabel || variableLabel) ? (
+              <div className={cn("flex items-center gap-2 px-1", isTabletTouchLayout ? "mb-2" : "mb-2.5")}>
+                {modelLabel ? (
+                  <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-50/92">
+                    {modelLabel}
+                  </span>
+                ) : null}
+                {variableLabel ? (
+                  <span className="min-w-0 truncate rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-white/84">
+                    {variableLabel}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             <div className={cn("flex items-start justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0">
                 {validTime ? (
