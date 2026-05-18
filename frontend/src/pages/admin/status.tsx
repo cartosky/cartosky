@@ -313,9 +313,6 @@ export default function AdminStatusPage() {
           </div>
           <div>
             <div className="text-2xl font-semibold tracking-tight">Pipeline Status</div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-              Operational health for retained published runs. This page tracks stale runs, incomplete manifests, and artifact failures from the current pipeline output. It no longer reports map-verification or parity warnings.
-            </p>
           </div>
         </div>
 
