@@ -36,6 +36,10 @@ export type ScreenshotExportOptions = {
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
 const DEFAULT_PIXEL_RATIO = 2;
+const MOBILE_SHARE_WIDTH = 1600;
+const MOBILE_SHARE_HEIGHT = 900;
+const MOBILE_VIEWPORT_MAX_WIDTH = 720;
+const MOBILE_VIEWPORT_MAX_ASPECT = 1.15;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_LOAD_TIMEOUT_MS = 15_000;
 const MAP_IDLE_TIMEOUT_MS = 15_000;
@@ -289,6 +293,61 @@ function drawDarkCard(
   drawRoundedRect(ctx, x + 1.5, y + 1.5, width - 3, height - 3, Math.max(0, radius - 1.5));
   ctx.fill();
   ctx.restore();
+}
+
+function imageSourceDimensions(source: CanvasImageSource): { width: number; height: number } | null {
+  if (source instanceof HTMLImageElement) {
+    const width = source.naturalWidth || source.width;
+    const height = source.naturalHeight || source.height;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (source instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== "undefined" && source instanceof OffscreenCanvas)) {
+    return source.width > 0 && source.height > 0 ? { width: source.width, height: source.height } : null;
+  }
+  if (typeof ImageBitmap !== "undefined" && source instanceof ImageBitmap) {
+    return source.width > 0 && source.height > 0 ? { width: source.width, height: source.height } : null;
+  }
+  if (typeof SVGImageElement !== "undefined" && source instanceof SVGImageElement) {
+    const width = source.width.baseVal.value;
+    const height = source.height.baseVal.value;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (source instanceof HTMLVideoElement) {
+    const width = source.videoWidth || source.width;
+    const height = source.videoHeight || source.height;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  return null;
+}
+
+function drawMapImageCover(
+  ctx: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  width: number,
+  height: number
+): void {
+  const dimensions = imageSourceDimensions(image);
+  if (!dimensions) {
+    ctx.drawImage(image, 0, 0, width, height);
+    return;
+  }
+
+  const sourceAspect = dimensions.width / dimensions.height;
+  const targetAspect = width / height;
+  let sourceX = 0;
+  let sourceY = 0;
+  let sourceWidth = dimensions.width;
+  let sourceHeight = dimensions.height;
+
+  if (sourceAspect > targetAspect) {
+    sourceWidth = dimensions.height * targetAspect;
+    sourceX = (dimensions.width - sourceWidth) / 2;
+  } else if (sourceAspect < targetAspect) {
+    sourceHeight = dimensions.width / targetAspect;
+    sourceY = (dimensions.height - sourceHeight) / 2;
+  }
+
+  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
 }
 
 function drawOverlay(
@@ -725,12 +784,26 @@ export async function exportViewerScreenshotPng(
     throw new Error("Screenshot export is only available in browser environments.");
   }
 
-  const width = Number.isFinite(opts.width)
+  const stateViewportWidth = Number.isFinite(state.viewportWidth) ? Number(state.viewportWidth) : null;
+  const stateViewportHeight = Number.isFinite(state.viewportHeight) ? Number(state.viewportHeight) : null;
+  const sourceViewportAspect = stateViewportWidth && stateViewportHeight
+    ? stateViewportWidth / stateViewportHeight
+    : null;
+  const shouldUseMobileShareFrame = !Number.isFinite(opts.width) && !Number.isFinite(opts.height)
+    && stateViewportWidth !== null
+    && stateViewportHeight !== null
+    && (stateViewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH || (sourceViewportAspect !== null && sourceViewportAspect <= MOBILE_VIEWPORT_MAX_ASPECT));
+
+  const width = shouldUseMobileShareFrame
+    ? MOBILE_SHARE_WIDTH
+    : Number.isFinite(opts.width)
     ? Math.max(1, Math.round(Number(opts.width)))
     : Number.isFinite(state.viewportWidth)
       ? Math.max(1, Math.round(Number(state.viewportWidth)))
       : DEFAULT_WIDTH;
-  const height = Number.isFinite(opts.height)
+  const height = shouldUseMobileShareFrame
+    ? MOBILE_SHARE_HEIGHT
+    : Number.isFinite(opts.height)
     ? Math.max(1, Math.round(Number(opts.height)))
     : Number.isFinite(state.viewportHeight)
       ? Math.max(1, Math.round(Number(state.viewportHeight)))
@@ -739,6 +812,7 @@ export async function exportViewerScreenshotPng(
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
+  const drawPointLabels = !shouldUseMobileShareFrame;
 
   const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
     const outputCanvas = document.createElement("canvas");
@@ -753,8 +827,10 @@ export async function exportViewerScreenshotPng(
     outputCtx.imageSmoothingQuality = "high";
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
-    outputCtx.drawImage(mapImage, 0, 0, width, height);
-    drawAnchors(outputCtx, state.anchors ?? [], width, height);
+    drawMapImageCover(outputCtx, mapImage, width, height);
+    if (drawPointLabels) {
+      drawAnchors(outputCtx, state.anchors ?? [], width, height);
+    }
     drawOverlay(outputCtx, overlayLines, width);
 
     try {

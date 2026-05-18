@@ -628,9 +628,7 @@ function ViewerNavMobile() {
     variable, onVariableChange, variables, model, onModelChange, models,
     run, onRunChange, runs, region, onRegionChange, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
-    runSelectionLocked, sourceStatusLabel, sourceStatusDescription, sourceStatusTone,
-    runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
-    onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
+    runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
     layoutMode, legend,
@@ -650,9 +648,6 @@ function ViewerNavMobile() {
 
   const selectedVariableLabel = displayVariables.find((o) => o.value === variable)?.label ?? "Variable";
   const selectedModelLabel = models.find((o) => o.value === model)?.label ?? "Model";
-  const selectedRunLabel = (runDisplayLabel ?? runs.find((o) => o.value === run)?.label ?? "Run")
-    .replace(/^Latest\s*\((.*)\)$/, "$1");
-  const selectedRegionLabel = regions.find((o) => o.value === region)?.label ?? "Region";
 
   useEffect(() => {
     if (!sheetOpen) {
@@ -688,30 +683,8 @@ function ViewerNavMobile() {
     else if (sheetSnap === "full") setSheetSnap("peek");
   };
 
-  const statusBadge = runAvailabilityLabel ? (
-    <AvailabilityReadout label={runAvailabilityLabel} description={runAvailabilityDescription} tone={runAvailabilityTone} />
-  ) : sourceStatusLabel ? (
-    <AvailabilityReadout label={sourceStatusLabel} description={sourceStatusDescription} tone={sourceStatusTone} />
-  ) : null;
-
   const selectionContent = (
     <>
-      <div className="mb-3 flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-        <span className="shrink-0 font-semibold uppercase tracking-[0.16em] text-cyan-200/54">
-          View
-        </span>
-        <div className="min-w-0 flex-1 truncate font-semibold text-white/82">
-          <span className="text-cyan-50/92">{selectedModelLabel}</span>
-          <span className="mx-1.5 text-white/28">/</span>
-          <span>{selectedVariableLabel}</span>
-        </div>
-        <div className="hidden min-w-0 shrink truncate text-white/46 min-[390px]:block">
-          {selectedRunLabel}
-          <span className="mx-1 text-white/24">·</span>
-          {selectedRegionLabel}
-        </div>
-        {statusBadge ? <div className="shrink-0 scale-[0.88] origin-right">{statusBadge}</div> : null}
-      </div>
       <div className="grid grid-cols-1 gap-3">
         <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">

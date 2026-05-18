@@ -1192,7 +1192,7 @@ export function TwfShareModal({
           <div className="px-4">
             <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
               {screenshotBlobUrl ? (
-                <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-cover" />
+                <img src={screenshotBlobUrl} alt="Screenshot preview" className="h-full w-full object-contain bg-black/20" />
               ) : screenshotBusy ? (
                 <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
                   <Loader2 className="h-6 w-6 animate-spin text-white/40" />
