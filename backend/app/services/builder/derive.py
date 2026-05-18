@@ -5299,6 +5299,24 @@ def _derive_snowfall_kuchera_total_cumulative(
             int(seed_fh),
         )
 
+    if use_direct_cumulative_lwe and len(step_fhs) >= 2:
+        prev_fh = int(step_fhs[-2])
+        prior = _kuchera_load_prior_cumulative(
+            model_id=model_id,
+            run_date=run_date,
+            var_key=var_key,
+            fh=prev_fh,
+            ctx=ctx,
+            grid_cache_key=cumulative_cache_grid_key,
+        )
+        if prior is not None:
+            unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
+            if unpacked_prior is not None:
+                base_cumulative, base_crs, base_transform, _ = unpacked_prior
+                start_index = len(step_fhs) - 1
+                reused_prev_cumulative = True
+                base_fh = prev_fh
+
     if (not use_direct_cumulative_lwe) and len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior = _load_prior_kuchera_base(prev_fh)
