@@ -906,15 +906,40 @@ export default function App() {
     if (Number.isFinite(requested)) {
       return Number(requested);
     }
-    return gridFrameHours[0] ?? null;
-  }, [forecastHour, gridFrameHours, isGridPreloadingForPlay, isPlaying, isScrubbing, isVariableSwitching, targetForecastHour]);
+    if (gridFrameHours.length === 0) {
+      return null;
+    }
+    return resolveForecastHour(
+      gridFrameHours,
+      Number.POSITIVE_INFINITY,
+      selectedVariableDefaultFh,
+      selectedModelDefaultFrameSelection,
+    );
+  }, [
+    forecastHour,
+    gridFrameHours,
+    isGridPreloadingForPlay,
+    isPlaying,
+    isScrubbing,
+    isVariableSwitching,
+    selectedModelDefaultFrameSelection,
+    selectedVariableDefaultFh,
+    targetForecastHour,
+  ]);
   const resolvedGridDisplayHour = useMemo(() => {
     if (gridFrameHours.length === 0) {
       return null;
     }
-    const requested = Number.isFinite(requestedGridDisplayHour) ? Number(requestedGridDisplayHour) : gridFrameHours[0];
+    const requested = Number.isFinite(requestedGridDisplayHour)
+      ? Number(requestedGridDisplayHour)
+      : resolveForecastHour(
+        gridFrameHours,
+        Number.POSITIVE_INFINITY,
+        selectedVariableDefaultFh,
+        selectedModelDefaultFrameSelection,
+      );
     return nearestFrame(gridFrameHours, requested);
-  }, [gridFrameHours, requestedGridDisplayHour]);
+  }, [gridFrameHours, requestedGridDisplayHour, selectedModelDefaultFrameSelection, selectedVariableDefaultFh]);
   const activeGridFrame = useMemo(() => {
     if (!Number.isFinite(resolvedGridDisplayHour)) {
       return null;
@@ -1072,9 +1097,16 @@ export default function App() {
     }
     const requested = Number.isFinite(targetForecastHour)
       ? Number(targetForecastHour)
-      : (Number.isFinite(forecastHour) ? Number(forecastHour) : gridFrameHours[0]);
+      : (Number.isFinite(forecastHour)
+        ? Number(forecastHour)
+        : resolveForecastHour(
+          gridFrameHours,
+          Number.POSITIVE_INFINITY,
+          selectedVariableDefaultFh,
+          selectedModelDefaultFrameSelection,
+        ));
     return nearestFrame(gridFrameHours, requested);
-  }, [forecastHour, gridFrameHours, targetForecastHour]);
+  }, [forecastHour, gridFrameHours, selectedModelDefaultFrameSelection, selectedVariableDefaultFh, targetForecastHour]);
   const gridPlaybackAheadReadyCount = useMemo(() => {
     if (!Number.isFinite(gridPlaybackStartHour)) {
       return 0;
@@ -2885,12 +2917,17 @@ export default function App() {
       return;
     }
 
-    const nextTarget = nearestFrame(selectableFrameHours, targetForecastHour);
+    const nextTarget = resolveForecastHour(
+      selectableFrameHours,
+      targetForecastHour,
+      selectedVariableDefaultFh,
+      selectedModelDefaultFrameSelection,
+    );
     if (nextTarget === forecastHour) {
       return;
     }
     setForecastHour(nextTarget);
-  }, [targetForecastHour, forecastHour, selectableFrameHours]);
+  }, [targetForecastHour, forecastHour, selectableFrameHours, selectedVariableDefaultFh, selectedModelDefaultFrameSelection]);
 
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
   const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
