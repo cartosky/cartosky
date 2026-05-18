@@ -449,7 +449,7 @@ export default function Home() {
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Link
                 to="/forecast"
-                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#70dfcf_0%,#4ecab9_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(56,189,169,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
+                className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
               >
                 Open Forecast
                 <ArrowRight className="h-4 w-4" />
