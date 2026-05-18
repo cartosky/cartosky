@@ -215,14 +215,33 @@ RADAR_CONFIG = {
 
 RADAR_PTYPE_ORDER = ("rain", "snow", "sleet", "frzr")
 
+MRMS_RADAR_CONFIG = {
+    **RADAR_CONFIG,
+    # The observed reflectivity-only product can follow the NWS Enhanced scale
+    # exactly, including cyan/blue weak echoes. In the ptype composite, blue is
+    # reserved for snow, so rain keeps a green low end and rejoins the NWS-style
+    # yellow/red/purple high end as intensity increases.
+    "rain": {
+        "levels": [5, 10, 15, 20, 23, 25, 28, 30, 33, 35, 38, 40, 43, 45, 48, 50, 55, 60, 65, 70],
+        "colors": [
+            "#d7f7cf", "#9cf29a", "#4be85a", "#02fd02", "#01dc02", "#01c501",
+            "#00a901", "#008e00", "#80ca01", "#fdf802", "#f0d600", "#e5bc00",
+            "#fdae00", "#fd9500", "#fd5f00", "#fd0000", "#d40000", "#bc0000",
+            "#f800fd", "#fdfdfd",
+        ],
+    },
+}
 
-def _build_radar_ptype_flat_palette() -> tuple[list[float], list[str], dict[str, dict[str, int]]]:
+
+def _build_radar_ptype_flat_palette(
+    config: dict[str, dict[str, list[float] | list[str]]] = RADAR_CONFIG,
+) -> tuple[list[float], list[str], dict[str, dict[str, int]]]:
     levels: list[float] = []
     colors: list[str] = []
     breaks: dict[str, dict[str, int]] = {}
     offset = 0
     for key in RADAR_PTYPE_ORDER:
-        cfg = RADAR_CONFIG[key]
+        cfg = config[key]
         type_levels = list(cfg["levels"])
         type_colors = list(cfg["colors"])
         levels.extend(type_levels)
@@ -239,6 +258,12 @@ RADAR_PTYPE_LEVELS, RADAR_PTYPE_COLORS, RADAR_PTYPE_BREAKS = _build_radar_ptype_
 RADAR_PTYPE_LEVELS_BY_TYPE = {
     key: list(RADAR_CONFIG[key]["levels"][: len(RADAR_CONFIG[key]["colors"])])
     for key in RADAR_PTYPE_ORDER
+}
+MRMS_RADAR_PTYPE_ORDER = RADAR_PTYPE_ORDER
+MRMS_RADAR_PTYPE_LEVELS, MRMS_RADAR_PTYPE_COLORS, MRMS_RADAR_PTYPE_BREAKS = _build_radar_ptype_flat_palette(MRMS_RADAR_CONFIG)
+MRMS_RADAR_PTYPE_LEVELS_BY_TYPE = {
+    key: list(MRMS_RADAR_CONFIG[key]["levels"][: len(MRMS_RADAR_CONFIG[key]["colors"])])
+    for key in MRMS_RADAR_PTYPE_ORDER
 }
 
 
@@ -907,13 +932,13 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "indexed",
         "units": "dBZ",
         "transparent_zero": True,
-        "levels": RADAR_PTYPE_LEVELS,
-        "colors": RADAR_PTYPE_COLORS,
+        "levels": MRMS_RADAR_PTYPE_LEVELS,
+        "colors": MRMS_RADAR_PTYPE_COLORS,
         "display_name": "Reflectivity + Ptype",
         "legend_title": "MRMS Reflectivity + Ptype (dBZ)",
-        "ptype_order": list(RADAR_PTYPE_ORDER),
-        "ptype_breaks": RADAR_PTYPE_BREAKS,
-        "ptype_levels": RADAR_PTYPE_LEVELS_BY_TYPE,
+        "ptype_order": list(MRMS_RADAR_PTYPE_ORDER),
+        "ptype_breaks": MRMS_RADAR_PTYPE_BREAKS,
+        "ptype_levels": MRMS_RADAR_PTYPE_LEVELS_BY_TYPE,
     },
 }
 

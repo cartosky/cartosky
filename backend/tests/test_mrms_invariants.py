@@ -141,3 +141,23 @@ def test_mrms_reflectivity_palette_uses_nws_enhanced_low_end() -> None:
     assert colors[levels.index(35.0)] == "#fdf802"
     assert colors[levels.index(65.0)] == "#f800fd"
     assert spec["transparent_below_min"] is True
+
+
+def test_mrms_radar_ptype_palette_reserves_blue_for_snow() -> None:
+    from app.services.colormaps import get_color_map_spec
+
+    spec = get_color_map_spec("mrms_radar_ptype")
+    colors = spec["colors"]
+    breaks = spec["ptype_breaks"]
+
+    rain_break = breaks["rain"]
+    snow_break = breaks["snow"]
+    rain_colors = colors[rain_break["offset"]: rain_break["offset"] + rain_break["count"]]
+    snow_colors = colors[snow_break["offset"]: snow_break["offset"] + snow_break["count"]]
+
+    assert rain_colors[:4] == ["#d7f7cf", "#9cf29a", "#4be85a", "#02fd02"]
+    assert rain_colors[9] == "#fdf802"
+    assert rain_colors[-2:] == ["#f800fd", "#fdfdfd"]
+    assert snow_colors[:4] == ["#ffffff", "#55ffff", "#4feaff", "#48d3ff"]
+    assert "#019ff4" not in rain_colors
+    assert "#0300f4" not in rain_colors

@@ -25,7 +25,7 @@ from app.services.builder.cog_writer import (
     write_value_cog,
 )
 from app.services.builder.pipeline import build_sidecar_json
-from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
+from app.services.colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
     promote_run,
@@ -627,7 +627,7 @@ def compose_mrms_radar_ptype(
     """Compose reflectivity + PrecipFlag into an indexed flat palette array.
 
     Returns a float32 array where valid pixels contain palette index values
-    (matching RADAR_PTYPE_BREAKS offsets) and invalid pixels are NaN.
+    (matching MRMS_RADAR_PTYPE_BREAKS offsets) and invalid pixels are NaN.
     This mirrors the forecast ``_derive_radar_ptype_combo`` output format.
     """
     refl = np.asarray(reflectivity, dtype=np.float32)
@@ -652,8 +652,8 @@ def compose_mrms_radar_ptype(
     normalized = np.clip(refl_safe / 70.0, 0.0, 1.0)
 
     indexed = np.full(refl.shape, np.nan, dtype=np.float32)
-    for code in RADAR_PTYPE_ORDER:
-        breaks = RADAR_PTYPE_BREAKS[code]
+    for code in MRMS_RADAR_PTYPE_ORDER:
+        breaks = MRMS_RADAR_PTYPE_BREAKS[code]
         offset = int(breaks["offset"])
         count = int(breaks["count"])
         local_bin = np.clip(
