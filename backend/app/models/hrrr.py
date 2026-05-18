@@ -506,7 +506,7 @@ HRRR_VARS: dict[str, VarSpec] = {
         name="Total Snowfall (Kuchera)",
         selectors=VarSelectors(
             hints={
-                "apcp_component": "apcp_step",
+                "kuchera_lwe_component": "apcp_step",
                 "step_hours": "1",
                 "kuchera_profile_product": "prs",
                 "kuchera_use_ptype_gate": "true",
