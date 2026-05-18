@@ -125,6 +125,9 @@ const NwsCityModal = lazy(() =>
 );
 
 const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
+const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc"]);
+const DEFAULT_VIEWER_MODEL_ID = "mrms";
+const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 
 function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | null | undefined): number | null {
   const parsedRun = parseRunId(runId);
@@ -1774,7 +1777,7 @@ export default function App() {
         const visibleModelIds = supportedModelIds;
         const modelRows = normalizeModelRows(capabilitiesData, visibleModelIds);
         const orderedVisibleModelIds = modelRows.map((entry) => entry.id);
-        const preferredDefaultModel = orderedVisibleModelIds.includes("nws_hazards") ? "nws_hazards" : "";
+        const preferredDefaultModel = orderedVisibleModelIds.includes(DEFAULT_VIEWER_MODEL_ID) ? DEFAULT_VIEWER_MODEL_ID : "";
         const availableModelId = orderedVisibleModelIds.find((modelId) => {
           const availability = capabilitiesData.availability?.[modelId];
           return Boolean(availability?.latest_run);
@@ -1791,9 +1794,12 @@ export default function App() {
         const variableOptions = makeVariableOptions(capabilityVars);
         const variableIds = variableOptions.map((opt) => opt.value);
         const defaultVarKey = String(modelCapability?.defaults?.default_var_key ?? "").trim();
+        const preferredDefaultVariable = nextModel === DEFAULT_VIEWER_MODEL_ID && variableIds.includes(DEFAULT_VIEWER_VARIABLE_ID)
+          ? DEFAULT_VIEWER_VARIABLE_ID
+          : "";
         const nextVariable = requestedVariable && variableIds.includes(requestedVariable)
           ? requestedVariable
-          : (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? ""));
+          : (preferredDefaultVariable || (variableIds.includes(defaultVarKey) ? defaultVarKey : (variableIds[0] ?? "")));
         const nextVariableCapability = nextVariable ? modelCapability?.variables?.[nextVariable] : undefined;
         setVariables(variableOptions);
         setVariable(nextVariable);
@@ -3099,6 +3105,9 @@ export default function App() {
     return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
   }, [variables, variable, selectedCapabilityVarMap, runManifest]);
   const runAvailability = useMemo(() => {
+    if (RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS.has(model)) {
+      return null;
+    }
     if (selectedTimeAxisMode === "observed") {
       return null;
     }
