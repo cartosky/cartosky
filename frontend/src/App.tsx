@@ -95,8 +95,10 @@ import {
   mergeManifestRowsWithPrevious,
   extractLegendMeta,
   nearestFrame,
+  mostRecentFrameHourByValidTime,
   selectableFramesForVariable,
   resolveForecastHour,
+  resolveForecastHourFromRows,
   buildLegend,
   buildVectorLayerUrl,
   emptyScrubPhase0aSnapshot,
@@ -631,14 +633,19 @@ export default function App() {
     return frameValidTimesByHour[forecastHour] ?? frameValidTime(currentFrame) ?? null;
   }, [frameValidTimesByHour, forecastHour, currentFrame]);
   const newestFrameValidTimeISO = useMemo(() => {
-    const orderedHours = Object.keys(frameValidTimesByHour)
-      .map((key) => Number(key))
-      .filter(Number.isFinite)
-      .sort((a, b) => a - b);
-    if (orderedHours.length === 0) {
-      return null;
+    let newest: string | null = null;
+    let newestTimestamp = Number.NEGATIVE_INFINITY;
+    for (const validTime of Object.values(frameValidTimesByHour)) {
+      const timestamp = Date.parse(validTime);
+      if (!Number.isFinite(timestamp)) {
+        continue;
+      }
+      if (timestamp > newestTimestamp) {
+        newest = validTime;
+        newestTimestamp = timestamp;
+      }
     }
-    return frameValidTimesByHour[orderedHours[orderedHours.length - 1]] ?? null;
+    return newest;
   }, [frameValidTimesByHour]);
   const latestRunId = useMemo(() => {
     const manifestLatest =
@@ -907,6 +914,15 @@ export default function App() {
     if (gridFrameHours.length === 0) {
       return null;
     }
+    if (
+      selectedTimeAxisMode === "observed"
+      && selectedModelDefaultFrameSelection === "latest"
+    ) {
+      const mostRecentHour = mostRecentFrameHourByValidTime(Array.from(gridFrameByHour.values()));
+      if (mostRecentHour !== null) {
+        return mostRecentHour;
+      }
+    }
     return resolveForecastHour(
       gridFrameHours,
       Number.POSITIVE_INFINITY,
@@ -915,12 +931,14 @@ export default function App() {
     );
   }, [
     forecastHour,
+    gridFrameByHour,
     gridFrameHours,
     isGridPreloadingForPlay,
     isPlaying,
     isScrubbing,
     isVariableSwitching,
     selectedModelDefaultFrameSelection,
+    selectedTimeAxisMode,
     selectedVariableDefaultFh,
     targetForecastHour,
   ]);
@@ -1113,14 +1131,22 @@ export default function App() {
       ? Number(targetForecastHour)
       : (Number.isFinite(forecastHour)
         ? Number(forecastHour)
-        : resolveForecastHour(
-          gridFrameHours,
-          Number.POSITIVE_INFINITY,
-          selectedVariableDefaultFh,
-          selectedModelDefaultFrameSelection,
-        ));
+        : (selectedTimeAxisMode === "observed"
+          && selectedModelDefaultFrameSelection === "latest"
+          ? (mostRecentFrameHourByValidTime(Array.from(gridFrameByHour.values())) ?? resolveForecastHour(
+            gridFrameHours,
+            Number.POSITIVE_INFINITY,
+            selectedVariableDefaultFh,
+            selectedModelDefaultFrameSelection,
+          ))
+          : resolveForecastHour(
+            gridFrameHours,
+            Number.POSITIVE_INFINITY,
+            selectedVariableDefaultFh,
+            selectedModelDefaultFrameSelection,
+          )));
     return nearestFrame(gridFrameHours, requested);
-  }, [forecastHour, gridFrameHours, selectedModelDefaultFrameSelection, selectedVariableDefaultFh, targetForecastHour]);
+  }, [forecastHour, gridFrameByHour, gridFrameHours, selectedModelDefaultFrameSelection, selectedTimeAxisMode, selectedVariableDefaultFh, targetForecastHour]);
   const gridPlaybackAheadReadyCount = useMemo(() => {
     if (!Number.isFinite(gridPlaybackStartHour)) {
       return 0;
@@ -1995,12 +2021,23 @@ export default function App() {
           });
           setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey));
           setLoadedFramesKey(selectionKey);
-          const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) =>
-            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+            resolveForecastHourFromRows(
+              rows,
+              prev,
+              selectedVariableDefaultFh,
+              selectedModelDefaultFrameSelection,
+              selectedTimeAxisMode,
+            )
           );
           setTargetForecastHour((prev) =>
-            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+            resolveForecastHourFromRows(
+              rows,
+              prev,
+              selectedVariableDefaultFh,
+              selectedModelDefaultFrameSelection,
+              selectedTimeAxisMode,
+            )
           );
           hydratedFromManifest = true;
         }
@@ -2070,12 +2107,23 @@ export default function App() {
         // hours (including manifest-only rows), not just COG-ready ones.
         // Note: React processes functional updaters synchronously within the
         // same synchronous block, so `mergedRows` is populated by this point.
-        const frames = mergedRows.map((row) => Number(row.fh)).filter(Number.isFinite);
         setForecastHour((prev) =>
-          resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          resolveForecastHourFromRows(
+            mergedRows,
+            prev,
+            selectedVariableDefaultFh,
+            selectedModelDefaultFrameSelection,
+            selectedTimeAxisMode,
+          )
         );
         setTargetForecastHour((prev) =>
-          resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+          resolveForecastHourFromRows(
+            mergedRows,
+            prev,
+            selectedVariableDefaultFh,
+            selectedModelDefaultFrameSelection,
+            selectedTimeAxisMode,
+          )
         );
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
@@ -2100,6 +2148,7 @@ export default function App() {
     runManifest,
     selectedVariableDefaultFh,
     selectedModelDefaultFrameSelection,
+    selectedTimeAxisMode,
     hasRenderableSelection,
     gridOnlySelection,
     loadedFramesKey,
@@ -2327,12 +2376,23 @@ export default function App() {
                 const merged = mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey);
                 return merged.length === prevRows.length ? prevRows : merged;
               });
-              const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
               setForecastHour((prev) =>
-                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+                resolveForecastHourFromRows(
+                  rows,
+                  prev,
+                  selectedVariableDefaultFh,
+                  selectedModelDefaultFrameSelection,
+                  selectedTimeAxisMode,
+                )
               );
               setTargetForecastHour((prev) =>
-                resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+                resolveForecastHourFromRows(
+                  rows,
+                  prev,
+                  selectedVariableDefaultFh,
+                  selectedModelDefaultFrameSelection,
+                  selectedTimeAxisMode,
+                )
               );
             }
             return;
@@ -2370,12 +2430,23 @@ export default function App() {
           }
 
           setFrameRows((prevRows) => (rows.length === prevRows.length ? prevRows : rows));
-          const frames = rows.map((row) => Number(row.fh)).filter(Number.isFinite);
           setForecastHour((prev) =>
-            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+            resolveForecastHourFromRows(
+              rows,
+              prev,
+              selectedVariableDefaultFh,
+              selectedModelDefaultFrameSelection,
+              selectedTimeAxisMode,
+            )
           );
           setTargetForecastHour((prev) =>
-            resolveForecastHour(frames, prev, selectedVariableDefaultFh, selectedModelDefaultFrameSelection)
+            resolveForecastHourFromRows(
+              rows,
+              prev,
+              selectedVariableDefaultFh,
+              selectedModelDefaultFrameSelection,
+              selectedTimeAxisMode,
+            )
           );
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
@@ -2391,7 +2462,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
+  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, selectedTimeAxisMode, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {

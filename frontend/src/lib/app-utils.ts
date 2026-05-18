@@ -14,6 +14,7 @@ import type {
   GridManifestResponse,
   LegendMeta,
   ModelDefaultFrameSelection,
+  ModelTimeAxisMode,
   RegionPreset,
   RunManifestResponse,
 } from "@/lib/api";
@@ -813,6 +814,80 @@ export function preferredInitialFrame(
     return defaultFrameSelection === "latest" ? frames[frames.length - 1] : frames[0];
   }
   return nearestFrame(frames, Number(preferredFh));
+}
+
+type ValidTimeFrame = {
+  fh: number;
+  valid_time?: string | null;
+  meta?: { meta?: { valid_time?: string | null } | null } | null;
+};
+
+function validTimeForFrame(frame: ValidTimeFrame): string | null {
+  const direct = typeof frame.valid_time === "string" && frame.valid_time.trim()
+    ? frame.valid_time.trim()
+    : null;
+  if (direct) {
+    return direct;
+  }
+  const nested = frame.meta?.meta?.valid_time;
+  return typeof nested === "string" && nested.trim() ? nested.trim() : null;
+}
+
+export function mostRecentFrameHourByValidTime(frames: ValidTimeFrame[]): number | null {
+  let bestHour: number | null = null;
+  let bestTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const frame of frames) {
+    const fh = Number(frame.fh);
+    const validTime = validTimeForFrame(frame);
+    const timestamp = validTime ? Date.parse(validTime) : Number.NaN;
+    if (!Number.isFinite(fh) || !Number.isFinite(timestamp)) {
+      continue;
+    }
+    if (
+      timestamp > bestTimestamp
+      || (timestamp === bestTimestamp && (bestHour === null || fh > bestHour))
+    ) {
+      bestHour = fh;
+      bestTimestamp = timestamp;
+    }
+  }
+
+  return bestHour;
+}
+
+export function resolveForecastHourFromRows(
+  rows: ValidTimeFrame[],
+  current: number,
+  preferredFh: number | null | undefined,
+  defaultFrameSelection: ModelDefaultFrameSelection = "first",
+  timeAxisMode: ModelTimeAxisMode = "forecast"
+): number {
+  const frames = rows
+    .map((row) => Number(row.fh))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const selectableFrames = selectableFramesForVariable(Array.from(new Set(frames)), preferredFh);
+  if (selectableFrames.length === 0) {
+    return 0;
+  }
+  if (Number.isFinite(current)) {
+    return nearestFrame(selectableFrames, current);
+  }
+  if (
+    timeAxisMode === "observed"
+    && defaultFrameSelection === "latest"
+    && !Number.isFinite(preferredFh)
+  ) {
+    const selectableFrameSet = new Set(selectableFrames);
+    const mostRecentHour = mostRecentFrameHourByValidTime(
+      rows.filter((row) => selectableFrameSet.has(Number(row.fh)))
+    );
+    if (mostRecentHour !== null) {
+      return mostRecentHour;
+    }
+  }
+  return preferredInitialFrame(selectableFrames, preferredFh, defaultFrameSelection);
 }
 
 export function resolveForecastHour(

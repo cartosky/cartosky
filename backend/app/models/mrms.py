@@ -130,7 +130,7 @@ MRMS_CAPABILITIES = ModelCapabilities(
     },
     run_discovery={},
     ui_defaults={
-        "default_var_key": "mrms_radar_ptype",
+        "default_var_key": "reflectivity",
         "default_run": "latest",
         "default_frame_selection": "latest",
     },
