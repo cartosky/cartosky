@@ -5491,7 +5491,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             # Without a carried APCP cumulative baseline, history-dependent
             # APCP windows inside an incremental subset can overcount by
             # subtracting against an empty or stale state.
-            if step_apcp_mode != "exact_step" and start_index > 0 and initial_apcp_cumulative is None:
+            if step_apcp_mode != "exact_step" and start_index > 0 and initial_apcp_cumulative is None and not use_direct_cumulative_lwe:
                 requires_full_history_rebuild = True
                 rebuild_trigger_step_fh = int(step_fh)
                 break
