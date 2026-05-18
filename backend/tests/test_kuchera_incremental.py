@@ -62,7 +62,7 @@ class _Plugin:
         search_pattern: str | None = None,
     ):
         del var_key, run_date, fh, search_pattern
-        return SimpleNamespace(product=product, herbie_kwargs={})
+        return SimpleNamespace(model="test", product=product, herbie_kwargs={})
 
 
 def _var_spec(*, rebuild_window_steps: int = 6) -> SimpleNamespace:

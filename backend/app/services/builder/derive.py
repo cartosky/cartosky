@@ -5201,7 +5201,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         rasterio.transform.Affine,
         int,
     ] | None = None
-    start_index = max(0, len(step_fhs) - rebuild_window_steps)
+    start_index = 0 if use_direct_cumulative_lwe else max(0, len(step_fhs) - rebuild_window_steps)
 
     def _load_prior_kuchera_base(
         prior_fh: int,
@@ -5219,15 +5219,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
         if unpacked_prior is None:
             return None
-        prior_data, prior_crs, prior_transform, prior_meta = unpacked_prior
-        if use_direct_cumulative_lwe and not _kuchera_cache_has_full_run_coverage(prior_meta):
-            logger.info(
-                "kuchera_incremental ignoring_legacy_direct_cache model=%s var=%s fh=%03d",
-                model_id,
-                var_key,
-                int(prior_fh),
-            )
-            return None
+        prior_data, prior_crs, prior_transform, _prior_meta = unpacked_prior
         return prior_data, prior_crs, prior_transform
 
     def _load_prior_apcp_seed(
@@ -5237,40 +5229,6 @@ def _derive_snowfall_kuchera_total_cumulative(
         reference_crs: rasterio.crs.CRS | None,
         reference_transform: rasterio.transform.Affine | None,
     ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, int] | None:
-        if use_direct_cumulative_lwe:
-            try:
-                prior_source, prior_source_crs, prior_source_transform = _fetch_step_component(
-                    model_id=model_id,
-                    product=str(apcp_product or product),
-                    run_date=run_date,
-                    step_fh=int(seed_fh),
-                    model_plugin=model_plugin,
-                    var_key=apcp_component,
-                    use_warped=use_warped,
-                    target_region=target_region,
-                    target_grid_id=target_grid_id,
-                    resampling=resampling,
-                    ctx=ctx,
-                )
-            except Exception:
-                return None
-            prior_source_data = np.asarray(prior_source, dtype=np.float32)
-            if kuchera_lwe_component_scale != 1.0:
-                prior_source_data = (prior_source_data * np.float32(kuchera_lwe_component_scale)).astype(np.float32, copy=False)
-            prior_source_valid = np.isfinite(prior_source_data) & (prior_source_data >= 0.0)
-            if reference_data is not None:
-                same_shape = prior_source_data.shape == reference_data.shape
-                same_crs = prior_source_crs == reference_crs
-                same_transform = prior_source_transform == reference_transform
-                if not (same_shape and same_crs and same_transform):
-                    return None
-            return (
-                np.where(prior_source_valid, prior_source_data, 0.0).astype(np.float32, copy=False),
-                prior_source_valid,
-                prior_source_crs,
-                prior_source_transform,
-                int(seed_fh),
-            )
         prior_precip = _kuchera_load_prior_cumulative(
             model_id=model_id,
             run_date=run_date,
@@ -5298,24 +5256,6 @@ def _derive_snowfall_kuchera_total_cumulative(
             prior_precip_transform,
             int(seed_fh),
         )
-
-    if use_direct_cumulative_lwe and len(step_fhs) >= 2:
-        prev_fh = int(step_fhs[-2])
-        prior = _kuchera_load_prior_cumulative(
-            model_id=model_id,
-            run_date=run_date,
-            var_key=var_key,
-            fh=prev_fh,
-            ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
-        )
-        if prior is not None:
-            unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
-            if unpacked_prior is not None:
-                base_cumulative, base_crs, base_transform, _ = unpacked_prior
-                start_index = len(step_fhs) - 1
-                reused_prev_cumulative = True
-                base_fh = prev_fh
 
     if (not use_direct_cumulative_lwe) and len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])

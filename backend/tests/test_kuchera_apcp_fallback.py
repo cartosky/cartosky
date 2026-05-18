@@ -279,6 +279,32 @@ def test_kuchera_inventory_driven_apcp_selection(
                 )
             )
 
+        def search_patterns_for_var(
+            self,
+            *,
+            var_key: str,
+            fh: int | None = None,
+            product: str | None = None,
+            var_spec=None,
+        ):
+            del fh, product, var_spec
+            resolved = self.get_var(var_key)
+            if resolved is None:
+                return []
+            return list(getattr(resolved.selectors, "search", []) or [])
+
+        def herbie_request(
+            self,
+            *,
+            product: str | None = None,
+            var_key: str | None = None,
+            run_date: datetime | None = None,
+            fh: int | None = None,
+            search_pattern: str | None = None,
+        ):
+            del var_key, run_date, fh, search_pattern
+            return SimpleNamespace(model="test", product=product, herbie_kwargs={})
+
     def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
         del model_id, product, run_date, herbie_kwargs
         pattern = str(search_pattern)
