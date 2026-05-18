@@ -258,22 +258,25 @@ export function BottomForecastControls({
           />
           {/* Content sits above the blur layer */}
           <div className={cn("relative z-10", isDesktopLayout ? "hidden" : "block")}>
-            {(modelLabel || variableLabel) ? (
-              <div className={cn("flex items-center gap-2 px-1", isTabletTouchLayout ? "mb-2" : "mb-2.5")}>
-                {modelLabel ? (
-                  <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-50/92">
-                    {modelLabel}
-                  </span>
-                ) : null}
-                {variableLabel ? (
-                  <span className="min-w-0 truncate rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-white/84">
-                    {variableLabel}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
             <div className={cn("flex items-start justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
+                {(modelLabel || variableLabel) ? (
+                  <div className="mb-0.5 flex items-center gap-1.5">
+                    {modelLabel ? (
+                      <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+                        {modelLabel}
+                      </span>
+                    ) : null}
+                    {modelLabel && variableLabel ? (
+                      <span className="text-[9px] text-white/24">·</span>
+                    ) : null}
+                    {variableLabel ? (
+                      <span className="min-w-0 truncate text-[10px] font-medium text-white/52">
+                        {variableLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {validTime ? (
                   <div className="truncate text-xs font-semibold text-white">{validTime.primary}</div>
                 ) : (
