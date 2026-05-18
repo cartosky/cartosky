@@ -412,21 +412,8 @@ export default function App() {
     && selectedVariableRenderSubstrates.includes("vector");
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
-  const showInitialMapSkeleton = loading
-    || !isMapReady
-    || (hasRenderableSelection && selectionSupportsGrid && !firstWeatherFramePainted);
-  const initialMapSkeletonStatus = loading || !bootstrapHydrated
-    ? "Loading viewer"
-    : "Preparing first frame";
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
-
-  useEffect(() => {
-    if (!showInitialMapSkeleton) {
-      return undefined;
-    }
-    return startSiteLoading(initialMapSkeletonStatus);
-  }, [initialMapSkeletonStatus, showInitialMapSkeleton, startSiteLoading]);
 
   const overlayFadeOutZoom = useMemo(() => {
     const start = toNumberOrNull(selectedVariableConstraints.overlay_fade_out_zoom_start);
@@ -1001,6 +988,22 @@ export default function App() {
       ? frameUrl
       : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
   }, [activeGridFrame, apiRoot]);
+  const shouldWaitForInitialGridFrame =
+    hasRenderableSelection
+    && selectionSupportsGrid
+    && Boolean(activeGridFrameUrl)
+    && !firstWeatherFramePainted;
+  const showInitialMapSkeleton = loading || !isMapReady || shouldWaitForInitialGridFrame;
+  const initialMapSkeletonStatus = loading || !bootstrapHydrated || !isMapReady
+    ? "Loading viewer"
+    : "Preparing first frame";
+
+  useEffect(() => {
+    if (!showInitialMapSkeleton) {
+      return undefined;
+    }
+    return startSiteLoading(initialMapSkeletonStatus);
+  }, [initialMapSkeletonStatus, showInitialMapSkeleton, startSiteLoading]);
   const normalizeGridFrameUrl = useCallback((frameUrl: string | null | undefined): string => {
     const normalized = String(frameUrl ?? "").trim();
     if (!normalized) {

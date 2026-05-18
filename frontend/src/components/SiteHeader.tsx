@@ -652,6 +652,7 @@ function ViewerNavMobile() {
   const selectedModelLabel = models.find((o) => o.value === model)?.label ?? "Model";
   const selectedRunLabel = (runDisplayLabel ?? runs.find((o) => o.value === run)?.label ?? "Run")
     .replace(/^Latest\s*\((.*)\)$/, "$1");
+  const selectedRegionLabel = regions.find((o) => o.value === region)?.label ?? "Region";
 
   useEffect(() => {
     if (!sheetOpen) {
@@ -687,8 +688,6 @@ function ViewerNavMobile() {
     else if (sheetSnap === "full") setSheetSnap("peek");
   };
 
-  const summaryPillClass = "rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 font-medium whitespace-nowrap";
-
   const statusBadge = runAvailabilityLabel ? (
     <AvailabilityReadout label={runAvailabilityLabel} description={runAvailabilityDescription} tone={runAvailabilityTone} />
   ) : sourceStatusLabel ? (
@@ -697,9 +696,34 @@ function ViewerNavMobile() {
 
   const selectionContent = (
     <>
-      {statusBadge ? (
-        <div className="mb-4 flex items-center">{statusBadge}</div>
-      ) : null}
+      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.045] px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200/58">
+              Current view
+            </div>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="max-w-full truncate rounded-full border border-cyan-200/16 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-50">
+                {selectedModelLabel}
+              </span>
+              <span className="max-w-full truncate rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-white/88">
+                {selectedVariableLabel}
+              </span>
+            </div>
+          </div>
+          {statusBadge ? <div className="shrink-0">{statusBadge}</div> : null}
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="min-w-0 rounded-xl border border-white/8 bg-black/10 px-2.5 py-2">
+            <div className="font-medium uppercase tracking-[0.16em] text-white/34">Run</div>
+            <div className="mt-0.5 truncate font-semibold text-white/76">{selectedRunLabel}</div>
+          </div>
+          <div className="min-w-0 rounded-xl border border-white/8 bg-black/10 px-2.5 py-2">
+            <div className="font-medium uppercase tracking-[0.16em] text-white/34">Region</div>
+            <div className="mt-0.5 truncate font-semibold text-white/76">{selectedRegionLabel}</div>
+          </div>
+        </div>
+      </div>
       <div className="grid grid-cols-1 gap-3">
         <div className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
@@ -832,15 +856,17 @@ function ViewerNavMobile() {
     <>
       {/* Compact summary + share icon — controls button is now a floating FAB */}
       <div className="flex flex-1 items-center justify-end gap-2">
-        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-[11px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <span className={cn(summaryPillClass, "text-white/82")}>
-            {selectedVariableLabel}
-          </span>
-          <span className={cn(summaryPillClass, "text-white/68")}>
+        <div
+          data-testid="viewer-mobile-summary"
+          className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-2"
+          aria-label={`${selectedModelLabel}, ${selectedVariableLabel}`}
+          title={`${selectedModelLabel} - ${selectedVariableLabel}`}
+        >
+          <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-300/[0.08] px-2.5 py-1 text-[11px] font-semibold text-cyan-50/92">
             {selectedModelLabel}
           </span>
-          <span className={cn(summaryPillClass, "text-white/60")}>
-            {selectedRunLabel}
+          <span className="min-w-0 max-w-[min(44vw,16rem)] truncate rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-semibold text-white/84">
+            {selectedVariableLabel}
           </span>
         </div>
 
