@@ -282,12 +282,20 @@ export function BottomForecastControls({
               <div className="min-w-0 flex-1">
                 {(modelLabel || variableLabel) ? (
                   <div className="flex items-center gap-1.5">
+                    {runDateTimeISO ? (
+                      <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
+                        {`${new Date(runDateTimeISO).getUTCHours()}z`}
+                      </span>
+                    ) : null}
+                    {runDateTimeISO && modelLabel ? (
+                      <span className="text-[9px] text-cyan-300/30">·</span>
+                    ) : null}
                     {modelLabel ? (
                       <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
                         {modelLabel}
                       </span>
                     ) : null}
-                    {modelLabel && variableLabel ? (
+                    {(runDateTimeISO || modelLabel) && variableLabel ? (
                       <span className="text-[9px] text-cyan-300/40">·</span>
                     ) : null}
                     {variableLabel ? (
@@ -324,7 +332,7 @@ export function BottomForecastControls({
                     type="button"
                     onClick={() => onOpenControls(true)}
                     aria-label="Open controls"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                    className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <Settings className="h-3.5 w-3.5" />
                   </button>
