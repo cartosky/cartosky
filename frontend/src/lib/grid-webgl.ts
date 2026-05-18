@@ -515,6 +515,11 @@ function compileShader(gl: WebGLRenderingContext | WebGL2RenderingContext, type:
   return shader;
 }
 
+function fragmentFloatPrecisionQualifier(gl: WebGLRenderingContext | WebGL2RenderingContext): "highp" | "mediump" {
+  const highPrecision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+  return highPrecision && highPrecision.precision > 0 ? "highp" : "mediump";
+}
+
 function createProgram(
   gl: WebGLRenderingContext | WebGL2RenderingContext,
   vertexSource: string,
@@ -1118,8 +1123,9 @@ export class GridWebglLayerController {
         gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
       }
     `;
+    const fragmentPrecision = fragmentFloatPrecisionQualifier(gl);
     const fragmentSource = `
-      precision mediump float;
+      precision ${fragmentPrecision} float;
       varying vec2 v_texCoord;
       uniform sampler2D u_data;
       uniform sampler2D u_prevData;

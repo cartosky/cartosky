@@ -59,7 +59,6 @@ import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { selectGridManifestLod } from "@/lib/grid-lod";
-import { getEffectiveZoom } from "@/lib/app-utils";
 import { useSiteLoading } from "@/lib/site-loading";
 import { useDisplaySettings } from "@/lib/use-display-settings";
 import { useFrameStatusBadge } from "@/lib/use-frame-status-badge";
@@ -839,7 +838,7 @@ export default function App() {
     if (!gridManifest?.lods?.length) {
       return null;
     }
-    return selectGridManifestLod(gridManifest, getEffectiveZoom(mapZoom));
+    return selectGridManifestLod(gridManifest, mapZoom);
   }, [gridManifest, mapZoom]);
   const compositeLayerSpecs = useMemo(() => {
     return Array.isArray(gridManifest?.composite_layers)
@@ -977,7 +976,7 @@ export default function App() {
     const targetHour = Number(resolvedGridDisplayHour);
     return compositeLayerSpecs.map((layer) => {
       const manifest = compositeGridManifests[layer.id] ?? null;
-      const selectedLod = selectGridManifestLod(manifest, getEffectiveZoom(mapZoom));
+      const selectedLod = selectGridManifestLod(manifest, mapZoom);
       const frames = Array.isArray(selectedLod?.frames) ? selectedLod.frames : [];
       const frameHours = frames
         .map((entry) => Number(entry?.fh))
