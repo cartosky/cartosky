@@ -122,6 +122,8 @@ const NwsCityModal = lazy(() =>
   import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
 );
 
+const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
+
 function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | null | undefined): number | null {
   const parsedRun = parseRunId(runId);
   const cycleHour = parsedRun?.getUTCHours() ?? null;
@@ -473,18 +475,27 @@ export default function App() {
 
   const regionViews = useMemo(() => {
     return Object.fromEntries(
-      Object.entries(regionPresets).map(([id, preset]) => [
-        id,
-        {
-          center: [preset.defaultCenter[0], preset.defaultCenter[1]] as [number, number],
-          zoom: preset.defaultZoom,
-          bbox: id === "na" ? [-154, 12, -48, 72] as [number, number, number, number] : preset.bbox,
-          minZoom: preset.minZoom,
-          maxZoom: preset.maxZoom,
-        },
-      ])
+      Object.entries(regionPresets).map(([id, preset]) => {
+        const isNwsHazardsConusView = model === "nws_hazards" && id === "conus";
+        return [
+          id,
+          {
+            center: [preset.defaultCenter[0], preset.defaultCenter[1]] as [number, number],
+            zoom: preset.defaultZoom,
+            bbox: isNwsHazardsConusView
+              ? NWS_HAZARDS_CONUS_VIEW_BBOX
+              : id === "na"
+                ? [-154, 12, -48, 72] as [number, number, number, number]
+                : preset.bbox,
+            fitMinZoom: isNwsHazardsConusView ? 3 : undefined,
+            fitMinZoomBreakpoint: isNwsHazardsConusView ? 640 : undefined,
+            minZoom: preset.minZoom,
+            maxZoom: preset.maxZoom,
+          },
+        ];
+      })
     );
-  }, [regionPresets]);
+  }, [model, regionPresets]);
 
   const anchorBatchPoints = useMemo(
     () => anchorBatchPointsFromGeoJson(anchorBaseGeoJson),

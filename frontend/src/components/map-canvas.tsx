@@ -49,6 +49,8 @@ type RegionView = {
   center: [number, number];
   zoom: number;
   bbox?: [number, number, number, number];
+  fitMinZoom?: number;
+  fitMinZoomBreakpoint?: number;
   minZoom?: number;
   maxZoom?: number;
 };
@@ -2149,6 +2151,19 @@ export function MapCanvas({
     }
     if (view.bbox) {
       const [west, south, east, north] = view.bbox;
+      const fitMinZoom = Number.isFinite(view.fitMinZoom) ? Number(view.fitMinZoom) : null;
+      const fitMinZoomBreakpoint = Number.isFinite(view.fitMinZoomBreakpoint) ? Number(view.fitMinZoomBreakpoint) : 640;
+      if (fitMinZoom !== null && map.getContainer().clientWidth <= fitMinZoomBreakpoint) {
+        const camera = map.cameraForBounds([[west, south], [east, north]], { padding: 24 });
+        if (camera?.center && Number.isFinite(camera.zoom)) {
+          map.easeTo({
+            center: camera.center,
+            zoom: Math.max(Number(camera.zoom), fitMinZoom),
+            duration: 600,
+          });
+          return;
+        }
+      }
       map.fitBounds([[west, south], [east, north]], {
         duration: 600,
         padding: 24,
