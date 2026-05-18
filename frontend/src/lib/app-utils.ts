@@ -877,7 +877,6 @@ export function resolveForecastHourFromRows(
   if (
     timeAxisMode === "observed"
     && defaultFrameSelection === "latest"
-    && !Number.isFinite(preferredFh)
   ) {
     const selectableFrameSet = new Set(selectableFrames);
     const mostRecentHour = mostRecentFrameHourByValidTime(
