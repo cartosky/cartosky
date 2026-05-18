@@ -298,8 +298,7 @@ export function FeedbackWidget() {
                   className="min-h-[132px] w-full resize-none rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-3 text-sm leading-6 text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
                   placeholder="What should we know?"
                 />
-                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-white/45">
-                  <span>{capturedContext?.pageContext ?? buildPageContext(location)}</span>
+                <div className="mt-2 flex items-center justify-end text-xs text-white/45">
                   <span className={remainingChars < 80 ? "text-amber-200" : undefined}>{message.length}/{MESSAGE_MAX_LENGTH}</span>
                 </div>
               </div>
