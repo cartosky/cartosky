@@ -95,14 +95,15 @@ export function FeedbackWidget() {
     && !statusLoading
   );
 
-  const submittingAs = useMemo(() => {
+  const sessionStatusLabel = useMemo(() => {
     if (statusLoading) {
-      return "Checking session";
+      return "Checking TWF session";
     }
     if (twfStatus?.linked) {
-      return twfStatus.display_name || (twfStatus.member_id ? `member-${twfStatus.member_id}` : "Weather Forums member");
+      const displayName = twfStatus.display_name || (twfStatus.member_id ? `member-${twfStatus.member_id}` : "Weather Forums member");
+      return `Submitting as ${displayName}`;
     }
-    return "Weather Forums login required";
+    return "Log in to your TWF account before submitting feedback.";
   }, [statusLoading, twfStatus]);
 
   useEffect(() => {
@@ -180,7 +181,7 @@ export function FeedbackWidget() {
       return;
     }
     if (!twfStatus?.linked) {
-      setSubmitMessage("Sign in with The Weather Forums before sending feedback.");
+      setSubmitMessage("Log in to your TWF account before submitting a feedback report.");
       return;
     }
 
@@ -250,7 +251,7 @@ export function FeedbackWidget() {
             <div className="flex items-center justify-between gap-3 border-b border-white/8 px-4 pb-3 pt-3 sm:px-5 sm:pt-4">
               <div>
                 <div className="text-base font-semibold tracking-tight text-white">Feedback</div>
-                <div className="mt-1 text-xs text-white/52">Submitting as {submittingAs}</div>
+                <div className="mt-1 text-xs text-white/52">{sessionStatusLabel}</div>
               </div>
               <button
                 type="button"
