@@ -50,6 +50,7 @@ function formatTimelineDisplay(params: {
   primary: string;
   secondary: string;
   compactValue: string;
+  shortDate: string;
   axisLabel: string;
 } | null {
   if (params.timeAxisMode === "observed") {
@@ -62,6 +63,7 @@ function formatTimelineDisplay(params: {
       primary,
       secondary: "Observed",
       compactValue,
+      shortDate: compactValue,
       axisLabel: "Observed Time",
     };
   }
@@ -75,6 +77,7 @@ function formatTimelineDisplay(params: {
       primary,
       secondary: validDayLabel(params.forecastHour),
       compactValue: validDayLabel(params.forecastHour),
+      shortDate: primary,
       axisLabel: "Valid Day",
     };
   }
@@ -97,12 +100,24 @@ function formatTimelineDisplay(params: {
       timeZoneName: "short",
     }).format(validDate);
 
+    const rawShort = new Intl.DateTimeFormat("en-US", {
+      month: "numeric",
+      day: "numeric",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(validDate);
+    // Trim spaces before AM/PM: "3:00 PM" → "3:00PM"
+    const shortDate = rawShort.replace(/(\d)\s+(AM|PM)/i, "$1$2");
+
     const secondary = `FH ${params.forecastHour}`;
 
     return {
       primary,
       secondary,
       compactValue: `${params.forecastHour}h`,
+      shortDate,
       axisLabel: "Forecast Hour",
     };
   } catch {
@@ -262,10 +277,11 @@ export function BottomForecastControls({
           />
           {/* Content sits above the blur layer */}
           <div className={cn("relative z-10", isDesktopLayout ? "hidden" : "block")}>
-            <div className={cn("flex items-start justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
+            {/* Row 1: context (model/variable) + action buttons */}
+            <div className={cn("flex items-center justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0 flex-1">
                 {(modelLabel || variableLabel) ? (
-                  <div className="mb-0.5 flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     {modelLabel ? (
                       <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
                         {modelLabel}
@@ -281,13 +297,6 @@ export function BottomForecastControls({
                     ) : null}
                   </div>
                 ) : null}
-                {validTime ? (
-                  <div className="truncate text-xs font-semibold text-white">{validTime.primary}</div>
-                ) : (
-                  <div className="text-[10px] text-white/50">
-                    {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
-                  </div>
-                )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {sourceStatusLabel ? (
@@ -300,16 +309,6 @@ export function BottomForecastControls({
                     {sourceStatusLabel}
                   </div>
                 ) : null}
-                {onOpenControls ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenControls(true)}
-                    aria-label="Open controls"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
-                  >
-                    <Settings className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
                 {onShare ? (
                   <button
                     type="button"
@@ -320,15 +319,30 @@ export function BottomForecastControls({
                     <Send className="h-3.5 w-3.5" />
                   </button>
                 ) : null}
+                {onOpenControls ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenControls(true)}
+                    aria-label="Open controls"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
             </div>
+
+            {/* Hairline divider */}
+            <div className="mb-2 border-t border-white/[0.08]" />
+
             {transientStatus ? (
-              <div className="flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
+              <div className="mb-2 flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
                 <AlertCircle className="h-3 w-3" />
                 {transientStatus}
               </div>
             ) : null}
 
+            {/* Row 2: play + slider + compact time/FH below */}
             <div className={cn("flex items-center", isTabletTouchLayout ? "gap-2.5" : "gap-3")}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -381,8 +395,11 @@ export function BottomForecastControls({
                   className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                 />
                 {validTime ? (
-                  <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em] text-white/50">
-                    {validTime.secondary}
+                  <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                    {validTime.shortDate}
+                    {validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                      <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
