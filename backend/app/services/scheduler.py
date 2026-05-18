@@ -142,6 +142,10 @@ DEFAULT_LOOP_SHARPEN_THRESHOLD = 3
 DEFAULT_DERIVE_BUNDLE = False
 
 BuildTarget = tuple[str, str, int]
+BuildOutcome = tuple[str, str, int, bool, int | None, str]
+BUILD_STATUS_OK = "ok"
+BUILD_STATUS_FAILED = "failed"
+BUILD_STATUS_TRANSIENT = "transient_unavailable"
 
 
 class SchedulerConfigError(RuntimeError):
@@ -866,7 +870,7 @@ def _build_one(
     readiness_cache: dict[str, bool] | None = None,
     log_fetch_cache_stats: bool = True,
     derive_component_warp_cache: bool = False,
-) -> tuple[str, str, int, bool, int]:
+) -> tuple[str, str, int, bool, int, str]:
     started_at = time.perf_counter()
     ensemble_view = _var_default_ensemble_view(plugin, var_id)
     runtime_var_id = _runtime_var_id(plugin, var_id, ensemble_view)
@@ -884,14 +888,22 @@ def _build_one(
         readiness_cache=readiness_cache,
         log_fetch_cache_stats=log_fetch_cache_stats,
         derive_component_warp_cache=derive_component_warp_cache,
+        return_status=True,
     )
-    return region, var_id, fh, result is not None, int((time.perf_counter() - started_at) * 1000)
+    frame_path, status = result if isinstance(result, tuple) else (result, BUILD_STATUS_OK if result is not None else BUILD_STATUS_FAILED)
+    normalized_status = str(status or "").strip().lower() or (BUILD_STATUS_OK if frame_path is not None else BUILD_STATUS_FAILED)
+    ok = frame_path is not None and normalized_status == BUILD_STATUS_OK
+    return region, var_id, fh, ok, int((time.perf_counter() - started_at) * 1000), normalized_status
 
 
 def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     normalize = getattr(plugin, "normalize_var_id", None)
     normalized: str = str(normalize(var_id)) if callable(normalize) else str(var_id)
     plugin_id = str(getattr(plugin, "id", "") or "").strip().lower()
+    if plugin_id == "gfs" and (
+        normalized == "ptype_intensity" or normalized.startswith("ptype_intensity_")
+    ):
+        return True
     if plugin_id == "eps":
         return True
     if normalized == "precip_total":
@@ -920,7 +932,7 @@ def _build_bundle(
     run_dt: datetime,
     data_root: Path,
     plugin: Any,
-) -> list[tuple[str, str, int, bool, int]]:
+) -> list[tuple[str, str, int, bool, int, str]]:
     normalized_vars: list[tuple[str, str, str | None]] = []
     seen: set[str] = set()
     for var_id in var_ids:
@@ -935,7 +947,7 @@ def _build_bundle(
     if not normalized_vars:
         return []
 
-    results, timings_ms = build_frame_bundle(
+    bundle_result = build_frame_bundle(
         model=model_id,
         region=region,
         var_keys=[runtime_var_id for _, runtime_var_id, _ in normalized_vars],
@@ -945,14 +957,32 @@ def _build_bundle(
         product=getattr(plugin, "product", "sfc"),
         model_plugin=plugin,
         include_timings=True,
+        include_statuses=True,
     )
+    if len(bundle_result) == 3:
+        results, timings_ms, statuses = bundle_result
+    else:
+        results, timings_ms = bundle_result
+        statuses = {}
+
+    def _bundle_status(runtime_var_id: str) -> str:
+        fallback = BUILD_STATUS_OK if results.get(runtime_var_id) is not None else BUILD_STATUS_FAILED
+        return str(statuses.get(runtime_var_id, fallback)).strip().lower()
+
     return [
-        (region, var_key, fh, results.get(runtime_var_id) is not None, int(timings_ms.get(runtime_var_id, 0)))
+        (
+            region,
+            var_key,
+            fh,
+            results.get(runtime_var_id) is not None and _bundle_status(runtime_var_id) == BUILD_STATUS_OK,
+            int(timings_ms.get(runtime_var_id, 0)),
+            _bundle_status(runtime_var_id),
+        )
         for var_key, runtime_var_id, _ensemble_view in normalized_vars
     ]
 
 
-def _coerce_build_outcome(outcome: tuple[Any, ...]) -> tuple[str, str, int, bool, int | None]:
+def _coerce_build_outcome(outcome: tuple[Any, ...]) -> BuildOutcome:
     if len(outcome) < 4:
         raise ValueError(f"Invalid build outcome: {outcome!r}")
     region = str(outcome[0]).strip().lower()
@@ -962,7 +992,12 @@ def _coerce_build_outcome(outcome: tuple[Any, ...]) -> tuple[str, str, int, bool
     elapsed_ms: int | None = None
     if len(outcome) >= 5 and outcome[4] is not None:
         elapsed_ms = int(outcome[4])
-    return region, var_id, fh, ok, elapsed_ms
+    status = BUILD_STATUS_OK if ok else BUILD_STATUS_FAILED
+    if len(outcome) >= 6 and outcome[5] is not None:
+        parsed_status = str(outcome[5]).strip().lower()
+        if parsed_status:
+            status = parsed_status
+    return region, var_id, fh, ok, elapsed_ms, status
 
 
 def _log_frame_timing(
@@ -1702,6 +1737,7 @@ def _process_run(
             )
 
             round_successes = 0
+            round_transient_failures = 0
             if workers == 1:
                 shared_fetch_ctx_by_region: dict[str, FetchContext] = {}
                 shared_readiness_cache_by_region: dict[str, dict[str, bool]] = {}
@@ -1721,7 +1757,7 @@ def _process_run(
                         log_fetch_cache_stats=False,
                         derive_component_warp_cache=True,
                     )
-                    region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(result))
+                    region, var_id, fh, ok, elapsed_ms, status = _coerce_build_outcome(tuple(result))
                     _log_frame_timing(
                         run_id=run_id,
                         model_id=model_id,
@@ -1736,6 +1772,9 @@ def _process_run(
                         built_ok += 1
                         round_successes += 1
                         logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
+                    elif status == BUILD_STATUS_TRANSIENT:
+                        round_transient_failures += 1
+                        logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                     else:
                         blocked_targets.add((region, var_id))
                         logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
@@ -1765,7 +1804,7 @@ def _process_run(
                     ]
 
                     for future in concurrent.futures.as_completed(futures):
-                        region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(future.result()))
+                        region, var_id, fh, ok, elapsed_ms, status = _coerce_build_outcome(tuple(future.result()))
                         _log_frame_timing(
                             run_id=run_id,
                             model_id=model_id,
@@ -1780,6 +1819,9 @@ def _process_run(
                             built_ok += 1
                             round_successes += 1
                             logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
+                        elif status == BUILD_STATUS_TRANSIENT:
+                            round_transient_failures += 1
+                            logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
                             blocked_targets.add((region, var_id))
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
@@ -1856,6 +1898,7 @@ def _process_run(
         )
 
         round_successes = 0
+        round_transient_failures = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures: list[concurrent.futures.Future] = []
             if derive_bundle_enabled and not rebuild_round:
@@ -1918,7 +1961,7 @@ def _process_run(
                     round_results = list(future_result)
 
                 for outcome in round_results:
-                    region, var_id, fh, ok, elapsed_ms = _coerce_build_outcome(tuple(outcome))
+                    region, var_id, fh, ok, elapsed_ms, status = _coerce_build_outcome(tuple(outcome))
                     rebuild_key = (run_id, str(region), str(var_id), int(fh))
                     is_rebuild_job = rebuild_round and rebuild_key in rebuild_attempts
                     _log_frame_timing(
@@ -1967,11 +2010,23 @@ def _process_run(
                                 int(rebuild_attempts.get(rebuild_key, 0)),
                                 rebuild_max_attempts,
                             )
+                        elif status == BUILD_STATUS_TRANSIENT:
+                            round_transient_failures += 1
+                            logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
                             blocked_targets.add((region, var_id))
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
         if round_successes == 0 and not rebuild_round:
+            if round_transient_failures > 0:
+                logger.info(
+                    "Catch-up paused: run=%s no progress in round=%d; transient_unavailable=%d blocked_vars=%s",
+                    run_id,
+                    rounds,
+                    round_transient_failures,
+                    sorted(f"{region}/{var_id}" for region, var_id in blocked_targets),
+                )
+                break
             logger.info(
                 "Catch-up paused: run=%s no progress in round=%d; blocked_vars=%s",
                 run_id,

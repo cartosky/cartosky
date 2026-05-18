@@ -104,6 +104,8 @@ def test_parse_vars_or_auto_supports_auto_tokens() -> None:
 def test_eps_targets_are_derive_bundle_candidates() -> None:
     assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "tmp2m")
     assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "hgt500_anom")
+    assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity")
+    assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity_snow")
     assert not scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "wspd10m")
 
 
@@ -458,6 +460,81 @@ def test_process_run_catches_up_consecutive_available_hours(
     assert total == 5
     assert available == 4
     assert attempted == [("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)]
+
+
+def test_process_run_retries_transient_unavailable_targets_during_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    model_id = "hrrr"
+
+    built: set[tuple[str, int]] = set()
+    attempts: list[tuple[str, int]] = []
+    transient_seen: set[tuple[str, int]] = set()
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run, region
+        return (var_id, fh) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+    ) -> tuple[str, str, int, bool, int, str]:
+        del model_id, run_dt, data_root, plugin
+        attempts.append((var_id, fh))
+        if var_id == "dp2m" and fh == 0 and (var_id, fh) not in transient_seen:
+            transient_seen.add((var_id, fh))
+            return region, var_id, fh, False, 10, scheduler_module.BUILD_STATUS_TRANSIENT
+        ok = (var_id == "tmp2m" and fh <= 1) or (var_id == "dp2m" and fh == 0)
+        if ok:
+            built.add((var_id, fh))
+            return region, var_id, fh, True, 10, scheduler_module.BUILD_STATUS_OK
+        return region, var_id, fh, False, 10, scheduler_module.BUILD_STATUS_FAILED
+
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    scheduler_module._process_run(
+        plugin=_FakePlugin(),
+        model_id=model_id,
+        vars_to_build=["tmp2m", "dp2m"],
+        primary_vars=["tmp2m"],
+        run_dt=run_dt,
+        data_root=tmp_path,
+        workers=1,
+        keep_runs=2,
+        loop_pregenerate_enabled=False,
+        loop_cache_root=tmp_path / "loop-cache",
+        loop_workers=1,
+        loop_tier0_quality=82,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
+        loop_tier1_quality=86,
+        loop_tier1_max_dim=2400,
+        loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
+    )
+
+    assert attempts.count(("dp2m", 0)) == 2
+    assert ("dp2m", 0) in built
+    assert ("tmp2m", 1) in built
 
 
 def test_process_run_publishes_early_then_refreshes_after_more_progress(

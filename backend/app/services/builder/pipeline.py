@@ -1020,7 +1020,8 @@ def build_frame(
     readiness_cache: dict[str, bool] | None = None,
     log_fetch_cache_stats: bool = True,
     derive_component_warp_cache: bool = False,
-) -> Path | None:
+    return_status: bool = False,
+) -> Path | None | tuple[Path | None, str]:
     """Build one frame's artifacts: RGBA COG + value COG + sidecar JSON.
 
     This is the core orchestration function implementing the pipeline:
@@ -1053,6 +1054,12 @@ def build_frame(
     """
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
+
+    def _result(path: Path | None, status: str) -> Path | None | tuple[Path | None, str]:
+        if return_status:
+            return path, status
+        return path
+
     local_fetch_ctx = fetch_ctx or FetchContext(coverage=region)
     setattr(local_fetch_ctx, "data_root", str(data_root))
     setattr(local_fetch_ctx, "run_id", run_id)
@@ -1075,7 +1082,7 @@ def build_frame(
     if resolved_plugin.get_region(region) is None:
         logger.error("Rejected unsupported region for build_frame: model=%s region=%s", model, region)
         _log_fetch_cache_stats_once()
-        return None
+        return _result(None, "failed")
 
     logger.info("Building frame: %s/%s/%s/%s (coverage=%s)", model, run_id, var_id, fh_str, region)
 
@@ -1091,14 +1098,14 @@ def build_frame(
             var_key,
         )
         _log_fetch_cache_stats_once()
-        return None
+        return _result(None, "failed")
     color_map_id = color_map_id.strip()
     try:
         var_spec_colormap = get_color_map_spec(color_map_id)
     except KeyError:
         logger.error("No colormap spec for model=%s var_key=%s color_map_id=%s", model, var_key, color_map_id)
         _log_fetch_cache_stats_once()
-        return None
+        return _result(None, "failed")
 
     kind = (
         getattr(var_capability, "kind", None)
@@ -1309,7 +1316,7 @@ def build_frame(
         ):
             logger.error("Value COG validation failed — rejecting frame")
             _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-            return None
+            return _result(None, "failed")
 
         if not check_value_sanity(
             val_path,
@@ -1319,7 +1326,7 @@ def build_frame(
         ):
             logger.error("Value sanity failed — rejecting frame")
             _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-            return None
+            return _result(None, "failed")
 
         contours_meta, contour_geojson_path = _build_contour_metadata_for_variable(
             model=model,
@@ -1376,7 +1383,7 @@ def build_frame(
             _file_size_str(sidecar_path),
             f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
         )
-        return staging_dir
+        return _result(staging_dir, "ok")
 
     except HerbieTransientUnavailableError as exc:
         logger.warning(
@@ -1389,7 +1396,7 @@ def build_frame(
             exc,
         )
         _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-        return None
+        return _result(None, "transient_unavailable")
 
     except Exception:
         logger.exception(
@@ -1397,7 +1404,7 @@ def build_frame(
             model, region, run_id, var_key, fh_str,
         )
         _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-        return None
+        return _result(None, "failed")
     finally:
         _log_fetch_cache_stats_once()
 
@@ -1413,7 +1420,13 @@ def build_frame_bundle(
     product: str = "sfc",
     model_plugin: Any = None,
     include_timings: bool = False,
-) -> dict[str, Path | None] | tuple[dict[str, Path | None], dict[str, int]]:
+    include_statuses: bool = False,
+) -> (
+    dict[str, Path | None]
+    | tuple[dict[str, Path | None], dict[str, int]]
+    | tuple[dict[str, Path | None], dict[str, str]]
+    | tuple[dict[str, Path | None], dict[str, int], dict[str, str]]
+):
     """Build multiple variables for one fh with shared fetch/warp caches."""
     resolved_plugin = model_plugin or _resolve_model_plugin(model)
     shared_ctx = FetchContext(coverage=region)
@@ -1430,9 +1443,10 @@ def build_frame_bundle(
 
     results: dict[str, Path | None] = {}
     timings_ms: dict[str, int] = {}
+    statuses: dict[str, str] = {}
     for var_key in ordered_vars:
         started_at = time.perf_counter()
-        results[var_key] = build_frame(
+        frame_result = build_frame(
             model=model,
             region=region,
             var_id=var_key,
@@ -1448,7 +1462,18 @@ def build_frame_bundle(
             readiness_cache=readiness_cache,
             log_fetch_cache_stats=False,
             derive_component_warp_cache=True,
+            return_status=include_statuses,
         )
+        if include_statuses:
+            frame_path, frame_status = (
+                frame_result
+                if isinstance(frame_result, tuple)
+                else (frame_result, "ok" if frame_result is not None else "failed")
+            )
+            results[var_key] = frame_path
+            statuses[var_key] = str(frame_status)
+        else:
+            results[var_key] = frame_result if not isinstance(frame_result, tuple) else frame_result[0]
         timings_ms[var_key] = int((time.perf_counter() - started_at) * 1000)
 
     fetch_hits = int(shared_ctx.stats.get("hits", 0))
@@ -1464,8 +1489,12 @@ def build_frame_bundle(
         warp_hits,
         warp_misses,
     )
+    if include_timings and include_statuses:
+        return results, timings_ms, statuses
     if include_timings:
         return results, timings_ms
+    if include_statuses:
+        return results, statuses
     return results
 
 
