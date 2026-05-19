@@ -334,3 +334,13 @@ async def test_delete_twf_connection_deletes_clerk_user_session(
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     assert deleted == ["user_test"]
+
+
+def test_twf_frontend_redirect_defaults_to_integrations_when_requested() -> None:
+    redirect_url = main_module._twf_frontend_redirect_url("/account/integrations", twf="linked")
+
+    assert redirect_url == "https://example.com/account/integrations?twf=linked"
+
+
+def test_maybe_twf_session_ignores_non_principal() -> None:
+    assert main_module._maybe_twf_session(None) is None

@@ -989,7 +989,12 @@ def _require_twf_session(current_user: ClerkPrincipal) -> twf_oauth.TwfSession:
     return sess
 
 
-def _maybe_twf_session(current_user: ClerkPrincipal) -> twf_oauth.TwfSession | None:
+def _maybe_twf_session(current_user: ClerkPrincipal | Request | None) -> twf_oauth.TwfSession | None:
+    if isinstance(current_user, Request):
+        sid = current_user.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+        return twf_oauth.get_session(sid) if sid else None
+    if not isinstance(current_user, ClerkPrincipal):
+        return None
     return twf_oauth.get_session_for_clerk_user(current_user.user_id)
 
 
@@ -1195,7 +1200,7 @@ async def twf_callback(
         )
 
         resp = RedirectResponse(
-            url=_twf_frontend_redirect_url(packed.get("return_to"), twf="linked"),
+            url=_twf_frontend_redirect_url(packed.get("return_to") or "/account/integrations", twf="linked"),
             status_code=302,
         )
 
