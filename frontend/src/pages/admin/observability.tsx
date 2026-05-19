@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, Database, ExternalLink, Server } from "lucide-react";
 
 import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
-import { fetchAdminObservabilitySummary, fetchTwfStatus, type AdminObservabilitySummaryResponse, type TwfStatus } from "@/lib/admin-api";
+import { fetchAdminAuthStatus, fetchAdminObservabilitySummary, type AdminObservabilitySummaryResponse, type TwfStatus } from "@/lib/admin-api";
 import { getGrafanaDashboardUrl, getGrafanaEmbedUrl, getGrafanaUrl } from "@/lib/config";
 
 export default function AdminObservabilityPage() {
@@ -18,7 +18,7 @@ export default function AdminObservabilityPage() {
 
     async function load() {
       try {
-        const authStatus = await fetchTwfStatus();
+        const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Route, TimerReset, Waypoints } from "lucide-react";
 
 import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
-import { fetchAdminTracesSummary, fetchTwfStatus, type AdminTracesSummaryResponse, type TwfStatus } from "@/lib/admin-api";
+import { fetchAdminAuthStatus, fetchAdminTracesSummary, type AdminTracesSummaryResponse, type TwfStatus } from "@/lib/admin-api";
 import { getGrafanaTracesUrl, getGrafanaUrl } from "@/lib/config";
 
 export default function AdminTracesPage() {
@@ -18,7 +18,7 @@ export default function AdminTracesPage() {
     async function load() {
       try {
         const [authStatus, tracesSummary] = await Promise.all([
-          fetchTwfStatus(),
+          fetchAdminAuthStatus(),
           fetchAdminTracesSummary(),
         ]);
         if (cancelled) return;

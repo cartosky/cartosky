@@ -310,6 +310,20 @@ export async function fetchTwfStatus(): Promise<TwfStatus> {
   return fetchJson<TwfStatus>(`${API_ORIGIN}/auth/twf/status`);
 }
 
+export async function fetchAdminAuthStatus(): Promise<TwfStatus> {
+  const token = await getClerkAuthToken();
+  if (!token) {
+    return { linked: false, admin: false };
+  }
+
+  const me = await fetchJson<ClerkMeResponse>(`${API_ORIGIN}/api/v4/auth/me`, withBearerToken(undefined, token));
+  return {
+    linked: true,
+    admin: me.is_admin,
+    display_name: me.user_id,
+  };
+}
+
 export async function fetchAdminOverviewSummary(window: string): Promise<AdminOverviewSummaryResponse> {
   const search = new URLSearchParams();
   search.set("window", window);

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import {
+  fetchAdminAuthStatus,
   fetchAdminNetworkDiagnostics,
   fetchAdminObservabilitySummary,
   fetchAdminOverviewSummary,
@@ -11,7 +12,6 @@ import {
   fetchAdminStatusQaSummary,
   fetchAdminTracesSummary,
   type AdminNetworkDiagnosticsResponse,
-  fetchTwfStatus,
   type AdminObservabilitySummaryResponse,
   type NetworkDiagnosticBreakdown,
   type NetworkDiagnosticMetricName,
@@ -300,7 +300,7 @@ export default function AdminOverviewPage() {
 
     async function load() {
       try {
-        const authStatus = await fetchTwfStatus();
+        const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) {

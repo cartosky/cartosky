@@ -3,10 +3,10 @@ import { AlertTriangle, ClipboardCheck, Clock3, SearchCheck, X } from "lucide-re
 
 import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import {
+  fetchAdminAuthStatus,
   fetchAdminStatusRunDetail,
   fetchAdminStatusQaSummary,
   fetchAdminStatusResults,
-  fetchTwfStatus,
   type StatusQaSummaryResponse,
   type StatusResult,
   type TwfStatus,
@@ -174,7 +174,7 @@ export default function AdminStatusPage() {
 
     async function load() {
       try {
-        const authStatus = await fetchTwfStatus();
+        const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) return;

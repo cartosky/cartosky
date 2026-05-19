@@ -4,8 +4,8 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock3, MessageSquareText, Ref
 
 import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
 import {
+  fetchAdminAuthStatus,
   fetchAdminFeedback,
-  fetchTwfStatus,
   type AdminFeedbackItem,
   type AdminFeedbackResponse,
   type FeedbackCategory,
@@ -127,7 +127,7 @@ export default function AdminFeedbackPage() {
 
     async function loadStatus() {
       try {
-        const authStatus = await fetchTwfStatus();
+        const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
         setStatus(authStatus);
       } catch (nextError) {

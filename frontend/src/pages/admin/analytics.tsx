@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BarChart3, Clapperboard, ExternalLink, Flag, ShieldCheck } from "lucide-react";
 
 import { AdminEmpty, AdminHero, AdminPage, AdminStat, AdminSurface } from "@/components/admin-shell";
-import { fetchTwfStatus, type TwfStatus } from "@/lib/admin-api";
+import { fetchAdminAuthStatus, type TwfStatus } from "@/lib/admin-api";
 import {
   getPostHogDashboardEmbedUrl,
   getPostHogDashboardUrl,
@@ -27,7 +27,7 @@ export default function AdminAnalyticsPage() {
 
     async function load() {
       try {
-        const authStatus = await fetchTwfStatus();
+        const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
         setStatus(authStatus);
       } catch (nextError) {
