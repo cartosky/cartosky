@@ -7,6 +7,8 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { API_ORIGIN } from "@/lib/config";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 
+const INTEGRATIONS_HASH = "#/integrations";
+
 type TwfConnectionStatus = {
   connected: boolean;
   twf_username: string | null;
@@ -49,8 +51,11 @@ function TwfConnectedAccountReturn() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (location.pathname === "/account" && (params.get("twf_connected") === "true" || params.get("twf") === "linked")) {
-      navigate(`/account/integrations${location.search}`, { replace: true });
+    if (location.pathname === "/account" && (params.get("twf_connected") === "true" || params.get("twf") === "linked" || params.get("twf") === "error")) {
+      if (window.location.hash !== INTEGRATIONS_HASH) {
+        window.location.hash = INTEGRATIONS_HASH;
+      }
+      navigate(`/account${location.search}${INTEGRATIONS_HASH}`, { replace: true });
     }
   }, [location.pathname, location.search, navigate]);
 
@@ -135,7 +140,7 @@ function TwfConnectionSection() {
     setError(null);
     setSuccess(null);
     try {
-      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations" })}`, {
+      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account" })}`, {
         method: "GET",
         credentials: "include",
         headers: { Accept: "application/json" },
@@ -271,7 +276,7 @@ export default function Account() {
         <Show when="signed-in">
           <>
             <TwfConnectedAccountReturn />
-            <UserProfile routing="path" path="/account" appearance={clerkAppearance}>
+            <UserProfile appearance={clerkAppearance}>
               <UserProfile.Page label="Integrations" labelIcon={<Plug className="h-4 w-4" />} url="integrations">
                 <TwfConnectionSection />
               </UserProfile.Page>

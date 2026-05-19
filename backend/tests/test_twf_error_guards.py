@@ -350,10 +350,10 @@ async def test_delete_twf_connection_allows_cors_preflight(client: httpx.AsyncCl
     assert "DELETE" in response.headers["access-control-allow-methods"]
 
 
-def test_twf_frontend_redirect_defaults_to_integrations_when_requested() -> None:
-    redirect_url = main_module._twf_frontend_redirect_url("/account/integrations", twf="linked")
+def test_twf_frontend_redirect_uses_account_when_requested() -> None:
+    redirect_url = main_module._twf_frontend_redirect_url("/account", twf="linked")
 
-    assert redirect_url == "https://example.com/account/integrations?twf=linked"
+    assert redirect_url == "https://example.com/account?twf=linked"
 
 
 def test_maybe_twf_session_ignores_non_principal() -> None:
