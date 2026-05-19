@@ -42,6 +42,16 @@ const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
     socialButtonsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
     alternativeMethodsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
     otpCodeFieldInput: "border-white/10 bg-[#161922] text-white focus:border-cyan-300/50 focus:ring-cyan-300/20",
+    userButtonPopoverCard: "border border-white/10 bg-[#0b0e15]/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl",
+    userButtonPopoverMain: "bg-transparent",
+    userButtonPopoverActions: "bg-transparent",
+    userButtonPopoverActionButton: "text-slate-200 hover:bg-cyan-300/[0.08] hover:text-white",
+    userButtonPopoverActionButtonText: "text-slate-200 group-hover:text-white",
+    userButtonPopoverActionButtonIcon: "text-slate-400 group-hover:text-cyan-200",
+    userButtonPopoverFooter: "border-t border-white/10 bg-transparent text-slate-500",
+    userPreviewMainIdentifier: "text-white",
+    userPreviewSecondaryIdentifier: "text-slate-400",
+    userPreviewTextContainer: "text-white",
   },
 };
 
