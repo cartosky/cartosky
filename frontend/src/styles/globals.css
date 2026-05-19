@@ -177,6 +177,20 @@
     border-color: rgba(255, 255, 255, 0.1) !important;
   }
 
+  .cl-userProfile-root .cl-navbarHeader,
+  .cl-userProfile-root .cl-navbarTitle,
+  .cl-userProfile-root .cl-navbar [class*="Title"] {
+    color: rgb(248 250 252) !important;
+    opacity: 1 !important;
+  }
+
+  .cl-userProfile-root .cl-navbarSubtitle,
+  .cl-userProfile-root .cl-navbar [class*="Subtitle"],
+  .cl-userProfile-root .cl-navbar [class*="Description"] {
+    color: rgb(148 163 184) !important;
+    opacity: 1 !important;
+  }
+
   .cl-userProfile-root .cl-navbarButton {
     color: rgb(148 163 184) !important;
   }
@@ -202,9 +216,26 @@
   .cl-userProfile-root .cl-headerSubtitle,
   .cl-userProfile-root .cl-profileSectionContent,
   .cl-userProfile-root .cl-profileSectionItemSubtitle,
+  .cl-userProfile-root .cl-profileSectionItemValue,
+  .cl-userProfile-root .cl-profileSectionItemValueText,
+  .cl-userProfile-root .cl-profileSectionItemSecondaryIdentifier,
   .cl-userProfile-root [class*="Subtitle"],
+  .cl-userProfile-root [class*="Identifier"],
+  .cl-userProfile-root [class*="Value"],
   .cl-userProfile-root [class*="Description"] {
     color: rgb(148 163 184) !important;
+    opacity: 1 !important;
+  }
+
+  .cl-userProfile-root .cl-profileSectionItem p,
+  .cl-userProfile-root .cl-profileSectionItem span,
+  .cl-userProfile-root .cl-profileSectionItem div {
+    opacity: 1 !important;
+  }
+
+  .cl-userProfile-root .cl-profileSectionItem [class*="Identifier"],
+  .cl-userProfile-root .cl-profileSectionItem [class*="Value"] {
+    color: rgb(203 213 225) !important;
   }
 
   .cl-userProfile-root .cl-profileSectionPrimaryButton,
