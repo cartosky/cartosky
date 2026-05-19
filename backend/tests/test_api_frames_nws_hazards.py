@@ -25,6 +25,7 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
+from app.services import nws_hazards as nws_hazards_service
 
 pytestmark = pytest.mark.anyio
 
@@ -197,7 +198,7 @@ async def test_nws_hazards_alert_detail_endpoint_returns_normalized_nws_alert(
             },
         }
 
-    monkeypatch.setattr(main_module.nws_hazards_service, "fetch_alert_geojson", fake_fetch_alert_geojson)
+    monkeypatch.setattr(nws_hazards_service, "fetch_alert_geojson", fake_fetch_alert_geojson)
 
     response = await client.get("/api/v4/nws-hazards/alert", params={"id": "urn:oid:alert-1"})
 

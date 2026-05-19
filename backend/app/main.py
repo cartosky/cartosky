@@ -76,7 +76,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, nws_hazards as nws_hazards_service, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, require_clerk_admin, require_clerk_user
@@ -3454,6 +3454,8 @@ def health_v4():
 async def nws_hazards_alert_detail(
     id: str = Query(..., min_length=1, description="NWS alert id"),
 ):
+    from .services import nws_hazards as nws_hazards_service
+
     try:
         feature = await run_in_threadpool(nws_hazards_service.fetch_alert_geojson, id)
     except nws_hazards_service.NWSHazardsError as exc:
