@@ -202,7 +202,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert rh700["derived"] is False
     assert rh700["kind"] == "continuous"
     assert rh700["units"] == "%"
-    assert rh700["display_name"] == "700mb RH"
+    assert rh700["display_name"] == "700mb Relative Humidity"
     assert rh700["group"] == "Moisture"
     assert rh700["color_map_id"] == "rh"
     assert rh700["order"] == 3.75

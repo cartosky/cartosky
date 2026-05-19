@@ -48,6 +48,9 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("d2m") == "dp2m"
     assert ECMWF_MODEL.normalize_var_id("2d") == "dp2m"
     assert ECMWF_MODEL.normalize_var_id("dewpoint") == "dp2m"
+    assert ECMWF_MODEL.normalize_var_id("rh700") == "rh700"
+    assert ECMWF_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert ECMWF_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
     assert ECMWF_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert ECMWF_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
     assert ECMWF_MODEL.normalize_var_id("t850_anom") == "tmp850_anom"
@@ -140,7 +143,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "ice_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "ice_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -156,6 +159,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert ("ecmwf", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "hgt500_anom") in _PACKING_BY_MODEL_VAR
+    assert ("ecmwf", "rh700") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "ice_total") in _PACKING_BY_MODEL_VAR
 
     tmp2m_anom_spec = ECMWF_MODEL.get_var("tmp2m_anom")
@@ -261,6 +265,19 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert vort500_spec.selectors.hints["contour_component"] == "hgt500"
     assert vort500_spec.selectors.hints["contour_interval"] == "60"
     assert vort500_spec.selectors.hints["contour_key"] == "height_500mb"
+
+    rh700_spec = ECMWF_MODEL.get_var("rh700")
+    assert rh700_spec is not None
+    assert rh700_spec.primary is True
+    assert rh700_spec.derived is False
+    assert rh700_spec.kind == "continuous"
+    assert rh700_spec.units == "%"
+    assert rh700_spec.selectors.search == [":r:700:pl:"]
+    assert rh700_spec.selectors.filter_by_keys == {
+        "shortName": "r",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "700",
+    }
 
     snowfall_kuchera_spec = ECMWF_MODEL.get_var("snowfall_kuchera_total")
     assert snowfall_kuchera_spec is not None
@@ -427,6 +444,19 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["group"] == "Temperature"
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["var_key"] == "rh700"
+    assert rh700["display_name"] == "700mb Relative Humidity"
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is False
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["order"] == 3.75
+    assert rh700["group"] == "Moisture"
+    assert rh700["default_fh"] == 0
+    assert rh700["render_substrates"] == ["grid"]
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["var_key"] == "tmp850"

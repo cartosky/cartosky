@@ -226,7 +226,7 @@ def _gfs_rh_level_component(level_hpa: int, *, primary: bool = False) -> VarSpec
     level = int(level_hpa)
     return VarSpec(
         id=f"rh{level}",
-        name=f"{level}mb RH",
+        name=f"{level}mb Relative Humidity" if level == 700 else f"{level}mb RH",
         selectors=VarSelectors(
             search=[f":RH:{level} mb:"],
             filter_by_keys={
