@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { clerkJwtTemplate } from "@/lib/admin-api";
 import { API_ORIGIN } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
@@ -345,6 +347,7 @@ export function TwfShareModal({
   buildScreenshotState,
   getLegend,
 }: TwfShareModalProps) {
+  const { getToken, isLoaded: clerkLoaded, isSignedIn } = useAuth();
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
   const destinationSavedTimerRef = useRef<number | null>(null);
@@ -356,6 +359,7 @@ export function TwfShareModal({
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusResolved, setStatusResolved] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [connectBusy, setConnectBusy] = useState(false);
 
   const [selectedForumId, setSelectedForumId] = useState<number>(() => forumIdFromPrefs(initialSharePrefs));
   const [showOtherForums, setShowOtherForums] = useState(
@@ -399,6 +403,55 @@ export function TwfShareModal({
   const [showDestinationEditor, setShowDestinationEditor] = useState(false);
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+
+  const twfFetch = useCallback(
+    async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+      if (!clerkLoaded) {
+        throw new Error("Checking CartoSky sign-in status.");
+      }
+      if (!isSignedIn) {
+        throw new Error("Sign in to CartoSky before connecting TWF.");
+      }
+      const token = await getToken({ template: clerkJwtTemplate() });
+      if (!token) {
+        throw new Error("Unable to load CartoSky auth token.");
+      }
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      return fetch(input, {
+        ...init,
+        credentials: init.credentials ?? "omit",
+        headers,
+      });
+    },
+    [clerkLoaded, getToken, isSignedIn]
+  );
+
+  const handleConnectTwf = useCallback(async () => {
+    setSubmitError(null);
+    setStatusError(null);
+    setConnectBusy(true);
+    try {
+      const returnTo = `${window.location.pathname}${window.location.search}` || "/";
+      const response = await twfFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: returnTo })}`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        const apiError = await readApiError(response);
+        throw new Error(apiError?.message || `TWF connection failed (${response.status})`);
+      }
+      const body = (await response.json()) as unknown;
+      if (!isObject(body) || typeof body.authorize_url !== "string" || !body.authorize_url.trim()) {
+        throw new Error("TWF authorization URL was not returned.");
+      }
+      window.location.assign(body.authorize_url);
+    } catch (error) {
+      setSubmitError({ message: (error as Error).message || "Failed to start TWF connection." });
+      setConnectBusy(false);
+    }
+  }, [twfFetch]);
 
   const getTopicCacheEntry = (forumId: number): TopicCacheEntry | null => {
     const inMemory = topicCacheRef.current.get(forumId);
@@ -592,14 +645,25 @@ export function TwfShareModal({
     if (!open) {
       return;
     }
+    if (!clerkLoaded) {
+      setStatusLoading(true);
+      setStatusError(null);
+      return;
+    }
+    if (!isSignedIn) {
+      setTwfStatus({ linked: false });
+      setStatusResolved(true);
+      setStatusLoading(false);
+      setStatusError("Sign in to CartoSky before connecting TWF.");
+      return;
+    }
 
     const controller = new AbortController();
     setStatusLoading(true);
     setStatusError(null);
 
-    fetch(`${API_ORIGIN}/auth/twf/status`, {
+    twfFetch(`${API_ORIGIN}/auth/twf/status`, {
       method: "GET",
-      credentials: "include",
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -624,7 +688,7 @@ export function TwfShareModal({
       .finally(() => setStatusLoading(false));
 
     return () => controller.abort();
-  }, [open]);
+  }, [clerkLoaded, isSignedIn, open, twfFetch]);
 
   useEffect(() => {
     if (!open || topicsLoading || topicsForumId !== selectedForumId) {
@@ -676,9 +740,8 @@ export function TwfShareModal({
         limit: "15",
       });
 
-      fetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
+      twfFetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
         method: "GET",
-        credentials: "include",
         signal: controller.signal,
       })
         .then(async (response) => {
@@ -712,7 +775,7 @@ export function TwfShareModal({
         controller.abort();
       }
     };
-  }, [open, selectedForumId, statusResolved, twfStatus]);
+  }, [open, selectedForumId, statusResolved, twfFetch, twfStatus]);
 
   useEffect(() => {
     if (!open || twfStatus.linked !== true || !showOtherForums) {
@@ -723,9 +786,8 @@ export function TwfShareModal({
     setForumsLoading(true);
     setForumsError(null);
 
-    fetch(`${API_ORIGIN}/twf/forums`, {
+    twfFetch(`${API_ORIGIN}/twf/forums`, {
       method: "GET",
-      credentials: "include",
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -753,7 +815,7 @@ export function TwfShareModal({
       .finally(() => setForumsLoading(false));
 
     return () => controller.abort();
-  }, [open, twfStatus, showOtherForums, selectedForumId]);
+  }, [open, twfFetch, twfStatus, showOtherForums, selectedForumId]);
 
   useEffect(() => {
     if (!open || selectedForumId <= 0) {
@@ -803,9 +865,8 @@ export function TwfShareModal({
     setSubmitTopicSuccess(null);
     setSubmitTopicTitle(null);
 
-    fetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
+    twfFetch(`${API_ORIGIN}/twf/topics?${params.toString()}`, {
       method: "GET",
-      credentials: "include",
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -849,7 +910,7 @@ export function TwfShareModal({
       .finally(() => setTopicsLoading(false));
 
     return () => controller.abort();
-  }, [open, selectedForumId, statusResolved, twfStatus]);
+  }, [open, selectedForumId, statusResolved, twfFetch, twfStatus]);
 
   const generateScreenshot = async (): Promise<{
     blob: Blob;
@@ -1020,9 +1081,8 @@ export function TwfShareModal({
           setSubmitError({ message: "Topic title is required." });
           return;
         }
-        response = await fetch(`${API_ORIGIN}/twf/share/topic`, {
+        response = await twfFetch(`${API_ORIGIN}/twf/share/topic`, {
           method: "POST",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             forum_id: selectedForumId,
@@ -1037,9 +1097,8 @@ export function TwfShareModal({
           setSubmitError({ message: "Select a topic to post." });
           return;
         }
-        response = await fetch(`${API_ORIGIN}/twf/share/post`, {
+        response = await twfFetch(`${API_ORIGIN}/twf/share/post`, {
           method: "POST",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             topic_id: Number(selectedTopicId),
@@ -1417,9 +1476,14 @@ export function TwfShareModal({
                 {twfStatus.linked !== true && (
                   <div className="rounded-lg border border-cyan-200/10 bg-[#0b182b]/55 px-3 py-2.5 text-xs text-white/70">
                     Connect your TWF account to post.{" "}
-                    <a href={`${API_ORIGIN}/auth/twf/start`} className="font-semibold text-cyan-300 hover:text-cyan-200">
-                      Connect TWF →
-                    </a>
+                    <button
+                      type="button"
+                      onClick={handleConnectTwf}
+                      disabled={connectBusy}
+                      className="font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-wait disabled:opacity-70"
+                    >
+                      {connectBusy ? "Connecting..." : "Connect TWF"}
+                    </button>
                   </div>
                 )}
 

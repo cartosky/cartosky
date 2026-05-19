@@ -23,13 +23,20 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
+from app.auth.clerk import ClerkPrincipal
 from app.auth import twf_oauth
 
 pytestmark = pytest.mark.anyio
+AUTH_HEADERS = {"Authorization": "Bearer clerk-test-token"}
+
+
+async def _fake_clerk_user() -> ClerkPrincipal:
+    return ClerkPrincipal(user_id="user_test", claims={}, token="clerk-test-token")
 
 
 @pytest.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
     with main_module._twf_rate_lock:
         main_module._twf_ip_windows.clear()
         main_module._twf_session_windows.clear()
@@ -38,6 +45,8 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=main_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
+
+    main_module.app.dependency_overrides.pop(main_module.require_clerk_user, None)
 
     with main_module._twf_rate_lock:
         main_module._twf_ip_windows.clear()
@@ -164,20 +173,21 @@ async def test_twf_share_post_rate_limited_returns_retry_after(
         assert content_format == "plain"
         return {"id": 11, "url": "https://example.com/post/11", "topic": {"id": topic_id}}
 
-    monkeypatch.setattr(main_module.twf_oauth, "get_session", lambda _sid: sess)
+    monkeypatch.setattr(main_module.twf_oauth, "get_session_for_clerk_user", lambda _user_id: sess)
     monkeypatch.setattr(main_module.twf_oauth, "create_post", fake_create_post)
     monkeypatch.setattr(main_module, "_TWF_IP_LIMIT", 1)
     monkeypatch.setattr(main_module, "_TWF_SESSION_LIMIT", 1)
-    client.cookies.set(twf_oauth.SESSION_COOKIE_NAME, sess.session_id)
 
     ok_response = await client.post(
         "/twf/share/post",
+        headers=AUTH_HEADERS,
         json={"topic_id": 10, "content": "hello"},
     )
     assert ok_response.status_code == 200
 
     limited_response = await client.post(
         "/twf/share/post",
+        headers=AUTH_HEADERS,
         json={"topic_id": 10, "content": "hello again"},
     )
     assert limited_response.status_code == 429
@@ -215,12 +225,12 @@ async def test_twf_share_post_structured_payload_builds_html(
         captured["content_format"] = content_format
         return {"id": 22, "url": "https://example.com/post/22", "topic": {"id": topic_id}}
 
-    monkeypatch.setattr(main_module.twf_oauth, "get_session", lambda _sid: sess)
+    monkeypatch.setattr(main_module.twf_oauth, "get_session_for_clerk_user", lambda _user_id: sess)
     monkeypatch.setattr(main_module.twf_oauth, "create_post", fake_create_post)
-    client.cookies.set(twf_oauth.SESSION_COOKIE_NAME, sess.session_id)
 
     response = await client.post(
         "/twf/share/post",
+        headers=AUTH_HEADERS,
         json={
             "topic_id": 10,
             "summary": "HRRR snowfall outlook",
@@ -279,12 +289,12 @@ async def test_twf_share_topic_structured_payload_builds_html_without_image(
             "title": title,
         }
 
-    monkeypatch.setattr(main_module.twf_oauth, "get_session", lambda _sid: sess)
+    monkeypatch.setattr(main_module.twf_oauth, "get_session_for_clerk_user", lambda _user_id: sess)
     monkeypatch.setattr(main_module.twf_oauth, "create_topic", fake_create_topic)
-    client.cookies.set(twf_oauth.SESSION_COOKIE_NAME, sess.session_id)
 
     response = await client.post(
         "/twf/share/topic",
+        headers=AUTH_HEADERS,
         json={
             "forum_id": 4,
             "title": "Structured share topic",
@@ -306,3 +316,21 @@ async def test_twf_share_topic_structured_payload_builds_html_without_image(
             "</a>"
         ),
     }
+
+
+async def test_delete_twf_connection_deletes_clerk_user_session(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deleted: list[str] = []
+
+    def fake_delete_session_for_clerk_user(clerk_user_id: str) -> None:
+        deleted.append(clerk_user_id)
+
+    monkeypatch.setattr(main_module.twf_oauth, "delete_session_for_clerk_user", fake_delete_session_for_clerk_user)
+
+    response = await client.delete("/api/v4/user/connections/twf", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert deleted == ["user_test"]

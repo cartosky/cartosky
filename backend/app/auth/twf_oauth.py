@@ -122,6 +122,7 @@ def _ensure_session_table(conn: sqlite3.Connection, table_name: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             session_id TEXT PRIMARY KEY,
+            clerk_user_id TEXT,
             member_id INTEGER NOT NULL,
             display_name TEXT NOT NULL,
             photo_url TEXT,
@@ -134,8 +135,17 @@ def _ensure_session_table(conn: sqlite3.Connection, table_name: str) -> None:
         """
     )
     cols = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if "clerk_user_id" not in cols:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN clerk_user_id TEXT")
     if "photo_url" not in cols:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN photo_url TEXT")
+    conn.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_clerk_user_id
+        ON {table_name}(clerk_user_id)
+        WHERE clerk_user_id IS NOT NULL
+        """
+    )
 
 
 def _migrate_legacy_sessions(conn: sqlite3.Connection) -> None:
@@ -150,6 +160,7 @@ def _migrate_legacy_sessions(conn: sqlite3.Connection) -> None:
         f"""
         INSERT OR IGNORE INTO {SESSIONS_TABLE}(
             session_id,
+            clerk_user_id,
             member_id,
             display_name,
             photo_url,
@@ -161,6 +172,7 @@ def _migrate_legacy_sessions(conn: sqlite3.Connection) -> None:
         )
         SELECT
             session_id,
+            clerk_user_id,
             member_id,
             display_name,
             photo_url,
@@ -188,6 +200,7 @@ class TwfSession:
     access_token: str
     refresh_token: str
     expires_at: int
+    clerk_user_id: str | None = None
 
 @dataclass
 class TwfUpstreamError(Exception):
@@ -363,11 +376,44 @@ async def _request_json(client: httpx.AsyncClient, method: str, url: str, **kwar
 def upsert_session(sess: TwfSession) -> None:
     now = int(time.time())
     with _db() as conn:
+        if sess.clerk_user_id:
+            existing = conn.execute(
+                f"SELECT session_id FROM {SESSIONS_TABLE} WHERE clerk_user_id=?",
+                (sess.clerk_user_id,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    f"""
+                    UPDATE {SESSIONS_TABLE}
+                    SET session_id=?,
+                        member_id=?,
+                        display_name=?,
+                        photo_url=?,
+                        access_token_enc=?,
+                        refresh_token_enc=?,
+                        expires_at=?,
+                        updated_at=?
+                    WHERE clerk_user_id=?
+                    """,
+                    (
+                        sess.session_id,
+                        sess.member_id,
+                        sess.display_name,
+                        sess.photo_url,
+                        _enc(sess.access_token),
+                        _enc(sess.refresh_token),
+                        sess.expires_at,
+                        now,
+                        sess.clerk_user_id,
+                    ),
+                )
+                return
         conn.execute(
                         f"""
-                        INSERT INTO {SESSIONS_TABLE}(session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO {SESSIONS_TABLE}(session_id, clerk_user_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(session_id) DO UPDATE SET
+                            clerk_user_id=excluded.clerk_user_id,
                             member_id=excluded.member_id,
                             display_name=excluded.display_name,
                             photo_url=excluded.photo_url,
@@ -378,6 +424,7 @@ def upsert_session(sess: TwfSession) -> None:
                         """,
             (
                 sess.session_id,
+                sess.clerk_user_id,
                 sess.member_id,
                 sess.display_name,
                 sess.photo_url,
@@ -392,24 +439,43 @@ def upsert_session(sess: TwfSession) -> None:
 def get_session(session_id: str) -> Optional[TwfSession]:
     with _db() as conn:
         row = conn.execute(
-            f"SELECT session_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at FROM {SESSIONS_TABLE} WHERE session_id=?",
+            f"SELECT session_id, clerk_user_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at FROM {SESSIONS_TABLE} WHERE session_id=?",
             (session_id,),
         ).fetchone()
+    return _session_from_row(row)
+
+
+def get_session_for_clerk_user(clerk_user_id: str) -> Optional[TwfSession]:
+    with _db() as conn:
+        row = conn.execute(
+            f"SELECT session_id, clerk_user_id, member_id, display_name, photo_url, access_token_enc, refresh_token_enc, expires_at FROM {SESSIONS_TABLE} WHERE clerk_user_id=?",
+            (clerk_user_id,),
+        ).fetchone()
+    return _session_from_row(row)
+
+
+def _session_from_row(row: Any) -> Optional[TwfSession]:
     if not row:
         return None
     return TwfSession(
         session_id=row[0],
-        member_id=int(row[1]),
-        display_name=str(row[2]),
-        photo_url=str(row[3]) if row[3] else None,
-        access_token=_dec(row[4]),
-        refresh_token=_dec(row[5]),
-        expires_at=int(row[6]),
+        member_id=int(row[2]),
+        display_name=str(row[3]),
+        photo_url=str(row[4]) if row[4] else None,
+        access_token=_dec(row[5]),
+        refresh_token=_dec(row[6]),
+        expires_at=int(row[7]),
+        clerk_user_id=str(row[1]) if row[1] else None,
     )
 
 def delete_session(session_id: str) -> None:
     with _db() as conn:
         conn.execute(f"DELETE FROM {SESSIONS_TABLE} WHERE session_id=?", (session_id,))
+
+
+def delete_session_for_clerk_user(clerk_user_id: str) -> None:
+    with _db() as conn:
+        conn.execute(f"DELETE FROM {SESSIONS_TABLE} WHERE clerk_user_id=?", (clerk_user_id,))
 
 
 # ----------------------------
@@ -673,10 +739,17 @@ async def list_topics(sess: TwfSession, forum_id: int, pinned: bool, per_page: i
 # Cookie payload helpers
 # ----------------------------
 
-def pack_oauth_cookie(state: str, verifier: str, return_to: str | None = None) -> str:
+def pack_oauth_cookie(
+    state: str,
+    verifier: str,
+    return_to: str | None = None,
+    clerk_user_id: str | None = None,
+) -> str:
     payload: dict[str, str] = {"state": state, "verifier": verifier}
     if isinstance(return_to, str) and return_to.strip():
         payload["return_to"] = return_to.strip()
+    if isinstance(clerk_user_id, str) and clerk_user_id.strip():
+        payload["clerk_user_id"] = clerk_user_id.strip()
     blob = json.dumps(payload).encode("utf-8")
     return _b64url(blob)
 
@@ -687,6 +760,8 @@ def unpack_oauth_cookie(val: str) -> dict[str, str]:
     payload = {"state": obj["state"], "verifier": obj["verifier"]}
     if isinstance(obj.get("return_to"), str) and obj["return_to"].strip():
         payload["return_to"] = obj["return_to"].strip()
+    if isinstance(obj.get("clerk_user_id"), str) and obj["clerk_user_id"].strip():
+        payload["clerk_user_id"] = obj["clerk_user_id"].strip()
     return payload
 
 def new_session_id() -> str:

@@ -700,7 +700,7 @@ async def twf_share_guards(request: Request, call_next):
                             request.url.path,
                             request.method,
                             _client_ip(request),
-                            bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+                            bool(request.headers.get("authorization")),
                             content_length,
                         )
                         response = _error_response(
@@ -749,7 +749,7 @@ async def twf_share_guards(request: Request, call_next):
                     request.url.path,
                     request.method,
                     _client_ip(request),
-                    bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+                    bool(request.headers.get("authorization")),
                     len(body),
                 )
                 response = _error_response(
@@ -778,7 +778,8 @@ async def twf_share_guards(request: Request, call_next):
 
             now = time.monotonic()
             ip = _client_ip(request)
-            session_id = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+            authorization = request.headers.get("authorization", "").strip()
+            auth_key = hashlib.sha256(authorization.encode("utf-8")).hexdigest() if authorization else ""
             retry_after = 0
             with _twf_rate_lock:
                 _maybe_prune_rate_limit_state(now)
@@ -789,10 +790,10 @@ async def twf_share_guards(request: Request, call_next):
                     window_seconds=_TWF_RATE_WINDOW_SECONDS,
                     now=now,
                 )
-                if retry_after == 0 and session_id:
+                if retry_after == 0 and auth_key:
                     retry_after = _rate_limit_check(
                         _twf_session_windows,
-                        key=session_id,
+                        key=auth_key,
                         limit=_TWF_SESSION_LIMIT,
                         window_seconds=_TWF_RATE_WINDOW_SECONDS,
                         now=now,
@@ -803,7 +804,7 @@ async def twf_share_guards(request: Request, call_next):
                     request_id,
                     request.url.path,
                     ip,
-                    bool(session_id),
+                    bool(auth_key),
                     retry_after,
                 )
                 response = _error_response(
@@ -873,12 +874,12 @@ async def twf_share_guards(request: Request, call_next):
 async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstreamError) -> JSONResponse:
     rid = getattr(request.state, "request_id", None)
     logger.warning(
-        "TWF upstream error request_id=%s path=%s method=%s ip=%s has_session=%s error_code=%s upstream_status=%s upstream_code=%s upstream_message=%s upstream_url=%s status_code=%s",
+        "TWF upstream error request_id=%s path=%s method=%s ip=%s has_auth=%s error_code=%s upstream_status=%s upstream_code=%s upstream_message=%s upstream_url=%s status_code=%s",
         rid,
         request.url.path,
         request.method,
         _client_ip(request),
-        bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+        bool(request.headers.get("authorization")),
         exc.code,
         exc.upstream_status,
         exc.upstream_code,
@@ -890,7 +891,7 @@ async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstrea
             "path": request.url.path,
             "method": request.method,
             "ip": _client_ip(request),
-            "has_session": bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+            "has_auth": bool(request.headers.get("authorization")),
             "error_code": exc.code,
             "upstream_status": exc.upstream_status,
             "upstream_code": exc.upstream_code,
@@ -914,12 +915,12 @@ async def twf_upstream_error_handler(request: Request, exc: twf_oauth.TwfUpstrea
 async def twf_api_error_handler(request: Request, exc: TwfApiError) -> JSONResponse:
     rid = getattr(request.state, "request_id", None)
     logger.warning(
-        "TWF API error request_id=%s path=%s method=%s ip=%s has_session=%s error_code=%s status_code=%s",
+        "TWF API error request_id=%s path=%s method=%s ip=%s has_auth=%s error_code=%s status_code=%s",
         rid,
         request.url.path,
         request.method,
         _client_ip(request),
-        bool(request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)),
+        bool(request.headers.get("authorization")),
         exc.code,
         exc.status_code,
     )
@@ -976,19 +977,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         content={"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}},
     )
 
-def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
-    """Load the linked The Weather Forums OAuth session for the current browser session.
-
-    Uses the HttpOnly session cookie set by /auth/twf/callback and loads tokens from server-side storage.
-    """
-    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
-    if not sid:
-        raise TwfApiError(
-            status_code=401,
-            code="TWF_NOT_LOGGED_IN",
-            message="Not logged in",
-        )
-    sess = twf_oauth.get_session(sid)
+def _require_twf_session(current_user: ClerkPrincipal) -> twf_oauth.TwfSession:
+    """Load the linked The Weather Forums OAuth session for the Clerk-authenticated user."""
+    sess = twf_oauth.get_session_for_clerk_user(current_user.user_id)
     if not sess:
         raise TwfApiError(
             status_code=401,
@@ -998,19 +989,16 @@ def _require_twf_session(request: Request) -> twf_oauth.TwfSession:
     return sess
 
 
-def _maybe_twf_session(request: Request) -> twf_oauth.TwfSession | None:
-    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
-    if not sid:
-        return None
-    return twf_oauth.get_session(sid)
+def _maybe_twf_session(current_user: ClerkPrincipal) -> twf_oauth.TwfSession | None:
+    return twf_oauth.get_session_for_clerk_user(current_user.user_id)
 
 
 def _is_admin_member(member_id: int) -> bool:
     return member_id in ADMIN_MEMBER_IDS
 
 
-def _require_admin_session(request: Request) -> twf_oauth.TwfSession:
-    sess = _require_twf_session(request)
+def _require_admin_session(current_user: ClerkPrincipal) -> twf_oauth.TwfSession:
+    sess = _require_twf_session(current_user)
     if not _is_admin_member(sess.member_id):
         raise TwfApiError(
             status_code=403,
@@ -1020,10 +1008,22 @@ def _require_admin_session(request: Request) -> twf_oauth.TwfSession:
     return sess
 
 
+def _require_legacy_admin_session(request: Request) -> twf_oauth.TwfSession:
+    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+    if not sid:
+        raise TwfApiError(status_code=401, code="TWF_NOT_LOGGED_IN", message="Not logged in")
+    sess = twf_oauth.get_session(sid)
+    if not sess:
+        raise TwfApiError(status_code=401, code="TWF_SESSION_NOT_FOUND", message="Session not found")
+    if not _is_admin_member(sess.member_id):
+        raise TwfApiError(status_code=403, code="TWF_ADMIN_REQUIRED", message="Admin access required")
+    return sess
+
+
 async def _require_admin_identity(request: Request) -> ClerkPrincipal | twf_oauth.TwfSession:
     if app_config.clerk_auth_enabled():
         return await require_clerk_admin(request)
-    return _require_admin_session(request)
+    return _require_legacy_admin_session(request)
 
 
 @app.get("/api/v4/auth/me")
@@ -1108,17 +1108,26 @@ def _twf_frontend_redirect_url(return_to: str | None, **params: str) -> str:
 
 
 @app.get("/auth/twf/start")
-async def twf_start(return_to: str | None = None) -> RedirectResponse:
+async def twf_start(
+    request: Request,
+    return_to: str | None = None,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> Response:
     state = secrets.token_urlsafe(24)
     verifier, challenge = twf_oauth.pkce_pair()
     url = twf_oauth.build_authorize_url(state, challenge)
     resolved_return_to = _sanitize_twf_return_to(return_to)
 
-    resp = RedirectResponse(url=url, status_code=302)
+    wants_json = "application/json" in request.headers.get("accept", "").lower()
+    resp: Response
+    if wants_json:
+        resp = JSONResponse({"authorize_url": url})
+    else:
+        resp = RedirectResponse(url=url, status_code=302)
     # Store only state + PKCE verifier (short-lived)
     resp.set_cookie(
         key=twf_oauth.OAUTH_COOKIE_NAME,
-        value=twf_oauth.pack_oauth_cookie(state, verifier, resolved_return_to),
+        value=twf_oauth.pack_oauth_cookie(state, verifier, resolved_return_to, current_user.user_id),
         httponly=True,
         secure=True,
         samesite="none",
@@ -1151,6 +1160,9 @@ async def twf_callback(
         packed = twf_oauth.unpack_oauth_cookie(cookie_val)
         if packed.get("state") != state:
             return _error_redirect("Login verification failed. Try again.", packed.get("return_to"))
+        clerk_user_id = packed.get("clerk_user_id")
+        if not clerk_user_id:
+            return _error_redirect("OAuth session expired. Try again.", packed.get("return_to"))
 
         tok = await twf_oauth.exchange_code_for_token(code, packed["verifier"])
         access = tok.get("access_token")
@@ -1172,6 +1184,7 @@ async def twf_callback(
         twf_oauth.upsert_session(
             twf_oauth.TwfSession(
                 session_id=sid,
+                clerk_user_id=clerk_user_id,
                 member_id=member_id,
                 display_name=display_name,
                 photo_url=photo_url,
@@ -1186,17 +1199,6 @@ async def twf_callback(
             status_code=302,
         )
 
-        # App session cookie (separate from forum cookies)
-        resp.set_cookie(
-            key=twf_oauth.SESSION_COOKIE_NAME,
-            value=sid,
-            httponly=True,
-            secure=True,
-            samesite="none",
-            max_age=60 * 60 * 24 * 30,
-            path="/",
-        )
-
         # Clear short-lived OAuth temp cookie
         resp.delete_cookie(key=twf_oauth.OAUTH_COOKIE_NAME, path="/")
         return resp
@@ -1206,12 +1208,8 @@ async def twf_callback(
 
 
 @app.get("/auth/twf/status")
-async def twf_status(request: Request) -> dict[str, Any]:
-    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
-    if not sid:
-        return {"linked": False, "admin": False}
-
-    sess = twf_oauth.get_session(sid)
+async def twf_status(current_user: ClerkPrincipal = Depends(require_clerk_user)) -> dict[str, Any]:
+    sess = twf_oauth.get_session_for_clerk_user(current_user.user_id)
     if not sess:
         return {"linked": False, "admin": False}
 
@@ -1620,20 +1618,20 @@ async def metrics() -> Response:
 
 
 @app.post("/auth/twf/disconnect")
-async def twf_disconnect(request: Request) -> JSONResponse:
-    sid = request.cookies.get(twf_oauth.SESSION_COOKIE_NAME)
+async def twf_disconnect(current_user: ClerkPrincipal = Depends(require_clerk_user)) -> JSONResponse:
+    twf_oauth.delete_session_for_clerk_user(current_user.user_id)
+    return JSONResponse({"ok": True})
 
-    resp = JSONResponse({"ok": True})
-    if sid:
-        twf_oauth.delete_session(sid)
 
-    resp.delete_cookie(key=twf_oauth.SESSION_COOKIE_NAME, path="/")
-    return resp
+@app.delete("/api/v4/user/connections/twf")
+async def delete_twf_connection(current_user: ClerkPrincipal = Depends(require_clerk_user)) -> JSONResponse:
+    twf_oauth.delete_session_for_clerk_user(current_user.user_id)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/twf/forums")
-async def twf_forums(request: Request) -> dict[str, Any]:
-    sess = _require_twf_session(request)
+async def twf_forums(current_user: ClerkPrincipal = Depends(require_clerk_user)) -> dict[str, Any]:
+    sess = _require_twf_session(current_user)
     return await twf_oauth.list_forums(sess)
 
 
@@ -1764,8 +1762,9 @@ async def twf_topics(
     request: Request,
     forum_id: int = Query(..., ge=1),
     limit: int = Query(15, ge=1, le=25),
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
 ) -> dict[str, Any]:
-    sess = _require_twf_session(request)
+    sess = _require_twf_session(current_user)
 
     pinned_payload = await twf_oauth.list_topics(sess, forum_id=forum_id, pinned=True, per_page=min(5, limit))
     regular_payload = await twf_oauth.list_topics(sess, forum_id=forum_id, pinned=False, per_page=limit)
@@ -1886,8 +1885,11 @@ def _twf_share_body_from_request(
 
 
 @app.post("/twf/share/topic")
-async def twf_share_topic(request: Request, body: ShareTopicIn) -> dict[str, Any]:
-    sess = _require_twf_session(request)
+async def twf_share_topic(
+    body: ShareTopicIn,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> dict[str, Any]:
+    sess = _require_twf_session(current_user)
     title = body.title.strip()
     content, content_format = _twf_share_body_from_request(
         content=body.content,
@@ -1948,8 +1950,11 @@ class SharePostIn(BaseModel):
 
 
 @app.post("/twf/share/post")
-async def twf_share_post(request: Request, body: SharePostIn) -> dict[str, Any]:
-    sess = _require_twf_session(request)
+async def twf_share_post(
+    body: SharePostIn,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> dict[str, Any]:
+    sess = _require_twf_session(current_user)
     content, content_format = _twf_share_body_from_request(
         content=body.content,
         summary=body.summary,

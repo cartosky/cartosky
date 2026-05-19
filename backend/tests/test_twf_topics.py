@@ -24,16 +24,24 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
+from app.auth.clerk import ClerkPrincipal
 from app.auth import twf_oauth
 
 pytestmark = pytest.mark.anyio
+AUTH_HEADERS = {"Authorization": "Bearer clerk-test-token"}
+
+
+async def _fake_clerk_user() -> ClerkPrincipal:
+    return ClerkPrincipal(user_id="user_test", claims={}, token="clerk-test-token")
 
 
 @pytest.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
     transport = httpx.ASGITransport(app=main_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
+    main_module.app.dependency_overrides.pop(main_module.require_clerk_user, None)
 
 
 async def test_request_json_with_variants_inlines_params_for_index_php_routes(
@@ -92,8 +100,8 @@ async def test_twf_topics_without_session_returns_enveloped_401(client: httpx.As
     payload = response.json()
     assert payload == {
         "error": {
-            "code": "TWF_NOT_LOGGED_IN",
-            "message": "Not logged in",
+            "code": "TWF_SESSION_NOT_FOUND",
+            "message": "Session not found",
         }
     }
 
@@ -120,8 +128,7 @@ async def test_twf_topics_merges_dedupes_orders_and_filters_to_requested_forum(
         refresh_token="refresh",
         expires_at=9999999999,
     )
-    client.cookies.set(twf_oauth.SESSION_COOKIE_NAME, sess.session_id)
-    monkeypatch.setattr(main_module.twf_oauth, "get_session", lambda _sid: sess)
+    monkeypatch.setattr(main_module.twf_oauth, "get_session_for_clerk_user", lambda _user_id: sess)
 
     calls: list[dict[str, str]] = []
 
@@ -259,14 +266,14 @@ async def test_twf_topics_merges_dedupes_orders_and_filters_to_requested_forum(
 
     monkeypatch.setattr(main_module.twf_oauth.httpx, "AsyncClient", FakeAsyncClient)
 
-    west_response = await client.get("/twf/topics", params={"forum_id": 4, "limit": 15})
+    west_response = await client.get("/twf/topics", params={"forum_id": 4, "limit": 15}, headers=AUTH_HEADERS)
     assert west_response.status_code == 200
     west_payload = west_response.json()
     assert west_payload["forum_id"] == 4
     west_ids = [row["id"] for row in west_payload["results"]]
     assert west_ids == [201, 202]
 
-    east_response = await client.get("/twf/topics", params={"forum_id": 9, "limit": 15})
+    east_response = await client.get("/twf/topics", params={"forum_id": 9, "limit": 15}, headers=AUTH_HEADERS)
     assert east_response.status_code == 200
     east_payload = east_response.json()
     assert east_payload["forum_id"] == 9

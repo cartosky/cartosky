@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -18,6 +19,56 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app.auth import twf_oauth
+
+
+def test_session_store_keys_connections_by_clerk_user_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(twf_oauth, "TOKEN_DB_PATH", str(tmp_path / "tokens.sqlite3"))
+
+    twf_oauth.upsert_session(
+        twf_oauth.TwfSession(
+            session_id="sid-original",
+            member_id=10,
+            display_name="Original",
+            photo_url=None,
+            access_token="access-1",
+            refresh_token="refresh-1",
+            expires_at=9999999999,
+            clerk_user_id="user_abc123",
+        )
+    )
+    twf_oauth.upsert_session(
+        twf_oauth.TwfSession(
+            session_id="sid-replacement",
+            member_id=11,
+            display_name="Replacement",
+            photo_url="https://example.com/photo.png",
+            access_token="access-2",
+            refresh_token="refresh-2",
+            expires_at=9999999998,
+            clerk_user_id="user_abc123",
+        )
+    )
+
+    loaded = twf_oauth.get_session_for_clerk_user("user_abc123")
+    assert loaded is not None
+    assert loaded.session_id == "sid-replacement"
+    assert loaded.member_id == 11
+    assert loaded.display_name == "Replacement"
+    assert loaded.access_token == "access-2"
+    assert loaded.refresh_token == "refresh-2"
+    assert loaded.clerk_user_id == "user_abc123"
+
+    with sqlite3.connect(tmp_path / "tokens.sqlite3") as conn:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(cartosky_forums_sessions)")}
+        indexes = {str(row[1]) for row in conn.execute("PRAGMA index_list(cartosky_forums_sessions)")}
+        row_count = conn.execute("SELECT COUNT(*) FROM cartosky_forums_sessions").fetchone()[0]
+
+    assert "clerk_user_id" in columns
+    assert "idx_cartosky_forums_sessions_clerk_user_id" in indexes
+    assert row_count == 1
+
+    twf_oauth.delete_session_for_clerk_user("user_abc123")
+    assert twf_oauth.get_session_for_clerk_user("user_abc123") is None
 
 
 def test_plain_text_to_ips_html_linkifies_permalink() -> None:
