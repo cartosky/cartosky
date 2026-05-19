@@ -1,5 +1,5 @@
-import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/react";
-import { ExternalLink, LogIn, UserPlus } from "lucide-react";
+import { Show, SignIn, UserButton } from "@clerk/react";
+import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function Login() {
@@ -26,26 +26,19 @@ export default function Login() {
 
           <div className="mt-8 rounded-[24px] border border-white/10 bg-white/[0.045] p-5">
             <Show when="signed-out">
-              <div className="space-y-4">
-                <SignInButton mode="modal">
-                  <button
-                    type="button"
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/20 bg-[linear-gradient(135deg,#1f342f_0%,#526d5c_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(0,0,0,0.28)] transition-all duration-150 hover:brightness-110"
-                  >
-                    <LogIn className="h-4 w-4" />
-                    Sign in
-                  </button>
-                </SignInButton>
-
-                <SignUpButton mode="modal">
-                  <button
-                    type="button"
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white/88 transition-all duration-150 hover:bg-white/[0.1] hover:text-white"
-                  >
-                    <UserPlus className="h-4 w-4" />
-                    Create account
-                  </button>
-                </SignUpButton>
+              <div className="flex justify-center">
+                <SignIn
+                  routing="hash"
+                  fallbackRedirectUrl="/viewer"
+                  signUpFallbackRedirectUrl="/viewer"
+                  appearance={{
+                    elements: {
+                      rootBox: "w-full",
+                      cardBox: "w-full shadow-none",
+                      card: "w-full border border-white/10 bg-[#07111f] text-white shadow-none",
+                    },
+                  }}
+                />
               </div>
             </Show>
 
