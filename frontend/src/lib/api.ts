@@ -886,6 +886,45 @@ export type AnchorAfdEmptyResponse = {
   };
 };
 
+export type NwsHazardAlertDetail = {
+  id: string;
+  source: "nws";
+  event: string | null;
+  headline: string | null;
+  severity: string | null;
+  urgency: string | null;
+  certainty: string | null;
+  sent: string | null;
+  effective: string | null;
+  expires: string | null;
+  area_description: string | null;
+  areas: string[];
+  description: string | null;
+  instruction: string | null;
+};
+
+export async function fetchNwsHazardAlertDetail(
+  alertId: string,
+  signal?: AbortSignal,
+): Promise<NwsHazardAlertDetail | null> {
+  const url = `${API_V4_BASE}/nws-hazards/alert?id=${encodeURIComponent(alertId)}`;
+  try {
+    const response = await fetch(url, { credentials: "omit", signal });
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`NWS hazard alert request failed: ${response.status}`);
+    }
+    return (await response.json()) as NwsHazardAlertDetail;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function fetchAnchorWeather(
   anchorId: string,
   signal?: AbortSignal,

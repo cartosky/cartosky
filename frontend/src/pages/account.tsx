@@ -184,78 +184,75 @@ function TwfConnectionSection() {
   }, [authedFetch]);
 
   return (
-    <section className="rounded-2xl border border-sky-200/12 bg-[#08182a]/80 p-5 text-white">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <section className="text-white">
+      <div className="border-b border-sky-200/[0.06] pb-5">
         <div>
-          <div className="text-sm font-semibold text-white">Connected Accounts</div>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-300">
+          <h2 className="text-lg font-semibold text-white">Connected accounts</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
             Link The Weather Forums to share CartoSky maps and posts with your forum account.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={loadStatus}
-          disabled={loading || action !== null}
-          className="inline-flex items-center justify-center gap-2 rounded-lg border border-sky-200/12 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
       </div>
 
-      <div className="mt-5 rounded-xl border border-sky-200/10 bg-[#061323]/80 p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-300/18 bg-cyan-300/[0.08] text-cyan-200">
-              <Link2 className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-white">The Weather Forums</div>
-              {loading ? (
-                <p className="mt-1 text-sm text-slate-400">Checking connection status...</p>
-              ) : status?.connected ? (
-                <p className="mt-1 text-sm text-slate-300">
-                  Connected as <span className="font-medium text-cyan-200">{status.twf_username || "TWF user"}</span>
-                </p>
-              ) : (
-                <p className="mt-1 text-sm text-slate-400">Not connected</p>
-              )}
-            </div>
+      <div className="border-b border-sky-200/[0.06] py-5">
+        <div className="grid gap-4 sm:grid-cols-[12rem_1fr_auto] sm:items-start">
+          <div className="text-sm font-medium text-white">The Weather Forums</div>
+          <div>
+            {loading ? (
+              <p className="text-sm text-slate-400">Checking connection status...</p>
+            ) : status?.connected ? (
+              <p className="text-sm text-slate-300">
+                Connected as <span className="font-medium text-cyan-200">{status.twf_username || "TWF user"}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-slate-400">Not connected</p>
+            )}
           </div>
 
-          {status?.connected ? (
+          <div className="flex flex-wrap gap-2 sm:justify-end">
             <button
               type="button"
-              onClick={handleDisconnect}
+              onClick={loadStatus}
               disabled={loading || action !== null}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300/20 bg-rose-300/[0.08] px-3 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-300/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {action === "disconnect" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Unlink className="h-4 w-4" />}
-              Disconnect
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleConnect}
-              disabled={loading || action !== null}
-              className="twf-connect-button inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold shadow-[0_14px_30px_rgba(35,196,255,0.18)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {action === "connect" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-              <span>Connect</span>
-            </button>
-          )}
+            {status?.connected ? (
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                disabled={loading || action !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-rose-200 transition hover:text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {action === "disconnect" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Unlink className="h-4 w-4" />}
+                Disconnect
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnect}
+                disabled={loading || action !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {action === "connect" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                Connect
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {success ? (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-300/18 bg-emerald-300/[0.08] px-3 py-2 text-sm text-emerald-100">
+        <div className="mt-4 flex items-start gap-2 text-sm text-emerald-100">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{success}</span>
         </div>
       ) : null}
 
       {error ? (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-300/18 bg-rose-300/[0.08] px-3 py-2 text-sm text-rose-100">
+        <div className="mt-4 flex items-start gap-2 text-sm text-rose-100">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>

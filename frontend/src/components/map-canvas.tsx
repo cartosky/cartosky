@@ -59,6 +59,19 @@ export type BasemapMode = "light" | "dark";
 
 type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 
+export type VectorHazardSelection = {
+  x: number;
+  y: number;
+  title: string;
+  areaLabel: string | null;
+  riskLabel: string | null;
+  hoverLabel: string | null;
+  fillColor: string | null;
+  expiresTime: string | null;
+  alertIds: string[];
+  activeHazards: string[];
+};
+
 /** Total prefetch budget for forecast scrub (ahead + behind). */
 const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
 /** Minimum behind-direction slots during forecast scrub. */
@@ -130,6 +143,68 @@ function isMobileDevice(): boolean {
     return false;
   }
   return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+}
+
+function readStringArrayProperty(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+  } catch {
+    // MapLibre may surface GeoJSON array properties as comma-delimited strings.
+  }
+  return trimmed.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function hazardSelectionFromFeature(
+  feature: { properties?: Record<string, unknown> } | undefined,
+  point: { x: number; y: number },
+): VectorHazardSelection | null {
+  const properties = feature?.properties;
+  if (!properties) {
+    return null;
+  }
+  const riskLabel = typeof properties.risk_label === "string" ? properties.risk_label.trim() : "";
+  const hoverLabel = typeof properties.hover_label === "string" ? properties.hover_label.trim() : "";
+  const areaLabel = typeof properties.county_name === "string" && properties.county_name.trim()
+    ? properties.county_name.trim()
+    : typeof properties.zone_name === "string" && properties.zone_name.trim()
+      ? properties.zone_name.trim()
+      : typeof properties.area_description === "string" && properties.area_description.trim()
+        ? properties.area_description.trim()
+        : "";
+  const alertIds = readStringArrayProperty(properties.alert_ids);
+  const activeHazards = readStringArrayProperty(properties.active_hazards);
+  if (!alertIds.length) {
+    return null;
+  }
+  const fillColor = typeof properties.fill === "string" && properties.fill.trim() ? properties.fill.trim() : null;
+  const expiresTime = typeof properties.expires_time === "string" && properties.expires_time.trim()
+    ? properties.expires_time.trim()
+    : null;
+  return {
+    x: point.x,
+    y: point.y,
+    title: hoverLabel || [areaLabel, riskLabel || activeHazards[0]].filter(Boolean).join(": ") || "NWS Hazard",
+    areaLabel: areaLabel || null,
+    riskLabel: riskLabel || activeHazards[0] || null,
+    hoverLabel: hoverLabel || null,
+    fillColor,
+    expiresTime,
+    alertIds,
+    activeHazards,
+  };
 }
 
 type GridPaintSettings = {
@@ -923,6 +998,7 @@ type MapCanvasProps = {
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
+  onVectorHazardClick?: (selection: VectorHazardSelection) => void;
 };
 
 export function MapCanvas({
@@ -965,6 +1041,7 @@ export function MapCanvas({
   onMapHover,
   onMapHoverEnd,
   onAnchorClick,
+  onVectorHazardClick,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -2178,6 +2255,8 @@ export function MapCanvas({
   onMapHoverRef.current = onMapHover;
   const onMapHoverEndRef = useRef(onMapHoverEnd);
   onMapHoverEndRef.current = onMapHoverEnd;
+  const onVectorHazardClickRef = useRef(onVectorHazardClick);
+  onVectorHazardClickRef.current = onVectorHazardClick;
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2214,7 +2293,8 @@ export function MapCanvas({
       const fillColor = typeof vectorFeature?.properties?.fill === "string"
         ? vectorFeature.properties.fill.trim()
         : null;
-      canvas.style.cursor = onMapHoverRef.current ? "crosshair" : "";
+      const hazardSelection = hazardSelectionFromFeature(vectorFeature, { x, y });
+      canvas.style.cursor = hazardSelection && onVectorHazardClickRef.current ? "pointer" : onMapHoverRef.current ? "crosshair" : "";
       onMapHoverRef.current?.(
         lat,
         lng,
@@ -2232,16 +2312,32 @@ export function MapCanvas({
       );
     };
 
+    const handleClick = (e: maplibregl.MapMouseEvent) => {
+      if (!onVectorHazardClickRef.current) {
+        return;
+      }
+      const vectorFeatures = map.queryRenderedFeatures(e.point, {
+        layers: [...VECTOR_FILL_LAYER_IDS],
+      }) as Array<{ properties?: Record<string, unknown> }>;
+      const selection = hazardSelectionFromFeature(vectorFeatures[0], e.point);
+      if (!selection) {
+        return;
+      }
+      onVectorHazardClickRef.current(selection);
+    };
+
     const handleLeave = () => {
       canvas.style.cursor = "";
       onMapHoverEndRef.current?.();
     };
 
     map.on("mousemove", handleMove);
+    map.on("click", handleClick);
     canvas.addEventListener("mouseleave", handleLeave);
 
     return () => {
       map.off("mousemove", handleMove);
+      map.off("click", handleClick);
       canvas.removeEventListener("mouseleave", handleLeave);
       canvas.style.cursor = "";
       if (anchorHoverLeaveTimeoutRef.current !== null) {

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 from shapely.geometry import GeometryCollection, mapping, shape
@@ -439,6 +440,48 @@ def fetch_active_alerts_geojson(
 ) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/alerts/active"
     return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=True)
+
+
+def fetch_alert_geojson(
+    alert_id: str,
+    *,
+    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
+    api_base: str = NWS_API_BASE,
+) -> dict[str, Any]:
+    normalized_id = alert_id.strip()
+    if not normalized_id:
+        raise NWSHazardsError("NWS Hazards alert id is required")
+    api_base_normalized = api_base.rstrip("/")
+    if urlsplit(normalized_id).scheme in {"http", "https"}:
+        if not normalized_id.startswith(f"{api_base_normalized}/alerts/"):
+            raise NWSHazardsError("NWS Hazards alert id URL is outside the configured NWS API")
+        url = normalized_id
+    else:
+        url = f"{api_base_normalized}/alerts/{quote(normalized_id, safe='')}"
+    return _fetch_geojson_with_retry(url=url, timeout_seconds=timeout_seconds, log_retries=True)
+
+
+def serialize_alert_detail(feature: dict[str, Any]) -> dict[str, Any]:
+    props = feature.get("properties") if isinstance(feature, dict) else None
+    if not isinstance(props, dict):
+        props = {}
+    area_desc = str(props.get("areaDesc") or "").strip()
+    return {
+        "id": str(props.get("id") or feature.get("id") or "").strip(),
+        "source": "nws",
+        "event": str(props.get("event") or "").strip() or None,
+        "headline": str(props.get("headline") or props.get("event") or "").strip() or None,
+        "severity": str(props.get("severity") or "").strip() or None,
+        "urgency": str(props.get("urgency") or "").strip() or None,
+        "certainty": str(props.get("certainty") or "").strip() or None,
+        "sent": str(props.get("sent") or "").strip() or None,
+        "effective": str(props.get("effective") or "").strip() or None,
+        "expires": str(props.get("expires") or "").strip() or None,
+        "area_description": area_desc or None,
+        "areas": [item.strip() for item in area_desc.split(";") if item.strip()],
+        "description": str(props.get("description") or "").strip() or None,
+        "instruction": str(props.get("instruction") or "").strip() or None,
+    }
 
 
 def _fetch_geojson_with_retry(

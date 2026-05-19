@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, buildMapStyle, type BasemapMode } from "@/components/map-canvas";
+import { MapCanvas, buildMapStyle, type BasemapMode, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import SiteHeader from "@/components/SiteHeader";
@@ -122,6 +122,9 @@ const TwfShareModal = lazy(() =>
 );
 const NwsCityModal = lazy(() =>
   import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
+);
+const NwsHazardModal = lazy(() =>
+  import("@/components/nws-hazard-modal").then((module) => ({ default: module.NwsHazardModal }))
 );
 
 const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
@@ -297,6 +300,7 @@ export default function App() {
     state: string;
     st: string;
   } | null>(null);
+  const [selectedVectorHazard, setSelectedVectorHazard] = useState<VectorHazardSelection | null>(null);
   const [sharePayload, setSharePayload] = useState<SharePayload>({
     permalink: "",
     summary: "CartoSky viewer share",
@@ -3472,6 +3476,7 @@ export default function App() {
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={setSelectedAnchorCity}
+          onVectorHazardClick={model === "nws_hazards" ? setSelectedVectorHazard : undefined}
           showZoomControls={zoomControlsVisible}
           legendButtonVisible={!isDesktopViewerLayout && legendVisible}
           legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
@@ -3569,6 +3574,16 @@ export default function App() {
             open={!!selectedAnchorCity}
             onClose={() => setSelectedAnchorCity(null)}
             anchor={selectedAnchorCity}
+          />
+        </Suspense>
+      ) : null}
+
+      {selectedVectorHazard ? (
+        <Suspense fallback={null}>
+          <NwsHazardModal
+            open={!!selectedVectorHazard}
+            onClose={() => setSelectedVectorHazard(null)}
+            hazard={selectedVectorHazard}
           />
         </Suspense>
       ) : null}

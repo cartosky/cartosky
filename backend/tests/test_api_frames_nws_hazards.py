@@ -172,3 +172,39 @@ async def test_nws_hazards_latest_manifest_frames_and_vector_endpoint_resolve(cl
     assert vector_response.headers["content-type"].startswith("application/geo+json")
     vector_payload = vector_response.json()
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
+
+
+async def test_nws_hazards_alert_detail_endpoint_returns_normalized_nws_alert(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_fetch_alert_geojson(alert_id: str) -> dict:
+        assert alert_id == "urn:oid:alert-1"
+        return {
+            "id": alert_id,
+            "properties": {
+                "id": alert_id,
+                "event": "Frost Advisory",
+                "headline": "Frost Advisory issued May 19",
+                "severity": "Minor",
+                "urgency": "Expected",
+                "certainty": "Likely",
+                "effective": "2026-05-19T03:00:00Z",
+                "expires": "2026-05-19T13:00:00Z",
+                "areaDesc": "Minnehaha County",
+                "description": "Temperatures as low as 33 will result in frost formation.",
+                "instruction": "Take steps now to protect tender plants from the cold.",
+            },
+        }
+
+    monkeypatch.setattr(main_module.nws_hazards_service, "fetch_alert_geojson", fake_fetch_alert_geojson)
+
+    response = await client.get("/api/v4/nws-hazards/alert", params={"id": "urn:oid:alert-1"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["event"] == "Frost Advisory"
+    assert payload["headline"] == "Frost Advisory issued May 19"
+    assert payload["areas"] == ["Minnehaha County"]
+    assert payload["description"] == "Temperatures as low as 33 will result in frost formation."
+    assert payload["instruction"] == "Take steps now to protect tender plants from the cold."

@@ -76,7 +76,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, nws_hazards as nws_hazards_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, require_clerk_admin, require_clerk_user
@@ -3448,6 +3448,24 @@ async def nws_anchor_afd(anchor_id: str):
 @app.get("/api/v4/health")
 def health_v4():
     return {"ok": True, "data_root": str(DATA_ROOT)}
+
+
+@app.get("/api/v4/nws-hazards/alert")
+async def nws_hazards_alert_detail(
+    id: str = Query(..., min_length=1, description="NWS alert id"),
+):
+    try:
+        feature = await run_in_threadpool(nws_hazards_service.fetch_alert_geojson, id)
+    except nws_hazards_service.NWSHazardsError as exc:
+        return _error_response(
+            status_code=502,
+            code="NWS_HAZARDS_ALERT_UNAVAILABLE",
+            message=str(exc),
+        )
+    return JSONResponse(
+        content=nws_hazards_service.serialize_alert_detail(feature),
+        headers={"Cache-Control": "public, max-age=60"},
+    )
 
 
 @app.get("/tiles/v3/health")
