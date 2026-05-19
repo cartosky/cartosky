@@ -13,7 +13,7 @@ export default function Login() {
       <div className="relative mx-auto flex min-h-[calc(100vh-13rem)] max-w-md items-center justify-center">
         <section className="w-full">
           <Show when="signed-out">
-            <div className="flex justify-center">
+            <div className="cartosky-clerk-auth flex justify-center">
               <SignIn
                 routing="hash"
                 fallbackRedirectUrl="/viewer"

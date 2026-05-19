@@ -109,6 +109,36 @@
     min-width: 44px;
     min-height: 44px;
   }
+
+  .cartosky-clerk-auth .cl-footerActionText {
+    color: rgb(203 213 225);
+  }
+
+  .cartosky-clerk-auth .cl-footerActionLink {
+    color: rgb(103 232 249);
+  }
+
+  .cartosky-clerk-auth .cl-footerActionLink:hover {
+    color: rgb(165 243 252);
+  }
+
+  .cartosky-clerk-auth .cl-badge,
+  .cartosky-clerk-auth [class*="lastAuthenticationStrategy"] {
+    border: 1px solid rgba(103, 232, 249, 0.22);
+    background: rgba(103, 232, 249, 0.14);
+    color: rgb(207 250 254);
+    box-shadow: none;
+  }
+
+  .cartosky-clerk-auth .cl-logoBox {
+    margin-bottom: 1.5rem;
+  }
+
+  .cartosky-clerk-auth .cl-logoImage {
+    width: auto;
+    height: 2rem;
+    max-height: 2rem;
+  }
 }
 
 @layer utilities {
