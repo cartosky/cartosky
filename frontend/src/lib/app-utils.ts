@@ -439,16 +439,20 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
     case "wind":
       return "SURFACE";
     case "precipitation":
-    case "radar & precipitation type":
     case "moisture":
-    case "radar":
       return "PRECIPITATION";
+    case "radar & precipitation type":
+    case "radar":
+      return "RADAR";
     case "severe":
     case "instability":
       return "SEVERE";
     case "upper air":
     case "dynamics":
       return "UPPER AIR";
+    case "ensemble":
+    case "ensembles":
+      return "ENSEMBLE";
     default:
       return null;
   }

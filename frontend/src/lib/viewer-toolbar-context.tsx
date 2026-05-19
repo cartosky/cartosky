@@ -22,6 +22,8 @@ export type ViewerToolbarProps = {
   models: GroupedOption[];
   runs: Option[];
   variables: VariableOption[];
+  variableCatalog: VariableOption[];
+  supportedVariableIds: string[];
   disabled?: boolean;
   // Run metadata
   runDisplayLabel?: string;

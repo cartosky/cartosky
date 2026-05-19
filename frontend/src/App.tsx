@@ -395,6 +395,33 @@ export default function App() {
     }
     return map;
   }, [selectedCapabilityVars]);
+  const allVariableCatalog = useMemo(() => {
+    const byId = new Map<string, VariableEntry>();
+    for (const capability of Object.values(modelCatalog)) {
+      for (const entry of normalizeCapabilityVarRows(capability)) {
+        if (!byId.has(entry.id)) {
+          byId.set(entry.id, entry);
+        }
+      }
+    }
+    for (const entry of selectedCapabilityVars) {
+      byId.set(entry.id, entry);
+    }
+    for (const option of variables) {
+      if (!byId.has(option.value)) {
+        byId.set(option.value, {
+          id: option.value,
+          displayName: option.label,
+          group: option.group,
+        });
+      }
+    }
+    return makeVariableOptions(Array.from(byId.values()));
+  }, [modelCatalog, selectedCapabilityVars, variables]);
+  const supportedVariableIds = useMemo(
+    () => selectedCapabilityVars.map((entry) => entry.id),
+    [selectedCapabilityVars]
+  );
 
   const manifestVarIds = useMemo(() => {
     const vars = runManifest?.variables;
@@ -1961,12 +1988,8 @@ export default function App() {
           : baseCapabilityVars;
         const variableOptions = makeVariableOptions(resolvedVars);
         const variableIds = variableOptions.map((opt) => opt.value);
-        const defaultVarKey = String(selectedModelCapability?.defaults?.default_var_key ?? "").trim();
-        const nextVar = variableIds.includes(defaultVarKey)
-          ? defaultVarKey
-          : (variableIds[0] ?? "");
         setVariables(variableOptions);
-        setVariable((prev) => (variableIds.includes(prev) ? prev : nextVar));
+        setVariable((prev) => (prev && variableIds.includes(prev) ? prev : ""));
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setRunManifest(null);
@@ -2349,12 +2372,8 @@ export default function App() {
             if (capabilityVars.length > 0) {
               const variableOptions = makeVariableOptions(capabilityVars);
               const variableIds = variableOptions.map((opt) => opt.value);
-              const defaultVarKey = String(selectedModelCapability?.defaults?.default_var_key ?? "").trim();
-              const nextVar = variableIds.includes(defaultVarKey)
-                ? defaultVarKey
-                : (variableIds[0] ?? "");
               setVariables(variableOptions);
-              setVariable((prev) => (variableIds.includes(prev) ? prev : nextVar));
+              setVariable((prev) => (prev && variableIds.includes(prev) ? prev : ""));
             }
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
 
@@ -2895,11 +2914,19 @@ export default function App() {
   }, [model, variable, telemetryRunId, forecastHour]);
 
   const handleModelChange = useCallback((nextModel: string) => {
+    const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;
+    const nextSupportedVariableIds = new Set(normalizeCapabilityVarRows(nextModelCapability).map((entry) => entry.id));
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
     setRun("latest");
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
+    if (variable && !nextSupportedVariableIds.has(variable)) {
+      pendingVariableSwitchRef.current = null;
+      setVariableSwitchState(null);
+      setVariable("");
+      setVisualVariable("");
+    }
     setModel(nextModel);
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
@@ -2908,7 +2935,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [variable, telemetryRunId, region, forecastHour]);
+  }, [capabilities, variable, telemetryRunId, region, forecastHour]);
 
   const handleRunChange = useCallback((nextRun: string) => {
     setRun(nextRun);
@@ -3382,6 +3409,8 @@ export default function App() {
     models,
     runs: runOptions,
     variables,
+    variableCatalog: allVariableCatalog,
+    supportedVariableIds,
     disabled: loading || models.length === 0,
     runDisplayLabel: selectedRunLabel,
     latestAvailableRunLabel,
@@ -3427,6 +3456,7 @@ export default function App() {
   }), [
     region, handleRegionChange, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
+    allVariableCatalog, supportedVariableIds,
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,

@@ -35,6 +35,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { VariablePicker } from "@/components/VariablePicker";
 import { MapLegend } from "@/components/map-legend";
 import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { GroupedOption } from "@/lib/app-utils";
@@ -85,7 +86,7 @@ function AvailabilityReadout({
 }
 
 
-const GROUP_ORDER = ["MODELS", "ENSEMBLES", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR"];
+const GROUP_ORDER = ["MODELS", "ENSEMBLES", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "ENSEMBLE", "RADAR"];
 
 function spcVariableLabel(option: VariableOption): string {
   switch (option.value) {
@@ -372,7 +373,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
   if (!toolbar) return null;
 
   const {
-    variable, onVariableChange, variables, model, onModelChange, models,
+    variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
     run, onRunChange, runs, region, onRegionChange, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
@@ -382,14 +383,6 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legend,
   } = toolbar;
-
-  const displayVariables = useMemo(
-    () =>
-      model === "spc"
-        ? variables.map((o) => ({ ...o, label: spcVariableLabel(o) }))
-        : variables,
-    [model, variables]
-  );
 
   const runMenuOptions = useMemo(() => {
     if (!hasNewerRunAvailable) return runs;
@@ -418,13 +411,15 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           />
         </HeaderSelectField>
         <HeaderSelectField label="Variable" icon={Layers}>
-          <NavbarSelect
+          <VariablePicker
+            modelId={model}
             value={variable}
-            onValueChange={onVariableChange}
-            options={displayVariables}
+            onChange={onVariableChange}
+            variableCatalog={model === "spc" ? variableCatalog.map((o) => ({ ...o, label: spcVariableLabel(o) })) : variableCatalog}
+            supportedVariableIds={supportedVariableIds}
             disabled={disabled}
             placeholder="Variable"
-            grouped
+            legend={legend}
             minWidth="min-w-[180px] max-w-[320px]"
           />
         </HeaderSelectField>
@@ -644,7 +639,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   if (!toolbar) return null;
 
   const {
-    variable, onVariableChange, variables, model, onModelChange, models,
+    variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
     run, onRunChange, runs, region, onRegionChange, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
@@ -737,14 +732,22 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Layers className="h-3 w-3" /> Variable
           </span>
-          <NavbarSelect
+          <VariablePicker
+            modelId={model}
             value={variable}
-            onValueChange={(v) => { onVariableChange(v); closeSheet(); }}
-            options={displayVariables}
+            onChange={(v) => { onVariableChange(v); closeSheet(); }}
+            variableCatalog={model === "spc" ? variableCatalog.map((o) => ({ ...o, label: spcVariableLabel(o) })) : variableCatalog}
+            supportedVariableIds={supportedVariableIds}
             disabled={disabled}
             placeholder="Variable"
-            grouped
+            selectedLabelOverride={selectedVariableLabel}
+            legend={legend}
             minWidth="w-full"
+            onOpenChange={(open) => {
+              if (open && sheetSnap === "peek") {
+                setSheetSnap("full");
+              }
+            }}
           />
         </div>
 
