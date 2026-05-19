@@ -1199,10 +1199,9 @@ async def twf_callback(
             )
         )
 
-        resp = RedirectResponse(
-            url=_twf_frontend_redirect_url(packed.get("return_to") or "/account/integrations", twf="linked"),
-            status_code=302,
-        )
+        redirect_url = _twf_frontend_redirect_url(packed.get("return_to") or "/account/integrations", twf="linked")
+        logger.info("TWF OAuth linked user_id=%s redirect_url=%s", clerk_user_id, redirect_url)
+        resp = RedirectResponse(url=redirect_url, status_code=302)
 
         # Clear short-lived OAuth temp cookie
         resp.delete_cookie(key=twf_oauth.OAUTH_COOKIE_NAME, path="/")

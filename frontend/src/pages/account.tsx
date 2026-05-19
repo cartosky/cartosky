@@ -111,12 +111,22 @@ function TwfConnectionSection() {
   }, [loadStatus]);
 
   useEffect(() => {
-    if (searchParams.get("twf_connected") !== "true" && searchParams.get("twf") !== "linked") return;
-    setSuccess("TWF account connected.");
-    void loadStatus();
+    const twfResult = searchParams.get("twf");
+    if (searchParams.get("twf_connected") !== "true" && twfResult !== "linked" && twfResult !== "error") return;
+
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("twf_connected");
     nextParams.delete("twf");
+    const message = nextParams.get("twf_message");
+    nextParams.delete("twf_message");
+
+    if (twfResult === "error") {
+      setError(message || "TWF connection failed. Please try again.");
+    } else {
+      setSuccess("TWF account connected.");
+      void loadStatus();
+    }
+
     setSearchParams(nextParams, { replace: true });
   }, [loadStatus, searchParams, setSearchParams]);
 
@@ -125,7 +135,11 @@ function TwfConnectionSection() {
     setError(null);
     setSuccess(null);
     try {
-      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations" })}`, { method: "GET" });
+      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations" })}`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
       if (!response.ok) {
         const apiError = await readApiError(response);
         throw new Error(apiError || `Unable to start TWF connection (${response.status})`);
