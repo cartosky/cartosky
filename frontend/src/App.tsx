@@ -208,6 +208,21 @@ function defaultEnsembleViewForVariable(
   ).trim().toLowerCase();
 }
 
+function pickDefaultVariableForModel(
+  modelId: string,
+  modelCapability: CapabilityModel | null | undefined,
+  variableIds: string[],
+): string {
+  if (modelId === DEFAULT_VIEWER_MODEL_ID && variableIds.includes(DEFAULT_VIEWER_VARIABLE_ID)) {
+    return DEFAULT_VIEWER_VARIABLE_ID;
+  }
+  const defaultVarKey = String(modelCapability?.defaults?.default_var_key ?? "").trim();
+  if (defaultVarKey && variableIds.includes(defaultVarKey)) {
+    return defaultVarKey;
+  }
+  return variableIds[0] ?? "";
+}
+
 export default function App() {
   const { start: startSiteLoading } = useSiteLoading();
   const { setViewerContext, clearViewerContext } = useFeedbackContext();
@@ -1988,8 +2003,9 @@ export default function App() {
           : baseCapabilityVars;
         const variableOptions = makeVariableOptions(resolvedVars);
         const variableIds = variableOptions.map((opt) => opt.value);
+        const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
         setVariables(variableOptions);
-        setVariable((prev) => (prev && variableIds.includes(prev) ? prev : ""));
+        setVariable((prev) => (prev && variableIds.includes(prev) ? prev : nextVar));
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setRunManifest(null);
@@ -2372,8 +2388,9 @@ export default function App() {
             if (capabilityVars.length > 0) {
               const variableOptions = makeVariableOptions(capabilityVars);
               const variableIds = variableOptions.map((opt) => opt.value);
+              const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
               setVariables(variableOptions);
-              setVariable((prev) => (prev && variableIds.includes(prev) ? prev : ""));
+              setVariable((prev) => (prev && variableIds.includes(prev) ? prev : nextVar));
             }
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
 
@@ -2915,22 +2932,30 @@ export default function App() {
 
   const handleModelChange = useCallback((nextModel: string) => {
     const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;
-    const nextSupportedVariableIds = new Set(normalizeCapabilityVarRows(nextModelCapability).map((entry) => entry.id));
+    const nextVariableOptions = makeVariableOptions(normalizeCapabilityVarRows(nextModelCapability));
+    const nextVariableIds = nextVariableOptions.map((option) => option.value);
+    const nextSupportedVariableIds = new Set(nextVariableIds);
+    const nextVariable = variable && nextSupportedVariableIds.has(variable)
+      ? variable
+      : pickDefaultVariableForModel(nextModel, nextModelCapability, nextVariableIds);
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
     setRun("latest");
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
-    if (variable && !nextSupportedVariableIds.has(variable)) {
-      pendingVariableSwitchRef.current = null;
-      setVariableSwitchState(null);
-      setVariable("");
-      setVisualVariable("");
+    pendingVariableSwitchRef.current = null;
+    setVariableSwitchState(null);
+    if (nextVariableOptions.length > 0) {
+      setVariables(nextVariableOptions);
+    }
+    if (nextVariable !== variable) {
+      setVariable(nextVariable);
+      setVisualVariable(nextVariable);
     }
     setModel(nextModel);
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
-      variable_id: variable || null,
+      variable_id: nextVariable || null,
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
