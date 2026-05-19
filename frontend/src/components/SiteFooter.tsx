@@ -35,6 +35,9 @@ export default function SiteFooter() {
             <Link to="/variables" className="transition duration-150 hover:text-white">
               Variable Guide
             </Link>
+            <Link to="/privacy" className="transition duration-150 hover:text-white">
+              Privacy Policy
+            </Link>
             <Link to="/login" className="transition duration-150 hover:text-white">
               Account
             </Link>
