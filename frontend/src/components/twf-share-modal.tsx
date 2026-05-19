@@ -1214,6 +1214,7 @@ export function TwfShareModal({
 
   const isPosted = Boolean(submitSuccess || submitTopicSuccess);
   const signedOutLoginUrl = loginRouteForCurrentPage();
+  const checkingShareAccess = !clerkLoaded || (isSignedIn && !statusResolved);
   const destinationLabel = selectedTopicTitle
     ? `${selectedForumLabel} › ${selectedTopicTitle}`
     : selectedForumLabel;
@@ -1342,6 +1343,47 @@ export function TwfShareModal({
             </div>
           </div>
         </TooltipProvider>
+
+        {twfStatus.linked !== true && !isPosted && (
+          <div className="px-4 mt-3">
+            <div className="flex flex-col gap-2 rounded-2xl border border-cyan-200/14 bg-[#071524]/85 px-3.5 py-3 text-sm text-white/78 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-2">
+                {checkingShareAccess ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
+                ) : (
+                  <ExternalLink className="h-4 w-4 shrink-0 text-cyan-200" />
+                )}
+                <span className="min-w-0 leading-snug">
+                  {!clerkLoaded
+                    ? "Checking CartoSky sign-in status..."
+                    : !isSignedIn
+                      ? "Sign in to CartoSky to connect TWF and post this screenshot."
+                      : !statusResolved
+                        ? "Checking your TWF connection..."
+                        : "Connect your TWF account to post this screenshot."}
+                </span>
+              </div>
+              {!clerkLoaded || (isSignedIn && !statusResolved) ? null : !isSignedIn ? (
+                <Link
+                  to={signedOutLoginUrl}
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
+                  onClick={onClose}
+                >
+                  Sign in
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectTwf}
+                  disabled={connectBusy}
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 disabled:cursor-wait disabled:opacity-70"
+                >
+                  {connectBusy ? "Connecting..." : "Connect TWF"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Composer card */}
         <div className="px-4 mt-3">
@@ -1625,10 +1667,10 @@ export function TwfShareModal({
             </button>
           </div>
 
-          {!clerkLoaded ? (
+          {checkingShareAccess ? (
             <button type="button" disabled className={primaryButtonClass}>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Checking sign-in...
+              {!clerkLoaded ? "Checking sign-in..." : "Checking TWF..."}
             </button>
           ) : !isSignedIn ? (
             <Link to={signedOutLoginUrl} onClick={onClose} className={primaryButtonClass}>
