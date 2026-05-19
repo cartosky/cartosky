@@ -25,6 +25,10 @@ class HRRRPlugin(BaseModelPlugin):
             return "tmp2m"
         if normalized in {"dp2m", "d2m", "2d", "dpt2m", "dewpoint2m", "dewpoint"}:
             return "dp2m"
+        if normalized in {"rh2m", "r2m", "2m_rh", "surface_rh", "surface_relative_humidity", "relative_humidity"}:
+            return "rh2m"
+        if normalized in {"rh700", "r700", "700rh", "700mb_rh", "rh_700mb", "700mb_relative_humidity"}:
+            return "rh700"
         if normalized in {"precip_total", "total_precip", "apcp", "qpf", "total_qpf"}:
             return "precip_total"
         if normalized == "mlcape":
@@ -136,7 +140,7 @@ def _hrrr_rh_level_component(level_hpa: int) -> VarSpec:
     level = int(level_hpa)
     return VarSpec(
         id=f"rh{level}",
-        name=f"{level}mb RH",
+        name="700mb Relative Humidity" if level == 700 else f"{level}mb RH",
         selectors=VarSelectors(
             search=[f":RH:{level} mb:"],
             filter_by_keys={
@@ -146,8 +150,12 @@ def _hrrr_rh_level_component(level_hpa: int) -> VarSpec:
             },
             hints={
                 "upstream_var": f"r{level}",
+                "product": "prs",
             },
         ),
+        primary=level == 700,
+        kind="continuous",
+        units="%",
     )
 
 
@@ -265,6 +273,24 @@ HRRR_VARS: dict[str, VarSpec] = {
         primary=True,
         kind="continuous",
         units="F",
+    ),
+    "rh2m": VarSpec(
+        id="rh2m",
+        name="Surface Relative Humidity",
+        selectors=VarSelectors(
+            search=[":RH:2 m above ground:"],
+            filter_by_keys={
+                "shortName": "r",
+                "typeOfLevel": "heightAboveGround",
+                "level": "2",
+            },
+            hints={
+                "upstream_var": "r2m",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="%",
     ),
     "tmp850": VarSpec(
         id="tmp850",
@@ -685,6 +711,8 @@ HRRR_VARS: dict[str, VarSpec] = {
 HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "tmp2m",
     "dp2m": "dp2m",
+    "rh2m": "rh",
+    "rh700": "rh",
     "tmp850": "tmp850",
     "tmp850_anom": "tmp850_anom",
     "wspd850": "wspd850",
@@ -714,8 +742,10 @@ HRRR_ORDER_BY_VAR_KEY: dict[str, float] = {
     "radar_ptype": 0,
     "tmp2m": 1,
     "dp2m": 2,
+    "rh2m": 2.5,
     "tmp850": 3,
     "tmp850_anom": 3.5,
+    "rh700": 3.75,
     "wspd850": 4,
     "wspd300": 999,
     "vort500": 5,
@@ -734,6 +764,8 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "radar_ptype": "Radar & Precipitation Type",
     "tmp2m": "Temperature",
     "dp2m": "Temperature",
+    "rh2m": "Moisture",
+    "rh700": "Moisture",
     "tmp850": "Temperature",
     "tmp850_anom": "Temperature",
     "wspd850": "Wind",

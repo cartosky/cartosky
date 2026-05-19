@@ -44,10 +44,13 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
     assert buildable_var_keys == {
         "tmp2m",
         "dp2m",
+        "rh2m",
+        "rh700",
         "tmp850",
         "tmp850_anom",
         "wspd850",
         "wspd300",
+        "vort500",
         "sbcape",
         "mlcape",
         "mucape",
@@ -72,6 +75,8 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
     from app.services.grid import _PACKING_BY_MODEL_VAR
 
     assert ("hrrr", "tmp850_anom") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "rh2m") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "rh700") in _PACKING_BY_MODEL_VAR
 
 
 def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
@@ -102,6 +107,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
         "kind",
         "display_resampling_override",
         "render_substrates",
+        "supported_build_regions",
         "units",
         "order",
         "group",
@@ -117,6 +123,32 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["buildable"] is True
     assert tmp2m["display_resampling_override"] is None
     assert tmp2m["render_substrates"] == ["grid"]
+
+    rh2m = payload["variables"]["rh2m"]
+    assert rh2m["var_key"] == "rh2m"
+    assert rh2m["display_name"] == "Surface Relative Humidity"
+    assert rh2m["kind"] == "continuous"
+    assert rh2m["units"] == "%"
+    assert rh2m["buildable"] is True
+    assert rh2m["derived"] is False
+    assert rh2m["color_map_id"] == "rh"
+    assert rh2m["order"] == 2.5
+    assert rh2m["group"] == "Moisture"
+    assert rh2m["default_fh"] is None
+    assert rh2m["render_substrates"] == ["grid"]
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["var_key"] == "rh700"
+    assert rh700["display_name"] == "700mb Relative Humidity"
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is False
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["order"] == 3.75
+    assert rh700["group"] == "Moisture"
+    assert rh700["default_fh"] is None
+    assert rh700["render_substrates"] == ["grid"]
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["buildable"] is True
@@ -295,6 +327,42 @@ def test_hrrr_pwat_selector_and_alias_invariants() -> None:
         "shortName": "pwat",
         "typeOfLevel": "atmosphereSingleLayer",
     }
+
+
+def test_hrrr_rh_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("rh2m") == "rh2m"
+    assert HRRR_MODEL.normalize_var_id("surface_rh") == "rh2m"
+    assert HRRR_MODEL.normalize_var_id("surface_relative_humidity") == "rh2m"
+    assert HRRR_MODEL.normalize_var_id("rh700") == "rh700"
+    assert HRRR_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert HRRR_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
+
+    rh2m_spec = HRRR_MODEL.get_var("rh2m")
+    assert rh2m_spec is not None
+    assert rh2m_spec.primary is True
+    assert rh2m_spec.derived is False
+    assert rh2m_spec.kind == "continuous"
+    assert rh2m_spec.units == "%"
+    assert rh2m_spec.selectors.search == [":RH:2 m above ground:"]
+    assert rh2m_spec.selectors.filter_by_keys == {
+        "shortName": "r",
+        "typeOfLevel": "heightAboveGround",
+        "level": "2",
+    }
+
+    rh700_spec = HRRR_MODEL.get_var("rh700")
+    assert rh700_spec is not None
+    assert rh700_spec.primary is True
+    assert rh700_spec.derived is False
+    assert rh700_spec.kind == "continuous"
+    assert rh700_spec.units == "%"
+    assert rh700_spec.selectors.search == [":RH:700 mb:"]
+    assert rh700_spec.selectors.filter_by_keys == {
+        "shortName": "r",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "700",
+    }
+    assert rh700_spec.selectors.hints["product"] == "prs"
 
 
 def test_hrrr_tmp850_anom_uses_pressure_tmp850_component_and_na_baseline() -> None:
