@@ -1,6 +1,7 @@
 import { Show, SignIn, UserButton } from "@clerk/react";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
+import { BRAND_LOGO_SRC } from "@/lib/branding";
 
 export default function Login() {
   return (
@@ -19,6 +20,9 @@ export default function Login() {
                 fallbackRedirectUrl="/viewer"
                 signUpFallbackRedirectUrl="/viewer"
                 appearance={{
+                  layout: {
+                    logoImageUrl: BRAND_LOGO_SRC,
+                  },
                   elements: {
                     rootBox: "w-full",
                     cardBox: "mx-auto w-full shadow-[0_20px_80px_rgba(0,0,0,0.36)]",

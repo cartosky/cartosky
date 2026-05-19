@@ -9,6 +9,7 @@ import { FeedbackProvider } from "./lib/feedback-context";
 import { initPostHogAnalytics } from "./lib/posthog";
 import { initRumTelemetry } from "./lib/rum";
 import { SiteLoadingProvider } from "./lib/site-loading";
+import { BRAND_LOGO_SRC } from "./lib/branding";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles/globals.css";
 
@@ -19,6 +20,9 @@ type EnvClerkProviderProps = Omit<ClerkProviderProps, "publishableKey">;
 const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderProps>;
 
 const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
+  layout: {
+    logoImageUrl: BRAND_LOGO_SRC,
+  },
   variables: {
     colorBackground: "#101218",
     colorInputBackground: "#161922",
