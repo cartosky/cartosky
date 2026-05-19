@@ -1150,10 +1150,9 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
               onClick={openFeedback}
               title="Send feedback"
               aria-label="Send feedback"
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.05] px-2.5 text-xs font-semibold text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
             >
-              <MessageSquareText className="h-3.5 w-3.5" />
-              <span>Feedback</span>
+              Feedback
             </button>
             <Show when="signed-out">
               <NavLink
@@ -1181,10 +1180,9 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
               onClick={openFeedback}
               title="Send feedback"
               aria-label="Send feedback"
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.05] px-2.5 text-xs font-semibold text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
             >
-              <MessageSquareText className="h-3.5 w-3.5" />
-              <span>Feedback</span>
+              Feedback
             </button>
           </nav>
         ) : null}

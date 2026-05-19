@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -127,6 +128,32 @@ async def test_feedback_submission_persists_and_admin_lists_record(client: httpx
     assert item["model_context"] == "hrrr"
     assert item["fhr_context"] == 12
     assert item["user_agent"] == "pytest-browser"
+
+
+async def test_feedback_submission_uses_clerk_profile_email_when_claims_lack_identity(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _authenticate_clerk_user(user_id="user_without_claims")
+
+    def fake_fetch_clerk_user_profile(user_id: str) -> SimpleNamespace:
+        assert user_id == "user_without_claims"
+        return SimpleNamespace(display_name="beta@example.com", email_address="beta@example.com")
+
+    monkeypatch.setattr(main_module, "fetch_clerk_user_profile", fake_fetch_clerk_user_profile)
+
+    response = await client.post(
+        "/api/v4/feedback",
+        json={
+            "category": "bug",
+            "message": "The profile fallback should use email.",
+            "page_context": "/viewer",
+        },
+    )
+
+    assert response.status_code == 201
+    feedback = feedback_service.get_admin_feedback(page=1, page_size=10)
+    assert feedback["items"][0]["forums_display_name"] == "beta@example.com"
 
 
 async def test_feedback_rate_limit_enforced_by_clerk_user_id(client: httpx.AsyncClient) -> None:

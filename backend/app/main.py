@@ -36,6 +36,7 @@ from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
 from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from .config.regions import REGION_PRESETS
 from .models.registry import list_model_capabilities
@@ -78,7 +79,7 @@ from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
-from backend.app.auth.clerk import ClerkPrincipal, require_clerk_admin, require_clerk_user
+from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, require_clerk_admin, require_clerk_user
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -1281,12 +1282,34 @@ class FeedbackSubmission(BaseModel):
         return self
 
 
-def _feedback_display_name(current_user: ClerkPrincipal) -> str:
+def _clean_claim_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _feedback_display_name_from_claims(claims: dict[str, Any]) -> str | None:
+    for key in ("name", "username", "email", "email_address", "primary_email_address", "primary_email"):
+        value = _clean_claim_string(claims.get(key))
+        if value:
+            return value
+
+    email_addresses = claims.get("email_addresses")
+    if isinstance(email_addresses, list):
+        for item in email_addresses:
+            if isinstance(item, dict):
+                value = _clean_claim_string(item.get("email_address"))
+                if value:
+                    return value
+
+    return None
+
+
+async def _feedback_display_name(current_user: ClerkPrincipal) -> str:
     claims = current_user.claims
-    for key in ("name", "username", "email", "email_address"):
-        value = claims.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    claim_display_name = _feedback_display_name_from_claims(claims)
+    if claim_display_name:
+        return claim_display_name
 
     first_name = claims.get("first_name")
     last_name = claims.get("last_name")
@@ -1297,6 +1320,10 @@ def _feedback_display_name(current_user: ClerkPrincipal) -> str:
     )
     if full_name:
         return full_name
+
+    profile = await run_in_threadpool(fetch_clerk_user_profile, current_user.user_id)
+    if profile and profile.display_name:
+        return profile.display_name
 
     return f"Clerk user {current_user.user_id[:12]}"
 
@@ -1315,7 +1342,7 @@ async def post_feedback(
             code="FEEDBACK_RATE_LIMITED",
             message="Too many feedback submissions. Please try again later.",
         )
-    display_name = _feedback_display_name(current_user)
+    display_name = await _feedback_display_name(current_user)
     try:
         record = feedback_service.insert_feedback(
             category=payload.category,

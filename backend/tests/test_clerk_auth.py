@@ -95,3 +95,33 @@ async def test_require_clerk_user_requires_bearer_token(monkeypatch: pytest.Monk
             "message": "Missing Clerk bearer token.",
         }
     }
+
+
+def test_clerk_user_profile_from_payload_prefers_name_then_primary_email() -> None:
+    profile = clerk_auth.clerk_user_profile_from_payload(
+        {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "username": "ada",
+            "primary_email_address_id": "email_primary",
+            "email_addresses": [
+                {"id": "email_other", "email_address": "other@example.com"},
+                {"id": "email_primary", "email_address": "ada@example.com"},
+            ],
+        }
+    )
+
+    assert profile.display_name == "Ada Lovelace"
+    assert profile.email_address == "ada@example.com"
+
+
+def test_clerk_user_profile_from_payload_uses_email_without_name() -> None:
+    profile = clerk_auth.clerk_user_profile_from_payload(
+        {
+            "primary_email_address_id": "email_primary",
+            "email_addresses": [{"id": "email_primary", "email_address": "beta@example.com"}],
+        }
+    )
+
+    assert profile.display_name == "beta@example.com"
+    assert profile.email_address == "beta@example.com"
