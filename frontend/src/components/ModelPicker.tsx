@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Search, X } from "lucide-react";
+import { ChevronDown, Search, Star, X } from "lucide-react";
 
 import type { GroupedOption } from "@/lib/app-utils";
+import { useModelFavorites } from "@/lib/use-model-favorites";
 import { cn } from "@/lib/utils";
 
-type ModelCategoryId = "MODELS" | "ENSEMBLES" | "OBSERVATIONS";
+type ModelCategoryId = "FAVORITES" | "MODELS" | "ENSEMBLES" | "OBSERVATIONS";
 
 type ModelPickerProps = {
   value: string;
@@ -17,14 +18,14 @@ type ModelPickerProps = {
   onOpenChange?: (open: boolean) => void;
 };
 
-const MODEL_CATEGORY_ROWS: Array<{ id: ModelCategoryId; label: string }> = [
+const MODEL_CATEGORY_ROWS: Array<{ id: Exclude<ModelCategoryId, "FAVORITES">; label: string }> = [
   { id: "MODELS", label: "Models" },
   { id: "ENSEMBLES", label: "Ensembles" },
-  { id: "OBSERVATIONS", label: "Observations" },
+  { id: "OBSERVATIONS", label: "Obs" },
 ];
 
 const MODEL_CATEGORY_LABELS = new Map<ModelCategoryId, string>(
-  MODEL_CATEGORY_ROWS.map((row) => [row.id, row.label])
+  [["FAVORITES", "Favorites"], ...MODEL_CATEGORY_ROWS.map((row) => [row.id, row.label] as [ModelCategoryId, string])]
 );
 
 function normalizeModelGroup(group: string | null): ModelCategoryId | null {
@@ -67,6 +68,7 @@ export function ModelPicker({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const { favorites, favoriteSet, toggleFavorite } = useModelFavorites();
 
   const modelOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -91,13 +93,13 @@ export function ModelPicker({
   }, [hasSearch, normalizedQuery]);
 
   const categorizedOptions = useMemo(() => {
-    const byCategory = new Map<ModelCategoryId, GroupedOption[]>();
+    const byCategory = new Map<Exclude<ModelCategoryId, "FAVORITES">, GroupedOption[]>();
     for (const row of MODEL_CATEGORY_ROWS) {
       byCategory.set(row.id, []);
     }
     for (const option of modelOptions) {
       const category = normalizeModelGroup(option.group);
-      if (!category) {
+      if (!category || category === "FAVORITES") {
         continue;
       }
       byCategory.get(category)?.push(option);
@@ -105,17 +107,38 @@ export function ModelPicker({
     return byCategory;
   }, [modelOptions]);
 
-  const categoryRows = useMemo(() => MODEL_CATEGORY_ROWS.map((row) => ({
-    ...row,
-    count: (categorizedOptions.get(row.id) ?? []).filter(matchesQuery).length,
-  })), [categorizedOptions, matchesQuery]);
+  const favoriteOptions = useMemo(
+    () => favorites.map((favoriteId) => optionById.get(favoriteId)).filter((option): option is GroupedOption => Boolean(option)),
+    [favorites, optionById]
+  );
+
+  const categoryRows = useMemo(() => {
+    const rows: Array<{ id: ModelCategoryId; label: string; count: number }> = [];
+    if (favoriteOptions.length > 0) {
+      rows.push({
+        id: "FAVORITES",
+        label: "Favorites",
+        count: favoriteOptions.filter(matchesQuery).length,
+      });
+    }
+    for (const row of MODEL_CATEGORY_ROWS) {
+      rows.push({
+        ...row,
+        count: (categorizedOptions.get(row.id) ?? []).filter(matchesQuery).length,
+      });
+    }
+    return rows;
+  }, [categorizedOptions, favoriteOptions, matchesQuery]);
 
   const visibleOptions = useMemo(() => {
     if (hasSearch) {
       return modelOptions.filter(matchesQuery);
     }
+    if (activeCategory === "FAVORITES") {
+      return favoriteOptions;
+    }
     return categorizedOptions.get(activeCategory) ?? [];
-  }, [activeCategory, categorizedOptions, hasSearch, matchesQuery, modelOptions]);
+  }, [activeCategory, categorizedOptions, favoriteOptions, hasSearch, matchesQuery, modelOptions]);
 
   const selectedCategory = useMemo(() => {
     const selected = optionById.get(value);
@@ -160,10 +183,18 @@ export function ModelPicker({
   }, [open, value, visibleOptions]);
 
   useEffect(() => {
-    if (selectedCategory) {
-      setActiveCategory(selectedCategory);
+    if (!selectedCategory) {
+      return;
     }
-  }, [selectedCategory]);
+    setActiveCategory((current) => (current === "FAVORITES" && favoriteOptions.length > 0 ? current : selectedCategory));
+  }, [favoriteOptions.length, selectedCategory]);
+
+  useEffect(() => {
+    if (activeCategory !== "FAVORITES" || favoriteOptions.length > 0) {
+      return;
+    }
+    setActiveCategory(selectedCategory ?? "MODELS");
+  }, [activeCategory, favoriteOptions.length, selectedCategory]);
 
   useEffect(() => {
     if (!open) {
@@ -275,7 +306,7 @@ export function ModelPicker({
         ) : null}
       </div>
 
-      <div className="grid h-[178px] grid-cols-[118px_minmax(0,1fr)]">
+      <div className="grid h-[236px] grid-cols-[118px_minmax(0,1fr)]">
         <div className="border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
           {categoryRows.map((category) => {
             const active = !hasSearch && category.id === activeCategory;
@@ -309,15 +340,13 @@ export function ModelPicker({
             const selected = option.value === value;
             const highlighted = index === highlightedIndex;
             const categoryLabel = MODEL_CATEGORY_LABELS.get(normalizeModelGroup(option.group) ?? "MODELS") ?? "Models";
+            const favorited = favoriteSet.has(option.value);
             return (
-              <button
+              <div
                 key={option.value}
-                type="button"
                 data-model-index={index}
-                onClick={() => chooseModel(option.value)}
-                onMouseEnter={() => setHighlightedIndex(index)}
                 className={cn(
-                  "flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors",
+                  "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
                   selected
                     ? "bg-[#185FA5]/20 text-cyan-100"
                     : highlighted
@@ -325,13 +354,34 @@ export function ModelPicker({
                       : "text-white/82 hover:bg-white/[0.055] hover:text-white"
                 )}
               >
-                <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
-                {hasSearch ? (
-                  <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
-                    {categoryLabel}
-                  </span>
-                ) : null}
-              </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleFavorite(option.value);
+                  }}
+                  className={cn(
+                    "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-0 group-hover:opacity-100"
+                  )}
+                  aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
+                >
+                  <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => chooseModel(option.value)}
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                  {hasSearch ? (
+                    <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
+                      {categoryLabel}
+                    </span>
+                  ) : null}
+                </button>
+              </div>
             );
           })}
         </div>
@@ -339,7 +389,7 @@ export function ModelPicker({
 
       <div className="flex items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2">
         <span className="min-w-0 truncate text-[11px] font-semibold text-white/78">{selectedLabel}</span>
-        <span className="shrink-0 text-[10px] font-medium text-white/34">↑↓ navigate</span>
+        <span className="shrink-0 text-[10px] font-medium text-white/34">↑↓ navigate · ★ favorite</span>
       </div>
     </div>,
     document.body
