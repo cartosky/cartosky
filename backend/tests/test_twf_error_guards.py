@@ -336,6 +336,20 @@ async def test_delete_twf_connection_deletes_clerk_user_session(
     assert deleted == ["user_test"]
 
 
+async def test_delete_twf_connection_allows_cors_preflight(client: httpx.AsyncClient) -> None:
+    response = await client.options(
+        "/api/v4/user/connections/twf",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "DELETE",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "DELETE" in response.headers["access-control-allow-methods"]
+
+
 def test_twf_frontend_redirect_defaults_to_integrations_when_requested() -> None:
     redirect_url = main_module._twf_frontend_redirect_url("/account/integrations", twf="linked")
 

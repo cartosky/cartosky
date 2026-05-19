@@ -489,7 +489,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=cors_allow_headers,
 )
 # GZip-compress responses >= 1 KB.  Critical for grid binary frames (.u16.bin)
