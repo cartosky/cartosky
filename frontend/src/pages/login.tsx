@@ -11,8 +11,8 @@ export default function Login() {
       </div>
 
       <div className="relative mx-auto flex min-h-[calc(100vh-13rem)] max-w-md items-center justify-center">
-        <section className="w-full rounded-[28px] border border-white/12 bg-black/35 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:p-8">
-          <div className="space-y-3 text-center">
+        <section className="w-full">
+          <div className="mb-7 space-y-3 text-center">
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#9bb4a8]">
               CartoSky Account
             </div>
@@ -24,25 +24,24 @@ export default function Login() {
             </p>
           </div>
 
-          <div className="mt-8 rounded-[24px] border border-white/10 bg-white/[0.045] p-5">
-            <Show when="signed-out">
-              <div className="flex justify-center">
-                <SignIn
-                  routing="hash"
-                  fallbackRedirectUrl="/viewer"
-                  signUpFallbackRedirectUrl="/viewer"
-                  appearance={{
-                    elements: {
-                      rootBox: "w-full",
-                      cardBox: "w-full shadow-none",
-                      card: "w-full border border-white/10 bg-[#07111f] text-white shadow-none",
-                    },
-                  }}
-                />
-              </div>
-            </Show>
+          <Show when="signed-out">
+            <div className="flex justify-center">
+              <SignIn
+                routing="hash"
+                fallbackRedirectUrl="/viewer"
+                signUpFallbackRedirectUrl="/viewer"
+                appearance={{
+                  elements: {
+                    rootBox: "w-full",
+                    cardBox: "mx-auto w-full shadow-[0_20px_80px_rgba(0,0,0,0.36)]",
+                  },
+                }}
+              />
+            </div>
+          </Show>
 
-            <Show when="signed-in">
+          <Show when="signed-in">
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.045] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.36)] backdrop-blur-2xl">
               <div className="space-y-5">
                 <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/25 p-4">
                   <div className="min-w-0">
@@ -60,8 +59,8 @@ export default function Login() {
                   <ExternalLink className="h-3.5 w-3.5" />
                 </Link>
               </div>
-            </Show>
-          </div>
+            </div>
+          </Show>
         </section>
       </div>
     </div>
