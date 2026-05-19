@@ -24,6 +24,14 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("t2m") == "tmp2m"
     assert GEFS_MODEL.normalize_var_id("2t") == "tmp2m"
+    assert GEFS_MODEL.normalize_var_id("rh2m") == "rh2m"
+    assert GEFS_MODEL.normalize_var_id("rh2m__mean") == "rh2m__mean"
+    assert GEFS_MODEL.normalize_var_id("surface_rh") == "rh2m"
+    assert GEFS_MODEL.normalize_var_id("surface_relative_humidity") == "rh2m"
+    assert GEFS_MODEL.normalize_var_id("rh700") == "rh700"
+    assert GEFS_MODEL.normalize_var_id("rh700__mean") == "rh700__mean"
+    assert GEFS_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert GEFS_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
     assert GEFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert GEFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert GEFS_MODEL.normalize_var_id("tmp850_anom") == "tmp850_anom"
@@ -48,6 +56,8 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.normalize_var_id("precipitable_water") == "pwat"
     assert GEFS_MODEL.normalize_var_id("apcp") == "precip_total"
     assert GEFS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("rh2m") == "mean"
+    assert GEFS_MODEL.default_ensemble_view("rh700") == "mean"
     assert GEFS_MODEL.default_ensemble_view("tmp850") == "mean"
     assert GEFS_MODEL.default_ensemble_view("tmp850_anom") == "mean"
     assert GEFS_MODEL.default_ensemble_view("wspd850") == "mean"
@@ -58,6 +68,8 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.default_ensemble_view("pwat") == "mean"
     assert GEFS_MODEL.default_ensemble_view("precip_total") == "mean"
     assert GEFS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("rh2m") == ["mean"]
+    assert GEFS_MODEL.supported_ensemble_views("rh700") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("tmp850") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("tmp850_anom") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("wspd850") == ["mean"]
@@ -68,6 +80,8 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert GEFS_MODEL.supported_ensemble_views("pwat") == ["mean"]
     assert GEFS_MODEL.supported_ensemble_views("precip_total") == ["mean"]
     assert GEFS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("rh2m", "mean") == "rh2m__mean"
+    assert GEFS_MODEL.resolve_runtime_var_id("rh700", "mean") == "rh700__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("tmp850", "mean") == "tmp850__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("tmp850_anom", "mean") == "tmp850_anom__mean"
     assert GEFS_MODEL.resolve_runtime_var_id("wspd850", "mean") == "wspd850__mean"
@@ -87,6 +101,16 @@ def test_gefs_alias_and_herbie_request_invariants() -> None:
     assert tmp850_request.model == "gefs"
     assert tmp850_request.product == "atmos.5"
     assert tmp850_request.herbie_kwargs["member"] == "mean"
+
+    rh2m_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="rh2m", ensemble_view="mean")
+    assert rh2m_request.model == "gefs"
+    assert rh2m_request.product == "atmos.5"
+    assert rh2m_request.herbie_kwargs["member"] == "mean"
+
+    rh700_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="rh700", ensemble_view="mean")
+    assert rh700_request.model == "gefs"
+    assert rh700_request.product == "atmos.5"
+    assert rh700_request.herbie_kwargs["member"] == "mean"
 
     tmp850_anom_request = GEFS_MODEL.herbie_request(product="atmos.5", var_key="tmp850_anom", ensemble_view="mean")
     assert tmp850_anom_request.model == "gefs"
@@ -140,8 +164,14 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
     }
     assert buildable_var_keys == {
         "hgt500_anom",
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
         "precip_total",
         "pwat",
+        "rh2m",
+        "rh700",
         "sbcape",
         "snowfall_total",
         "tmp2m",
@@ -172,6 +202,8 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["default_view"] == "mean"
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "pwat__mean" not in payload["variables"]
+    assert "rh2m__mean" not in payload["variables"]
+    assert "rh700__mean" not in payload["variables"]
     assert "tmp2m__mean" not in payload["variables"]
     assert "tmp850__mean" not in payload["variables"]
     assert "tmp850_anom__mean" not in payload["variables"]
@@ -189,6 +221,32 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    rh2m = payload["variables"]["rh2m"]
+    assert rh2m["var_key"] == "rh2m"
+    assert rh2m["display_name"] == "Surface Relative Humidity (Mean)"
+    assert rh2m["buildable"] is True
+    assert rh2m["derived"] is False
+    assert rh2m["kind"] == "continuous"
+    assert rh2m["units"] == "%"
+    assert rh2m["color_map_id"] == "rh"
+    assert rh2m["default_fh"] == 0
+    assert rh2m["group"] == "Moisture"
+    assert rh2m["ensemble"]["default_view"] == "mean"
+    assert rh2m["ensemble"]["supported_views"] == ["mean"]
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["var_key"] == "rh700"
+    assert rh700["display_name"] == "700mb Relative Humidity (Mean)"
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is False
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["default_fh"] == 0
+    assert rh700["group"] == "Moisture"
+    assert rh700["ensemble"]["default_view"] == "mean"
+    assert rh700["ensemble"]["supported_views"] == ["mean"]
 
     tmp2m_anom = payload["variables"]["tmp2m_anom"]
     assert tmp2m_anom["var_key"] == "tmp2m_anom"
@@ -310,6 +368,8 @@ def test_gefs_capabilities_schema_snapshot_invariants() -> None:
 
 def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "rh2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("gefs", "rh700", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "tmp850", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "tmp850_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "wspd850", None) == "mean"
@@ -320,6 +380,8 @@ def test_gefs_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("gefs", "pwat", None) == "mean"
     assert _resolve_requested_ensemble_view("gefs", "precip_total", None) == "mean"
     assert _runtime_var_id_for_request("gefs", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("gefs", "rh2m", "mean") == "rh2m__mean"
+    assert _runtime_var_id_for_request("gefs", "rh700", "mean") == "rh700__mean"
     assert _runtime_var_id_for_request("gefs", "tmp850", "mean") == "tmp850__mean"
     assert _runtime_var_id_for_request("gefs", "tmp850_anom", "mean") == "tmp850_anom__mean"
     assert _runtime_var_id_for_request("gefs", "wspd850", "mean") == "wspd850__mean"
@@ -350,6 +412,13 @@ def test_gefs_sbcape_selector_matches_live_inventory_shape() -> None:
 def test_gefs_tmp850_selector_matches_live_inventory_shape() -> None:
     pattern = GEFS_MODEL.get_var("tmp850__mean").selectors.search[0]
     assert re.search(pattern, ":TMP:850 mb:6 hour fcst:ens mean") is not None
+
+
+def test_gefs_rh_selectors_match_live_inventory_shape() -> None:
+    rh2m_pattern = GEFS_MODEL.get_var("rh2m__mean").selectors.search[0]
+    rh700_pattern = GEFS_MODEL.get_var("rh700__mean").selectors.search[0]
+    assert re.search(rh2m_pattern, ":RH:2 m above ground:6 hour fcst:ens mean:") is not None
+    assert re.search(rh700_pattern, ":RH:700 mb:6 hour fcst:ens mean:") is not None
 
 
 def test_gefs_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:

@@ -34,6 +34,13 @@ class EPSPlugin(ECMWFPlugin):
         normalized = str(var_id).strip().lower()
         aliases = {
             "tmp2m__mean": "tmp2m__mean",
+            "rh700": "rh700",
+            "rh700__mean": "rh700__mean",
+            "r700": "rh700",
+            "700rh": "rh700",
+            "700mb_rh": "rh700",
+            "rh_700mb": "rh700",
+            "700mb_relative_humidity": "rh700",
             "tmp2m_anom": "tmp2m_anom",
             "t2m_anom": "tmp2m_anom",
             "2m_temp_anom": "tmp2m_anom",
@@ -97,7 +104,7 @@ class EPSPlugin(ECMWFPlugin):
         herbie_kwargs = dict(base_request.herbie_kwargs)
         if runtime_var in {"hgt500__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_direct_mean_or_pf_mean"
-        elif runtime_var in {"tmp2m__mean", "tmp850__mean", "tmp850_anom__mean", "10u__mean", "10v__mean"}:
+        elif runtime_var in {"tmp2m__mean", "tmp850__mean", "tmp850_anom__mean", "rh700__mean", "10u__mean", "10v__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
         return HerbieRequest(
             model="ifs",
@@ -115,6 +122,15 @@ EPS_VARS = {
         ECMWF_VARS["tmp2m"],
         id="tmp2m__mean",
         name="Surface Temp (Mean)",
+    ),
+    "rh700": replace(
+        ECMWF_VARS["rh700"],
+        name="700mb Relative Humidity (Mean)",
+    ),
+    "rh700__mean": replace(
+        ECMWF_VARS["rh700"],
+        id="rh700__mean",
+        name="700mb Relative Humidity (Mean)",
     ),
     "tmp2m_anom": replace(
         ECMWF_VARS["tmp2m_anom"],
@@ -382,6 +398,44 @@ EPS_VARIABLE_CATALOG = {
         buildable=False,
         order=2,
         group="Temperature",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "rh700": VariableCapability(
+        var_key="rh700",
+        name=EPS_VARS["rh700"].name,
+        selectors=EPS_VARS["rh700"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="%",
+        color_map_id="rh",
+        default_fh=0,
+        buildable=True,
+        order=2.75,
+        group="Moisture",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "rh700__mean"},
+        },
+    ),
+    "rh700__mean": VariableCapability(
+        var_key="rh700__mean",
+        name=EPS_VARS["rh700__mean"].name,
+        selectors=EPS_VARS["rh700__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="%",
+        color_map_id="rh",
+        default_fh=0,
+        buildable=False,
+        order=2.75,
+        group="Moisture",
         frontend={"internal_only": True},
         ensemble={
             "supported_views": ["mean"],

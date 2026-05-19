@@ -25,6 +25,10 @@ def test_eps_target_fhs_invariants() -> None:
 
 def test_eps_alias_and_herbie_request_invariants() -> None:
     assert EPS_MODEL.normalize_var_id("tmp2m") == "tmp2m"
+    assert EPS_MODEL.normalize_var_id("rh700") == "rh700"
+    assert EPS_MODEL.normalize_var_id("rh700__mean") == "rh700__mean"
+    assert EPS_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert EPS_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
     assert EPS_MODEL.normalize_var_id("tmp2m_anom") == "tmp2m_anom"
     assert EPS_MODEL.normalize_var_id("tmp2m_anom__mean") == "tmp2m_anom__mean"
     assert EPS_MODEL.normalize_var_id("surface_temp_anom") == "tmp2m_anom"
@@ -45,16 +49,19 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert EPS_MODEL.normalize_var_id("10u") == "10u__mean"
     assert EPS_MODEL.normalize_var_id("10v") == "10v__mean"
     assert EPS_MODEL.default_ensemble_view("tmp2m") == "mean"
+    assert EPS_MODEL.default_ensemble_view("rh700") == "mean"
     assert EPS_MODEL.default_ensemble_view("tmp2m_anom") == "mean"
     assert EPS_MODEL.default_ensemble_view("tmp850_anom") == "mean"
     assert EPS_MODEL.default_ensemble_view("wspd10m") == "mean"
     assert EPS_MODEL.default_ensemble_view("hgt500_anom") == "mean"
     assert EPS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
+    assert EPS_MODEL.supported_ensemble_views("rh700") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("tmp2m_anom") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("tmp850_anom") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("hgt500_anom") == ["mean"]
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
+    assert EPS_MODEL.resolve_runtime_var_id("rh700", "mean") == "rh700__mean"
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m_anom", "mean") == "tmp2m_anom__mean"
     assert EPS_MODEL.resolve_runtime_var_id("tmp850_anom", "mean") == "tmp850_anom__mean"
     assert EPS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
@@ -80,6 +87,11 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert tmp850_mean_request.product == "enfo"
     assert tmp850_mean_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_pf_mean"
 
+    rh700_request = EPS_MODEL.herbie_request(product="enfo", var_key="rh700", ensemble_view="mean")
+    assert rh700_request.model == "ifs"
+    assert rh700_request.product == "enfo"
+    assert rh700_request.herbie_kwargs["_cartosky_fetch_aggregation"] == "ecmwf_pf_mean"
+
     u10_request = EPS_MODEL.herbie_request(product="enfo", var_key="10u", ensemble_view="mean")
     assert u10_request.model == "ifs"
     assert u10_request.product == "enfo"
@@ -95,7 +107,7 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "tmp850_anom", "hgt500_anom", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "rh700", "tmp2m_anom", "tmp850_anom", "hgt500_anom", "wspd10m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "na"
@@ -112,6 +124,7 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
     assert ("eps", "hgt500__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp2m_anom__mean") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "rh700__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp850__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp850_anom__mean") in _PACKING_BY_MODEL_VAR
@@ -130,6 +143,8 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["default_view"] == "mean"
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "tmp2m__mean" not in payload["variables"]
+    assert "rh700__mean" not in payload["variables"]
+    assert "rh2m" not in payload["variables"]
     assert "tmp2m_anom__mean" not in payload["variables"]
     assert "tmp850__mean" not in payload["variables"]
     assert "tmp850_anom__mean" not in payload["variables"]
@@ -146,6 +161,19 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["ensemble"]["default_view"] == "mean"
     assert tmp2m["ensemble"]["supported_views"] == ["mean"]
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["var_key"] == "rh700"
+    assert rh700["display_name"] == "700mb Relative Humidity (Mean)"
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is False
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["default_fh"] == 0
+    assert rh700["group"] == "Moisture"
+    assert rh700["ensemble"]["default_view"] == "mean"
+    assert rh700["ensemble"]["supported_views"] == ["mean"]
 
     tmp2m_anom = payload["variables"]["tmp2m_anom"]
     assert tmp2m_anom["var_key"] == "tmp2m_anom"
@@ -198,11 +226,13 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
 
 def test_eps_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("eps", "tmp2m", None) == "mean"
+    assert _resolve_requested_ensemble_view("eps", "rh700", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "tmp2m_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "tmp850_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "wspd10m", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "hgt500_anom", None) == "mean"
     assert _runtime_var_id_for_request("eps", "tmp2m", "mean") == "tmp2m__mean"
+    assert _runtime_var_id_for_request("eps", "rh700", "mean") == "rh700__mean"
     assert _runtime_var_id_for_request("eps", "tmp2m_anom", "mean") == "tmp2m_anom__mean"
     assert _runtime_var_id_for_request("eps", "tmp850_anom", "mean") == "tmp850_anom__mean"
     assert _runtime_var_id_for_request("eps", "wspd10m", "mean") == "wspd10m__mean"

@@ -285,6 +285,18 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("gefs", "rh2m__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "%",
+    },
+    ("gefs", "rh700__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "%",
+    },
     ("gefs", "hgt500_anom"): {
         "scale": 0.1,
         "offset": -60.0,
@@ -314,6 +326,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "offset": -80.0,
         "nodata": 65535,
         "units": "F",
+    },
+    ("eps", "rh700__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "%",
     },
     ("eps", "hgt500__mean"): {
         "scale": 0.1,
