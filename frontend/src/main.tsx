@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { ClerkProvider, type ClerkProviderProps } from "@clerk/react";
 import { BrowserRouter } from "react-router-dom";
 import RouterApp from "./RouterApp";
 import { FeedbackWidget } from "./components/FeedbackWidget";
@@ -14,16 +15,21 @@ import "./styles/globals.css";
 initRumTelemetry();
 initPostHogAnalytics();
 
+type EnvClerkProviderProps = Omit<ClerkProviderProps, "publishableKey">;
+const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderProps>;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <SiteLoadingProvider>
-        <FeedbackProvider>
-          <PostHogBridge />
-          <RouterApp />
-          <FeedbackWidget />
-        </FeedbackProvider>
-      </SiteLoadingProvider>
-    </BrowserRouter>
+    <EnvClerkProvider afterSignOutUrl="/">
+      <BrowserRouter>
+        <SiteLoadingProvider>
+          <FeedbackProvider>
+            <PostHogBridge />
+            <RouterApp />
+            <FeedbackWidget />
+          </FeedbackProvider>
+        </SiteLoadingProvider>
+      </BrowserRouter>
+    </EnvClerkProvider>
   </React.StrictMode>
 );

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { Show, UserButton } from "@clerk/react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -1034,8 +1035,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const isViewerDesktop = isViewerRoute && (toolbar?.layoutMode === "desktop" || toolbar?.layoutMode === undefined);
   const isViewerMobile = isViewerRoute && !isViewerDesktop;
 
-  const accountLabel = twfStatus.linked ? twfStatus.display_name : "Login";
-  const accountPhotoUrl = twfStatus.linked ? twfStatus.photo_url : null;
   const adminEnabled = twfStatus.admin === true;
 
   useEffect(() => {
@@ -1139,17 +1138,19 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             >
               <MessageSquareText className="h-3.5 w-3.5" />
             </button>
-            <NavLink
-              to="/login"
-              className="ml-3 rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
-            >
-              <span className="inline-flex items-center gap-2">
-                {accountPhotoUrl ? (
-                  <img src={accountPhotoUrl} alt="" className="h-5 w-5 rounded-full object-cover" />
-                ) : null}
-                <span>{accountLabel}</span>
-              </span>
-            </NavLink>
+            <Show when="signed-out">
+              <NavLink
+                to="/login"
+                className="ml-3 rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
+              >
+                Login
+              </NavLink>
+            </Show>
+            <Show when="signed-in">
+              <div className="ml-3 flex h-9 items-center">
+                <UserButton />
+              </div>
+            </Show>
           </nav>
         ) : null}
 
@@ -1217,7 +1218,15 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                     Feedback
                   </button>
                   <div className="my-1 h-px bg-white/10" />
-                  <NavItem to="/login" label={accountLabel} onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  <Show when="signed-out">
+                    <NavItem to="/login" label="Login" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  </Show>
+                  <Show when="signed-in">
+                    <div className="flex items-center justify-between rounded-md px-3 py-2">
+                      <span className="text-sm font-medium text-white/90">Account</span>
+                      <UserButton />
+                    </div>
+                  </Show>
                 </div>
               </nav>
             ) : null}
