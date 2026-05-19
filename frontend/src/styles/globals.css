@@ -145,6 +145,90 @@
     max-height: 3rem !important;
     object-fit: contain;
   }
+
+  .cl-modalContent,
+  .cl-userProfile-root,
+  .cl-userProfileCard,
+  .cl-userProfilePage,
+  .cl-pageScrollBox {
+    background: #0b0e15 !important;
+    color: rgb(248 250 252) !important;
+  }
+
+  .cl-modalContent {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 24px 100px rgba(0, 0, 0, 0.72);
+  }
+
+  .cl-modalCloseButton,
+  .cl-userProfile-root .cl-menuButton,
+  .cl-userProfile-root .cl-formButtonReset {
+    color: rgb(148 163 184) !important;
+  }
+
+  .cl-modalCloseButton:hover,
+  .cl-userProfile-root .cl-menuButton:hover,
+  .cl-userProfile-root .cl-formButtonReset:hover {
+    color: rgb(248 250 252) !important;
+  }
+
+  .cl-userProfile-root .cl-navbar {
+    background: #090c12 !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  .cl-userProfile-root .cl-navbarButton {
+    color: rgb(148 163 184) !important;
+  }
+
+  .cl-userProfile-root .cl-navbarButton:hover,
+  .cl-userProfile-root .cl-navbarButton[data-active="true"] {
+    background: rgba(103, 232, 249, 0.09) !important;
+    color: rgb(103 232 249) !important;
+  }
+
+  .cl-userProfile-root .cl-navbarButtonIcon,
+  .cl-userProfile-root .cl-navbarButtonText {
+    color: inherit !important;
+  }
+
+  .cl-userProfile-root .cl-headerTitle,
+  .cl-userProfile-root .cl-profileSectionTitleText,
+  .cl-userProfile-root .cl-profileSectionItemTitle,
+  .cl-userProfile-root [class*="Title"] {
+    color: rgb(248 250 252) !important;
+  }
+
+  .cl-userProfile-root .cl-headerSubtitle,
+  .cl-userProfile-root .cl-profileSectionContent,
+  .cl-userProfile-root .cl-profileSectionItemSubtitle,
+  .cl-userProfile-root [class*="Subtitle"],
+  .cl-userProfile-root [class*="Description"] {
+    color: rgb(148 163 184) !important;
+  }
+
+  .cl-userProfile-root .cl-profileSectionPrimaryButton,
+  .cl-userProfile-root .cl-formButtonReset,
+  .cl-userProfile-root a {
+    color: rgb(103 232 249) !important;
+  }
+
+  .cl-userProfile-root .cl-profileSectionPrimaryButton:hover,
+  .cl-userProfile-root .cl-formButtonReset:hover,
+  .cl-userProfile-root a:hover {
+    color: rgb(165 243 252) !important;
+  }
+
+  .cl-userProfile-root .cl-profileSectionItem,
+  .cl-userProfile-root .cl-accordionTriggerButton,
+  .cl-userProfile-root .cl-badge {
+    border-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  .cl-userProfile-root .cl-badge {
+    background: rgba(103, 232, 249, 0.12) !important;
+    color: rgb(207 250 254) !important;
+  }
 }
 
 @layer utilities {
