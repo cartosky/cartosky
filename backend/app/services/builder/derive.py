@@ -3748,6 +3748,51 @@ def _relative_humidity_from_temp_dewpoint_c(
     return rh.astype(np.float32, copy=False)
 
 
+def _specific_humidity_to_kgkg(data: np.ndarray, units: Any) -> np.ndarray:
+    units_norm = str(units or "kg/kg").strip().lower().replace(" ", "")
+    values = data.astype(np.float32, copy=True)
+    if units_norm in {"kg/kg", "kgkg-1", "kgkg^-1", "1", "fraction"}:
+        return values
+    if units_norm in {"g/kg", "gkg-1", "gkg^-1"}:
+        return values / np.float32(1000.0)
+    raise ValueError(f"Unsupported specific humidity units for relative humidity derive: {units!r}")
+
+
+def _relative_humidity_from_specific_humidity_temp_pressure(
+    specific_humidity_kgkg: np.ndarray,
+    temp_c: np.ndarray,
+    pressure_hpa: float,
+) -> np.ndarray:
+    if specific_humidity_kgkg.shape != temp_c.shape:
+        raise ValueError(
+            "relative humidity shape mismatch: "
+            f"{specific_humidity_kgkg.shape} != {temp_c.shape}"
+        )
+
+    q = specific_humidity_kgkg.astype(np.float32, copy=False)
+    temp = temp_c.astype(np.float32, copy=False)
+    valid = np.isfinite(q) & np.isfinite(temp) & (q >= np.float32(0.0))
+    rh = np.full(temp.shape, np.nan, dtype=np.float32)
+
+    epsilon = np.float32(0.622)
+    pressure = np.float32(pressure_hpa)
+    denom = epsilon + (np.float32(1.0) - epsilon) * q
+    valid &= np.isfinite(denom) & (denom > np.float32(1.0e-9)) & (pressure > np.float32(0.0))
+
+    a = np.float32(17.625)
+    b = np.float32(243.04)
+    denom_temp = b + temp
+    valid &= np.abs(denom_temp) > np.float32(1.0e-6)
+
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        vapor_pressure_hpa = (q * pressure) / denom
+        saturation_hpa = np.float32(6.1094) * np.exp((a * temp / denom_temp).astype(np.float64))
+        computed = (np.float32(100.0) * vapor_pressure_hpa / saturation_hpa).astype(np.float32)
+
+    rh[valid] = np.clip(computed[valid], np.float32(0.0), np.float32(100.0))
+    return rh.astype(np.float32, copy=False)
+
+
 def _derive_relative_humidity_from_temp_dewpoint(
     *,
     model_id: str,
@@ -3823,6 +3868,85 @@ def _derive_relative_humidity_from_temp_dewpoint(
     temp_c = _temperature_to_celsius(temp_data, temp_units)
     dewpoint_c = _temperature_to_celsius(dewpoint_data, dewpoint_units)
     rh = _relative_humidity_from_temp_dewpoint_c(temp_c, dewpoint_c)
+    return rh, src_crs, src_transform
+
+
+def _derive_relative_humidity_from_specific_humidity(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_key, var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
+    humidity_component = str(hints.get("specific_humidity_component") or hints.get("humidity_component") or "q700").strip()
+    temp_component = str(hints.get("temp_component") or hints.get("temperature_component") or "tmp700").strip()
+    humidity_units = str(hints.get("specific_humidity_units") or hints.get("humidity_units") or "kg/kg").strip()
+    temp_units = str(hints.get("temp_units") or hints.get("temperature_units") or "c").strip()
+    pressure_hpa = float(hints.get("pressure_hpa") or 700.0)
+    if not humidity_component or not temp_component:
+        raise ValueError("specific-humidity relative humidity derive requires humidity and temperature component hints")
+
+    use_warped = _derive_uses_warped_components(derive_component_target_grid, derive_component_resampling)
+    if use_warped:
+        target_region = str((derive_component_target_grid or {}).get("region", "")).strip()
+        target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+        resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
+        humidity_data, src_crs, src_transform = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=humidity_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+        temp_data, _, _ = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=temp_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+    else:
+        humidity_data, src_crs, src_transform = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=humidity_component,
+            ctx=ctx,
+        )
+        temp_data, _, _ = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=temp_component,
+            ctx=ctx,
+        )
+
+    q_kgkg = _specific_humidity_to_kgkg(humidity_data, humidity_units)
+    temp_c = _temperature_to_celsius(temp_data, temp_units)
+    rh = _relative_humidity_from_specific_humidity_temp_pressure(q_kgkg, temp_c, pressure_hpa)
     return rh, src_crs, src_transform
 
 
@@ -6438,6 +6562,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("tmp2m", "dp2m"),
         output_var_key="rh2m",
         execute=_derive_relative_humidity_from_temp_dewpoint,
+    ),
+    "relative_humidity_from_specific_humidity": DeriveStrategy(
+        id="relative_humidity_from_specific_humidity",
+        required_inputs=("q700", "tmp700"),
+        output_var_key=None,
+        execute=_derive_relative_humidity_from_specific_humidity,
     ),
     "radar_ptype_combo": DeriveStrategy(
         id="radar_ptype_combo",

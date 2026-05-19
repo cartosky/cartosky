@@ -12,6 +12,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.builder.derive import (  # noqa: E402
     _relative_humidity_from_temp_dewpoint_c,
+    _relative_humidity_from_specific_humidity_temp_pressure,
+    _specific_humidity_to_kgkg,
     _temperature_to_celsius,
 )
 
@@ -48,3 +50,24 @@ def test_temperature_to_celsius_supports_common_component_units() -> None:
 
     with pytest.raises(ValueError, match="Unsupported temperature units"):
         _temperature_to_celsius(values, "rankine")
+
+
+def test_relative_humidity_from_specific_humidity_temperature_and_pressure() -> None:
+    q_kgkg = np.array([[0.00423, 0.00933]], dtype=np.float32)
+    temp_c = np.array([[0.0, 10.0]], dtype=np.float32)
+
+    rh = _relative_humidity_from_specific_humidity_temp_pressure(q_kgkg, temp_c, 700.0)
+
+    assert rh.dtype == np.float32
+    np.testing.assert_allclose(rh[0, 0], 77.9, rtol=0.0, atol=0.2)
+    np.testing.assert_allclose(rh[0, 1], 85.16, rtol=0.0, atol=0.2)
+
+
+def test_specific_humidity_to_kgkg_supports_common_units() -> None:
+    values = np.array([[4.0, 0.004]], dtype=np.float32)
+
+    np.testing.assert_allclose(_specific_humidity_to_kgkg(values[:, :1], "g/kg"), [[0.004]], atol=0.000001)
+    np.testing.assert_allclose(_specific_humidity_to_kgkg(values[:, 1:], "kg/kg"), [[0.004]], atol=0.000001)
+
+    with pytest.raises(ValueError, match="Unsupported specific humidity units"):
+        _specific_humidity_to_kgkg(values, "percent")

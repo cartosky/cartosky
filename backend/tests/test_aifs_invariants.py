@@ -55,6 +55,12 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("dp2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("d2m") == "dp2m"
     assert AIFS_MODEL.normalize_var_id("2d") == "dp2m"
+    assert AIFS_MODEL.normalize_var_id("rh2m") == "rh2m"
+    assert AIFS_MODEL.normalize_var_id("surface_rh") == "rh2m"
+    assert AIFS_MODEL.normalize_var_id("surface_relative_humidity") == "rh2m"
+    assert AIFS_MODEL.normalize_var_id("rh700") == "rh700"
+    assert AIFS_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert AIFS_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
     assert AIFS_MODEL.normalize_var_id("tmp850") == "tmp850"
     assert AIFS_MODEL.normalize_var_id("t850") == "tmp850"
     assert AIFS_MODEL.normalize_var_id("temp850") == "tmp850"
@@ -71,6 +77,8 @@ def test_aifs_alias_and_herbie_request_invariants() -> None:
     assert AIFS_MODEL.normalize_var_id("hgt500") == "hgt500"
     assert AIFS_MODEL.normalize_var_id("z500") == "hgt500"
     assert AIFS_MODEL.normalize_var_id("gh500") == "hgt500"
+    assert AIFS_MODEL.normalize_var_id("q700") == "q700"
+    assert AIFS_MODEL.normalize_var_id("700mb_specific_humidity") == "q700"
     assert AIFS_MODEL.normalize_var_id("hgt500_anom") == "hgt500_anom"
     assert AIFS_MODEL.normalize_var_id("500mb_height_anom") == "hgt500_anom"
     assert AIFS_MODEL.normalize_var_id("precip_total") == "precip_total"
@@ -107,7 +115,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "precip_total", "pwat", "snowfall_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "pwat", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -123,6 +131,8 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert ("aifs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("aifs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("aifs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
+    assert ("aifs", "rh2m") in _PACKING_BY_MODEL_VAR
+    assert ("aifs", "rh700") in _PACKING_BY_MODEL_VAR
 
     tmp2m_spec = AIFS_MODEL.get_var("tmp2m")
     assert tmp2m_spec is not None
@@ -175,6 +185,51 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert dp2m_spec.selectors.filter_by_keys == {
         "shortName": "2d",
         "typeOfLevel": "surface",
+    }
+
+    rh2m_spec = AIFS_MODEL.get_var("rh2m")
+    assert rh2m_spec is not None
+    assert rh2m_spec.primary is True
+    assert rh2m_spec.derived is True
+    assert rh2m_spec.derive == "relative_humidity_from_temp_dewpoint"
+    assert rh2m_spec.kind == "continuous"
+    assert rh2m_spec.units == "%"
+    assert rh2m_spec.selectors.search == []
+    assert rh2m_spec.selectors.hints["temp_component"] == "tmp2m"
+    assert rh2m_spec.selectors.hints["dewpoint_component"] == "dp2m"
+    assert rh2m_spec.selectors.hints["temp_units"] == "c"
+    assert rh2m_spec.selectors.hints["dewpoint_units"] == "c"
+
+    rh700_spec = AIFS_MODEL.get_var("rh700")
+    assert rh700_spec is not None
+    assert rh700_spec.primary is True
+    assert rh700_spec.derived is True
+    assert rh700_spec.derive == "relative_humidity_from_specific_humidity"
+    assert rh700_spec.kind == "continuous"
+    assert rh700_spec.units == "%"
+    assert rh700_spec.selectors.search == []
+    assert rh700_spec.selectors.hints["specific_humidity_component"] == "q700"
+    assert rh700_spec.selectors.hints["specific_humidity_units"] == "kg/kg"
+    assert rh700_spec.selectors.hints["temp_component"] == "tmp700"
+    assert rh700_spec.selectors.hints["temp_units"] == "c"
+    assert rh700_spec.selectors.hints["pressure_hpa"] == "700"
+
+    tmp700_spec = AIFS_MODEL.get_var("tmp700")
+    assert tmp700_spec is not None
+    assert tmp700_spec.primary is False
+    assert tmp700_spec.derived is False
+    assert tmp700_spec.selectors.search == [":t:700:pl:"]
+
+    q700_spec = AIFS_MODEL.get_var("q700")
+    assert q700_spec is not None
+    assert q700_spec.primary is False
+    assert q700_spec.derived is False
+    assert q700_spec.units == "kg/kg"
+    assert q700_spec.selectors.search == [":q:700:pl:", ":q:700:"]
+    assert q700_spec.selectors.filter_by_keys == {
+        "shortName": "q",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "700",
     }
 
     tmp850_spec = AIFS_MODEL.get_var("tmp850")
@@ -400,6 +455,34 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
 
+    rh2m = payload["variables"]["rh2m"]
+    assert rh2m["var_key"] == "rh2m"
+    assert rh2m["display_name"] == "Surface Relative Humidity"
+    assert rh2m["kind"] == "continuous"
+    assert rh2m["units"] == "%"
+    assert rh2m["buildable"] is True
+    assert rh2m["derived"] is True
+    assert rh2m["derive_strategy_id"] == "relative_humidity_from_temp_dewpoint"
+    assert rh2m["color_map_id"] == "rh"
+    assert rh2m["order"] == 2.5
+    assert rh2m["group"] == "Moisture"
+    assert rh2m["default_fh"] == 0
+    assert rh2m["render_substrates"] == ["grid"]
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["var_key"] == "rh700"
+    assert rh700["display_name"] == "700mb Relative Humidity"
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is True
+    assert rh700["derive_strategy_id"] == "relative_humidity_from_specific_humidity"
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["order"] == 3.75
+    assert rh700["group"] == "Moisture"
+    assert rh700["default_fh"] == 0
+    assert rh700["render_substrates"] == ["grid"]
+
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["var_key"] == "tmp850"
     assert tmp850["display_name"] == "850mb Temp"
@@ -527,6 +610,8 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
 
     assert "10u" not in payload["variables"]
     assert "10v" not in payload["variables"]
+    assert "tmp700" not in payload["variables"]
+    assert "q700" not in payload["variables"]
     assert "u850" not in payload["variables"]
     assert "v850" not in payload["variables"]
     assert "hgt850" not in payload["variables"]

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import HerbieRequest, ModelCapabilities, VarSelectors
+from .base import HerbieRequest, ModelCapabilities, VarSelectors, VarSpec
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
 from .gfs import (
     PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
@@ -45,6 +45,8 @@ class AIFSPlugin(ECMWFPlugin):
             return "hgt300"
         if normalized in {"z500", "gh500"}:
             return "hgt500"
+        if normalized in {"q700", "sh700", "specific_humidity_700", "700mb_specific_humidity"}:
+            return "q700"
         return super().normalize_var_id(var_id)
 
     def herbie_request(
@@ -76,8 +78,47 @@ AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
     "tmp2m_anom": ECMWF_VARS["tmp2m_anom"],
     "dp2m": ECMWF_VARS["dp2m"],
+    "rh2m": ECMWF_VARS["rh2m"],
+    "rh700": VarSpec(
+        id="rh700",
+        name="700mb Relative Humidity",
+        selectors=VarSelectors(
+            hints={
+                "specific_humidity_component": "q700",
+                "specific_humidity_units": "kg/kg",
+                "temp_component": "tmp700",
+                "temp_units": "c",
+                "pressure_hpa": "700",
+            }
+        ),
+        primary=True,
+        derived=True,
+        derive="relative_humidity_from_specific_humidity",
+        kind="continuous",
+        units="%",
+    ),
     "tmp850": ECMWF_VARS["tmp850"],
     "tmp850_anom": ECMWF_VARS["tmp850_anom"],
+    "tmp700": ECMWF_VARS["tmp700"],
+    "q700": VarSpec(
+        id="q700",
+        name="700mb Specific Humidity",
+        selectors=VarSelectors(
+            search=[":q:700:pl:", ":q:700:"],
+            filter_by_keys={
+                "shortName": "q",
+                "typeOfLevel": "isobaricInhPa",
+                "level": "700",
+            },
+            hints={
+                "upstream_var": "q700",
+                "cf_var": "q",
+                "short_name": "q",
+            },
+        ),
+        kind="continuous",
+        units="kg/kg",
+    ),
     "u850": ECMWF_VARS["u850"],
     "v850": ECMWF_VARS["v850"],
     "hgt850": ECMWF_VARS["hgt850"],
@@ -107,7 +148,7 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 AIFS_VARIABLE_CATALOG = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in AIFS_VARS.items()
-    if var_key not in {"10u", "10v", "u850", "v850", "hgt850", "u300", "v300", "hgt300"}
+    if var_key not in {"10u", "10v", "tmp700", "q700", "u850", "v850", "hgt850", "u300", "v300", "hgt300"}
 }
 
 AIFS_VARIABLE_CATALOG["precip_total"] = replace(
