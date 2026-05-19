@@ -30,11 +30,10 @@ type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES"
 
 const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
-  { id: "PRECIPITATION", label: "Precipitation" },
+  { id: "PRECIPITATION", label: "Precip" },
   { id: "PRECIP ANOMALIES", label: "Precip anomalies" },
   { id: "SEVERE", label: "Severe" },
   { id: "UPPER AIR", label: "Upper air" },
-  { id: "ENSEMBLE", label: "Ensemble" },
   { id: "RADAR", label: "Radar" },
 ];
 
@@ -313,7 +312,7 @@ export function VariablePicker({
   const panel = open && panelPosition ? createPortal(
     <div
       ref={panelRef}
-      className="fixed z-[90] w-[min(380px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-[#1a3a5c]/70 bg-[#04101e] text-white shadow-[0_18px_56px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(100,180,255,0.08)]"
+      className="fixed z-[90] w-[min(380px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] text-white shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
       style={{ left: panelPosition.left, top: panelPosition.top }}
       role="dialog"
       aria-label="Variable picker"
@@ -343,7 +342,7 @@ export function VariablePicker({
       </div>
 
       <div className="grid h-[292px] grid-cols-[118px_minmax(0,1fr)]">
-        <div className="border-r border-[#1a3a5c]/55 bg-[#071422] p-1.5">
+        <div className="border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
           {categoryRows.map((category) => {
             const active = !hasSearch && category.id === activeCategory;
             return (
@@ -358,7 +357,14 @@ export function VariablePicker({
                     : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                 )}
               >
-                <span className="min-w-0 truncate">{category.label}</span>
+                {category.id === "PRECIP ANOMALIES" ? (
+                  <span className="min-w-0 leading-[1.05]">
+                    <span className="block">Precip</span>
+                    <span className="block">Anomalies</span>
+                  </span>
+                ) : (
+                  <span className="min-w-0 truncate">{category.label}</span>
+                )}
                 <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
                   {category.count}
                 </span>
@@ -428,7 +434,7 @@ export function VariablePicker({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422] px-3 py-2">
+      <div className="flex items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden="true"
