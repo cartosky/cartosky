@@ -1,6 +1,9 @@
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import { useAuth } from "@clerk/react";
 import { Activity, BarChart3, ClipboardCheck, Gauge, MessageSquareText, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
+
+import { clerkJwtTemplate, setClerkAuthTokenProvider } from "@/lib/admin-api";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
   const { to, label, icon: Icon } = props;
@@ -23,6 +26,30 @@ function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ 
 }
 
 export default function AdminLayout() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [tokenProviderReady, setTokenProviderReady] = useState(false);
+
+  useEffect(() => {
+    setTokenProviderReady(false);
+
+    if (!isLoaded) {
+      setClerkAuthTokenProvider(null);
+      return undefined;
+    }
+
+    setClerkAuthTokenProvider(async () => {
+      if (!isSignedIn) {
+        return null;
+      }
+      return getToken({ template: clerkJwtTemplate() });
+    });
+    setTokenProviderReady(true);
+
+    return () => {
+      setClerkAuthTokenProvider(null);
+    };
+  }, [getToken, isLoaded, isSignedIn]);
+
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#07111f] text-white">
       <div
@@ -62,7 +89,13 @@ export default function AdminLayout() {
         </div>
 
         <main className="min-w-0">
-          <Outlet />
+          {isLoaded && tokenProviderReady ? (
+            <Outlet />
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-6 text-sm text-white/68">
+              Loading admin session...
+            </div>
+          )}
         </main>
       </div>
     </div>

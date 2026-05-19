@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,6 +77,8 @@ from .services.render_resampling import (
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
+from backend.app import config as app_config
+from backend.app.auth.clerk import ClerkPrincipal, require_clerk_admin, require_clerk_user
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -1018,6 +1020,21 @@ def _require_admin_session(request: Request) -> twf_oauth.TwfSession:
     return sess
 
 
+async def _require_admin_identity(request: Request) -> ClerkPrincipal | twf_oauth.TwfSession:
+    if app_config.clerk_auth_enabled():
+        return await require_clerk_admin(request)
+    return _require_admin_session(request)
+
+
+@app.get("/api/v4/auth/me")
+async def clerk_auth_me(current_user: ClerkPrincipal = Depends(require_clerk_user)) -> dict[str, Any]:
+    return {
+        "user_id": current_user.user_id,
+        "role": current_user.role,
+        "is_admin": current_user.is_admin,
+    }
+
+
 def _resolve_window_seconds(window: str) -> int:
     normalized = window.strip().lower()
     if normalized not in _ADMIN_WINDOW_SECONDS:
@@ -1345,8 +1362,8 @@ async def admin_perf_summary(
     model: str | None = Query(None),
     variable: str | None = Query(None),
     latest_runs: int | None = Query(None, ge=1, le=12),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     summary = admin_telemetry.get_perf_summary(
@@ -1378,8 +1395,8 @@ async def admin_perf_timeseries(
     model: str | None = Query(None),
     variable: str | None = Query(None),
     latest_runs: int | None = Query(None, ge=1, le=12),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     resolved_bucket = _resolve_bucket(normalized_window, bucket)
@@ -1420,8 +1437,8 @@ async def admin_perf_breakdown(
     variable: str | None = Query(None),
     latest_runs: int | None = Query(None, ge=1, le=12),
     limit: int = Query(8, ge=1, le=20),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     try:
@@ -1452,8 +1469,11 @@ async def admin_perf_breakdown(
 
 
 @app.get("/api/v4/admin/usage/summary")
-async def admin_usage_summary(request: Request, window: str = Query("30d")) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_usage_summary(
+    request: Request,
+    window: str = Query("30d"),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
@@ -1471,8 +1491,8 @@ async def admin_feedback(
     since: str | None = Query(None),
     until: str | None = Query(None),
     display_name: str | None = Query(None),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     try:
         normalized_since = feedback_service.normalize_datetime_filter(since)
         normalized_until = feedback_service.normalize_datetime_filter(until)
@@ -1491,8 +1511,11 @@ async def admin_feedback(
 
 
 @app.get("/api/v4/admin/overview/summary")
-async def admin_overview_summary(request: Request, window: str = Query("7d")) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_overview_summary(
+    request: Request,
+    window: str = Query("7d"),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
@@ -1502,8 +1525,11 @@ async def admin_overview_summary(request: Request, window: str = Query("7d")) ->
 
 
 @app.get("/api/v4/admin/overview/network-diagnostics")
-async def admin_overview_network_diagnostics(request: Request, window: str = Query("7d")) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_overview_network_diagnostics(
+    request: Request,
+    window: str = Query("7d"),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
@@ -1513,15 +1539,19 @@ async def admin_overview_network_diagnostics(request: Request, window: str = Que
 
 
 @app.get("/api/v4/admin/observability/summary")
-async def admin_observability_summary(request: Request) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_observability_summary(
+    request: Request,
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     _refresh_prometheus_gauges()
     return prometheus_metrics.get_observability_summary()
 
 
 @app.get("/api/v4/admin/traces/summary")
-async def admin_traces_summary(request: Request) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_traces_summary(
+    request: Request,
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     return otel_tracing.get_traces_summary()
 
 
@@ -1533,8 +1563,8 @@ async def admin_status_results(
     status: str | None = Query(None),
     limit: int = Query(200, ge=1, le=500),
     include_details: bool = Query(False),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     normalized_window = window.strip().lower()
     since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
     return {
@@ -1559,8 +1589,8 @@ async def admin_status_run_detail(
     request: Request,
     model: str = Query(...),
     run: str = Query(...),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
-    _require_admin_session(request)
     return {
         "result": admin_telemetry.get_operational_status_run_detail(
             data_root=DATA_ROOT,
@@ -1571,8 +1601,10 @@ async def admin_status_run_detail(
 
 
 @app.get("/api/v4/admin/status/qa-summary")
-async def admin_status_qa_summary(request: Request) -> dict[str, Any]:
-    _require_admin_session(request)
+async def admin_status_qa_summary(
+    request: Request,
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
     return admin_telemetry.get_status_qa_summary()
 
 

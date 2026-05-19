@@ -1,11 +1,35 @@
 import { API_ORIGIN } from "@/lib/config";
 
+const CLERK_JWT_TEMPLATE = "cartosky-default";
+
+export type ClerkAuthTokenProvider = () => Promise<string | null>;
+
+let clerkAuthTokenProvider: ClerkAuthTokenProvider | null = null;
+
+export function setClerkAuthTokenProvider(provider: ClerkAuthTokenProvider | null): void {
+  clerkAuthTokenProvider = provider;
+}
+
+export async function getClerkAuthToken(): Promise<string | null> {
+  return clerkAuthTokenProvider ? clerkAuthTokenProvider() : null;
+}
+
+export function clerkJwtTemplate(): string {
+  return CLERK_JWT_TEMPLATE;
+}
+
 export type TwfStatus = {
   linked: boolean;
   admin: boolean;
   member_id?: number;
   display_name?: string;
   photo_url?: string | null;
+};
+
+type ClerkMeResponse = {
+  user_id: string;
+  role: string | null;
+  is_admin: boolean;
 };
 
 export type OverviewMetricSummary = {
@@ -259,28 +283,51 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function withBearerToken(init: RequestInit | undefined, token: string): RequestInit {
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return {
+    ...init,
+    headers,
+  };
+}
+
+async function fetchAdminJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const token = await getClerkAuthToken();
+  return fetchJson<T>(url, token ? withBearerToken(init, token) : init);
+}
+
 export async function fetchTwfStatus(): Promise<TwfStatus> {
+  const token = await getClerkAuthToken();
+  if (token) {
+    const me = await fetchJson<ClerkMeResponse>(`${API_ORIGIN}/api/v4/auth/me`, withBearerToken(undefined, token));
+    return {
+      linked: true,
+      admin: me.is_admin,
+      display_name: me.user_id,
+    };
+  }
   return fetchJson<TwfStatus>(`${API_ORIGIN}/auth/twf/status`);
 }
 
 export async function fetchAdminOverviewSummary(window: string): Promise<AdminOverviewSummaryResponse> {
   const search = new URLSearchParams();
   search.set("window", window);
-  return fetchJson<AdminOverviewSummaryResponse>(`${API_ORIGIN}/api/v4/admin/overview/summary?${search.toString()}`);
+  return fetchAdminJson<AdminOverviewSummaryResponse>(`${API_ORIGIN}/api/v4/admin/overview/summary?${search.toString()}`);
 }
 
 export async function fetchAdminNetworkDiagnostics(window: string): Promise<AdminNetworkDiagnosticsResponse> {
   const search = new URLSearchParams();
   search.set("window", window);
-  return fetchJson<AdminNetworkDiagnosticsResponse>(`${API_ORIGIN}/api/v4/admin/overview/network-diagnostics?${search.toString()}`);
+  return fetchAdminJson<AdminNetworkDiagnosticsResponse>(`${API_ORIGIN}/api/v4/admin/overview/network-diagnostics?${search.toString()}`);
 }
 
 export async function fetchAdminObservabilitySummary(): Promise<AdminObservabilitySummaryResponse> {
-  return fetchJson<AdminObservabilitySummaryResponse>(`${API_ORIGIN}/api/v4/admin/observability/summary`);
+  return fetchAdminJson<AdminObservabilitySummaryResponse>(`${API_ORIGIN}/api/v4/admin/observability/summary`);
 }
 
 export async function fetchAdminTracesSummary(): Promise<AdminTracesSummaryResponse> {
-  return fetchJson<AdminTracesSummaryResponse>(`${API_ORIGIN}/api/v4/admin/traces/summary`);
+  return fetchAdminJson<AdminTracesSummaryResponse>(`${API_ORIGIN}/api/v4/admin/traces/summary`);
 }
 
 export async function fetchAdminFeedback(params: {
@@ -298,7 +345,7 @@ export async function fetchAdminFeedback(params: {
   if (params.since?.trim()) search.set("since", params.since.trim());
   if (params.until?.trim()) search.set("until", params.until.trim());
   if (params.displayName?.trim()) search.set("display_name", params.displayName.trim());
-  return fetchJson<AdminFeedbackResponse>(`${API_ORIGIN}/api/v4/admin/feedback?${search.toString()}`);
+  return fetchAdminJson<AdminFeedbackResponse>(`${API_ORIGIN}/api/v4/admin/feedback?${search.toString()}`);
 }
 
 export async function fetchAdminStatusResults(params: {
@@ -314,7 +361,7 @@ export async function fetchAdminStatusResults(params: {
   if (params.model && params.model !== "all") search.set("model", params.model);
   if (params.status && params.status !== "all") search.set("status", params.status);
   if (params.includeDetails) search.set("include_details", "true");
-  return fetchJson<StatusResultsResponse>(`${API_ORIGIN}/api/v4/admin/status/results?${search.toString()}`);
+  return fetchAdminJson<StatusResultsResponse>(`${API_ORIGIN}/api/v4/admin/status/results?${search.toString()}`);
 }
 
 export async function fetchAdminStatusRunDetail(params: {
@@ -324,9 +371,9 @@ export async function fetchAdminStatusRunDetail(params: {
   const search = new URLSearchParams();
   search.set("model", params.model);
   search.set("run", params.run);
-  return fetchJson<StatusRunDetailResponse>(`${API_ORIGIN}/api/v4/admin/status/run?${search.toString()}`);
+  return fetchAdminJson<StatusRunDetailResponse>(`${API_ORIGIN}/api/v4/admin/status/run?${search.toString()}`);
 }
 
 export async function fetchAdminStatusQaSummary(): Promise<StatusQaSummaryResponse> {
-  return fetchJson<StatusQaSummaryResponse>(`${API_ORIGIN}/api/v4/admin/status/qa-summary`);
+  return fetchAdminJson<StatusQaSummaryResponse>(`${API_ORIGIN}/api/v4/admin/status/qa-summary`);
 }

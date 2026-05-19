@@ -25,6 +25,19 @@ def clerk_auth_enabled() -> bool:
 
 
 @lru_cache(maxsize=1)
+def clerk_jwt_audience() -> str:
+    return _env_value("CLERK_JWT_AUDIENCE").strip()
+
+
+@lru_cache(maxsize=1)
+def clerk_authorized_parties() -> list[str]:
+    raw = _env_value("CLERK_AUTHORIZED_PARTIES").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+@lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True
 
