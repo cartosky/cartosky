@@ -18,9 +18,36 @@ initPostHogAnalytics();
 type EnvClerkProviderProps = Omit<ClerkProviderProps, "publishableKey">;
 const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderProps>;
 
+const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
+  variables: {
+    colorBackground: "#101218",
+    colorInputBackground: "#161922",
+    colorInputText: "#f8fafc",
+    colorText: "#f8fafc",
+    colorTextSecondary: "#94a3b8",
+    colorPrimary: "#22d3ee",
+    colorDanger: "#fb7185",
+    borderRadius: "0.5rem",
+  },
+  elements: {
+    card: "border border-white/10 bg-transparent shadow-xl backdrop-blur-xl",
+    headerTitle: "text-white",
+    headerSubtitle: "text-slate-400",
+    formFieldLabel: "text-slate-200",
+    formFieldInput: "border-white/10 bg-[#161922] text-white placeholder:text-slate-500 focus:border-cyan-300/50 focus:ring-cyan-300/20",
+    formButtonPrimary: "bg-cyan-500 text-slate-950 hover:bg-cyan-400 focus:ring-cyan-300/30",
+    footerActionLink: "text-cyan-300 hover:text-cyan-200",
+    dividerLine: "bg-white/10",
+    dividerText: "text-slate-400",
+    socialButtonsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
+    alternativeMethodsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
+    otpCodeFieldInput: "border-white/10 bg-[#161922] text-white focus:border-cyan-300/50 focus:ring-cyan-300/20",
+  },
+};
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <EnvClerkProvider afterSignOutUrl="/">
+    <EnvClerkProvider afterSignOutUrl="/" appearance={clerkAppearance}>
       <BrowserRouter>
         <SiteLoadingProvider>
           <FeedbackProvider>

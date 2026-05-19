@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { Show, UserButton } from "@clerk/react";
+import { Show, UserButton, useAuth } from "@clerk/react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -19,9 +19,11 @@ import {
 } from "lucide-react";
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
+import { API_ORIGIN } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import { useFeedbackContext } from "@/lib/feedback-context";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
+import { clerkJwtTemplate } from "@/lib/admin-api";
 import {
   Select,
   SelectContent,
@@ -992,15 +994,6 @@ type NavItemProps = {
   className?: string;
 };
 
-type TwfStatus =
-  | { linked: false; admin?: boolean }
-  | { linked: true; admin?: boolean; member_id: number; display_name: string; photo_url?: string | null };
-
-function getApiBase(): string {
-  const fromEnv = (import.meta as any)?.env?.VITE_API_BASE as string | undefined;
-  return ((fromEnv ?? "https://api.cartosky.com").trim()).replace(/\/$/, "");
-}
-
 function NavItem({ to, label, onClick, className }: NavItemProps) {
   return (
     <NavLink
@@ -1022,7 +1015,8 @@ function NavItem({ to, label, onClick, className }: NavItemProps) {
 // ─── Main SiteHeader ──────────────────────────────────────────────────────────
 export default function SiteHeader({ variant }: { variant: "marketing" | "app" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [twfStatus, setTwfStatus] = useState<TwfStatus>({ linked: false });
+  const [adminEnabled, setAdminEnabled] = useState(false);
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const location = useLocation();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const toolbar = useViewerToolbar();
@@ -1035,26 +1029,45 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const isViewerDesktop = isViewerRoute && (toolbar?.layoutMode === "desktop" || toolbar?.layoutMode === undefined);
   const isViewerMobile = isViewerRoute && !isViewerDesktop;
 
-  const adminEnabled = twfStatus.admin === true;
-
   useEffect(() => {
+    let cancelled = false;
     const controller = new AbortController();
-    fetch(`${getApiBase()}/auth/twf/status`, {
-      method: "GET",
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Status request failed (${r.status})`);
-        return (await r.json()) as TwfStatus;
-      })
-      .then((status) => setTwfStatus(status))
-      .catch((e: unknown) => {
-        if ((e as any)?.name === "AbortError") return;
-        setTwfStatus({ linked: false });
-      });
-    return () => controller.abort();
-  }, []);
+
+    async function loadAdminStatus() {
+      if (!isLoaded || !isSignedIn) {
+        setAdminEnabled(false);
+        return;
+      }
+
+      try {
+        const token = await getToken({ template: clerkJwtTemplate() });
+        if (!token) {
+          if (!cancelled) setAdminEnabled(false);
+          return;
+        }
+
+        const response = await fetch(`${API_ORIGIN}/api/v4/auth/me`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Admin auth check failed (${response.status})`);
+        }
+        const body = (await response.json()) as { is_admin?: boolean };
+        if (!cancelled) setAdminEnabled(body.is_admin === true);
+      } catch (error: unknown) {
+        if ((error as { name?: string } | undefined)?.name === "AbortError") return;
+        if (!cancelled) setAdminEnabled(false);
+      }
+    }
+
+    void loadAdminStatus();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [getToken, isLoaded, isSignedIn]);
 
   useEffect(() => {
     setMobileMenuOpen(false);
