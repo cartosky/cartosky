@@ -12,18 +12,6 @@ export default function Login() {
 
       <div className="relative mx-auto flex min-h-[calc(100vh-13rem)] max-w-md items-center justify-center">
         <section className="w-full">
-          <div className="mb-7 space-y-3 text-center">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#9bb4a8]">
-              CartoSky Account
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white md:text-4xl">
-              Sign in to CartoSky
-            </h1>
-            <p className="mx-auto max-w-sm text-sm leading-6 text-white/68">
-              Access your CartoSky account and return to the weather viewer when you are ready.
-            </p>
-          </div>
-
           <Show when="signed-out">
             <div className="flex justify-center">
               <SignIn
