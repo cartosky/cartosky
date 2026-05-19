@@ -38,16 +38,6 @@ function paragraphLines(text: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-function DetailPill({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null;
-  return (
-    <div className="rounded-md border border-white/[0.08] bg-white/[0.05] px-2.5 py-1.5">
-      <div className="text-[10px] uppercase text-white/40">{label}</div>
-      <div className="mt-0.5 text-xs font-medium text-white/85">{value}</div>
-    </div>
-  );
-}
-
 function AlertDetailCard({ alert }: { alert: NwsHazardAlertDetail }) {
   const descriptionLines = paragraphLines(alert.description);
   const instructionLines = paragraphLines(alert.instruction);
@@ -59,21 +49,11 @@ function AlertDetailCard({ alert }: { alert: NwsHazardAlertDetail }) {
           <h3 className="text-sm font-semibold leading-snug text-white">
             {alert.headline || alert.event || "NWS Hazard"}
           </h3>
-          {alert.area_description ? (
-            <p className="mt-1 text-xs text-white/50">{alert.area_description}</p>
-          ) : null}
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <DetailPill label="Severity" value={alert.severity} />
-        <DetailPill label="Urgency" value={alert.urgency} />
-        <DetailPill label="Certainty" value={alert.certainty} />
-        <DetailPill label="Expires" value={formatTime(alert.expires)} />
-      </div>
-
       {descriptionLines.length ? (
-        <div className="mt-4 space-y-2 text-sm leading-relaxed text-white/75">
+        <div className="mt-3 space-y-2 text-sm leading-relaxed text-white/75">
           {descriptionLines.map((line) => (
             <p key={line}>{line}</p>
           ))}
