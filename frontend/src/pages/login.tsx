@@ -1,10 +1,20 @@
 import { Show, SignIn, UserButton } from "@clerk/react";
 import { ExternalLink } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 
+function safeRedirectUrl(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/viewer";
+  }
+  return value;
+}
+
 export default function Login() {
+  const [searchParams] = useSearchParams();
+  const redirectUrl = safeRedirectUrl(searchParams.get("redirect_url"));
+
   return (
     <div className="relative min-h-[calc(100vh-9rem)] overflow-hidden px-4 py-10 md:px-6 md:py-16">
       <div className="pointer-events-none absolute inset-0">
@@ -18,8 +28,8 @@ export default function Login() {
             <div className="cartosky-clerk-auth flex justify-center">
               <SignIn
                 routing="hash"
-                fallbackRedirectUrl="/viewer"
-                signUpFallbackRedirectUrl="/viewer"
+                fallbackRedirectUrl={redirectUrl}
+                signUpFallbackRedirectUrl={redirectUrl}
                 appearance={{
                   layout: {
                     logoImageUrl: BRAND_LOGO_SRC,
@@ -47,10 +57,10 @@ export default function Login() {
                 </div>
 
                 <Link
-                  to="/viewer"
+                  to={redirectUrl}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-medium text-white hover:bg-white/[0.1]"
                 >
-                  Back to viewer
+                  Continue
                   <ExternalLink className="h-3.5 w-3.5" />
                 </Link>
               </div>

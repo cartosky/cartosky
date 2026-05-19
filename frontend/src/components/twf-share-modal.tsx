@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -340,6 +341,17 @@ function screenshotFilename(state: ScreenshotExportState): string {
   return `cartosky-${parts.join("-")}.png`;
 }
 
+function currentRouteWithSearch(): string {
+  if (typeof window === "undefined") {
+    return "/viewer";
+  }
+  return `${window.location.pathname}${window.location.search}` || "/viewer";
+}
+
+function loginRouteForCurrentPage(): string {
+  return `/login?${new URLSearchParams({ redirect_url: currentRouteWithSearch() }).toString()}`;
+}
+
 export function TwfShareModal({
   open,
   onClose,
@@ -430,9 +442,18 @@ export function TwfShareModal({
   const handleConnectTwf = useCallback(async () => {
     setSubmitError(null);
     setStatusError(null);
+    if (!clerkLoaded) {
+      setSubmitError({ message: "Checking CartoSky sign-in status." });
+      return;
+    }
+    if (!isSignedIn) {
+      setSubmitError(null);
+      setStatusError("Sign in to CartoSky before connecting TWF.");
+      return;
+    }
     setConnectBusy(true);
     try {
-      const returnTo = `${window.location.pathname}${window.location.search}` || "/";
+      const returnTo = currentRouteWithSearch();
       const response = await twfFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: returnTo })}`, {
         method: "GET",
         credentials: "include",
@@ -451,7 +472,7 @@ export function TwfShareModal({
       setSubmitError({ message: (error as Error).message || "Failed to start TWF connection." });
       setConnectBusy(false);
     }
-  }, [twfFetch]);
+  }, [clerkLoaded, isSignedIn, twfFetch]);
 
   const getTopicCacheEntry = (forumId: number): TopicCacheEntry | null => {
     const inMemory = topicCacheRef.current.get(forumId);
@@ -1192,6 +1213,7 @@ export function TwfShareModal({
   }
 
   const isPosted = Boolean(submitSuccess || submitTopicSuccess);
+  const signedOutLoginUrl = loginRouteForCurrentPage();
   const destinationLabel = selectedTopicTitle
     ? `${selectedForumLabel} › ${selectedTopicTitle}`
     : selectedForumLabel;
@@ -1474,16 +1496,30 @@ export function TwfShareModal({
                 )}
 
                 {twfStatus.linked !== true && (
-                  <div className="rounded-lg border border-cyan-200/10 bg-[#0b182b]/55 px-3 py-2.5 text-xs text-white/70">
-                    Connect your TWF account to post.{" "}
-                    <button
-                      type="button"
-                      onClick={handleConnectTwf}
-                      disabled={connectBusy}
-                      className="font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-wait disabled:opacity-70"
-                    >
-                      {connectBusy ? "Connecting..." : "Connect TWF"}
-                    </button>
+                  <div className="flex flex-col gap-2 rounded-lg border border-cyan-200/10 bg-[#0b182b]/55 px-3 py-2.5 text-xs text-white/70 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                      {isSignedIn
+                        ? "Connect your TWF account to post."
+                        : "Sign in to CartoSky, then connect your TWF account to post."}
+                    </span>
+                    {isSignedIn ? (
+                      <button
+                        type="button"
+                        onClick={handleConnectTwf}
+                        disabled={connectBusy}
+                        className="font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-wait disabled:opacity-70"
+                      >
+                        {connectBusy ? "Connecting..." : "Connect TWF"}
+                      </button>
+                    ) : (
+                      <Link
+                        to={signedOutLoginUrl}
+                        className="font-semibold text-cyan-300 hover:text-cyan-200"
+                        onClick={onClose}
+                      >
+                        Sign in
+                      </Link>
+                    )}
                   </div>
                 )}
 
@@ -1589,16 +1625,37 @@ export function TwfShareModal({
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => { void handleSubmitPost(); }}
-            disabled={postButtonDisabled || isPosted}
-            className={primaryButtonClass}
-          >
-            {submitBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {isPosted && <CheckCircle2 className="h-3.5 w-3.5" />}
-            {submitBusy ? "Posting…" : isPosted ? "Posted!" : "Post →"}
-          </button>
+          {!clerkLoaded ? (
+            <button type="button" disabled className={primaryButtonClass}>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Checking sign-in...
+            </button>
+          ) : !isSignedIn ? (
+            <Link to={signedOutLoginUrl} onClick={onClose} className={primaryButtonClass}>
+              Sign in
+            </Link>
+          ) : twfStatus.linked !== true ? (
+            <button
+              type="button"
+              onClick={handleConnectTwf}
+              disabled={connectBusy || isPosted}
+              className={primaryButtonClass}
+            >
+              {connectBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {connectBusy ? "Connecting..." : "Connect TWF"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { void handleSubmitPost(); }}
+              disabled={postButtonDisabled || isPosted}
+              className={primaryButtonClass}
+            >
+              {submitBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isPosted && <CheckCircle2 className="h-3.5 w-3.5" />}
+              {submitBusy ? "Posting…" : isPosted ? "Posted!" : "Post →"}
+            </button>
+          )}
         </div>
       </div>
     </div>
