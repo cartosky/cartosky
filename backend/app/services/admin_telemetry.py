@@ -1808,7 +1808,7 @@ def _scan_run_issue(
         contour_keys: list[str] = []
         grid_manifest_dir: Path | None = None
 
-        if uses_grid_runtime:
+        if uses_grid_runtime and frame_hours:
             grid_manifest_file = grid_manifest_path(data_root, model_id, run_id, artifact_variable_id)
             grid_manifest_dir = grid_manifest_file.parent
             if not grid_manifest_file.is_file():

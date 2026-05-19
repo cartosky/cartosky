@@ -338,6 +338,51 @@ async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_l
     assert rows[0]["sample_paths"] == []
 
 
+async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not_artifact_failure(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 5, 19, 14, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "gfs" / "20260519_12z.json",
+        model_id="gfs",
+        run_id="20260519_12z",
+        variables={"ptype_intensity": [0, 6]},
+        available_override={"ptype_intensity": 0},
+    )
+    manifest_path = main_module.DATA_ROOT / "manifests" / "gfs" / "20260519_12z.json"
+    manifest_payload = json.loads(manifest_path.read_text())
+    manifest_payload["last_updated"] = "2026-05-19T13:30:00Z"
+    manifest_path.write_text(json.dumps(manifest_payload))
+    (main_module.DATA_ROOT / "published" / "gfs" / "20260519_12z" / "ptype_intensity").mkdir(parents=True)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gfs&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "warning"
+    assert rows[0]["issue_type"] == "run_incomplete"
+    assert rows[0]["missing_artifact_count"] == 0
+    assert rows[0]["unreadable_artifact_count"] == 0
+    assert rows[0]["incomplete_variable_count"] == 1
+    assert rows[0]["incomplete_variables"] == ["ptype_intensity"]
+
+
 async def test_status_results_reuses_cached_operational_scan(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

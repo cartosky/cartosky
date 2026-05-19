@@ -120,6 +120,62 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     assert np.count_nonzero(rain_values[0] > 0.0) + np.count_nonzero(snow_values[0] > 0.0) + np.count_nonzero(ice_values[0] > 0.0) == 3
 
 
+def test_ptype_intensity_uses_warped_component_fetches_when_requested(monkeypatch) -> None:
+    crs = CRS.from_epsg(3857)
+    transform = Affine.translation(-1.0, 1.0)
+    target_shape = (2, 2)
+    component_data = {
+        "prate": np.full(target_shape, 10.0, dtype=np.float32),
+        "crain": np.ones(target_shape, dtype=np.float32),
+        "csnow": np.zeros(target_shape, dtype=np.float32),
+        "cicep": np.zeros(target_shape, dtype=np.float32),
+        "cfrzr": np.zeros(target_shape, dtype=np.float32),
+        "tmp2m": np.full(target_shape, 3.0, dtype=np.float32),
+        "tmp850": np.full(target_shape, 4.0, dtype=np.float32),
+    }
+    seen: list[tuple[str, bool, str, str, str]] = []
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        seen.append(
+            (
+                var_key,
+                bool(kwargs["use_warped"]),
+                str(kwargs["target_region"]),
+                str(kwargs["target_grid_id"]),
+                str(kwargs["resampling"]),
+            )
+        )
+        return component_data[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+    monkeypatch.setattr(
+        derive_module,
+        "_ptype_intensity_fetch_step_intensity",
+        _make_fake_step_intensity(np.full(target_shape, 2.0, dtype=np.float32)),
+    )
+
+    values, out_crs, out_transform = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 5, 19, 12),
+        fh=0,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=SimpleNamespace(),
+        ctx=derive_module.FetchContext(),
+        derive_component_target_grid={"region": "na", "id": "climatology:era5:na:25000.0m"},
+        derive_component_resampling="nearest",
+    )
+
+    assert values.shape == target_shape
+    assert out_crs == crs
+    assert out_transform == transform
+    assert {item[0] for item in seen} == {"prate", "crain", "csnow", "cicep", "cfrzr", "tmp2m", "tmp850"}
+    assert all(item[1:] == (True, "na", "climatology:era5:na:25000.0m", "nearest") for item in seen)
+
+
 def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

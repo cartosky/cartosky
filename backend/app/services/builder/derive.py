@@ -1417,18 +1417,26 @@ def _ptype_intensity_fetch_optional_component(
     model_plugin: Any,
     var_key: str | None,
     ctx: FetchContext | None,
+    use_warped: bool = False,
+    target_region: str = "",
+    target_grid_id: str = "",
+    resampling: str = "",
 ) -> np.ndarray | None:
     candidate = str(var_key or "").strip()
     if not candidate:
         return None
     try:
-        data, _, _ = _fetch_component(
+        data, _, _ = _fetch_step_component(
             model_id=model_id,
             product=product,
             run_date=run_date,
-            fh=fh,
+            step_fh=fh,
             model_plugin=model_plugin,
             var_key=candidate,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
             ctx=ctx,
         )
     except Exception:
@@ -1447,6 +1455,10 @@ def _ptype_intensity_thermal_fields(
     ctx: FetchContext | None,
     hints: dict[str, Any],
     expected_shape: tuple[int, ...],
+    use_warped: bool = False,
+    target_region: str = "",
+    target_grid_id: str = "",
+    resampling: str = "",
 ) -> tuple[np.ndarray, np.ndarray]:
     temp2m = _ptype_intensity_fetch_optional_component(
         model_id=model_id,
@@ -1456,6 +1468,10 @@ def _ptype_intensity_thermal_fields(
         model_plugin=model_plugin,
         var_key=str(hints.get("surface_temp_component") or "tmp2m"),
         ctx=ctx,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
     temp850 = _ptype_intensity_fetch_optional_component(
         model_id=model_id,
@@ -1465,6 +1481,10 @@ def _ptype_intensity_thermal_fields(
         model_plugin=model_plugin,
         var_key=str(hints.get("mid_temp_component") or "tmp850"),
         ctx=ctx,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     cold_fields: list[np.ndarray] = []
@@ -1501,6 +1521,10 @@ def _ptype_intensity_fetch_step_intensity(
     ctx: FetchContext | None,
     hints: dict[str, Any],
     expected_shape: tuple[int, ...],
+    use_warped: bool = False,
+    target_region: str = "",
+    target_grid_id: str = "",
+    resampling: str = "",
 ) -> np.ndarray | None:
     """Fetch the per-step APCP accumulation for ptype intensity display.
 
@@ -1625,6 +1649,25 @@ def _ptype_intensity_fetch_step_intensity(
             exc_info=True,
         )
         return None
+
+    if tuple(np.shape(step_data)) != tuple(expected_shape) and use_warped:
+        try:
+            step_data, _ = _warp_component_to_target_grid(
+                raw_data=np.asarray(step_data, dtype=np.float32),
+                raw_crs=step_crs,
+                raw_transform=step_transform,
+                model_id=model_id,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+            )
+        except Exception:
+            logger.debug(
+                "ptype_intensity APCP warp failed: model=%s fh=%03d pattern=%s",
+                model_id, fh, search_pattern,
+                exc_info=True,
+            )
+            return None
 
     if tuple(np.shape(step_data)) != tuple(expected_shape):
         return None
@@ -3864,27 +3907,48 @@ def _derive_ptype_intensity_gfs(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid,
+        derive_component_resampling,
+        model_id,
+    )
     prate_id = hints.get("prate_component", "prate")
     rain_id = hints.get("rain_component", "crain")
     snow_id = hints.get("snow_component", "csnow")
     sleet_id = hints.get("sleet_component", "cicep")
     frzr_id = hints.get("frzr_component", "cfrzr")
 
-    prate, src_crs, src_transform = _fetch_component(
+    prate, src_crs, src_transform = _fetch_step_component(
         model_id=model_id,
         product=product,
         run_date=run_date,
-        fh=fh,
+        step_fh=fh,
         model_plugin=model_plugin,
         var_key=prate_id,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
         ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
-    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
-    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
-    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    component_fetch_kwargs = {
+        "model_id": model_id,
+        "product": product,
+        "run_date": run_date,
+        "step_fh": fh,
+        "model_plugin": model_plugin,
+        "use_warped": use_warped,
+        "target_region": target_region,
+        "target_grid_id": target_grid_id,
+        "resampling": resampling,
+        "ctx": ctx,
+    }
+    rain, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=rain_id)
+    snow, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=snow_id)
+    sleet, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=sleet_id)
+    frzr, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=frzr_id)
     cold_profile, warm_profile = _ptype_intensity_thermal_fields(
         model_id=model_id,
         product=product,
@@ -3894,6 +3958,10 @@ def _derive_ptype_intensity_gfs(
         ctx=ctx,
         hints=hints,
         expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     intensity_rate = _ptype_intensity_fetch_step_intensity(
@@ -3905,6 +3973,10 @@ def _derive_ptype_intensity_gfs(
         ctx=ctx,
         hints=hints,
         expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
     if intensity_rate is None:
         # prate is instantaneous (kg/m²/s).  Convert to approximate step-
@@ -3997,8 +4069,13 @@ def _derive_ptype_intensity_component(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid,
+        derive_component_resampling,
+        model_id,
+    )
     component = str(hints.get("ptype_component") or "").strip().lower()
     prate_id = hints.get("prate_component", "prate")
     rain_id = hints.get("rain_component", "crain")
@@ -4006,19 +4083,35 @@ def _derive_ptype_intensity_component(
     sleet_id = hints.get("sleet_component", "cicep")
     frzr_id = hints.get("frzr_component", "cfrzr")
 
-    prate, src_crs, src_transform = _fetch_component(
+    prate, src_crs, src_transform = _fetch_step_component(
         model_id=model_id,
         product=product,
         run_date=run_date,
-        fh=fh,
+        step_fh=fh,
         model_plugin=model_plugin,
         var_key=prate_id,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
         ctx=ctx,
     )
-    rain, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=rain_id, ctx=ctx)
-    snow, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=snow_id, ctx=ctx)
-    sleet, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=sleet_id, ctx=ctx)
-    frzr, _, _ = _fetch_component(model_id=model_id, product=product, run_date=run_date, fh=fh, model_plugin=model_plugin, var_key=frzr_id, ctx=ctx)
+    component_fetch_kwargs = {
+        "model_id": model_id,
+        "product": product,
+        "run_date": run_date,
+        "step_fh": fh,
+        "model_plugin": model_plugin,
+        "use_warped": use_warped,
+        "target_region": target_region,
+        "target_grid_id": target_grid_id,
+        "resampling": resampling,
+        "ctx": ctx,
+    }
+    rain, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=rain_id)
+    snow, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=snow_id)
+    sleet, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=sleet_id)
+    frzr, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=frzr_id)
     cold_profile, warm_profile = _ptype_intensity_thermal_fields(
         model_id=model_id,
         product=product,
@@ -4028,6 +4121,10 @@ def _derive_ptype_intensity_component(
         ctx=ctx,
         hints=hints,
         expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     intensity_rate = _ptype_intensity_fetch_step_intensity(
@@ -4039,6 +4136,10 @@ def _derive_ptype_intensity_component(
         ctx=ctx,
         hints=hints,
         expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
     if intensity_rate is None:
         # prate is instantaneous (kg/m²/s).  Convert to approximate step-
