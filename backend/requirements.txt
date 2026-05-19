@@ -10,6 +10,7 @@ shapely
 Pillow
 httpx
 cryptography
+clerk-backend-api
 boto3
 python-multipart
 prometheus-client

@@ -15,6 +15,16 @@ def _env_value(name: str, default: str = "") -> str:
 
 
 @lru_cache(maxsize=1)
+def clerk_secret_key() -> str:
+    return _env_value("CLERK_SECRET_KEY").strip()
+
+
+@lru_cache(maxsize=1)
+def clerk_auth_enabled() -> bool:
+    return bool(clerk_secret_key())
+
+
+@lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True
 
