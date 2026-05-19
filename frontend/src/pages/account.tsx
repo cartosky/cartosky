@@ -1,7 +1,7 @@
 import { useAuth, Show, UserProfile } from "@clerk/react";
-import { AlertTriangle, CheckCircle2, Link2, RefreshCw, Unlink } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Link2, Plug, RefreshCw, Unlink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { API_ORIGIN } from "@/lib/config";
@@ -43,7 +43,21 @@ function readTwfStatus(body: unknown): TwfConnectionStatus {
   return { connected, twf_username: username };
 }
 
-function TwfConnectedAccount() {
+function TwfConnectedAccountReturn() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (location.pathname === "/account" && params.get("twf_connected") === "true") {
+      navigate(`/account/integrations${location.search}`, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
+
+  return null;
+}
+
+function TwfConnectionSection() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<TwfConnectionStatus | null>(null);
@@ -110,7 +124,7 @@ function TwfConnectedAccount() {
     setError(null);
     setSuccess(null);
     try {
-      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account?twf_connected=true" })}`, { method: "GET" });
+      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations?twf_connected=true" })}`, { method: "GET" });
       if (!response.ok) {
         const apiError = await readApiError(response);
         throw new Error(apiError || `Unable to start TWF connection (${response.status})`);
@@ -150,7 +164,7 @@ function TwfConnectedAccount() {
   }, [authedFetch]);
 
   return (
-    <section className="mt-6 rounded-2xl border border-sky-200/12 bg-[#08182a]/95 p-5 text-white shadow-[0_18px_70px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+    <section className="rounded-2xl border border-sky-200/12 bg-[#08182a]/80 p-5 text-white">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-white">Connected Accounts</div>
@@ -241,8 +255,12 @@ export default function Account() {
       <div className="cartosky-clerk-profile relative mx-auto max-w-5xl">
         <Show when="signed-in">
           <>
-            <UserProfile routing="path" path="/account" appearance={clerkAppearance} />
-            <TwfConnectedAccount />
+            <TwfConnectedAccountReturn />
+            <UserProfile routing="path" path="/account" appearance={clerkAppearance}>
+              <UserProfile.Page label="Integrations" labelIcon={<Plug className="h-4 w-4" />} url="integrations">
+                <TwfConnectionSection />
+              </UserProfile.Page>
+            </UserProfile>
           </>
         </Show>
         <Show when="signed-out">
