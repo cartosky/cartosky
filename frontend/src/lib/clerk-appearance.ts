@@ -75,6 +75,8 @@ export const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
 };
 
 export const clerkUserButtonProps = {
+  userProfileMode: "navigation",
+  userProfileUrl: "/account",
   appearance: clerkAppearance,
   userProfileProps: {
     appearance: clerkAppearance,

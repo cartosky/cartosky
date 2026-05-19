@@ -300,6 +300,54 @@
     background: rgba(103, 232, 249, 0.12) !important;
     color: rgb(207 250 254) !important;
   }
+
+  .cartosky-clerk-profile :is(.cl-rootBox, .cl-card, .cl-userProfile-root, .cl-userProfileCard, .cl-pageScrollBox) {
+    width: 100%;
+    background: #0b0e15 !important;
+    color: rgb(248 250 252) !important;
+  }
+
+  .cartosky-clerk-profile .cl-card {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 24px 100px rgba(0, 0, 0, 0.48);
+  }
+
+  .cartosky-clerk-profile :is(h1, h2, h3, h4, p, span, div, label, button) {
+    color: rgb(226 232 240) !important;
+    opacity: 1 !important;
+  }
+
+  .cartosky-clerk-profile :is(h1, h2, h3, h4),
+  .cartosky-clerk-profile [class*="Title"],
+  .cartosky-clerk-profile [class*="title"] {
+    color: rgb(248 250 252) !important;
+  }
+
+  .cartosky-clerk-profile [class*="Subtitle"],
+  .cartosky-clerk-profile [class*="subtitle"],
+  .cartosky-clerk-profile [class*="Description"],
+  .cartosky-clerk-profile [class*="description"],
+  .cartosky-clerk-profile [class*="Identifier"],
+  .cartosky-clerk-profile [class*="identifier"],
+  .cartosky-clerk-profile [class*="Value"],
+  .cartosky-clerk-profile [class*="value"] {
+    color: rgb(203 213 225) !important;
+  }
+
+  .cartosky-clerk-profile :is(a, a *, button[class*="Primary"], button[class*="primary"]) {
+    color: rgb(103 232 249) !important;
+  }
+
+  .cartosky-clerk-profile .cl-navbar {
+    background: #090c12 !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  .cartosky-clerk-profile :is(.cl-badge, [class*="Badge"], [class*="badge"]) {
+    border-color: rgba(103, 232, 249, 0.22) !important;
+    background: rgba(103, 232, 249, 0.12) !important;
+    color: rgb(207 250 254) !important;
+  }
 }
 
 @layer utilities {

@@ -73,6 +73,7 @@ const Forecast = lazyRoute(() => import("./pages/forecast"));
 const Models = lazyRoute(() => import("./pages/models"));
 const Variables = lazyRoute(() => import("./pages/variables"));
 const Login = lazyRoute(() => import("./pages/login"));
+const Account = lazyRoute(() => import("./pages/account"));
 const Privacy = lazyRoute(() => import("./pages/privacy"));
 const AdminOverview = lazyRoute(() => import("./pages/admin/overview"));
 const AdminAnalytics = lazyRoute(() => import("./pages/admin/analytics"));
@@ -105,6 +106,7 @@ function getPageTitle(pathname: string) {
     ["/variables", "Variables"],
     ["/privacy", "Privacy Policy"],
     ["/login", "Login"],
+    ["/account", "Account"],
     ["/", "Home"],
   ];
 
@@ -128,6 +130,7 @@ export default function RouterApp() {
         <Route path="/models" element={withSuspense(<Models />)} />
         <Route path="/variables" element={withSuspense(<Variables />)} />
         <Route path="/login" element={withSuspense(<Login />)} />
+        <Route path="/account/*" element={withSuspense(<Account />)} />
         <Route path="/privacy" element={withSuspense(<Privacy />)} />
       </Route>
 
