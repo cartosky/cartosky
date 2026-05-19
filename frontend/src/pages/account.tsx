@@ -219,9 +219,12 @@ function TwfConnectionSection() {
               onClick={handleConnect}
               disabled={loading || action !== null}
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold !text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.18)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ color: "#020617" }}
             >
               {action === "connect" ? <RefreshCw className="h-4 w-4 animate-spin !text-slate-950" /> : <Link2 className="h-4 w-4 !text-slate-950" />}
-              Connect
+              <span className="!text-slate-950" style={{ color: "#020617" }}>
+                Connect
+              </span>
             </button>
           )}
         </div>
