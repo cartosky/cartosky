@@ -260,6 +260,46 @@
     background: rgba(103, 232, 249, 0.12) !important;
     color: rgb(207 250 254) !important;
   }
+
+  .cl-modalContent :is(h1, h2, h3, h4, h5, h6, p, span, div, label, button) {
+    color: rgb(226 232 240) !important;
+    opacity: 1 !important;
+  }
+
+  .cl-modalContent :is(h1, h2, h3, h4),
+  .cl-modalContent [class*="Title"],
+  .cl-modalContent [class*="title"] {
+    color: rgb(248 250 252) !important;
+    opacity: 1 !important;
+  }
+
+  .cl-modalContent [class*="Subtitle"],
+  .cl-modalContent [class*="subtitle"],
+  .cl-modalContent [class*="Description"],
+  .cl-modalContent [class*="description"],
+  .cl-modalContent [class*="Identifier"],
+  .cl-modalContent [class*="identifier"],
+  .cl-modalContent [class*="Value"],
+  .cl-modalContent [class*="value"] {
+    color: rgb(203 213 225) !important;
+    opacity: 1 !important;
+  }
+
+  .cl-modalContent :is(a, a *, button[class*="Primary"], button[class*="primary"], [class*="Button"] [class*="Text"]) {
+    color: rgb(103 232 249) !important;
+  }
+
+  .cl-modalContent :is(a:hover, a:hover *, button:hover[class*="Primary"], button:hover[class*="primary"]) {
+    color: rgb(165 243 252) !important;
+  }
+
+  .cl-modalContent .cl-badge,
+  .cl-modalContent [class*="Badge"],
+  .cl-modalContent [class*="badge"] {
+    border-color: rgba(103, 232, 249, 0.22) !important;
+    background: rgba(103, 232, 249, 0.12) !important;
+    color: rgb(207 250 254) !important;
+  }
 }
 
 @layer utilities {
