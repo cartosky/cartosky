@@ -231,6 +231,7 @@ export type AdminFeedbackItem = {
   submitted_at: string;
   category: FeedbackCategory;
   message: string;
+  clerk_user_id: string | null;
   member_id: number;
   forums_display_name: string;
   page_context: string;

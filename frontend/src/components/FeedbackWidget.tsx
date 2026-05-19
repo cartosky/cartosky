@@ -1,20 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { AlertCircle, Bug, CheckCircle2, Gauge, Lightbulb, MessageSquareText, Send, Sparkles, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
 
 import { API_ORIGIN } from "@/lib/config";
 import { useFeedbackContext } from "@/lib/feedback-context";
+import { clerkJwtTemplate } from "@/lib/admin-api";
 import { cn } from "@/lib/utils";
 
 type FeedbackCategory = "bug" | "performance" | "feature" | "data_accuracy" | "ui_ux";
-
-type TwfStatus = {
-  linked: boolean;
-  admin?: boolean;
-  member_id?: number;
-  display_name?: string;
-  photo_url?: string | null;
-};
 
 type CapturedContext = {
   pageContext: string;
@@ -43,20 +37,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeTwfStatus(value: unknown): TwfStatus {
-  if (!isObject(value) || value.linked !== true) {
-    return { linked: false };
-  }
-  const displayName = typeof value.display_name === "string" ? value.display_name.trim() : "";
-  return {
-    linked: true,
-    admin: value.admin === true,
-    member_id: Number.isFinite(Number(value.member_id)) ? Number(value.member_id) : undefined,
-    display_name: displayName || undefined,
-    photo_url: typeof value.photo_url === "string" ? value.photo_url : null,
-  };
-}
-
 async function readApiMessage(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as unknown;
@@ -75,12 +55,11 @@ function buildPageContext(location: ReturnType<typeof useLocation>): string {
 
 export function FeedbackWidget() {
   const location = useLocation();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const feedbackContext = useFeedbackContext();
   const { isFeedbackOpen, closeFeedback } = feedbackContext;
   const closeTimerRef = useRef<number | null>(null);
   const [capturedContext, setCapturedContext] = useState<CapturedContext | null>(null);
-  const [twfStatus, setTwfStatus] = useState<TwfStatus | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
   const [category, setCategory] = useState<FeedbackCategory | null>(null);
   const [message, setMessage] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
@@ -90,21 +69,20 @@ export function FeedbackWidget() {
   const canSubmit = Boolean(
     category
     && message.trim().length > 0
-    && twfStatus?.linked
+    && isLoaded
+    && isSignedIn
     && submitState !== "submitting"
-    && !statusLoading
   );
 
   const sessionStatusLabel = useMemo(() => {
-    if (statusLoading) {
-      return "Checking TWF session";
+    if (!isLoaded) {
+      return "Checking account session";
     }
-    if (twfStatus?.linked) {
-      const displayName = twfStatus.display_name || (twfStatus.member_id ? `member-${twfStatus.member_id}` : "Weather Forums member");
-      return `Submitting as ${displayName}`;
+    if (isSignedIn) {
+      return "Submitting with your CartoSky account";
     }
-    return "Log in to your TWF account before submitting feedback.";
-  }, [statusLoading, twfStatus]);
+    return "Sign in with your CartoSky account before submitting feedback.";
+  }, [isLoaded, isSignedIn]);
 
   // Capture page/viewer context and reset form state when the widget opens
   useEffect(() => {
@@ -133,40 +111,6 @@ export function FeedbackWidget() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isFeedbackOpen) {
-      return;
-    }
-
-    const controller = new AbortController();
-    setStatusLoading(true);
-
-    fetch(`${API_ORIGIN}/auth/twf/status`, {
-      method: "GET",
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await readApiMessage(response));
-        }
-        return response.json() as Promise<unknown>;
-      })
-      .then((value) => {
-        setTwfStatus(normalizeTwfStatus(value));
-      })
-      .catch((error: unknown) => {
-        if ((error as { name?: string } | undefined)?.name === "AbortError") {
-          return;
-        }
-        setTwfStatus({ linked: false });
-        setSubmitMessage((error as Error).message || "Unable to check Weather Forums session.");
-      })
-      .finally(() => setStatusLoading(false));
-
-    return () => controller.abort();
-  }, [isFeedbackOpen]);
-
   function closeWidget() {
     closeFeedback();
     setSubmitState("idle");
@@ -182,18 +126,25 @@ export function FeedbackWidget() {
       setSubmitMessage("Add a short note before sending.");
       return;
     }
-    if (!twfStatus?.linked) {
-      setSubmitMessage("Log in to your TWF account before submitting a feedback report.");
+    if (!isLoaded || !isSignedIn) {
+      setSubmitMessage("Sign in with your CartoSky account before submitting feedback.");
       return;
     }
 
     setSubmitState("submitting");
     setSubmitMessage(null);
     try {
+      const token = await getToken({ template: clerkJwtTemplate() });
+      if (!token) {
+        throw new Error("Unable to verify your account session. Please sign in again.");
+      }
       const response = await fetch(`${API_ORIGIN}/api/v4/feedback`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           category,
           message: message.trim(),
@@ -311,7 +262,7 @@ export function FeedbackWidget() {
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-white/8 px-4 py-3 sm:px-5">
-              {!twfStatus?.linked && !statusLoading ? (
+              {isLoaded && !isSignedIn ? (
                 <a
                   href="/login"
                   className="mr-auto inline-flex h-9 items-center rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.07]"

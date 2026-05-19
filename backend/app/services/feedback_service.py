@@ -97,6 +97,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 submitted_at TEXT NOT NULL,
                 category TEXT NOT NULL,
                 message TEXT NOT NULL,
+                clerk_user_id TEXT,
                 member_id INTEGER NOT NULL,
                 forums_display_name TEXT NOT NULL,
                 page_context TEXT NOT NULL,
@@ -116,6 +117,15 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 ON feedback(forums_display_name);
             """
         )
+        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(feedback)").fetchall()}
+        if "clerk_user_id" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN clerk_user_id TEXT")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_feedback_clerk_user_submitted
+                ON feedback(clerk_user_id, submitted_at DESC)
+            """
+        )
         conn.commit()
         _db_initialized = True
 
@@ -126,6 +136,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "submitted_at": row["submitted_at"],
         "category": row["category"],
         "message": row["message"],
+        "clerk_user_id": row["clerk_user_id"],
         "member_id": row["member_id"],
         "forums_display_name": row["forums_display_name"],
         "page_context": row["page_context"],
@@ -174,16 +185,19 @@ def insert_feedback(
     *,
     category: str,
     message: str,
-    member_id: int,
+    member_id: int | None,
     forums_display_name: str,
     page_context: str,
     model_context: str | None,
     fhr_context: int | None,
     user_agent: str,
     app_version: str | None,
+    clerk_user_id: str | None = None,
 ) -> dict[str, Any]:
     normalized_category = _validate_category(category)
     submitted_at = _format_utc(_utc_now())
+    normalized_clerk_user_id = clerk_user_id.strip() if clerk_user_id and clerk_user_id.strip() else None
+    stored_member_id = member_id if member_id is not None else 0
     with _connect() as conn:
         cursor = conn.execute(
             """
@@ -191,6 +205,7 @@ def insert_feedback(
                 submitted_at,
                 category,
                 message,
+                clerk_user_id,
                 member_id,
                 forums_display_name,
                 page_context,
@@ -199,13 +214,14 @@ def insert_feedback(
                 user_agent,
                 app_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 submitted_at,
                 normalized_category,
                 message,
-                member_id,
+                normalized_clerk_user_id,
+                stored_member_id,
                 forums_display_name,
                 page_context,
                 model_context,
@@ -221,18 +237,27 @@ def insert_feedback(
     return _row_to_dict(row)
 
 
-def check_rate_limit(member_id: int) -> int:
+def check_rate_limit(*, clerk_user_id: str | None = None, member_id: int | None = None) -> int:
     now = _utc_now()
     cutoff = _format_utc(now - timedelta(seconds=FEEDBACK_RATE_LIMIT_WINDOW_SECONDS))
+    normalized_clerk_user_id = clerk_user_id.strip() if clerk_user_id and clerk_user_id.strip() else None
+    if normalized_clerk_user_id:
+        identity_clause = "clerk_user_id = ?"
+        identity_value: str | int = normalized_clerk_user_id
+    elif member_id is not None:
+        identity_clause = "member_id = ?"
+        identity_value = member_id
+    else:
+        raise ValueError("clerk_user_id or member_id is required for feedback rate limiting")
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT submitted_at
             FROM feedback
-            WHERE member_id = ? AND submitted_at >= ?
+            WHERE {identity_clause} AND submitted_at >= ?
             ORDER BY submitted_at ASC
             """,
-            (member_id, cutoff),
+            (identity_value, cutoff),
         ).fetchall()
     if len(rows) < FEEDBACK_RATE_LIMIT_MAX_SUBMISSIONS:
         return 0

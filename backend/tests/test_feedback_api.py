@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,7 +33,8 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(autouse=True)
-def isolate_databases(tmp_path: Path) -> None:
+def isolate_databases(tmp_path: Path) -> Iterator[None]:
+    previous_overrides = dict(main_module.app.dependency_overrides)
     token_db = tmp_path / "tokens.sqlite3"
     feedback_db = tmp_path / "feedback.sqlite3"
     twf_oauth.TOKEN_DB_PATH = str(token_db)
@@ -50,6 +51,9 @@ def isolate_databases(tmp_path: Path) -> None:
         "CARTOSKY_ADMIN_BASE_URL",
     ):
         os.environ.pop(env_name, None)
+    yield
+    main_module.app.dependency_overrides.clear()
+    main_module.app.dependency_overrides.update(previous_overrides)
 
 
 @pytest.fixture
@@ -73,13 +77,21 @@ def _create_session(*, session_id: str, member_id: int, name: str) -> None:
     )
 
 
+def _authenticate_clerk_user(*, user_id: str = "user_beta", claims: dict[str, object] | None = None) -> None:
+    merged_claims = {"sub": user_id, **(claims or {})}
+
+    async def require_test_clerk_user() -> main_module.ClerkPrincipal:
+        return main_module.ClerkPrincipal(user_id=user_id, claims=merged_claims, token="test-token")
+
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = require_test_clerk_user
+
+
 async def test_feedback_submission_persists_and_admin_lists_record(client: httpx.AsyncClient) -> None:
-    _create_session(session_id="beta-session", member_id=777, name="Beta Tester")
+    _authenticate_clerk_user(user_id="user_beta", claims={"name": "Beta Tester"})
     _create_session(session_id="admin-session", member_id=42, name="Admin")
 
     response = await client.post(
         "/api/v4/feedback",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "beta-session"},
         headers={"user-agent": "pytest-browser"},
         json={
             "category": "bug",
@@ -108,7 +120,8 @@ async def test_feedback_submission_persists_and_admin_lists_record(client: httpx
     assert admin_payload["summary"]["by_category"]["bug"] == 1
     assert admin_payload["daily_volume"][0]["count"] == 1
     item = admin_payload["items"][0]
-    assert item["member_id"] == 777
+    assert item["clerk_user_id"] == "user_beta"
+    assert item["member_id"] == 0
     assert item["forums_display_name"] == "Beta Tester"
     assert item["category"] == "bug"
     assert item["model_context"] == "hrrr"
@@ -116,27 +129,23 @@ async def test_feedback_submission_persists_and_admin_lists_record(client: httpx
     assert item["user_agent"] == "pytest-browser"
 
 
-async def test_feedback_rate_limit_enforced_by_member_id(client: httpx.AsyncClient) -> None:
-    _create_session(session_id="beta-session-a", member_id=777, name="Original Name")
-    _create_session(session_id="beta-session-b", member_id=777, name="Renamed User")
+async def test_feedback_rate_limit_enforced_by_clerk_user_id(client: httpx.AsyncClient) -> None:
+    _authenticate_clerk_user(user_id="user_rate_limited", claims={"email": "beta@example.com"})
 
     payload = {
         "category": "performance",
         "message": "The map feels slow while scrubbing.",
         "page_context": "/viewer",
     }
-    for index in range(10):
-        session_id = "beta-session-a" if index % 2 == 0 else "beta-session-b"
+    for _index in range(10):
         response = await client.post(
             "/api/v4/feedback",
-            cookies={twf_oauth.SESSION_COOKIE_NAME: session_id},
             json=payload,
         )
         assert response.status_code == 201
 
     limited_response = await client.post(
         "/api/v4/feedback",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "beta-session-b"},
         json=payload,
     )
 
@@ -148,11 +157,10 @@ async def test_feedback_rate_limit_enforced_by_member_id(client: httpx.AsyncClie
 
 
 async def test_feedback_submission_validates_category_and_required_fields(client: httpx.AsyncClient) -> None:
-    _create_session(session_id="beta-session", member_id=777, name="Beta Tester")
+    _authenticate_clerk_user(user_id="user_beta", claims={"name": "Beta Tester"})
 
     invalid_category = await client.post(
         "/api/v4/feedback",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "beta-session"},
         json={
             "category": "other",
             "message": "Something happened.",
@@ -161,7 +169,6 @@ async def test_feedback_submission_validates_category_and_required_fields(client
     )
     missing_message = await client.post(
         "/api/v4/feedback",
-        cookies={twf_oauth.SESSION_COOKIE_NAME: "beta-session"},
         json={
             "category": "bug",
             "page_context": "/viewer",
@@ -172,6 +179,19 @@ async def test_feedback_submission_validates_category_and_required_fields(client
     assert invalid_category.json()["error"]["code"] == "TWF_VALIDATION_ERROR"
     assert missing_message.status_code == 400
     assert missing_message.json()["error"]["code"] == "TWF_VALIDATION_ERROR"
+
+
+async def test_feedback_submission_requires_clerk_user(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v4/feedback",
+        json={
+            "category": "bug",
+            "message": "Something happened.",
+            "page_context": "/viewer",
+        },
+    )
+
+    assert response.status_code == 401
 
 
 async def test_admin_feedback_returns_aggregate_metadata(

@@ -1281,26 +1281,47 @@ class FeedbackSubmission(BaseModel):
         return self
 
 
+def _feedback_display_name(current_user: ClerkPrincipal) -> str:
+    claims = current_user.claims
+    for key in ("name", "username", "email", "email_address"):
+        value = claims.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    first_name = claims.get("first_name")
+    last_name = claims.get("last_name")
+    full_name = " ".join(
+        part.strip()
+        for part in (first_name, last_name)
+        if isinstance(part, str) and part.strip()
+    )
+    if full_name:
+        return full_name
+
+    return f"Clerk user {current_user.user_id[:12]}"
+
+
 @app.post("/api/v4/feedback", status_code=201)
 async def post_feedback(
     request: Request,
     background_tasks: BackgroundTasks,
     payload: FeedbackSubmission,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
 ) -> dict[str, Any]:
-    sess = _require_twf_session(request)
-    retry_after = feedback_service.check_rate_limit(sess.member_id)
+    retry_after = feedback_service.check_rate_limit(clerk_user_id=current_user.user_id)
     if retry_after > 0:
         raise TwfApiError(
             status_code=429,
             code="FEEDBACK_RATE_LIMITED",
             message="Too many feedback submissions. Please try again later.",
         )
-    display_name = sess.display_name.strip() if sess.display_name and sess.display_name.strip() else f"member-{sess.member_id}"
+    display_name = _feedback_display_name(current_user)
     try:
         record = feedback_service.insert_feedback(
             category=payload.category,
             message=payload.message.strip(),
-            member_id=sess.member_id,
+            clerk_user_id=current_user.user_id,
+            member_id=None,
             forums_display_name=display_name,
             page_context=payload.page_context.strip(),
             model_context=payload.model_context.strip() if payload.model_context and payload.model_context.strip() else None,
