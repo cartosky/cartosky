@@ -124,12 +124,6 @@ export function NwsHazardModal({ open, onClose, hazard }: NwsHazardModalProps) {
 
   if (!open) return null;
 
-  const hazards = hazard.activeHazards.length
-    ? hazard.activeHazards
-    : hazard.riskLabel
-      ? [hazard.riskLabel]
-      : [];
-
   return (
     <div
       className="fixed inset-0 z-[82] flex items-start justify-center overflow-y-auto bg-slate-950/46 p-2 backdrop-blur-sm backdrop-brightness-[0.62] backdrop-saturate-75 sm:items-center sm:p-4"
@@ -144,17 +138,7 @@ export function NwsHazardModal({ open, onClose, hazard }: NwsHazardModalProps) {
       >
         <header className="flex shrink-0 items-start justify-between gap-4 px-4 py-3.5">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold leading-snug text-white sm:text-base">{hazard.title}</h2>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {hazards.map((label) => (
-                <span
-                  key={label}
-                  className="rounded-md border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-white/75"
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
+            <h2 className="text-sm font-semibold leading-snug text-cyan-100 sm:text-base">{hazard.title}</h2>
           </div>
           <button
             type="button"
