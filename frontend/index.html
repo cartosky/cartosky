@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="CartoSky is an interactive weather mapping application for viewing forecast models, radar, SPC outlooks, and location-based weather data in one map-first workflow."
+    />
     <link rel="icon" type="image/png" href="/assets/favicon.ico" />
     <title>CartoSky</title>
     <link rel="preconnect" href="https://api.cartosky.com" />
@@ -12,7 +16,18 @@
     <link rel="dns-prefetch" href="https://d.basemaps.cartocdn.com" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main>
+        <h1>CartoSky</h1>
+        <p>
+          CartoSky is an interactive weather mapping application for viewing forecast models,
+          radar, SPC outlooks, and location-based weather data in one map-first workflow.
+        </p>
+        <p>
+          <a href="https://cartosky.com/privacy">Privacy Policy</a>
+        </p>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
