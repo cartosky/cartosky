@@ -22,6 +22,8 @@ export default function Login() {
                   elements: {
                     rootBox: "w-full",
                     cardBox: "mx-auto w-full shadow-[0_20px_80px_rgba(0,0,0,0.36)]",
+                    logoBox: "mb-6 flex justify-center",
+                    logoImage: "!h-12 !max-h-12 !w-auto !max-w-[12rem]",
                   },
                 }}
               />

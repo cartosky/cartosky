@@ -32,7 +32,7 @@ const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
   elements: {
     card: "border border-white/10 bg-transparent shadow-xl backdrop-blur-xl",
     logoBox: "mb-6 justify-center",
-    logoImage: "!h-8 !max-h-8 !w-auto",
+    logoImage: "!h-12 !max-h-12 !w-auto !max-w-[12rem]",
     headerTitle: "text-white",
     headerSubtitle: "text-slate-400",
     formFieldLabel: "text-slate-200",

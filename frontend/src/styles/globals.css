@@ -132,12 +132,18 @@
 
   .cartosky-clerk-auth .cl-logoBox {
     margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: center;
   }
 
-  .cartosky-clerk-auth .cl-logoImage {
+  .cartosky-clerk-auth .cl-logoImage,
+  .cartosky-clerk-auth [class*="logoImage"],
+  .cartosky-clerk-auth [class*="LogoImage"] {
     width: auto;
-    height: 2rem;
-    max-height: 2rem;
+    height: 3rem !important;
+    max-width: 12rem !important;
+    max-height: 3rem !important;
+    object-fit: contain;
   }
 }
 
