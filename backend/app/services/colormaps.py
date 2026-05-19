@@ -461,6 +461,40 @@ WSPD10M_COLOR_ANCHORS = [
 ]
 WSPD10M_RANGE = (0.0, 100.0)
 
+RH_PERCENT_LEVELS = [float(value) for value in range(0, 105, 5)]
+RH_PERCENT_COLORS = [
+    "#543004",
+    "#714107",
+    "#8d520b",
+    "#a96c1e",
+    "#c28634",
+    "#d3aa5f",
+    "#e2c786",
+    "#efdcad",
+    "#f6ebcd",
+    "#f5f2e8",
+    "#e9f2f1",
+    "#d0ece8",
+    "#b1e1da",
+    "#8ad1c6",
+    "#64b9ae",
+    "#3b9b93",
+    "#27827a",
+    "#1d675f",
+    "#145147",
+    "#0d3c31",
+]
+RH_PERCENT_LEGEND_STOPS = list(zip(RH_PERCENT_LEVELS[:-1], RH_PERCENT_COLORS))
+RH_PERCENT_LEGEND_ENTRIES = [
+    {
+        "value": float(RH_PERCENT_LEVELS[index]),
+        "color": color,
+        "label": f"{int(RH_PERCENT_LEVELS[index])}-{int(RH_PERCENT_LEVELS[index + 1])}",
+    }
+    for index, color in enumerate(RH_PERCENT_COLORS)
+]
+RH_PERCENT_RANGE = (0.0, 100.0)
+
 WSPD300_COLOR_ANCHORS = [
     (0, "#ffffff"),
     (5, "#e1e1e1"),
@@ -839,6 +873,18 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP2M_F_COLOR_ANCHORS,
         "display_name": "2m Dew Point",
         "legend_title": "Dew Point (°F)",
+    },
+    "rh": {
+        "type": "discrete",
+        "units": "%",
+        "range": RH_PERCENT_RANGE,
+        "levels": RH_PERCENT_LEVELS,
+        "colors": RH_PERCENT_COLORS,
+        "display_name": "Relative Humidity",
+        "legend_title": "Relative Humidity (%)",
+        "legend_stops": RH_PERCENT_LEGEND_STOPS,
+        "legend_entries": RH_PERCENT_LEGEND_ENTRIES,
+        "transparent_below_min": False,
     },
     "tmp850": {
         "type": "continuous",

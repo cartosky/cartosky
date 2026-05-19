@@ -36,6 +36,18 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Use with CAPE and wind fields to separate moisture presence from actual storm potential.",
     ],
   },
+  rh2m: {
+    definition: "Near-surface relative humidity, used to quickly assess saturation, drying, and low-level moisture depth near the ground.",
+    bestFor: [
+      "Fog, low cloud, and near-saturation context",
+      "Boundary-layer drying and recovery trends",
+      "Pairing with temperature and dew point for surface moisture reads",
+    ],
+    interpretation: [
+      "High values show the air is close to saturation, but not whether deep moisture or lift is present.",
+      "Use with dew point to separate truly moist air from cool air that is merely near saturation.",
+    ],
+  },
   tmp850: {
     definition: "850 mb temperature field for low-level thermal advection, warm nose diagnosis, and synoptic structure.",
     bestFor: [
@@ -304,6 +316,7 @@ const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "
 const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   tmp2m: "SURFACE",
   dp2m: "SURFACE",
+  rh2m: "SURFACE",
   td2m: "SURFACE",
   wspd10m: "SURFACE",
   wgst10m: "SURFACE",

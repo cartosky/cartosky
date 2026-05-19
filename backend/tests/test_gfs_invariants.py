@@ -34,6 +34,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m",
         "tmp2m_anom",
         "dp2m",
+        "rh2m",
         "tmp850",
         "tmp850_anom",
         "hgt500_anom",
@@ -72,6 +73,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     assert ("gfs", "tmp2m_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
+    assert ("gfs", "rh2m") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "ice_total") in _PACKING_BY_MODEL_VAR
 
 
@@ -182,6 +184,16 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["units"] == "F"
     assert dp2m["display_name"] == "Surface Dew Point"
     assert dp2m["order"] == 2
+
+    rh2m = payload["variables"]["rh2m"]
+    assert rh2m["buildable"] is True
+    assert rh2m["derived"] is False
+    assert rh2m["kind"] == "continuous"
+    assert rh2m["units"] == "%"
+    assert rh2m["display_name"] == "Surface Relative Humidity"
+    assert rh2m["group"] == "Moisture"
+    assert rh2m["color_map_id"] == "rh"
+    assert rh2m["order"] == 2.5
 
     tmp2m = payload["variables"]["tmp2m"]
     assert tmp2m["buildable"] is True
@@ -419,6 +431,43 @@ def test_gfs_pwat_selector_invariants() -> None:
     }
 
 
+def test_gfs_rh2m_selector_and_palette_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("rh2m")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is False
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "%"
+    assert var_spec.selectors.search == [":RH:2 m above ground:"]
+    assert var_spec.selectors.filter_by_keys == {
+        "shortName": "r",
+        "typeOfLevel": "heightAboveGround",
+        "level": "2",
+    }
+
+    color_map = get_color_map_spec("rh")
+    assert color_map["type"] == "discrete"
+    assert color_map["units"] == "%"
+    assert color_map["range"] == (0.0, 100.0)
+    assert color_map["levels"] == [float(value) for value in range(0, 105, 5)]
+    assert color_map["colors"] == [
+        "#543004", "#714107", "#8d520b", "#a96c1e", "#c28634",
+        "#d3aa5f", "#e2c786", "#efdcad", "#f6ebcd", "#f5f2e8",
+        "#e9f2f1", "#d0ece8", "#b1e1da", "#8ad1c6", "#64b9ae",
+        "#3b9b93", "#27827a", "#1d675f", "#145147", "#0d3c31",
+    ]
+    assert color_map["legend_entries"][0] == {
+        "value": 0.0,
+        "color": "#543004",
+        "label": "0-5",
+    }
+    assert color_map["legend_entries"][-1] == {
+        "value": 95.0,
+        "color": "#0d3c31",
+        "label": "95-100",
+    }
+
+
 def test_gfs_wspd850_uses_850mb_components_and_height_contours() -> None:
     var_spec = GFS_MODEL.get_var("wspd850")
     assert var_spec is not None
@@ -514,6 +563,9 @@ def test_gfs_dewpoint_and_snow_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("d2m") == "dp2m"
     assert GFS_MODEL.normalize_var_id("2d") == "dp2m"
     assert GFS_MODEL.normalize_var_id("dpt2m") == "dp2m"
+    assert GFS_MODEL.normalize_var_id("rh2m") == "rh2m"
+    assert GFS_MODEL.normalize_var_id("surface_rh") == "rh2m"
+    assert GFS_MODEL.normalize_var_id("surface_relative_humidity") == "rh2m"
 
     assert GFS_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
     assert GFS_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"
