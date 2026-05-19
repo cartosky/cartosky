@@ -49,7 +49,7 @@ function TwfConnectedAccountReturn() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (location.pathname === "/account" && params.get("twf_connected") === "true") {
+    if (location.pathname === "/account" && (params.get("twf_connected") === "true" || params.get("twf") === "linked")) {
       navigate(`/account/integrations${location.search}`, { replace: true });
     }
   }, [location.pathname, location.search, navigate]);
@@ -111,11 +111,12 @@ function TwfConnectionSection() {
   }, [loadStatus]);
 
   useEffect(() => {
-    if (searchParams.get("twf_connected") !== "true") return;
+    if (searchParams.get("twf_connected") !== "true" && searchParams.get("twf") !== "linked") return;
     setSuccess("TWF account connected.");
     void loadStatus();
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("twf_connected");
+    nextParams.delete("twf");
     setSearchParams(nextParams, { replace: true });
   }, [loadStatus, searchParams, setSearchParams]);
 
@@ -124,7 +125,7 @@ function TwfConnectionSection() {
     setError(null);
     setSuccess(null);
     try {
-      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations?twf_connected=true" })}`, { method: "GET" });
+      const response = await authedFetch(`${API_ORIGIN}/auth/twf/start?${new URLSearchParams({ return_to: "/account/integrations" })}`, { method: "GET" });
       if (!response.ok) {
         const apiError = await readApiError(response);
         throw new Error(apiError || `Unable to start TWF connection (${response.status})`);
@@ -218,13 +219,10 @@ function TwfConnectionSection() {
               type="button"
               onClick={handleConnect}
               disabled={loading || action !== null}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold !text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.18)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ color: "#020617" }}
+              className="twf-connect-button inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold shadow-[0_14px_30px_rgba(35,196,255,0.18)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {action === "connect" ? <RefreshCw className="h-4 w-4 animate-spin !text-slate-950" /> : <Link2 className="h-4 w-4 !text-slate-950" />}
-              <span className="!text-slate-950" style={{ color: "#020617" }}>
-                Connect
-              </span>
+              {action === "connect" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+              <span>Connect</span>
             </button>
           )}
         </div>

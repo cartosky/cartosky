@@ -338,6 +338,11 @@
     color: rgb(103 232 249) !important;
   }
 
+  .cartosky-clerk-profile .twf-connect-button,
+  .cartosky-clerk-profile .twf-connect-button :is(span, svg) {
+    color: rgb(2 6 23) !important;
+  }
+
   .cartosky-clerk-profile .cl-navbar {
     background: #061323 !important;
     border-color: rgba(186, 230, 253, 0.12) !important;
