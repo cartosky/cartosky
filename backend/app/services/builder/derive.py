@@ -3708,6 +3708,124 @@ def _derive_wspd10m(
     return wspd.astype(np.float32, copy=False), src_crs, src_transform
 
 
+def _temperature_to_celsius(data: np.ndarray, units: Any) -> np.ndarray:
+    units_norm = str(units or "c").strip().lower()
+    values = data.astype(np.float32, copy=True)
+    if units_norm in {"c", "degc", "celsius", "degree_celsius", "degrees_c"}:
+        return values
+    if units_norm in {"k", "kelvin", "degree_kelvin", "degrees_k"}:
+        return values - np.float32(273.15)
+    if units_norm in {"f", "degf", "fahrenheit", "degree_fahrenheit", "degrees_f"}:
+        return (values - np.float32(32.0)) * np.float32(5.0 / 9.0)
+    raise ValueError(f"Unsupported temperature units for relative humidity derive: {units!r}")
+
+
+def _relative_humidity_from_temp_dewpoint_c(
+    temp_c: np.ndarray,
+    dewpoint_c: np.ndarray,
+) -> np.ndarray:
+    if temp_c.shape != dewpoint_c.shape:
+        raise ValueError(f"relative humidity shape mismatch: {temp_c.shape} != {dewpoint_c.shape}")
+
+    temp = temp_c.astype(np.float32, copy=False)
+    dewpoint = dewpoint_c.astype(np.float32, copy=False)
+    valid = np.isfinite(temp) & np.isfinite(dewpoint)
+    rh = np.full(temp.shape, np.nan, dtype=np.float32)
+
+    # Alduchov and Eskridge Magnus coefficients over water. This is the
+    # standard near-surface RH approximation from air temperature and dew point.
+    a = np.float32(17.625)
+    b = np.float32(243.04)
+    denom_temp = b + temp
+    denom_dewpoint = b + dewpoint
+    valid &= (np.abs(denom_temp) > np.float32(1.0e-6)) & (np.abs(denom_dewpoint) > np.float32(1.0e-6))
+
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        exponent = (a * dewpoint / denom_dewpoint) - (a * temp / denom_temp)
+        computed = (np.float32(100.0) * np.exp(exponent.astype(np.float64))).astype(np.float32)
+
+    rh[valid] = np.clip(computed[valid], np.float32(0.0), np.float32(100.0))
+    return rh.astype(np.float32, copy=False)
+
+
+def _derive_relative_humidity_from_temp_dewpoint(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_key, var_capability
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
+    temp_component = str(hints.get("temp_component") or hints.get("temperature_component") or "tmp2m").strip()
+    dewpoint_component = str(hints.get("dewpoint_component") or "dp2m").strip()
+    temp_units = str(hints.get("temp_units") or hints.get("temperature_units") or "c").strip()
+    dewpoint_units = str(hints.get("dewpoint_units") or hints.get("dewpoint_temperature_units") or temp_units or "c").strip()
+    if not temp_component or not dewpoint_component:
+        raise ValueError("relative humidity derive requires temp_component and dewpoint_component hints")
+
+    use_warped = _derive_uses_warped_components(derive_component_target_grid, derive_component_resampling)
+    if use_warped:
+        target_region = str((derive_component_target_grid or {}).get("region", "")).strip()
+        target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+        resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
+        temp_data, src_crs, src_transform = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=temp_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+        dewpoint_data, _, _ = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=dewpoint_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+    else:
+        temp_data, src_crs, src_transform = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=temp_component,
+            ctx=ctx,
+        )
+        dewpoint_data, _, _ = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=dewpoint_component,
+            ctx=ctx,
+        )
+
+    temp_c = _temperature_to_celsius(temp_data, temp_units)
+    dewpoint_c = _temperature_to_celsius(dewpoint_data, dewpoint_units)
+    rh = _relative_humidity_from_temp_dewpoint_c(temp_c, dewpoint_c)
+    return rh, src_crs, src_transform
+
+
 def _grid_center_coordinates_geographic(
     *,
     transform: rasterio.transform.Affine,
@@ -6314,6 +6432,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("u500", "v500"),
         output_var_key="vort500",
         execute=_derive_vort500_from_uv,
+    ),
+    "relative_humidity_from_temp_dewpoint": DeriveStrategy(
+        id="relative_humidity_from_temp_dewpoint",
+        required_inputs=("tmp2m", "dp2m"),
+        output_var_key="rh2m",
+        execute=_derive_relative_humidity_from_temp_dewpoint,
     ),
     "radar_ptype_combo": DeriveStrategy(
         id="radar_ptype_combo",
