@@ -2,6 +2,7 @@ import { Show, SignIn, UserButton } from "@clerk/react";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
+import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 
 export default function Login() {
   return (
@@ -42,7 +43,7 @@ export default function Login() {
                     <div className="text-xs uppercase tracking-[0.22em] text-white/45">Account</div>
                     <div className="mt-1 text-lg font-medium text-white">Signed in</div>
                   </div>
-                  <UserButton />
+                  <UserButton {...clerkUserButtonProps} />
                 </div>
 
                 <Link

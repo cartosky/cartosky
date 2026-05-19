@@ -20,6 +20,7 @@ import {
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { API_ORIGIN } from "@/lib/config";
+import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 import { cn } from "@/lib/utils";
 import { useFeedbackContext } from "@/lib/feedback-context";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
@@ -1161,7 +1162,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             </Show>
             <Show when="signed-in">
               <div className="ml-3 flex h-9 items-center">
-                <UserButton />
+                <UserButton {...clerkUserButtonProps} />
               </div>
             </Show>
           </nav>
@@ -1237,7 +1238,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                   <Show when="signed-in">
                     <div className="flex items-center justify-between rounded-md px-3 py-2">
                       <span className="text-sm font-medium text-white/90">Account</span>
-                      <UserButton />
+                      <UserButton {...clerkUserButtonProps} />
                     </div>
                   </Show>
                 </div>
