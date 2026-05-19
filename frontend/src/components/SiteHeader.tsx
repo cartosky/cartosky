@@ -35,6 +35,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { ModelPicker } from "@/components/ModelPicker";
 import { VariablePicker } from "@/components/VariablePicker";
 import { MapLegend } from "@/components/map-legend";
 import type { ObservedSourceStatusTone } from "@/lib/time-axis";
@@ -400,13 +401,12 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
       <div className="flex shrink-0 items-end gap-1.5">
         {/* Primary selectors */}
         <HeaderSelectField label="Product" icon={Boxes}>
-          <NavbarSelect
+          <ModelPicker
             value={model}
-            onValueChange={onModelChange}
+            onChange={onModelChange}
             options={models}
             disabled={disabled}
             placeholder="Model"
-            grouped
             minWidth="min-w-[90px] max-w-[140px]"
           />
         </HeaderSelectField>
@@ -717,14 +717,18 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Boxes className="h-3 w-3" /> Product
           </span>
-          <NavbarSelect
+          <ModelPicker
             value={model}
-            onValueChange={(v) => { onModelChange(v); closeSheet(); }}
+            onChange={(nextModel) => { onModelChange(nextModel); closeSheet(); }}
             options={models}
             disabled={disabled}
             placeholder="Product"
-            grouped
             minWidth="w-full"
+            onOpenChange={(nextOpen) => {
+              if (nextOpen && sheetSnap === "peek") {
+                setSheetSnap("full");
+              }
+            }}
           />
         </div>
 
