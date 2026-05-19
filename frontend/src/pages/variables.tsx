@@ -48,6 +48,18 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Use with dew point to separate truly moist air from cool air that is merely near saturation.",
     ],
   },
+  rh700: {
+    definition: "Relative humidity at 700 mb, useful for mid-level moisture, dry-slot structure, and cloud-layer context.",
+    bestFor: [
+      "Mid-level dry intrusion and saturation checks",
+      "Cloud-layer and precipitation-growth context",
+      "Pairing moisture structure with 500 mb energy and 850 mb flow",
+    ],
+    interpretation: [
+      "Low values can highlight dry air aloft that limits precipitation coverage or enhances evaporative cooling.",
+      "Use it with vertical motion and temperature fields rather than treating humidity alone as lift.",
+    ],
+  },
   tmp850: {
     definition: "850 mb temperature field for low-level thermal advection, warm nose diagnosis, and synoptic structure.",
     bestFor: [
@@ -321,6 +333,7 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   wspd10m: "SURFACE",
   wgst10m: "SURFACE",
   tmp850: "UPPER AIR",
+  rh700: "UPPER AIR",
   wspd850: "UPPER AIR",
   wspd300: "UPPER AIR",
   vort500: "UPPER AIR",

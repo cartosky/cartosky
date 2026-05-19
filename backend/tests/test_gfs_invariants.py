@@ -35,6 +35,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "tmp2m_anom",
         "dp2m",
         "rh2m",
+        "rh700",
         "tmp850",
         "tmp850_anom",
         "hgt500_anom",
@@ -74,6 +75,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
     assert ("gfs", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "hgt500_anom") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "rh2m") in _PACKING_BY_MODEL_VAR
+    assert ("gfs", "rh700") in _PACKING_BY_MODEL_VAR
     assert ("gfs", "ice_total") in _PACKING_BY_MODEL_VAR
 
 
@@ -194,6 +196,16 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert rh2m["group"] == "Moisture"
     assert rh2m["color_map_id"] == "rh"
     assert rh2m["order"] == 2.5
+
+    rh700 = payload["variables"]["rh700"]
+    assert rh700["buildable"] is True
+    assert rh700["derived"] is False
+    assert rh700["kind"] == "continuous"
+    assert rh700["units"] == "%"
+    assert rh700["display_name"] == "700mb RH"
+    assert rh700["group"] == "Moisture"
+    assert rh700["color_map_id"] == "rh"
+    assert rh700["order"] == 3.75
 
     tmp2m = payload["variables"]["tmp2m"]
     assert tmp2m["buildable"] is True
@@ -468,6 +480,21 @@ def test_gfs_rh2m_selector_and_palette_invariants() -> None:
     }
 
 
+def test_gfs_rh700_selector_invariants() -> None:
+    var_spec = GFS_MODEL.get_var("rh700")
+    assert var_spec is not None
+    assert var_spec.primary is True
+    assert var_spec.derived is False
+    assert var_spec.kind == "continuous"
+    assert var_spec.units == "%"
+    assert var_spec.selectors.search == [":RH:700 mb:"]
+    assert var_spec.selectors.filter_by_keys == {
+        "shortName": "r",
+        "typeOfLevel": "isobaricInhPa",
+        "level": "700",
+    }
+
+
 def test_gfs_wspd850_uses_850mb_components_and_height_contours() -> None:
     var_spec = GFS_MODEL.get_var("wspd850")
     assert var_spec is not None
@@ -566,6 +593,9 @@ def test_gfs_dewpoint_and_snow_aliases_normalize() -> None:
     assert GFS_MODEL.normalize_var_id("rh2m") == "rh2m"
     assert GFS_MODEL.normalize_var_id("surface_rh") == "rh2m"
     assert GFS_MODEL.normalize_var_id("surface_relative_humidity") == "rh2m"
+    assert GFS_MODEL.normalize_var_id("rh700") == "rh700"
+    assert GFS_MODEL.normalize_var_id("700mb_rh") == "rh700"
+    assert GFS_MODEL.normalize_var_id("700mb_relative_humidity") == "rh700"
 
     assert GFS_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
     assert GFS_MODEL.normalize_var_id("snowfall_kuchera_total") == "snowfall_kuchera_total"

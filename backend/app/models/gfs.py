@@ -65,6 +65,12 @@ class GFSPlugin(BaseModelPlugin):
             "surface_rh": "rh2m",
             "surface_relative_humidity": "rh2m",
             "relative_humidity": "rh2m",
+            "rh700": "rh700",
+            "r700": "rh700",
+            "700rh": "rh700",
+            "700mb_rh": "rh700",
+            "rh_700mb": "rh700",
+            "700mb_relative_humidity": "rh700",
             "tmp850": "tmp850",
             "t850": "tmp850",
             "t850mb": "tmp850",
@@ -216,7 +222,7 @@ def _gfs_tmp_level_component(level_hpa: int) -> VarSpec:
     )
 
 
-def _gfs_rh_level_component(level_hpa: int) -> VarSpec:
+def _gfs_rh_level_component(level_hpa: int, *, primary: bool = False) -> VarSpec:
     level = int(level_hpa)
     return VarSpec(
         id=f"rh{level}",
@@ -233,6 +239,9 @@ def _gfs_rh_level_component(level_hpa: int) -> VarSpec:
                 "short_name": "r",
             },
         ),
+        primary=primary,
+        kind="continuous",
+        units="%",
     )
 
 
@@ -596,7 +605,7 @@ GFS_VARS: dict[str, VarSpec] = {
         for level in (925, 700, 600, 500)
     },
     **{
-        f"rh{level}": _gfs_rh_level_component(level)
+        f"rh{level}": _gfs_rh_level_component(level, primary=(level == 700))
         for level in (925, 850, 700, 600, 500)
     },
     # ── Wind components (fetched separately for wspd10m derivation) ─────────
@@ -1041,6 +1050,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m_anom": "tmp2m_anom",
     "dp2m": "dp2m",
     "rh2m": "rh",
+    "rh700": "rh",
     "tmp850": "tmp850",
     "tmp850_anom": "tmp850_anom",
     "hgt500_anom": "hgt500_anom",
@@ -1092,6 +1102,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "rh2m": 2.5,
     "tmp850": 3,
     "tmp850_anom": 3.5,
+    "rh700": 3.75,
     "hgt500_anom": 5,
     "wspd850": 4,
     "wspd300": 999,
@@ -1120,6 +1131,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m_anom": "Temperature",
     "dp2m": "Temperature",
     "rh2m": "Moisture",
+    "rh700": "Moisture",
     "tmp850": "Temperature",
     "tmp850_anom": "Temperature",
     "hgt500_anom": "Dynamics",
