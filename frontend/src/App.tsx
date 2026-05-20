@@ -2545,7 +2545,9 @@ export default function App() {
             if (hasFrameList) {
               setFrameRows((prevRows) => {
                 const merged = mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey);
-                return merged.length === prevRows.length ? prevRows : merged;
+                return merged.length === prevRows.length && JSON.stringify(merged) === JSON.stringify(prevRows)
+                  ? prevRows
+                  : merged;
               });
               setForecastHour((prev) =>
                 resolveForecastHourFromRows(

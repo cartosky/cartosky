@@ -1627,6 +1627,25 @@ export function MapCanvas({
     }
 
     lastAppliedBasemapModeRef.current = basemapMode;
+    const controller = gridWebglControllerRef.current;
+    const onStyleData = () => {
+      if (shouldUseGridController) {
+        controller?.ensureAttached(map, gridOverlayBeforeLayerId(map));
+        for (const compositeController of compositeGridControllersRef.current.values()) {
+          compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
+        }
+      }
+      setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
+      enforceLayerOrder(map);
+    };
+
+    map.once("styledata", onStyleData);
+    map.setStyle(buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode));
+
+    return () => {
+      map.off("styledata", onStyleData);
+    };
+  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, shouldUseGridController, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1660,25 +1679,6 @@ export function MapCanvas({
       }
     };
   }, [isLoaded, pressureCenters]);
-    const controller = gridWebglControllerRef.current;
-    const onStyleData = () => {
-      if (shouldUseGridController) {
-        controller?.ensureAttached(map, gridOverlayBeforeLayerId(map));
-        for (const compositeController of compositeGridControllersRef.current.values()) {
-          compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
-        }
-      }
-      setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
-      enforceLayerOrder(map);
-    };
-
-    map.once("styledata", onStyleData);
-    map.setStyle(buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode));
-
-    return () => {
-      map.off("styledata", onStyleData);
-    };
-  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, shouldUseGridController, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
