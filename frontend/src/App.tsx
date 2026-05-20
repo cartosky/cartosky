@@ -130,12 +130,16 @@ const NwsHazardModal = lazy(() =>
 const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
 const HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 6_000_000;
 const VERY_HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 10_000_000;
-const HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 40;
-const VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 24;
+const HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES = 4;
+const VERY_HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES = 3;
+const HIGH_RES_AUTOPLAY_READY_AHEAD = 2;
+const VERY_HIGH_RES_AUTOPLAY_READY_AHEAD = 2;
+const HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 250;
+const VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 250;
 const HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 300;
 const VERY_HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 200;
-const HIGH_RES_GRID_PLAY_STALL_MS = 900;
-const VERY_HIGH_RES_GRID_PLAY_STALL_MS = 700;
+const HIGH_RES_GRID_PLAY_STALL_MS = 2400;
+const VERY_HIGH_RES_GRID_PLAY_STALL_MS = 2400;
 const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc"]);
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
@@ -924,19 +928,19 @@ export default function App() {
   }, [isObservedGridSelection, selectedGridLodPixelCount]);
   const gridPlayStartAheadFrames = useMemo(() => {
     if (isVeryHighResObservedGridPlayback) {
-      return 0;
+      return VERY_HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES;
     }
     if (isHighResObservedGridPlayback) {
-      return 1;
+      return HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES;
     }
     return GRID_PLAY_START_AHEAD_FRAMES;
   }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const autoplayReadyAheadFrames = useMemo(() => {
     if (isVeryHighResObservedGridPlayback) {
-      return 0;
+      return VERY_HIGH_RES_AUTOPLAY_READY_AHEAD;
     }
     if (isHighResObservedGridPlayback) {
-      return 1;
+      return HIGH_RES_AUTOPLAY_READY_AHEAD;
     }
     return AUTOPLAY_READY_AHEAD;
   }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
@@ -2710,12 +2714,16 @@ export default function App() {
           }
           // Look-ahead not satisfied — accumulate wait time but don't block
           // indefinitely.  After LOOKAHEAD_GRACE_MS the next tick will advance.
+          // Drop playback debt so a buffered frame resumes at the normal cadence
+          // instead of racing through the next few frames after a wait.
           lookAheadWaitMs += deltaMs;
+          accumulatedMs = 0;
           break;
         }
 
         // Next frame isn't ready — reset look-ahead wait and accumulate stall time.
         lookAheadWaitMs = 0;
+        accumulatedMs = 0;
         if (stalledOnIndex !== nextIndex) {
           stalledOnIndex = nextIndex;
           stallMs = 0;
