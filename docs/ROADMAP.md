@@ -481,7 +481,7 @@ Business
 - [X] Add Kuchera to NAM and GFS
 - [X] Add selected new core models
 - [X] Redesign frontend
-- [ ] Add selected new secondary variables
+- [X] Add selected new secondary variables
 - [X] Add groups/titles in dropdown
 - [X] Expand to North America domain for certain variables
 - [X] Add lightweight feedback collection/ability
@@ -509,5 +509,5 @@ Business
 - [ ] Add social sharing targets
 
 **PHASE 5 - Platform + Monetization**
-- [ ] Setup CSKY account system
+- [X] Setup CSKY account system
 - [ ] Lay groundwork for monetization (free/pro tiers)

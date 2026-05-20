@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
+import { AlertCircle, ArrowRight, Loader2, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   fetchAnchorWeather,
-  fetchAnchorAfd,
   type AnchorWeatherResponse,
-  type AnchorAfdResponse,
-  type NwsForecastPeriod,
 } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -23,8 +21,6 @@ type NwsCityModalProps = {
   };
 };
 
-type TabId = "current" | "forecast" | "afd";
-
 // ---------------------------------------------------------------------------
 // Shared class constants (matching TWF Share Modal patterns)
 // ---------------------------------------------------------------------------
@@ -33,15 +29,6 @@ const modalCardClass =
   "glass-overlay my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl text-white sm:my-4 sm:max-h-[calc(100dvh-2rem)]";
 
 const sectionCardClass = "glass-overlay-section rounded-2xl";
-
-const tabButtonBase =
-  "flex-1 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm";
-
-const tabButtonActive =
-  "border-b-2 border-emerald-400/80 text-white";
-
-const tabButtonInactive =
-  "border-b-2 border-transparent text-white/50 hover:text-white/70";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,32 +77,6 @@ function observationStaleness(observedAt: string | null | undefined): StalenessL
     const ageMin = ageMs / 60_000;
     if (ageMin < 30) return "fresh";
     if (ageMin < 90) return "warning";
-    return "stale";
-  } catch {
-    return "stale";
-  }
-}
-
-function forecastStaleness(generatedAt: string | null | undefined): StalenessLevel {
-  if (!generatedAt) return "stale";
-  try {
-    const ageMs = Date.now() - new Date(generatedAt).getTime();
-    const ageHrs = ageMs / 3_600_000;
-    if (ageHrs < 6) return "fresh";
-    if (ageHrs < 12) return "warning";
-    return "stale";
-  } catch {
-    return "stale";
-  }
-}
-
-function afdStaleness(issuedAt: string | null | undefined): StalenessLevel {
-  if (!issuedAt) return "stale";
-  try {
-    const ageMs = Date.now() - new Date(issuedAt).getTime();
-    const ageHrs = ageMs / 3_600_000;
-    if (ageHrs < 12) return "fresh";
-    if (ageHrs < 24) return "warning";
     return "stale";
   } catch {
     return "stale";
@@ -249,131 +210,15 @@ function CurrentTab({
   );
 }
 
-function ForecastPeriodRow({ period }: { period: NwsForecastPeriod }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border-b border-white/[0.04] last:border-b-0">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs font-medium text-white">{period.name}</span>
-            <span className="tabular-nums text-xs font-semibold text-white/90">
-              {period.tempF != null ? `${period.tempF}°F` : "—"}
-            </span>
-          </div>
-          <div className="mt-0.5 text-[11px] text-white/50">{period.shortForecast}</div>
-          {period.windSpeed ? (
-            <div className="mt-0.5 text-[11px] text-white/40">
-              Wind: {period.windDirection ?? ""} {period.windSpeed}
-              {period.precipProbability != null && period.precipProbability > 0
-                ? ` · ${period.precipProbability}% precip`
-                : ""}
-            </div>
-          ) : null}
-        </div>
-        <div className="shrink-0 text-white/30">
-          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        </div>
-      </button>
-      {expanded && period.detailedForecast ? (
-        <div className="px-3.5 pb-3 text-xs leading-relaxed text-white/60">
-          {period.detailedForecast}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ForecastTab({
-  weather,
-  loading,
-  error,
-  onRetry,
-}: {
-  weather: AnchorWeatherResponse | null;
-  loading: boolean;
-  error: string | null;
-  onRetry: () => void;
-}) {
-  if (loading) return <SkeletonBlock lines={10} />;
-  if (error) return <ErrorBlock message={error} onRetry={onRetry} />;
-  if (!weather?.forecast?.periods?.length) return <ErrorBlock message="No forecast data available." />;
-
-  const forecast = weather.forecast;
-  const staleness = forecastStaleness(forecast.generatedAt);
-
-  return (
-    <div className="space-y-1">
-      <div className={`${sectionCardClass} divide-y divide-white/[0.04] overflow-hidden`}>
-        {forecast.periods.map((period) => (
-          <ForecastPeriodRow key={period.number} period={period} />
-        ))}
-      </div>
-      <div className={`pt-2 text-center text-[11px] ${stalenessColor(staleness)}`}>
-        {staleness === "stale" ? "Forecast may be outdated" : `Generated at ${formatTime(forecast.generatedAt)}`}
-      </div>
-    </div>
-  );
-}
-
-function AfdTab({
-  afd,
-  loading,
-  error,
-  onRetry,
-}: {
-  afd: AnchorAfdResponse | null;
-  loading: boolean;
-  error: string | null;
-  onRetry: () => void;
-}) {
-  if (loading) return <SkeletonBlock lines={12} />;
-  if (error) return <ErrorBlock message={error} onRetry={onRetry} />;
-  if (!afd || !afd.productText) {
-    return <ErrorBlock message="No Area Forecast Discussion available for this office." />;
-  }
-
-  const staleness = afdStaleness(afd.issuedAt);
-
-  return (
-    <div className="space-y-1">
-      <div className={`${sectionCardClass} overflow-hidden`}>
-        <pre className="legend-scroll max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[11px] leading-relaxed text-white/80 sm:text-xs">
-          {afd.productText}
-        </pre>
-      </div>
-      <div className={`pt-2 text-center text-[11px] ${stalenessColor(staleness)}`}>
-        {staleness === "stale"
-          ? "This discussion may be outdated"
-          : `Issued at ${formatTime(afd.issuedAt)}${afd.officeName ? ` by ${afd.officeName}` : ""}`}
-      </div>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
 export function NwsCityModal({ open, onClose, anchor }: NwsCityModalProps) {
-  // Tab state
-  const [activeTab, setActiveTab] = useState<TabId>("current");
-
   // Weather data (obs + forecast)
   const [weather, setWeather] = useState<AnchorWeatherResponse | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
-
-  // AFD data (lazy loaded)
-  const [afd, setAfd] = useState<AnchorAfdResponse | null>(null);
-  const [afdLoading, setAfdLoading] = useState(false);
-  const [afdError, setAfdError] = useState<string | null>(null);
-  const afdFetchedRef = useRef(false);
 
   // Track open cycle
   const wasOpenRef = useRef(false);
@@ -432,12 +277,8 @@ export function NwsCityModal({ open, onClose, anchor }: NwsCityModalProps) {
     wasOpenRef.current = true;
 
     // Reset state for new open cycle
-    setActiveTab("current");
     setWeather(null);
     setWeatherError(null);
-    setAfd(null);
-    setAfdError(null);
-    afdFetchedRef.current = false;
 
     const controller = new AbortController();
     fetchWeather(controller.signal);
@@ -448,63 +289,18 @@ export function NwsCityModal({ open, onClose, anchor }: NwsCityModalProps) {
   }, [open, fetchWeather]);
 
   // --------------------------------------------------
-  // Fetch AFD on first tab switch
-  // --------------------------------------------------
-  const fetchAfdData = useCallback(
-    (signal?: AbortSignal) => {
-      setAfdLoading(true);
-      setAfdError(null);
-      fetchAnchorAfd(anchor.id, signal)
-        .then((result) => {
-          if (!signal?.aborted) {
-            setAfd(result);
-            setAfdLoading(false);
-          }
-        })
-        .catch((err) => {
-          if (!signal?.aborted) {
-            setAfdError(err instanceof Error ? err.message : "Failed to load AFD.");
-            setAfdLoading(false);
-          }
-        });
-    },
-    [anchor.id],
-  );
-
-  useEffect(() => {
-    if (!open || activeTab !== "afd" || afdFetchedRef.current) return;
-    afdFetchedRef.current = true;
-
-    const controller = new AbortController();
-    fetchAfdData(controller.signal);
-
-    return () => {
-      controller.abort();
-    };
-  }, [open, activeTab, fetchAfdData]);
-
-  // --------------------------------------------------
   // Retry handlers
   // --------------------------------------------------
   const retryWeather = useCallback(() => {
     fetchWeather();
   }, [fetchWeather]);
 
-  const retryAfd = useCallback(() => {
-    afdFetchedRef.current = false;
-    fetchAfdData();
-  }, [fetchAfdData]);
-
   // --------------------------------------------------
   // Render
   // --------------------------------------------------
   if (!open) return null;
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "current", label: "Current" },
-    { id: "forecast", label: "Forecast" },
-    { id: "afd", label: "AFD" },
-  ];
+  const forecastQuery = `${anchor.city}, ${anchor.st}`;
 
   return (
     <div
@@ -540,46 +336,31 @@ export function NwsCityModal({ open, onClose, anchor }: NwsCityModalProps) {
           </button>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex shrink-0 border-b border-white/[0.06]">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`${tabButtonBase} ${activeTab === tab.id ? tabButtonActive : tabButtonInactive}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
         {/* Body */}
         <div className="legend-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {activeTab === "current" ? (
-            <CurrentTab
-              weather={weather}
-              loading={weatherLoading}
-              error={weatherError}
-              onRetry={retryWeather}
-            />
-          ) : null}
-          {activeTab === "forecast" ? (
-            <ForecastTab
-              weather={weather}
-              loading={weatherLoading}
-              error={weatherError}
-              onRetry={retryWeather}
-            />
-          ) : null}
-          {activeTab === "afd" ? (
-            <AfdTab
-              afd={afd}
-              loading={afdLoading}
-              error={afdError}
-              onRetry={retryAfd}
-            />
-          ) : null}
+          <CurrentTab
+            weather={weather}
+            loading={weatherLoading}
+            error={weatherError}
+            onRetry={retryWeather}
+          />
+
+          <div className="mt-4 pt-2">
+            <Link
+              to={{
+                pathname: "/forecast",
+                search: `?q=${encodeURIComponent(forecastQuery)}`,
+              }}
+              onClick={onClose}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-300/30 bg-[linear-gradient(135deg,rgba(16,36,56,0.94)_0%,rgba(26,79,104,0.94)_52%,rgba(106,183,212,0.94)_100%)] px-4 py-3 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(17,68,92,0.34)] transition-all hover:brightness-110"
+            >
+              Open Full Forecast
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <p className="mt-2 text-center text-[11px] text-white/45">
+              Opens the Forecast page for {forecastQuery} with hourly, extended, model, and discussion details.
+            </p>
+          </div>
         </div>
       </div>
     </div>
