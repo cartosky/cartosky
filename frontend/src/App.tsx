@@ -2600,7 +2600,12 @@ export default function App() {
             }
           }
 
-          setFrameRows((prevRows) => (rows.length === prevRows.length ? prevRows : rows));
+          setFrameRows((prevRows) => {
+            if (rows.length === prevRows.length && JSON.stringify(rows) === JSON.stringify(prevRows)) {
+              return prevRows;
+            }
+            return rows;
+          });
           setForecastHour((prev) =>
             resolveForecastHourFromRows(
               rows,

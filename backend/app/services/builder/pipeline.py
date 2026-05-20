@@ -396,8 +396,13 @@ def _build_pressure_center_metadata_for_variable(
     max_centers = (
         _safe_int_hint(hints, "center_max_count")
         or _safe_int_hint(hints, "pressure_center_max_count")
-        or (12 if center_kind == "pressure" else 10)
+        or (32 if center_kind == "pressure" else 48)
     )
+    skip_edge_centers = str(
+        hints.get("center_skip_edge")
+        or hints.get("pressure_center_skip_edge")
+        or ("true" if center_kind == "pressure" else "false")
+    ).strip().lower() not in {"0", "false", "no", "off"}
 
     component_spec = _resolve_model_var_spec(model, center_component, model_plugin)
     component_patterns = _get_search_patterns(
@@ -521,6 +526,7 @@ def _build_pressure_center_metadata_for_variable(
             min_delta=float(min_delta),
             min_separation_km=float(min_separation_km),
             max_centers=max(1, int(max_centers)),
+            skip_edge_centers=skip_edge_centers,
         ),
     )
     if not centers:
