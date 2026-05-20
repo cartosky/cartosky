@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useUser } from "@clerk/react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -10,9 +11,11 @@ import {
   MapPinned,
   RefreshCw,
   Search,
+  Star,
   X,
 } from "lucide-react";
 
+import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { useSiteLoading } from "@/lib/site-loading";
@@ -28,13 +31,6 @@ type LocationResult = {
   admin1?: string | null;
   country?: string | null;
 };
-
-const FEATURED_LOCATIONS = [
-  { name: "Denver, CO", latitude: 39.7392, longitude: -104.9903 },
-  { name: "Chicago, IL", latitude: 41.8781, longitude: -87.6298 },
-  { name: "Miami, FL", latitude: 25.7617, longitude: -80.1918 },
-  { name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321 },
-] as const;
 
 type CurrentData = {
   source: string;
@@ -224,6 +220,15 @@ function readFiniteSearchParam(searchParams: URLSearchParams, key: string): numb
   if (rawValue === null) return null;
   const value = Number(rawValue);
   return Number.isFinite(value) ? value : null;
+}
+
+function toForecastLocation(label: string, lat: number, lon: number): ForecastLocation {
+  return {
+    id: makeForecastLocationId(label, lat, lon),
+    label,
+    lat,
+    lon,
+  };
 }
 
 // ── Weather Icon ──────────────────────────────────────────────────────
@@ -1050,6 +1055,7 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 // ── Main Page ─────────────────────────────────────────────────────────
 
 export default function Forecast() {
+  const { user } = useUser();
   const { start: startSiteLoading } = useSiteLoading();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialRestorePending = (() => {
@@ -1067,12 +1073,28 @@ export default function Forecast() {
   const [isLoading, setIsLoading] = useState(initialRestorePending);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("hourly");
+  const [favoriteLimitMessage, setFavoriteLimitMessage] = useState<string | null>(null);
+  const {
+    favorites,
+    displayChips,
+    addFavorite,
+    removeFavorite,
+    isFavorite,
+    addRecent,
+  } = useForecastLocations(user?.id);
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const favoriteLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRestorePendingRef = useRef(initialRestorePending);
+
+  useEffect(() => {
+    return () => {
+      if (favoriteLimitTimerRef.current) clearTimeout(favoriteLimitTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     function onOut(e: globalThis.MouseEvent) {
@@ -1185,6 +1207,7 @@ export default function Forecast() {
       setPendingName(name);
       setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
+      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude));
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
@@ -1220,6 +1243,7 @@ export default function Forecast() {
       setPendingName(name);
       setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
+      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude));
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
@@ -1238,8 +1262,39 @@ export default function Forecast() {
     void loadByCoords(loc.latitude, loc.longitude, loc.display_name, loc);
   }
 
+  function selectForecastLocation(location: ForecastLocation) {
+    setPendingName(location.label);
+    setQuery(location.label);
+    setShowDropdown(false);
+    setSearchResults([]);
+    void loadByCoords(location.lat, location.lon, location.label);
+  }
+
+  function showFavoriteLimitMessage() {
+    setFavoriteLimitMessage("Remove a favorite first");
+    if (favoriteLimitTimerRef.current) clearTimeout(favoriteLimitTimerRef.current);
+    favoriteLimitTimerRef.current = setTimeout(() => setFavoriteLimitMessage(null), 2200);
+  }
+
+  function toggleFavorite(location: ForecastLocation) {
+    if (isFavorite(location.id)) {
+      removeFavorite(location.id);
+      setFavoriteLimitMessage(null);
+      return;
+    }
+
+    if (favorites.length >= 5) {
+      showFavoriteLimitMessage();
+      return;
+    }
+
+    addFavorite(location);
+    setFavoriteLimitMessage(null);
+  }
+
   function clearSearch() {
     setQuery(""); setPendingName(null); setForecast(null); setError(null);
+    setFavoriteLimitMessage(null);
     setSearchResults([]); setShowDropdown(false);
     if (loadAbortRef.current) loadAbortRef.current.abort();
     initialRestorePendingRef.current = false;
@@ -1264,6 +1319,8 @@ export default function Forecast() {
     if (f.current.station?.name) stationParts.push(f.current.station.name);
     if (f.current.station?.distance_km != null) stationParts.push(`${f.current.station.distance_km} km`);
     const stationMeta = stationParts.join(" · ");
+    const currentLocation = toForecastLocation(f.location.display_name, f.location.latitude, f.location.longitude);
+    const currentIsFavorite = isFavorite(currentLocation.id);
 
     return (
       <div className="relative left-1/2 right-1/2 -mt-12 w-screen -translate-x-1/2 md:-mt-16 pt-16 min-h-screen bg-[#07111f] text-white">
@@ -1281,6 +1338,19 @@ export default function Forecast() {
             </button>
             <div className="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
               <h1 className="text-[15px] font-medium text-white truncate">{f.location.display_name}</h1>
+              <button
+                type="button"
+                onClick={() => toggleFavorite(currentLocation)}
+                title={currentIsFavorite ? "Remove favorite" : "Save favorite"}
+                aria-label={currentIsFavorite ? "Remove favorite" : "Save favorite"}
+                aria-pressed={currentIsFavorite}
+                className={`flex-none text-white/35 transition duration-200 hover:text-amber-200 focus:outline-none focus-visible:text-amber-200 ${currentIsFavorite ? "scale-105 text-amber-300" : ""}`}
+              >
+                <Star className="h-3.5 w-3.5 transition-all duration-200" fill={currentIsFavorite ? "currentColor" : "none"} />
+              </button>
+              {favoriteLimitMessage && (
+                <span className="text-[12px] text-amber-200/85 whitespace-nowrap">{favoriteLimitMessage}</span>
+              )}
               {stationMeta && (
                 <span className="hidden sm:inline text-[12px] text-white/35 whitespace-nowrap">{stationMeta}</span>
               )}
@@ -1496,21 +1566,36 @@ export default function Forecast() {
             <div className="mx-auto mt-10 max-w-xl lg:mx-0">
               {searchBox}
               {!isLoading && (
-                <div className="mt-6 flex flex-wrap gap-2 lg:max-w-xl">
-                  {FEATURED_LOCATIONS.map(place => (
-                    <button
-                      key={place.name}
-                      type="button"
-                      onClick={() => {
-                        setPendingName(place.name);
-                        setQuery(place.name);
-                        void loadByCoords(place.latitude, place.longitude, place.name);
-                      }}
-                      className="rounded-xl border border-white/10 bg-slate-950/18 px-3 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78"
-                    >
-                      {place.name}
-                    </button>
-                  ))}
+                <div className="forecast-scroll mt-6 flex max-w-full flex-nowrap gap-2 overflow-x-auto pb-1 lg:max-w-xl">
+                  {displayChips.map(location => {
+                    const chipIsFavorite = isFavorite(location.id);
+                    return (
+                      <div key={location.id} className="group relative flex-none">
+                        <button
+                          type="button"
+                          onClick={() => selectForecastLocation(location)}
+                          className={`whitespace-nowrap rounded-xl border border-white/10 bg-slate-950/18 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78 focus:outline-none focus-visible:border-cyan-200/45 focus-visible:text-white/82 ${chipIsFavorite ? "pl-2.5 pr-7" : "px-3"}`}
+                        >
+                          {chipIsFavorite ? <span className="mr-1.5 text-amber-300">★</span> : null}
+                          {location.label}
+                        </button>
+                        {chipIsFavorite && (
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.stopPropagation();
+                              removeFavorite(location.id);
+                            }}
+                            title="Remove favorite"
+                            aria-label={`Remove ${location.label} from favorites`}
+                            className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/0 transition hover:bg-white/10 hover:text-white/75 focus:bg-white/10 focus:text-white/75 focus:outline-none group-hover:text-white/45 group-focus-within:text-white/45"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1552,7 +1637,7 @@ export default function Forecast() {
                   <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
                     <div className="text-sm font-medium text-white">Fast Entry</div>
                     <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
-                      Search by city, zip code, or jump straight in with the featured U.S. locations on the left.
+                      Search by city, zip code, or jump straight in with saved, recent, or featured U.S. locations on the left.
                     </div>
                   </div>
                 </div>
