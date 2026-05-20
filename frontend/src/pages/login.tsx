@@ -1,8 +1,7 @@
 import { Show, SignIn, UserButton } from "@clerk/react";
 import { ExternalLink } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { BRAND_LOGO_SRC } from "@/lib/branding";
-import { clerkUserButtonProps } from "@/lib/clerk-appearance";
+import { clerkAppearance, clerkUserButtonProps } from "@/lib/clerk-appearance";
 
 function safeRedirectUrl(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
@@ -31,14 +30,11 @@ export default function Login() {
                 fallbackRedirectUrl={redirectUrl}
                 signUpFallbackRedirectUrl={redirectUrl}
                 appearance={{
-                  layout: {
-                    logoImageUrl: BRAND_LOGO_SRC,
-                  },
+                  ...clerkAppearance,
                   elements: {
+                    ...clerkAppearance.elements,
                     rootBox: "w-full",
                     cardBox: "mx-auto w-full shadow-[0_20px_80px_rgba(0,0,0,0.36)]",
-                    logoBox: "mb-6 flex justify-center",
-                    logoImage: "!h-12 !max-h-12 !w-auto !max-w-[12rem]",
                   },
                 }}
               />
