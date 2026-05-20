@@ -21,6 +21,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
+from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
 from app.services.builder.derive import FetchContext
@@ -2242,6 +2243,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
     data_root = _data_root(args.data_root)
+    climatology.configure_data_root(data_root)
     workers = _workers(args.workers)
     vars_raw = args.vars if isinstance(args.vars, str) else _env_value(ENV_DEFAULT_VARS, DEFAULT_VARS)
     primary_raw = (
