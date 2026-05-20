@@ -18,8 +18,8 @@ export const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
   },
   elements: {
     card: "border border-white/10 bg-transparent shadow-xl backdrop-blur-xl",
-    logoBox: "mb-6 justify-center !h-24",
-    logoImage: "!h-20 !max-h-20 !w-auto !max-w-[14rem]",
+    logoBox: {  height: '96px', marginBottom: '1.5rem', justifyContent: 'center', display: 'flex' },
+    logoImage: { height: '80px', maxHeight: '80px', width: 'auto', maxWidth: '224px' },
     headerTitle: "text-white",
     headerSubtitle: "text-slate-400",
     formFieldLabel: "text-slate-200",

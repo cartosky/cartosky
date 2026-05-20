@@ -162,6 +162,11 @@ function CurrentTab({
 
   return (
     <div className="space-y-1">
+      <div className="pb-2 text-center">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-cyan-200/72">
+          Current Conditions
+        </div>
+      </div>
       {obs.textDescription ? (
         <div className="pb-2 text-center text-base font-medium text-white">{obs.textDescription}</div>
       ) : null}
