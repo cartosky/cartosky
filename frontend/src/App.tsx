@@ -128,6 +128,14 @@ const NwsHazardModal = lazy(() =>
 );
 
 const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
+const HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 6_000_000;
+const VERY_HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 10_000_000;
+const HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 40;
+const VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 24;
+const HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 300;
+const VERY_HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 200;
+const HIGH_RES_GRID_PLAY_STALL_MS = 900;
+const VERY_HIGH_RES_GRID_PLAY_STALL_MS = 700;
 const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc"]);
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
@@ -889,6 +897,76 @@ export default function App() {
     }
     return selectGridManifestLod(gridManifest, mapZoom);
   }, [gridManifest, mapZoom]);
+  const selectedGridLodPixelCount = useMemo(() => {
+    const width = Number(selectedGridLod?.width);
+    const height = Number(selectedGridLod?.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return Math.floor(width) * Math.floor(height);
+  }, [selectedGridLod]);
+  const isObservedGridSelection = useMemo(() => {
+    return String(model ?? "").trim().toLowerCase() === "mrms";
+  }, [model]);
+  const isHighResObservedGridPlayback = useMemo(() => {
+    return Boolean(
+      isObservedGridSelection
+      && selectedGridLodPixelCount !== null
+      && selectedGridLodPixelCount >= HIGH_RES_GRID_LOD_PIXEL_THRESHOLD
+    );
+  }, [isObservedGridSelection, selectedGridLodPixelCount]);
+  const isVeryHighResObservedGridPlayback = useMemo(() => {
+    return Boolean(
+      isObservedGridSelection
+      && selectedGridLodPixelCount !== null
+      && selectedGridLodPixelCount >= VERY_HIGH_RES_GRID_LOD_PIXEL_THRESHOLD
+    );
+  }, [isObservedGridSelection, selectedGridLodPixelCount]);
+  const gridPlayStartAheadFrames = useMemo(() => {
+    if (isVeryHighResObservedGridPlayback) {
+      return 0;
+    }
+    if (isHighResObservedGridPlayback) {
+      return 1;
+    }
+    return GRID_PLAY_START_AHEAD_FRAMES;
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  const autoplayReadyAheadFrames = useMemo(() => {
+    if (isVeryHighResObservedGridPlayback) {
+      return 0;
+    }
+    if (isHighResObservedGridPlayback) {
+      return 1;
+    }
+    return AUTOPLAY_READY_AHEAD;
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  const autoplayLookAheadGraceMs = useMemo(() => {
+    if (isVeryHighResObservedGridPlayback) {
+      return VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS;
+    }
+    if (isHighResObservedGridPlayback) {
+      return HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS;
+    }
+    return 80;
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  const autoplayStallSkipMs = useMemo(() => {
+    if (isVeryHighResObservedGridPlayback) {
+      return VERY_HIGH_RES_AUTOPLAY_STALL_SKIP_MS;
+    }
+    if (isHighResObservedGridPlayback) {
+      return HIGH_RES_AUTOPLAY_STALL_SKIP_MS;
+    }
+    return AUTOPLAY_STALL_SKIP_MS;
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  const gridPlayStallMs = useMemo(() => {
+    if (isVeryHighResObservedGridPlayback) {
+      return VERY_HIGH_RES_GRID_PLAY_STALL_MS;
+    }
+    if (isHighResObservedGridPlayback) {
+      return HIGH_RES_GRID_PLAY_STALL_MS;
+    }
+    return GRID_PLAY_STALL_MS;
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const compositeLayerSpecs = useMemo(() => {
     return Array.isArray(gridManifest?.composite_layers)
       ? gridManifest.composite_layers.filter((layer) => Boolean(layer?.id) && Boolean(layer?.var))
@@ -1201,8 +1279,8 @@ export default function App() {
     if (!Number.isFinite(gridPlaybackStartHour)) {
       return 0;
     }
-    return countGridAheadReadyFrames(Number(gridPlaybackStartHour), GRID_PLAY_START_AHEAD_FRAMES);
-  }, [countGridAheadReadyFrames, gridPlaybackStartHour, gridReadyVersion]);
+    return countGridAheadReadyFrames(Number(gridPlaybackStartHour), gridPlayStartAheadFrames);
+  }, [countGridAheadReadyFrames, gridPlaybackStartHour, gridPlayStartAheadFrames, gridReadyVersion]);
   const isGridPlaybackStartReady = useMemo(() => {
     if (!Number.isFinite(gridPlaybackStartHour)) {
       return false;
@@ -1216,13 +1294,14 @@ export default function App() {
       return false;
     }
     const remainingAhead = Math.max(0, gridFrameHours.length - currentIndex - 1);
-    const requiredAhead = Math.min(GRID_PLAY_START_AHEAD_FRAMES, remainingAhead);
+    const requiredAhead = Math.min(gridPlayStartAheadFrames, remainingAhead);
     return gridPlaybackAheadReadyCount >= requiredAhead;
   }, [
     gridFrameHours,
     gridFrameIndexByHour,
     gridPlaybackAheadReadyCount,
     gridPlaybackStartHour,
+    gridPlayStartAheadFrames,
     gridReadyHourSet,
   ]);
   const isGridLowMidActive = useMemo(() => {
@@ -2575,7 +2654,7 @@ export default function App() {
     /** Tracks time spent waiting for look-ahead frames when the next frame IS ready. */
     let lookAheadWaitMs = 0;
     /** Maximum time (ms) to wait for look-ahead frames before advancing anyway. */
-    const LOOKAHEAD_GRACE_MS = 80;
+    const LOOKAHEAD_GRACE_MS = autoplayLookAheadGraceMs;
 
     const tick = (now: number) => {
       const currentHour = gridPlaybackHourRef.current
@@ -2608,7 +2687,7 @@ export default function App() {
           // beyond this one are also ready (or we're near the end).  This
           // prevents advancing into a gap that will immediately stall.
           let aheadReady = true;
-          const lookAheadEnd = Math.min(nextIndex + AUTOPLAY_READY_AHEAD, gridFrameHours.length - 1);
+          const lookAheadEnd = Math.min(nextIndex + autoplayReadyAheadFrames, gridFrameHours.length - 1);
           for (let li = nextIndex + 1; li <= lookAheadEnd; li++) {
             const laHour = gridFrameHours[li];
             if (!gridReadyHourSet.has(laHour)) {
@@ -2644,7 +2723,7 @@ export default function App() {
         stallMs += deltaMs;
 
         // After stalling long enough, try skipping ahead within a window.
-        if (stallMs >= AUTOPLAY_STALL_SKIP_MS) {
+        if (stallMs >= autoplayStallSkipMs) {
           const maxStep = Math.min(AUTOPLAY_SKIP_WINDOW, gridFrameHours.length - 1 - currentIndex);
           for (let step = 2; step <= maxStep; step += 1) {
             const candidateHour = gridFrameHours[currentIndex + step];
@@ -2671,7 +2750,16 @@ export default function App() {
       }
       gridPlaybackHourRef.current = null;
     };
-  }, [gridFrameHours, gridFrameIndexByHour, gridReadyHourSet, isGridPlayable, isPlaying]);
+  }, [
+    autoplayLookAheadGraceMs,
+    autoplayReadyAheadFrames,
+    autoplayStallSkipMs,
+    gridFrameHours,
+    gridFrameIndexByHour,
+    gridReadyHourSet,
+    isGridPlayable,
+    isPlaying,
+  ]);
 
   useEffect(() => {
     if (!isGridPreloadingForPlay) {
@@ -2692,7 +2780,7 @@ export default function App() {
     const stalledMs = pendingLoopStartMetricRef.current
       ? Math.max(0, performance.now() - pendingLoopStartMetricRef.current.startedAt)
       : 0;
-    const allowStallStart = currentReady && stalledMs >= GRID_PLAY_STALL_MS;
+    const allowStallStart = currentReady && stalledMs >= gridPlayStallMs;
 
     if (!isGridPlaybackStartReady && !allowStallStart) {
       return;
@@ -2713,6 +2801,7 @@ export default function App() {
     isGridPlayable,
     isGridPlaybackStartReady,
     isGridPreloadingForPlay,
+    gridPlayStallMs,
     normalizeGridFrameUrl,
     showTransientFrameStatus,
   ]);
