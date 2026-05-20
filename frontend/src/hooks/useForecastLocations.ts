@@ -5,6 +5,10 @@ export interface ForecastLocation {
   label: string;
   lat: number;
   lon: number;
+  timezone?: string | null;
+  country_code?: string | null;
+  admin1?: string | null;
+  country?: string | null;
 }
 
 const FAVORITES_STORAGE_KEY = "cartosky_forecast_favorites_v1";
@@ -13,10 +17,10 @@ const MAX_FAVORITES = 5;
 const MAX_RECENTS = 4;
 
 export const defaultCities: ForecastLocation[] = [
-  { id: "denver-co", label: "Denver, CO", lat: 39.7392, lon: -104.9903 },
-  { id: "chicago-il", label: "Chicago, IL", lat: 41.8781, lon: -87.6298 },
-  { id: "miami-fl", label: "Miami, FL", lat: 25.7617, lon: -80.1918 },
-  { id: "seattle-wa", label: "Seattle, WA", lat: 47.6062, lon: -122.3321 },
+  { id: "denver-co", label: "Denver, CO", lat: 39.7392, lon: -104.9903, country_code: "US", admin1: "Colorado" },
+  { id: "chicago-il", label: "Chicago, IL", lat: 41.8781, lon: -87.6298, country_code: "US", admin1: "Illinois" },
+  { id: "miami-fl", label: "Miami, FL", lat: 25.7617, lon: -80.1918, country_code: "US", admin1: "Florida" },
+  { id: "seattle-wa", label: "Seattle, WA", lat: 47.6062, lon: -122.3321, country_code: "US", admin1: "Washington" },
 ];
 
 function favoritesStorageKey(userId?: string): string {
@@ -52,6 +56,10 @@ function sanitizeLocations(value: unknown, maxItems: number): ForecastLocation[]
       label: item.label,
       lat: item.lat,
       lon: item.lon,
+      timezone: item.timezone ?? null,
+      country_code: item.country_code ?? null,
+      admin1: item.admin1 ?? null,
+      country: item.country ?? null,
     });
     if (locations.length >= maxItems) break;
   }

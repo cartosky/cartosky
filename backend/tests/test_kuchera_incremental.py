@@ -611,7 +611,7 @@ def test_incremental_reuse_with_late_cumulative_apcp_stays_incremental(monkeypat
     assert "computed_steps=2" in caplog.text
 
 
-def test_direct_cumulative_kuchera_rebuilds_full_history_even_with_prior_cache(monkeypatch, caplog) -> None:
+def test_direct_cumulative_kuchera_reuses_prior_cache_with_raw_lwe_seed(monkeypatch, caplog) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
     tmp_925 = np.full((2, 2), -10.0, dtype=np.float32)
@@ -773,16 +773,15 @@ def test_direct_cumulative_kuchera_rebuilds_full_history_even_with_prior_cache(m
 
     assert out_crs == crs
     assert out_transform == transform
-    assert set(sf_calls) == {3, 6, 9, 12}
-    assert len(sf_calls) >= 4
+    assert sf_calls == [6, 9, 12]
     assert "retrying full rebuild" not in caplog.text
-    assert "reused_prev_cumulative=false" in caplog.text
-    assert "base_fh=none" in caplog.text
-    assert "computed_steps=4" in caplog.text
+    assert "reused_prev_cumulative=true" in caplog.text
+    assert "base_fh=006" in caplog.text
+    assert "computed_steps=2" in caplog.text
     np.testing.assert_allclose(data, full_data, rtol=1e-6, atol=1e-6)
 
 
-def test_direct_cumulative_kuchera_ignores_immediate_prev_frame_cache(monkeypatch, caplog) -> None:
+def test_direct_cumulative_kuchera_uses_immediate_prev_frame_cache(monkeypatch, caplog) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
     tmp_925 = np.full((2, 2), -10.0, dtype=np.float32)
@@ -936,11 +935,10 @@ def test_direct_cumulative_kuchera_ignores_immediate_prev_frame_cache(monkeypatc
 
     assert out_crs == crs
     assert out_transform == transform
-    assert set(sf_calls) == {258, 264, 270, 276, 282, 288, 294, 300}
-    assert len(sf_calls) >= 8
-    assert "reused_prev_cumulative=false" in caplog.text
-    assert "base_fh=none" in caplog.text
-    assert "computed_steps=8" in caplog.text
+    assert sf_calls == [294, 300]
+    assert "reused_prev_cumulative=true" in caplog.text
+    assert "base_fh=294" in caplog.text
+    assert "computed_steps=1" in caplog.text
     np.testing.assert_allclose(data, full_data, rtol=1e-6, atol=1e-6)
 
 

@@ -5574,11 +5574,11 @@ def _derive_snowfall_kuchera_total_cumulative(
         rasterio.transform.Affine,
         int,
     ] | None = None
-    start_index = 0 if use_direct_cumulative_lwe else max(0, len(step_fhs) - rebuild_window_steps)
+    start_index = max(0, len(step_fhs) - rebuild_window_steps)
 
     def _load_prior_kuchera_base(
         prior_fh: int,
-    ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+    ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]] | None:
         prior = _kuchera_load_prior_cumulative(
             model_id=model_id,
             run_date=run_date,
@@ -5592,8 +5592,8 @@ def _derive_snowfall_kuchera_total_cumulative(
         unpacked_prior = _unpack_kuchera_cumulative_cache_entry(prior)
         if unpacked_prior is None:
             return None
-        prior_data, prior_crs, prior_transform, _prior_meta = unpacked_prior
-        return prior_data, prior_crs, prior_transform
+        prior_data, prior_crs, prior_transform, prior_meta = unpacked_prior
+        return prior_data, prior_crs, prior_transform, prior_meta
 
     def _load_prior_apcp_seed(
         seed_fh: int,
@@ -5630,41 +5630,116 @@ def _derive_snowfall_kuchera_total_cumulative(
             int(seed_fh),
         )
 
-    if (not use_direct_cumulative_lwe) and len(step_fhs) >= 2:
+    def _load_prior_direct_lwe_seed(
+        seed_fh: int,
+        *,
+        reference_data: np.ndarray | None,
+        reference_crs: rasterio.crs.CRS | None,
+        reference_transform: rasterio.transform.Affine | None,
+    ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, int] | None:
+        try:
+            seed_data, seed_crs, seed_transform = _fetch_step_component(
+                model_id=model_id,
+                product=apcp_product or product,
+                run_date=run_date,
+                step_fh=int(seed_fh),
+                model_plugin=model_plugin,
+                var_key=apcp_component,
+                use_warped=use_warped,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                ctx=ctx,
+            )
+        except (HerbieTransientUnavailableError, RuntimeError, ValueError):
+            return None
+        if reference_data is not None:
+            same_shape = seed_data.shape == reference_data.shape
+            same_crs = seed_crs == reference_crs
+            same_transform = seed_transform == reference_transform
+            if not (same_shape and same_crs and same_transform):
+                return None
+        return (
+            seed_data.astype(np.float32, copy=False),
+            np.isfinite(seed_data),
+            seed_crs,
+            seed_transform,
+            int(seed_fh),
+        )
+
+    def _load_prior_seed(
+        seed_fh: int,
+        *,
+        reference_data: np.ndarray | None,
+        reference_crs: rasterio.crs.CRS | None,
+        reference_transform: rasterio.transform.Affine | None,
+    ) -> tuple[np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, int] | None:
+        if use_direct_cumulative_lwe:
+            return _load_prior_direct_lwe_seed(
+                seed_fh,
+                reference_data=reference_data,
+                reference_crs=reference_crs,
+                reference_transform=reference_transform,
+            )
+        return _load_prior_apcp_seed(
+            seed_fh,
+            reference_data=reference_data,
+            reference_crs=reference_crs,
+            reference_transform=reference_transform,
+        )
+
+    if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior = _load_prior_kuchera_base(prev_fh)
         if prior is not None:
-            base_cumulative, base_crs, base_transform = prior
-            base_fh = prev_fh
-            start_index = len(step_fhs) - 1
-            reused_prev_cumulative = True
-            initial_apcp_cumulative = _load_prior_apcp_seed(
+            prior_data, prior_crs, prior_transform, prior_meta = prior
+            prior_seed = _load_prior_seed(
                 prev_fh,
-                reference_data=base_cumulative,
-                reference_crs=base_crs,
-                reference_transform=base_transform,
+                reference_data=prior_data,
+                reference_crs=prior_crs,
+                reference_transform=prior_transform,
             )
-            if initial_apcp_cumulative is not None:
-                first_step_expected_start_fh = prev_fh
+            direct_prior_ok = (
+                not use_direct_cumulative_lwe
+                or _kuchera_cache_has_full_run_coverage(prior_meta)
+            )
+            if direct_prior_ok and (prior_seed is not None or not use_direct_cumulative_lwe):
+                base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
+                base_fh = prev_fh
+                start_index = len(step_fhs) - 1
+                reused_prev_cumulative = True
+                initial_apcp_cumulative = prior_seed
+                if initial_apcp_cumulative is not None:
+                    first_step_expected_start_fh = prev_fh
 
-    if (not use_direct_cumulative_lwe) and base_cumulative is None and start_index > 0:
+    if base_cumulative is None and start_index > 0:
         anchor_fh = int(step_fhs[start_index - 1])
         prior = _load_prior_kuchera_base(anchor_fh)
         if prior is None:
             start_index = 0
             base_fh = None
         else:
-            base_cumulative, base_crs, base_transform = prior
-            base_fh = anchor_fh
-            reused_prev_cumulative = True
-            initial_apcp_cumulative = _load_prior_apcp_seed(
+            prior_data, prior_crs, prior_transform, prior_meta = prior
+            prior_seed = _load_prior_seed(
                 anchor_fh,
-                reference_data=base_cumulative,
-                reference_crs=base_crs,
-                reference_transform=base_transform,
+                reference_data=prior_data,
+                reference_crs=prior_crs,
+                reference_transform=prior_transform,
             )
-            if initial_apcp_cumulative is not None:
-                first_step_expected_start_fh = anchor_fh
+            direct_prior_ok = (
+                not use_direct_cumulative_lwe
+                or _kuchera_cache_has_full_run_coverage(prior_meta)
+            )
+            if (prior_seed is None or not direct_prior_ok) and use_direct_cumulative_lwe:
+                start_index = 0
+                base_fh = None
+            else:
+                base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
+                base_fh = anchor_fh
+                reused_prev_cumulative = True
+                initial_apcp_cumulative = prior_seed
+                if initial_apcp_cumulative is not None:
+                    first_step_expected_start_fh = anchor_fh
 
     steps_processed = 0
     while True:
@@ -5672,9 +5747,11 @@ def _derive_snowfall_kuchera_total_cumulative(
         if not subset_step_fhs:
             raise ValueError(f"No incremental Kuchera steps selected for {model_id}/{var_key} fh{fh:03d}")
 
-        if (not use_direct_cumulative_lwe) and start_index > 0:
+        if start_index > 0:
             anchor_fh = int(step_fhs[start_index - 1])
-            if base_fh != anchor_fh or base_cumulative is None:
+            if base_fh != anchor_fh or base_cumulative is None or (
+                use_direct_cumulative_lwe and initial_apcp_cumulative is None
+            ):
                 prior = _load_prior_kuchera_base(anchor_fh)
                 if prior is None:
                     start_index = 0
@@ -5686,15 +5763,31 @@ def _derive_snowfall_kuchera_total_cumulative(
                     initial_apcp_cumulative = None
                     reused_prev_cumulative = False
                     continue
-                base_cumulative, base_crs, base_transform = prior
+                prior_data, prior_crs, prior_transform, prior_meta = prior
+                prior_seed = _load_prior_seed(
+                    anchor_fh,
+                    reference_data=prior_data,
+                    reference_crs=prior_crs,
+                    reference_transform=prior_transform,
+                )
+                direct_prior_ok = (
+                    not use_direct_cumulative_lwe
+                    or _kuchera_cache_has_full_run_coverage(prior_meta)
+                )
+                if (prior_seed is None or not direct_prior_ok) and use_direct_cumulative_lwe:
+                    start_index = 0
+                    base_cumulative = None
+                    base_crs = None
+                    base_transform = None
+                    base_fh = None
+                    first_step_expected_start_fh = None
+                    initial_apcp_cumulative = None
+                    reused_prev_cumulative = False
+                    continue
+                base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
                 base_fh = anchor_fh
                 reused_prev_cumulative = True
-                initial_apcp_cumulative = _load_prior_apcp_seed(
-                    anchor_fh,
-                    reference_data=base_cumulative,
-                    reference_crs=base_crs,
-                    reference_transform=base_transform,
-                )
+                initial_apcp_cumulative = prior_seed
                 first_step_expected_start_fh = anchor_fh if initial_apcp_cumulative is not None else None
 
         _prefetch_tasks: list[_PrefetchTask] = []

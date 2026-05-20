@@ -222,12 +222,29 @@ function readFiniteSearchParam(searchParams: URLSearchParams, key: string): numb
   return Number.isFinite(value) ? value : null;
 }
 
-function toForecastLocation(label: string, lat: number, lon: number): ForecastLocation {
+function toForecastLocation(label: string, lat: number, lon: number, locationHint?: Partial<LocationResult>): ForecastLocation {
   return {
     id: makeForecastLocationId(label, lat, lon),
     label,
     lat,
     lon,
+    timezone: locationHint?.timezone ?? null,
+    country_code: locationHint?.country_code ?? null,
+    admin1: locationHint?.admin1 ?? null,
+    country: locationHint?.country ?? null,
+  };
+}
+
+function forecastLocationHint(location: ForecastLocation): Partial<LocationResult> | undefined {
+  if (!location.timezone && !location.country_code && !location.admin1 && !location.country) return undefined;
+  return {
+    display_name: location.label,
+    latitude: location.lat,
+    longitude: location.lon,
+    timezone: location.timezone ?? null,
+    country_code: location.country_code ?? null,
+    admin1: location.admin1 ?? null,
+    country: location.country ?? null,
   };
 }
 
@@ -1182,7 +1199,7 @@ export default function Forecast() {
     setIsLoading(true); setError(null); setShowDropdown(false);
     try {
       const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
-      const displayName = preferredName ?? locationHint?.display_name ?? null;
+      const displayName = locationHint?.display_name ?? null;
       if (displayName) params.set("display_name", displayName);
       if (locationHint?.timezone) params.set("timezone", locationHint.timezone);
       if (locationHint?.country_code) params.set("country_code", locationHint.country_code);
@@ -1207,7 +1224,7 @@ export default function Forecast() {
       setPendingName(name);
       setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
-      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude));
+      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
@@ -1243,7 +1260,7 @@ export default function Forecast() {
       setPendingName(name);
       setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
-      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude));
+      addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
@@ -1267,7 +1284,7 @@ export default function Forecast() {
     setQuery(location.label);
     setShowDropdown(false);
     setSearchResults([]);
-    void loadByCoords(location.lat, location.lon, location.label);
+    void loadByCoords(location.lat, location.lon, location.label, forecastLocationHint(location));
   }
 
   function showFavoriteLimitMessage() {
@@ -1319,7 +1336,14 @@ export default function Forecast() {
     if (f.current.station?.name) stationParts.push(f.current.station.name);
     if (f.current.station?.distance_km != null) stationParts.push(`${f.current.station.distance_km} km`);
     const stationMeta = stationParts.join(" · ");
-    const currentLocation = toForecastLocation(f.location.display_name, f.location.latitude, f.location.longitude);
+    const currentLocation = toForecastLocation(f.location.display_name, f.location.latitude, f.location.longitude, {
+      display_name: f.location.display_name,
+      latitude: f.location.latitude,
+      longitude: f.location.longitude,
+      timezone: f.location.timezone,
+      country_code: f.location.country_code,
+      admin1: f.location.admin1,
+    });
     const currentIsFavorite = isFavorite(currentLocation.id);
 
     return (
