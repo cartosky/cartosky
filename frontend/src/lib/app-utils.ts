@@ -440,9 +440,10 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
       return "SURFACE";
     case "precipitation":
     case "moisture":
+      return "PRECIPITATION";
     case "radar & precipitation type":
     case "radar":
-      return "PRECIPITATION";
+      return "RADAR";
     case "severe":
     case "instability":
       return "SEVERE";

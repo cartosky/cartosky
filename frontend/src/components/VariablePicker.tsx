@@ -26,14 +26,21 @@ type VariablePickerProps = {
   onOpenChange?: (open: boolean) => void;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR";
 
-const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
+const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
   { id: "PRECIPITATION", label: "Precip" },
   { id: "PRECIP ANOMALIES", label: "Precip anomalies" },
   { id: "SEVERE", label: "Severe" },
   { id: "UPPER AIR", label: "Upper air" },
+];
+
+const RADAR_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "RADAR", label: "Radar" };
+
+const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
+  ...BASE_CATEGORY_ROWS,
+  RADAR_CATEGORY_ROW,
 ];
 
 const CATEGORY_LABELS = new Map<CategoryId, string>([
@@ -49,7 +56,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "SEVERE") return "SEVERE";
   if (normalized === "UPPER AIR") return "UPPER AIR";
   if (normalized === "ENSEMBLE" || normalized === "ENSEMBLES") return "ENSEMBLE";
-  if (normalized === "RADAR") return "PRECIPITATION";
+  if (normalized === "RADAR") return "RADAR";
   return null;
 }
 
@@ -98,6 +105,11 @@ export function VariablePicker({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const { favorites, favoriteSet, toggleFavorite } = useVariableFavorites(modelId);
+  const isRadarModel = modelId === "mrms";
+  const availableCategoryRows = useMemo(
+    () => (isRadarModel ? CATEGORY_ROWS : BASE_CATEGORY_ROWS),
+    [isRadarModel]
+  );
 
   const supportedSet = useMemo(() => new Set(supportedVariableIds), [supportedVariableIds]);
   const options = useMemo(() => {
@@ -106,10 +118,13 @@ export function VariablePicker({
       if (!option.value || seen.has(option.value)) {
         return false;
       }
+      if (!isRadarModel && normalizeGroup(option.group) === "RADAR") {
+        return false;
+      }
       seen.add(option.value);
       return true;
     });
-  }, [variableCatalog]);
+  }, [isRadarModel, variableCatalog]);
   const optionById = useMemo(() => new Map(options.map((option) => [option.value, option])), [options]);
   const selectedLabel = selectedLabelOverride ?? optionById.get(value)?.label ?? (value || placeholder);
   const normalizedQuery = query.trim().toLowerCase();
@@ -124,18 +139,18 @@ export function VariablePicker({
 
   const categorizedOptions = useMemo(() => {
     const byCategory = new Map<CategoryId, VariableOption[]>();
-    for (const row of CATEGORY_ROWS) {
+    for (const row of availableCategoryRows) {
       byCategory.set(row.id, []);
     }
     for (const option of options) {
       const category = normalizeGroup(option.group);
-      if (!category || category === "FAVORITES") {
+      if (!category || category === "FAVORITES" || (!isRadarModel && category === "RADAR")) {
         continue;
       }
       byCategory.get(category)?.push(option);
     }
     return byCategory;
-  }, [options]);
+  }, [availableCategoryRows, isRadarModel, options]);
 
   const favoriteOptions = useMemo(
     () => favorites.map((favoriteId) => optionById.get(favoriteId)).filter((option): option is VariableOption => Boolean(option)),
@@ -151,7 +166,7 @@ export function VariablePicker({
         count: favoriteOptions.filter(matchesQuery).length,
       });
     }
-    for (const row of CATEGORY_ROWS) {
+    for (const row of availableCategoryRows) {
       rows.push({
         id: row.id,
         label: row.label,
@@ -159,7 +174,7 @@ export function VariablePicker({
       });
     }
     return rows;
-  }, [categorizedOptions, favoriteOptions, matchesQuery]);
+  }, [availableCategoryRows, categorizedOptions, favoriteOptions, matchesQuery]);
 
   const visibleOptions = useMemo(() => {
     if (hasSearch) {
@@ -226,6 +241,13 @@ export function VariablePicker({
     }
     setActiveCategory(selectedCategory ?? "SURFACE");
   }, [activeCategory, favoriteOptions.length, selectedCategory]);
+
+  useEffect(() => {
+    if (activeCategory !== "RADAR" || isRadarModel) {
+      return;
+    }
+    setActiveCategory(selectedCategory && selectedCategory !== "RADAR" ? selectedCategory : "SURFACE");
+  }, [activeCategory, isRadarModel, selectedCategory]);
 
   useEffect(() => {
     if (!open) {
