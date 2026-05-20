@@ -83,7 +83,9 @@ export type GridWebglLayerConfig = {
    *  avoid competing with the animation/scrub for main-thread and GPU time. */
   isAnimating?: boolean;
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
+  /** Fired when a frame has a live GPU texture and can be shown without a foreground upload. */
   onFrameReady?: ((frameUrl: string) => void) | null;
+  /** Fired when a frame is no longer texture-ready. */
   onFrameEvicted?: ((frameUrl: string) => void) | null;
 };
 
@@ -1561,6 +1563,7 @@ export class GridWebglLayerController {
 
     const existing = this.textureCache.touch(frameUrl);
     if (existing) {
+      this.onFrameReady?.(frameUrl);
       return existing.texture;
     }
     if (!bytes) {
@@ -1709,6 +1712,7 @@ export class GridWebglLayerController {
     this.textureCacheBytes += preparedUpload.bytes.byteLength;
     this.markFrameRetained(frameUrl);
     this.evictCaches(frameUrl);
+    this.onFrameReady?.(frameUrl);
     return targetTexture;
   }
 
@@ -1876,7 +1880,6 @@ export class GridWebglLayerController {
         const bytes = new Uint8Array(arrayBuffer);
         this.upsertFrameCache(frameUrl, bytes);
         this.markFrameRetained(frameUrl);
-        this.onFrameReady?.(frameUrl);
         return bytes;
       })
       .catch((error) => {
@@ -1933,9 +1936,7 @@ export class GridWebglLayerController {
     }
     this.textureCacheBytes -= evicted.value.bytes;
     this.gl?.deleteTexture(evicted.value.texture);
-    if (!this.frameCache.has(evicted.key)) {
-      this.onFrameEvicted?.(evicted.key);
-    }
+    this.onFrameEvicted?.(evicted.key);
     return true;
   }
 
