@@ -147,11 +147,11 @@
   }
 
   .map-pressure-center--h {
-    color: rgb(37, 99, 235);
+    color: rgb(220, 0, 0);
   }
 
   .map-pressure-center--l {
-    color: rgb(220, 38, 38);
+    color: rgb(0, 72, 255);
   }
 
   .cartosky-clerk-auth .cl-footerActionText {
