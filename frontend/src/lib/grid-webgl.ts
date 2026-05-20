@@ -22,6 +22,8 @@ const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP = 2;
 const OBSERVED_GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE = 1;
 const OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_DESKTOP = 6;
 const OBSERVED_GRID_TEXTURE_HIGH_PRIORITY_COUNT_MOBILE = 4;
+const OBSERVED_HIGH_RES_LOD_PIXEL_THRESHOLD = 6_000_000;
+const OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD = 10_000_000;
 const GRID_LUT_SIZE = 4096;
 const MERCATOR_HALF_WORLD = 20037508.342789244;
 const TRANSPARENT_BELOW_MIN_BY_COLOR_MAP_ID = new Map<string, number>([
@@ -1082,20 +1084,49 @@ export class GridWebglLayerController {
 
   private textureWarmLimit(): number {
     if (isObservedGridManifest(this.manifest)) {
-      return resolveObservedTextureWarmLimit();
+      const baseLimit = resolveObservedTextureWarmLimit();
+      const lodPixelCount = this.resolveSelectedLodPixelCount();
+      if (lodPixelCount !== null && lodPixelCount >= OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        return Math.max(6, Math.floor(baseLimit * 0.35));
+      }
+      if (lodPixelCount !== null && lodPixelCount >= OBSERVED_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        return Math.max(8, Math.floor(baseLimit * 0.5));
+      }
+      return baseLimit;
     }
     return GRID_TEXTURE_WARM_LIMIT;
   }
 
   private textureWarmBatchSize(): number {
     if (isObservedGridManifest(this.manifest)) {
-      return resolveObservedTextureWarmBatchSize(this.animating);
+      const baseBatchSize = resolveObservedTextureWarmBatchSize(this.animating);
+      const lodPixelCount = this.resolveSelectedLodPixelCount();
+      if (lodPixelCount !== null && lodPixelCount >= OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        return 1;
+      }
+      if (lodPixelCount !== null && lodPixelCount >= OBSERVED_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        return this.animating ? 1 : Math.max(1, baseBatchSize - 1);
+      }
+      return baseBatchSize;
     }
     return resolveForecastTextureWarmBatchSize(this.animating);
   }
 
   private textureWarmHighPriorityCount(): number {
     return isObservedGridManifest(this.manifest) ? resolveObservedTextureHighPriorityCount() : 4;
+  }
+
+  private resolveSelectedLodPixelCount(): number | null {
+    const selected = this.resolveSelectedLod();
+    if (!selected) {
+      return null;
+    }
+    const width = Number(selected.width);
+    const height = Number(selected.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return Math.floor(width) * Math.floor(height);
   }
 
   private rebuildLegendTexture() {
@@ -2021,10 +2052,18 @@ export class GridWebglLayerController {
   }
 
   private async pumpTextureWarmQueue() {
-    // During animation/scrub, observed MRMS grids can now warm a little more
-    // aggressively on desktop because per-frame upload cost is lower.
+    // Keep warming adaptive so high-resolution observed LODs don't saturate
+    // frame time while the user is actively scrubbing or animating.
     const effectiveBatchSize = this.textureWarmBatchSize();
-    const frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating);
+    let frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating);
+    if (isObservedGridManifest(this.manifest)) {
+      const lodPixelCount = this.resolveSelectedLodPixelCount();
+      if (lodPixelCount !== null && lodPixelCount >= OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        frameBudgetMs = Math.min(frameBudgetMs, this.animating ? 3 : 4);
+      } else if (lodPixelCount !== null && lodPixelCount >= OBSERVED_HIGH_RES_LOD_PIXEL_THRESHOLD) {
+        frameBudgetMs = Math.min(frameBudgetMs, this.animating ? 4 : 5);
+      }
+    }
     const pumpStartedAt = typeof performance !== "undefined" ? performance.now() : 0;
     let warmedAny = false;
     let warmedCount = 0;

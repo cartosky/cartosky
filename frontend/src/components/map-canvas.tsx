@@ -83,6 +83,9 @@ const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_BEHIND = 1;
 const OBSERVED_MOBILE_SCRUB_PREFETCH_BUDGET = 6;
 const OBSERVED_MOBILE_SCRUB_MIN_AHEAD = 2;
 const OBSERVED_MOBILE_SCRUB_MIN_BEHIND = 2;
+const OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET = 12;
+const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
+const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
 const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
@@ -1178,8 +1181,18 @@ export function MapCanvas({
             behindTarget = Math.min(remainingBehind, budget - aheadTarget);
           }
         } else {
-          aheadTarget = remainingAhead;
-          behindTarget = remainingBehind;
+          const budget = OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET;
+          if (direction > 0) {
+            behindTarget = Math.min(remainingBehind, OBSERVED_DESKTOP_SCRUB_MIN_BEHIND);
+            aheadTarget = Math.min(remainingAhead, budget - behindTarget);
+          } else if (direction < 0) {
+            aheadTarget = Math.min(remainingAhead, OBSERVED_DESKTOP_SCRUB_MIN_AHEAD);
+            behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+          } else {
+            const halfBudget = Math.floor(budget / 2);
+            aheadTarget = Math.min(remainingAhead, halfBudget + 1);
+            behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+          }
         }
       }
     } else if (mode === "autoplay") {
