@@ -637,6 +637,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const [mobileModelPickerOpen, setMobileModelPickerOpen] = useState(false);
   const [mobileVariablePickerOpen, setMobileVariablePickerOpen] = useState(false);
   const dragStartY = useRef<number | null>(null);
+  const pickerReturnSnap = useRef<"peek" | "full" | null>(null);
 
   if (!toolbar) return null;
 
@@ -690,9 +691,24 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const closeSheet = () => {
     setSheetSnap("closed");
+    pickerReturnSnap.current = null;
     setMobileModelPickerOpen(false);
     setMobileVariablePickerOpen(false);
     onMobileControlsOpenChange?.(false);
+  };
+
+  const restorePickerReturnSnap = () => {
+    const returnSnap = pickerReturnSnap.current;
+    pickerReturnSnap.current = null;
+    if (returnSnap) {
+      setSheetSnap(returnSnap);
+    }
+  };
+
+  const rememberPickerReturnSnap = () => {
+    if (!mobilePickerOpen && pickerReturnSnap.current == null) {
+      pickerReturnSnap.current = sheetSnap === "closed" ? "peek" : sheetSnap;
+    }
   };
 
   // Drag-to-snap gesture handlers (phone only)
@@ -732,10 +748,17 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             inlinePanel={isPhoneLayout}
             inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
             onOpenChange={(nextOpen) => {
-              setMobileModelPickerOpen(isPhoneLayout && nextOpen);
+              if (!isPhoneLayout) {
+                setMobileModelPickerOpen(false);
+                return;
+              }
+              setMobileModelPickerOpen(nextOpen);
               if (nextOpen) {
+                rememberPickerReturnSnap();
                 setMobileVariablePickerOpen(false);
                 setSheetSnap("full");
+              } else if (!mobileVariablePickerOpen) {
+                restorePickerReturnSnap();
               }
             }}
           />
@@ -759,10 +782,17 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             inlinePanel={isPhoneLayout}
             inlinePanelClassName="max-h-[calc(90dvh-17rem)]"
             onOpenChange={(open) => {
-              setMobileVariablePickerOpen(isPhoneLayout && open);
+              if (!isPhoneLayout) {
+                setMobileVariablePickerOpen(false);
+                return;
+              }
+              setMobileVariablePickerOpen(open);
               if (open) {
+                rememberPickerReturnSnap();
                 setMobileModelPickerOpen(false);
                 setSheetSnap("full");
+              } else if (!mobileModelPickerOpen) {
+                restorePickerReturnSnap();
               }
             }}
           />
@@ -902,7 +932,6 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           <div
             style={isPhoneLayout ? {
               maxHeight: sheetSnap === "full" ? "90dvh" : "60dvh",
-              height: mobilePickerOpen && sheetSnap === "full" ? "90dvh" : undefined,
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
