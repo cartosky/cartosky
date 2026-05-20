@@ -377,7 +377,7 @@ def _build_pressure_center_metadata_for_variable(
     center_product = str(hints.get("center_product") or hints.get("contour_product") or product).strip() or product
 
     contour_interval = _safe_float_hint(hints, "contour_interval")
-    default_min_delta = 4.0 if center_kind == "pressure" else float(contour_interval or 60.0)
+    default_min_delta = 4.0 if center_kind == "pressure" else max(2.0, float(contour_interval or 6.0) / 3.0)
     radius_km = (
         _safe_float_hint(hints, "center_radius_km")
         or _safe_float_hint(hints, "pressure_center_radius_km")
