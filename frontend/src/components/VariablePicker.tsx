@@ -26,7 +26,7 @@ type VariablePickerProps = {
   onOpenChange?: (open: boolean) => void;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE";
 
 const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
@@ -34,7 +34,6 @@ const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string
   { id: "PRECIP ANOMALIES", label: "Precip anomalies" },
   { id: "SEVERE", label: "Severe" },
   { id: "UPPER AIR", label: "Upper air" },
-  { id: "RADAR", label: "Radar" },
 ];
 
 const CATEGORY_LABELS = new Map<CategoryId, string>([
@@ -50,7 +49,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "SEVERE") return "SEVERE";
   if (normalized === "UPPER AIR") return "UPPER AIR";
   if (normalized === "ENSEMBLE" || normalized === "ENSEMBLES") return "ENSEMBLE";
-  if (normalized === "RADAR") return "RADAR";
+  if (normalized === "RADAR") return "PRECIPITATION";
   return null;
 }
 

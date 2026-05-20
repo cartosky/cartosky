@@ -87,7 +87,7 @@ function AvailabilityReadout({
 }
 
 
-const GROUP_ORDER = ["MODELS", "ENSEMBLES", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "ENSEMBLE", "RADAR"];
+const GROUP_ORDER = ["MODELS", "ENSEMBLES", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "ENSEMBLE"];
 
 function spcVariableLabel(option: VariableOption): string {
   switch (option.value) {
