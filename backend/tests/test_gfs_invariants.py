@@ -353,6 +353,20 @@ def test_gfs_hgt500_anom_uses_hgt500_component_and_height_contours() -> None:
     assert var_spec.selectors.hints["contour_conversion"] == "m_to_dam"
 
 
+def test_gfs_ptype_intensity_uses_synoptic_mslp_center_tuning() -> None:
+    var_spec = GFS_MODEL.get_var("ptype_intensity")
+    assert var_spec is not None
+    hints = var_spec.selectors.hints
+    assert hints["contour_component"] == "prmsl"
+    assert hints["contour_key"] == "mslp"
+    assert hints["contour_conversion"] == "pressure_pa_to_hpa"
+    assert hints["center_radius_km"] == "900"
+    assert hints["center_min_delta"] == "8"
+    assert hints["center_min_separation_km"] == "1000"
+    assert hints["center_max_count"] == "18"
+    assert hints["center_skip_edge"] == "true"
+
+
 def test_gfs_tmp2m_anom_uses_tmp2m_component_and_era5_baseline() -> None:
     var_spec = GFS_MODEL.get_var("tmp2m_anom")
     assert var_spec is not None

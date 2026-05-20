@@ -120,6 +120,91 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
     assert np.count_nonzero(rain_values[0] > 0.0) + np.count_nonzero(snow_values[0] > 0.0) + np.count_nonzero(ice_values[0] > 0.0) == 3
 
 
+def test_ptype_intensity_family_cache_reuses_primary_derivation_for_components(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "prate": np.array([[10.0, 10.0]], dtype=np.float32),
+        "apcp_step": np.array([[10.0, 10.0]], dtype=np.float32),
+        "crain": np.array([[1.0, 0.0]], dtype=np.float32),
+        "csnow": np.array([[0.0, 1.0]], dtype=np.float32),
+        "cicep": np.array([[0.0, 0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0, 0.0]], dtype=np.float32),
+        "tmp2m": np.array([[3.0, -4.0]], dtype=np.float32),
+        "tmp850": np.array([[2.0, -8.0]], dtype=np.float32),
+    }
+    fetch_calls: list[str] = []
+    step_calls = 0
+
+    def _fake_fetch_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        fetch_calls.append(var_key)
+        return component_data[var_key], crs, transform
+
+    def _fake_step_intensity(**kwargs):
+        nonlocal step_calls
+        step_calls += 1
+        expected_shape = tuple(kwargs["expected_shape"])
+        assert expected_shape == tuple(component_data["apcp_step"].shape)
+        return _make_fake_step_intensity(component_data["apcp_step"])(**kwargs)
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(derive_module, "_ptype_intensity_fetch_step_intensity", _fake_step_intensity)
+
+    fetch_ctx = derive_module.FetchContext(coverage="na")
+    indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
+        model_id="gfs",
+        var_key="ptype_intensity",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=fetch_ctx,
+    )
+    rain_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_rain",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("rain"),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=fetch_ctx,
+    )
+    snow_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_snow",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("snow"),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=fetch_ctx,
+    )
+    ice_values, _, _ = derive_module._derive_ptype_intensity_component(
+        model_id="gfs",
+        var_key="ptype_intensity_ice",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 4, 9, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec("ice"),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=fetch_ctx,
+    )
+
+    assert step_calls == 1
+    assert fetch_calls == ["prate", "crain", "csnow", "cicep", "cfrzr", "tmp2m", "tmp850"]
+    assert np.isfinite(indexed).all()
+    assert rain_values[0, 0] > 0.0
+    assert snow_values[0, 1] > 0.0
+    assert ice_values.max() == 0.0
+
+
 def test_ptype_intensity_uses_warped_component_fetches_when_requested(monkeypatch) -> None:
     crs = CRS.from_epsg(3857)
     transform = Affine.translation(-1.0, 1.0)

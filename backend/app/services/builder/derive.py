@@ -93,6 +93,10 @@ class FetchContext:
         tuple[str, str, str, int, str, str, int, str, str],
         tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]],
     ] = field(default_factory=dict)
+    ptype_family_cache: dict[
+        tuple[str, str, str, int, str, str, str],
+        dict[str, Any],
+    ] = field(default_factory=dict)
     derive_quality: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
     warp_stats: dict[str, int] = field(default_factory=lambda: {"hits": 0, "misses": 0})
@@ -2148,6 +2152,252 @@ def _ptype_intensity_family_rates(
     return base_intensity, rain_rate, snow_rate, ice_rate
 
 
+def _ptype_intensity_gfs_family_cache_key(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    hints: dict[str, Any],
+    use_warped: bool,
+    target_region: str,
+    target_grid_id: str,
+    resampling: str,
+) -> tuple[str, str, str, int, str, str, str]:
+    run_date_utc = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
+    component_identity = (
+        str(hints.get("prate_component") or "prate"),
+        str(hints.get("rain_component") or "crain"),
+        str(hints.get("snow_component") or "csnow"),
+        str(hints.get("sleet_component") or "cicep"),
+        str(hints.get("frzr_component") or "cfrzr"),
+        str(hints.get("surface_temp_component") or "tmp2m"),
+        str(hints.get("mid_temp_component") or "tmp850"),
+        str(hints.get("apcp_component") or "apcp_step"),
+        str(hints.get("apcp_product") or ""),
+    )
+    if use_warped:
+        scope = f"warped:{target_grid_id}:{resampling}"
+    else:
+        scope = f"raw:{target_region}"
+    return (
+        str(model_id),
+        str(product),
+        run_date_utc.isoformat(),
+        int(fh),
+        repr(component_identity),
+        str(scope),
+        "gfs_ptype_family_v1",
+    )
+
+
+def _ptype_intensity_index_from_gfs_family_rates(
+    *,
+    rain_rate: np.ndarray,
+    snow_rate: np.ndarray,
+    ice_rate: np.ndarray,
+) -> np.ndarray:
+    family_rate_by_code = {
+        "rain": rain_rate,
+        "snow": snow_rate,
+        "ice": ice_rate,
+    }
+    family_stack = np.stack([ice_rate, snow_rate, rain_rate], axis=0).astype(np.float32, copy=False)
+    family_idx = np.argmax(np.nan_to_num(family_stack, nan=-1.0), axis=0).astype(np.int32)
+    family_codes = np.array(["ice", "snow", "rain"])
+    ptype = family_codes[family_idx]
+    has_any_ptype = (
+        np.isfinite(rain_rate)
+        & (
+            (np.nan_to_num(rain_rate, nan=0.0) > 0.0)
+            | (np.nan_to_num(snow_rate, nan=0.0) > 0.0)
+            | (np.nan_to_num(ice_rate, nan=0.0) > 0.0)
+        )
+    )
+
+    # The competitor's ptype snow shading is slightly amplified relative to the
+    # liquid-equivalent step accumulation base. Keep that as a modest display-only
+    # bias rather than a large arbitrary boost.
+    snow_display_boost = np.float32(2.0)
+    type_levels = {
+        "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
+        "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
+        "ice": np.asarray([0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
+    }
+    type_breaks = {
+        "rain": {"offset": 0, "count": 16},
+        "snow": {"offset": 16, "count": 10},
+        "ice": {"offset": 26, "count": 18},
+    }
+    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.01}
+
+    indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
+    for code in ("rain", "snow", "ice"):
+        levels = type_levels[code]
+        offset = int(type_breaks[code]["offset"])
+        count = int(type_breaks[code]["count"])
+        family_rate = family_rate_by_code[code]
+        display_rate = family_rate
+        if code == "snow":
+            display_rate = (snow_display_boost * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
+        selector = (
+            (ptype == code)
+            & np.isfinite(family_rate)
+            & (family_rate >= float(min_visible[code]))
+            & has_any_ptype
+        )
+        if not np.any(selector):
+            continue
+        local_bin = np.digitize(display_rate[selector], levels, right=False) - 1
+        local_bin = np.clip(local_bin, 0, count - 1)
+        indexed[selector] = (offset + local_bin).astype(np.float32)
+    return indexed
+
+
+def _derive_ptype_intensity_gfs_family(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    model_plugin: Any,
+    ctx: FetchContext | None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> dict[str, Any]:
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    if not isinstance(hints, dict):
+        hints = {}
+    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
+        derive_component_target_grid,
+        derive_component_resampling,
+        model_id,
+    )
+    cache_key = _ptype_intensity_gfs_family_cache_key(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        hints=hints,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
+    if ctx is not None:
+        cached = ctx.ptype_family_cache.get(cache_key)
+        if cached is not None:
+            logger.info("ptype_intensity family cache hit: model=%s fh=%03d", model_id, fh)
+            return cached
+
+    prate_id = hints.get("prate_component", "prate")
+    rain_id = hints.get("rain_component", "crain")
+    snow_id = hints.get("snow_component", "csnow")
+    sleet_id = hints.get("sleet_component", "cicep")
+    frzr_id = hints.get("frzr_component", "cfrzr")
+
+    prate, src_crs, src_transform = _fetch_step_component(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        step_fh=fh,
+        model_plugin=model_plugin,
+        var_key=prate_id,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        ctx=ctx,
+    )
+    component_fetch_kwargs = {
+        "model_id": model_id,
+        "product": product,
+        "run_date": run_date,
+        "step_fh": fh,
+        "model_plugin": model_plugin,
+        "use_warped": use_warped,
+        "target_region": target_region,
+        "target_grid_id": target_grid_id,
+        "resampling": resampling,
+        "ctx": ctx,
+    }
+    rain, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=rain_id)
+    snow, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=snow_id)
+    sleet, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=sleet_id)
+    frzr, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=frzr_id)
+    cold_profile, warm_profile = _ptype_intensity_thermal_fields(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
+
+    intensity_rate = _ptype_intensity_fetch_step_intensity(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        hints=hints,
+        expected_shape=prate.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+    )
+    if intensity_rate is None:
+        # prate is instantaneous (kg/m²/s). Convert to approximate step-
+        # equivalent inches so the fallback is in the same units as the
+        # APCP-derived path. Assume a 3-hour window.
+        step_seconds = np.float32(3.0 * 3600.0)
+        inch_scale = np.float32(0.03937007874015748)
+        prate_arr = np.asarray(prate, dtype=np.float32)
+        intensity_rate = np.where(
+            np.isfinite(prate_arr) & (prate_arr >= 0.0),
+            prate_arr * step_seconds * inch_scale,
+            np.nan,
+        ).astype(np.float32, copy=False)
+
+    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
+        intensity=intensity_rate,
+        rain=rain,
+        snow=snow,
+        sleet=sleet,
+        frzr=frzr,
+        cold_profile=cold_profile,
+        warm_profile=warm_profile,
+    )
+    indexed = _ptype_intensity_index_from_gfs_family_rates(
+        rain_rate=rain_rate,
+        snow_rate=snow_rate,
+        ice_rate=ice_rate,
+    )
+    snow_display = (2.0 * np.nan_to_num(snow_rate, nan=0.0)).astype(np.float32, copy=False)
+    snow_display[~np.isfinite(prate)] = np.nan
+
+    family = {
+        "indexed": indexed.astype(np.float32, copy=False),
+        "rain": rain_rate.astype(np.float32, copy=False),
+        "snow": snow_display.astype(np.float32, copy=False),
+        "ice": ice_rate.astype(np.float32, copy=False),
+        "src_crs": src_crs,
+        "src_transform": src_transform,
+    }
+    if ctx is not None:
+        ctx.ptype_family_cache[cache_key] = family
+    return family
+
+
 def _apply_kuchera_ptype_gate(apcp_step: np.ndarray, frozen_frac: np.ndarray) -> np.ndarray:
     if apcp_step.shape != frozen_frac.shape:
         raise ValueError(f"kuchera ptype gate shape mismatch: {apcp_step.shape} != {frozen_frac.shape}")
@@ -4150,151 +4400,18 @@ def _derive_ptype_intensity_gfs(
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_key, var_capability
-    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
-    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
-        derive_component_target_grid,
-        derive_component_resampling,
-        model_id,
-    )
-    prate_id = hints.get("prate_component", "prate")
-    rain_id = hints.get("rain_component", "crain")
-    snow_id = hints.get("snow_component", "csnow")
-    sleet_id = hints.get("sleet_component", "cicep")
-    frzr_id = hints.get("frzr_component", "cfrzr")
-
-    prate, src_crs, src_transform = _fetch_step_component(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        step_fh=fh,
-        model_plugin=model_plugin,
-        var_key=prate_id,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-        ctx=ctx,
-    )
-    component_fetch_kwargs = {
-        "model_id": model_id,
-        "product": product,
-        "run_date": run_date,
-        "step_fh": fh,
-        "model_plugin": model_plugin,
-        "use_warped": use_warped,
-        "target_region": target_region,
-        "target_grid_id": target_grid_id,
-        "resampling": resampling,
-        "ctx": ctx,
-    }
-    rain, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=rain_id)
-    snow, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=snow_id)
-    sleet, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=sleet_id)
-    frzr, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=frzr_id)
-    cold_profile, warm_profile = _ptype_intensity_thermal_fields(
+    family = _derive_ptype_intensity_gfs_family(
         model_id=model_id,
         product=product,
         run_date=run_date,
         fh=fh,
+        var_spec_model=var_spec_model,
         model_plugin=model_plugin,
         ctx=ctx,
-        hints=hints,
-        expected_shape=prate.shape,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
     )
-
-    intensity_rate = _ptype_intensity_fetch_step_intensity(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        model_plugin=model_plugin,
-        ctx=ctx,
-        hints=hints,
-        expected_shape=prate.shape,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-    )
-    if intensity_rate is None:
-        # prate is instantaneous (kg/m²/s).  Convert to approximate step-
-        # equivalent inches so the fallback is in the same units as the
-        # APCP-derived path.  Assume a 3-hour window (the default GFS cadence
-        # for most of the forecast range).
-        #   kg/m²/s → kg/m² over 3 h  = prate × 10800
-        #   kg/m²   → inches           = × 0.03937
-        step_seconds = np.float32(3.0 * 3600.0)
-        inch_scale = np.float32(0.03937007874015748)
-        prate_arr = np.asarray(prate, dtype=np.float32)
-        intensity_rate = np.where(
-            np.isfinite(prate_arr) & (prate_arr >= 0.0),
-            prate_arr * step_seconds * inch_scale,
-            np.nan,
-        ).astype(np.float32, copy=False)
-
-    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
-        intensity=intensity_rate,
-        rain=rain,
-        snow=snow,
-        sleet=sleet,
-        frzr=frzr,
-        cold_profile=cold_profile,
-        warm_profile=warm_profile,
-    )
-
-    family_rate_by_code = {
-        "rain": rain_rate,
-        "snow": snow_rate,
-        "ice": ice_rate,
-    }
-    family_stack = np.stack([ice_rate, snow_rate, rain_rate], axis=0).astype(np.float32, copy=False)
-    family_idx = np.argmax(np.nan_to_num(family_stack, nan=-1.0), axis=0).astype(np.int32)
-    family_codes = np.array(["ice", "snow", "rain"])
-    ptype = family_codes[family_idx]
-    has_any_ptype = np.isfinite(rain_rate) & ((np.nan_to_num(rain_rate, nan=0.0) > 0.0) | (np.nan_to_num(snow_rate, nan=0.0) > 0.0) | (np.nan_to_num(ice_rate, nan=0.0) > 0.0))
-
-    # The competitor's ptype snow shading is slightly amplified relative to the
-    # liquid-equivalent step accumulation base. Keep that as a modest display-only
-    # bias rather than a large arbitrary boost.
-    snow_display_boost = np.float32(2.0)
-    type_levels = {
-        "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
-        "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
-        "ice": np.asarray([0.01, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.25, 1.5, 2.0], dtype=np.float32),
-    }
-    type_breaks = {
-        "rain": {"offset": 0, "count": 16},
-        "snow": {"offset": 16, "count": 10},
-        "ice": {"offset": 26, "count": 18},
-    }
-    min_visible = {"rain": 0.01, "snow": 0.01, "ice": 0.01}
-
-    indexed = np.full(rain_rate.shape, np.nan, dtype=np.float32)
-    for code in ("rain", "snow", "ice"):
-        levels = type_levels[code]
-        offset = int(type_breaks[code]["offset"])
-        count = int(type_breaks[code]["count"])
-        family_rate = family_rate_by_code[code]
-        display_rate = family_rate
-        if code == "snow":
-            display_rate = (snow_display_boost * np.nan_to_num(family_rate, nan=0.0)).astype(np.float32, copy=False)
-        selector = (
-            (ptype == code)
-            & np.isfinite(family_rate)
-            & (family_rate >= float(min_visible[code]))
-            & has_any_ptype
-        )
-        if not np.any(selector):
-            continue
-        local_bin = np.digitize(display_rate[selector], levels, right=False) - 1
-        local_bin = np.clip(local_bin, 0, count - 1)
-        indexed[selector] = (offset + local_bin).astype(np.float32)
-
-    return indexed, src_crs, src_transform
+    return family["indexed"], family["src_crs"], family["src_transform"]
 
 
 def _derive_ptype_intensity_component(
@@ -4313,112 +4430,25 @@ def _derive_ptype_intensity_component(
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
-    use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
-        derive_component_target_grid,
-        derive_component_resampling,
-        model_id,
-    )
+    if not isinstance(hints, dict):
+        hints = {}
     component = str(hints.get("ptype_component") or "").strip().lower()
-    prate_id = hints.get("prate_component", "prate")
-    rain_id = hints.get("rain_component", "crain")
-    snow_id = hints.get("snow_component", "csnow")
-    sleet_id = hints.get("sleet_component", "cicep")
-    frzr_id = hints.get("frzr_component", "cfrzr")
-
-    prate, src_crs, src_transform = _fetch_step_component(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        step_fh=fh,
-        model_plugin=model_plugin,
-        var_key=prate_id,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-        ctx=ctx,
-    )
-    component_fetch_kwargs = {
-        "model_id": model_id,
-        "product": product,
-        "run_date": run_date,
-        "step_fh": fh,
-        "model_plugin": model_plugin,
-        "use_warped": use_warped,
-        "target_region": target_region,
-        "target_grid_id": target_grid_id,
-        "resampling": resampling,
-        "ctx": ctx,
-    }
-    rain, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=rain_id)
-    snow, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=snow_id)
-    sleet, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=sleet_id)
-    frzr, _, _ = _fetch_step_component(**component_fetch_kwargs, var_key=frzr_id)
-    cold_profile, warm_profile = _ptype_intensity_thermal_fields(
+    family = _derive_ptype_intensity_gfs_family(
         model_id=model_id,
         product=product,
         run_date=run_date,
         fh=fh,
+        var_spec_model=var_spec_model,
         model_plugin=model_plugin,
         ctx=ctx,
-        hints=hints,
-        expected_shape=prate.shape,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
     )
-
-    intensity_rate = _ptype_intensity_fetch_step_intensity(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        model_plugin=model_plugin,
-        ctx=ctx,
-        hints=hints,
-        expected_shape=prate.shape,
-        use_warped=use_warped,
-        target_region=target_region,
-        target_grid_id=target_grid_id,
-        resampling=resampling,
-    )
-    if intensity_rate is None:
-        # prate is instantaneous (kg/m²/s).  Convert to approximate step-
-        # equivalent inches so the fallback is in the same units as the
-        # APCP-derived path.  Assume a 3-hour window.
-        step_seconds = np.float32(3.0 * 3600.0)
-        inch_scale = np.float32(0.03937007874015748)
-        prate_arr = np.asarray(prate, dtype=np.float32)
-        intensity_rate = np.where(
-            np.isfinite(prate_arr) & (prate_arr >= 0.0),
-            prate_arr * step_seconds * inch_scale,
-            np.nan,
-        ).astype(np.float32, copy=False)
-
-    _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates(
-        intensity=intensity_rate,
-        rain=rain,
-        snow=snow,
-        sleet=sleet,
-        frzr=frzr,
-        cold_profile=cold_profile,
-        warm_profile=warm_profile,
-    )
-
-    component_values = {
-        "rain": rain_rate,
-        "snow": snow_rate,
-        "ice": ice_rate,
-    }
-    values = component_values.get(component)
+    values = family.get(component)
     if values is None:
-        values = np.zeros(prate.shape, dtype=np.float32)
-        values[~np.isfinite(prate)] = np.nan
-    elif component == "snow":
-        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
-        values[~np.isfinite(prate)] = np.nan
-    return values.astype(np.float32, copy=False), src_crs, src_transform
+        values = np.zeros(np.asarray(family["indexed"]).shape, dtype=np.float32)
+        values[~np.isfinite(np.asarray(family["indexed"]))] = np.nan
+    return values.astype(np.float32, copy=False), family["src_crs"], family["src_transform"]
 
 
 def _derive_ptype_intensity_ecmwf(
