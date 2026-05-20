@@ -35,6 +35,8 @@ from app.services.publish_utils import (
 )
 from app.services.grid import (
     build_grid_manifests_for_run_root,
+    grid_dir_for_run_root,
+    resolved_grid_dir_for_run_root,
     write_grid_frames_for_run_root,
 )
 from app.services.run_ids import format_run_id
@@ -479,16 +481,23 @@ def reuse_mrms_frame(
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
     if grid_build_enabled():
-        with rasterio.open(value_path) as ds:
-            write_grid_frames_for_run_root(
-                run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                model=MRMS_MODEL_ID,
-                var=MRMS_VARIABLE_ID,
-                fh=int(forecast_hour),
-                values=ds.read(1).astype(np.float32, copy=False),
-                transform=ds.transform,
-                projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-            )
+        if not _reuse_mrms_grid_artifacts(
+            data_root=data_root,
+            run_id=run_id,
+            var=MRMS_VARIABLE_ID,
+            forecast_hour=int(forecast_hour),
+            source_value_path=frame.value_path,
+        ):
+            with rasterio.open(value_path) as ds:
+                write_grid_frames_for_run_root(
+                    run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                    model=MRMS_MODEL_ID,
+                    var=MRMS_VARIABLE_ID,
+                    fh=int(forecast_hour),
+                    values=ds.read(1).astype(np.float32, copy=False),
+                    transform=ds.transform,
+                    projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+                )
 
     # Reuse paired mrms_radar_ptype artifacts if they exist
     has_ptype = False
@@ -512,16 +521,23 @@ def reuse_mrms_frame(
                 ptype_sc["source_metadata"] = ptype_source_metadata
             write_json_atomic(ptype_sidecar_path, ptype_sc)
             if grid_build_enabled():
-                with rasterio.open(ptype_value_path) as ds:
-                    write_grid_frames_for_run_root(
-                        run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                        model=MRMS_MODEL_ID,
-                        var=MRMS_RADAR_PTYPE_VARIABLE_ID,
-                        fh=int(forecast_hour),
-                        values=ds.read(1).astype(np.float32, copy=False),
-                        transform=ds.transform,
-                        projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                    )
+                if not _reuse_mrms_grid_artifacts(
+                    data_root=data_root,
+                    run_id=run_id,
+                    var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                    forecast_hour=int(forecast_hour),
+                    source_value_path=frame.ptype_value_path,
+                ):
+                    with rasterio.open(ptype_value_path) as ds:
+                        write_grid_frames_for_run_root(
+                            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                            model=MRMS_MODEL_ID,
+                            var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                            fh=int(forecast_hour),
+                            values=ds.read(1).astype(np.float32, copy=False),
+                            transform=ds.transform,
+                            projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+                        )
             has_ptype = True
         except Exception:
             logger.warning(
@@ -530,6 +546,71 @@ def reuse_mrms_frame(
                 exc_info=True,
             )
     return has_ptype
+
+
+def _reuse_mrms_grid_artifacts(
+    *,
+    data_root: Path,
+    run_id: str,
+    var: str,
+    forecast_hour: int,
+    source_value_path: Path,
+) -> bool:
+    source_fh = _forecast_hour_from_artifact_name(source_value_path)
+    if source_fh is None:
+        return False
+
+    source_run_root = source_value_path.parent.parent
+    source_grid_dir = resolved_grid_dir_for_run_root(source_run_root, var)
+    if not source_grid_dir.is_dir():
+        return False
+
+    target_run_root = data_root / "staging" / MRMS_MODEL_ID / run_id
+    target_grid_dir = grid_dir_for_run_root(target_run_root, var)
+    target_grid_dir.mkdir(parents=True, exist_ok=True)
+
+    source_token = f"fh{source_fh:03d}"
+    target_token = f"fh{int(forecast_hour):03d}"
+    source_bins = sorted(source_grid_dir.glob(f"{source_token}.l*.u*.bin"))
+    source_meta_paths = sorted(source_grid_dir.glob(f"{source_token}.l*.meta.json"))
+    if not source_bins or not source_meta_paths:
+        return False
+
+    retargeted_meta: list[tuple[Path, dict[str, Any]]] = []
+    for source_meta_path in source_meta_paths:
+        target_meta_path = target_grid_dir / source_meta_path.name.replace(source_token, target_token, 1)
+        try:
+            meta = json.loads(source_meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+        meta["fh"] = int(forecast_hour)
+        filename = str(meta.get("file") or "").strip()
+        if filename:
+            meta["file"] = filename.replace(source_token, target_token, 1)
+        retargeted_meta.append((target_meta_path, meta))
+
+    for source_bin in source_bins:
+        target_bin = target_grid_dir / source_bin.name.replace(source_token, target_token, 1)
+        _link_or_copy(source_bin, target_bin)
+        for suffix in (".gz", ".br"):
+            source_sidecar = source_bin.with_name(f"{source_bin.name}{suffix}")
+            if source_sidecar.is_file():
+                _link_or_copy(source_sidecar, target_bin.with_name(f"{target_bin.name}{suffix}"))
+
+    for target_meta_path, meta in retargeted_meta:
+        write_json_atomic(target_meta_path, meta)
+
+    return True
+
+
+def _forecast_hour_from_artifact_name(path: Path) -> int | None:
+    token = Path(path).name.split(".", 1)[0]
+    if not token.startswith("fh"):
+        return None
+    try:
+        return int(token.removeprefix("fh"))
+    except ValueError:
+        return None
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:

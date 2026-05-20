@@ -704,3 +704,68 @@ def test_reuse_mrms_frame_writes_grids_without_generic_value_cog_helper(
         ("reflectivity", 0, (2, 3)),
         ("mrms_radar_ptype", 0, (2, 3)),
     ]
+
+
+def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
+
+    source_run = tmp_path / "published" / "mrms" / "20260327_1206z"
+    refl_path = source_run / "reflectivity" / "fh003.val.cog.tif"
+    ptype_path = source_run / "mrms_radar_ptype" / "fh003.val.cog.tif"
+    _write_test_value_raster(refl_path, np.ones((2, 3), dtype=np.float32))
+    _write_test_value_raster(ptype_path, np.ones((2, 3), dtype=np.float32) * 2.0)
+
+    def _write_grid_fixture(var: str) -> None:
+        grid_dir = source_run / var / "grid"
+        grid_dir.mkdir(parents=True, exist_ok=True)
+        frame_path = grid_dir / "fh003.l0.u16.bin"
+        frame_path.write_bytes(np.arange(6, dtype="<u2").tobytes())
+        (grid_dir / "fh003.l0.u16.bin.gz").write_bytes(b"gzip-sidecar")
+        (grid_dir / "fh003.l0.u16.bin.br").write_bytes(b"brotli-sidecar")
+        (grid_dir / "fh003.l0.meta.json").write_text(json.dumps({
+            "fh": 3,
+            "level": 0,
+            "file": "fh003.l0.u16.bin",
+            "width": 3,
+            "height": 2,
+            "bbox": [-101.0, 44.0, -98.0, 46.0],
+            "projection": "EPSG:3857",
+        }))
+
+    _write_grid_fixture("reflectivity")
+    _write_grid_fixture("mrms_radar_ptype")
+
+    def _fail_grid_write(**kwargs):
+        raise AssertionError(f"reused {kwargs['var']} grid should be linked/copied, not rewritten")
+
+    monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _fail_grid_write)
+
+    frame = mrms_publish.MRMSPublishedFrame(
+        valid_time=datetime(2026, 3, 27, 12, 15, tzinfo=timezone.utc),
+        source_valid_time=datetime(2026, 3, 27, 12, 15, tzinfo=timezone.utc),
+        value_path=refl_path,
+        sidecar={"valid_time": "2026-03-27T12:15:00Z"},
+        ptype_value_path=ptype_path,
+        ptype_sidecar={"valid_time": "2026-03-27T12:15:00Z"},
+    )
+
+    has_ptype = mrms_publish.reuse_mrms_frame(
+        data_root=tmp_path,
+        run_id="20260327_1208z",
+        forecast_hour=4,
+        frame=frame,
+    )
+
+    assert has_ptype is True
+    target_refl_grid = tmp_path / "staging" / "mrms" / "20260327_1208z" / "reflectivity" / "grid"
+    target_ptype_grid = tmp_path / "staging" / "mrms" / "20260327_1208z" / "mrms_radar_ptype" / "grid"
+    for grid_dir in (target_refl_grid, target_ptype_grid):
+        assert (grid_dir / "fh004.l0.u16.bin").read_bytes() == np.arange(6, dtype="<u2").tobytes()
+        assert (grid_dir / "fh004.l0.u16.bin.gz").read_bytes() == b"gzip-sidecar"
+        assert (grid_dir / "fh004.l0.u16.bin.br").read_bytes() == b"brotli-sidecar"
+        meta = json.loads((grid_dir / "fh004.l0.meta.json").read_text())
+        assert meta["fh"] == 4
+        assert meta["file"] == "fh004.l0.u16.bin"

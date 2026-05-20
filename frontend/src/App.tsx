@@ -140,6 +140,7 @@ const HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 300;
 const VERY_HIGH_RES_AUTOPLAY_STALL_SKIP_MS = 200;
 const HIGH_RES_GRID_PLAY_STALL_MS = 2400;
 const VERY_HIGH_RES_GRID_PLAY_STALL_MS = 2400;
+const HIGH_RES_SCRUB_LOD_HOLD_MS = 700;
 const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc"]);
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
@@ -293,6 +294,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [isScrubLodHoldActive, setIsScrubLodHoldActive] = useState(false);
   const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
   const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
 
@@ -370,6 +372,8 @@ export default function App() {
   const datasetGenerationRef = useRef(0);
   const requestGenerationRef = useRef(0);
   const scrubRafRef = useRef<number | null>(null);
+  const scrubLodHoldTimerRef = useRef<number | null>(null);
+  const previousIsScrubbingRef = useRef(false);
   const pendingScrubHourRef = useRef<number | null>(null);
   const scrubPhase0aRef = useRef<ScrubPhase0aSnapshot>(emptyScrubPhase0aSnapshot());
   const forecastHourRef = useRef(forecastHour);
@@ -895,12 +899,45 @@ export default function App() {
     return buildRunOptions(runs, latestRunId, selectedTimeAxisMode);
   }, [runs, latestRunId, selectedTimeAxisMode]);
 
-  const selectedGridLod = useMemo(() => {
+  const isObservedGridSelection = useMemo(() => {
+    return String(model ?? "").trim().toLowerCase() === "mrms";
+  }, [model]);
+  const zoomSelectedGridLod = useMemo(() => {
     if (!gridManifest?.lods?.length) {
       return null;
     }
     return selectGridManifestLod(gridManifest, mapZoom);
   }, [gridManifest, mapZoom]);
+  const selectedGridLod = useMemo(() => {
+    if (!(isScrubbing || isScrubLodHoldActive) || !isObservedGridSelection || !zoomSelectedGridLod || !gridManifest?.lods?.length) {
+      return zoomSelectedGridLod;
+    }
+
+    const currentWidth = Number(zoomSelectedGridLod.width);
+    const currentHeight = Number(zoomSelectedGridLod.height);
+    const currentPixels = Number.isFinite(currentWidth) && Number.isFinite(currentHeight)
+      ? Math.max(0, Math.floor(currentWidth) * Math.floor(currentHeight))
+      : 0;
+    if (currentPixels < HIGH_RES_GRID_LOD_PIXEL_THRESHOLD) {
+      return zoomSelectedGridLod;
+    }
+
+    const currentLevel = Number(zoomSelectedGridLod.level);
+    const nextCoarserLod = [...gridManifest.lods]
+      .filter((entry) => {
+        const width = Number(entry?.width);
+        const height = Number(entry?.height);
+        const level = Number(entry?.level);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(level)) {
+          return false;
+        }
+        return level !== currentLevel && Math.floor(width) * Math.floor(height) < currentPixels;
+      })
+      .sort((left, right) => (Number(right.width) * Number(right.height)) - (Number(left.width) * Number(left.height)))[0]
+      ?? null;
+
+    return nextCoarserLod ?? zoomSelectedGridLod;
+  }, [gridManifest, isObservedGridSelection, isScrubLodHoldActive, isScrubbing, zoomSelectedGridLod]);
   const selectedGridLodPixelCount = useMemo(() => {
     const width = Number(selectedGridLod?.width);
     const height = Number(selectedGridLod?.height);
@@ -909,9 +946,6 @@ export default function App() {
     }
     return Math.floor(width) * Math.floor(height);
   }, [selectedGridLod]);
-  const isObservedGridSelection = useMemo(() => {
-    return String(model ?? "").trim().toLowerCase() === "mrms";
-  }, [model]);
   const isHighResObservedGridPlayback = useMemo(() => {
     return Boolean(
       isObservedGridSelection
@@ -1105,9 +1139,12 @@ export default function App() {
       }>;
     }
     const targetHour = Number(resolvedGridDisplayHour);
+    const effectiveGridLodLevel = Number(selectedGridLod?.level);
     return compositeLayerSpecs.map((layer) => {
       const manifest = compositeGridManifests[layer.id] ?? null;
-      const selectedLod = selectGridManifestLod(manifest, mapZoom);
+      const selectedLod = Number.isFinite(effectiveGridLodLevel)
+        ? manifest?.lods?.find((entry) => Number(entry?.level) === effectiveGridLodLevel) ?? selectGridManifestLod(manifest, mapZoom)
+        : selectGridManifestLod(manifest, mapZoom);
       const frames = Array.isArray(selectedLod?.frames) ? selectedLod.frames : [];
       const frameHours = frames
         .map((entry) => Number(entry?.fh))
@@ -1139,7 +1176,7 @@ export default function App() {
         legend: buildLegend(legendMeta, opacity),
       };
     }).filter((layer) => layer.manifest && layer.frameUrl);
-  }, [apiRoot, compositeGridManifests, compositeLayerSpecs, mapZoom, opacity, resolvedGridDisplayHour]);
+  }, [apiRoot, compositeGridManifests, compositeLayerSpecs, mapZoom, opacity, resolvedGridDisplayHour, selectedGridLod]);
   const activeGridFrameUrl = useMemo(() => {
     const frameUrl = activeGridFrame?.url;
     if (!frameUrl) {
@@ -3127,6 +3164,41 @@ export default function App() {
       setIsScrubbing(false);
     }
   }, [isPlaying, isScrubbing]);
+
+  useEffect(() => {
+    const wasScrubbing = previousIsScrubbingRef.current;
+    previousIsScrubbingRef.current = isScrubbing;
+
+    if (isScrubbing) {
+      if (scrubLodHoldTimerRef.current !== null) {
+        window.clearTimeout(scrubLodHoldTimerRef.current);
+        scrubLodHoldTimerRef.current = null;
+      }
+      setIsScrubLodHoldActive(false);
+      return;
+    }
+
+    if (!wasScrubbing) {
+      return;
+    }
+
+    setIsScrubLodHoldActive(true);
+    if (scrubLodHoldTimerRef.current !== null) {
+      window.clearTimeout(scrubLodHoldTimerRef.current);
+    }
+    scrubLodHoldTimerRef.current = window.setTimeout(() => {
+      scrubLodHoldTimerRef.current = null;
+      setIsScrubLodHoldActive(false);
+    }, HIGH_RES_SCRUB_LOD_HOLD_MS);
+  }, [isScrubbing]);
+
+  useEffect(() => {
+    return () => {
+      if (scrubLodHoldTimerRef.current !== null) {
+        window.clearTimeout(scrubLodHoldTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!scrubCommitIntent || !Number.isFinite(forecastHour)) {
