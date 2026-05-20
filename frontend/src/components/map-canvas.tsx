@@ -5,7 +5,7 @@ import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
-import type { GridManifestResponse } from "@/lib/api";
+import type { GridManifestResponse, PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
@@ -223,6 +223,14 @@ type ContourScreenLabel = {
   x: number;
   y: number;
   angle: number;
+};
+
+type PressureCenterScreenLabel = {
+  id: string;
+  type: "H" | "L";
+  valueLabel: string;
+  x: number;
+  y: number;
 };
 
 type LngLatPair = [number, number];
@@ -492,6 +500,61 @@ function buildContourScreenLabels(
       x: point.x,
       y: point.y,
       angle: placement.angle,
+    });
+  });
+
+  return labels;
+}
+
+function pressureCenterValueLabel(center: PressureCenter): string {
+  const rawValue = center.value;
+  const numericValue = typeof rawValue === "number" ? rawValue : Number(rawValue);
+  if (!Number.isFinite(numericValue)) {
+    return "";
+  }
+  return Math.abs(numericValue) >= 100
+    ? String(Math.round(numericValue))
+    : numericValue.toFixed(1).replace(/\.0$/, "");
+}
+
+function buildPressureCenterScreenLabels(
+  centers: PressureCenter[] | null | undefined,
+  map: maplibregl.Map
+): PressureCenterScreenLabel[] {
+  if (!Array.isArray(centers) || centers.length === 0) {
+    return [];
+  }
+  const canvas = map.getCanvas();
+  const width = canvas.clientWidth || canvas.width;
+  const height = canvas.clientHeight || canvas.height;
+  const labels: PressureCenterScreenLabel[] = [];
+  const marginPx = 48;
+
+  centers.forEach((center, index) => {
+    const type = String(center.type ?? "").trim().toUpperCase();
+    if (type !== "H" && type !== "L") {
+      return;
+    }
+    const lon = Number(center.lon);
+    const lat = Number(center.lat);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+      return;
+    }
+    const point = map.project([lon, lat]);
+    if (
+      point.x < -marginPx ||
+      point.y < -marginPx ||
+      point.x > width + marginPx ||
+      point.y > height + marginPx
+    ) {
+      return;
+    }
+    labels.push({
+      id: `${type}-${index}-${lat.toFixed(3)}-${lon.toFixed(3)}`,
+      type,
+      valueLabel: pressureCenterValueLabel(center),
+      x: point.x,
+      y: point.y,
     });
   });
 
@@ -975,6 +1038,7 @@ type MapCanvasProps = {
   gridContour?: GridContourLayerConfig | null;
   contourGeoJsonUrl?: string | null;
   contourPrefetchUrls?: string[];
+  pressureCenters?: PressureCenter[];
   vectorGeoJsonUrl?: string | null;
   vectorPrefetchUrls?: string[];
   anchorGeoJson?: AnchorFeatureCollection | null;
@@ -1018,6 +1082,7 @@ export function MapCanvas({
   gridContour = null,
   contourGeoJsonUrl,
   contourPrefetchUrls = [],
+  pressureCenters = [],
   vectorGeoJsonUrl,
   vectorPrefetchUrls = [],
   anchorGeoJson = null,
@@ -1057,6 +1122,7 @@ export function MapCanvas({
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
+  const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
 
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const isHoveringAnchorRef = useRef(false);
@@ -1561,6 +1627,39 @@ export function MapCanvas({
     }
 
     lastAppliedBasemapModeRef.current = basemapMode;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      setPressureCenterScreenLabels([]);
+      return;
+    }
+
+    let rafId: number | null = null;
+    const scheduleSync = () => {
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        setPressureCenterScreenLabels(buildPressureCenterScreenLabels(pressureCenters, map));
+      });
+    };
+
+    scheduleSync();
+    map.on("move", scheduleSync);
+    map.on("moveend", scheduleSync);
+    map.on("resize", scheduleSync);
+
+    return () => {
+      map.off("move", scheduleSync);
+      map.off("moveend", scheduleSync);
+      map.off("resize", scheduleSync);
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [isLoaded, pressureCenters]);
     const controller = gridWebglControllerRef.current;
     const onStyleData = () => {
       if (shouldUseGridController) {
@@ -2391,6 +2490,21 @@ export function MapCanvas({
           {anchorTooltip.cityName}
         </div>
       )}
+
+      {pressureCenterScreenLabels.map((item) => (
+        <div
+          key={item.id}
+          className={`map-pressure-center map-pressure-center--${item.type.toLowerCase()}`}
+          style={{
+            left: item.x,
+            top: item.y,
+          }}
+          aria-hidden="true"
+        >
+          <div className="map-pressure-center__letter">{item.type}</div>
+          {item.valueLabel && <div className="map-pressure-center__value">{item.valueLabel}</div>}
+        </div>
+      ))}
 
       {contourScreenLabels.map((item) => (
         <div

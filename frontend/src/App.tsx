@@ -1499,6 +1499,10 @@ export default function App() {
     }
     return urls;
   }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  const pressureCenters = useMemo(() => {
+    const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
+    return Array.isArray(frameMeta?.pressure_centers) ? frameMeta.pressure_centers : [];
+  }, [frameRows, visibleOverlayFrame]);
   const vectorGeoJsonUrl = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable) {
       return null;
@@ -3678,6 +3682,7 @@ export default function App() {
           gridContour={isGridLowMidActive ? gridContour : null}
             contourGeoJsonUrl={contourGeoJsonUrl}
             contourPrefetchUrls={contourPrefetchUrls}
+            pressureCenters={pressureCenters}
             vectorGeoJsonUrl={vectorGeoJsonUrl}
           vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}

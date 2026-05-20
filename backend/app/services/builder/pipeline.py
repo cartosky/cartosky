@@ -58,6 +58,7 @@ from app.services.grid import (
     write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
+from app.services.pressure_centers import PressureCenterConfig, detect_pressure_centers
 from app.services.render_resampling import resampling_name_for_kind
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,13 @@ def _safe_float_hint(hints: dict[str, Any], key: str) -> float | None:
     except (TypeError, ValueError):
         return None
     return value if np.isfinite(value) else None
+
+
+def _safe_int_hint(hints: dict[str, Any], key: str) -> int | None:
+    value = _safe_float_hint(hints, key)
+    if value is None:
+        return None
+    return int(value)
 
 
 def _build_contour_metadata_for_variable(
@@ -301,6 +309,223 @@ def _build_contour_metadata_for_variable(
         }
     }
     return metadata, contours_dir
+
+
+def _center_kind_from_contour_key(contour_key: str) -> str | None:
+    normalized = str(contour_key or "").strip().lower()
+    if normalized == "mslp" or "pressure" in normalized:
+        return "pressure"
+    if normalized.startswith("height_") or "height" in normalized:
+        return "height"
+    return None
+
+
+def _center_units(*, center_kind: str, conversion: str) -> str:
+    normalized_conversion = str(conversion or "").strip().lower()
+    if center_kind == "pressure":
+        return "hPa" if normalized_conversion == "pressure_pa_to_hpa" else ""
+    if center_kind == "height":
+        if normalized_conversion in {"m_to_dam", "geopotential_to_height_dam"}:
+            return "dam"
+        return "m"
+    return ""
+
+
+def _build_pressure_center_metadata_for_variable(
+    *,
+    model: str,
+    run_date: datetime,
+    fh: int,
+    product: str,
+    var_key: str,
+    region: str,
+    model_plugin: Any,
+    var_spec_model: Any,
+    dst_transform: Any,
+    fetch_ctx: FetchContext | None,
+    ensemble_view: str | None = None,
+) -> dict[str, Any] | None:
+    if str(model or "").strip().lower() in {"gefs", "eps"} or str(ensemble_view or "").strip():
+        return None
+
+    selectors = getattr(var_spec_model, "selectors", None)
+    hints = getattr(selectors, "hints", {}) if selectors is not None else {}
+    if not isinstance(hints, dict):
+        return None
+
+    contour_key = str(hints.get("contour_key") or "").strip()
+    inferred_kind = _center_kind_from_contour_key(contour_key)
+    center_component = str(
+        hints.get("center_component")
+        or hints.get("pressure_center_component")
+        or (hints.get("contour_component") if inferred_kind else "")
+        or ""
+    ).strip()
+    if not center_component:
+        return None
+
+    center_kind = str(hints.get("center_kind") or hints.get("pressure_center_kind") or inferred_kind or "").strip().lower()
+    if center_kind not in {"pressure", "height"}:
+        return None
+
+    center_conversion = str(
+        hints.get("center_conversion")
+        or hints.get("pressure_center_conversion")
+        or hints.get("contour_conversion")
+        or ""
+    ).strip()
+    center_product = str(hints.get("center_product") or hints.get("contour_product") or product).strip() or product
+
+    contour_interval = _safe_float_hint(hints, "contour_interval")
+    default_min_delta = 4.0 if center_kind == "pressure" else float(contour_interval or 60.0)
+    radius_km = (
+        _safe_float_hint(hints, "center_radius_km")
+        or _safe_float_hint(hints, "pressure_center_radius_km")
+        or (550.0 if center_kind == "pressure" else 450.0)
+    )
+    min_delta = (
+        _safe_float_hint(hints, "center_min_delta")
+        or _safe_float_hint(hints, "pressure_center_min_delta")
+        or default_min_delta
+    )
+    min_separation_km = (
+        _safe_float_hint(hints, "center_min_separation_km")
+        or _safe_float_hint(hints, "pressure_center_min_separation_km")
+        or radius_km
+    )
+    max_centers = (
+        _safe_int_hint(hints, "center_max_count")
+        or _safe_int_hint(hints, "pressure_center_max_count")
+        or (12 if center_kind == "pressure" else 10)
+    )
+
+    component_spec = _resolve_model_var_spec(model, center_component, model_plugin)
+    component_patterns = _get_search_patterns(
+        component_spec,
+        model_plugin=model_plugin,
+        var_key=center_component,
+        fh=fh,
+        product=center_product,
+    )
+    component_data = None
+    src_crs = None
+    src_transform = None
+    center_resampling = _warp_resampling_for_variable(
+        model_id=model,
+        var_key=var_key,
+        kind=str(getattr(var_spec_model, "kind", "") or "continuous"),
+    )
+    derive_target_grid, _derive_grid_matches_output = _resolve_derive_target_grid(
+        model=model,
+        region=region,
+        hints=hints,
+        derive_component_warp_cache=True,
+    )
+    derive_target_grid_id = str((derive_target_grid or {}).get("id", "")).strip()
+    if derive_target_grid_id:
+        cached_component = get_cached_warped_component(
+            ctx=fetch_ctx,
+            model_id=model,
+            product=center_product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=center_component,
+            target_grid_id=derive_target_grid_id,
+            resampling=center_resampling,
+        )
+        if cached_component is not None:
+            component_data, src_crs, src_transform = cached_component
+            logger.info(
+                "Pressure-center source reused cached warped component: model=%s var=%s component=%s fh%03d",
+                model,
+                var_key,
+                center_component,
+                int(fh),
+            )
+
+    last_exc: Exception | None = None
+    if component_data is None:
+        for search_pattern in component_patterns:
+            try:
+                center_request = model_plugin.herbie_request(
+                    product=center_product,
+                    var_key=center_component,
+                    ensemble_view=ensemble_view,
+                    run_date=run_date,
+                    fh=fh,
+                    search_pattern=search_pattern,
+                )
+                component_data, src_crs, src_transform = fetch_variable(
+                    model_id=center_request.model,
+                    product=center_request.product,
+                    search_pattern=search_pattern,
+                    run_date=run_date,
+                    fh=fh,
+                    herbie_kwargs=getattr(center_request, "herbie_kwargs", None),
+                    bundle_fetch_cache=getattr(fetch_ctx, "bundle_fetch_cache", None),
+                )
+                break
+            except (HerbieTransientUnavailableError, RuntimeError) as exc:
+                last_exc = exc
+                continue
+    if component_data is None or src_crs is None or src_transform is None:
+        if last_exc is not None:
+            logger.info(
+                "Pressure-center source unavailable: model=%s var=%s component=%s fh%03d error=%s",
+                model,
+                var_key,
+                center_component,
+                int(fh),
+                last_exc,
+            )
+        return None
+
+    same_output_transform = False
+    try:
+        same_output_transform = all(
+            abs(float(actual) - float(expected)) <= 1.0e-6
+            for actual, expected in zip(src_transform[:6], dst_transform[:6])
+        )
+    except Exception:
+        same_output_transform = False
+    if getattr(src_crs, "to_epsg", lambda: None)() == 3857 and same_output_transform:
+        warped_component = component_data.astype(np.float32, copy=False)
+    else:
+        warped_component, _ = warp_to_target_grid(
+            component_data,
+            src_crs,
+            src_transform,
+            model=model,
+            region=region,
+            resampling="bilinear",
+            src_nodata=None,
+            dst_nodata=float("nan"),
+        )
+    if center_conversion:
+        center_capability = type("_CenterCapability", (), {"conversion": center_conversion})()
+        warped_component = convert_units(
+            warped_component,
+            center_component,
+            model_id=model,
+            var_capability=center_capability,
+        )
+
+    centers = detect_pressure_centers(
+        warped_component,
+        transform=dst_transform,
+        config=PressureCenterConfig(
+            source=contour_key or center_component,
+            units=_center_units(center_kind=center_kind, conversion=center_conversion),
+            radius_km=float(radius_km),
+            min_delta=float(min_delta),
+            min_separation_km=float(min_separation_km),
+            max_centers=max(1, int(max_centers)),
+        ),
+    )
+    if not centers:
+        return None
+    return {"pressure_centers": centers}
 
 
 # ---------------------------------------------------------------------------
@@ -1343,6 +1568,35 @@ def build_frame(
             ensemble_view=ensemble_view,
         )
 
+        sidecar_extra_metadata = quality_meta.get("sidecar_metadata") if isinstance(quality_meta, dict) else None
+        if isinstance(sidecar_extra_metadata, dict):
+            sidecar_extra_metadata = dict(sidecar_extra_metadata)
+        else:
+            sidecar_extra_metadata = {}
+        try:
+            pressure_center_meta = _build_pressure_center_metadata_for_variable(
+                model=model,
+                run_date=run_date,
+                fh=fh,
+                product=product,
+                var_key=var_key,
+                region=region,
+                model_plugin=resolved_plugin,
+                var_spec_model=var_spec_model,
+                dst_transform=dst_transform,
+                fetch_ctx=local_fetch_ctx,
+                ensemble_view=ensemble_view,
+            )
+            if isinstance(pressure_center_meta, dict):
+                sidecar_extra_metadata.update(pressure_center_meta)
+        except Exception:
+            logger.exception(
+                "Pressure-center detection skipped after error: model=%s var=%s fh%03d",
+                model,
+                var_key,
+                int(fh),
+            )
+
         # --- Write sidecar JSON ---
         sidecar = build_sidecar_json(
             model=model,
@@ -1358,7 +1612,7 @@ def build_frame(
             quality=frame_quality,
             quality_flags=frame_quality_flags,
             ensemble_view=ensemble_view,
-            extra_metadata=quality_meta.get("sidecar_metadata") if isinstance(quality_meta, dict) else None,
+            extra_metadata=sidecar_extra_metadata,
         )
         _write_json_atomic(sidecar_path, sidecar)
 

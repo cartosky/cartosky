@@ -47,6 +47,31 @@ def test_build_sidecar_writes_degraded_quality_flags() -> None:
     assert sidecar["quality_flags"] == ["slr_fallback_10to1", "apcp_cumulative_fallback"]
 
 
+def test_build_sidecar_preserves_pressure_center_metadata() -> None:
+    centers = [
+        {
+            "type": "L",
+            "lat": 39.1,
+            "lon": -97.2,
+            "value": 996,
+            "units": "hPa",
+            "source": "mslp",
+        }
+    ]
+    sidecar = pipeline_module.build_sidecar_json(
+        model="gfs",
+        run_id="20260305_18z",
+        var_id="ptype_intensity",
+        fh=12,
+        run_date=datetime(2026, 3, 5, 18, tzinfo=timezone.utc),
+        colorize_meta={"kind": "indexed", "units": "in/hr", "min": 0.0, "max": 1.0},
+        var_spec={"type": "indexed", "colors": ["#000000", "#ffffff"]},
+        extra_metadata={"pressure_centers": centers},
+    )
+
+    assert sidecar["pressure_centers"] == centers
+
+
 def test_build_sidecar_can_override_display_kind_for_precip() -> None:
     sidecar = pipeline_module.build_sidecar_json(
         model="gfs",

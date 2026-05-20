@@ -20,6 +20,16 @@ export type ModelTimeAxisMode = "forecast" | "observed" | "valid";
 export type ModelDefaultFrameSelection = "first" | "latest";
 export type AvailabilityFreshnessState = "live" | "delayed" | "stale" | "unavailable";
 
+export type PressureCenter = {
+  type: "H" | "L" | string;
+  lat: number;
+  lon: number;
+  value?: number | string | null;
+  units?: string | null;
+  source?: string | null;
+  prominence?: number | string | null;
+};
+
 export type CapabilityModelDefaults = Record<string, unknown> & {
   default_var_key?: string;
   default_run?: string;
@@ -161,6 +171,7 @@ export type LegendMeta = {
       style_key?: string;
     }
   >;
+  pressure_centers?: PressureCenter[];
   day_label?: string;
 };
 
