@@ -126,10 +126,11 @@
     line-height: 1;
     text-align: center;
     text-shadow:
-      0 1px 2px rgba(255, 255, 255, 0.92),
-      0 -1px 2px rgba(255, 255, 255, 0.82),
-      1px 0 2px rgba(255, 255, 255, 0.82),
-      -1px 0 2px rgba(255, 255, 255, 0.82);
+      0 1px 1px rgba(255, 255, 255, 0.9),
+      0 -1px 1px rgba(255, 255, 255, 0.9),
+      1px 0 1px rgba(255, 255, 255, 0.9),
+      -1px 0 1px rgba(255, 255, 255, 0.9),
+      0 0 4px rgba(255, 255, 255, 0.78);
   }
 
   .map-pressure-center__letter {
@@ -146,12 +147,16 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .map-pressure-center--h {
-    color: rgb(220, 0, 0);
+  .map-pressure-center--h,
+  .map-pressure-center--h .map-pressure-center__letter,
+  .map-pressure-center--h .map-pressure-center__value {
+    color: rgb(255, 0, 0);
   }
 
-  .map-pressure-center--l {
-    color: rgb(0, 72, 255);
+  .map-pressure-center--l,
+  .map-pressure-center--l .map-pressure-center__letter,
+  .map-pressure-center--l .map-pressure-center__value {
+    color: rgb(0, 80, 255);
   }
 
   .cartosky-clerk-auth .cl-footerActionText {
