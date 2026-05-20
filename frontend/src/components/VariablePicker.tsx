@@ -24,6 +24,8 @@ type VariablePickerProps = {
   legend?: LegendPayload | null;
   minWidth?: string;
   onOpenChange?: (open: boolean) => void;
+  inlinePanel?: boolean;
+  inlinePanelClassName?: string;
 };
 
 type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR";
@@ -94,6 +96,8 @@ export function VariablePicker({
   legend,
   minWidth = "min-w-[180px] max-w-[320px]",
   onOpenChange,
+  inlinePanel = false,
+  inlinePanelClassName,
 }: VariablePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -115,7 +119,7 @@ export function VariablePicker({
   const options = useMemo(() => {
     const seen = new Set<string>();
     return variableCatalog.filter((option) => {
-      if (!option.value || seen.has(option.value)) {
+      if (!option.value || seen.has(option.value) || !supportedSet.has(option.value)) {
         return false;
       }
       if (!isRadarModel && normalizeGroup(option.group) === "RADAR") {
@@ -124,7 +128,7 @@ export function VariablePicker({
       seen.add(option.value);
       return true;
     });
-  }, [isRadarModel, variableCatalog]);
+  }, [isRadarModel, supportedSet, variableCatalog]);
   const optionById = useMemo(() => new Map(options.map((option) => [option.value, option])), [options]);
   const selectedLabel = selectedLabelOverride ?? optionById.get(value)?.label ?? (value || placeholder);
   const normalizedQuery = query.trim().toLowerCase();
@@ -330,11 +334,17 @@ export function VariablePicker({
     setOpenState(false);
   };
 
-  const panel = open && panelPosition ? createPortal(
+  const panelContent = open && (inlinePanel || panelPosition) ? (
     <div
       ref={panelRef}
-      className="fixed z-[90] w-[min(380px,calc(100vw-16px))] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] text-white shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
-      style={{ left: panelPosition.left, top: panelPosition.top }}
+      className={cn(
+        "z-[90] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] text-white shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+        inlinePanel
+          ? "mt-2 flex min-h-0 w-full flex-1 flex-col"
+          : "fixed w-[min(380px,calc(100vw-16px))]",
+        inlinePanel ? inlinePanelClassName : null
+      )}
+      style={inlinePanel ? undefined : { left: panelPosition?.left ?? 8, top: panelPosition?.top ?? 0 }}
       role="dialog"
       aria-label="Variable picker"
     >
@@ -362,8 +372,8 @@ export function VariablePicker({
         ) : null}
       </div>
 
-      <div className="grid h-[292px] grid-cols-[118px_minmax(0,1fr)]">
-        <div className="border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
+      <div className={cn("grid grid-cols-[118px_minmax(0,1fr)]", inlinePanel ? "min-h-0 flex-1" : "h-[292px]")}> 
+        <div className="min-h-0 overflow-hidden border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
           {categoryRows.map((category) => {
             const active = !hasSearch && category.id === activeCategory;
             return (
@@ -394,7 +404,7 @@ export function VariablePicker({
           })}
         </div>
 
-        <div ref={listRef} className="overflow-y-auto p-1.5">
+        <div ref={listRef} className="min-h-0 overflow-y-auto p-1.5">
           {visibleOptions.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-[12px] font-medium text-white/42">
               No variables found
@@ -455,7 +465,10 @@ export function VariablePicker({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2">
+      <div
+        className="flex shrink-0 items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2"
+        style={inlinePanel ? { paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" } : undefined}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden="true"
@@ -466,12 +479,13 @@ export function VariablePicker({
         </div>
         <span className="shrink-0 text-[10px] font-medium text-white/34">↑↓ navigate · ★ favorite</span>
       </div>
-    </div>,
-    document.body
+    </div>
   ) : null;
 
+  const panel = panelContent && inlinePanel ? panelContent : panelContent ? createPortal(panelContent, document.body) : null;
+
   return (
-    <>
+    <div className={cn(inlinePanel ? "flex min-h-0 flex-col" : "contents")}>
       <button
         ref={triggerRef}
         type="button"
@@ -489,6 +503,6 @@ export function VariablePicker({
         <ChevronDown className={cn("h-4 w-4 shrink-0 opacity-50 transition-transform", open ? "rotate-180" : "")} />
       </button>
       {panel}
-    </>
+    </div>
   );
 }

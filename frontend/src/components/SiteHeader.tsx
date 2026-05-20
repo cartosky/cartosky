@@ -634,6 +634,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const toolbar = useViewerToolbar();
   const [sheetSnap, setSheetSnap] = useState<"closed" | "peek" | "full">("closed");
   const [activeTab, setActiveTab] = useState<"selection" | "display">("selection");
+  const [mobileModelPickerOpen, setMobileModelPickerOpen] = useState(false);
+  const [mobileVariablePickerOpen, setMobileVariablePickerOpen] = useState(false);
   const dragStartY = useRef<number | null>(null);
 
   if (!toolbar) return null;
@@ -651,6 +653,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isPhoneLayout = !isTabletTouchLayout;
   const sheetOpen = sheetSnap !== "closed";
+  const mobilePickerOpen = mobileModelPickerOpen || mobileVariablePickerOpen;
 
   // Sync external open requests (e.g. from the bottom bar) into local sheetSnap
   useEffect(() => {
@@ -687,6 +690,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const closeSheet = () => {
     setSheetSnap("closed");
+    setMobileModelPickerOpen(false);
+    setMobileVariablePickerOpen(false);
     onMobileControlsOpenChange?.(false);
   };
 
@@ -712,8 +717,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const selectionContent = (
     <>
-      <div className="grid grid-cols-1 gap-3">
-        <div className="space-y-1.5">
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Boxes className="h-3 w-3" /> Product
           </span>
@@ -724,15 +729,19 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             disabled={disabled}
             placeholder="Product"
             minWidth="w-full"
+            inlinePanel={isPhoneLayout}
+            inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
             onOpenChange={(nextOpen) => {
-              if (nextOpen && sheetSnap === "peek") {
+              setMobileModelPickerOpen(isPhoneLayout && nextOpen);
+              if (nextOpen) {
+                setMobileVariablePickerOpen(false);
                 setSheetSnap("full");
               }
             }}
           />
         </div>
 
-        <div className="space-y-1.5">
+        <div className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Layers className="h-3 w-3" /> Variable
           </span>
@@ -747,15 +756,19 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             selectedLabelOverride={selectedVariableLabel}
             legend={legend}
             minWidth="w-full"
+            inlinePanel={isPhoneLayout}
+            inlinePanelClassName="max-h-[calc(90dvh-17rem)]"
             onOpenChange={(open) => {
-              if (open && sheetSnap === "peek") {
+              setMobileVariablePickerOpen(isPhoneLayout && open);
+              if (open) {
+                setMobileModelPickerOpen(false);
                 setSheetSnap("full");
               }
             }}
           />
         </div>
 
-        <div className="space-y-1.5">
+        <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <CalendarClock className="h-3 w-3" /> Run Time
           </span>
@@ -888,7 +901,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           {/* Sheet panel */}
           <div
             style={isPhoneLayout ? {
-              maxHeight: sheetSnap === "full" ? "88svh" : "60svh",
+              maxHeight: sheetSnap === "full" ? "90dvh" : "60dvh",
+              height: mobilePickerOpen && sheetSnap === "full" ? "90dvh" : undefined,
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
@@ -959,10 +973,11 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             {/* Scrollable content — explicit max-height keeps container content-sized (no dead space) */}
             <div
               style={isPhoneLayout ? {
-                maxHeight: sheetSnap === "full" ? "calc(88svh - 5.5rem)" : "calc(60svh - 5.5rem)",
+                maxHeight: sheetSnap === "full" ? "calc(90dvh - 5.5rem)" : "calc(60dvh - 5.5rem)",
               } : undefined}
               className={cn(
-                "overflow-y-auto",
+                "min-h-0",
+                mobilePickerOpen ? "flex flex-1 flex-col overflow-hidden" : "overflow-y-auto",
                 isTabletTouchLayout ? "max-h-[calc(100svh-10rem)] px-5 pb-5 pt-3" : "px-4 pb-6 pt-3"
               )}
             >
