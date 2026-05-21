@@ -986,6 +986,40 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "ptype_breaks": MRMS_RADAR_PTYPE_BREAKS,
         "ptype_levels": MRMS_RADAR_PTYPE_LEVELS_BY_TYPE,
     },
+    "goes_ir13_enhanced": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "K",
+        "range": (190.0, 330.0),
+        "levels": [
+            190.0, 195.0, 200.0, 205.0, 210.0, 215.0, 220.0, 225.0,
+            230.0, 235.0, 240.0, 245.0, 250.0, 255.0, 260.0, 265.0,
+            270.0, 275.0, 280.0, 285.0, 290.0, 295.0, 300.0, 305.0,
+            310.0, 315.0, 320.0, 325.0, 330.0,
+        ],
+        "colors": [
+            "#f8f2ff", "#e7d5ff", "#d0a8ff", "#aa78ff", "#7b47d6", "#532190",
+            "#7d003f", "#b0002b", "#df2f00", "#ff7400", "#ffbc00", "#fff06a",
+            "#ffffff", "#d6f0ff", "#9ed2f3", "#6cabd4", "#4f8bb2", "#657b90",
+            "#777777", "#888888", "#989898", "#a8a8a8", "#b8b8b8", "#c8c8c8",
+            "#d7d7d7", "#e2e2e2", "#ececec", "#f5f5f5", "#ffffff",
+        ],
+        "display_name": "Clean IR",
+        "legend_title": "Brightness Temperature (K)",
+        "legend_stops": [
+            (200.0, "#d0a8ff"),
+            (220.0, "#7d003f"),
+            (235.0, "#ff7400"),
+            (240.0, "#ffbc00"),
+            (250.0, "#ffffff"),
+            (270.0, "#4f8bb2"),
+            (290.0, "#989898"),
+            (310.0, "#d7d7d7"),
+            (330.0, "#ffffff"),
+        ],
+        "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
+    },
 }
 
 # Aliases kept for historical compatibility with already-published metadata.

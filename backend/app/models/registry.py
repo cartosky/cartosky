@@ -38,6 +38,12 @@ except ImportError as exc:
     logger.warning("MRMS plugin unavailable (missing dependency): %s", exc)
 
 try:
+    from .goes_east import GOES_EAST_MODEL
+    MODEL_REGISTRY[GOES_EAST_MODEL.id] = GOES_EAST_MODEL
+except ImportError as exc:
+    logger.warning("GOES-East plugin unavailable (missing dependency): %s", exc)
+
+try:
     from .spc import SPC_MODEL
     MODEL_REGISTRY[SPC_MODEL.id] = SPC_MODEL
 except ImportError as exc:

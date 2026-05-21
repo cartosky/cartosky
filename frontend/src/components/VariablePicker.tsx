@@ -28,7 +28,7 @@ type VariablePickerProps = {
   inlinePanelClassName?: string;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR" | "SATELLITE";
 
 const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
@@ -39,10 +39,12 @@ const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: s
 ];
 
 const RADAR_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "RADAR", label: "Radar" };
+const SATELLITE_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "SATELLITE", label: "Satellite" };
 
 const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   ...BASE_CATEGORY_ROWS,
   RADAR_CATEGORY_ROW,
+  SATELLITE_CATEGORY_ROW,
 ];
 
 const CATEGORY_LABELS = new Map<CategoryId, string>([
@@ -59,6 +61,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "UPPER AIR") return "UPPER AIR";
   if (normalized === "ENSEMBLE" || normalized === "ENSEMBLES") return "ENSEMBLE";
   if (normalized === "RADAR") return "RADAR";
+  if (normalized === "SATELLITE") return "SATELLITE";
   return null;
 }
 
@@ -110,9 +113,10 @@ export function VariablePicker({
   const listRef = useRef<HTMLDivElement | null>(null);
   const { favorites, favoriteSet, toggleFavorite } = useVariableFavorites(modelId);
   const isRadarModel = modelId === "mrms";
+  const isSatelliteModel = modelId === "goes-east";
   const availableCategoryRows = useMemo(
-    () => (isRadarModel ? CATEGORY_ROWS : BASE_CATEGORY_ROWS),
-    [isRadarModel]
+    () => (isRadarModel || isSatelliteModel ? CATEGORY_ROWS : BASE_CATEGORY_ROWS),
+    [isRadarModel, isSatelliteModel]
   );
 
   const supportedSet = useMemo(() => new Set(supportedVariableIds), [supportedVariableIds]);
@@ -122,13 +126,17 @@ export function VariablePicker({
       if (!option.value || seen.has(option.value) || !supportedSet.has(option.value)) {
         return false;
       }
-      if (!isRadarModel && normalizeGroup(option.group) === "RADAR") {
+      const normalizedGroup = normalizeGroup(option.group);
+      if (!isRadarModel && normalizedGroup === "RADAR") {
+        return false;
+      }
+      if (!isSatelliteModel && normalizedGroup === "SATELLITE") {
         return false;
       }
       seen.add(option.value);
       return true;
     });
-  }, [isRadarModel, supportedSet, variableCatalog]);
+  }, [isRadarModel, isSatelliteModel, supportedSet, variableCatalog]);
   const optionById = useMemo(() => new Map(options.map((option) => [option.value, option])), [options]);
   const selectedLabel = selectedLabelOverride ?? optionById.get(value)?.label ?? (value || placeholder);
   const normalizedQuery = query.trim().toLowerCase();

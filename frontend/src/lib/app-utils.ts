@@ -397,6 +397,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
+  ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
 };
 
 const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
@@ -410,8 +411,9 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   gefs: { label: "GEFS", group: "ENSEMBLES", order: 7 },
   eps: { label: "EPS", group: "ENSEMBLES", order: 8 },
   mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
-  nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 11 },
-  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 12 },
+  "goes-east": { label: "Satellite", group: "OBSERVATIONS", order: 11 },
+  nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 12 },
+  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 13 },
 };
 
 function variableUiOverride(id: string): VariableUiOverride | null {
@@ -450,6 +452,8 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
     case "upper air":
     case "dynamics":
       return "UPPER AIR";
+    case "satellite":
+      return "SATELLITE";
     case "ensemble":
     case "ensembles":
       return "ENSEMBLE";

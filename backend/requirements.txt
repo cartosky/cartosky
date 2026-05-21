@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
 numpy
+xarray
+h5netcdf[h5py]
 rasterio
 rio-tiler
 scipy
