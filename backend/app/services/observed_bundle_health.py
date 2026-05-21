@@ -10,10 +10,11 @@ OBSERVED_SOURCE_THRESHOLDS: dict[str, tuple[int, int]] = {
     # Preserve MRMS's established alerting behavior; tests and operational
     # expectations already treat an 8-minute lag as delayed.
     "mrms": (8, OBSERVED_STALE_THRESHOLD_MINUTES),
-    # GOES-East publishes on a 15-minute cadence and intentionally waits for
-    # scans to age slightly before download, so it needs a wider freshness window
-    # than MRMS to avoid healthy bundles reading as delayed.
-    "goes-east": (20, 35),
+    # GOES-East publishes on a 15-minute cadence, but freshness is currently
+    # evaluated from the frame's scan-valid timestamp rather than from publish
+    # time. Keep the runtime health window aligned with the publish-time window
+    # so a newly published bundle does not immediately read as delayed.
+    "goes-east": (30, 45),
 }
 
 

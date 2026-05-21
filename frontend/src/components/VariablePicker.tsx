@@ -112,12 +112,6 @@ export function VariablePicker({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const { favorites, favoriteSet, toggleFavorite } = useVariableFavorites(modelId);
-  const isRadarModel = modelId === "mrms";
-  const isSatelliteModel = modelId === "goes-east";
-  const availableCategoryRows = useMemo(
-    () => (isRadarModel || isSatelliteModel ? CATEGORY_ROWS : BASE_CATEGORY_ROWS),
-    [isRadarModel, isSatelliteModel]
-  );
 
   const supportedSet = useMemo(() => new Set(supportedVariableIds), [supportedVariableIds]);
   const options = useMemo(() => {
@@ -126,17 +120,20 @@ export function VariablePicker({
       if (!option.value || seen.has(option.value) || !supportedSet.has(option.value)) {
         return false;
       }
-      const normalizedGroup = normalizeGroup(option.group);
-      if (!isRadarModel && normalizedGroup === "RADAR") {
-        return false;
-      }
-      if (!isSatelliteModel && normalizedGroup === "SATELLITE") {
-        return false;
-      }
       seen.add(option.value);
       return true;
     });
-  }, [isRadarModel, isSatelliteModel, supportedSet, variableCatalog]);
+  }, [supportedSet, variableCatalog]);
+  const availableCategoryRows = useMemo(() => {
+    const categoryIds = new Set<CategoryId>();
+    for (const option of options) {
+      const category = normalizeGroup(option.group);
+      if (category && category !== "FAVORITES") {
+        categoryIds.add(category);
+      }
+    }
+    return CATEGORY_ROWS.filter((row) => categoryIds.has(row.id));
+  }, [options]);
   const optionById = useMemo(() => new Map(options.map((option) => [option.value, option])), [options]);
   const selectedLabel = selectedLabelOverride ?? optionById.get(value)?.label ?? (value || placeholder);
   const normalizedQuery = query.trim().toLowerCase();
@@ -156,13 +153,13 @@ export function VariablePicker({
     }
     for (const option of options) {
       const category = normalizeGroup(option.group);
-      if (!category || category === "FAVORITES" || (!isRadarModel && category === "RADAR")) {
+      if (!category || category === "FAVORITES") {
         continue;
       }
       byCategory.get(category)?.push(option);
     }
     return byCategory;
-  }, [availableCategoryRows, isRadarModel, options]);
+  }, [availableCategoryRows, options]);
 
   const favoriteOptions = useMemo(
     () => favorites.map((favoriteId) => optionById.get(favoriteId)).filter((option): option is VariableOption => Boolean(option)),
@@ -187,6 +184,7 @@ export function VariablePicker({
     }
     return rows;
   }, [availableCategoryRows, categorizedOptions, favoriteOptions, matchesQuery]);
+  const firstAvailableCategory = categoryRows[0]?.id ?? "SURFACE";
 
   const visibleOptions = useMemo(() => {
     if (hasSearch) {
@@ -244,22 +242,24 @@ export function VariablePicker({
     if (!selectedCategory) {
       return;
     }
+    if (!categoryRows.some((category) => category.id === selectedCategory)) {
+      return;
+    }
     setActiveCategory((current) => (current === "FAVORITES" && favoriteOptions.length > 0 ? current : selectedCategory));
-  }, [favoriteOptions.length, selectedCategory]);
+  }, [categoryRows, favoriteOptions.length, selectedCategory]);
 
   useEffect(() => {
-    if (activeCategory !== "FAVORITES" || favoriteOptions.length > 0) {
+    if (activeCategory === "FAVORITES" && favoriteOptions.length > 0) {
       return;
     }
-    setActiveCategory(selectedCategory ?? "SURFACE");
-  }, [activeCategory, favoriteOptions.length, selectedCategory]);
-
-  useEffect(() => {
-    if (activeCategory !== "RADAR" || isRadarModel) {
+    if (categoryRows.some((category) => category.id === activeCategory)) {
       return;
     }
-    setActiveCategory(selectedCategory && selectedCategory !== "RADAR" ? selectedCategory : "SURFACE");
-  }, [activeCategory, isRadarModel, selectedCategory]);
+    const nextCategory = selectedCategory && categoryRows.some((category) => category.id === selectedCategory)
+      ? selectedCategory
+      : firstAvailableCategory;
+    setActiveCategory(nextCategory);
+  }, [activeCategory, categoryRows, favoriteOptions.length, firstAvailableCategory, selectedCategory]);
 
   useEffect(() => {
     if (!open) {
