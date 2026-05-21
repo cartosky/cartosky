@@ -21,7 +21,7 @@ def test_global_models_use_na_as_canonical_build_region(model_id: str) -> None:
     assert scheduler_module._build_regions_for_var(plugin, "tmp2m") == ["na"]
 
 
-@pytest.mark.parametrize("model_id", ["hrrr", "nam", "nbm", "mrms", "spc", "nws_hazards"])
+@pytest.mark.parametrize("model_id", ["hrrr", "nam", "nbm", "mrms", "current_analysis", "spc", "nws_hazards"])
 def test_regional_models_keep_existing_canonical_region(model_id: str) -> None:
     plugin = MODEL_REGISTRY[model_id]
 

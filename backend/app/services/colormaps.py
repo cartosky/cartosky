@@ -569,6 +569,20 @@ WSPD10M_COLOR_ANCHORS = [
 ]
 WSPD10M_RANGE = (0.0, 100.0)
 
+MSLP_HPA_LEGEND_STOPS = [
+    (960.0, "#5e4fa2"),
+    (972.0, "#3288bd"),
+    (984.0, "#66c2a5"),
+    (996.0, "#abdda4"),
+    (1004.0, "#e6f598"),
+    (1012.0, "#fee08b"),
+    (1020.0, "#fdae61"),
+    (1028.0, "#f46d43"),
+    (1040.0, "#d53e4f"),
+]
+MSLP_HPA_COLOR_ANCHORS = list(MSLP_HPA_LEGEND_STOPS)
+MSLP_HPA_RANGE = (960.0, 1040.0)
+
 RH_PERCENT_LEVELS = [float(value) for value in range(0, 105, 5)]
 RH_PERCENT_COLORS = [
     "#543004",
@@ -1057,6 +1071,24 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "10m Wind Gust",
         "legend_title": "Wind Gust (mph)",
+    },
+    "mslp": {
+        "type": "continuous",
+        "units": "hPa",
+        "range": MSLP_HPA_RANGE,
+        "anchors": MSLP_HPA_COLOR_ANCHORS,
+        "display_name": "Mean Sea-Level Pressure",
+        "legend_title": "Mean Sea-Level Pressure (hPa)",
+        "legend_stops": MSLP_HPA_LEGEND_STOPS,
+    },
+    "spres": {
+        "type": "continuous",
+        "units": "hPa",
+        "range": MSLP_HPA_RANGE,
+        "anchors": MSLP_HPA_COLOR_ANCHORS,
+        "display_name": "Surface Pressure",
+        "legend_title": "Surface Pressure (hPa)",
+        "legend_stops": MSLP_HPA_LEGEND_STOPS,
     },
     "refc": {
         "type": "discrete",

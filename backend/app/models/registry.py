@@ -44,6 +44,12 @@ except ImportError as exc:
     logger.warning("GOES-East plugin unavailable (missing dependency): %s", exc)
 
 try:
+    from .rtma_ru import CURRENT_ANALYSIS_MODEL
+    MODEL_REGISTRY[CURRENT_ANALYSIS_MODEL.id] = CURRENT_ANALYSIS_MODEL
+except ImportError as exc:
+    logger.warning("Current Analysis plugin unavailable (missing dependency): %s", exc)
+
+try:
     from .spc import SPC_MODEL
     MODEL_REGISTRY[SPC_MODEL.id] = SPC_MODEL
 except ImportError as exc:

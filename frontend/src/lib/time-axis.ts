@@ -173,7 +173,7 @@ export function deriveObservedSourceStatus(params: {
     return {
       tone: "unavailable",
       label: "Unavailable",
-      description: "No publishable MRMS bundle is available.",
+      description: "No publishable observed analysis bundle is available.",
       ageMinutes: null,
     };
   }
@@ -257,7 +257,7 @@ export function observedSourceStatusFromAvailability(
   return {
     tone: "unavailable",
     label: "Unavailable",
-    description: degradedReason ? `MRMS is unavailable: ${degradedReason}.` : "No publishable MRMS bundle is available.",
+    description: degradedReason ? `Observed source is unavailable: ${degradedReason}.` : "No publishable observed analysis bundle is available.",
     ageMinutes: null,
   };
 }

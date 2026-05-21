@@ -75,6 +75,42 @@ except ValueError:
     GRID_BROTLI_QUALITY = 5
 
 _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
+    ("current_analysis", "tmp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("current_analysis", "dp2m"): {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    ("current_analysis", "wspd10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("current_analysis", "wgst10m"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    ("current_analysis", "spres"): {
+        "scale": 0.1,
+        "offset": 800.0,
+        "nodata": 65535,
+        "units": "hPa",
+    },
+    ("current_analysis", "mslp"): {
+        "scale": 0.1,
+        "offset": 800.0,
+        "nodata": 65535,
+        "units": "hPa",
+    },
     ("hrrr", "tmp2m"): {
         "scale": 0.1,
         "offset": -100.0,

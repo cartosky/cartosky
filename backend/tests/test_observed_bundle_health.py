@@ -140,3 +140,29 @@ def test_observed_bundle_health_marks_goes_east_delayed_after_satellite_window()
     assert payload["usable"] is True
     assert payload["degraded_reason"] == "delayed_source"
     assert payload["latest_scan_age_minutes"] == 32
+
+
+def test_observed_bundle_health_uses_current_analysis_thresholds() -> None:
+    now_utc = datetime(2026, 3, 27, 12, 28, tzinfo=timezone.utc)
+    payload = build_observed_bundle_health(
+        latest_run="20260327_1228z",
+        manifest={
+            "last_updated": "2026-03-27T12:27:00Z",
+            "variables": {
+                "tmp2m": {
+                    "expected_frames": 4,
+                    "available_frames": 4,
+                    "frames": [
+                        {"fh": 0, "valid_time": "2026-03-27T12:05:00Z"},
+                    ],
+                }
+            },
+        },
+        source="current_analysis",
+        now_utc=now_utc,
+    )
+
+    assert payload["freshness_state"] == "live"
+    assert payload["usable"] is True
+    assert payload["degraded_reason"] is None
+    assert payload["latest_scan_age_minutes"] == 23

@@ -398,6 +398,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
+  spres: { label: "Surface Pressure", group: "SURFACE", order: 4 },
 };
 
 const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
@@ -412,8 +413,9 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   eps: { label: "EPS", group: "ENSEMBLES", order: 8 },
   mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
   "goes-east": { label: "Satellite", group: "OBSERVATIONS", order: 11 },
-  nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 12 },
-  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 13 },
+  current_analysis: { label: "Current Analysis", group: "OBSERVATIONS", order: 12 },
+  nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 13 },
+  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 14 },
 };
 
 function variableUiOverride(id: string): VariableUiOverride | null {

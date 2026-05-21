@@ -10,6 +10,9 @@ OBSERVED_SOURCE_THRESHOLDS: dict[str, tuple[int, int]] = {
     # Preserve MRMS's established alerting behavior; tests and operational
     # expectations already treat an 8-minute lag as delayed.
     "mrms": (8, OBSERVED_STALE_THRESHOLD_MINUTES),
+    # RTMA rapid-update is expected roughly every 15 minutes, but the publish
+    # path still needs room for upstream lag and local processing.
+    "current_analysis": (25, 45),
     # GOES-East publishes on a 15-minute cadence, but freshness is currently
     # evaluated from the frame's scan-valid timestamp rather than from publish
     # time. Keep the runtime health window aligned with the publish-time window
