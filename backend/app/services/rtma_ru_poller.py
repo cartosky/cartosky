@@ -215,9 +215,10 @@ def build_bundle_frame(
 ) -> CurrentAnalysisBundleFrame:
     values_by_var: dict[str, np.ndarray] = {}
     source_metadata_by_var: dict[str, dict[str, Any]] = {}
+    frame_transform = None
 
     for var_id, pattern in CURRENT_ANALYSIS_DIRECT_PATTERNS.items():
-        warped, meta = _fetch_direct_variable(
+        warped, warped_transform, meta = _fetch_direct_variable(
             run_time=run_time,
             config=config,
             var_id=var_id,
@@ -226,19 +227,29 @@ def build_bundle_frame(
         )
         values_by_var[var_id] = warped
         source_metadata_by_var[var_id] = meta
+        if warped_transform is not None:
+            if frame_transform is None:
+                frame_transform = warped_transform
+            elif warped_transform != frame_transform:
+                raise RuntimeError("Current Analysis direct variables returned mismatched target grids")
 
-    wspd_values, wspd_meta = _fetch_derived_wind_speed(
+    wspd_values, wspd_transform, wspd_meta = _fetch_derived_wind_speed(
         run_time=run_time,
         config=config,
         bundle_fetch_cache=bundle_fetch_cache,
     )
     values_by_var["wspd10m"] = wspd_values
     source_metadata_by_var["wspd10m"] = wspd_meta
+    if wspd_transform is not None:
+        if frame_transform is None:
+            frame_transform = wspd_transform
+        elif wspd_transform != frame_transform:
+            raise RuntimeError("Current Analysis wind speed returned a mismatched target grid")
 
     return CurrentAnalysisBundleFrame(
         valid_time=run_time.astimezone(timezone.utc),
         values_by_var=values_by_var,
-        transform=None,
+        transform=frame_transform,
         projection="EPSG:3857",
         source_metadata={
             "source_model": CURRENT_ANALYSIS_HERBIE_MODEL,
@@ -328,7 +339,7 @@ def _fetch_direct_variable(
     var_id: str,
     search_pattern: str,
     bundle_fetch_cache: Any,
-) -> tuple[np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, Any, dict[str, Any]]:
     capability = CURRENT_ANALYSIS_MODEL.get_var_capability(var_id)
     if capability is None:
         raise KeyError(f"Unknown Current Analysis variable: {var_id}")
@@ -343,7 +354,7 @@ def _fetch_direct_variable(
         return_meta=True,
     )
     converted = convert_units(data, var_id, model_id=CURRENT_ANALYSIS_MODEL_ID, var_capability=capability)
-    warped, _dst_transform = warp_to_target_grid(
+    warped, dst_transform = warp_to_target_grid(
         converted,
         crs,
         transform,
@@ -351,7 +362,7 @@ def _fetch_direct_variable(
         region=CURRENT_ANALYSIS_REGION_ID,
         resampling="bilinear",
     )
-    return warped, {
+    return warped, dst_transform, {
         "inventory_line": str(meta.get("inventory_line") or ""),
         "search_pattern": str(meta.get("search_pattern") or search_pattern),
         "source_product": str(meta.get("product") or config.product),
@@ -363,7 +374,7 @@ def _fetch_derived_wind_speed(
     run_time: datetime,
     config: CurrentAnalysisPollerConfig,
     bundle_fetch_cache: Any,
-) -> tuple[np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, Any, dict[str, Any]]:
     u_data, u_crs, u_transform, u_meta = fetch_variable(
         model_id=CURRENT_ANALYSIS_HERBIE_MODEL,
         product=config.product,
@@ -396,7 +407,7 @@ def _fetch_derived_wind_speed(
         model_id=CURRENT_ANALYSIS_MODEL_ID,
         var_capability=capability,
     )
-    warped, _dst_transform = warp_to_target_grid(
+    warped, dst_transform = warp_to_target_grid(
         converted_speed,
         u_crs,
         u_transform,
@@ -404,7 +415,7 @@ def _fetch_derived_wind_speed(
         region=CURRENT_ANALYSIS_REGION_ID,
         resampling="bilinear",
     )
-    return warped, {
+    return warped, dst_transform, {
         "inventory_lines": [
             str(u_meta.get("inventory_line") or ""),
             str(v_meta.get("inventory_line") or ""),

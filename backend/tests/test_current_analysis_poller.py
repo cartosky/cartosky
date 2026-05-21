@@ -133,6 +133,7 @@ def test_build_bundle_frame_derives_wind_and_uses_surface_pressure(tmp_path: Pat
     config = _config(tmp_path)
     captured_patterns: list[str] = []
     shared_transform = object()
+    warped_transform = object()
 
     def _fetch_variable(*, search_pattern: str, **_kwargs):
         captured_patterns.append(search_pattern)
@@ -162,7 +163,7 @@ def test_build_bundle_frame_derives_wind_and_uses_surface_pressure(tmp_path: Pat
             else np.asarray(data, dtype=np.float32) * 9.0 / 5.0 + 32.0
         ),
     )
-    monkeypatch.setattr(rtma_ru_poller, "warp_to_target_grid", lambda data, *_args, **_kwargs: (np.asarray(data, dtype=np.float32), None))
+    monkeypatch.setattr(rtma_ru_poller, "warp_to_target_grid", lambda data, *_args, **_kwargs: (np.asarray(data, dtype=np.float32), warped_transform))
 
     frame = rtma_ru_poller.build_bundle_frame(
         run_time=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
@@ -176,6 +177,7 @@ def test_build_bundle_frame_derives_wind_and_uses_surface_pressure(tmp_path: Pat
         frame.values_by_var["wspd10m"],
         np.array([[5.0, 5.0], [0.0, 5.0]], dtype=np.float32) * np.float32(2.23694),
     )
+    assert frame.transform is warped_transform
     assert frame.source_metadata_by_var["spres"]["inventory_line"] == ":PRES:surface:anl:"
     assert frame.source_metadata_by_var["wspd10m"]["inventory_lines"] == [
         ":UGRD:10 m above ground:anl:",
