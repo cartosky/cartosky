@@ -141,20 +141,34 @@ GOES_IR13_LEVELS = [
 ]
 GOES_IR13_COLOR_ANCHORS = [
     (163.0, "#000000"),
-    (173.0, "#f0f0f0"),
-    (198.0, "#000000"),
+    (173.0, "#6b6b6b"),
+    (198.0, "#f4f4f4"),
     (208.0, "#ff0000"),
     (218.0, "#fff000"),
     (228.0, "#32ff00"),
     (245.0, "#003cff"),
     (253.0, "#d100ff"),
-    (258.0, "#fff4ff"),
+    (258.0, "#f2f2f2"),
     (280.0, "#9c9c9c"),
     (285.0, "#8a8a8a"),
     (300.0, "#4f4f4f"),
     (330.0, "#000000"),
 ]
 GOES_IR13_COLORS = _expand_color_anchors(GOES_IR13_LEVELS, GOES_IR13_COLOR_ANCHORS)
+GOES_IR13_LEGEND_STOPS = [
+    (163.0, "#000000"),
+    (173.0, "#6b6b6b"),
+    (198.0, "#f4f4f4"),
+    (208.0, "#ff0000"),
+    (218.0, "#fff000"),
+    (228.0, "#32ff00"),
+    (245.0, "#003cff"),
+    (253.0, "#d100ff"),
+    (258.0, "#f2f2f2"),
+    (280.0, "#9c9c9c"),
+    (300.0, "#4f4f4f"),
+    (330.0, "#000000"),
+]
 
 
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
@@ -1050,20 +1064,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "colors": GOES_IR13_COLORS,
         "display_name": "Clean IR",
         "legend_title": "Brightness Temperature (K)",
-        "legend_stops": [
-            (163.0, "#000000"),
-            (173.0, "#f0f0f0"),
-            (198.0, "#000000"),
-            (208.0, "#ff0000"),
-            (218.0, "#fff000"),
-            (228.0, "#32ff00"),
-            (245.0, "#003cff"),
-            (253.0, "#d100ff"),
-            (258.0, "#fff4ff"),
-            (280.0, "#9c9c9c"),
-            (300.0, "#4f4f4f"),
-            (330.0, "#000000"),
-        ],
+        "legend_stops": GOES_IR13_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
