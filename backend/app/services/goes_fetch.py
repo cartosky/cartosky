@@ -76,6 +76,7 @@ def discover_recent_scans_s3(
     lookback_hours: int = 5,
     object_min_age_seconds: int = 120,
     min_object_bytes: int = 1_000_000,
+    slot_cadence_minutes: int = 15,
     limit: int | None = None,
 ) -> list[GOESScanRef]:
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -127,7 +128,7 @@ def discover_recent_scans_s3(
                 scan_start_time=scan_start,
                 scan_end_time=parsed["scan_end_time"].astimezone(timezone.utc),
                 created_time=parsed["created_time"].astimezone(timezone.utc),
-                slot_time=_floor_to_cadence(scan_start, 15),
+                slot_time=_floor_to_cadence(scan_start, slot_cadence_minutes),
                 size_bytes=size_bytes,
                 last_modified=last_modified,
                 etag=str(obj.get("ETag") or "").strip('"') or None,

@@ -101,6 +101,7 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
         lookback_hours=config.listing_lookback_hours,
         object_min_age_seconds=config.object_min_age_seconds,
         min_object_bytes=config.min_object_bytes,
+        slot_cadence_minutes=config.frame_cadence_minutes,
         limit=max(target_frame_count * 3, target_frame_count),
     )
     frozen = freeze_bundle_scans(

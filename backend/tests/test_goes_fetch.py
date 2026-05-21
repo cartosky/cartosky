@@ -92,6 +92,69 @@ def test_discover_recent_scans_s3_applies_age_and_size_gates() -> None:
     assert refs[0].slot_time == datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
 
 
+def test_discover_recent_scans_s3_respects_slot_cadence_minutes() -> None:
+    now = datetime(2026, 5, 21, 12, 10, tzinfo=timezone.utc)
+    pages = [
+        {
+            "Contents": [
+                {
+                    "Key": "ABI-L2-CMIPC/2026/141/12/OR_ABI-L2-CMIPC-M6C13_G19_s20261411206175_e20261411208560_c20261411209046.nc",
+                    "Size": 4_000_000,
+                    "LastModified": now - timedelta(minutes=3),
+                    "ETag": '"abc"',
+                },
+            ]
+        }
+    ]
+    client = _S3Client(pages)
+    refs = discover_recent_scans_s3(
+        s3_client=client,
+        bucket="noaa-goes19",
+        product="ABI-L2-CMIPC",
+        sector="C",
+        band=13,
+        satellite="goes19",
+        now_utc=now,
+        lookback_hours=1,
+        object_min_age_seconds=120,
+        min_object_bytes=1_000_000,
+        slot_cadence_minutes=5,
+    )
+    assert len(refs) == 1
+    assert refs[0].scan_start_time == datetime(2026, 5, 21, 12, 6, 17, 500000, tzinfo=timezone.utc)
+    assert refs[0].slot_time == datetime(2026, 5, 21, 12, 5, tzinfo=timezone.utc)
+
+
+def test_freeze_bundle_scans_selects_latest_per_5_minute_slot() -> None:
+    base = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+
+    def ref(scan_minute: int, created_offset: int, suffix: str) -> GOESScanRef:
+        start = base + timedelta(minutes=scan_minute, seconds=75)
+        slot = start.replace(minute=(start.minute // 5) * 5, second=0, microsecond=0)
+        return GOESScanRef(
+            bucket="b",
+            key=f"k-{suffix}",
+            filename=f"f-{suffix}.nc",
+            product="ABI-L2-CMIPC",
+            sector="C",
+            band=13,
+            satellite="goes19",
+            scan_start_time=start,
+            scan_end_time=start + timedelta(minutes=2),
+            created_time=start + timedelta(seconds=created_offset),
+            slot_time=slot,
+            size_bytes=1,
+            last_modified=start + timedelta(seconds=created_offset),
+        )
+
+    frozen = freeze_bundle_scans(
+        [ref(0, 10, "old"), ref(1, 20, "new"), ref(5, 10, "next"), ref(10, 10, "last")],
+        max_frames=2,
+        frame_cadence_minutes=5,
+    )
+    assert [item.key for item in frozen] == ["k-next", "k-last"]
+
+
 def test_freeze_bundle_scans_selects_latest_per_15_minute_slot() -> None:
     base = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
 
