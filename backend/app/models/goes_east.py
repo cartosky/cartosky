@@ -113,7 +113,7 @@ GOES_EAST_CAPABILITIES = ModelCapabilities(
         "canonical_region": GOES_EAST_REGION_ID,
         "time_axis_mode": "observed",
         "latest_only": True,
-        "supports_sampling": True,
+        "supports_sampling": False,
     },
     variable_catalog=GOES_EAST_VARIABLE_CATALOG,
 )
