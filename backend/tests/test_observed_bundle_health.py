@@ -88,3 +88,55 @@ def test_observed_bundle_health_reports_unavailable_without_scan_time() -> None:
     assert payload["freshness_state"] == "unavailable"
     assert payload["usable"] is False
     assert payload["degraded_reason"] == "missing_latest_scan_time"
+
+
+def test_observed_bundle_health_uses_wider_goes_east_thresholds() -> None:
+    now_utc = datetime(2026, 3, 27, 12, 20, tzinfo=timezone.utc)
+    payload = build_observed_bundle_health(
+        latest_run="20260327_1220z",
+        manifest={
+            "last_updated": "2026-03-27T12:19:00Z",
+            "variables": {
+                "ir13": {
+                    "expected_frames": 13,
+                    "available_frames": 13,
+                    "frames": [
+                        {"fh": 0, "valid_time": "2026-03-27T12:04:00Z"},
+                    ],
+                }
+            },
+        },
+        source="goes-east",
+        now_utc=now_utc,
+    )
+
+    assert payload["freshness_state"] == "live"
+    assert payload["usable"] is True
+    assert payload["degraded_reason"] is None
+    assert payload["latest_scan_age_minutes"] == 16
+
+
+def test_observed_bundle_health_marks_goes_east_delayed_after_satellite_window() -> None:
+    now_utc = datetime(2026, 3, 27, 12, 26, tzinfo=timezone.utc)
+    payload = build_observed_bundle_health(
+        latest_run="20260327_1226z",
+        manifest={
+            "last_updated": "2026-03-27T12:25:00Z",
+            "variables": {
+                "ir13": {
+                    "expected_frames": 13,
+                    "available_frames": 13,
+                    "frames": [
+                        {"fh": 0, "valid_time": "2026-03-27T12:04:00Z"},
+                    ],
+                }
+            },
+        },
+        source="goes-east",
+        now_utc=now_utc,
+    )
+
+    assert payload["freshness_state"] == "delayed"
+    assert payload["usable"] is True
+    assert payload["degraded_reason"] == "delayed_source"
+    assert payload["latest_scan_age_minutes"] == 22

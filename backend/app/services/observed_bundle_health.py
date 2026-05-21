@@ -6,6 +6,15 @@ from typing import Any
 
 OBSERVED_DELAYED_THRESHOLD_MINUTES = 10
 OBSERVED_STALE_THRESHOLD_MINUTES = 15
+OBSERVED_SOURCE_THRESHOLDS: dict[str, tuple[int, int]] = {
+    # Preserve MRMS's established alerting behavior; tests and operational
+    # expectations already treat an 8-minute lag as delayed.
+    "mrms": (8, OBSERVED_STALE_THRESHOLD_MINUTES),
+    # GOES-East publishes on a 15-minute cadence and intentionally waits for
+    # scans to age slightly before download, so it needs a wider freshness window
+    # than MRMS to avoid healthy bundles reading as delayed.
+    "goes-east": (20, 35),
+}
 
 
 def is_observed_model_capability(model_capability: Any | None) -> bool:
@@ -34,10 +43,16 @@ def build_observed_bundle_health(
     manifest: dict[str, Any] | None,
     source: str,
     now_utc: datetime | None = None,
-    delayed_threshold_minutes: int = OBSERVED_DELAYED_THRESHOLD_MINUTES,
-    stale_threshold_minutes: int = OBSERVED_STALE_THRESHOLD_MINUTES,
+    delayed_threshold_minutes: int | None = None,
+    stale_threshold_minutes: int | None = None,
 ) -> dict[str, Any]:
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    source_id = str(source).strip().lower() or "observed"
+    delayed_threshold, stale_threshold = _resolve_observed_thresholds(
+        source=source_id,
+        delayed_threshold_minutes=delayed_threshold_minutes,
+        stale_threshold_minutes=stale_threshold_minutes,
+    )
     expected_frames, available_frames = _manifest_frame_counts(manifest)
     latest_scan_dt = _latest_scan_valid_time(manifest)
     bundle_published_at = parse_iso_datetime(manifest.get("last_updated")) if isinstance(manifest, dict) else None
@@ -68,12 +83,9 @@ def build_observed_bundle_health(
         degraded_reason = "missing_latest_scan_time"
     else:
         usable = True
-        if latest_scan_age_minutes is not None and latest_scan_age_minutes >= max(
-            delayed_threshold_minutes,
-            stale_threshold_minutes,
-        ):
+        if latest_scan_age_minutes is not None and latest_scan_age_minutes >= stale_threshold:
             freshness_state = "stale"
-        elif latest_scan_age_minutes is not None and latest_scan_age_minutes >= max(1, delayed_threshold_minutes):
+        elif latest_scan_age_minutes is not None and latest_scan_age_minutes >= max(1, delayed_threshold):
             freshness_state = "delayed"
         else:
             freshness_state = "live"
@@ -86,7 +98,7 @@ def build_observed_bundle_health(
             degraded_reason = "delayed_source"
 
     return {
-        "source": str(source).strip().lower() or "observed",
+        "source": source_id,
         "time_axis_mode": "observed",
         "latest_scan_valid_time": _isoformat_or_none(latest_scan_dt),
         "latest_scan_age_minutes": latest_scan_age_minutes,
@@ -100,6 +112,22 @@ def build_observed_bundle_health(
         "degraded_reason": degraded_reason,
         "freshness_state": freshness_state,
     }
+
+
+def _resolve_observed_thresholds(
+    *,
+    source: str,
+    delayed_threshold_minutes: int | None,
+    stale_threshold_minutes: int | None,
+) -> tuple[int, int]:
+    default_delayed, default_stale = OBSERVED_SOURCE_THRESHOLDS.get(
+        source,
+        (OBSERVED_DELAYED_THRESHOLD_MINUTES, OBSERVED_STALE_THRESHOLD_MINUTES),
+    )
+    delayed = default_delayed if delayed_threshold_minutes is None else max(1, int(delayed_threshold_minutes))
+    stale_floor = max(delayed + 1, default_stale)
+    stale = stale_floor if stale_threshold_minutes is None else max(delayed + 1, int(stale_threshold_minutes))
+    return delayed, stale
 
 
 def _manifest_frame_counts(manifest: dict[str, Any] | None) -> tuple[int, int]:
