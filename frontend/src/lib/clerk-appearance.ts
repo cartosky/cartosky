@@ -36,7 +36,7 @@ export const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
     lastAuthenticationStrategyBadge: "border border-cyan-300/20 bg-cyan-300/12 text-cyan-100 shadow-none",
     socialButtonsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
     alternativeMethodsBlockButton: "border-white/10 bg-white/[0.04] text-white hover:bg-cyan-300/[0.08]",
-    otpCodeFieldInput: "border-white/10 bg-[#161922] text-white focus:border-cyan-300/50 focus:ring-cyan-300/20",
+    otpCodeFieldInput: "border border-cyan-300/55 bg-[#0f1d2b] text-white shadow-[0_0_0_1px_rgba(34,211,238,0.18)] focus:border-cyan-200 focus:ring-2 focus:ring-cyan-300/35",
     userButtonPopoverCard: "border border-white/10 bg-[#0b0e15]/95 text-white shadow-[0_24px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl",
     userButtonPopoverMain: "bg-transparent",
     userButtonPopoverActions: "bg-transparent",
