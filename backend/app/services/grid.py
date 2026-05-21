@@ -932,9 +932,9 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
     ("goes-east", "ir13"): {
         "dtype": GRID_DTYPE_UINT16,
         "scale": 0.01,
-        "offset": 150.0,
+        "offset": -100.0,
         "nodata": 65535,
-        "units": "K",
+        "units": "C",
     },
 }
 

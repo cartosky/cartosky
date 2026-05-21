@@ -72,7 +72,7 @@ GOES_EAST_VARS: dict[str, VarSpec] = {
         ),
         primary=True,
         kind="continuous",
-        units="K",
+        units="C",
     ),
 }
 
@@ -84,12 +84,12 @@ GOES_EAST_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         selectors=GOES_EAST_VARS[GOES_EAST_IR13_VARIABLE_ID].selectors,
         primary=True,
         kind="continuous",
-        units="K",
+        units="C",
         color_map_id=GOES_EAST_IR13_COLOR_MAP_ID,
         buildable=True,
         order=0,
         group="Satellite",
-        legend_title="Brightness Temperature (K)",
+        legend_title="Brightness Temperature",
         render_substrates=["grid"],
     ),
 }

@@ -62,6 +62,21 @@ def test_non_display_prep_variable_remains_passthrough() -> None:
     np.testing.assert_array_equal(prepared, values.astype(np.float32))
 
 
+def test_goes_ir13_display_prep_converts_kelvin_to_celsius() -> None:
+    values = np.array([[273.15, 233.15], [np.nan, 313.15]], dtype=np.float32)
+
+    prepared, meta = prepare_grid_display_values(model="goes-east", var="ir13", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "goes_ir13_display_celsius_v1"
+    assert meta["unit_conversion"] == "K_to_C"
+    assert prepared.dtype == np.float32
+    assert float(prepared[0, 0]) == 0.0
+    assert float(prepared[0, 1]) == -40.0
+    assert float(prepared[1, 1]) == 40.0
+    assert np.isnan(prepared[1, 0])
+
+
 def test_ecmwf_snowfall_display_prep_matches_gfs_treatment() -> None:
     values = np.array(
         [
