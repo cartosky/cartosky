@@ -6,7 +6,7 @@ import type { GroupedOption } from "@/lib/app-utils";
 import { useModelFavorites } from "@/lib/use-model-favorites";
 import { cn } from "@/lib/utils";
 
-type ModelCategoryId = "FAVORITES" | "MODELS" | "ENSEMBLES" | "OBSERVATIONS";
+type ModelCategoryId = "FAVORITES" | "MODELS" | "ENSEMBLES" | "FORECASTS" | "OBSERVATIONS";
 
 type ModelPickerProps = {
   value: string;
@@ -23,6 +23,7 @@ type ModelPickerProps = {
 const MODEL_CATEGORY_ROWS: Array<{ id: Exclude<ModelCategoryId, "FAVORITES">; label: string }> = [
   { id: "MODELS", label: "Models" },
   { id: "ENSEMBLES", label: "Ensembles" },
+  { id: "FORECASTS", label: "Forecasts" },
   { id: "OBSERVATIONS", label: "Obs" },
 ];
 
@@ -34,6 +35,7 @@ function normalizeModelGroup(group: string | null): ModelCategoryId | null {
   const normalized = String(group ?? "").trim().toUpperCase();
   if (normalized === "MODELS") return "MODELS";
   if (normalized === "ENSEMBLES" || normalized === "ENSEMBLE") return "ENSEMBLES";
+  if (normalized === "FORECASTS" || normalized === "FORECAST") return "FORECASTS";
   if (normalized === "OBSERVATIONS" || normalized === "OBSERVATION") return "OBSERVATIONS";
   return null;
 }

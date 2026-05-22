@@ -56,6 +56,12 @@ except ImportError as exc:
     logger.warning("SPC plugin unavailable (missing dependency): %s", exc)
 
 try:
+    from .cpc import CPC_MODEL
+    MODEL_REGISTRY[CPC_MODEL.id] = CPC_MODEL
+except ImportError as exc:
+    logger.warning("CPC plugin unavailable (missing dependency): %s", exc)
+
+try:
     from .nws_hazards import NWS_HAZARDS_MODEL
     MODEL_REGISTRY[NWS_HAZARDS_MODEL.id] = NWS_HAZARDS_MODEL
 except ImportError as exc:

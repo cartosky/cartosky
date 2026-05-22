@@ -15,6 +15,7 @@ export type LegendPayload = {
   units?: string;
   kind?: string;
   id?: string;
+  note?: string;
   ptype_breaks?: Record<string, { offset: number; count: number }>;
   ptype_order?: string[];
   bins_per_ptype?: number;
@@ -512,6 +513,12 @@ export function MapLegend({
                     </div>
                   ))}
             </div>
+
+            {legend.note ? (
+              <p className="border-t border-border/25 pt-1 text-[9px] font-medium leading-snug text-foreground/68">
+                {legend.note}
+              </p>
+            ) : null}
 
             {showOpacityControl ? (
               <div className="border-t border-border/30 pt-1.5">

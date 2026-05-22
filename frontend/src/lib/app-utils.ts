@@ -67,6 +67,7 @@ export const MODEL_ORDER_BY_ID: Record<string, number> = {
   gefs: 7,
   eps: 8,
   spc: 9,
+  cpc: 10,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -415,6 +416,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   current_analysis: { label: "Current Analysis", group: "OBSERVATIONS", order: 12 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 13 },
   spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 14 },
+  cpc: { label: "CPC Outlooks", group: "FORECASTS", order: 15 },
 };
 
 function variableUiOverride(id: string): VariableUiOverride | null {
@@ -455,6 +457,8 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
       return "UPPER AIR";
     case "outlooks":
       return "OUTLOOKS";
+    case "forecasts":
+      return "FORECASTS";
     case "satellite":
       return "SATELLITE";
     case "ensemble":
@@ -975,6 +979,7 @@ export function buildLegend(meta: LegendMeta | null | undefined, opacity: number
   const legendMetadata = {
     kind: metaWithIds.kind,
     id: metaWithIds.var_key ?? metaWithIds.spec_key ?? metaWithIds.id ?? metaWithIds.var,
+    note: typeof meta.legend_note === "string" ? meta.legend_note.trim() || undefined : undefined,
     ptype_breaks: metaWithIds.ptype_breaks,
     ptype_order: metaWithIds.ptype_order,
     bins_per_ptype: metaWithIds.bins_per_ptype,

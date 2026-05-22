@@ -140,6 +140,7 @@ export type LegendMeta = {
   kind?: string;
   display_name?: string;
   legend_title?: string;
+  legend_note?: string;
   units?: string;
   valid_time?: string;
   issue_time?: string;

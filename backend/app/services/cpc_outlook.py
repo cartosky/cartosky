@@ -1,0 +1,517 @@
+from __future__ import annotations
+
+import json
+import logging
+import shutil
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from app.models.cpc import CPC_MODEL
+from app.services.publish_utils import promote_run, write_json_atomic, write_latest_pointer, write_run_manifest
+from app.services.run_ids import format_run_id
+
+logger = logging.getLogger(__name__)
+
+CPC_MODEL_ID = "cpc"
+CPC_REGION_ID = "conus"
+CPC_SOURCE_NAME = "NOAA CPC"
+CPC_610_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_6_10_day_outlk/MapServer"
+CPC_814_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_8_14_day_outlk/MapServer"
+
+
+class CPCOutlookError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class CPCProductConfig:
+    var_id: str
+    display_name: str
+    period: str
+    variable: str
+    base_url: str
+    layer_id: int
+    legend_title: str
+    style_key: str
+
+
+@dataclass(frozen=True)
+class CPCOutlookPayload:
+    product: CPCProductConfig
+    issued_at: datetime | None
+    valid_start: datetime | None
+    valid_end: datetime | None
+    features: list[dict]
+
+
+@dataclass(frozen=True)
+class CPCPublishResult:
+    run_id: str
+    published_run_dir: Path
+    manifest_path: Path
+    frame_count: int
+    variable_ids: list[str]
+
+
+CPC_PRODUCT_CONFIGS: dict[str, CPCProductConfig] = {
+    "cpc_610_temp": CPCProductConfig(
+        var_id="cpc_610_temp",
+        display_name="CPC 6-10 Day Temperature Outlook",
+        period="6-10",
+        variable="temperature",
+        base_url=CPC_610_BASE_URL,
+        layer_id=0,
+        legend_title="CPC Temperature Outlook",
+        style_key="cpc_temperature_outlook",
+    ),
+    "cpc_610_precip": CPCProductConfig(
+        var_id="cpc_610_precip",
+        display_name="CPC 6-10 Day Precipitation Outlook",
+        period="6-10",
+        variable="precipitation",
+        base_url=CPC_610_BASE_URL,
+        layer_id=1,
+        legend_title="CPC Precipitation Outlook",
+        style_key="cpc_precipitation_outlook",
+    ),
+    "cpc_814_temp": CPCProductConfig(
+        var_id="cpc_814_temp",
+        display_name="CPC 8-14 Day Temperature Outlook",
+        period="8-14",
+        variable="temperature",
+        base_url=CPC_814_BASE_URL,
+        layer_id=0,
+        legend_title="CPC Temperature Outlook",
+        style_key="cpc_temperature_outlook",
+    ),
+    "cpc_814_precip": CPCProductConfig(
+        var_id="cpc_814_precip",
+        display_name="CPC 8-14 Day Precipitation Outlook",
+        period="8-14",
+        variable="precipitation",
+        base_url=CPC_814_BASE_URL,
+        layer_id=1,
+        legend_title="CPC Precipitation Outlook",
+        style_key="cpc_precipitation_outlook",
+    ),
+}
+
+TEMP_COLORS: dict[str, dict[int, str] | str] = {
+    "above": {
+        33: "#edbe7b",
+        40: "#ea9d5d",
+        50: "#e36d3f",
+        60: "#d55021",
+        70: "#c24100",
+        80: "#a43700",
+        90: "#842f00",
+    },
+    "near": "#b0afb0",
+    "below": {
+        33: "#cad5e9",
+        40: "#afcce5",
+        50: "#88c2e8",
+        60: "#43afe3",
+        70: "#0072b1",
+        80: "#3d3282",
+        90: "#2e2565",
+    },
+}
+
+PRECIP_COLORS: dict[str, dict[int, str] | str] = {
+    "above": {
+        33: "#bfdfb9",
+        40: "#a4d591",
+        50: "#55bd3e",
+        60: "#00a32a",
+        70: "#008819",
+        80: "#327108",
+        90: "#336400",
+    },
+    "near": "#b1b0b1",
+    "below": {
+        33: "#f4dba4",
+        40: "#e0b561",
+        50: "#c98142",
+        60: "#ad6440",
+        70: "#a55a49",
+        80: "#945200",
+        90: "#623f3d",
+    },
+}
+
+
+def fetch_cpc_outlook(
+    period: str,
+    variable: str,
+    *,
+    timeout_seconds: float = 30.0,
+) -> dict:
+    config = _config_for(period=period, variable=variable)
+    return fetch_cpc_layer_geojson(config, timeout_seconds=timeout_seconds)
+
+
+def fetch_cpc_layer_geojson(config: CPCProductConfig, *, timeout_seconds: float = 30.0) -> dict:
+    query = urlencode({"where": "1=1", "outFields": "*", "f": "geojson"})
+    url = f"{config.base_url.rstrip('/')}/{config.layer_id}/query?{query}"
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "CartoSky-CPC/1.0",
+            "Accept": "application/geo+json,application/json;q=0.9,*/*;q=0.8",
+        },
+    )
+    with urlopen(request, timeout=float(timeout_seconds)) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _config_for(*, period: str, variable: str) -> CPCProductConfig:
+    normalized_period = str(period).strip().lower().replace("day", "").replace(" ", "")
+    normalized_variable = str(variable).strip().lower()
+    for config in CPC_PRODUCT_CONFIGS.values():
+        if config.period.replace("-", "") == normalized_period.replace("-", "") and config.variable == normalized_variable:
+            return config
+    raise CPCOutlookError(f"Unknown CPC outlook period={period!r} variable={variable!r}")
+
+
+def _coerce_datetime(value: object) -> datetime | None:
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric > 1e12:
+            numeric /= 1000.0
+        try:
+            return datetime.fromtimestamp(numeric, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for candidate in (text, text.replace("Z", "+00:00")):
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d%H%M", "%Y%m%d_%H%M"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _first_datetime(props: dict, *keys: str) -> datetime | None:
+    for key in keys:
+        parsed = _coerce_datetime(props.get(key))
+        if parsed is not None:
+            return parsed
+        parsed = _coerce_datetime(props.get(key.lower()))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _category(value: object) -> tuple[str, str] | None:
+    text = str(value or "").strip().lower()
+    if text in {"above", "a", "above normal"}:
+        return "above", "Above Normal"
+    if text in {"below", "b", "below normal"}:
+        return "below", "Below Normal"
+    if text in {"normal", "near", "n", "near normal"}:
+        return "near", "Near Normal"
+    return None
+
+
+def _probability(value: object) -> int | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric <= 0:
+        return None
+    return int(round(numeric))
+
+
+def _probability_bucket(probability: int | None) -> int:
+    if probability is None:
+        return 33
+    for bucket in (90, 80, 70, 60, 50, 40, 33):
+        if probability >= bucket:
+            return bucket
+    return 33
+
+
+def _style_for(variable: str, category: str, probability: int | None) -> tuple[str, int]:
+    palette = TEMP_COLORS if variable == "temperature" else PRECIP_COLORS
+    if category == "near":
+        return str(palette["near"]), 0
+    bucket = _probability_bucket(probability)
+    category_palette = palette.get(category)
+    if isinstance(category_palette, dict):
+        return category_palette.get(bucket) or category_palette[33], bucket
+    return "#888888", bucket
+
+
+def _format_iso(value: datetime | None) -> str | None:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if value else None
+
+
+def _format_date(value: datetime | None) -> str | None:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d") if value else None
+
+
+def _hover_label(
+    *,
+    config: CPCProductConfig,
+    category_label: str,
+    probability: int | None,
+    valid_start: datetime | None,
+    valid_end: datetime | None,
+) -> str:
+    parts = [config.display_name, f"Category: {category_label}"]
+    if probability is not None:
+        parts.append(f"Probability: {probability}%")
+    start_label = _format_date(valid_start)
+    end_label = _format_date(valid_end)
+    if start_label and end_label:
+        parts.append(f"Valid: {start_label} to {end_label}")
+    parts.append(f"Source: {CPC_SOURCE_NAME}")
+    return " · ".join(parts)
+
+
+def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOutlookPayload:
+    features_raw = raw_data.get("features")
+    if not isinstance(features_raw, list):
+        raise CPCOutlookError("CPC payload is missing features")
+
+    normalized_features: list[dict] = []
+    issued_at: datetime | None = None
+    valid_start: datetime | None = None
+    valid_end: datetime | None = None
+    forecast_date: datetime | None = None
+
+    for feature in features_raw:
+        if not isinstance(feature, dict):
+            continue
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, dict):
+            continue
+        props = feature.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+
+        category = _category(props.get("cat") or props.get("CAT") or props.get("category"))
+        if category is None:
+            continue
+        category_key, category_label = category
+        probability = _probability(props.get("prob") or props.get("PROB") or props.get("probability"))
+        fill, bucket = _style_for(config.variable, category_key, probability)
+        display_label = category_label if category_key == "near" else f"{probability or bucket}% {category_label}"
+
+        feature_valid_start = _first_datetime(props, "start_date", "START_DATE")
+        feature_valid_end = _first_datetime(props, "end_date", "END_DATE")
+        feature_issued_at = _first_datetime(props, "idp_filedate", "idp_FILEDATE", "fcst_date", "FCST_DATE")
+        forecast_date = forecast_date or _first_datetime(props, "fcst_date", "FCST_DATE")
+        issued_at = issued_at or feature_issued_at
+        valid_start = valid_start or feature_valid_start
+        valid_end = valid_end or feature_valid_end
+
+        normalized_features.append(
+            {
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": {
+                    "source": CPC_SOURCE_NAME,
+                    "outlook_type": config.variable,
+                    "period": config.period,
+                    "category": category_key,
+                    "label": category_label,
+                    "probability": probability,
+                    "probability_bucket": bucket if category_key != "near" else None,
+                    "displayLabel": display_label,
+                    "risk_label": display_label,
+                    "hover_label": _hover_label(
+                        config=config,
+                        category_label=category_label,
+                        probability=probability,
+                        valid_start=feature_valid_start,
+                        valid_end=feature_valid_end,
+                    ),
+                    "valid_start": _format_iso(feature_valid_start),
+                    "valid_end": _format_iso(feature_valid_end),
+                    "issued_at": _format_iso(feature_issued_at),
+                    "fill": fill,
+                    "fill_opacity": 0.66 if category_key != "near" else 0.42,
+                    "stroke": "#30343b",
+                    "stroke_width": 0.75,
+                    "sort_rank": _sort_rank(category_key, probability),
+                },
+            }
+        )
+
+    if not normalized_features:
+        raise CPCOutlookError(f"{config.display_name} payload had no recognized CPC outlook polygons")
+
+    normalized_features.sort(key=lambda item: int(item["properties"].get("sort_rank") or 0))
+    return CPCOutlookPayload(
+        product=config,
+        issued_at=issued_at or forecast_date,
+        valid_start=valid_start,
+        valid_end=valid_end,
+        features=normalized_features,
+    )
+
+
+def _sort_rank(category: str, probability: int | None) -> int:
+    base = {"near": 0, "below": 100, "above": 200}.get(category, 300)
+    return base + int(probability or 0)
+
+
+def cache_cpc_outlook(data_root: Path, outlook: CPCOutlookPayload, *, run_id: str) -> None:
+    var_root = data_root / "staging" / CPC_MODEL_ID / run_id / outlook.product.var_id
+    vector_root = var_root / "vectors"
+    vector_root.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(vector_root / "fh000.geojson", {"type": "FeatureCollection", "features": outlook.features})
+    write_json_atomic(var_root / "fh000.json", _build_frame_sidecar(run_id=run_id, outlook=outlook))
+
+
+def _legend_entries(variable: str) -> list[dict[str, object]]:
+    palette = TEMP_COLORS if variable == "temperature" else PRECIP_COLORS
+    rows: list[dict[str, object]] = []
+    for value, label, category in (
+        (33, "33-40% Below Normal", "below"),
+        (40, "40-50% Below Normal", "below"),
+        (50, "50-60% Below Normal", "below"),
+        (60, "60-70% Below Normal", "below"),
+        (70, "70-80% Below Normal", "below"),
+        (80, "80-90% Below Normal", "below"),
+        (90, "90-100% Below Normal", "below"),
+        (0, "Near Normal", "near"),
+        (133, "33-40% Above Normal", "above"),
+        (140, "40-50% Above Normal", "above"),
+        (150, "50-60% Above Normal", "above"),
+        (160, "60-70% Above Normal", "above"),
+        (170, "70-80% Above Normal", "above"),
+        (180, "80-90% Above Normal", "above"),
+        (190, "90-100% Above Normal", "above"),
+    ):
+        if category == "near":
+            color = str(palette["near"])
+        else:
+            bucket = value if value < 100 else value - 100
+            category_palette = palette[category]
+            color = str(category_palette[bucket]) if isinstance(category_palette, dict) else "#888888"
+        rows.append({"value": value, "color": color, "label": label})
+    return rows
+
+
+def _build_frame_sidecar(*, run_id: str, outlook: CPCOutlookPayload) -> dict:
+    valid_time = outlook.valid_start or outlook.issued_at or datetime.now(timezone.utc)
+    payload = {
+        "contract_version": "3.0",
+        "model": CPC_MODEL_ID,
+        "run": run_id,
+        "var": outlook.product.var_id,
+        "fh": 0,
+        "region": CPC_REGION_ID,
+        "valid_time": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "issue_time": _format_iso(outlook.issued_at),
+        "issued_at": _format_iso(outlook.issued_at),
+        "valid_start": _format_iso(outlook.valid_start),
+        "valid_end": _format_iso(outlook.valid_end),
+        "source": CPC_SOURCE_NAME,
+        "kind": "categorical",
+        "legend_title": outlook.product.legend_title,
+        "legend_note": "Probabilities of above, near, or below normal conditions; not deterministic temperatures or precipitation amounts.",
+        "display_name": outlook.product.display_name,
+        "period": outlook.product.period,
+        "outlook_type": outlook.product.variable,
+        "legend_entries": _legend_entries(outlook.product.variable),
+        "vector_layers": {
+            "primary": {
+                "format": "geojson",
+                "path": "vectors/fh000.geojson",
+                "style_key": outlook.product.style_key,
+            }
+        },
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def publish_cpc_outlooks(
+    *,
+    data_root: Path,
+    products: dict[str, CPCOutlookPayload],
+    issued_at: datetime,
+) -> CPCPublishResult:
+    if not products:
+        raise CPCOutlookError("CPC publish requires at least one product")
+
+    run_id = format_run_id(issued_at.astimezone(timezone.utc), include_minutes=True)
+    staging_run_root = data_root / "staging" / CPC_MODEL_ID / run_id
+    if staging_run_root.exists():
+        shutil.rmtree(staging_run_root, ignore_errors=True)
+    staging_run_root.mkdir(parents=True, exist_ok=True)
+
+    targets: list[tuple[str, int]] = []
+    latest_valid_time: datetime | None = None
+    for var_id, outlook in products.items():
+        cache_cpc_outlook(data_root, outlook, run_id=run_id)
+        targets.append((var_id, 0))
+        if outlook.valid_end is not None:
+            latest_valid_time = outlook.valid_end if latest_valid_time is None else max(latest_valid_time, outlook.valid_end)
+
+    promote_run(data_root=data_root, model=CPC_MODEL_ID, run_id=run_id)
+    write_run_manifest(
+        data_root=data_root,
+        model=CPC_MODEL_ID,
+        run_id=run_id,
+        targets=targets,
+        plugin=CPC_MODEL,
+        metadata={
+            "source": "NOAA CPC ArcGIS MapServer",
+            "time_axis_mode": "valid",
+            "target_frame_count": len(targets),
+            "available_frame_count": len(targets),
+            "latest_valid_time": (latest_valid_time or issued_at).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    write_latest_pointer(data_root=data_root, model=CPC_MODEL_ID, run_id=run_id, source="cpc_outlook")
+    return CPCPublishResult(
+        run_id=run_id,
+        published_run_dir=data_root / "published" / CPC_MODEL_ID / run_id,
+        manifest_path=data_root / "manifests" / CPC_MODEL_ID / f"{run_id}.json",
+        frame_count=len(targets),
+        variable_ids=sorted(products.keys()),
+    )
+
+
+def collect_latest_cpc_outlooks(*, timeout_seconds: float = 30.0) -> tuple[dict[str, CPCOutlookPayload], datetime]:
+    products: dict[str, CPCOutlookPayload] = {}
+    failures: list[str] = []
+    for config in CPC_PRODUCT_CONFIGS.values():
+        try:
+            raw = fetch_cpc_layer_geojson(config, timeout_seconds=timeout_seconds)
+            products[config.var_id] = normalize_cpc_features(raw, config=config)
+        except Exception as exc:
+            failures.append(f"{config.var_id}: {exc}")
+            logger.warning("Skipping CPC product var=%s error=%s", config.var_id, exc)
+
+    if not products:
+        raise CPCOutlookError("CPC publish failed: no products available; " + "; ".join(failures))
+    issue_time = min((outlook.issued_at for outlook in products.values() if outlook.issued_at is not None), default=None)
+    return products, issue_time or datetime.now(timezone.utc)
+
+
+def publish_latest_cpc_outlooks(*, data_root: Path, timeout_seconds: float = 30.0) -> CPCPublishResult:
+    try:
+        products, issued_at = collect_latest_cpc_outlooks(timeout_seconds=timeout_seconds)
+    except CPCOutlookError:
+        latest_pointer = data_root / "published" / CPC_MODEL_ID / "LATEST.json"
+        if latest_pointer.exists():
+            logger.warning("CPC refresh failed; preserving last known good CPC outlook bundle")
+        raise
+    return publish_cpc_outlooks(data_root=data_root, products=products, issued_at=issued_at)
