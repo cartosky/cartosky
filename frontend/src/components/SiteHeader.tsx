@@ -407,7 +407,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             options={models}
             disabled={disabled}
             placeholder="Model"
-            minWidth="min-w-[90px] max-w-[140px]"
+            minWidth="min-w-[180px] max-w-[220px]"
           />
         </HeaderSelectField>
         <HeaderSelectField label="Variable" icon={Layers}>

@@ -185,8 +185,13 @@ CURRENT_ANALYSIS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "spres": "Surface",
 }
 
+# Keep pressure in the backend contract for future contours and overlays, but do
+# not expose it as a primary buildable base layer in the public Current Analysis UI.
+CURRENT_ANALYSIS_INTERNAL_ONLY_VAR_KEYS = {"spres"}
+
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
+    is_buildable = bool(var_spec.primary or var_spec.derived) and var_key not in CURRENT_ANALYSIS_INTERNAL_ONLY_VAR_KEYS
     return VariableCapability(
         var_key=var_key,
         name=var_spec.name,
@@ -199,7 +204,7 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         normalize_units=var_spec.normalize_units,
         scale=var_spec.scale,
         color_map_id=CURRENT_ANALYSIS_COLOR_MAP_BY_VAR_KEY.get(var_key),
-        buildable=bool(var_spec.primary or var_spec.derived),
+        buildable=is_buildable,
         order=CURRENT_ANALYSIS_ORDER_BY_VAR_KEY.get(var_key),
         group=CURRENT_ANALYSIS_GROUP_BY_VAR_KEY.get(var_key),
         conversion=CURRENT_ANALYSIS_CONVERSION_BY_VAR_KEY.get(var_key),

@@ -20,7 +20,8 @@ def test_current_analysis_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "dp2m", "wspd10m", "wgst10m", "spres"}
+    assert buildable_var_keys == {"tmp2m", "dp2m", "wspd10m", "wgst10m"}
+    assert capabilities.variable_catalog["spres"].buildable is False
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -77,6 +78,7 @@ def test_current_analysis_capabilities_schema_snapshot_invariants() -> None:
     assert spres["units"] == "hPa"
     assert spres["group"] == "Surface"
     assert spres["color_map_id"] == "spres"
+    assert spres["buildable"] is False
 
 
 def test_current_analysis_aliases_normalize() -> None:

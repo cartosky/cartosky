@@ -14,7 +14,8 @@ Initial public variables:
 - `dp2m` Dewpoint
 - `wspd10m` Wind Speed
 - `wgst10m` Wind Gust
-- `spres` Surface Pressure
+
+Pressure remains available internally for future contour and overlay work, but it should not be exposed as a primary filled-raster Current Analysis base layer.
 
 ## Architecture plan
 
@@ -83,6 +84,7 @@ Recommended field selectors:
   - pressure to hPa
 - Derive `wspd10m` from `UGRD` and `VGRD` when a direct speed field is absent or lower quality.
 - RTMA Rapid Update currently exposes surface pressure, not a verified mean-sea-level-pressure field, so v1 should publish `spres` truthfully instead of relabeling it as MSLP.
+- Prefer a future `spres` or MSLP isobar overlay over a filled pressure raster base layer.
 - Keep source metadata per frame so downstream diagnostics and verification can see the original valid time and inventory line.
 
 ## Raster and tile generation workflow

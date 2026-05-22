@@ -398,7 +398,6 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
-  spres: { label: "Surface Pressure", group: "SURFACE", order: 4 },
 };
 
 const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
