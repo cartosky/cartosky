@@ -863,6 +863,7 @@ export default function App() {
         newestValidTimeISO: newestFrameValidTimeISO,
         availableFrameCount: frameRows.length,
         nowMs: freshnessTickMs,
+        source: availability?.source ?? model,
       });
     }
 
@@ -878,6 +879,7 @@ export default function App() {
       newestValidTimeISO: newestFrameValidTimeISO,
       availableFrameCount: frameRows.length,
       nowMs: freshnessTickMs,
+      source: availability?.source ?? model,
     });
   }, [selectedTimeAxisMode, model, capabilities, newestFrameValidTimeISO, frameRows.length, freshnessTickMs]);
   useEffect(() => {

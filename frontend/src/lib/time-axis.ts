@@ -1,6 +1,12 @@
 export type TimeAxisMode = "forecast" | "observed" | "valid";
 export type ObservedSourceStatusTone = "live" | "delayed" | "stale" | "unavailable";
 
+const OBSERVED_SOURCE_THRESHOLDS: Record<string, { delayed: number; stale: number }> = {
+  mrms: { delayed: 8, stale: 15 },
+  current_analysis: { delayed: 25, stale: 45 },
+  "goes-east": { delayed: 30, stale: 45 },
+};
+
 export type ObservedSourceStatus = {
   tone: ObservedSourceStatusTone;
   label: string;
@@ -163,11 +169,17 @@ export function deriveObservedSourceStatus(params: {
   newestValidTimeISO: string | null | undefined;
   availableFrameCount: number;
   nowMs?: number;
+  source?: string | null | undefined;
   delayedThresholdMinutes?: number;
   staleThresholdMinutes?: number;
 }): ObservedSourceStatus {
-  const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? 10);
-  const staleThresholdMinutes = Math.max(delayedThresholdMinutes, params.staleThresholdMinutes ?? 15);
+  const sourceId = String(params.source ?? "").trim().toLowerCase();
+  const defaults = OBSERVED_SOURCE_THRESHOLDS[sourceId];
+  const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? defaults?.delayed ?? 10);
+  const staleThresholdMinutes = Math.max(
+    delayedThresholdMinutes,
+    params.staleThresholdMinutes ?? defaults?.stale ?? 15,
+  );
 
   if (!params.latestRunAvailable || params.latestRunReady === false || params.availableFrameCount <= 0) {
     return {
