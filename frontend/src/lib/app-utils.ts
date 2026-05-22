@@ -415,7 +415,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   "goes-east": { label: "Satellite", group: "OBSERVATIONS", order: 11 },
   current_analysis: { label: "Current Analysis", group: "OBSERVATIONS", order: 12 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 13 },
-  spc: { label: "SPC Outlooks", group: "OBSERVATIONS", order: 14 },
+  spc: { label: "SPC Outlooks", group: "FORECASTS", order: 14 },
   cpc: { label: "CPC Outlooks", group: "FORECASTS", order: 15 },
 };
 
