@@ -28,7 +28,7 @@ type VariablePickerProps = {
   inlinePanelClassName?: string;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "ENSEMBLE" | "RADAR" | "SATELLITE";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
 
 const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
@@ -36,6 +36,7 @@ const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: s
   { id: "PRECIP ANOMALIES", label: "Precip anomalies" },
   { id: "SEVERE", label: "Severe" },
   { id: "UPPER AIR", label: "Upper air" },
+  { id: "OUTLOOKS", label: "Outlooks" },
 ];
 
 const RADAR_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "RADAR", label: "Radar" };
@@ -59,6 +60,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "PRECIP ANOMALIES") return "PRECIP ANOMALIES";
   if (normalized === "SEVERE") return "SEVERE";
   if (normalized === "UPPER AIR") return "UPPER AIR";
+  if (normalized === "OUTLOOKS") return "OUTLOOKS";
   if (normalized === "ENSEMBLE" || normalized === "ENSEMBLES") return "ENSEMBLE";
   if (normalized === "RADAR") return "RADAR";
   if (normalized === "SATELLITE") return "SATELLITE";
