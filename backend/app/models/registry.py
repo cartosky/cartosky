@@ -97,6 +97,12 @@ try:
 except ImportError as exc:
     logger.warning("EPS plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .ndfd import NDFD_MODEL
+    MODEL_REGISTRY[NDFD_MODEL.id] = NDFD_MODEL
+except ImportError as exc:
+    logger.warning("NDFD plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)

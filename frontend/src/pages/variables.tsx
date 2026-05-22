@@ -159,6 +159,63 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Convective regimes can make QPF volatile from run to run, so use it with forcing context.",
     ],
   },
+  mint: {
+    definition: "Forecast daily minimum temperature from the official NDFD blend, focused on the coolest part of the diurnal cycle.",
+    bestFor: [
+      "Overnight freeze and frost risk context",
+      "Comparing coldest-night placement across days",
+      "Broad minimum-temperature planning",
+    ],
+    interpretation: [
+      "Treat it as a daily minimum field rather than an hourly temperature trace.",
+      "Use it with cloud cover, wind, and surface temperature guidance in marginal freeze setups.",
+    ],
+  },
+  maxt: {
+    definition: "Forecast daily maximum temperature from the official NDFD blend, centered on daytime heating potential.",
+    bestFor: [
+      "Warmest-day placement and intensity",
+      "Heat and cooling-demand context",
+      "Comparing day-to-day thermal trends",
+    ],
+    interpretation: [
+      "This is a daily maximum field, not an hourly surface-temperature evolution.",
+      "Pair it with wind and humidity for a fuller read on daytime impacts.",
+    ],
+  },
+  qpf_6h: {
+    definition: "Official NDFD six-hour liquid-equivalent precipitation accumulation.",
+    bestFor: [
+      "Near-term accumulation windows",
+      "Event timing within broader storm totals",
+      "Comparing shorter precipitation bursts",
+    ],
+    interpretation: [
+      "Short-window QPF is useful for timing, but convective placement can still shift materially.",
+    ],
+  },
+  qpf_24h: {
+    definition: "Official NDFD rolling 24-hour liquid-equivalent precipitation total derived from six-hour fields.",
+    bestFor: [
+      "Daily precipitation planning",
+      "Flood-sensitive day-scale accumulation context",
+      "Comparing the heaviest 24-hour axes",
+    ],
+    interpretation: [
+      "Use it for day-scale totals, then inspect six-hour QPF for timing detail.",
+    ],
+  },
+  qpf_48h: {
+    definition: "Official NDFD rolling 48-hour liquid-equivalent precipitation total derived from six-hour fields.",
+    bestFor: [
+      "Two-day storm-total context",
+      "Broader event accumulation screening",
+      "Comparing longer-duration wet corridors",
+    ],
+    interpretation: [
+      "Longer windows are useful for total impact framing but hide shorter bursts and timing shifts.",
+    ],
+  },
   snowfall_total: {
     definition: "Derived snowfall using a simpler fixed-ratio approach, useful as a quick baseline snow field.",
     bestFor: [
@@ -168,6 +225,39 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
     ],
     interpretation: [
       "It is convenient, but not as profile-aware as a temperature-dependent approach.",
+    ],
+  },
+  snow_6h: {
+    definition: "Official NDFD six-hour snowfall accumulation.",
+    bestFor: [
+      "Short-window winter accumulation timing",
+      "Pinpointing heavier snow periods within a storm",
+      "Comparing six-hour snowfall bursts",
+    ],
+    interpretation: [
+      "Short windows help with timing; use daily totals for broader impact framing.",
+    ],
+  },
+  snow_24h: {
+    definition: "Official NDFD rolling 24-hour snowfall accumulation derived from six-hour fields.",
+    bestFor: [
+      "Day-scale snowfall planning",
+      "Comparing core daily snow corridors",
+      "Broad winter-storm impact context",
+    ],
+    interpretation: [
+      "Useful for daily totals, but verify timing with the six-hour snowfall field.",
+    ],
+  },
+  snow_48h: {
+    definition: "Official NDFD rolling 48-hour snowfall accumulation derived from six-hour fields.",
+    bestFor: [
+      "Multi-day storm-total snowfall context",
+      "Longer-duration winter-event screening",
+      "Comparing broader heavy-snow swaths",
+    ],
+    interpretation: [
+      "This is best for event framing; shorter windows still matter for operational timing.",
     ],
   },
   snowfall_kuchera_total: {
@@ -193,6 +283,28 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Small spatial shifts matter, so compare runs and nearby guidance before treating the axis as fixed.",
     ],
   },
+  ice_6h: {
+    definition: "Official NDFD six-hour freezing-rain ice accumulation.",
+    bestFor: [
+      "Short-window icing risk timing",
+      "Detecting when glaze accumulation ramps up",
+      "Comparing marginal freezing-rain periods",
+    ],
+    interpretation: [
+      "Use with surface temperature and precipitation type in marginal setups where small thermal changes matter.",
+    ],
+  },
+  ice_24h: {
+    definition: "Official NDFD rolling 24-hour freezing-rain ice accumulation derived from six-hour fields.",
+    bestFor: [
+      "Day-scale icing impact awareness",
+      "Comparing highest ice-risk corridors",
+      "Utility and travel impact screening",
+    ],
+    interpretation: [
+      "The daily total is useful for impacts, but the six-hour field gives the timing detail.",
+    ],
+  },
   wspd10m: {
     definition: "Sustained wind speed at 10 meters above ground, used for gradient wind and near-surface flow context.",
     bestFor: [
@@ -202,6 +314,28 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
     ],
     interpretation: [
       "Compare with gusts for a better read on mixing and turbulence potential.",
+    ],
+  },
+  wgust_6h_max: {
+    definition: "Official NDFD maximum wind gust expected within each six-hour window.",
+    bestFor: [
+      "Near-term peak gust awareness",
+      "Short-window wind impact timing",
+      "Comparing the strongest gust periods in a forecast cycle",
+    ],
+    interpretation: [
+      "Use this as a peak-gust envelope for each window rather than a sustained wind forecast.",
+    ],
+  },
+  wgust_24h_max: {
+    definition: "Official NDFD rolling 24-hour maximum wind gust derived from six-hour peak windows.",
+    bestFor: [
+      "Day-scale wind impact screening",
+      "Comparing the strongest gust day in a forecast sequence",
+      "Broad planning for wind-sensitive operations",
+    ],
+    interpretation: [
+      "The daily max is useful for impact framing, but six-hour maxima show timing and persistence better.",
     ],
   },
   wgst10m: {
@@ -332,6 +466,10 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   td2m: "SURFACE",
   wspd10m: "SURFACE",
   wgst10m: "SURFACE",
+  mint: "SURFACE",
+  maxt: "SURFACE",
+  wgust_6h_max: "SURFACE",
+  wgust_24h_max: "SURFACE",
   tmp850: "UPPER AIR",
   rh700: "UPPER AIR",
   wspd850: "UPPER AIR",
@@ -343,11 +481,19 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   pwat: "PRECIPITATION",
   precip_total: "PRECIPITATION",
   qpf: "PRECIPITATION",
+  qpf_6h: "PRECIPITATION",
+  qpf_24h: "PRECIPITATION",
+  qpf_48h: "PRECIPITATION",
   snowfall_total: "PRECIPITATION",
   snow10to1: "PRECIPITATION",
+  snow_6h: "PRECIPITATION",
+  snow_24h: "PRECIPITATION",
+  snow_48h: "PRECIPITATION",
   snowfall_kuchera_total: "PRECIPITATION",
   snowkuchera: "PRECIPITATION",
   ice_total: "PRECIPITATION",
+  ice_6h: "PRECIPITATION",
+  ice_24h: "PRECIPITATION",
   ptype_intensity: "PRECIPITATION",
   radar_ptype: "PRECIPITATION",
   precip_5d_anom: "PRECIP ANOMALIES",

@@ -993,6 +993,83 @@ for _precip_anom_var in _PRECIP_ANOM_VARS:
     _PACKING_BY_MODEL_VAR[("gefs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
 
+_NDFD_GRID_PACKING_BY_VAR: dict[str, dict[str, Any]] = {
+    "mint": {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    "maxt": {
+        "scale": 0.1,
+        "offset": -100.0,
+        "nodata": 65535,
+        "units": "F",
+    },
+    "qpf_6h": {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "qpf_24h": {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "qpf_48h": {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "snow_6h": {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "snow_24h": {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "snow_48h": {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "ice_6h": {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "ice_24h": {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    "wgust_6h_max": {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+    "wgust_24h_max": {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mph",
+    },
+}
+for _ndfd_var, _ndfd_packing in _NDFD_GRID_PACKING_BY_VAR.items():
+    _PACKING_BY_MODEL_VAR[("ndfd", _ndfd_var)] = dict(_ndfd_packing)
+
 
 def grid_code_supported(model_id: str, var_key: str) -> bool:
     normalized_model = str(model_id or "").strip().lower()
