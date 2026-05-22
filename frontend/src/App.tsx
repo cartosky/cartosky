@@ -330,6 +330,7 @@ export default function App() {
     st: string;
   } | null>(null);
   const [selectedVectorHazard, setSelectedVectorHazard] = useState<VectorHazardSelection | null>(null);
+  const isCurrentAnalysisSelection = String(model ?? "").trim().toLowerCase() === "current_analysis";
   const [sharePayload, setSharePayload] = useState<SharePayload>({
     permalink: "",
     summary: "CartoSky viewer share",
@@ -894,6 +895,12 @@ export default function App() {
   useEffect(() => {
     setSelectionEpoch((current) => current + 1);
   }, [selectionKey]);
+
+  useEffect(() => {
+    if (!isCurrentAnalysisSelection && selectedAnchorCity) {
+      setSelectedAnchorCity(null);
+    }
+  }, [isCurrentAnalysisSelection, selectedAnchorCity]);
 
   const runOptions = useMemo<Option[]>(() => {
     return buildRunOptions(runs, latestRunId, selectedTimeAxisMode);
@@ -3711,7 +3718,7 @@ export default function App() {
           onMapReady={handleMapReady}
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
-          onAnchorClick={setSelectedAnchorCity}
+          onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}
           onVectorHazardClick={model === "nws_hazards" ? setSelectedVectorHazard : undefined}
           showZoomControls={zoomControlsVisible}
           legendButtonVisible={!isDesktopViewerLayout && legendVisible}
