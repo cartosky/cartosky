@@ -453,6 +453,8 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
     case "upper air":
     case "dynamics":
       return "UPPER AIR";
+    case "outlooks":
+      return "OUTLOOKS";
     case "satellite":
       return "SATELLITE";
     case "ensemble":
