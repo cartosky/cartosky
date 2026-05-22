@@ -478,17 +478,20 @@ HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM
 HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
 PRECIP_ANOM_IN_LEVELS = [
-    -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.75, -0.5, -0.25, -0.1,
-    0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0,
+    -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.8, -1.6, -1.4,
+    -1.2, -1.0, -0.8, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2,
+    1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5,
 ]
 PRECIP_ANOM_IN_COLORS = [
-    "#923a1d", "#8e451f", "#975025", "#aa6524", "#c17922", "#d99528",
-    "#e6b428", "#f1cf3a", "#fff26a", "#fff9ae", "#ffffff", "#f1fbeb",
-    "#d8f6c8", "#a8ed8f", "#74e15a", "#41d700", "#3bcf13", "#35c42b",
-    "#33ad42", "#2f9e63", "#2a8a8a", "#3095a1", "#35a3b8",
+    "#fbc9c9", "#f5a1a1", "#e58281", "#e16464", "#d54f4f", "#c93c3c",
+    "#b52828", "#a62021", "#64544a", "#776658", "#8b7668", "#9f8977",
+    "#b39987", "#c7ab95", "#e1c3ad", "#efddcb", "#ffffff", "#c9e9b9",
+    "#b7dfa7", "#9bd18c", "#7cc378", "#5aaf62", "#529d5a", "#4a874d",
+    "#467847", "#2b6eeb", "#2b6eeb", "#3083f1", "#3c97f5", "#50a5f5",
+    "#78b9fb", "#97d3fb", "#b5f1fb",
 ]
-PRECIP_ANOM_IN_LEGEND_STOPS = list(zip(PRECIP_ANOM_IN_LEVELS, PRECIP_ANOM_IN_COLORS))
-PRECIP_ANOM_IN_RANGE = (-4.0, 4.0)
+PRECIP_ANOM_IN_LEGEND_STOPS = list(zip(PRECIP_ANOM_IN_LEVELS[:-1], PRECIP_ANOM_IN_COLORS))
+PRECIP_ANOM_IN_RANGE = (-5.5, 5.5)
 
 # Total precipitation (inches)
 precip_colors = [
