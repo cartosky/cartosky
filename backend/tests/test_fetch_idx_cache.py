@@ -93,6 +93,48 @@ def test_no_idx_negative_cache_skips_repeated_herbie_calls_within_ttl(monkeypatc
     assert _FakeHerbie.calls == 2
 
 
+def test_no_idx_negative_cache_isolated_by_minute_granularity(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeHerbie:
+        calls = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            type(self).calls += 1
+            self.idx = None
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fetch_module.time, "monotonic", lambda: float(clock["now"]))
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "2")
+    monkeypatch.setenv("TWF_HERBIE_IDX_NEGATIVE_CACHE_INITIAL_TTL_SECONDS", "60")
+    monkeypatch.setenv("TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_TTL_SECONDS", "300")
+
+    base_kwargs = dict(
+        model_id="rtma_ru",
+        product="anl",
+        search_pattern=":TMP:2 m above ground:",
+        fh=0,
+        herbie_kwargs={"priority": "aws"},
+    )
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            run_date=datetime(2026, 5, 22, 13, 0),
+            **base_kwargs,
+        )
+    assert _FakeHerbie.calls == 1
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            run_date=datetime(2026, 5, 22, 13, 15),
+            **base_kwargs,
+        )
+    assert _FakeHerbie.calls == 2
+
+
 def test_inventory_filter_matches_literal_parentheses_before_regex_fallback() -> None:
     index_df = pd.DataFrame(
         [

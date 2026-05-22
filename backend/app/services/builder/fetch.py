@@ -506,6 +506,8 @@ def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
 
 
 def _run_id_from_date(run_date: datetime) -> str:
+    if run_date.minute or run_date.second or run_date.microsecond:
+        return run_date.strftime("%Y%m%d_%H%Mz")
     return run_date.strftime("%Y%m%d_%Hz")
 
 
