@@ -68,8 +68,7 @@ def test_normalize_cpc_temperature_categories_and_metadata() -> None:
     assert by_category["below"]["fill"] == "#0072b1"
     assert by_category["near"]["fill"] == "#b0afb0"
     assert by_category["near"]["label"] == "Near Normal"
-    assert "CPC 6-10 Day Temperature Outlook" in by_category["above"]["hover_label"]
-    assert "Source: NOAA CPC" in by_category["above"]["hover_label"]
+    assert by_category["above"]["hover_label"] == "Category: Above normal · Probability: 40%"
 
 
 def test_normalize_cpc_precip_palette() -> None:

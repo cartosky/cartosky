@@ -259,26 +259,15 @@ def _format_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if value else None
 
 
-def _format_date(value: datetime | None) -> str | None:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d") if value else None
-
-
 def _hover_label(
     *,
-    config: CPCProductConfig,
     category_label: str,
     probability: int | None,
-    valid_start: datetime | None,
-    valid_end: datetime | None,
 ) -> str:
-    parts = [config.display_name, f"Category: {category_label}"]
+    display_category = category_label[:1].upper() + category_label[1:].lower() if category_label else category_label
+    parts = [f"Category: {display_category}"]
     if probability is not None:
         parts.append(f"Probability: {probability}%")
-    start_label = _format_date(valid_start)
-    end_label = _format_date(valid_end)
-    if start_label and end_label:
-        parts.append(f"Valid: {start_label} to {end_label}")
-    parts.append(f"Source: {CPC_SOURCE_NAME}")
     return " · ".join(parts)
 
 
@@ -334,11 +323,8 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
                     "displayLabel": display_label,
                     "risk_label": display_label,
                     "hover_label": _hover_label(
-                        config=config,
                         category_label=category_label,
                         probability=probability,
-                        valid_start=feature_valid_start,
-                        valid_end=feature_valid_end,
                     ),
                     "valid_start": _format_iso(feature_valid_start),
                     "valid_end": _format_iso(feature_valid_end),
