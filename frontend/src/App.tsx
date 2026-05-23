@@ -402,6 +402,8 @@ export default function App() {
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
   const modelRef = useRef(model);
   const variableRef = useRef(variable);
+  const regionRef = useRef(region);
+  const telemetryRunIdRef = useRef<string | null>(null);
   const targetForecastHourRef = useRef(targetForecastHour);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
@@ -1379,6 +1381,33 @@ export default function App() {
     modelRef.current = model;
     variableRef.current = variable;
   }, [model, variable]);
+
+  useEffect(() => {
+    regionRef.current = region;
+  }, [region]);
+
+  useEffect(() => {
+    telemetryRunIdRef.current = telemetryRunId;
+  }, [telemetryRunId]);
+
+  useEffect(() => {
+    return () => {
+      if (!viewerOpenedTrackedRef.current) {
+        return;
+      }
+      const durationMs = typeof performance === "undefined"
+        ? 0
+        : Math.max(0, performance.now() - viewerMountedAtRef.current);
+      captureProductAnalyticsEvent("viewer_session_ended", {
+        model_id: modelRef.current || null,
+        variable_id: variableRef.current || null,
+        run_id: telemetryRunIdRef.current,
+        region_id: regionRef.current || null,
+        forecast_hour: Number.isFinite(forecastHourRef.current) ? forecastHourRef.current : null,
+        duration_seconds: Math.floor(durationMs / 1000),
+      });
+    };
+  }, []);
 
   useEffect(() => {
     mapZoomRef.current = mapZoom;

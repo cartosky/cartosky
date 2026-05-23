@@ -74,7 +74,7 @@ export default function AdminAnalyticsPage() {
           <AdminStat
             label="Replay"
             value={replayEnabled ? "Enabled" : "Disabled"}
-            hint={replayEnabled ? "Controlled sampling and errors" : "Replay flag is off"}
+            hint={replayEnabled ? "Sampling controlled by frontend env" : "Replay flag is off"}
             accentClassName={replayEnabled ? "text-cyan-200" : "text-white"}
             icon={<Clapperboard className="h-5 w-5 text-cyan-200/80" />}
           />
@@ -199,10 +199,12 @@ export default function AdminAnalyticsPage() {
         </AdminSurface>
       ) : null}
 
-      <AdminSurface title="CartoSky event contract" description="Phase 3 intentionally keeps the taxonomy small. These are the events currently eligible for PostHog capture from the viewer.">
+      <AdminSurface title="CartoSky event contract" description="Phase 3 intentionally keeps the taxonomy small. These are the events currently eligible for PostHog capture from the viewer and forecast surfaces.">
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {[
             "viewer_opened",
+            "viewer_session_ended",
+            "forecast_page_viewed",
             "model_selected",
             "variable_selected",
             "region_selected",

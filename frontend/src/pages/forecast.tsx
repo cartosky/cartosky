@@ -18,6 +18,7 @@ import {
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
+import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { useSiteLoading } from "@/lib/site-loading";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -1106,6 +1107,10 @@ export default function Forecast() {
   const loadAbortRef = useRef<AbortController | null>(null);
   const favoriteLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRestorePendingRef = useRef(initialRestorePending);
+
+  useEffect(() => {
+    captureProductAnalyticsEvent("forecast_page_viewed");
+  }, []);
 
   useEffect(() => {
     return () => {

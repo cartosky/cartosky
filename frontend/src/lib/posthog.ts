@@ -14,6 +14,8 @@ const POSTHOG_EVENT_BUDGET = 75;
 const ALLOWED_EVENT_NAMES = new Set([
   "$pageview",
   "viewer_opened",
+  "viewer_session_ended",
+  "forecast_page_viewed",
   "model_selected",
   "variable_selected",
   "region_selected",
@@ -24,6 +26,8 @@ const ALLOWED_EVENT_NAMES = new Set([
 
 type ProductAnalyticsEventName =
   | "viewer_opened"
+  | "viewer_session_ended"
+  | "forecast_page_viewed"
   | "model_selected"
   | "variable_selected"
   | "region_selected"
