@@ -12,6 +12,7 @@ interface ImportMetaEnv {
   readonly VITE_CARTOSKY_LEGACY_USAGE_TELEMETRY_ENABLED?: string;
   readonly VITE_CARTOSKY_POSTHOG_ENABLED?: string;
   readonly VITE_CARTOSKY_POSTHOG_REPLAY_ENABLED?: string;
+  readonly VITE_CARTOSKY_POSTHOG_REPLAY_SAMPLE_RATE?: string;
   readonly VITE_CARTOSKY_POSTHOG_API_KEY?: string;
   readonly VITE_CARTOSKY_POSTHOG_HOST?: string;
   readonly VITE_CARTOSKY_POSTHOG_UI_HOST?: string;

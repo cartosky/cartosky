@@ -4,13 +4,10 @@ import type { TwfStatus } from "@/lib/admin-api";
 import {
   getPostHogApiKey,
   getPostHogHost,
+  getPostHogReplaySampleRate,
   getReleaseSha,
   isPostHogEnabled,
-  isPostHogReplayEnabled,
 } from "@/lib/config";
-import { isSampledSession } from "@/lib/telemetry";
-
-const POSTHOG_REPLAY_SAMPLE_RATE = 0.1;
 const POSTHOG_EVENT_BUDGET_KEY = "cartosky.posthog.event_count";
 const POSTHOG_EVENT_BUDGET = 75;
 
@@ -55,7 +52,6 @@ type ProductAnalyticsProperties = {
  */
 let ph: PostHog | null = null;
 let initStarted = false;
-let replayStarted = false;
 let lastPageviewKey: string | null = null;
 
 function getDeviceClass(): "mobile" | "desktop" {
@@ -116,32 +112,6 @@ function buildCommonProperties(): ProductAnalyticsProperties {
   };
 }
 
-function startReplay(reason: "sampled" | "error" | "unhandledrejection"): void {
-  if (!ph || replayStarted || !isPostHogReplayEnabled()) {
-    return;
-  }
-  replayStarted = true;
-  ph.startSessionRecording({ sampling: true });
-  ph.register_for_session({
-    replay_start_reason: reason,
-  });
-}
-
-function attachReplayGuards(): void {
-  if (typeof window === "undefined" || !isPostHogReplayEnabled()) {
-    return;
-  }
-  if (isSampledSession(POSTHOG_REPLAY_SAMPLE_RATE)) {
-    startReplay("sampled");
-  }
-  window.addEventListener("error", () => {
-    startReplay("error");
-  });
-  window.addEventListener("unhandledrejection", () => {
-    startReplay("unhandledrejection");
-  });
-}
-
 /**
  * Lazily load and initialize PostHog analytics.
  *
@@ -161,7 +131,9 @@ export function initPostHogAnalytics(): void {
       autocapture: false,
       capture_pageview: false,
       capture_pageleave: false,
-      disable_session_recording: true,
+      session_recording: {
+        sampleRate: getPostHogReplaySampleRate(),
+      },
       person_profiles: "identified_only",
       before_send: (event) => {
         if (!event) {
@@ -182,7 +154,6 @@ export function initPostHogAnalytics(): void {
 
     ph = posthog;
     posthog.register(buildCommonProperties());
-    attachReplayGuards();
   });
 }
 

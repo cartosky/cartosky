@@ -10,6 +10,7 @@ const POSTHOG_UI_HOST_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_UI_HOST
 const POSTHOG_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_URL ?? "").trim();
 const POSTHOG_DASHBOARD_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_EMBED_URL ?? "").trim();
 const POSTHOG_REPLAY_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_URL ?? "").trim();
+const POSTHOG_REPLAY_SAMPLE_RATE_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_SAMPLE_RATE ?? "").trim();
 const GRAFANA_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_URL ?? "").trim();
 const GRAFANA_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_DASHBOARD_URL ?? "").trim();
 const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED_URL ?? "").trim();
@@ -79,6 +80,13 @@ export function isPostHogEnabled(): boolean {
 
 export function isPostHogReplayEnabled(): boolean {
   return isPostHogEnabled() && readBooleanEnv(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_ENABLED, false);
+}
+
+export function getPostHogReplaySampleRate(): number {
+  if (!isPostHogReplayEnabled()) {
+    return 0;
+  }
+  return readNumberEnv(POSTHOG_REPLAY_SAMPLE_RATE_ENV, 1, 0, 1);
 }
 
 export function getPostHogApiKey(): string {
