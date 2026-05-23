@@ -92,7 +92,7 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="F",
         color_map_id="tmp2m",
         group="Temperature",
-        order=0,
+        order=1,
     ),
     "maxt": _capability(
         var_key="maxt",
@@ -100,7 +100,7 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="F",
         color_map_id="tmp2m",
         group="Temperature",
-        order=1,
+        order=0,
     ),
     "qpf_6h": _capability(
         var_key="qpf_6h",
@@ -201,7 +201,7 @@ NDFD_CAPABILITIES = ModelCapabilities(
     },
     run_discovery={},
     ui_defaults={
-        "default_var_key": "mint",
+        "default_var_key": "maxt",
         "default_run": "latest",
         "default_frame_selection": "first",
     },
