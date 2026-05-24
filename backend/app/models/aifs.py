@@ -133,7 +133,7 @@ AIFS_VARS = {
     "precip_5d_anom": ECMWF_VARS["precip_5d_anom"],
     "precip_7d_anom": ECMWF_VARS["precip_7d_anom"],
     "precip_10d_anom": ECMWF_VARS["precip_10d_anom"],
-    "precip_15d_anom": ECMWF_VARS["precip_15d_anom"],
+        "precip_16d_anom": ECMWF_VARS["precip_16d_anom"],
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
     "10u": ECMWF_VARS["10u"],

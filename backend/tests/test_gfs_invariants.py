@@ -53,7 +53,7 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "precip_5d_anom",
         "precip_7d_anom",
         "precip_10d_anom",
-        "precip_15d_anom",
+        "precip_16d_anom",
         "snowfall_total",
         "snowfall_kuchera_total",
         "ice_total",

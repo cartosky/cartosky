@@ -132,6 +132,7 @@ export default function RouterApp() {
         <Route path="/login" element={withSuspense(<Login />)} />
         <Route path="/account/*" element={withSuspense(<Account />)} />
         <Route path="/privacy" element={withSuspense(<Privacy />)} />
+        <Route path="/privacy-policy" element={withSuspense(<Privacy />)} />
       </Route>
 
       <Route element={<AppLayout />}>

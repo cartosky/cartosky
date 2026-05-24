@@ -351,7 +351,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-source", default="era5", help="Shared baseline source key. Default: era5.")
     parser.add_argument("--region", default="na", help="Target region key. Default: na.")
     parser.add_argument("--reference-period", default="1991-2020", help="Reference period label. Default: 1991-2020.")
-    parser.add_argument("--windows", nargs="+", type=int, default=[5, 7, 10, 15], help="Accumulation windows in days. Default: 5 7 10 15.")
+    parser.add_argument("--windows", nargs="+", type=int, default=[5, 7, 10, 16], help="Accumulation windows in days. Default: 5 7 10 16.")
     parser.add_argument("--units-in", default="inches", help="Units of staged daily rasters. Default: inches.")
     parser.add_argument("--start-year", type=int, required=True, help="Inclusive lower source year bound.")
     parser.add_argument("--end-year", type=int, required=True, help="Inclusive upper source year bound.")

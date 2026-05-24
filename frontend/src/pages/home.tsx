@@ -279,6 +279,16 @@ export default function Home() {
                 Open Forecast
               </Link>
             </div>
+
+            <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-white/62 lg:mx-0 lg:text-left">
+              Review our
+              {" "}
+              <a href="/privacy-policy" className="font-semibold text-cyan-100 underline underline-offset-4 hover:text-white">
+                Privacy Policy
+              </a>
+              {" "}
+              for details about data handling, account information, and analytics.
+            </p>
           </div>
 
           <div className="relative hidden lg:block">
