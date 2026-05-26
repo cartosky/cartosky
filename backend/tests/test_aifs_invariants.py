@@ -115,7 +115,7 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom", "pwat", "snowfall_total", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "pwat", "snowfall_total", "wspd10m"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"

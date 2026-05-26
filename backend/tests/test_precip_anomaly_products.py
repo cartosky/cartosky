@@ -237,14 +237,14 @@ def test_precip_anomaly_target_lead_constraints_and_unsupported_model_gating() -
         "precip_5d_anom": 120,
         "precip_7d_anom": 168,
         "precip_10d_anom": 240,
-        "precip_16d_anom": 384,
+        "precip_15d_anom": 360,
     }
     for var_key, target_fh in expected.items():
         capability = GFS_MODEL.get_var_capability(var_key)
         assert capability is not None
         assert capability.default_fh == target_fh
         assert capability.derive_strategy_id == "precip_accum_anomaly_departure"
-        if var_key == "precip_16d_anom":
+        if var_key == "precip_15d_anom":
             assert capability.constraints == {"min_fh": target_fh, "max_fh": target_fh}
             assert GFS_MODEL.scheduled_fhs_for_var(var_key, 0) == [target_fh]
         else:
@@ -314,7 +314,7 @@ def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
         "precip_5d_anom",
         "precip_7d_anom",
         "precip_10d_anom",
-        "precip_16d_anom",
+        "precip_15d_anom",
     )
     for model_id in ("gfs", "ecmwf", "aifs", "aigfs"):
         for var_key in expected_vars:

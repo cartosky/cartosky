@@ -79,7 +79,7 @@ def test_build_precip_accumulation_outputs_all_windows_and_inches(monkeypatch, t
         baseline_source="era5",
         region="na",
         reference_period="1991-2020",
-        windows=(5, 7, 10, 16),
+        windows=(5, 7, 10, 15),
         units_in="mm",
         start_year=1991,
         end_year=1992,
@@ -88,7 +88,7 @@ def test_build_precip_accumulation_outputs_all_windows_and_inches(monkeypatch, t
     )
 
     assert files_written == 1464
-    assert files_by_window == {5: 366, 7: 366, 10: 366, 16: 366}
+    assert files_by_window == {5: 366, 7: 366, 10: 366, 15: 366}
     assert missing_dates == []
 
     first_5d = data_root / "climatology" / "v1" / "era5" / "baseline" / "precip_5d" / "na" / "1991-2020" / "doy_001.tif"
