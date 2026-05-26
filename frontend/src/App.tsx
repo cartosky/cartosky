@@ -1423,10 +1423,22 @@ export default function App() {
       captureViewerSessionEnded(true);
     };
 
+    const handleBeforeUnload = () => {
+      captureViewerSessionEnded(true);
+    };
+
+    const handleUnload = () => {
+      captureViewerSessionEnded(true);
+    };
+
     window.addEventListener("pagehide", handlePageHide, { passive: true });
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("unload", handleUnload);
 
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("unload", handleUnload);
       captureViewerSessionEnded();
     };
   }, []);
