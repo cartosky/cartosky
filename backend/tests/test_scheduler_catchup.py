@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services import scheduler as scheduler_module
 from app.models.base import ModelCapabilities, VariableCapability
+from app.models.hrrr import HRRR_MODEL
 
 
 class _FakePlugin:
@@ -93,6 +94,10 @@ class _FakeGFSBundlePlugin(_FakePlugin):
         return types.SimpleNamespace(derive="wspd10m")
 
 
+class _FakeNAMBundlePlugin(_FakePlugin):
+    id = "nam"
+
+
 def test_parse_vars_or_auto_supports_auto_tokens() -> None:
     assert scheduler_module._parse_vars_or_auto(None) == []
     assert scheduler_module._parse_vars_or_auto("") == []
@@ -106,6 +111,9 @@ def test_eps_targets_are_derive_bundle_candidates() -> None:
     assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "hgt500_anom")
     assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity")
     assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity_snow")
+    assert scheduler_module._is_derive_bundle_candidate(_FakePlugin(), "radar_ptype")
+    assert scheduler_module._is_derive_bundle_candidate(_FakePlugin(), "radar_ptype_rain")
+    assert scheduler_module._is_derive_bundle_candidate(_FakeNAMBundlePlugin(), "radar_ptype_snow")
     assert not scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "wspd10m")
 
 
@@ -307,6 +315,16 @@ def test_scheduled_targets_for_cycle_use_model_canonical_region() -> None:
         ("na", "tmp2m", 0),
         ("na", "mlcape", 0),
     ]
+
+
+def test_hrrr_radar_ptype_schedules_hidden_companion_layers() -> None:
+    targets = scheduler_module._scheduled_targets_for_cycle(HRRR_MODEL, ["radar_ptype"], 1)
+
+    assert ("conus", "radar_ptype", 0) in targets
+    assert ("conus", "radar_ptype_rain", 0) in targets
+    assert ("conus", "radar_ptype_snow", 0) in targets
+    assert ("conus", "radar_ptype_sleet", 0) in targets
+    assert ("conus", "radar_ptype_frzr", 0) in targets
 
 
 def test_resolve_loop_prewarm_targets_use_default_var_and_default_fh() -> None:

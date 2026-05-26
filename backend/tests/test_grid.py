@@ -1068,7 +1068,20 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     values = np.array([[0.0, 1.0], [np.nan, 15.0]], dtype=np.float32)
     _write_value_cog(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
-        json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
+        json.dumps(
+            {
+                "fh": 0,
+                "units": "dBZ",
+                "valid_time": "2026-03-30T12:00:00Z",
+                "composite_mode": "max_alpha_stack",
+                "composite_layers": [
+                    {"id": "rain", "var": "radar_ptype_rain"},
+                    {"id": "snow", "var": "radar_ptype_snow"},
+                    {"id": "sleet", "var": "radar_ptype_sleet"},
+                    {"id": "frzr", "var": "radar_ptype_frzr"},
+                ],
+            }
+        )
     )
 
     ok, fail, manifest_ok = build_grid_for_run(
@@ -1116,6 +1129,70 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     assert manifest["grid"]["height"] == values.shape[0] * 3
     assert manifest["display_prep"]["id"] == "hrrr_radar_ptype_display_v2"
     assert "categorical_nearest" not in manifest["display_prep"]
+    assert manifest["composite_mode"] == "max_alpha_stack"
+    assert manifest["composite_layers"] == [
+        {"id": "rain", "var": "radar_ptype_rain"},
+        {"id": "snow", "var": "radar_ptype_snow"},
+        {"id": "sleet", "var": "radar_ptype_sleet"},
+        {"id": "frzr", "var": "radar_ptype_frzr"},
+    ]
+
+
+def test_build_grid_for_run_supports_hrrr_radar_ptype_component(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    model = "hrrr"
+    run_id = "20260330_12z"
+    var = "radar_ptype_rain"
+    var_dir = data_root / "published" / model / run_id / var
+    values = np.array([[0.0, 40.0], [0.0, 20.0]], dtype=np.float32)
+    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    (var_dir / "fh000.json").write_text(
+        json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
+    )
+
+    ok, fail, manifest_ok = build_grid_for_run(
+        data_root=data_root,
+        model=model,
+        run=run_id,
+        workers=1,
+        variables=(var,),
+    )
+
+    assert ok == 1
+    assert fail == 0
+    assert manifest_ok == 1
+
+    artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
+    frame_path = artifacts_dir / "fh000.l0.u16.bin"
+    frame_meta_path = artifacts_dir / "fh000.l0.meta.json"
+    manifest_path = artifacts_dir / "manifest.json"
+    assert frame_path.is_file()
+    assert frame_meta_path.is_file()
+    assert manifest_path.is_file()
+
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+        values.shape[0] * 3,
+        values.shape[1] * 3,
+    )
+    assert encoded.max() > 20
+
+    frame_meta = json.loads(frame_meta_path.read_text())
+    assert frame_meta["width"] == values.shape[1] * 3
+    assert frame_meta["height"] == values.shape[0] * 3
+    assert frame_meta["display_prep"]["id"] == "hrrr_radar_ptype_component_display_v1"
+    assert frame_meta["display_prep"]["support_min_value"] == 10.0
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["palette"]["color_map_id"] == "radar_ptype_rain"
+    assert manifest["palette"]["kind"] == "discrete"
+    assert manifest["palette"]["transparent_below_min"] == 10.0
+    assert manifest["grid"]["scale"] == 0.5
+    assert manifest["grid"]["offset"] == -10.0
+    assert manifest["grid"]["units"] == "dBZ"
+    assert manifest["display_prep"]["id"] == "hrrr_radar_ptype_component_display_v1"
 
 
 def test_build_grid_for_run_supports_hrrr_mlcape(

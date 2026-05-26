@@ -112,6 +112,10 @@ class NAMPlugin(BaseModelPlugin):
             "cref": "refc",
             "radar_ptype": "radar_ptype",
             "radarptype": "radar_ptype",
+            "radar_ptype_rain": "radar_ptype_rain",
+            "radar_ptype_snow": "radar_ptype_snow",
+            "radar_ptype_sleet": "radar_ptype_sleet",
+            "radar_ptype_frzr": "radar_ptype_frzr",
             "wspd10m": "wspd10m",
             "wind10m": "10si",
             "10si": "10si",
@@ -716,11 +720,98 @@ NAM_VARS: dict[str, VarSpec] = {
                 "min_visible_dbz": "10.0",
                 "min_mask_value": "0.5",
                 "despeckle_min_neighbors": "2",
+                "companion_vars": "radar_ptype_rain,radar_ptype_snow,radar_ptype_sleet,radar_ptype_frzr",
+                "composite_mode": "max_alpha_stack",
+                "composite_layers": "rain:radar_ptype_rain;snow:radar_ptype_snow;sleet:radar_ptype_sleet;frzr:radar_ptype_frzr",
             },
         ),
         derived=True,
         derive="radar_ptype_combo",
         kind="discrete",
+        units="dBZ",
+    ),
+    "radar_ptype_rain": VarSpec(
+        id="radar_ptype_rain",
+        name="Rain Reflectivity",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "rain",
+                "refl_component": "refc",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+                "min_visible_dbz": "10.0",
+                "min_mask_value": "0.5",
+                "despeckle_min_neighbors": "2",
+            },
+        ),
+        derived=True,
+        derive="radar_ptype_component",
+        kind="continuous",
+        units="dBZ",
+    ),
+    "radar_ptype_snow": VarSpec(
+        id="radar_ptype_snow",
+        name="Snow Reflectivity",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "snow",
+                "refl_component": "refc",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+                "min_visible_dbz": "10.0",
+                "min_mask_value": "0.5",
+                "despeckle_min_neighbors": "2",
+            },
+        ),
+        derived=True,
+        derive="radar_ptype_component",
+        kind="continuous",
+        units="dBZ",
+    ),
+    "radar_ptype_sleet": VarSpec(
+        id="radar_ptype_sleet",
+        name="Sleet Reflectivity",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "sleet",
+                "refl_component": "refc",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+                "min_visible_dbz": "10.0",
+                "min_mask_value": "0.5",
+                "despeckle_min_neighbors": "2",
+            },
+        ),
+        derived=True,
+        derive="radar_ptype_component",
+        kind="continuous",
+        units="dBZ",
+    ),
+    "radar_ptype_frzr": VarSpec(
+        id="radar_ptype_frzr",
+        name="Freezing Rain Reflectivity",
+        selectors=VarSelectors(
+            hints={
+                "ptype_component": "frzr",
+                "refl_component": "refc",
+                "rain_component": "crain",
+                "snow_component": "csnow",
+                "sleet_component": "cicep",
+                "frzr_component": "cfrzr",
+                "min_visible_dbz": "10.0",
+                "min_mask_value": "0.5",
+                "despeckle_min_neighbors": "2",
+            },
+        ),
+        derived=True,
+        derive="radar_ptype_component",
+        kind="continuous",
         units="dBZ",
     ),
 }
@@ -743,6 +834,10 @@ NAM_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
     "radar_ptype": "radar_ptype",
+    "radar_ptype_rain": "radar_ptype_rain",
+    "radar_ptype_snow": "radar_ptype_snow",
+    "radar_ptype_sleet": "radar_ptype_sleet",
+    "radar_ptype_frzr": "radar_ptype_frzr",
 }
 
 NAM_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
@@ -817,6 +912,22 @@ NAM_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
 
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
     is_buildable = bool(var_spec.primary or var_spec.derived)
+    hints = getattr(getattr(var_spec, "selectors", None), "hints", {}) or {}
+    frontend: dict[str, object] = {}
+    if str(hints.get("companion_vars") or "").strip():
+        frontend["companion_vars"] = [
+            item.strip()
+            for item in str(hints.get("companion_vars") or "").split(",")
+            if item.strip()
+        ]
+    if str(hints.get("composite_mode") or "").strip():
+        frontend["composite_mode"] = str(hints.get("composite_mode") or "").strip()
+    if str(hints.get("composite_layers") or "").strip():
+        frontend["composite_layers"] = str(hints.get("composite_layers") or "").strip()
+    if str(var_key).startswith("radar_ptype_"):
+        frontend["internal_only"] = True
+        frontend["allow_dry_frame"] = True
+        is_buildable = False
     return VariableCapability(
         var_key=var_key,
         name=var_spec.name,
@@ -835,6 +946,7 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         group=NAM_GROUP_BY_VAR_KEY.get(var_key),
         conversion=NAM_CONVERSION_BY_VAR_KEY.get(var_key),
         constraints=dict(NAM_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),
+        frontend=frontend,
     )
 
 

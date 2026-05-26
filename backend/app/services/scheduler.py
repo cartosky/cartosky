@@ -905,6 +905,10 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
         normalized == "ptype_intensity" or normalized.startswith("ptype_intensity_")
     ):
         return True
+    if plugin_id in {"hrrr", "nam"} and (
+        normalized == "radar_ptype" or normalized.startswith("radar_ptype_")
+    ):
+        return True
     if plugin_id == "eps":
         return True
     if normalized == "precip_total":

@@ -77,6 +77,10 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
     assert ("hrrr", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("hrrr", "rh2m") in _PACKING_BY_MODEL_VAR
     assert ("hrrr", "rh700") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "radar_ptype_rain") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "radar_ptype_snow") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "radar_ptype_sleet") in _PACKING_BY_MODEL_VAR
+    assert ("hrrr", "radar_ptype_frzr") in _PACKING_BY_MODEL_VAR
 
 
 def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
@@ -239,6 +243,30 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["buildable"] is True
     assert radar_ptype["derived"] is True
     assert radar_ptype["derive_strategy_id"] == "radar_ptype_combo"
+    radar_ptype_capability = capabilities.variable_catalog["radar_ptype"]
+    assert radar_ptype_capability.frontend["companion_vars"] == [
+        "radar_ptype_rain",
+        "radar_ptype_snow",
+        "radar_ptype_sleet",
+        "radar_ptype_frzr",
+    ]
+    assert radar_ptype_capability.frontend["composite_mode"] == "max_alpha_stack"
+    assert radar_ptype_capability.frontend["composite_layers"] == (
+        "rain:radar_ptype_rain;snow:radar_ptype_snow;"
+        "sleet:radar_ptype_sleet;frzr:radar_ptype_frzr"
+    )
+    for component_var in [
+        "radar_ptype_rain",
+        "radar_ptype_snow",
+        "radar_ptype_sleet",
+        "radar_ptype_frzr",
+    ]:
+        assert component_var not in payload["variables"]
+        capability = capabilities.variable_catalog[component_var]
+        assert capability.buildable is False
+        assert capability.derived is True
+        assert capability.derive_strategy_id == "radar_ptype_component"
+        assert capability.frontend == {"internal_only": True, "allow_dry_frame": True}
 
     snowfall_total = payload["variables"]["snowfall_total"]
     assert snowfall_total["display_resampling_override"] is None

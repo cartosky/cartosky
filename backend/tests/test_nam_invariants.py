@@ -64,6 +64,13 @@ def test_nam_buildable_var_set_and_defaults_invariants() -> None:
         "pnw": 3000.0,
     }
 
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    assert ("nam", "radar_ptype_rain") in _PACKING_BY_MODEL_VAR
+    assert ("nam", "radar_ptype_snow") in _PACKING_BY_MODEL_VAR
+    assert ("nam", "radar_ptype_sleet") in _PACKING_BY_MODEL_VAR
+    assert ("nam", "radar_ptype_frzr") in _PACKING_BY_MODEL_VAR
+
 
 def test_nam_capabilities_schema_snapshot_invariants() -> None:
     capabilities = NAM_MODEL.capabilities
@@ -229,6 +236,30 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["default_fh"] == 1
     assert radar_ptype["display_name"] == "Composite Reflectivity + Ptype"
     assert radar_ptype["order"] == 0
+    radar_ptype_capability = capabilities.variable_catalog["radar_ptype"]
+    assert radar_ptype_capability.frontend["companion_vars"] == [
+        "radar_ptype_rain",
+        "radar_ptype_snow",
+        "radar_ptype_sleet",
+        "radar_ptype_frzr",
+    ]
+    assert radar_ptype_capability.frontend["composite_mode"] == "max_alpha_stack"
+    assert radar_ptype_capability.frontend["composite_layers"] == (
+        "rain:radar_ptype_rain;snow:radar_ptype_snow;"
+        "sleet:radar_ptype_sleet;frzr:radar_ptype_frzr"
+    )
+    for component_var in [
+        "radar_ptype_rain",
+        "radar_ptype_snow",
+        "radar_ptype_sleet",
+        "radar_ptype_frzr",
+    ]:
+        assert component_var not in payload["variables"]
+        capability = capabilities.variable_catalog[component_var]
+        assert capability.buildable is False
+        assert capability.derived is True
+        assert capability.derive_strategy_id == "radar_ptype_component"
+        assert capability.frontend == {"internal_only": True, "allow_dry_frame": True}
     radar_ptype_spec = NAM_MODEL.get_var("radar_ptype")
     assert radar_ptype_spec is not None
     assert radar_ptype_spec.selectors.hints["min_visible_dbz"] == "10.0"

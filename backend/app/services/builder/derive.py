@@ -4308,8 +4308,102 @@ def _derive_radar_ptype_combo(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability, derive_component_target_grid, derive_component_resampling
+    del var_key, var_capability
+    family = _derive_radar_ptype_family(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        var_spec_model=var_spec_model,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    return family["indexed"], family["src_crs"], family["src_transform"]
+
+
+def _derive_radar_ptype_component(
+    *,
+    model_id: str,
+    var_key: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    var_capability: Any | None,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    del var_key, var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    if not isinstance(hints, dict):
+        hints = {}
+    component = str(hints.get("ptype_component") or "").strip().lower()
+    family = _derive_radar_ptype_family(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        fh=fh,
+        var_spec_model=var_spec_model,
+        model_plugin=model_plugin,
+        ctx=ctx,
+        derive_component_target_grid=derive_component_target_grid,
+        derive_component_resampling=derive_component_resampling,
+    )
+    values = family.get(component)
+    if values is None:
+        values = np.zeros(np.asarray(family["indexed"]).shape, dtype=np.float32)
+    return values.astype(np.float32, copy=False), family["src_crs"], family["src_transform"]
+
+
+def _derive_radar_ptype_family(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    var_spec_model: Any,
+    model_plugin: Any,
+    ctx: FetchContext | None = None,
+    derive_component_target_grid: dict[str, str] | None = None,
+    derive_component_resampling: str | None = None,
+) -> dict[str, Any]:
+    del derive_component_target_grid, derive_component_resampling
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    if not isinstance(hints, dict):
+        hints = {}
+    cache_hints = {
+        str(k): str(hints.get(k))
+        for k in (
+            "refl_component",
+            "rain_component",
+            "snow_component",
+            "sleet_component",
+            "frzr_component",
+            "min_visible_dbz",
+            "min_mask_value",
+            "despeckle_min_neighbors",
+        )
+        if k in hints
+    }
+    cache_key = (
+        str(model_id),
+        str(product),
+        run_date.strftime("%Y%m%d%H"),
+        int(fh),
+        "radar_ptype",
+        repr(sorted(cache_hints.items())),
+        "",
+    )
+    if ctx is not None:
+        cached = ctx.ptype_family_cache.get(cache_key)
+        if cached is not None:
+            logger.info("radar_ptype family cache hit: model=%s fh=%03d", model_id, fh)
+            return cached
+
     try:
         min_visible_dbz = float(hints.get("min_visible_dbz", "10.0"))
     except (TypeError, ValueError):
@@ -4382,7 +4476,21 @@ def _derive_radar_ptype_combo(
             neighbor_count = _neighbor_count_3x3(valid)
             indexed = np.where(neighbor_count >= despeckle_min_neighbors, indexed, np.nan).astype(np.float32, copy=False)
 
-    return indexed, src_crs, src_transform
+    component_values: dict[str, np.ndarray] = {}
+    finite_refl = np.isfinite(refl_safe)
+    for code in RADAR_PTYPE_ORDER:
+        selector = (ptype == code) & finite_refl & (refl_safe >= min_visible_dbz) & np.isfinite(indexed)
+        component_values[str(code)] = np.where(selector, refl_safe, 0.0).astype(np.float32, copy=False)
+
+    family: dict[str, Any] = {
+        "indexed": indexed.astype(np.float32, copy=False),
+        **component_values,
+        "src_crs": src_crs,
+        "src_transform": src_transform,
+    }
+    if ctx is not None:
+        ctx.ptype_family_cache[cache_key] = family
+    return family
 
 
 def _derive_ptype_intensity_gfs(
@@ -6697,6 +6805,12 @@ DERIVE_STRATEGIES: dict[str, DeriveStrategy] = {
         required_inputs=("refc", "crain", "csnow", "cicep", "cfrzr"),
         output_var_key="radar_ptype",
         execute=_derive_radar_ptype_combo,
+    ),
+    "radar_ptype_component": DeriveStrategy(
+        id="radar_ptype_component",
+        required_inputs=("refc", "crain", "csnow", "cicep", "cfrzr"),
+        output_var_key=None,
+        execute=_derive_radar_ptype_component,
     ),
     "ptype_intensity_gfs": DeriveStrategy(
         id="ptype_intensity_gfs",

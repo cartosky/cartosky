@@ -150,6 +150,28 @@ def test_hrrr_radar_ptype_display_prep_keeps_categorical_upscale_but_not_nearest
     np.testing.assert_array_equal(prepared[3:, 3:], np.full((3, 3), 9.0, dtype=np.float32))
 
 
+def test_hrrr_radar_ptype_component_display_prep_uses_continuous_upscale() -> None:
+    values = np.array(
+        [
+            [0.0, 40.0],
+            [0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    prepared, meta = prepare_grid_display_values(model="hrrr", var="radar_ptype_rain", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "hrrr_radar_ptype_component_display_v1"
+    assert meta["preserve_zero_support"] is True
+    assert meta["support_min_value"] == 10.0
+    assert meta["support_coverage_threshold"] == 0.15
+    assert "categorical_nearest" not in meta
+    assert prepared.shape == (6, 6)
+    assert prepared.dtype == np.float32
+    assert prepared.max() > 0.0
+
+
 def test_gfs_ptype_intensity_display_prep_upscales_categorically() -> None:
     values = np.array(
         [
