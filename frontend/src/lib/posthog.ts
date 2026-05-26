@@ -13,6 +13,7 @@ const POSTHOG_EVENT_BUDGET = 75;
 
 const ALLOWED_EVENT_NAMES = new Set([
   "$pageview",
+  "$exception",
   "viewer_opened",
   "viewer_session_ended",
   "forecast_page_viewed",
@@ -135,6 +136,7 @@ export function initPostHogAnalytics(): void {
       autocapture: false,
       capture_pageview: false,
       capture_pageleave: false,
+      capture_exceptions: true,
       session_recording: {
         sampleRate: getPostHogReplaySampleRate(),
       },
@@ -148,6 +150,7 @@ export function initPostHogAnalytics(): void {
           eventName === "$identify"
           || eventName === "$set"
           || eventName === "$groupidentify"
+          || eventName === "$exception"
           || ALLOWED_EVENT_NAMES.has(eventName)
         ) {
           return event;
