@@ -1827,9 +1827,7 @@ async def twf_topics(
         out: list[dict[str, Any]] = []
         for it in items:
             fid = _topic_forum_id(it)
-            if fid is None:
-                continue
-            if fid == forum_id:
+            if fid is None or fid == forum_id:
                 out.append(it)
         return out
 

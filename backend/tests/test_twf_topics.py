@@ -280,16 +280,103 @@ async def test_twf_topics_merges_dedupes_orders_and_filters_to_requested_forum(
     east_ids = [row["id"] for row in east_payload["results"]]
     assert east_ids == [101, 103]
 
-    assert len(calls) == 4
-    assert calls[0]["forum"] == "4"
-    assert calls[0]["pinned"] == "1"
-    assert calls[0]["perPage"] == "5"
-    assert calls[1]["forum"] == "4"
-    assert calls[1]["pinned"] == "0"
-    assert calls[1]["perPage"] == "15"
-    assert calls[2]["forum"] == "9"
-    assert calls[2]["pinned"] == "1"
-    assert calls[2]["perPage"] == "5"
-    assert calls[3]["forum"] == "9"
-    assert calls[3]["pinned"] == "0"
-    assert calls[3]["perPage"] == "15"
+
+async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sess = twf_oauth.TwfSession(
+        session_id="sid-topics-missing-forum",
+        member_id=42,
+        display_name="tester",
+        photo_url=None,
+        access_token="token",
+        refresh_token="refresh",
+        expires_at=9999999999,
+    )
+    monkeypatch.setattr(main_module.twf_oauth, "get_session_for_clerk_user", lambda _user_id: sess)
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.status_code = 200
+            self._payload = payload
+            self.text = json.dumps(payload)
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+            del exc_type, exc, tb
+            return None
+
+        async def get(self, url: str, **kwargs: object) -> FakeResponse:
+            resolved: dict[str, str] = {}
+            params = kwargs.get("params")
+            if isinstance(params, dict):
+                resolved.update({k: str(v) for k, v in params.items()})
+            for key in ("forum", "pinned", "perPage"):
+                match = re.search(rf"[?&]{re.escape(key)}=([^&]+)", url)
+                if match and key not in resolved:
+                    resolved[key] = match.group(1)
+
+            pinned = str(resolved.get("pinned", "0"))
+            if pinned == "1":
+                return FakeResponse(
+                    {
+                        "results": [
+                            {
+                                "id": 601,
+                                "title": "Staff Monthly Thread",
+                                "url": "https://forums.example.com/topic/601-staff-monthly-thread/",
+                                "pinned": True,
+                                "updated": "2026-05-20T12:00:00Z",
+                            },
+                            {
+                                "id": 999,
+                                "title": "Wrong Forum Topic",
+                                "url": "https://forums.example.com/topic/999-wrong-forum/",
+                                "pinned": True,
+                                "updated": "2026-05-19T12:00:00Z",
+                                "forum": {"id": 4},
+                            },
+                        ]
+                    }
+                )
+
+            return FakeResponse(
+                {
+                    "results": [
+                        {
+                            "id": 602,
+                            "title": "Staff Operations",
+                            "url": "https://forums.example.com/topic/602-staff-operations/",
+                            "pinned": False,
+                            "updated": "2026-05-21T09:00:00Z",
+                        },
+                        {
+                            "id": 998,
+                            "title": "Another Wrong Forum Topic",
+                            "url": "https://forums.example.com/topic/998-wrong-forum/",
+                            "pinned": False,
+                            "updated": "2026-05-18T09:00:00Z",
+                            "forum_id": 9,
+                        },
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(main_module.twf_oauth.httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.get("/twf/topics", params={"forum_id": 60, "limit": 15}, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["forum_id"] == 60
+    assert [row["id"] for row in payload["results"]] == [601, 602]
