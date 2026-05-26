@@ -8,6 +8,7 @@ rendered by mapping LUT[band1] and applying band2 as the output alpha.
 from __future__ import annotations
 
 import numpy as np
+from typing import cast
 
 # Precipitation type configuration with levels and colors.
 # Legacy thresholds were specified in mm/hr; convert once to in/hr so legend
@@ -285,16 +286,79 @@ def _build_gfs_ptype_intensity_flat_palette() -> tuple[
     GFS_PTYPE_INTENSITY_LEGEND_ENTRIES,
 ) = _build_gfs_ptype_intensity_flat_palette()
 
-# Radar reflectivity configuration with dBZ levels and colors for each precipitation type
-RADAR_CONFIG = {
-    "rain": {
-        "levels": [0, 10, 15, 20, 23, 25, 28, 30, 33, 35, 38, 40, 43, 45, 48, 50, 53, 55, 58, 60, 70],
-        "colors": [
-            "#ffffff", "#4efb4c", "#46e444", "#3ecd3d", "#36b536", "#2d9e2e", "#258528",
-            "#1d6e1f", "#155719", "#feff50", "#fad248", "#f8a442", "#f6763c", "#f5253a",
-            "#de0a35", "#c21230", "#9c0045", "#bc0f9c", "#e300c1", "#f600dc",
+RADAR_PTYPE_ORDER = ("rain", "snow", "sleet", "frzr")
+
+
+def _build_modeled_reflectivity_palette(ptype: str) -> tuple[list[float], list[str]]:
+    levels = [float(value) for value in range(5, 71)]
+
+    anchors_by_ptype = {
+        "rain": [
+            (5.0, "#a8f0a8"),
+            (10.0, "#4efb4c"),
+            (20.0, "#2d9e2e"),
+            (30.0, "#155719"),
+            (35.0, "#feff50"),
+            (40.0, "#f8a442"),
+            (45.0, "#f5253a"),
+            (50.0, "#c21230"),
+            (55.0, "#f800fd"),
+            (65.0, "#9854c6"),
+            (70.0, "#fdfdfd"),
         ],
-    },
+        "frzr": [
+            (5.0, "#ffd6e1"),
+            (10.0, "#fbcad0"),
+            (20.0, "#dc4f8b"),
+            (30.0, "#bd1366"),
+            (40.0, "#da2d0d"),
+            (50.0, "#fd0000"),
+            (55.0, "#f800fd"),
+            (65.0, "#9854c6"),
+            (70.0, "#fdfdfd"),
+        ],
+        "sleet": [
+            (5.0, "#ddd0ff"),
+            (10.0, "#b49dff"),
+            (20.0, "#c54ef9"),
+            (30.0, "#a913d3"),
+            (40.0, "#bc0f9c"),
+            (50.0, "#fd0000"),
+            (55.0, "#f800fd"),
+            (65.0, "#9854c6"),
+            (70.0, "#fdfdfd"),
+        ],
+        "snow": [
+            (5.0, "#c8ffff"),
+            (10.0, "#55ffff"),
+            (20.0, "#3caaff"),
+            (30.0, "#1e40d0"),
+            (40.0, "#2a009a"),
+            (50.0, "#fd0000"),
+            (55.0, "#f800fd"),
+            (65.0, "#9854c6"),
+            (70.0, "#fdfdfd"),
+        ],
+    }
+
+    colors = _expand_color_anchors(levels, anchors_by_ptype[ptype])
+    return levels, colors
+
+
+_MODELED_REFL_PALETTES = {
+    ptype: _build_modeled_reflectivity_palette(ptype)
+    for ptype in RADAR_PTYPE_ORDER
+}
+
+_MODELED_REFL_CONFIG = {
+    ptype: {
+        "levels": list(levels),
+        "colors": list(colors),
+    }
+    for ptype, (levels, colors) in _MODELED_REFL_PALETTES.items()
+}
+
+_MRMS_RADAR_BASE_CONFIG = {
     "frzr": {
         "levels": [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 70],
         "colors": [
@@ -321,10 +385,8 @@ RADAR_CONFIG = {
     },
 }
 
-RADAR_PTYPE_ORDER = ("rain", "snow", "sleet", "frzr")
-
 MRMS_RADAR_CONFIG = {
-    **RADAR_CONFIG,
+    **_MRMS_RADAR_BASE_CONFIG,
     # The observed reflectivity-only product can follow the NWS Enhanced scale
     # exactly, including cyan/blue weak echoes. In the ptype composite, blue is
     # reserved for snow, so rain keeps a green low end and rejoins the NWS-style
@@ -342,7 +404,7 @@ MRMS_RADAR_CONFIG = {
 
 
 def _build_radar_ptype_flat_palette(
-    config: dict[str, dict[str, list[float] | list[str]]] = RADAR_CONFIG,
+    config: dict[str, dict[str, list[float] | list[str]]] = _MODELED_REFL_CONFIG,
 ) -> tuple[list[float], list[str], dict[str, dict[str, int]]]:
     levels: list[float] = []
     colors: list[str] = []
@@ -350,8 +412,8 @@ def _build_radar_ptype_flat_palette(
     offset = 0
     for key in RADAR_PTYPE_ORDER:
         cfg = config[key]
-        type_levels = list(cfg["levels"])
-        type_colors = list(cfg["colors"])
+        type_levels = list(cast(list[float], cfg["levels"]))
+        type_colors = list(cast(list[str], cfg["colors"]))
         levels.extend(type_levels)
         colors.extend(type_colors)
         breaks[key] = {
@@ -364,7 +426,7 @@ def _build_radar_ptype_flat_palette(
 
 RADAR_PTYPE_LEVELS, RADAR_PTYPE_COLORS, RADAR_PTYPE_BREAKS = _build_radar_ptype_flat_palette()
 RADAR_PTYPE_LEVELS_BY_TYPE = {
-    key: list(RADAR_CONFIG[key]["levels"][: len(RADAR_CONFIG[key]["colors"])])
+    key: list(_MODELED_REFL_CONFIG[key]["levels"][: len(_MODELED_REFL_CONFIG[key]["colors"])])
     for key in RADAR_PTYPE_ORDER
 }
 MRMS_RADAR_PTYPE_ORDER = RADAR_PTYPE_ORDER
@@ -1098,8 +1160,15 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "units": "dBZ",
         # Hide "no precip" / near-noise returns by making <10 dBZ transparent.
         # Keep visible echoes starting at the first non-white radar color.
-        "levels": RADAR_CONFIG["rain"]["levels"][1:],
-        "colors": RADAR_CONFIG["rain"]["colors"][1:],
+        "levels": [
+            value for value in _MODELED_REFL_PALETTES["rain"][0]
+            if value >= 10.0
+        ],
+        "colors": [
+            color
+            for value, color in zip(*_MODELED_REFL_PALETTES["rain"], strict=False)
+            if value >= 10.0
+        ],
         "display_name": "Composite Reflectivity",
         "legend_title": "Reflectivity (dBZ)",
     },

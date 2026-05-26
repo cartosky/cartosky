@@ -143,6 +143,17 @@ def test_mrms_reflectivity_palette_uses_nws_enhanced_low_end() -> None:
     assert spec["transparent_below_min"] is True
 
 
+def test_modeled_reflectivity_palette_helper_shapes() -> None:
+    from app.services.colormaps import _build_modeled_reflectivity_palette
+
+    for ptype in ("rain", "frzr", "sleet", "snow"):
+        levels, colors = _build_modeled_reflectivity_palette(ptype)
+        assert len(levels) == len(colors), f"{ptype}: level/color length mismatch"
+        assert levels[0] == 5.0
+        assert levels[-1] == 70.0
+        assert all(color.startswith("#") for color in colors)
+
+
 def test_mrms_radar_ptype_palette_reserves_blue_for_snow() -> None:
     from app.services.colormaps import get_color_map_spec
 
