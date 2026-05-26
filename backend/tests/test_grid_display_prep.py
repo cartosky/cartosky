@@ -129,7 +129,7 @@ def test_ecmwf_kuchera_snowfall_display_prep_matches_gfs_treatment() -> None:
     np.testing.assert_allclose(prepared, gfs_prepared)
 
 
-def test_hrrr_radar_ptype_display_prep_upscales_categorically() -> None:
+def test_hrrr_radar_ptype_display_prep_keeps_categorical_upscale_but_not_nearest_render() -> None:
     values = np.array(
         [
             [0.0, 1.0],
@@ -141,8 +141,8 @@ def test_hrrr_radar_ptype_display_prep_upscales_categorically() -> None:
     prepared, meta = prepare_grid_display_values(model="hrrr", var="radar_ptype", values=values)
 
     assert meta is not None
-    assert meta["id"] == "hrrr_radar_ptype_display_v1"
-    assert meta["categorical_nearest"] is True
+    assert meta["id"] == "hrrr_radar_ptype_display_v2"
+    assert "categorical_nearest" not in meta
     assert prepared.shape == (6, 6)
     np.testing.assert_array_equal(prepared[:3, :3], np.zeros((3, 3), dtype=np.float32))
     np.testing.assert_array_equal(prepared[:3, 3:], np.ones((3, 3), dtype=np.float32))
