@@ -1,4 +1,4 @@
-import type { PostHog } from "posthog-js";
+import type { CaptureOptions, PostHog } from "posthog-js";
 
 import type { TwfStatus } from "@/lib/admin-api";
 import {
@@ -219,6 +219,7 @@ export function capturePostHogPageview(pathname: string, search = ""): void {
 export function captureProductAnalyticsEvent(
   eventName: ProductAnalyticsEventName,
   properties: ProductAnalyticsProperties = {},
+  options?: CaptureOptions,
 ): void {
   if (!ph || !isPostHogEnabled() || !ALLOWED_EVENT_NAMES.has(eventName)) {
     return;
@@ -229,5 +230,5 @@ export function captureProductAnalyticsEvent(
   ph.capture(eventName, {
     ...buildCommonProperties(),
     ...properties,
-  });
+  }, options);
 }

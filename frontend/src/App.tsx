@@ -396,6 +396,7 @@ export default function App() {
   const firstViewerFrameTrackedRef = useRef(false);
   const firstMapRenderTrackedRef = useRef(false);
   const viewerOpenedTrackedRef = useRef(false);
+  const viewerSessionEndedTrackedRef = useRef(false);
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
@@ -1391,10 +1392,14 @@ export default function App() {
   }, [telemetryRunId]);
 
   useEffect(() => {
-    return () => {
+    const captureViewerSessionEnded = (useBeaconTransport = false) => {
       if (!viewerOpenedTrackedRef.current) {
         return;
       }
+      if (viewerSessionEndedTrackedRef.current) {
+        return;
+      }
+      viewerSessionEndedTrackedRef.current = true;
       const durationMs = typeof performance === "undefined"
         ? 0
         : Math.max(0, performance.now() - viewerMountedAtRef.current);
@@ -1405,7 +1410,24 @@ export default function App() {
         region_id: regionRef.current || null,
         forecast_hour: Number.isFinite(forecastHourRef.current) ? forecastHourRef.current : null,
         duration_seconds: Math.floor(durationMs / 1000),
-      });
+      }, useBeaconTransport ? {
+        send_instantly: true,
+        transport: "sendBeacon",
+      } : undefined);
+    };
+
+    const handlePageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        return;
+      }
+      captureViewerSessionEnded(true);
+    };
+
+    window.addEventListener("pagehide", handlePageHide, { passive: true });
+
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      captureViewerSessionEnded();
     };
   }, []);
 
