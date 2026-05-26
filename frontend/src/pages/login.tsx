@@ -5,7 +5,7 @@ import { clerkAppearance, clerkUserButtonProps } from "@/lib/clerk-appearance";
 
 function safeRedirectUrl(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/viewer";
+    return "/account";
   }
   return value;
 }
