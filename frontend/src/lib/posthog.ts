@@ -25,6 +25,22 @@ const ALLOWED_EVENT_NAMES = new Set([
   "share_clicked",
 ]);
 
+const ALLOWED_INTERNAL_EVENT_NAMES = new Set([
+  "$snapshot",
+  "$pageleave",
+  "$identify",
+  "$set",
+  "$groupidentify",
+  "$create_alias",
+  "$$client_ingestion_warning",
+  "$web_experiment_applied",
+  "$feature_enrollment_update",
+  "$feature_flag_called",
+  "survey dismissed",
+  "survey sent",
+  "survey shown",
+]);
+
 type ProductAnalyticsEventName =
   | "viewer_opened"
   | "viewer_session_ended"
@@ -173,10 +189,8 @@ export function initPostHogAnalytics(): void {
         }
         const eventName = String(event.event ?? "");
         if (
-          eventName === "$identify"
-          || eventName === "$set"
-          || eventName === "$groupidentify"
-          || eventName === "$exception"
+          eventName === "$exception"
+          || ALLOWED_INTERNAL_EVENT_NAMES.has(eventName)
           || ALLOWED_EVENT_NAMES.has(eventName)
         ) {
           return event;
