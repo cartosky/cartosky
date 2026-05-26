@@ -704,20 +704,59 @@ async def list_forums(sess: TwfSession) -> dict[str, Any]:
     )
 
 
+def _extract_topic_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("results", "topics", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _payload_topic_forum_id(topic: dict[str, Any]) -> int | None:
+    forum = topic.get("forum")
+    if isinstance(forum, dict):
+        forum_id = forum.get("id")
+        try:
+            return int(forum_id) if forum_id is not None else None
+        except (TypeError, ValueError):
+            return None
+    if isinstance(forum, (int, str)):
+        try:
+            return int(forum)
+        except (TypeError, ValueError):
+            return None
+    forum_id = topic.get("forum_id")
+    if isinstance(forum_id, (int, str)):
+        try:
+            return int(forum_id)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _payload_is_scoped_to_forum(payload: dict[str, Any], forum_id: int) -> bool:
+    rows = _extract_topic_rows(payload)
+    if not rows:
+        return True
+
+    saw_forum_id = False
+    for row in rows:
+        row_forum_id = _payload_topic_forum_id(row)
+        if row_forum_id is None:
+            continue
+        saw_forum_id = True
+        if row_forum_id == forum_id:
+            return True
+
+    return not saw_forum_id
+
+
 async def list_topics(sess: TwfSession, forum_id: int, pinned: bool, per_page: int) -> dict[str, Any]:
     sess = await ensure_fresh_tokens(sess)
     headers = _auth_headers(sess.access_token)
 
     base = API_LIST_TOPICS
     urls = [base, base.rstrip("/"), base.rstrip("/") + "/"]
-    # IPS query parameter names can vary by install; these are the expected/default names.
-    params = {
-        "forum": str(forum_id),
-        "pinned": "1" if pinned else "0",
-        "sortBy": "updated",
-        "sortDir": "desc",
-        "perPage": str(per_page),
-    }
     logger.debug(
         "TWF list_topics request forum_id=%s pinned=%s per_page=%s base_url=%s",
         forum_id,
@@ -726,13 +765,30 @@ async def list_topics(sess: TwfSession, forum_id: int, pinned: bool, per_page: i
         urls[0],
     )
 
-    return await _request_json_with_variants(
-        method="GET",
-        urls=urls,
-        headers=headers,
-        timeout=20,
-        params=params,
-    )
+    shared_params = {
+        "pinned": "1" if pinned else "0",
+        "sortBy": "updated",
+        "sortDir": "desc",
+        "perPage": str(per_page),
+    }
+    fallback_payload: dict[str, Any] | None = None
+    for forum_param_name in ("forums", "forum", "forum_id", "forumId"):
+        params = {
+            forum_param_name: str(forum_id),
+            **shared_params,
+        }
+        payload = await _request_json_with_variants(
+            method="GET",
+            urls=urls,
+            headers=headers,
+            timeout=20,
+            params=params,
+        )
+        if fallback_payload is None:
+            fallback_payload = payload
+        if _payload_is_scoped_to_forum(payload, forum_id):
+            return payload
+    return fallback_payload or {"results": []}
 
 
 # ----------------------------

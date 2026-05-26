@@ -157,12 +157,12 @@ async def test_twf_topics_merges_dedupes_orders_and_filters_to_requested_forum(
             params = kwargs.get("params")
             if isinstance(params, dict):
                 resolved.update({k: str(v) for k, v in params.items()})
-            for key in ("forum", "pinned", "perPage"):
+            for key in ("forums", "forum", "pinned", "perPage"):
                 match = re.search(rf"[?&]{re.escape(key)}=([^&]+)", url)
                 if match and key not in resolved:
                     resolved[key] = match.group(1)
             calls.append(resolved)
-            forum = str(resolved.get("forum", ""))
+            forum = str(resolved.get("forums", resolved.get("forum", "")))
             pinned = str(resolved.get("pinned", "0"))
             if forum == "4" and pinned == "1":
                 return FakeResponse(
@@ -321,7 +321,7 @@ async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum
             params = kwargs.get("params")
             if isinstance(params, dict):
                 resolved.update({k: str(v) for k, v in params.items()})
-            for key in ("forum", "pinned", "perPage"):
+            for key in ("forums", "forum", "pinned", "perPage"):
                 match = re.search(rf"[?&]{re.escape(key)}=([^&]+)", url)
                 if match and key not in resolved:
                     resolved[key] = match.group(1)
@@ -380,3 +380,67 @@ async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum
     assert [row["id"] for row in payload["results"]] == [601, 602]
     assert payload["results"][0].get("url") is None
     assert payload["results"][1].get("url") is None
+
+
+async def test_list_topics_falls_back_when_first_param_variant_is_unscoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sess = twf_oauth.TwfSession(
+        session_id="sid-list-topics-variants",
+        member_id=42,
+        display_name="tester",
+        photo_url=None,
+        access_token="token",
+        refresh_token="refresh",
+        expires_at=9999999999,
+    )
+    calls: list[dict[str, str]] = []
+
+    async def fake_ensure_fresh_tokens(current: twf_oauth.TwfSession) -> twf_oauth.TwfSession:
+        return current
+
+    async def fake_request_json_with_variants(
+        *,
+        method: str,
+        urls: list[str],
+        headers: dict[str, str],
+        timeout: float,
+        data: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        del method, urls, headers, timeout, data
+        assert params is not None
+        calls.append(params)
+        if params.get("forums") == "60":
+            return {
+                "results": [
+                    {
+                        "id": 999,
+                        "title": "Wrong forum topic",
+                        "url": "https://forums.example.com/topic/999-wrong-forum/",
+                        "forum": {"id": 4},
+                    }
+                ]
+            }
+        if params.get("forum") == "60":
+            return {
+                "results": [
+                    {
+                        "id": 601,
+                        "title": "Staff discussion",
+                        "url": "https://forums.example.com/topic/601-staff-discussion/",
+                        "forum": {"id": 60},
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected params: {params}")
+
+    monkeypatch.setattr(twf_oauth, "ensure_fresh_tokens", fake_ensure_fresh_tokens)
+    monkeypatch.setattr(twf_oauth, "_request_json_with_variants", fake_request_json_with_variants)
+
+    payload = await twf_oauth.list_topics(sess, forum_id=60, pinned=False, per_page=15)
+
+    assert [call.get("forums") or call.get("forum") for call in calls] == ["60", "60"]
+    assert "forums" in calls[0]
+    assert "forum" in calls[1]
+    assert [row["id"] for row in payload["results"]] == [601]
