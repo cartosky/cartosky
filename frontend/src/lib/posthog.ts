@@ -59,6 +59,32 @@ let ph: PostHog | null = null;
 let initStarted = false;
 let lastPageviewKey: string | null = null;
 
+type PendingCapture = {
+  eventName: "$pageview" | ProductAnalyticsEventName;
+  properties: ProductAnalyticsProperties;
+  options?: CaptureOptions;
+};
+
+const pendingCaptures: PendingCapture[] = [];
+
+function enqueueCapture(
+  eventName: PendingCapture["eventName"],
+  properties: ProductAnalyticsProperties,
+  options?: CaptureOptions,
+): void {
+  pendingCaptures.push({ eventName, properties, options });
+}
+
+function flushPendingCaptures(): void {
+  if (!ph || pendingCaptures.length === 0) {
+    return;
+  }
+  const queuedCaptures = pendingCaptures.splice(0, pendingCaptures.length);
+  for (const capture of queuedCaptures) {
+    ph.capture(capture.eventName, capture.properties, capture.options);
+  }
+}
+
 function getDeviceClass(): "mobile" | "desktop" {
   if (typeof window === "undefined") {
     return "desktop";
@@ -161,6 +187,7 @@ export function initPostHogAnalytics(): void {
 
     ph = posthog;
     posthog.register(buildCommonProperties());
+    flushPendingCaptures();
   });
 }
 
@@ -199,7 +226,7 @@ export function syncPostHogAuthStatus(status: TwfStatus): void {
 }
 
 export function capturePostHogPageview(pathname: string, search = ""): void {
-  if (!ph || !isPostHogEnabled()) {
+  if (!isPostHogEnabled()) {
     return;
   }
   const pageviewKey = `${pathname}${search}`;
@@ -210,13 +237,18 @@ export function capturePostHogPageview(pathname: string, search = ""): void {
   if (!canCaptureEvent()) {
     return;
   }
-  ph.capture("$pageview", {
+  const properties = {
     ...buildCommonProperties(),
     path: pathname,
     search,
     title: typeof document !== "undefined" ? document.title : undefined,
     current_url: typeof window !== "undefined" ? window.location.href : undefined,
-  });
+  };
+  if (!ph) {
+    enqueueCapture("$pageview", properties);
+    return;
+  }
+  ph.capture("$pageview", properties);
 }
 
 export function captureProductAnalyticsEvent(
@@ -224,14 +256,19 @@ export function captureProductAnalyticsEvent(
   properties: ProductAnalyticsProperties = {},
   options?: CaptureOptions,
 ): void {
-  if (!ph || !isPostHogEnabled() || !ALLOWED_EVENT_NAMES.has(eventName)) {
+  if (!isPostHogEnabled() || !ALLOWED_EVENT_NAMES.has(eventName)) {
     return;
   }
   if (!canCaptureEvent()) {
     return;
   }
-  ph.capture(eventName, {
+  const payload = {
     ...buildCommonProperties(),
     ...properties,
-  }, options);
+  };
+  if (!ph) {
+    enqueueCapture(eventName, payload, options);
+    return;
+  }
+  ph.capture(eventName, payload, options);
 }
