@@ -1752,16 +1752,17 @@ def _normalize_topic(raw_topic: Any, *, force_pinned: bool) -> dict[str, Any] | 
     title = str(raw_title).strip() if raw_title is not None else ""
     raw_url = raw_topic.get("url")
     url = str(raw_url).strip() if raw_url is not None else ""
-    if not title or not url:
+    if not title:
         return None
 
     pinned = force_pinned or _is_truthy_topic_flag(raw_topic.get("pinned"))
     normalized: dict[str, Any] = {
         "id": topic_id,
         "title": title,
-        "url": url,
         "pinned": pinned,
     }
+    if url:
+        normalized["url"] = url
 
     updated = raw_topic.get("updated")
     if updated is not None:

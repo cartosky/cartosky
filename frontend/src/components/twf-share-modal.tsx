@@ -37,7 +37,7 @@ type TwfForum = {
 type TwfTopic = {
   id: number;
   title: string;
-  url: string;
+  url?: string;
   pinned: boolean;
   updated?: string;
   starter?: string;
@@ -191,7 +191,7 @@ function normalizeTopics(value: unknown): TwfTopic[] {
     const id = Number(entry.id);
     const title = typeof entry.title === "string" ? entry.title.trim() : "";
     const url = typeof entry.url === "string" ? entry.url.trim() : "";
-    if (!Number.isFinite(id) || id <= 0 || !title || !url) {
+    if (!Number.isFinite(id) || id <= 0 || !title) {
       continue;
     }
     const updated = typeof entry.updated === "string" && entry.updated.trim() ? entry.updated.trim() : undefined;
@@ -199,9 +199,11 @@ function normalizeTopics(value: unknown): TwfTopic[] {
     const topic: TwfTopic = {
       id,
       title,
-      url,
       pinned: entry.pinned === true,
     };
+    if (url) {
+      topic.url = url;
+    }
     if (updated) {
       topic.updated = updated;
     }
@@ -494,7 +496,10 @@ export function TwfShareModal({
     }
     setSharePrefsTopicCacheEntry({
       forumId,
-      topics: entry.topics,
+      topics: entry.topics.map((topic) => ({
+        ...topic,
+        url: topic.url ?? "",
+      })),
       selectedTopicId: entry.selectedTopicId ?? undefined,
       selectedTopicTitle: entry.selectedTopicTitle ?? undefined,
       savedAt: Date.now(),

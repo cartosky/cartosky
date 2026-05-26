@@ -334,7 +334,6 @@ async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum
                             {
                                 "id": 601,
                                 "title": "Staff Monthly Thread",
-                                "url": "https://forums.example.com/topic/601-staff-monthly-thread/",
                                 "pinned": True,
                                 "updated": "2026-05-20T12:00:00Z",
                             },
@@ -356,7 +355,6 @@ async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum
                         {
                             "id": 602,
                             "title": "Staff Operations",
-                            "url": "https://forums.example.com/topic/602-staff-operations/",
                             "pinned": False,
                             "updated": "2026-05-21T09:00:00Z",
                         },
@@ -380,3 +378,5 @@ async def test_twf_topics_keeps_items_without_forum_metadata_for_requested_forum
     payload = response.json()
     assert payload["forum_id"] == 60
     assert [row["id"] for row in payload["results"]] == [601, 602]
+    assert payload["results"][0].get("url") is None
+    assert payload["results"][1].get("url") is None
