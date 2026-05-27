@@ -915,14 +915,6 @@ export function buildMapStyle(
         source: "twf-basemap",
         paint: basemapPaint,
       },
-      ...(screenshotMode
-        ? []
-        : [{
-            id: "twf-labels",
-            type: "raster",
-            source: "twf-labels",
-            paint: labelPaint,
-          } as LayerSpecification]),
       {
         id: COASTLINE_LAYER_ID,
         type: "line",
