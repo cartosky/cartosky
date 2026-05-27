@@ -812,8 +812,12 @@ export function TwfShareModal({
     const updatePreviewBox = () => {
       const containerW = element.offsetWidth;
       const containerH = element.offsetHeight;
-      const frameW = containerW;
-      const frameH = Math.round(containerW / (16 / 9));
+      const TARGET_ASPECT = 16 / 9;
+      const frameByWidth = { w: containerW, h: Math.round(containerW / TARGET_ASPECT) };
+      const frameByHeight = { w: Math.round(containerH * TARGET_ASPECT), h: containerH };
+      const fits = frameByWidth.h <= containerH;
+      const frameW = fits ? frameByWidth.w : frameByHeight.w;
+      const frameH = fits ? frameByWidth.h : frameByHeight.h;
       const initialY = Math.max(0, Math.round((containerH - frameH) / 2));
       setCropFrameMetrics({ containerW, containerH, frameW, frameH, initialY });
     };
@@ -1488,7 +1492,7 @@ export function TwfShareModal({
                       onPointerCancel={handleCropPointerUp}
                       style={{
                         position: "absolute",
-                        left: 0,
+                        left: Math.round((cropFrameMetrics.containerW - cropFrameMetrics.frameW) / 2),
                         top: cropTopPx,
                         width: cropFrameMetrics.frameW,
                         height: cropFrameMetrics.frameH,
