@@ -28,12 +28,17 @@ export type ScreenshotExportState = {
 };
 
 export type ScreenshotExportOptions = {
+  width?: number;
+  height?: number;
   pixelRatio?: number;
   legend?: LegendPayload | null;
   overlayLines?: string[];
 };
 
 const NORMALIZED_OUTPUT_WIDTH = 1280;
+const PORTRAIT_OUTPUT_WIDTH = 720;
+const DEFAULT_WIDTH = NORMALIZED_OUTPUT_WIDTH;
+const DEFAULT_HEIGHT = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
@@ -815,8 +820,35 @@ export async function exportViewerScreenshotPng(
     throw new Error("Screenshot export is only available in browser environments.");
   }
 
-  const width = NORMALIZED_OUTPUT_WIDTH;
-  const height = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
+  const stateViewportWidth = Number.isFinite(state.viewportWidth) ? Number(state.viewportWidth) : null;
+  const stateViewportHeight = Number.isFinite(state.viewportHeight) ? Number(state.viewportHeight) : null;
+
+  const isPortraitViewport = stateViewportWidth !== null
+    && stateViewportHeight !== null
+    && stateViewportHeight > stateViewportWidth;
+
+  const outputBaseWidth = isPortraitViewport ? PORTRAIT_OUTPUT_WIDTH : NORMALIZED_OUTPUT_WIDTH;
+
+  const normalizedViewportSize = stateViewportWidth !== null
+    && stateViewportHeight !== null
+    && stateViewportWidth > 0
+    && stateViewportHeight > 0
+    ? {
+        width: outputBaseWidth,
+        height: Math.max(1, Math.round(outputBaseWidth / (stateViewportWidth / stateViewportHeight))),
+      }
+    : null;
+
+  const width = Number.isFinite(opts.width)
+    ? Math.max(1, Math.round(Number(opts.width)))
+    : normalizedViewportSize
+      ? normalizedViewportSize.width
+      : DEFAULT_WIDTH;
+  const height = Number.isFinite(opts.height)
+    ? Math.max(1, Math.round(Number(opts.height)))
+    : normalizedViewportSize
+      ? normalizedViewportSize.height
+      : DEFAULT_HEIGHT;
   const pixelRatio = Number.isFinite(opts.pixelRatio)
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
