@@ -25,7 +25,14 @@ export type ScreenshotExportState = {
   region?: { id: string; label: string };
   animationEnabled: boolean;
   capturedMapDataUrl?: string;
-  anchors?: Array<{ x: number; y: number; label: string; cityName: string }>;
+  anchors?: Array<{ lngLat: [number, number]; label: string; cityName: string }>;
+};
+
+type ProjectedScreenshotAnchor = {
+  x: number;
+  y: number;
+  label: string;
+  cityName: string;
 };
 
 export type ScreenshotExportOptions = {
@@ -205,6 +212,57 @@ function waitForMapIdle(map: maplibregl.Map): Promise<void> {
       finish();
     }
   });
+}
+
+async function projectAnchorsForScreenshot(
+  state: ScreenshotExportState,
+  width: number,
+  height: number
+): Promise<ProjectedScreenshotAnchor[]> {
+  const anchors = state.anchors ?? [];
+  if (anchors.length === 0 || typeof document === "undefined") {
+    return [];
+  }
+
+  const container = document.createElement("div");
+  container.style.position = "fixed";
+  container.style.left = "-10000px";
+  container.style.top = "0";
+  container.style.width = `${width}px`;
+  container.style.height = `${height}px`;
+  container.style.pointerEvents = "none";
+  container.style.opacity = "0";
+
+  document.body.appendChild(container);
+
+  const map = new maplibregl.Map({
+    container,
+    style: { version: 8, sources: {}, layers: [] },
+    center: state.center,
+    zoom: state.zoom,
+    bearing: state.bearing ?? 0,
+    pitch: state.pitch ?? 0,
+    interactive: false,
+    attributionControl: false,
+  } as maplibregl.MapOptions);
+
+  try {
+    await waitForMapLoad(map);
+    return anchors
+      .map((anchor) => {
+        const projected = map.project(anchor.lngLat);
+        return {
+          x: projected.x,
+          y: projected.y,
+          label: anchor.label,
+          cityName: anchor.cityName,
+        };
+      })
+      .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
+  } finally {
+    map.remove();
+    container.remove();
+  }
 }
 
 function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayload | null): string[] {
@@ -745,7 +803,7 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number, scaleFacto
 
 function drawAnchors(
   ctx: CanvasRenderingContext2D,
-  anchors: Array<{ x: number; y: number; label: string; cityName: string }>,
+  anchors: ProjectedScreenshotAnchor[],
   width: number,
   height: number,
   isMobileLayout = false,
@@ -855,6 +913,7 @@ export async function exportViewerScreenshotPng(
     : DEFAULT_PIXEL_RATIO;
   const scaleFactor = width / NORMALIZED_OUTPUT_WIDTH;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
+  const projectedAnchors = await projectAnchorsForScreenshot(state, width, height);
 
   const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
     const outputCanvas = document.createElement("canvas");
@@ -870,7 +929,7 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     drawMapImageCover(outputCtx, mapImage, width, height);
-    drawAnchors(outputCtx, state.anchors ?? [], width, height, state.isMobile, scaleFactor);
+    drawAnchors(outputCtx, projectedAnchors, width, height, state.isMobile, scaleFactor);
     drawOverlay(outputCtx, overlayLines, width, scaleFactor);
 
     try {

@@ -3697,16 +3697,11 @@ export default function App() {
       }
     }
     const anchors = getActiveAnchorLabels(anchorDisplayGeoJson, zoom)
-      .map((anchor) => {
-        const projected = map.project(anchor.lngLat);
-        return {
-          x: Math.round(projected.x),
-          y: Math.round(projected.y),
-          label: anchor.label,
-          cityName: anchor.cityName,
-        };
-      })
-      .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
+      .map((anchor) => ({
+        lngLat: anchor.lngLat,
+        label: anchor.label,
+        cityName: anchor.cityName,
+      }));
 
     const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode);
     const normalizedActiveGridFrameUrl = normalizeGridFrameUrl(activeGridFrameUrl);
