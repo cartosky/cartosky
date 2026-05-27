@@ -626,9 +626,28 @@ export function TwfShareModal({
         throw new Error(`Server screenshot failed (${response.status})`);
       }
       const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        const chunk = bytes.subarray(offset, offset + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+      const latestState = buildScreenshotState?.() ?? null;
+      if (!latestState) {
+        throw new Error("No map state available.");
+      }
+      const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");
+      const finalBlob = await exportViewerScreenshotPng(
+        { ...latestState, capturedMapDataUrl: dataUrl },
+        { legend: getLegend?.() ?? null },
+      );
+      const objectUrl = URL.createObjectURL(finalBlob);
       const filename = screenshotFilename(state);
-      setScreenshotStateSnapshot(state);
+      setScreenshotBlob(finalBlob);
+      setScreenshotStateSnapshot(latestState);
       setScreenshotFilenameValue(filename);
       setScreenshotUploadError(null);
       setScreenshotUrl(null);
@@ -640,7 +659,7 @@ export function TwfShareModal({
         }
         return objectUrl;
       });
-      return { blobUrl: objectUrl, filename, state };
+      return { blobUrl: objectUrl, filename, state: latestState };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Server screenshot failed.";
       setScreenshotError(message);
@@ -648,7 +667,7 @@ export function TwfShareModal({
     } finally {
       setScreenshotBusy(false);
     }
-  }, [buildScreenshotState, payload.permalink]);
+  }, [API_ORIGIN, buildScreenshotState, getLegend, payload.permalink]);
 
   useEffect(() => {
     if (!open) {

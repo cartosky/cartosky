@@ -319,6 +319,15 @@ export default function App() {
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
   const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("legend") === "1") {
+      setLegendVisible(true);
+    }
+  }, [setLegendVisible]);
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

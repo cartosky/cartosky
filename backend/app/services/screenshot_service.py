@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from playwright.async_api import Browser, Playwright, async_playwright
 
@@ -9,7 +10,6 @@ SCREENSHOT_CONCURRENCY = 2
 SCREENSHOT_TIMEOUT_MS = 30_000
 SCREENSHOT_VIEWPORT_WIDTH = 1280
 SCREENSHOT_VIEWPORT_HEIGHT = 720
-MAP_IDLE_DELAY_MS = 4_000
 
 
 class ScreenshotService:
@@ -41,9 +41,19 @@ class ScreenshotService:
             )
             page = await context.new_page()
             try:
-                await page.goto(url, wait_until="networkidle", timeout=SCREENSHOT_TIMEOUT_MS)
-                await page.wait_for_timeout(MAP_IDLE_DELAY_MS)
-                png = await page.screenshot(full_page=False, timeout=SCREENSHOT_TIMEOUT_MS)
+                parsed = urlsplit(url)
+                params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+                params["screenshot"] = "1"
+                params["legend"] = "1"
+                render_url = urlunsplit(parsed._replace(query=urlencode(params)))
+
+                await page.goto(render_url, wait_until="networkidle", timeout=SCREENSHOT_TIMEOUT_MS)
+                map_el = await page.wait_for_selector(
+                    'div[role="img"][aria-label="Weather map"] canvas',
+                    timeout=SCREENSHOT_TIMEOUT_MS,
+                )
+                await page.wait_for_timeout(1500)
+                png = await map_el.screenshot()
                 return png
             finally:
                 await context.close()
