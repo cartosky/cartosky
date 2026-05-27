@@ -428,6 +428,7 @@ export default function App() {
     stalledAtMs: 0,
     lookAheadWaitStartedAtMs: 0,
   });
+  const gridPlaybackLastAdvanceAtMsRef = useRef(0);
   const autoplayUiSyncTimerRef = useRef<number | null>(null);
   const autoplayUiSyncQueuedHourRef = useRef<number | null>(null);
   const autoplayUiSyncLastCommittedAtRef = useRef(0);
@@ -920,6 +921,7 @@ export default function App() {
       stalledAtMs: 0,
       lookAheadWaitStartedAtMs: 0,
     };
+    gridPlaybackLastAdvanceAtMsRef.current = 0;
     autoplayUiSyncQueuedHourRef.current = null;
     autoplayUiSyncLastCommittedAtRef.current = 0;
     if (autoplayUiSyncTimerRef.current !== null) {
@@ -1511,6 +1513,7 @@ export default function App() {
       flushAutoplayUiHour();
     }
     gridPlaybackHourRef.current = null;
+    gridPlaybackLastAdvanceAtMsRef.current = 0;
     resetGridPlaybackWaitState();
     setIsPlaying(false);
     setIsGridPreloadingForPlay(false);
@@ -1553,6 +1556,12 @@ export default function App() {
       return false;
     }
 
+    const now = performance.now();
+    const lastAdvanceAtMs = gridPlaybackLastAdvanceAtMsRef.current;
+    if (lastAdvanceAtMs > 0 && now - lastAdvanceAtMs < AUTOPLAY_TICK_MS) {
+      return false;
+    }
+
     let aheadReady = true;
     const lookAheadEnd = Math.min(nextIndex + autoplayReadyAheadFrames, gridFrameHours.length - 1);
     for (let index = nextIndex + 1; index <= lookAheadEnd; index += 1) {
@@ -1577,6 +1586,7 @@ export default function App() {
     }
 
     gridPlaybackHourRef.current = nextHour;
+    gridPlaybackLastAdvanceAtMsRef.current = now;
     resetGridPlaybackWaitState();
     return true;
   }, [
@@ -2979,6 +2989,7 @@ export default function App() {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
       if (!isPlaying) {
         gridPlaybackHourRef.current = null;
+        gridPlaybackLastAdvanceAtMsRef.current = 0;
       }
       resetGridPlaybackWaitState();
       return;
@@ -3018,6 +3029,7 @@ export default function App() {
                   continue;
                 }
                 gridPlaybackHourRef.current = candidateHour;
+                gridPlaybackLastAdvanceAtMsRef.current = performance.now();
                 resetGridPlaybackWaitState();
                 break;
               }
@@ -3076,6 +3088,7 @@ export default function App() {
 
     setIsGridPreloadingForPlay(false);
     gridPlaybackHourRef.current = currentHour;
+    gridPlaybackLastAdvanceAtMsRef.current = performance.now();
     resetGridPlaybackWaitState();
     if (allowStallStart && !isGridPlaybackStartReady) {
       showTransientFrameStatus("Starting grid playback");
@@ -3166,6 +3179,7 @@ export default function App() {
           ? targetForecastHour
           : (Number.isFinite(forecastHour) ? forecastHour : null));
       gridPlaybackHourRef.current = startHour;
+      gridPlaybackLastAdvanceAtMsRef.current = performance.now();
       resetGridPlaybackWaitState();
       if (Number.isFinite(startHour) && isGridPlaybackStartReady) {
         setIsGridPreloadingForPlay(false);
