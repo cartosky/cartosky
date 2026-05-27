@@ -1466,53 +1466,52 @@ export function TwfShareModal({
         {/* Screenshot preview */}
         <TooltipProvider delayDuration={250}>
           <div className="px-4">
-            <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+            <div ref={previewContainerRef} className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
               {screenshotBlobUrl ? (
-                <div ref={previewContainerRef} className="relative h-full w-full overflow-hidden bg-black/20">
+                <>
                   <img
                     src={screenshotBlobUrl}
                     alt="Screenshot preview"
                     className="h-full w-full object-cover"
-                    onLoad={(event) => {
-                      const image = event.currentTarget;
-                      setPreviewImageNaturalSize({
-                        width: image.naturalWidth,
-                        height: image.naturalHeight,
-                      });
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      setPreviewImageNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
                     }}
                   />
-                  {cropFrameMetrics.frameW > 0 && cropFrameMetrics.frameH > 0 && (
+
+                  {canReframeScreenshot && (
                     <div
                       ref={cropFrameRef}
-                      className={`absolute left-0 border-2 border-white ${canReframeScreenshot ? "cursor-move" : "cursor-default"}`}
-                      style={{
-                        top: cropTopPx,
-                        width: cropFrameMetrics.frameW,
-                        height: cropFrameMetrics.frameH,
-                        boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)",
-                        borderRadius: 2,
-                        touchAction: "none",
-                      }}
                       onPointerDown={handleCropPointerDown}
                       onPointerMove={handleCropPointerMove}
                       onPointerUp={handleCropPointerUp}
                       onPointerCancel={handleCropPointerUp}
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        top: cropTopPx,
+                        width: cropFrameMetrics.frameW,
+                        height: cropFrameMetrics.frameH,
+                        boxShadow: "0 0 0 9999px rgba(0,0,0,0.52)",
+                        border: "2px solid rgba(255,255,255,0.9)",
+                        borderRadius: 2,
+                        cursor: canReframeScreenshot ? "ns-resize" : "default",
+                        touchAction: "none",
+                      }}
                     />
                   )}
-                </div>
+
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    {canReframeScreenshot ? "Drag to reframe" : "Screenshot ready"}
+                  </div>
+                </>
               ) : screenshotBusy ? (
                 <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
                   <Loader2 className="h-6 w-6 animate-spin text-white/40" />
                 </div>
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
-              )}
-
-              {screenshotBlobUrl && !screenshotBusy && (
-                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Drag to reframe
-                </div>
               )}
             </div>
 
