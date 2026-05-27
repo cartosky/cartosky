@@ -70,6 +70,7 @@ export const MODEL_ORDER_BY_ID: Record<string, number> = {
   ndfd: 9,
   spc: 10,
   cpc: 11,
+  wpc: 12,
 };
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -433,6 +434,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   ndfd: { label: "NDFD", group: "FORECASTS", order: 14 },
   spc: { label: "SPC Outlooks", group: "FORECASTS", order: 15 },
   cpc: { label: "CPC Outlooks", group: "FORECASTS", order: 16 },
+  wpc: { label: "WPC", group: "FORECASTS", order: 17 },
 };
 
 function variableUiOverride(id: string): VariableUiOverride | null {

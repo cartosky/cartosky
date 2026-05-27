@@ -1131,6 +1131,13 @@ _NDFD_GRID_PACKING_BY_VAR: dict[str, dict[str, Any]] = {
 for _ndfd_var, _ndfd_packing in _NDFD_GRID_PACKING_BY_VAR.items():
     _PACKING_BY_MODEL_VAR[("ndfd", _ndfd_var)] = dict(_ndfd_packing)
 
+_PACKING_BY_MODEL_VAR[("wpc", "precip_total")] = {
+    "scale": 0.01,
+    "offset": 0.0,
+    "nodata": 65535,
+    "units": "in",
+}
+
 
 def grid_code_supported(model_id: str, var_key: str) -> bool:
     normalized_model = str(model_id or "").strip().lower()

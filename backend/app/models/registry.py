@@ -103,6 +103,12 @@ try:
 except ImportError as exc:
     logger.warning("NDFD plugin unavailable (missing dependency): %s", exc)
 
+try:
+    from .wpc import WPC_MODEL
+    MODEL_REGISTRY[WPC_MODEL.id] = WPC_MODEL
+except ImportError as exc:
+    logger.warning("WPC plugin unavailable (missing dependency): %s", exc)
+
 
 def get_model(model_id: str) -> ModelPlugin:
     model = MODEL_REGISTRY.get(model_id)
