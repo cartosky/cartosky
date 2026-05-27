@@ -304,37 +304,25 @@ export default function AdminStatusPage() {
     <AdminPage>
       <AdminHero
         eyebrow="Pipeline Status"
-        title="Retained run health and artifact checks"
-        description="Operational health for retained published runs. This page tracks stale runs, incomplete manifests, and artifact failures from the current pipeline output."
+        title="Retained run health"
       >
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl border border-white/12 bg-white/[0.05] p-3">
-            <ClipboardCheck className="h-5 w-5 text-[#9dd5bf]" />
-          </div>
-          <div>
-            <div className="text-2xl font-semibold tracking-tight">Pipeline Status</div>
-          </div>
-        </div>
-
         {error ? (
-          <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {error}
           </div>
         ) : null}
 
-        <div className="mt-6 space-y-5">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <CompactMetric
               label="Retained runs"
               value={results.length}
-              hint="All retained published runs in scope."
               active={viewFilter === "all"}
               onClick={() => setViewFilter("all")}
             />
             <CompactMetric
               label="Open issues"
               value={issueRows.length}
-              hint="Runs with operational problems worth review."
               accentClassName="text-amber-300"
               active={viewFilter === "issues"}
               onClick={() => setViewFilter("issues")}
@@ -342,7 +330,6 @@ export default function AdminStatusPage() {
             <CompactMetric
               label="Artifact failures"
               value={artifactRows.length}
-              hint="Missing manifests, files, or unreadable outputs."
               accentClassName="text-rose-300"
               active={viewFilter === "artifacts"}
               onClick={() => setViewFilter("artifacts")}
@@ -350,32 +337,29 @@ export default function AdminStatusPage() {
             <CompactMetric
               label="Stale or stalled"
               value={staleRows.length}
-              hint="Latest runs that are not advancing as expected."
               accentClassName="text-amber-300"
               active={viewFilter === "stale"}
               onClick={() => setViewFilter("stale")}
             />
           </div>
 
-          <div className="grid gap-4 border-t border-white/8 pt-5 md:grid-cols-3">
-            <div className="border-l border-white/10 pl-4">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Store</div>
-              <div className="mt-2 text-xl font-semibold tracking-tight text-white">
+          <div className="grid gap-3 border-t border-white/8 pt-3 md:grid-cols-3">
+            <div className="flex items-center gap-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Store</div>
+              <span className="inline-flex rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/72">
                 {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
-              </div>
-              <div className="mt-2 text-sm leading-6 text-white/58">
-                {qaSummary?.store_mode === "separate" ? "Ready for final DB retirement." : "Still sharing legacy telemetry DB."}
-              </div>
+              </span>
             </div>
-            <div className="border-l border-white/10 pl-4">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Reviews</div>
-              <div className="mt-2 text-xl font-semibold tracking-tight text-white">{qaSummary?.total_reviews ?? 0}</div>
-              <div className="mt-2 text-sm leading-6 text-white/58">{qaSummary?.warning_reviews ?? 0} warning rows in the QA summary.</div>
+            <div className="flex items-center gap-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Reviews</div>
+              <span className="text-sm font-semibold text-white">{qaSummary?.total_reviews ?? 0}</span>
+              {(qaSummary?.warning_reviews ?? 0) > 0 ? (
+                <span className="text-xs text-amber-300">{qaSummary?.warning_reviews} warnings</span>
+              ) : null}
             </div>
-            <div className="border-l border-white/10 pl-4">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Latest QA Check</div>
-              <div className="mt-2 text-lg font-semibold tracking-tight text-white">{formatTimestamp(qaSummary?.latest_checked_at)}</div>
-              <div className="mt-2 text-sm leading-6 text-white/58">{qaSummary?.distinct_runs ?? 0} distinct runs tracked.</div>
+            <div className="flex items-center gap-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">Latest QA Check</div>
+              <span className="text-sm text-white/72">{formatTimestamp(qaSummary?.latest_checked_at)}</span>
             </div>
           </div>
         </div>
@@ -428,13 +412,9 @@ export default function AdminStatusPage() {
         </div>
       </AdminHero>
 
-      <AdminSurface className="p-4" title="Current View" description={`Showing ${viewLabel(viewFilter)} for retained published runs matching the current filters.`} headerRight={<div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">{filteredRows.length} rows loaded</div>}>
-        <div className="mb-3 px-2 text-xs text-white/42">
-          Click a row to inspect missing files, incomplete variables, and run timing. Use the top scrollbar to reach the right-side columns while staying at the top of the table.
-        </div>
-
-        <div ref={topScrollRef} onScroll={() => syncScroll("top")} className="mb-3 overflow-x-auto px-2">
-          <div className="h-3 rounded-full bg-white/[0.04]" style={{ width: tableScrollWidth > 0 ? `${tableScrollWidth}px` : "100%" }} />
+      <AdminSurface className="p-4" title="Current View" headerRight={<div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">{filteredRows.length} rows</div>}>
+        <div ref={topScrollRef} onScroll={() => syncScroll("top")} className="mb-3 overflow-x-auto">
+          <div className="h-2 rounded-full bg-white/[0.04]" style={{ width: tableScrollWidth > 0 ? `${tableScrollWidth}px` : "100%" }} />
         </div>
 
         <div ref={tableScrollRef} onScroll={() => syncScroll("table")} className="overflow-x-auto pb-2">
@@ -468,7 +448,13 @@ export default function AdminStatusPage() {
                     onClick={() => setSelectedId(item.id)}
                     className={[
                       "cursor-pointer rounded-2xl border transition-colors",
-                      item.id === selectedId ? "bg-emerald-500/10 text-white" : "bg-white/[0.03] text-white/84 hover:bg-white/[0.05]",
+                      item.id === selectedId
+                        ? "bg-emerald-500/10 text-white"
+                        : item.status === "error"
+                          ? "border-rose-400/15 bg-rose-500/[0.06] text-white/84 hover:bg-rose-500/[0.1]"
+                          : item.status === "warning"
+                            ? "border-amber-400/15 bg-amber-500/[0.05] text-white/84 hover:bg-amber-500/[0.08]"
+                            : "bg-white/[0.03] text-white/84 hover:bg-white/[0.05]",
                     ].join(" ")}
                   >
                     <td className="rounded-l-2xl border-y border-l border-white/10 px-3 py-3 font-semibold">{item.model_id}</td>

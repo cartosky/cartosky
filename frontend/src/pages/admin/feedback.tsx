@@ -221,12 +221,11 @@ export default function AdminFeedbackPage() {
       <AdminHero
         eyebrow="Beta Feedback"
         title="Feedback triage"
-        description="Review public beta submissions, monitor category patterns, and inspect context captured from the viewer and public pages."
         actions={(
           <button
             type="button"
             onClick={refreshFeedback}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/82 transition hover:bg-white/[0.08]"
+            className="inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm font-semibold text-white/82 transition hover:bg-white/[0.08]"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh
@@ -243,7 +242,7 @@ export default function AdminFeedbackPage() {
           <AdminStat
             label="Total Feedback"
             value={formatNumber(feedback?.summary.total ?? 0)}
-            hint="Matching current filters"
+            hint="Matching filters"
             accentClassName="text-cyan-200"
             icon={<MessageSquareText className="h-5 w-5 text-cyan-200/80" />}
           />
@@ -271,73 +270,9 @@ export default function AdminFeedbackPage() {
         </div>
       </AdminHero>
 
-      <AdminSurface title="Filters" description="Filter by category, submitted date, or Weather Forums display name. Summary and chart values update from backend aggregate data.">
-        <div className="grid gap-3 lg:grid-cols-[minmax(160px,0.9fr)_minmax(150px,0.8fr)_minmax(150px,0.8fr)_minmax(220px,1.2fr)_auto] lg:items-end">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Category</span>
-            <select
-              value={filters.category}
-              onChange={(event) => setFilters((prev) => ({ ...prev, category: event.target.value as FeedbackCategory | "all" }))}
-              className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
-            >
-              {CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Since</span>
-            <input
-              type="date"
-              value={filters.since}
-              onChange={(event) => setFilters((prev) => ({ ...prev, since: event.target.value }))}
-              className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Until</span>
-            <input
-              type="date"
-              value={filters.until}
-              onChange={(event) => setFilters((prev) => ({ ...prev, until: event.target.value }))}
-              className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Display Name</span>
-            <div className="relative mt-2">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/36" />
-              <input
-                type="search"
-                value={filters.displayName}
-                onChange={(event) => setFilters((prev) => ({ ...prev, displayName: event.target.value }))}
-                className="h-10 w-full rounded-lg border border-white/10 bg-[#091322] pl-9 pr-3 text-sm text-white outline-none placeholder:text-white/34 focus:border-cyan-300/34"
-                placeholder="Search tester"
-              />
-            </div>
-          </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={applyFilters}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-cyan-200/28 bg-cyan-300/12 px-4 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/16"
-            >
-              Apply
-            </button>
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/72 transition hover:bg-white/[0.07]"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-      </AdminSurface>
-
       <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
-        <AdminSurface title="Submission volume" description="Daily feedback count for the current filters.">
-          <div className="h-[280px]">
+        <AdminSurface title="Submission volume">
+          <div className="h-[240px]">
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
@@ -365,7 +300,7 @@ export default function AdminFeedbackPage() {
           </div>
         </AdminSurface>
 
-        <AdminSurface title="Category breakdown">
+        <AdminSurface title="By category">
           <div className="space-y-3">
             {CATEGORY_ORDER.map((categoryKey) => {
               const count = categoryBreakdown[categoryKey] ?? 0;
@@ -376,7 +311,7 @@ export default function AdminFeedbackPage() {
                     <span className="font-semibold text-white/82">{CATEGORY_LABELS[categoryKey]}</span>
                     <span className="text-white/52">{formatNumber(count)}</span>
                   </div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
                     <div className="h-full rounded-full bg-cyan-300/70" style={{ width: `${pct}%` }} />
                   </div>
                 </div>
@@ -386,9 +321,72 @@ export default function AdminFeedbackPage() {
         </AdminSurface>
       </div>
 
+      <AdminSurface>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Category</span>
+            <select
+              value={filters.category}
+              onChange={(event) => setFilters((prev) => ({ ...prev, category: event.target.value as FeedbackCategory | "all" }))}
+              className="mt-1.5 h-9 w-full min-w-[140px] rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
+            >
+              {CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Since</span>
+            <input
+              type="date"
+              value={filters.since}
+              onChange={(event) => setFilters((prev) => ({ ...prev, since: event.target.value }))}
+              className="mt-1.5 h-9 w-full rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Until</span>
+            <input
+              type="date"
+              value={filters.until}
+              onChange={(event) => setFilters((prev) => ({ ...prev, until: event.target.value }))}
+              className="mt-1.5 h-9 w-full rounded-lg border border-white/10 bg-[#091322] px-3 text-sm text-white outline-none focus:border-cyan-300/34"
+            />
+          </label>
+          <label className="block flex-1 min-w-[180px]">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">Display Name</span>
+            <div className="relative mt-1.5">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/36" />
+              <input
+                type="search"
+                value={filters.displayName}
+                onChange={(event) => setFilters((prev) => ({ ...prev, displayName: event.target.value }))}
+                className="h-9 w-full rounded-lg border border-white/10 bg-[#091322] pl-8 pr-3 text-sm text-white outline-none placeholder:text-white/34 focus:border-cyan-300/34"
+                placeholder="Search tester"
+              />
+            </div>
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={applyFilters}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-cyan-200/28 bg-cyan-300/12 px-4 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/16"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/72 transition hover:bg-white/[0.07]"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      </AdminSurface>
+
       <AdminSurface
         title="Submissions"
-        description="Expand a row to read the full message and captured browser context."
         headerRight={(
           <div className="text-sm text-white/52">
             Page {page} of {pageCount}

@@ -56,9 +56,7 @@ function SummaryCard(props: {
   hint: string;
   icon: typeof Gauge;
   accentClassName?: string;
-  description?: string;
-  statusLabel?: string;
-  statusClassName?: string;
+  topBorderClass?: string;
 }) {
   const {
     title,
@@ -66,25 +64,15 @@ function SummaryCard(props: {
     hint,
     icon: Icon,
     accentClassName = "text-white",
-    description,
-    statusLabel,
-    statusClassName = "border-white/10 bg-white/[0.05] text-white/72",
+    topBorderClass,
   } = props;
   return (
-    <section className="rounded-[1.15rem] border border-white/8 bg-white/[0.025] p-4 shadow-[0_12px_30px_rgba(0,0,0,0.16)]">
+    <section className={`rounded-[1.15rem] border border-white/8 bg-white/[0.025] p-4 shadow-[0_12px_30px_rgba(0,0,0,0.16)] ${topBorderClass ? `border-t-2 ${topBorderClass}` : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-semibold text-white">{title}</div>
-            {statusLabel ? (
-              <div className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusClassName}`}>
-                {statusLabel}
-              </div>
-            ) : null}
-          </div>
+          <div className="text-sm font-semibold text-white">{title}</div>
           <div className={`mt-3 text-[2.1rem] font-semibold tracking-tight ${accentClassName}`}>{value}</div>
-          <div className="mt-2 text-xs uppercase tracking-[0.18em] text-white/40">{hint}</div>
-          {description ? <p className="mt-3 max-w-xs text-sm leading-6 text-white/62">{description}</p> : null}
+          <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/40">{hint}</div>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3">
           <Icon className={`h-5 w-5 ${accentClassName}`} />
@@ -374,8 +362,7 @@ export default function AdminOverviewPage() {
       <AdminPage>
         <AdminHero
           eyebrow="Overview"
-          title="Telemetry trust center"
-          description="Monitor health and performance of the system."
+          title="System health"
         >
           {error ? (
             <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
@@ -384,19 +371,16 @@ export default function AdminOverviewPage() {
           ) : null}
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <SummaryCard title="Open Issues" value={String(issueRows.length)} hint="Retained run warnings and errors" icon={AlertTriangle} accentClassName="text-amber-300" />
-            <SummaryCard title="Artifact Failures" value={String(artifactRows.length)} hint="Missing or unreadable artifacts" icon={ClipboardCheck} accentClassName="text-rose-300" />
-            <SummaryCard title="Stale / Stalled" value={String(staleRows.length)} hint="Latest runs needing attention" icon={Activity} accentClassName="text-[#9dd5bf]" />
+            <SummaryCard title="Open Issues" value={String(issueRows.length)} hint="Run warnings &amp; errors" icon={AlertTriangle} accentClassName="text-amber-300" topBorderClass="border-t-amber-400/60" />
+            <SummaryCard title="Artifact Failures" value={String(artifactRows.length)} hint="Missing or unreadable" icon={ClipboardCheck} accentClassName="text-rose-300" topBorderClass="border-t-rose-400/60" />
+            <SummaryCard title="Stale / Stalled" value={String(staleRows.length)} hint="Runs needing attention" icon={Activity} accentClassName="text-[#9dd5bf]" topBorderClass={staleRows.length > 0 ? "border-t-amber-400/60" : "border-t-emerald-400/40"} />
             <SummaryCard
               title="QA Reviews"
               value={new Intl.NumberFormat("en-US").format(qaSummary?.total_reviews ?? 0)}
-              hint={
-                qaSummary
-                  ? `${new Intl.NumberFormat("en-US").format(qaSummary.warning_reviews)} warning reviews · ${qaStoreMode.toLowerCase()} store`
-                  : "Awaiting QA store summary"
-              }
+              hint={qaSummary ? `${qaSummary.warning_reviews} warnings · ${qaStoreMode.toLowerCase()}` : "Awaiting summary"}
               icon={Database}
               accentClassName="text-sky-300"
+              topBorderClass="border-t-sky-400/40"
             />
           </div>
         </AdminHero>
@@ -469,25 +453,25 @@ export default function AdminOverviewPage() {
                   ? `${rumDiagnostics.manifest_fetch_duration.count} sampled diagnostics · last seen ${formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}`
                   : "Waiting for sampled RUM diagnostics"}
               </div>
-              <div className="mt-5 border-t border-white/8 pt-4">
-                <div className="text-sm font-semibold text-white">Frontend ownership snapshot</div>
-                <div className="mt-3 space-y-3 text-sm text-white/62">
-                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
-                    <span>Product analytics</span>
-                    <span className="font-medium text-white/84">{posthogEnabled ? "PostHog enabled" : "PostHog disabled"}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
-                    <span>Service metrics</span>
-                    <span className="font-medium text-white/84">{observabilityLive ? "Prometheus live" : observability?.metrics_enabled ? "Prometheus armed" : "Prometheus disabled"}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-4 border-b border-white/6 pb-3">
-                    <span>Trace drill-down</span>
-                    <span className="font-medium text-white/84">{tracesLive ? "Tempo live" : traces?.enabled ? "Tracing armed" : "Tracing disabled"}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-4">
-                    <span>QA store</span>
-                    <span className="font-medium text-white/84">{qaStoreMode}</span>
-                  </div>
+              <div className="mt-4 border-t border-white/8 pt-4">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">Ownership</div>
+                <div className="flex flex-wrap gap-2">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${posthogEnabled ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/[0.05] text-white/60"}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${posthogEnabled ? "bg-emerald-400" : "bg-white/30"}`} />
+                    PostHog {posthogEnabled ? "on" : "off"}
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${observabilityLive ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : observability?.metrics_enabled ? "border-amber-400/25 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/[0.05] text-white/60"}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${observabilityLive ? "bg-emerald-400" : observability?.metrics_enabled ? "bg-amber-400" : "bg-white/30"}`} />
+                    Prometheus {observabilityLive ? "live" : observability?.metrics_enabled ? "armed" : "off"}
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tracesLive ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : traces?.enabled ? "border-amber-400/25 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/[0.05] text-white/60"}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${tracesLive ? "bg-emerald-400" : traces?.enabled ? "bg-amber-400" : "bg-white/30"}`} />
+                    Tempo {tracesLive ? "live" : traces?.enabled ? "armed" : "off"}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                    QA {qaStoreMode}
+                  </span>
                 </div>
               </div>
             </div>
@@ -496,85 +480,55 @@ export default function AdminOverviewPage() {
 
         <AdminSurface
           title="Network Diagnostics"
-          description="Compare overall p95 with cache-status, model, device, WebGL-backend, payload-size, and encoding splits to tell whether a route is edge-bound, origin-bound, or frontend-bound."
           headerRight={
             <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
               Last seen {formatRelativeTimestamp(telemetryHealth?.rum_last_seen_at ?? null)}
             </div>
           }
         >
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {NETWORK_CARD_METRICS.map((metricName) => {
-              const metric = networkMetricByName.get(metricName);
-              const targetMs = NETWORK_P95_TARGETS[metricName] ?? null;
-              const statusTone = getNetworkStatus(metric?.summary ?? null, targetMs);
-              return (
-                <div key={metricName} className="border-l border-white/8 pl-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-sm font-semibold text-white">{`${metric?.label ?? metricName} p95`}</div>
-                    <div className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusTone.className}`}>
-                      {statusTone.label}
-                    </div>
-                  </div>
-                  <div className={`mt-2 text-2xl font-semibold tracking-tight ${statusTone.accentClassName}`}>
-                    {formatMetricValue(metric?.summary ?? null, "p95")}
-                  </div>
-                  <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/40">
-                    {metric?.summary?.count
-                      ? `${metric.summary.count} samples`
-                      : "Waiting for sampled diagnostics"}
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-white/58">
-                    {metric?.summary?.count
-                      ? getNetworkActionLabel({
-                        summary: metric.summary,
-                        by_cf_cache_status: metric.by_cf_cache_status,
-                        targetMs,
-                      })
-                      : "Awaiting samples"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/10 bg-white/[0.03]">
-            <div className="grid grid-cols-[minmax(0,1fr)_110px_80px_110px_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_minmax(0,1fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+          <div className="overflow-hidden rounded-[1.2rem] border border-white/10 bg-white/[0.03]">
+            <div className="grid grid-cols-[minmax(160px,1.5fr)_90px_80px_minmax(80px,0.8fr)_minmax(0,1fr)] gap-4 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
               <div>Metric</div>
               <div>p95</div>
               <div>Samples</div>
-              <div>Last Seen</div>
-              <div>Cache Split</div>
-              <div>Models</div>
-              <div>Devices</div>
-              <div>Runtime</div>
-              <div>Payload</div>
-              <div>Encoding</div>
+              <div>Cache</div>
               <div>Action</div>
             </div>
             <div>
-              {networkMetrics.map((metric) => {
+              {[...networkMetrics]
+                .sort((a, b) => {
+                  const targetA = NETWORK_P95_TARGETS[a.metric_name] ?? null;
+                  const targetB = NETWORK_P95_TARGETS[b.metric_name] ?? null;
+                  const statusA = getNetworkStatus(a.summary, targetA);
+                  const statusB = getNetworkStatus(b.summary, targetB);
+                  const order = { "Over Target": 0, Watch: 1, Healthy: 2, "Awaiting Data": 3 };
+                  return (order[statusA.label as keyof typeof order] ?? 3) - (order[statusB.label as keyof typeof order] ?? 3);
+                })
+                .map((metric) => {
                 const targetMs = NETWORK_P95_TARGETS[metric.metric_name] ?? null;
                 const statusTone = getNetworkStatus(metric.summary, targetMs);
+                const dominantCache = [...metric.by_cf_cache_status].sort((a, b) => b.count - a.count)[0];
                 return (
                   <div
                     key={metric.metric_name}
-                    className="grid grid-cols-[minmax(0,1fr)_110px_80px_110px_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_minmax(0,1fr)] gap-4 border-b border-white/6 px-4 py-4 text-sm last:border-b-0"
+                    className={`grid grid-cols-[minmax(160px,1.5fr)_90px_80px_minmax(80px,0.8fr)_minmax(0,1fr)] gap-4 border-b border-white/6 px-4 py-3 text-sm last:border-b-0 ${
+                      statusTone.label === "Over Target" ? "bg-rose-500/[0.05]" : statusTone.label === "Watch" ? "bg-amber-500/[0.04]" : ""
+                    }`}
                   >
                     <div>
                       <div className="font-semibold text-white">{metric.label}</div>
-                      <div className="mt-1 text-xs text-white/48">{metric.metric_name}</div>
+                      <div className="mt-0.5 text-xs text-white/42">{metric.metric_name}</div>
                     </div>
-                    <div className={statusTone.accentClassName}>{formatMetricValue(metric.summary, "p95")}</div>
-                    <div>{new Intl.NumberFormat("en-US").format(metric.summary.count)}</div>
-                    <div className="text-white/62">{formatRelativeTimestamp(metric.last_seen_at)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_cf_cache_status)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_model_id)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_device_type)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_webgl_backend)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_payload_size_bucket)}</div>
-                    <div className="text-white/62">{formatNetworkBreakdowns(metric.by_content_encoding)}</div>
-                    <div className="text-white/72">{getNetworkActionLabel({
+                    <div className={`font-semibold ${statusTone.accentClassName}`}>{formatMetricValue(metric.summary, "p95")}</div>
+                    <div className="text-white/68">{new Intl.NumberFormat("en-US").format(metric.summary.count)}</div>
+                    <div>
+                      {dominantCache?.key ? (
+                        <span className="inline-flex rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/68">
+                          {dominantCache.key}
+                        </span>
+                      ) : <span className="text-white/30">—</span>}
+                    </div>
+                    <div className="text-white/72 text-xs leading-5">{getNetworkActionLabel({
                       summary: metric.summary,
                       by_cf_cache_status: metric.by_cf_cache_status,
                       targetMs,
@@ -586,51 +540,22 @@ export default function AdminOverviewPage() {
           </div>
         </AdminSurface>
 
-        <AdminSurface
-          title="Ownership Map"
-          description="Each admin route fronts a specific telemetry owner. Use these as the release-level handoff points instead of the retired custom frontend perf stack."
-        >
-          <div className="grid gap-4 md:grid-cols-2">
-            <Link
-              to="/admin/analytics"
-              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
-            >
-              <div className="flex items-center gap-2 font-semibold text-white">
-                <BarChart3 className="h-4 w-4 text-cyan-200/80" />
-                Analytics
-              </div>
-              <div className="mt-2 text-white/60">PostHog owns product analytics, dashboards, event ingestion validation, and replay launch points.</div>
-            </Link>
-            <Link
-              to="/admin/observability"
-              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
-            >
-              <div className="flex items-center gap-2 font-semibold text-white">
-                <Activity className="h-4 w-4 text-cyan-200/80" />
-                Observability
-              </div>
-              <div className="mt-2 text-white/60">Prometheus and Grafana own API latency, errors, cache health, and published-run freshness.</div>
-            </Link>
-            <Link
-              to="/admin/traces"
-              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
-            >
-              <div className="flex items-center gap-2 font-semibold text-white">
-                <Waypoints className="h-4 w-4 text-cyan-200/80" />
-                Traces
-              </div>
-              <div className="mt-2 text-white/60">Tempo-backed traces own slow-request drill-down, correlation, and request-path debugging.</div>
-            </Link>
-            <Link
-              to="/admin/status"
-              className="border-l border-white/8 pl-4 text-sm text-white transition hover:text-cyan-100"
-            >
-              <div className="flex items-center gap-2 font-semibold text-white">
-                <ClipboardCheck className="h-4 w-4 text-cyan-200/80" />
-                Pipeline Status
-              </div>
-              <div className="mt-2 text-white/60">CartoSky keeps ownership here for retained-run health, artifact checks, QA warnings, and domain-specific pipeline issues.</div>
-            </Link>
+        <AdminSurface title="Ownership Map">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              { to: "/admin/analytics", icon: BarChart3, label: "Analytics", sub: "PostHog · events, replay" },
+              { to: "/admin/observability", icon: Activity, label: "Observability", sub: "Prometheus · Grafana" },
+              { to: "/admin/traces", icon: Waypoints, label: "Traces", sub: "Tempo · OTLP drill-down" },
+              { to: "/admin/status", icon: ClipboardCheck, label: "Pipeline Status", sub: "Retained runs · artifacts" },
+            ].map(({ to, icon: Icon, label, sub }) => (
+              <Link key={to} to={to} className="flex items-center gap-3 rounded-xl border border-white/8 px-3 py-3 text-sm transition hover:border-white/14 hover:bg-white/[0.03]">
+                <Icon className="h-4 w-4 flex-shrink-0 text-cyan-200/80" />
+                <div>
+                  <div className="font-semibold text-white">{label}</div>
+                  <div className="text-xs text-white/50">{sub}</div>
+                </div>
+              </Link>
+            ))}
           </div>
         </AdminSurface>
       </AdminPage>

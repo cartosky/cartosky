@@ -48,8 +48,7 @@ export default function AdminTracesPage() {
     <AdminPage>
       <AdminHero
         eyebrow="Traces"
-        title="Trace export and drill-down"
-        description="OpenTelemetry and Tempo handle backend trace ownership. This page focuses on sample policy, recent exports, and native search entry points."
+        title="Trace export"
       >
         {error ? (
           <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
@@ -84,45 +83,42 @@ export default function AdminTracesPage() {
 
       <AdminSurface title="Tracing surfaces">
         <div className="grid gap-3 xl:grid-cols-3">
-          <section className="border-l border-white/8 pl-4">
-            <div className="flex items-center gap-3">
-              <Waypoints className="h-5 w-5 text-cyan-200/80" />
-              <div className="text-sm font-semibold text-white">Tracing Status</div>
+          <section className="flex items-start gap-3 rounded-xl border border-white/8 p-3">
+            <Waypoints className="mt-0.5 h-4 w-4 flex-shrink-0 text-cyan-200/80" />
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-white">Tracing Status</div>
+                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                  summary?.enabled ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/[0.05] text-white/60"
+                }`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${summary?.enabled ? "bg-emerald-400" : "bg-white/30"}`} />
+                  {summary?.enabled ? "Exporting via OTLP" : "Disabled"}
+                </span>
+              </div>
+              <div className="mt-1 text-xs text-white/55">{summary?.enabled ? `${Math.round((summary.sample_ratio || 0) * 100)}% sample rate` : "Needs CARTOSKY_OTEL_ENABLED"}</div>
             </div>
-            <p className="mt-3 text-sm leading-6 text-white/62">
-              Backend tracing is currently {summary?.enabled ? "enabled and exporting through OTLP." : "disabled until CARTOSKY_OTEL_ENABLED is turned on in production."}
-            </p>
           </section>
-          <section className="border-l border-white/8 pl-4">
-            <div className="flex items-center gap-3">
-              <TimerReset className="h-5 w-5 text-cyan-200/80" />
-              <div className="text-sm font-semibold text-white">Slow/Error Priority</div>
+          <section className="flex items-start gap-3 rounded-xl border border-white/8 p-3">
+            <TimerReset className="mt-0.5 h-4 w-4 flex-shrink-0 text-cyan-200/80" />
+            <div>
+              <div className="text-sm font-semibold text-white">Slow / Error Priority</div>
+              <div className="mt-1 text-xs text-white/55">Always exported regardless of sample rate</div>
+              <div className="mt-2 rounded-lg border border-sky-400/20 bg-sky-500/[0.08] px-2.5 py-1.5 text-[11px] text-sky-200/90">
+                Slow requests (&gt;{summary ? `${Math.round(summary.slow_request_ms)} ms` : "threshold"}) and server errors always export.
+              </div>
             </div>
-            <p className="mt-3 text-sm leading-6 text-white/62">
-              Slow requests and server errors are always exported, even when the default trace sample rate is lower.
-            </p>
           </section>
-          <section className="border-l border-white/8 pl-4">
-            <div className="flex items-center gap-3">
-              <ExternalLink className="h-5 w-5 text-white/76" />
+          <section className="flex items-start gap-3 rounded-xl border border-white/8 p-3">
+            <ExternalLink className="mt-0.5 h-4 w-4 flex-shrink-0 text-white/76" />
+            <div>
               <div className="text-sm font-semibold text-white">Trace Search</div>
+              <div className="mt-1 text-xs text-white/55">{grafanaTracesUrl || grafanaUrl ? "Grafana trace exploration" : "Set Grafana traces URL in env"}</div>
+              {grafanaTracesUrl || grafanaUrl ? (
+                <a href={grafanaTracesUrl ?? grafanaUrl ?? "#"} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-cyan-300 hover:text-cyan-200">
+                  Open trace search <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : null}
             </div>
-            <p className="mt-3 text-sm leading-6 text-white/62">
-              {grafanaTracesUrl || grafanaUrl
-                ? "Open Grafana trace exploration for sampled requests and drill-down."
-                : "Set a Grafana traces URL in env once Tempo and Grafana trace search are configured."}
-            </p>
-            {grafanaTracesUrl || grafanaUrl ? (
-              <a
-                href={grafanaTracesUrl ?? grafanaUrl ?? "#"}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-white/86 transition hover:bg-white/[0.12]"
-              >
-                Open Trace Search
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            ) : null}
           </section>
         </div>
       </AdminSurface>
