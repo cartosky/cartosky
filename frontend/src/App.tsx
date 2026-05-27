@@ -3803,6 +3803,7 @@ export default function App() {
           onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}
           onVectorHazardClick={model === "nws_hazards" ? setSelectedVectorHazard : undefined}
           showZoomControls={zoomControlsVisible}
+          isDesktopLayout={isDesktopViewerLayout}
           legendButtonVisible={!isDesktopViewerLayout && legendVisible}
           legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
           onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}

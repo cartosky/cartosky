@@ -1045,6 +1045,7 @@ type MapCanvasProps = {
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
   showZoomControls?: boolean;
+  isDesktopLayout?: boolean;
   legendButtonVisible?: boolean;
   legendButtonActive?: boolean;
   onLegendButtonClick?: () => void;
@@ -1090,6 +1091,7 @@ export function MapCanvas({
   anchorGeoJson = null,
   pointLabelsEnabled = true,
   showZoomControls = false,
+  isDesktopLayout = false,
   legendButtonVisible = false,
   legendButtonActive = false,
   onLegendButtonClick,
@@ -2590,7 +2592,10 @@ export function MapCanvas({
       ))}
 
       {(showZoomControls || legendButtonVisible) && (
-        <div className="pointer-events-none fixed left-4 top-[calc(3.5rem+1rem)] z-50 flex flex-col gap-2">
+        <div
+          className="pointer-events-none fixed left-4 z-50 flex flex-col gap-2"
+          style={{ top: isDesktopLayout ? "calc(4.5rem + 10px)" : "calc(3.5rem + 1rem)" }}
+        >
           {showZoomControls && (
             <div className="glass pointer-events-auto overflow-hidden rounded-xl">
               <button

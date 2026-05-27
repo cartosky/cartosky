@@ -140,18 +140,16 @@ function buildDenseLegendTicks(entries: LegendEntry[], targetCount = 6): LegendE
 
 function formatDenseTickValue(value: number): string {
   const absValue = Math.abs(value);
+  // For small values, preserve actual precision rather than collapsing to "0"
   if (absValue < 1) {
-    return "0";
+    return formatValue(value);
   }
-
   if (absValue >= 20) {
     return formatValue(Math.round(value / 10) * 10);
   }
-
   if (absValue >= 5) {
     return formatValue(Math.round(value / 5) * 5);
   }
-
   return formatValue(Math.round(value));
 }
 
@@ -174,13 +172,17 @@ function splitLegendTitle(title: string, units?: string): { title: string; units
 }
 
 function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
+  // entries arrive high-to-low; reverse so index 0 = lowest value = left side
   const displayed = entries.slice().reverse();
-  const ticks = buildDenseLegendTicks(entries, 6);
+  // Build ticks from the low-to-high displayed array
+  const ticks = buildDenseLegendTicks(displayed.slice().reverse(), 6)
+    .map((tick) => displayed.findIndex((e) => e === tick))
+    .filter((i) => i !== -1)
+    .map((i) => ({ entry: displayed[i]!, displayedIndex: i }));
   const stopCount = Math.max(displayed.length - 1, 1);
   const gradientStops = displayed
     .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
     .join(", ");
-  const indexByEntry = new Map(displayed.map((entry, index) => [entry, index]));
 
   return (
     <div className="px-0.5 py-1.5">
@@ -194,16 +196,33 @@ function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
           }}
         />
       </div>
-      <div className="relative mt-2 h-7">
-        {ticks.map((entry, index) => {
-          const displayedIndex = indexByEntry.get(entry) ?? 0;
+      {/* Tick marks */}
+      <div className="relative mt-[3px] h-[5px]">
+        {ticks.map(({ entry, displayedIndex }, index) => {
           const offset = stopCount === 0 ? 0 : (displayedIndex / stopCount) * 100;
           const isFirst = index === 0;
           const isLast = index === ticks.length - 1;
-
           return (
             <div
-              key={`${entry.value}-${index}`}
+              key={`tick-${entry.value}-${index}`}
+              className="absolute top-0 h-full w-px bg-white/40"
+              style={{
+                left: `${offset}%`,
+                transform: isFirst ? "none" : isLast ? "translateX(-100%)" : "translateX(-50%)",
+              }}
+            />
+          );
+        })}
+      </div>
+      {/* Tick labels */}
+      <div className="relative mt-0.5 h-4">
+        {ticks.map(({ entry, displayedIndex }, index) => {
+          const offset = stopCount === 0 ? 0 : (displayedIndex / stopCount) * 100;
+          const isFirst = index === 0;
+          const isLast = index === ticks.length - 1;
+          return (
+            <div
+              key={`label-${entry.value}-${index}`}
               className="absolute top-0"
               style={{
                 left: `${offset}%`,
