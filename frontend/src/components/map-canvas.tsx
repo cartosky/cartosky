@@ -78,6 +78,7 @@ const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
 const FORECAST_SCRUB_MIN_BEHIND = 1;
 /** Minimum ahead-direction slots during forecast scrub. */
 const FORECAST_SCRUB_MIN_AHEAD = 2;
+const MAP_DATA_URL_CAPTURE_INTERVAL_MS = 500;
 const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_AHEAD = 4;
 const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_BEHIND = 1;
 const OBSERVED_MOBILE_SCRUB_PREFETCH_BUDGET = 6;
@@ -1062,6 +1063,7 @@ type MapCanvasProps = {
   onGridFrameEvicted?: (frameUrl: string) => void;
   isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
+  onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
@@ -1106,6 +1108,7 @@ export function MapCanvas({
   onGridFrameEvicted,
   isAnimating = false,
   onMapReady,
+  onLatestMapDataUrl,
   onMapHover,
   onMapHoverEnd,
   onAnchorClick,
@@ -1113,6 +1116,7 @@ export function MapCanvas({
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const latestMapDataUrlRef = useRef<string | null>(null);
   const gridWebglControllerRef = useRef<GridWebglLayerController | null>(null);
   if (!gridWebglControllerRef.current) {
     gridWebglControllerRef.current = new GridWebglLayerController();
@@ -1132,6 +1136,8 @@ export function MapCanvas({
   const scrubDirectionRef = useRef<1 | -1 | 0>(0);
   const onMapReadyRef = useRef(onMapReady);
   onMapReadyRef.current = onMapReady;
+  const onLatestMapDataUrlRef = useRef(onLatestMapDataUrl);
+  onLatestMapDataUrlRef.current = onLatestMapDataUrl;
   const onViewportChangeRef = useRef(onViewportChange);
   onViewportChangeRef.current = onViewportChange;
   const contourRequestTokenRef = useRef(0);
@@ -1545,6 +1551,14 @@ export function MapCanvas({
   }, []);
 
   useEffect(() => {
+    onLatestMapDataUrlRef.current?.(() => latestMapDataUrlRef.current);
+
+    return () => {
+      onLatestMapDataUrlRef.current?.(null);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return;
     }
@@ -1616,6 +1630,58 @@ export function MapCanvas({
       setIsLoaded(false);
     };
   }, [clearAnchorMarkers, enforceLayerOrder]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      latestMapDataUrlRef.current = null;
+      return;
+    }
+    if (isAnimating) {
+      return;
+    }
+
+    let rafId: number | null = null;
+    let warnedCaptureFailure = false;
+    let lastCaptureAt = -Infinity;
+
+    const captureLatestFrame = () => {
+      rafId = null;
+      try {
+        latestMapDataUrlRef.current = map.getCanvas().toDataURL("image/png");
+      } catch (error) {
+        if (!warnedCaptureFailure) {
+          warnedCaptureFailure = true;
+          console.warn("[screenshot] Failed to capture live map canvas frame.", error);
+        }
+      }
+    };
+
+    const scheduleCapture = () => {
+      if (isAnimating) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastCaptureAt < MAP_DATA_URL_CAPTURE_INTERVAL_MS) {
+        return;
+      }
+      if (rafId !== null) {
+        return;
+      }
+      lastCaptureAt = now;
+      rafId = window.requestAnimationFrame(captureLatestFrame);
+    };
+
+    scheduleCapture();
+    map.on("render", scheduleCapture);
+
+    return () => {
+      map.off("render", scheduleCapture);
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [isAnimating, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;

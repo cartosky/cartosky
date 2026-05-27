@@ -381,6 +381,7 @@ export default function App() {
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
+  const latestMapDataUrlGetterRef = useRef<(() => string | null) | null>(null);
   const mapViewRef = useRef({
     lat: MAP_VIEW_DEFAULTS.center[0],
     lon: MAP_VIEW_DEFAULTS.center[1],
@@ -3083,6 +3084,10 @@ export default function App() {
     }
   }, [telemetryRunId, region, forecastHour]);
 
+  const handleLatestMapDataUrl = useCallback((getter: (() => string | null) | null) => {
+    latestMapDataUrlGetterRef.current = getter;
+  }, []);
+
   const handleViewportChange = useCallback((payload: { lat: number; lon: number; z: number }) => {
     if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon) || !Number.isFinite(payload.z)) {
       return;
@@ -3518,11 +3523,13 @@ export default function App() {
     if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
       return null;
     }
-    let capturedMapDataUrl: string | undefined;
-    try {
-      capturedMapDataUrl = map.getCanvas().toDataURL("image/png");
-    } catch (error) {
-      console.warn("[screenshot] Failed to snapshot live map canvas; falling back to offscreen export.", error);
+    let capturedMapDataUrl = latestMapDataUrlGetterRef.current?.() ?? undefined;
+    if (!capturedMapDataUrl) {
+      try {
+        capturedMapDataUrl = map.getCanvas().toDataURL("image/png");
+      } catch (error) {
+        console.warn("[screenshot] Failed to snapshot live map canvas; falling back to offscreen export.", error);
+      }
     }
     const anchors = getActiveAnchorLabels(anchorDisplayGeoJson, zoom)
       .map((anchor) => {
@@ -3537,6 +3544,10 @@ export default function App() {
       .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
 
     const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode);
+    const normalizedActiveGridFrameUrl = normalizeGridFrameUrl(activeGridFrameUrl);
+    const gridReady = gridReadyVersion > 0
+      && Boolean(normalizedActiveGridFrameUrl)
+      && gridReadyFrameUrlsRef.current.has(normalizedActiveGridFrameUrl);
 
     return {
       style,
@@ -3553,6 +3564,8 @@ export default function App() {
         label: selectedVariableLabel || variable || "Variable",
       },
       fh: Number.isFinite(forecastHour) ? Math.round(forecastHour) : 0,
+      isMobile: viewerLayoutMode !== "desktop",
+      gridReady,
       timeAxisMode: selectedTimeAxisMode,
       validTimeISO: currentFrameValidTimeISO,
       sourceStatusLabel: observedSourceStatus?.label ?? null,
@@ -3569,19 +3582,22 @@ export default function App() {
     model,
     selectedRunLabel,
     run,
-    opacity,
     variable,
-    overlayFadeOutZoom,
     contourGeoJsonUrl,
+    vectorGeoJsonUrl,
     basemapMode,
+    activeGridFrameUrl,
     anchorDisplayGeoJson,
     selectedVariableLabel,
     forecastHour,
+    gridReadyVersion,
+    normalizeGridFrameUrl,
     selectedTimeAxisMode,
     currentFrameValidTimeISO,
     observedSourceStatus,
     region,
     selectedRegionLabel,
+    viewerLayoutMode,
   ]);
 
   const handleOpenShareModal = useCallback(() => {
@@ -3781,6 +3797,7 @@ export default function App() {
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}
           onMapReady={handleMapReady}
+          onLatestMapDataUrl={handleLatestMapDataUrl}
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}

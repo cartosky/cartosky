@@ -12,10 +12,12 @@ export type ScreenshotExportState = {
   pitch?: number;
   viewportWidth?: number;
   viewportHeight?: number;
+  isMobile: boolean;
   model: string;
   run: string;
   variable: { key: string; label: string };
   fh: number;
+  gridReady: boolean;
   timeAxisMode?: TimeAxisMode;
   validTimeISO?: string | null;
   sourceStatusLabel?: string | null;
@@ -35,9 +37,10 @@ export type ScreenshotExportOptions = {
 
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
+const NORMALIZED_OUTPUT_WIDTH = 1280;
 const DEFAULT_PIXEL_RATIO = 2;
-const MOBILE_VIEWPORT_MAX_WIDTH = 720;
 const MAP_SETTLE_DELAY_MS = 150;
+const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
 const MAP_LOAD_TIMEOUT_MS = 15_000;
 const MAP_IDLE_TIMEOUT_MS = 15_000;
 const IMAGE_LOAD_TIMEOUT_MS = 5_000;
@@ -207,9 +210,13 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
   const run = state.run.trim() || "Run";
   const baseVariableLabel = state.variable.label.trim() || state.variable.key.trim() || "Variable";
   const units = legend?.units?.trim();
-  const variableLabel = units && !baseVariableLabel.toLowerCase().includes(`(${units.toLowerCase()})`)
-    ? `${baseVariableLabel} (${units})`
-    : baseVariableLabel;
+  const unitsNormalized = units?.toLowerCase().replace(/[()]/g, "").trim() ?? "";
+  const labelNormalized = baseVariableLabel.toLowerCase();
+  const variableLabel = unitsNormalized && labelNormalized.includes(unitsNormalized)
+    ? baseVariableLabel
+    : units
+      ? `${baseVariableLabel} (${units})`
+      : baseVariableLabel;
   if (state.timeAxisMode === "observed") {
     const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
     const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
@@ -803,20 +810,25 @@ export async function exportViewerScreenshotPng(
 
   const stateViewportWidth = Number.isFinite(state.viewportWidth) ? Number(state.viewportWidth) : null;
   const stateViewportHeight = Number.isFinite(state.viewportHeight) ? Number(state.viewportHeight) : null;
-  const isMobileViewport = !Number.isFinite(opts.width) && !Number.isFinite(opts.height)
-    && stateViewportWidth !== null
+  const normalizedViewportSize = stateViewportWidth !== null
     && stateViewportHeight !== null
-    && stateViewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH;
+    && stateViewportWidth > 0
+    && stateViewportHeight > 0
+    ? {
+        width: NORMALIZED_OUTPUT_WIDTH,
+        height: Math.max(1, Math.round(NORMALIZED_OUTPUT_WIDTH / (stateViewportWidth / stateViewportHeight))),
+      }
+    : null;
 
   const width = Number.isFinite(opts.width)
     ? Math.max(1, Math.round(Number(opts.width)))
-    : Number.isFinite(state.viewportWidth)
-      ? Math.max(1, Math.round(Number(state.viewportWidth)))
+    : normalizedViewportSize
+      ? normalizedViewportSize.width
       : DEFAULT_WIDTH;
   const height = Number.isFinite(opts.height)
     ? Math.max(1, Math.round(Number(opts.height)))
-    : Number.isFinite(state.viewportHeight)
-      ? Math.max(1, Math.round(Number(state.viewportHeight)))
+    : normalizedViewportSize
+      ? normalizedViewportSize.height
       : DEFAULT_HEIGHT;
   const pixelRatio = Number.isFinite(opts.pixelRatio)
     ? Math.max(1, Number(opts.pixelRatio))
@@ -837,11 +849,11 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     drawMapImageCover(outputCtx, mapImage, width, height);
-    drawAnchors(outputCtx, state.anchors ?? [], width, height, isMobileViewport);
-    drawOverlay(outputCtx, overlayLines, width, isMobileViewport);
+    drawAnchors(outputCtx, state.anchors ?? [], width, height, state.isMobile);
+    drawOverlay(outputCtx, overlayLines, width, state.isMobile);
 
     try {
-      await drawLogo(outputCtx, width, isMobileViewport);
+      await drawLogo(outputCtx, width, state.isMobile);
     } catch (error) {
       console.warn("[screenshot] Logo load failed; continuing without logo.", error);
     }
@@ -887,7 +899,7 @@ export async function exportViewerScreenshotPng(
   try {
     await waitForMapLoad(map);
     await waitForMapIdle(map);
-    await sleep(MAP_SETTLE_DELAY_MS);
+    await sleep(state.gridReady ? MAP_SETTLE_DELAY_MS : MAP_SETTLE_DELAY_GRID_NOT_READY_MS);
 
     const capturedMapCanvas = map.getCanvas();
     const capturedMapImage = await snapshotCanvasImage(capturedMapCanvas);
