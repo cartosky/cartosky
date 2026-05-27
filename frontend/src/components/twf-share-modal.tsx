@@ -418,7 +418,13 @@ export function TwfShareModal({
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [cropPos, setCropPos] = useState({ x: 0, y: 0 });
-  const [previewBox, setPreviewBox] = useState({ width: 0, height: 0 });
+  const [cropFrameMetrics, setCropFrameMetrics] = useState({
+    containerW: 0,
+    containerH: 0,
+    frameW: 0,
+    frameH: 0,
+    initialY: 0,
+  });
   const [previewImageNaturalSize, setPreviewImageNaturalSize] = useState({ width: 0, height: 0 });
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
   const cropFrameRef = useRef<HTMLDivElement | null>(null);
@@ -550,14 +556,17 @@ export function TwfShareModal({
       (!statusResolved || statusLoading || topicsForumId !== selectedForumId));
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
-  const cropFrameHeight = previewBox.width > 0 ? previewBox.width * 9 / 16 : 0;
-  const cropTravel = Math.max(0, previewBox.height - cropFrameHeight);
-  const cropTopPx = cropTravel > 0 ? cropPos.y * cropTravel : Math.max(0, (previewBox.height - cropFrameHeight) / 2);
-  const canReframeScreenshot = Boolean(screenshotBlobUrl) && cropFrameHeight > 0 && cropFrameHeight < previewBox.height - 1;
+  const cropTravel = Math.max(0, cropFrameMetrics.containerH - cropFrameMetrics.frameH);
+  const cropTopPx = cropTravel > 0
+    ? cropPos.y * cropTravel
+    : cropFrameMetrics.initialY;
+  const canReframeScreenshot = Boolean(screenshotBlobUrl)
+    && cropFrameMetrics.frameH > 0
+    && cropFrameMetrics.frameH < cropFrameMetrics.containerH - 1;
 
   const resetCrop = useCallback(() => {
-    const centeredY = previewBox.height > 0 && cropFrameHeight > 0
-      ? Math.max(0, (previewBox.height - cropFrameHeight) / 2) / previewBox.height
+    const centeredY = cropFrameMetrics.containerH > 0 && cropFrameMetrics.frameH > 0
+      ? Math.max(0, (cropFrameMetrics.containerH - cropFrameMetrics.frameH) / 2) / cropFrameMetrics.containerH
       : 0;
     setCropPos({ x: 0, y: centeredY });
     cropRectRef.current = null;
@@ -565,23 +574,23 @@ export function TwfShareModal({
     setScreenshotUploadError(null);
     setScreenshotUrl(null);
     setScreenshotKey(null);
-  }, [cropFrameHeight, previewBox.height]);
+  }, [cropFrameMetrics.containerH, cropFrameMetrics.frameH]);
 
   const resolveCropRectFromPreview = useCallback((): ScreenshotCropRect | null => {
     if (
       !screenshotBlobUrl
-      || previewBox.width <= 0
-      || previewBox.height <= 0
+      || cropFrameMetrics.containerW <= 0
+      || cropFrameMetrics.containerH <= 0
       || previewImageNaturalSize.width <= 0
       || previewImageNaturalSize.height <= 0
-      || cropFrameHeight <= 0
+      || cropFrameMetrics.frameH <= 0
     ) {
       return null;
     }
 
     const renderedScale = Math.max(
-      previewBox.width / previewImageNaturalSize.width,
-      previewBox.height / previewImageNaturalSize.height,
+      cropFrameMetrics.containerW / previewImageNaturalSize.width,
+      cropFrameMetrics.containerH / previewImageNaturalSize.height,
     );
     if (!Number.isFinite(renderedScale) || renderedScale <= 0) {
       return null;
@@ -589,12 +598,12 @@ export function TwfShareModal({
 
     const renderedWidth = previewImageNaturalSize.width * renderedScale;
     const renderedHeight = previewImageNaturalSize.height * renderedScale;
-    const offsetX = (previewBox.width - renderedWidth) / 2;
-    const offsetY = (previewBox.height - renderedHeight) / 2;
+    const offsetX = (cropFrameMetrics.containerW - renderedWidth) / 2;
+    const offsetY = (cropFrameMetrics.containerH - renderedHeight) / 2;
     const sourceX = Math.max(0, Math.min(previewImageNaturalSize.width, (0 - offsetX) / renderedScale));
     const sourceY = Math.max(0, Math.min(previewImageNaturalSize.height, (cropTopPx - offsetY) / renderedScale));
-    const sourceWidth = Math.max(1, Math.min(previewImageNaturalSize.width - sourceX, previewBox.width / renderedScale));
-    const sourceHeight = Math.max(1, Math.min(previewImageNaturalSize.height - sourceY, cropFrameHeight / renderedScale));
+    const sourceWidth = Math.max(1, Math.min(previewImageNaturalSize.width - sourceX, cropFrameMetrics.frameW / renderedScale));
+    const sourceHeight = Math.max(1, Math.min(previewImageNaturalSize.height - sourceY, cropFrameMetrics.frameH / renderedScale));
 
     return {
       x: sourceX / previewImageNaturalSize.width,
@@ -602,7 +611,7 @@ export function TwfShareModal({
       width: sourceWidth / previewImageNaturalSize.width,
       height: sourceHeight / previewImageNaturalSize.height,
     };
-  }, [cropFrameHeight, cropTopPx, previewBox.height, previewBox.width, previewImageNaturalSize.height, previewImageNaturalSize.width, screenshotBlobUrl]);
+  }, [cropFrameMetrics.containerH, cropFrameMetrics.containerW, cropFrameMetrics.frameH, cropFrameMetrics.frameW, cropTopPx, previewImageNaturalSize.height, previewImageNaturalSize.width, screenshotBlobUrl]);
 
   const buildResolvedCropRect = useCallback((): ScreenshotCropRect | null => {
     return cropRectRef.current ?? resolveCropRectFromPreview();
@@ -710,7 +719,7 @@ export function TwfShareModal({
     setShowDestinationEditor(false);
     setDestinationSaved(false);
     setCropPos({ x: 0, y: 0 });
-    setPreviewBox({ width: 0, height: 0 });
+    setCropFrameMetrics({ containerW: 0, containerH: 0, frameW: 0, frameH: 0, initialY: 0 });
     setPreviewImageNaturalSize({ width: 0, height: 0 });
     cropRectRef.current = null;
     cropDragRef.current = null;
@@ -801,10 +810,12 @@ export function TwfShareModal({
     }
     const element = previewContainerRef.current;
     const updatePreviewBox = () => {
-      setPreviewBox({
-        width: element.clientWidth,
-        height: element.clientHeight,
-      });
+      const containerW = element.offsetWidth;
+      const containerH = element.offsetHeight;
+      const frameW = containerW;
+      const frameH = Math.round(containerW / (16 / 9));
+      const initialY = Math.max(0, Math.round((containerH - frameH) / 2));
+      setCropFrameMetrics({ containerW, containerH, frameW, frameH, initialY });
     };
     updatePreviewBox();
     const observer = new ResizeObserver(updatePreviewBox);
@@ -817,7 +828,7 @@ export function TwfShareModal({
       return;
     }
     resetCrop();
-  }, [cropFrameHeight, previewBox.height, previewBox.width, resetCrop, screenshotBlobUrl]);
+  }, [cropFrameMetrics.containerH, cropFrameMetrics.containerW, cropFrameMetrics.frameH, resetCrop, screenshotBlobUrl]);
 
   const handleCropPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!canReframeScreenshot) {
@@ -832,15 +843,15 @@ export function TwfShareModal({
   }, [canReframeScreenshot, cropTopPx]);
 
   const handleCropPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!cropDragRef.current || cropDragRef.current.pointerId !== event.pointerId || previewBox.height <= 0) {
+    if (!cropDragRef.current || cropDragRef.current.pointerId !== event.pointerId || cropFrameMetrics.containerH <= 0) {
       return;
     }
     const nextTopPx = Math.max(0, Math.min(cropTravel, cropDragRef.current.startTopPx + (event.clientY - cropDragRef.current.startClientY)));
     setCropPos({
       x: 0,
-      y: previewBox.height > 0 ? nextTopPx / previewBox.height : 0,
+      y: cropFrameMetrics.containerH > 0 ? nextTopPx / cropFrameMetrics.containerH : 0,
     });
-  }, [cropTravel, previewBox.height]);
+  }, [cropFrameMetrics.containerH, cropTravel]);
 
   const handleCropPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!cropDragRef.current || cropDragRef.current.pointerId !== event.pointerId) {
@@ -1470,15 +1481,16 @@ export function TwfShareModal({
                       });
                     }}
                   />
-                  {cropFrameHeight > 0 && cropFrameHeight <= previewBox.height && (
+                  {cropFrameMetrics.frameW > 0 && cropFrameMetrics.frameH > 0 && (
                     <div
                       ref={cropFrameRef}
                       className={`absolute left-0 border-2 border-white ${canReframeScreenshot ? "cursor-move" : "cursor-default"}`}
                       style={{
                         top: cropTopPx,
-                        width: previewBox.width,
-                        height: cropFrameHeight,
-                        boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)",
+                        width: cropFrameMetrics.frameW,
+                        height: cropFrameMetrics.frameH,
+                        boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)",
+                        borderRadius: 2,
                         touchAction: "none",
                       }}
                       onPointerDown={handleCropPointerDown}
@@ -1502,18 +1514,19 @@ export function TwfShareModal({
                   Drag to reframe
                 </div>
               )}
+            </div>
 
-              {screenshotBlobUrl && !screenshotBusy && (
+            <div className="mt-1.5 flex items-center justify-between px-1">
+              <span className="text-xs text-white/45">Drag the frame to adjust what gets shared</span>
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={resetCrop}
-                  className="absolute top-2 left-2 rounded-md bg-black/40 px-2 py-1 text-xs text-white/70 transition-colors hover:bg-black/55 hover:text-white"
+                  disabled={!screenshotBlobUrl || screenshotBusy}
+                  className="inline-flex h-7 items-center rounded-md bg-white/[0.08] px-2 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:opacity-50"
                 >
                   Reset
                 </button>
-              )}
-
-              <div className="absolute top-2 right-2 flex items-center gap-1.5">
                 {screenshotBlobUrl && (
                   <Tooltip>
                     <TooltipTrigger asChild>
