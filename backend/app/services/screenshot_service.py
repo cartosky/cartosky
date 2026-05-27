@@ -38,7 +38,7 @@ class ScreenshotService:
             browser = await self._ensure_browser()
             context = await browser.new_context(
                 viewport={"width": SCREENSHOT_VIEWPORT_WIDTH, "height": SCREENSHOT_VIEWPORT_HEIGHT},
-                device_scale_factor=2,
+                device_scale_factor=1,
             )
             page = await context.new_page()
             try:
@@ -49,7 +49,7 @@ class ScreenshotService:
                 params["basemap"] = basemap
                 render_url = urlunsplit(parsed._replace(query=urlencode(params)))
 
-                await page.goto(render_url, wait_until="domcontentloaded", timeout=SCREENSHOT_TIMEOUT_MS)
+                await page.goto(render_url, wait_until="commit", timeout=SCREENSHOT_TIMEOUT_MS)
 
                 await page.wait_for_selector(
                     'div[role="img"][aria-label="Weather map"] canvas',
@@ -57,26 +57,21 @@ class ScreenshotService:
                 )
 
                 await page.wait_for_function(
-                    """() => new Promise((resolve) => {
-                        const checkMap = () => {
-                            const mapInstance = window._cartosky_map;
-                            if (mapInstance) {
-                                if (mapInstance.loaded() && mapInstance.areTilesLoaded()) {
-                                    resolve(true);
-                                    return;
-                                }
-                                mapInstance.once('idle', () => resolve(true));
-                            } else {
-                                setTimeout(checkMap, 100);
-                            }
-                        };
-                        checkMap();
-                        setTimeout(() => resolve(true), 6000);
-                    })""",
+                    """() => {
+                        const canvas = document.querySelector(
+                            'div[role="img"][aria-label="Weather map"] canvas'
+                        );
+                        if (!canvas) return false;
+                        try {
+                            const gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
+                            if (gl) return true;
+                        } catch {}
+                        return canvas.width > 0 && canvas.height > 0;
+                    }""",
                     timeout=SCREENSHOT_TIMEOUT_MS,
                 )
 
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(2000)
 
                 data_url = await page.evaluate(
                     """() => {
