@@ -174,8 +174,10 @@ function splitLegendTitle(title: string, units?: string): { title: string; units
 function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
   // entries arrive high-to-low; reverse so index 0 = lowest value = left side
   const displayed = entries.slice().reverse();
-  // Build ticks from the low-to-high displayed array
-  const ticks = buildDenseLegendTicks(displayed.slice().reverse(), 6)
+  // buildDenseLegendTicks expects high-to-low input (it reverses internally),
+  // so pass the original entries array directly, then map each tick back to
+  // its position in the low-to-high displayed array for offset calculation.
+  const ticks = buildDenseLegendTicks(entries, 6)
     .map((tick) => displayed.findIndex((e) => e === tick))
     .filter((i) => i !== -1)
     .map((i) => ({ entry: displayed[i]!, displayedIndex: i }));
