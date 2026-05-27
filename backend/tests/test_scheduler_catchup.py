@@ -317,14 +317,14 @@ def test_scheduled_targets_for_cycle_use_model_canonical_region() -> None:
     ]
 
 
-def test_hrrr_radar_ptype_schedules_hidden_companion_layers() -> None:
+def test_hrrr_radar_ptype_schedules_single_public_layer() -> None:
     targets = scheduler_module._scheduled_targets_for_cycle(HRRR_MODEL, ["radar_ptype"], 1)
 
     assert ("conus", "radar_ptype", 0) in targets
-    assert ("conus", "radar_ptype_rain", 0) in targets
-    assert ("conus", "radar_ptype_snow", 0) in targets
-    assert ("conus", "radar_ptype_sleet", 0) in targets
-    assert ("conus", "radar_ptype_frzr", 0) in targets
+    assert ("conus", "radar_ptype_rain", 0) not in targets
+    assert ("conus", "radar_ptype_snow", 0) not in targets
+    assert ("conus", "radar_ptype_sleet", 0) not in targets
+    assert ("conus", "radar_ptype_frzr", 0) not in targets
 
 
 def test_resolve_loop_prewarm_targets_use_default_var_and_default_fh() -> None:

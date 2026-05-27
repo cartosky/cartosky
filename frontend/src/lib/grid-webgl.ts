@@ -465,6 +465,11 @@ function categoricalNearestForManifest(manifest: GridManifestResponse | null): b
   return Boolean(manifest?.display_prep?.categorical_nearest);
 }
 
+function radarPtypePackedForManifest(manifest: GridManifestResponse | null): boolean {
+  const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
+  return colorMapId === "radar_ptype";
+}
+
 function supportCoverageThresholdForManifest(manifest: GridManifestResponse | null): number {
   const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
   // Accumulated precip/snow already use transparent_below_min to fade weak edges.
@@ -733,6 +738,7 @@ type ProgramBindings = {
   texSizeLocation: WebGLUniformLocation | null;
   categoricalLocation: WebGLUniformLocation | null;
   categoricalNearestLocation: WebGLUniformLocation | null;
+  radarPtypePackedLocation: WebGLUniformLocation | null;
   supportCoverageThresholdLocation: WebGLUniformLocation | null;
   lowEndEdgeMaxLocation: WebGLUniformLocation | null;
   lowEndEdgeSupportCoverageThresholdLocation: WebGLUniformLocation | null;
@@ -1190,6 +1196,7 @@ export class GridWebglLayerController {
       uniform vec2 u_texSize;
       uniform float u_categorical;
       uniform float u_categoricalNearest;
+      uniform float u_radarPtypePacked;
       uniform float u_supportCoverageThreshold;
       uniform float u_lowEndEdgeMax;
       uniform float u_lowEndEdgeSupportCoverageThreshold;
@@ -1429,18 +1436,88 @@ export class GridWebglLayerController {
         return texture2D(u_lut, vec2(t, 0.5));
       }
 
+      float radarPtypeCode(float decoded) {
+        if (decoded <= -1e29) {
+          return -1.0;
+        }
+        return clamp(floor((floor(decoded + 0.5)) / 66.0), 0.0, 3.0);
+      }
+
+      float radarPtypeLocalBin(float decoded, float code) {
+        return clamp((floor(decoded + 0.5)) - (code * 66.0), 0.0, 65.0);
+      }
+
+      vec4 sampleRadarPtypePacked(sampler2D tex, vec2 uv) {
+        vec2 texel = uv * u_texSize - 0.5;
+        vec2 f = fract(texel);
+        vec2 base = (floor(texel) + 0.5) / u_texSize;
+        vec2 step = 1.0 / u_texSize;
+
+        float v00 = decodeSample(texture2D(tex, base));
+        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
+        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
+        float v11 = decodeSample(texture2D(tex, base + step));
+
+        float bw00 = (1.0 - f.x) * (1.0 - f.y);
+        float bw10 = f.x * (1.0 - f.y);
+        float bw01 = (1.0 - f.x) * f.y;
+        float bw11 = f.x * f.y;
+
+        float c00 = radarPtypeCode(v00);
+        float c10 = radarPtypeCode(v10);
+        float c01 = radarPtypeCode(v01);
+        float c11 = radarPtypeCode(v11);
+
+        float wRain = (c00 == 0.0 ? bw00 : 0.0) + (c10 == 0.0 ? bw10 : 0.0) + (c01 == 0.0 ? bw01 : 0.0) + (c11 == 0.0 ? bw11 : 0.0);
+        float wSnow = (c00 == 1.0 ? bw00 : 0.0) + (c10 == 1.0 ? bw10 : 0.0) + (c01 == 1.0 ? bw01 : 0.0) + (c11 == 1.0 ? bw11 : 0.0);
+        float wSleet = (c00 == 2.0 ? bw00 : 0.0) + (c10 == 2.0 ? bw10 : 0.0) + (c01 == 2.0 ? bw01 : 0.0) + (c11 == 2.0 ? bw11 : 0.0);
+        float wFrzr = (c00 == 3.0 ? bw00 : 0.0) + (c10 == 3.0 ? bw10 : 0.0) + (c01 == 3.0 ? bw01 : 0.0) + (c11 == 3.0 ? bw11 : 0.0);
+
+        float selectedCode = 0.0;
+        float selectedWeight = wRain;
+        if (wSnow > selectedWeight) {
+          selectedCode = 1.0;
+          selectedWeight = wSnow;
+        }
+        if (wSleet > selectedWeight) {
+          selectedCode = 2.0;
+          selectedWeight = wSleet;
+        }
+        if (wFrzr > selectedWeight) {
+          selectedCode = 3.0;
+          selectedWeight = wFrzr;
+        }
+        if (selectedWeight <= 0.0) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+
+        float localSum = 0.0;
+        localSum += c00 == selectedCode ? radarPtypeLocalBin(v00, selectedCode) * bw00 : 0.0;
+        localSum += c10 == selectedCode ? radarPtypeLocalBin(v10, selectedCode) * bw10 : 0.0;
+        localSum += c01 == selectedCode ? radarPtypeLocalBin(v01, selectedCode) * bw01 : 0.0;
+        localSum += c11 == selectedCode ? radarPtypeLocalBin(v11, selectedCode) * bw11 : 0.0;
+        float localBin = localSum / selectedWeight;
+        float packedValue = selectedCode * 66.0 + localBin;
+        float t = clamp((packedValue + 0.5) / 264.0, 0.0, 1.0);
+        return texture2D(u_lut, vec2(t, 0.5));
+      }
+
       void main() {
-        vec4 current = u_categorical > 0.5
+        vec4 current = u_radarPtypePacked > 0.5
+          ? sampleRadarPtypePacked(u_data, v_texCoord)
+          : (u_categorical > 0.5
           ? (u_categoricalNearest > 0.5
             ? sampleCategoricalNearest(u_data, v_texCoord)
             : sampleCategorical(u_data, v_texCoord))
-          : sampleBilinear(u_data, v_texCoord);
+          : sampleBilinear(u_data, v_texCoord));
         vec4 previous = u_hasPrevious > 0.5
-          ? (u_categorical > 0.5
+          ? (u_radarPtypePacked > 0.5
+            ? sampleRadarPtypePacked(u_prevData, v_texCoord)
+            : (u_categorical > 0.5
             ? (u_categoricalNearest > 0.5
               ? sampleCategoricalNearest(u_prevData, v_texCoord)
               : sampleCategorical(u_prevData, v_texCoord))
-            : sampleBilinear(u_prevData, v_texCoord))
+            : sampleBilinear(u_prevData, v_texCoord)))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
         float contourAlpha = contourLineAlpha(v_texCoord) * u_contourColor.a * u_opacity;
@@ -1496,6 +1573,7 @@ export class GridWebglLayerController {
       texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
+      radarPtypePackedLocation: gl.getUniformLocation(this.program, "u_radarPtypePacked"),
       supportCoverageThresholdLocation: gl.getUniformLocation(this.program, "u_supportCoverageThreshold"),
       lowEndEdgeMaxLocation: gl.getUniformLocation(this.program, "u_lowEndEdgeMax"),
       lowEndEdgeSupportCoverageThresholdLocation: gl.getUniformLocation(
@@ -2181,6 +2259,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.dataEncodingLocation, resolveGridDtype(grid.dtype) === "uint16" ? 1 : 0);
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
+    gl.uniform1f(bindings.radarPtypePackedLocation, radarPtypePackedForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.supportCoverageThresholdLocation, supportCoverageThresholdForManifest(this.manifest));
     const lowEndEdgeCleanup = lowEndEdgeCleanupForManifest(this.manifest);
     gl.uniform1f(bindings.lowEndEdgeMaxLocation, lowEndEdgeCleanup.maxValue);

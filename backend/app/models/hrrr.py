@@ -706,9 +706,6 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "snow_component": "csnow",
                 "sleet_component": "cicep",
                 "frzr_component": "cfrzr",
-                "companion_vars": "radar_ptype_rain,radar_ptype_snow,radar_ptype_sleet,radar_ptype_frzr",
-                "composite_mode": "max_alpha_stack",
-                "composite_layers": "rain:radar_ptype_rain;snow:radar_ptype_snow;sleet:radar_ptype_sleet;frzr:radar_ptype_frzr",
             }
         ),
         derived=True,

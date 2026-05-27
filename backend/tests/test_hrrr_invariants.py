@@ -244,17 +244,7 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["derived"] is True
     assert radar_ptype["derive_strategy_id"] == "radar_ptype_combo"
     radar_ptype_capability = capabilities.variable_catalog["radar_ptype"]
-    assert radar_ptype_capability.frontend["companion_vars"] == [
-        "radar_ptype_rain",
-        "radar_ptype_snow",
-        "radar_ptype_sleet",
-        "radar_ptype_frzr",
-    ]
-    assert radar_ptype_capability.frontend["composite_mode"] == "max_alpha_stack"
-    assert radar_ptype_capability.frontend["composite_layers"] == (
-        "rain:radar_ptype_rain;snow:radar_ptype_snow;"
-        "sleet:radar_ptype_sleet;frzr:radar_ptype_frzr"
-    )
+    assert radar_ptype_capability.frontend == {}
     for component_var in [
         "radar_ptype_rain",
         "radar_ptype_snow",

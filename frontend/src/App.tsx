@@ -948,12 +948,6 @@ export default function App() {
   const isObservedGridSelection = useMemo(() => {
     return String(model ?? "").trim().toLowerCase() === "mrms";
   }, [model]);
-  const compositeGridLayerCount = useMemo(() => {
-    return Array.isArray(gridManifest?.composite_layers)
-      ? gridManifest.composite_layers.filter((layer) => Boolean(layer?.id) && Boolean(layer?.var)).length
-      : 0;
-  }, [gridManifest]);
-  const isCompositeGridSelection = compositeGridLayerCount > 0;
   const zoomSelectedGridLod = useMemo(() => {
     if (!gridManifest?.lods?.length) {
       return null;
@@ -961,8 +955,7 @@ export default function App() {
     return selectGridManifestLod(gridManifest, mapZoom);
   }, [gridManifest, mapZoom]);
   const selectedGridLod = useMemo(() => {
-    const useInteractionLod = isScrubbing || isScrubLodHoldActive || isPlaying || isGridPreloadingForPlay;
-    if (!useInteractionLod || (!isObservedGridSelection && !isCompositeGridSelection) || !zoomSelectedGridLod || !gridManifest?.lods?.length) {
+    if (!(isScrubbing || isScrubLodHoldActive) || !isObservedGridSelection || !zoomSelectedGridLod || !gridManifest?.lods?.length) {
       return zoomSelectedGridLod;
     }
 
@@ -971,10 +964,7 @@ export default function App() {
     const currentPixels = Number.isFinite(currentWidth) && Number.isFinite(currentHeight)
       ? Math.max(0, Math.floor(currentWidth) * Math.floor(currentHeight))
       : 0;
-    const effectivePixels = isCompositeGridSelection
-      ? currentPixels * Math.max(1, compositeGridLayerCount)
-      : currentPixels;
-    if (effectivePixels < HIGH_RES_GRID_LOD_PIXEL_THRESHOLD) {
+    if (currentPixels < HIGH_RES_GRID_LOD_PIXEL_THRESHOLD) {
       return zoomSelectedGridLod;
     }
 
@@ -993,17 +983,7 @@ export default function App() {
       ?? null;
 
     return nextCoarserLod ?? zoomSelectedGridLod;
-  }, [
-    compositeGridLayerCount,
-    gridManifest,
-    isCompositeGridSelection,
-    isGridPreloadingForPlay,
-    isObservedGridSelection,
-    isPlaying,
-    isScrubLodHoldActive,
-    isScrubbing,
-    zoomSelectedGridLod,
-  ]);
+  }, [gridManifest, isObservedGridSelection, isScrubLodHoldActive, isScrubbing, zoomSelectedGridLod]);
   const selectedGridLodPixelCount = useMemo(() => {
     const width = Number(selectedGridLod?.width);
     const height = Number(selectedGridLod?.height);
@@ -1027,9 +1007,6 @@ export default function App() {
     );
   }, [isObservedGridSelection, selectedGridLodPixelCount]);
   const gridPlayStartAheadFrames = useMemo(() => {
-    if (isCompositeGridSelection) {
-      return 0;
-    }
     if (isVeryHighResObservedGridPlayback) {
       return VERY_HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES;
     }
@@ -1037,11 +1014,8 @@ export default function App() {
       return HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES;
     }
     return GRID_PLAY_START_AHEAD_FRAMES;
-  }, [isCompositeGridSelection, isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const autoplayReadyAheadFrames = useMemo(() => {
-    if (isCompositeGridSelection) {
-      return 0;
-    }
     if (isVeryHighResObservedGridPlayback) {
       return VERY_HIGH_RES_AUTOPLAY_READY_AHEAD;
     }
@@ -1049,7 +1023,7 @@ export default function App() {
       return HIGH_RES_AUTOPLAY_READY_AHEAD;
     }
     return AUTOPLAY_READY_AHEAD;
-  }, [isCompositeGridSelection, isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const autoplayLookAheadGraceMs = useMemo(() => {
     if (isVeryHighResObservedGridPlayback) {
       return VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS;
@@ -1078,10 +1052,15 @@ export default function App() {
     return GRID_PLAY_STALL_MS;
   }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const compositeLayerSpecs = useMemo(() => {
+    const normalizedModel = String(model ?? "").trim().toLowerCase();
+    const normalizedVariable = String(variable ?? "").trim().toLowerCase();
+    if ((normalizedModel === "hrrr" || normalizedModel === "nam") && normalizedVariable === "radar_ptype") {
+      return [];
+    }
     return Array.isArray(gridManifest?.composite_layers)
       ? gridManifest.composite_layers.filter((layer) => Boolean(layer?.id) && Boolean(layer?.var))
       : [];
-  }, [gridManifest]);
+  }, [gridManifest, model, variable]);
   useEffect(() => {
     if (!model || !resolvedRunForRequests || compositeLayerSpecs.length === 0) {
       setCompositeGridManifests({});
@@ -3533,18 +3512,8 @@ export default function App() {
   }, [buildCompositeGridLayersForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
 
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
-  const preloadRequiredAhead = Number.isFinite(gridPlaybackStartHour)
-    ? Math.min(
-        gridPlayStartAheadFrames,
-        Math.max(0, gridFrameHours.length - (gridFrameIndexByHour.get(Number(gridPlaybackStartHour)) ?? -1) - 1),
-      )
-    : 0;
-  const preloadTargetTotal = Math.max(1, 1 + preloadRequiredAhead);
-  const preloadReadyAtStart = Number.isFinite(gridPlaybackStartHour) && gridReadyHourSet.has(Number(gridPlaybackStartHour)) ? 1 : 0;
-  const preloadBufferedCount = isGridPreloadingForPlay
-    ? Math.min(preloadTargetTotal, preloadReadyAtStart + gridPlaybackAheadReadyCount)
-    : Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
-  const preloadTotal = isGridPreloadingForPlay ? preloadTargetTotal : gridFrameHours.length;
+  const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
+  const preloadTotal = gridFrameHours.length;
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;

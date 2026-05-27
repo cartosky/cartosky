@@ -1191,7 +1191,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   }, [mobileMenuOpen]);
 
   return (
-    <header className="fixed inset-x-0 top-0 z-[60]">
+    <header className="fixed inset-x-0 top-0 z-[80]">
       {/* Isolated blur layer — own compositor layer, never repaints from map activity */}
       <div
         aria-hidden="true"

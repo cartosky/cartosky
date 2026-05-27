@@ -255,7 +255,7 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[70] flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
         <div
           className={cn(
             "pointer-events-auto relative flex flex-col",
