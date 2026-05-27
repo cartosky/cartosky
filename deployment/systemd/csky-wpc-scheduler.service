@@ -13,3 +13,6 @@ WorkingDirectory=/opt/cartosky/backend
 EnvironmentFile=-/etc/cartosky/scheduler-wpc.env
 Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.wpc_poller
+
+[Install]
+WantedBy=multi-user.target
