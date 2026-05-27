@@ -613,10 +613,14 @@ export function TwfShareModal({
       if (!permalink) {
         throw new Error("No permalink available.");
       }
+      const screenshotUrl = new URL(
+        permalink,
+        typeof window !== "undefined" ? window.location.origin : "https://cartosky.com",
+      ).toString();
       const response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: `https://cartosky.com${permalink}` }),
+        body: JSON.stringify({ url: screenshotUrl }),
       });
       if (!response.ok) {
         throw new Error(`Server screenshot failed (${response.status})`);
