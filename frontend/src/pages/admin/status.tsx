@@ -5,9 +5,7 @@ import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/adm
 import {
   fetchAdminAuthStatus,
   fetchAdminStatusRunDetail,
-  fetchAdminStatusQaSummary,
   fetchAdminStatusResults,
-  type StatusQaSummaryResponse,
   type StatusResult,
   type TwfStatus,
 } from "@/lib/admin-api";
@@ -156,7 +154,6 @@ function viewLabel(view: ViewFilter): string {
 
 export default function AdminStatusPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
-  const [qaSummary, setQaSummary] = useState<StatusQaSummaryResponse | null>(null);
   const [windowValue, setWindowValue] = useState<WindowValue>("30d");
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("issues");
@@ -179,19 +176,15 @@ export default function AdminStatusPage() {
         setStatus(authStatus);
         if (!authStatus.linked || !authStatus.admin) return;
 
-        const [response, nextQaSummary] = await Promise.all([
-          fetchAdminStatusResults({
-            window: windowValue,
-            model: modelFilter,
-            limit: 200,
-            includeDetails: false,
-          }),
-          fetchAdminStatusQaSummary(),
-        ]);
+        const response = await fetchAdminStatusResults({
+          window: windowValue,
+          model: modelFilter,
+          limit: 200,
+          includeDetails: false,
+        });
         if (cancelled) return;
         setResults(response.results);
         setSelectedDetail(null);
-        setQaSummary(nextQaSummary);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -343,25 +336,6 @@ export default function AdminStatusPage() {
             />
           </div>
 
-          <div className="grid gap-3 border-t border-white/8 pt-3 md:grid-cols-3">
-            <div className="flex items-center gap-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Store</div>
-              <span className="inline-flex rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/72">
-                {qaSummary?.store_mode === "separate" ? "Separate" : "Shared"}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">QA Reviews</div>
-              <span className="text-sm font-semibold text-white">{qaSummary?.total_reviews ?? 0}</span>
-              {(qaSummary?.warning_reviews ?? 0) > 0 ? (
-                <span className="text-xs text-amber-300">{qaSummary?.warning_reviews} warnings</span>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/44">Latest QA Check</div>
-              <span className="text-sm text-white/72">{formatTimestamp(qaSummary?.latest_checked_at)}</span>
-            </div>
-          </div>
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">

@@ -142,7 +142,7 @@ export default function AdminAnalyticsPage() {
         </div>
       </AdminSurface>
 
-      <AdminSurface title="CartoSky event contract" description="Phase 3 intentionally keeps the taxonomy small. These are the events currently eligible for PostHog capture from the viewer and forecast surfaces.">
+      <AdminSurface title="CartoSky event contract">
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {[
             "viewer_opened",
