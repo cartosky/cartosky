@@ -59,6 +59,19 @@ export type BasemapMode = "light" | "dark";
 
 type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
 
+type AnimatedGridPlaybackState = {
+  frameUrl: string | null;
+  frameHour: number | null;
+  prefetchPivotHour: number | null;
+  compositeGridLayers: Array<{
+    id: string;
+    manifest: GridManifestResponse | null;
+    frameUrl: string | null;
+    frameHour: number | null;
+    legend: LegendPayload | null;
+  }>;
+};
+
 export type VectorHazardSelection = {
   x: number;
   y: number;
@@ -1062,6 +1075,7 @@ type MapCanvasProps = {
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
+  getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
   onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
@@ -1108,6 +1122,7 @@ export function MapCanvas({
   onGridFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
+  getAnimatedGridPlaybackState = null,
   isAnimating = false,
   onMapReady,
   onLatestMapDataUrl,
@@ -1154,6 +1169,7 @@ export function MapCanvas({
   const activeVectorUrlRef = useRef("");
   const vectorTransitionRafRef = useRef<number | null>(null);
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
+  const autoplayGridStateSignatureRef = useRef("");
 
   const view = useMemo(() => {
     return regionViews?.[region] ?? {
@@ -1172,8 +1188,13 @@ export function MapCanvas({
   }, []);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
-  const gridPrefetchUrls = useMemo(() => {
-    if (!gridManifest?.lods?.length || !gridFrameUrl || !Number.isFinite(gridFrameHour)) {
+  const buildGridPrefetchUrls = useCallback((params: {
+    frameUrl: string | null;
+    frameHour: number | null;
+    prefetchPivotHour: number | null;
+  }): string[] => {
+    const { frameUrl, frameHour, prefetchPivotHour } = params;
+    if (!gridManifest?.lods?.length || !frameUrl || !Number.isFinite(frameHour)) {
       return [] as string[];
     }
 
@@ -1197,9 +1218,9 @@ export function MapCanvas({
     // that jumping directly to a far forecast hour immediately prefetches around
     // the destination rather than the currently-displayed frame.  Falls back to
     // gridFrameHour (the presented/visible hour) when no explicit pivot is given.
-    const effectivePivotHour = Number.isFinite(gridPrefetchPivotHour)
-      ? Number(gridPrefetchPivotHour)
-      : Number(gridFrameHour);
+    const effectivePivotHour = Number.isFinite(prefetchPivotHour)
+      ? Number(prefetchPivotHour)
+      : Number(frameHour);
     const pivot = frameHours.indexOf(effectivePivotHour);
     if (pivot < 0) {
       return [] as string[];
@@ -1309,7 +1330,7 @@ export function MapCanvas({
     const pushFrameUrl = (hour: number) => {
       const frame = frameByHour.get(hour);
       const url = normalizeGridUrl(String(frame?.url ?? "").trim());
-      if (url && url !== gridFrameUrl && !urls.includes(url)) {
+      if (url && url !== frameUrl && !urls.includes(url)) {
         urls.push(url);
       }
     };
@@ -1367,10 +1388,127 @@ export function MapCanvas({
       }
     }
     return urls;
-  }, [apiRoot, gridFrameHour, gridFrameUrl, gridLodLevel, gridManifest, gridPrefetchPivotHour, mode]);
+  }, [apiRoot, gridLodLevel, gridManifest, mode]);
+  const gridPrefetchUrls = useMemo(() => {
+    return buildGridPrefetchUrls({
+      frameUrl: gridFrameUrl,
+      frameHour: gridFrameHour,
+      prefetchPivotHour: gridPrefetchPivotHour,
+    });
+  }, [buildGridPrefetchUrls, gridFrameHour, gridFrameUrl, gridPrefetchPivotHour]);
   const shouldUseGridController = Boolean(
     gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0 || compositeGridLayers.length > 0
   );
+
+  const syncGridControllers = useCallback((params: {
+    frameUrl: string | null;
+    frameHour: number | null;
+    prefetchPivotHour: number | null;
+    compositeLayers: AnimatedGridPlaybackState["compositeGridLayers"];
+  }) => {
+    const map = mapRef.current;
+    const controller = gridWebglControllerRef.current;
+    if (!map || !isLoaded || !controller) {
+      return;
+    }
+
+    const { frameUrl, frameHour, prefetchPivotHour, compositeLayers } = params;
+    const activePrefetchUrls = buildGridPrefetchUrls({
+      frameUrl,
+      frameHour,
+      prefetchPivotHour,
+    });
+    const shouldAttachGridController = Boolean(
+      gridActive || gridManifest || frameUrl || activePrefetchUrls.length > 0 || compositeLayers.length > 0
+    );
+
+    if (!shouldAttachGridController) {
+      controller.remove(map);
+      for (const compositeController of compositeGridControllersRef.current.values()) {
+        compositeController.remove(map);
+      }
+      compositeGridControllersRef.current.clear();
+      return;
+    }
+
+    controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
+    controller.update({
+      active: Boolean(gridActive && gridManifest && frameUrl),
+      manifest: gridManifest,
+      lodLevel: gridLodLevel,
+      frameUrl,
+      frameHour,
+      legend: gridLegend,
+      opacity,
+      overlayFadeOutZoom,
+      selectionEpoch,
+      selectionKey,
+      prefetchUrls: activePrefetchUrls,
+      contour: gridContour,
+      rasterPaint: getGridPaintSettings(variable, basemapMode),
+      onFrameVisible: onGridFrameVisible,
+      onFrameReady: onGridFrameReady,
+      onFrameEvicted: onGridFrameEvicted,
+      isAnimating,
+    });
+
+    const activeCompositeLayerIds = new Set<string>();
+    for (const layer of compositeLayers) {
+      const layerId = `${GRID_WEBGL_LAYER_ID}-${layer.id}`;
+      activeCompositeLayerIds.add(layerId);
+      let compositeController = compositeGridControllersRef.current.get(layerId);
+      if (!compositeController) {
+        compositeController = new GridWebglLayerController(layerId);
+        compositeGridControllersRef.current.set(layerId, compositeController);
+      }
+      compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
+      compositeController.update({
+        active: Boolean(gridActive && layer.manifest && layer.frameUrl),
+        manifest: layer.manifest,
+        lodLevel: gridLodLevel,
+        frameUrl: layer.frameUrl,
+        frameHour: layer.frameHour,
+        legend: layer.legend,
+        opacity,
+        overlayFadeOutZoom,
+        selectionEpoch,
+        selectionKey: `${selectionKey}:${layer.id}`,
+        prefetchUrls: [],
+        contour: layer.id === compositeLayers[compositeLayers.length - 1]?.id ? gridContour : null,
+        rasterPaint: getGridPaintSettings(variable, basemapMode),
+        onFrameVisible: onGridFrameVisible,
+        onFrameReady: onGridFrameReady,
+        onFrameEvicted: onGridFrameEvicted,
+        isAnimating,
+      });
+    }
+
+    for (const [layerId, compositeController] of compositeGridControllersRef.current.entries()) {
+      if (activeCompositeLayerIds.has(layerId)) {
+        continue;
+      }
+      compositeController.remove(map);
+      compositeGridControllersRef.current.delete(layerId);
+    }
+  }, [
+    basemapMode,
+    buildGridPrefetchUrls,
+    gridActive,
+    gridContour,
+    gridLegend,
+    gridLodLevel,
+    gridManifest,
+    isAnimating,
+    isLoaded,
+    onGridFrameEvicted,
+    onGridFrameReady,
+    onGridFrameVisible,
+    opacity,
+    overlayFadeOutZoom,
+    selectionEpoch,
+    selectionKey,
+    variable,
+  ]);
 
   const clearAnchorMarkers = useCallback(() => {
     if (anchorHoverLeaveTimeoutRef.current !== null) {
@@ -2216,103 +2354,70 @@ export function MapCanvas({
 
   // --- Grid controller update (runs on every frame / config change) ---
   useEffect(() => {
-    const map = mapRef.current;
-    const controller = gridWebglControllerRef.current;
-    if (!map || !isLoaded || !controller) {
+    if (getAnimatedGridPlaybackState && isAnimating && mode === "autoplay") {
       return;
     }
-
-    if (!shouldUseGridController) {
-      controller.remove(map);
-      for (const compositeController of compositeGridControllersRef.current.values()) {
-        compositeController.remove(map);
-      }
-      compositeGridControllersRef.current.clear();
-      return;
-    }
-
-    controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
-    controller.update({
-      active: Boolean(gridActive && gridManifest && gridFrameUrl),
-      manifest: gridManifest,
-      lodLevel: gridLodLevel,
+    syncGridControllers({
       frameUrl: gridFrameUrl,
       frameHour: gridFrameHour,
-      legend: gridLegend,
-      opacity,
-      overlayFadeOutZoom,
-      selectionEpoch,
-      selectionKey,
-      prefetchUrls: gridPrefetchUrls,
-      contour: gridContour,
-      rasterPaint: getGridPaintSettings(variable, basemapMode),
-      onFrameVisible: onGridFrameVisible,
-      onFrameReady: onGridFrameReady,
-      onFrameEvicted: onGridFrameEvicted,
-      isAnimating,
+      prefetchPivotHour: gridPrefetchPivotHour,
+      compositeLayers: compositeGridLayers,
     });
-
-    const activeCompositeLayerIds = new Set<string>();
-    for (const layer of compositeGridLayers) {
-      const layerId = `${GRID_WEBGL_LAYER_ID}-${layer.id}`;
-      activeCompositeLayerIds.add(layerId);
-      let compositeController = compositeGridControllersRef.current.get(layerId);
-      if (!compositeController) {
-        compositeController = new GridWebglLayerController(layerId);
-        compositeGridControllersRef.current.set(layerId, compositeController);
-      }
-      compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
-      compositeController.update({
-        active: Boolean(gridActive && layer.manifest && layer.frameUrl),
-        manifest: layer.manifest,
-        lodLevel: gridLodLevel,
-        frameUrl: layer.frameUrl,
-        frameHour: layer.frameHour,
-        legend: layer.legend,
-        opacity,
-        overlayFadeOutZoom,
-        selectionEpoch,
-        selectionKey: `${selectionKey}:${layer.id}`,
-        prefetchUrls: [],
-        contour: layer.id === compositeGridLayers[compositeGridLayers.length - 1]?.id ? gridContour : null,
-        rasterPaint: getGridPaintSettings(variable, basemapMode),
-        onFrameVisible: onGridFrameVisible,
-        onFrameReady: onGridFrameReady,
-        onFrameEvicted: onGridFrameEvicted,
-        isAnimating,
-      });
-    }
-
-    for (const [layerId, compositeController] of compositeGridControllersRef.current.entries()) {
-      if (activeCompositeLayerIds.has(layerId)) {
-        continue;
-      }
-      compositeController.remove(map);
-      compositeGridControllersRef.current.delete(layerId);
-    }
   }, [
-    basemapMode,
     compositeGridLayers,
-    gridActive,
     gridFrameHour,
     gridFrameUrl,
-    gridLegend,
-    gridContour,
-    gridLodLevel,
-    gridManifest,
-    gridPrefetchUrls,
+    gridPrefetchPivotHour,
+    getAnimatedGridPlaybackState,
     isAnimating,
-    isLoaded,
-    onGridFrameEvicted,
-    onGridFrameReady,
-    onGridFrameVisible,
-    opacity,
-    overlayFadeOutZoom,
-    selectionEpoch,
-    selectionKey,
-    shouldUseGridController,
-    variable,
+    mode,
+    syncGridControllers,
   ]);
+
+  useEffect(() => {
+    if (!getAnimatedGridPlaybackState || !isAnimating || mode !== "autoplay") {
+      autoplayGridStateSignatureRef.current = "";
+      return;
+    }
+
+    let rafId: number | null = null;
+    const syncAnimatedState = () => {
+      const nextState = getAnimatedGridPlaybackState();
+      if (!nextState) {
+        autoplayGridStateSignatureRef.current = "";
+        rafId = window.requestAnimationFrame(syncAnimatedState);
+        return;
+      }
+      const nextSignature = JSON.stringify({
+        frameUrl: nextState.frameUrl,
+        frameHour: nextState.frameHour,
+        prefetchPivotHour: nextState.prefetchPivotHour,
+        compositeGridLayers: nextState.compositeGridLayers.map((layer) => ({
+          id: layer.id,
+          frameUrl: layer.frameUrl,
+          frameHour: layer.frameHour,
+        })),
+      });
+      if (nextSignature !== autoplayGridStateSignatureRef.current) {
+        autoplayGridStateSignatureRef.current = nextSignature;
+        syncGridControllers({
+          frameUrl: nextState.frameUrl,
+          frameHour: nextState.frameHour,
+          prefetchPivotHour: nextState.prefetchPivotHour,
+          compositeLayers: nextState.compositeGridLayers,
+        });
+      }
+      rafId = window.requestAnimationFrame(syncAnimatedState);
+    };
+
+    syncAnimatedState();
+    return () => {
+      autoplayGridStateSignatureRef.current = "";
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [getAnimatedGridPlaybackState, isAnimating, mode, syncGridControllers]);
 
   // --- Enforce layer order only on structural changes (not every frame) ---
   useEffect(() => {

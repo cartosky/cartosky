@@ -32,7 +32,8 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-export const AUTOPLAY_TICK_MS = 250;
+export const AUTOPLAY_TICK_MS = 120;
+export const AUTOPLAY_UI_SYNC_MS = 120;
 export const AUTOPLAY_READY_AHEAD = 2;
 export const AUTOPLAY_SKIP_WINDOW = 8;
 /** Stall time before the loop attempts to skip ahead to a ready frame. */
