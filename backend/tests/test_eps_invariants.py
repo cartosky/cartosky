@@ -52,18 +52,21 @@ def test_eps_alias_and_herbie_request_invariants() -> None:
     assert EPS_MODEL.default_ensemble_view("rh700") == "mean"
     assert EPS_MODEL.default_ensemble_view("tmp2m_anom") == "mean"
     assert EPS_MODEL.default_ensemble_view("tmp850_anom") == "mean"
+    assert EPS_MODEL.default_ensemble_view("precip_15d_anom") == "mean"
     assert EPS_MODEL.default_ensemble_view("wspd10m") == "mean"
     assert EPS_MODEL.default_ensemble_view("hgt500_anom") == "mean"
     assert EPS_MODEL.supported_ensemble_views("tmp2m") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("rh700") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("tmp2m_anom") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("tmp850_anom") == ["mean"]
+    assert EPS_MODEL.supported_ensemble_views("precip_15d_anom") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("wspd10m") == ["mean"]
     assert EPS_MODEL.supported_ensemble_views("hgt500_anom") == ["mean"]
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m", "mean") == "tmp2m__mean"
     assert EPS_MODEL.resolve_runtime_var_id("rh700", "mean") == "rh700__mean"
     assert EPS_MODEL.resolve_runtime_var_id("tmp2m_anom", "mean") == "tmp2m_anom__mean"
     assert EPS_MODEL.resolve_runtime_var_id("tmp850_anom", "mean") == "tmp850_anom__mean"
+    assert EPS_MODEL.resolve_runtime_var_id("precip_15d_anom", "mean") == "precip_15d_anom__mean"
     assert EPS_MODEL.resolve_runtime_var_id("wspd10m", "mean") == "wspd10m__mean"
     assert EPS_MODEL.resolve_runtime_var_id("hgt500_anom", "mean") == "hgt500_anom__mean"
 
@@ -107,7 +110,7 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "rh700", "tmp2m_anom", "tmp850_anom", "hgt500_anom", "wspd10m"}
+    assert buildable_var_keys == {"tmp2m", "rh700", "tmp2m_anom", "tmp850_anom", "precip_15d_anom", "hgt500_anom", "wspd10m"}
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "na"
@@ -128,6 +131,8 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
     assert ("eps", "tmp850__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp850_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "tmp850_anom__mean") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "precip_15d_anom") in _PACKING_BY_MODEL_VAR
+    assert ("eps", "precip_15d_anom__mean") in _PACKING_BY_MODEL_VAR
     assert ("eps", "hgt500_anom") in _PACKING_BY_MODEL_VAR
     assert ("eps", "hgt500_anom__mean") in _PACKING_BY_MODEL_VAR
 
@@ -229,12 +234,14 @@ def test_eps_runtime_resolution_helpers() -> None:
     assert _resolve_requested_ensemble_view("eps", "rh700", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "tmp2m_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "tmp850_anom", None) == "mean"
+    assert _resolve_requested_ensemble_view("eps", "precip_15d_anom", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "wspd10m", None) == "mean"
     assert _resolve_requested_ensemble_view("eps", "hgt500_anom", None) == "mean"
     assert _runtime_var_id_for_request("eps", "tmp2m", "mean") == "tmp2m__mean"
     assert _runtime_var_id_for_request("eps", "rh700", "mean") == "rh700__mean"
     assert _runtime_var_id_for_request("eps", "tmp2m_anom", "mean") == "tmp2m_anom__mean"
     assert _runtime_var_id_for_request("eps", "tmp850_anom", "mean") == "tmp850_anom__mean"
+    assert _runtime_var_id_for_request("eps", "precip_15d_anom", "mean") == "precip_15d_anom__mean"
     assert _runtime_var_id_for_request("eps", "wspd10m", "mean") == "wspd10m__mean"
     assert _runtime_var_id_for_request("eps", "hgt500_anom", "mean") == "hgt500_anom__mean"
     try:
@@ -273,3 +280,28 @@ def test_eps_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:
         assert spec.selectors.hints["baseline_region"] == "na"
         assert spec.selectors.hints["baseline_version"] == "v1"
         assert spec.selectors.hints["reference_period"] == "1991-2020"
+
+
+def test_eps_precip_15d_anom_uses_mean_precip_component_and_era5_baseline() -> None:
+    var_spec = EPS_MODEL.get_var("precip_15d_anom")
+    runtime_spec = EPS_MODEL.get_var("precip_15d_anom__mean")
+    component_spec = EPS_MODEL.get_var("precip_total__mean")
+    assert var_spec is not None
+    assert runtime_spec is not None
+    assert component_spec is not None
+    assert component_spec.primary is True
+    assert component_spec.derived is False
+    for spec in (var_spec, runtime_spec):
+        assert spec.primary is True
+        assert spec.derived is True
+        assert spec.derive == "precip_accum_anomaly_departure"
+        assert spec.kind == "continuous"
+        assert spec.units == "in"
+        assert spec.selectors.hints["base_component"] == "precip_total__mean"
+        assert spec.selectors.hints["baseline_field"] == "precip_15d"
+        assert spec.selectors.hints["baseline_source"] == "era5"
+        assert spec.selectors.hints["baseline_region"] == "na"
+        assert spec.selectors.hints["baseline_version"] == "v1"
+        assert spec.selectors.hints["reference_period"] == "1991-2020"
+        assert spec.selectors.hints["target_fh"] == 360
+        assert spec.selectors.hints["accumulation_window_hours"] == 360

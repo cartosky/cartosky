@@ -500,6 +500,7 @@ const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
   precip_7d_anom: "PRECIP ANOMALIES",
   precip_10d_anom: "PRECIP ANOMALIES",
   precip_15d_anom: "PRECIP ANOMALIES",
+  precip_16d_anom: "PRECIP ANOMALIES",
   convective: "OBSERVATIONS",
   tornado: "OBSERVATIONS",
   wind: "OBSERVATIONS",

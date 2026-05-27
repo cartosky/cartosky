@@ -38,8 +38,8 @@ from .base import HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, Va
 from .gfs import (
     GFSPlugin,
     GFS_VARS,
-    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
-    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY,
     _precip_anomaly_var_spec,
 )
 
@@ -223,12 +223,12 @@ AIGFS_VARS = {
     "vort500": _aigfs_vort500_spec(),
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
     AIGFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 
@@ -390,10 +390,10 @@ AIGFS_VARIABLE_CATALOG = {
     ),
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
     _precip_anom_constraint = {"min_fh": _precip_anom_fh}
-    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+    if _precip_anom_key in PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY:
         _precip_anom_constraint["max_fh"] = _precip_anom_fh
     AIGFS_VARIABLE_CATALOG[_precip_anom_key] = VariableCapability(
         var_key=_precip_anom_key,

@@ -18,6 +18,7 @@ from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors, VariableCapability
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
+from .gfs import PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
 
 
 EPS_FHS_SYNOPTIC = list(range(0, 361, 6))
@@ -69,6 +70,8 @@ class EPSPlugin(ECMWFPlugin):
             "hgt500__mean": "hgt500__mean",
             "hgt500_anom": "hgt500_anom",
             "hgt500_anom__mean": "hgt500_anom__mean",
+            "precip_15d_anom": "precip_15d_anom",
+            "precip_15d_anom__mean": "precip_15d_anom__mean",
             "wspd10m": "wspd10m",
             "wspd10m__mean": "wspd10m__mean",
             "wind10m": "wspd10m",
@@ -104,7 +107,7 @@ class EPSPlugin(ECMWFPlugin):
         herbie_kwargs = dict(base_request.herbie_kwargs)
         if runtime_var in {"hgt500__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_direct_mean_or_pf_mean"
-        elif runtime_var in {"tmp2m__mean", "tmp850__mean", "tmp850_anom__mean", "rh700__mean", "10u__mean", "10v__mean"}:
+        elif runtime_var in {"tmp2m__mean", "tmp850__mean", "tmp850_anom__mean", "rh700__mean", "10u__mean", "10v__mean", "precip_total__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
         return HerbieRequest(
             model="ifs",
@@ -289,6 +292,11 @@ EPS_VARS = {
         kind="continuous",
         units="F",
     ),
+    "precip_total__mean": replace(
+        ECMWF_VARS["precip_total"],
+        id="precip_total__mean",
+        name="Total Precip (Mean)",
+    ),
     "10u__mean": replace(
         ECMWF_VARS["10u"],
         id="10u__mean",
@@ -319,6 +327,25 @@ EPS_VARS = {
                 "v_component": "10v__mean",
             }
         ),
+    ),
+    "precip_15d_anom": replace(
+        _precip_anomaly_var_spec(
+            "precip_15d_anom",
+            15,
+            PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
+            base_component="precip_total__mean",
+        ),
+        name="15-Day Precip Anomaly",
+    ),
+    "precip_15d_anom__mean": replace(
+        _precip_anomaly_var_spec(
+            "precip_15d_anom__mean",
+            15,
+            PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
+            base_component="precip_total__mean",
+        ),
+        id="precip_15d_anom__mean",
+        name="15-Day Precip Anomaly",
     ),
 }
 
@@ -556,6 +583,69 @@ EPS_VARIABLE_CATALOG = {
         order=3.5,
         group="Temperature",
         frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "precip_total__mean": VariableCapability(
+        var_key="precip_total__mean",
+        name=EPS_VARS["precip_total__mean"].name,
+        selectors=EPS_VARS["precip_total__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="precip_total",
+        default_fh=6,
+        buildable=False,
+        order=10,
+        group="Precipitation",
+        conversion="m_to_in",
+        frontend={"internal_only": True},
+        constraints={"min_fh": 6},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "precip_15d_anom": VariableCapability(
+        var_key="precip_15d_anom",
+        name=EPS_VARS["precip_15d_anom"].name,
+        selectors=EPS_VARS["precip_15d_anom"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_accum_anomaly_departure",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_anom",
+        default_fh=360,
+        buildable=True,
+        order=10.4,
+        group="Anomalies",
+        constraints={"min_fh": 360, "max_fh": 360},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "precip_15d_anom__mean"},
+        },
+    ),
+    "precip_15d_anom__mean": VariableCapability(
+        var_key="precip_15d_anom__mean",
+        name=EPS_VARS["precip_15d_anom__mean"].name,
+        selectors=EPS_VARS["precip_15d_anom__mean"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_accum_anomaly_departure",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_anom",
+        default_fh=360,
+        buildable=False,
+        order=10.4,
+        group="Anomalies",
+        frontend={"internal_only": True},
+        constraints={"min_fh": 360, "max_fh": 360},
         ensemble={
             "supported_views": ["mean"],
             "default_view": "mean",

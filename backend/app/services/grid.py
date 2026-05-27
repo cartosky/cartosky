@@ -1034,12 +1034,15 @@ _PRECIP_ANOM_VARS = (
     "precip_10d_anom",
     "precip_15d_anom",
 )
-for _precip_anom_model in ("gfs", "ecmwf", "aifs", "aigfs"):
-    for _precip_anom_var in _PRECIP_ANOM_VARS:
+for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom"):
+    for _precip_anom_model in ("gfs", "ecmwf", "aigfs"):
         _PACKING_BY_MODEL_VAR[(_precip_anom_model, _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
-for _precip_anom_var in _PRECIP_ANOM_VARS:
     _PACKING_BY_MODEL_VAR[("gefs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
+for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"):
+    _PACKING_BY_MODEL_VAR[("aifs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
+_PACKING_BY_MODEL_VAR[("eps", "precip_15d_anom")] = dict(_PRECIP_ANOM_PACKING)
+_PACKING_BY_MODEL_VAR[("eps", "precip_15d_anom__mean")] = dict(_PRECIP_ANOM_PACKING)
 
 _NDFD_GRID_PACKING_BY_VAR: dict[str, dict[str, Any]] = {
     "mint": {

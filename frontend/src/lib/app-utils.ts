@@ -396,6 +396,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   precip_7d_anom: { label: "7-day Anomaly", group: "PRECIP ANOMALIES", order: 41 },
   precip_10d_anom: { label: "10-day Anomaly", group: "PRECIP ANOMALIES", order: 42 },
   precip_15d_anom: { label: "15-day Anomaly", group: "PRECIP ANOMALIES", order: 43 },
+  precip_16d_anom: { label: "16-day Anomaly", group: "PRECIP ANOMALIES", order: 44 },
   snowfall_total: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
   snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
   snow_6h: { label: "Snowfall (6h)", group: "PRECIPITATION", order: 13.1 },

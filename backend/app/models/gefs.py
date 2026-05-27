@@ -21,8 +21,8 @@ from datetime import datetime
 from .base import BaseModelPlugin, HerbieRequest, ModelCapabilities, RegionSpec, VarSelectors, VarSpec, VariableCapability
 from .gfs import (
     GFS_VARS,
-    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
-    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY,
     _precip_anomaly_var_spec,
 )
 
@@ -43,7 +43,7 @@ GEFS_REGIONS: dict[str, RegionSpec] = {
 }
 
 
-GEFS_FHS = tuple(range(0, 361, 6))
+GEFS_FHS = tuple(range(0, 385, 6))
 
 
 class GEFSPlugin(BaseModelPlugin):
@@ -141,8 +141,8 @@ class GEFSPlugin(BaseModelPlugin):
             "precip_7d_anom__mean": "precip_7d_anom__mean",
             "precip_10d_anom": "precip_10d_anom",
             "precip_10d_anom__mean": "precip_10d_anom__mean",
-            "precip_15d_anom": "precip_15d_anom",
-            "precip_15d_anom__mean": "precip_15d_anom__mean",
+            "precip_16d_anom": "precip_16d_anom",
+            "precip_16d_anom__mean": "precip_16d_anom__mean",
             "t2m": "tmp2m",
             "2t": "tmp2m",
         }
@@ -194,7 +194,7 @@ class GEFSPlugin(BaseModelPlugin):
             "precip_5d_anom__mean",
             "precip_7d_anom__mean",
             "precip_10d_anom__mean",
-            "precip_15d_anom__mean",
+            "precip_16d_anom__mean",
             "tmp2m_anom__mean",
             "tmp850_anom__mean",
             "hgt500__mean",
@@ -632,12 +632,12 @@ GEFS_VARS: dict[str, VarSpec] = {
     ),
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
     GEFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
         base_component="precip_total__mean",
     )
     GEFS_VARS[f"{_precip_anom_key}__mean"] = replace(
@@ -648,10 +648,10 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items(
 
 def _gefs_precip_anomaly_capability(var_key: str, *, internal: bool = False) -> VariableCapability:
     public_key = var_key.removesuffix("__mean")
-    target_fh = PRECIP_ANOM_TARGET_FH_BY_VAR_KEY[public_key]
+    target_fh = PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY[public_key]
     days = int(public_key.split("_", 2)[1].removesuffix("d"))
     constraints = {"min_fh": target_fh}
-    if public_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+    if public_key in PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY:
         constraints["max_fh"] = target_fh
     return VariableCapability(
         var_key=var_key,
@@ -1264,7 +1264,7 @@ GEFS_VARIABLE_CATALOG = {
     ),
 }
 
-for _precip_anom_key in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY:
+for _precip_anom_key in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY:
     GEFS_VARIABLE_CATALOG[_precip_anom_key] = _gefs_precip_anomaly_capability(_precip_anom_key)
     GEFS_VARIABLE_CATALOG[f"{_precip_anom_key}__mean"] = _gefs_precip_anomaly_capability(
         f"{_precip_anom_key}__mean",

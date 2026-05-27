@@ -26,8 +26,8 @@ from .base import (
     VariableCapability,
 )
 from .gfs import (
-    PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY,
-    PRECIP_ANOM_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY,
     _precip_anomaly_var_spec,
 )
 
@@ -134,7 +134,7 @@ class ECMWFPlugin(BaseModelPlugin):
             "precip_5d_anom": "precip_5d_anom",
             "precip_7d_anom": "precip_7d_anom",
             "precip_10d_anom": "precip_10d_anom",
-            "precip_15d_anom": "precip_15d_anom",
+            "precip_16d_anom": "precip_16d_anom",
             "snowfall_total": "snowfall_total",
             "asnow": "snowfall_total",
             "snow10": "snowfall_total",
@@ -224,7 +224,7 @@ class ECMWFPlugin(BaseModelPlugin):
         return ordered
 
 
-ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 361, 6))
+ECMWF_OPER_FHS = list(range(0, 145, 3)) + list(range(150, 385, 6))
 ECMWF_SCDA_FHS = list(range(0, 145, 3))
 ECMWF_SHORT_CUTOFF_CYCLE_HOURS = {6, 18}
 ECMWF_SCDA_RETIREMENT_RUN = datetime(2026, 5, 12, 6, tzinfo=timezone.utc)
@@ -1009,12 +1009,12 @@ ECMWF_VARS: dict[str, VarSpec] = {
     ),
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
     ECMWF_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _days,
-        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 
@@ -1034,7 +1034,7 @@ ECMWF_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "precip_5d_anom": "precip_anom",
     "precip_7d_anom": "precip_anom",
     "precip_10d_anom": "precip_anom",
-    "precip_15d_anom": "precip_anom",
+    "precip_16d_anom": "precip_anom",
     "ptype_intensity": "ptype_intensity",
     "ptype_intensity_rain": "ptype_intensity_rain",
     "ptype_intensity_snow": "ptype_intensity_snow",
@@ -1064,7 +1064,7 @@ ECMWF_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_5d_anom": 120,
     "precip_7d_anom": 168,
     "precip_10d_anom": 240,
-    "precip_15d_anom": 360,
+    "precip_16d_anom": 384,
     "ptype_intensity": 6,
     "ptype_intensity_rain": 6,
     "ptype_intensity_snow": 6,
@@ -1094,7 +1094,7 @@ ECMWF_ORDER_BY_VAR_KEY: dict[str, float] = {
     "precip_5d_anom": 10.1,
     "precip_7d_anom": 10.2,
     "precip_10d_anom": 10.3,
-    "precip_15d_anom": 10.4,
+    "precip_16d_anom": 10.4,
     "snowfall_total": 11,
     "snowfall_kuchera_total": 14,
     "ice_total": 14.5,
@@ -1122,7 +1122,7 @@ ECMWF_GROUP_BY_VAR_KEY: dict[str, str] = {
     "precip_5d_anom": "Anomalies",
     "precip_7d_anom": "Anomalies",
     "precip_10d_anom": "Anomalies",
-    "precip_15d_anom": "Anomalies",
+    "precip_16d_anom": "Anomalies",
     "ptype_intensity": "Precipitation",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
@@ -1167,11 +1167,11 @@ ECMWF_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
     },
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _precip_anom_constraint: dict[str, int] = {
         "min_fh": _precip_anom_fh,
     }
-    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+    if _precip_anom_key in PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY:
         _precip_anom_constraint["max_fh"] = _precip_anom_fh
     ECMWF_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 

@@ -1001,14 +1001,23 @@ GFS_VARS: dict[str, VarSpec] = {
 }
 
 
-PRECIP_ANOM_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_5d_anom": 120,
     "precip_7d_anom": 168,
     "precip_10d_anom": 240,
     "precip_15d_anom": 360,
 }
-PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_15d_anom": 360,
+}
+PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+    "precip_5d_anom": 120,
+    "precip_7d_anom": 168,
+    "precip_10d_anom": 240,
+    "precip_16d_anom": 384,
+}
+PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY: dict[str, int] = {
+    "precip_16d_anom": 384,
 }
 
 
@@ -1042,12 +1051,12 @@ def _precip_anomaly_var_spec(
     )
 
 
-for _precip_anom_days, _precip_anom_fh in ((5, 120), (7, 168), (10, 240), (15, 360)):
-    _precip_anom_key = f"precip_{_precip_anom_days}d_anom"
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
+    _precip_anom_days = int(_precip_anom_key.split("_", 2)[1].removesuffix("d"))
     GFS_VARS[_precip_anom_key] = _precip_anomaly_var_spec(
         _precip_anom_key,
         _precip_anom_days,
-        PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
 
 GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
@@ -1077,7 +1086,7 @@ GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "precip_5d_anom": "precip_anom",
     "precip_7d_anom": "precip_anom",
     "precip_10d_anom": "precip_anom",
-    "precip_15d_anom": "precip_anom",
+    "precip_16d_anom": "precip_anom",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
     "ice_total": "ice_total",
@@ -1093,7 +1102,7 @@ GFS_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "precip_5d_anom": 120,
     "precip_7d_anom": 168,
     "precip_10d_anom": 240,
-    "precip_15d_anom": 360,
+    "precip_16d_anom": 384,
     "snowfall_total": 6,
     "snowfall_kuchera_total": 6,
     "ice_total": 6,
@@ -1120,7 +1129,7 @@ GFS_ORDER_BY_VAR_KEY: dict[str, float] = {
     "precip_5d_anom": 10.1,
     "precip_7d_anom": 10.2,
     "precip_10d_anom": 10.3,
-    "precip_15d_anom": 10.4,
+    "precip_16d_anom": 10.4,
     "snowfall_total": 11,
     "ice_total": 17.5,
     "wspd10m": 12,
@@ -1151,7 +1160,7 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "precip_5d_anom": "Anomalies",
     "precip_7d_anom": "Anomalies",
     "precip_10d_anom": "Anomalies",
-    "precip_15d_anom": "Anomalies",
+    "precip_16d_anom": "Anomalies",
     "snowfall_total": "Precipitation",
     "snowfall_kuchera_total": "Precipitation",
     "ice_total": "Precipitation",
@@ -1194,11 +1203,11 @@ GFS_CONSTRAINTS_BY_VAR_KEY: dict[str, dict[str, int]] = {
     },
 }
 
-for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.items():
+for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.items():
     _precip_anom_constraint: dict[str, int] = {
         "min_fh": _precip_anom_fh,
     }
-    if _precip_anom_key in PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY:
+    if _precip_anom_key in PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY:
         _precip_anom_constraint["max_fh"] = _precip_anom_fh
     GFS_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 

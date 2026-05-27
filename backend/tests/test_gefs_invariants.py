@@ -15,7 +15,7 @@ from app.models.gefs import GEFS_MODEL
 
 
 def test_gefs_target_fhs_invariants() -> None:
-    expected = list(range(0, 361, 6))
+    expected = list(range(0, 385, 6))
     assert GEFS_MODEL.target_fhs(0) == expected
     assert GEFS_MODEL.target_fhs(12) == expected
 
@@ -167,7 +167,7 @@ def test_gefs_buildable_var_set_and_defaults_invariants() -> None:
         "precip_5d_anom",
         "precip_7d_anom",
         "precip_10d_anom",
-        "precip_15d_anom",
+        "precip_16d_anom",
         "precip_total",
         "pwat",
         "rh2m",
