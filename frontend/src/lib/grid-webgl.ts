@@ -87,6 +87,8 @@ export type GridWebglLayerConfig = {
   onFrameReady?: ((frameUrl: string) => void) | null;
   /** Fired when a frame is no longer texture-ready. */
   onFrameEvicted?: ((frameUrl: string) => void) | null;
+  /** Optional repaint scheduler for callers that need to batch multiple grid layers. */
+  requestRepaint?: (() => void) | null;
 };
 
 function mercatorXFromMeters(x: number): number {
@@ -775,6 +777,7 @@ export class GridWebglLayerController {
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private onFrameEvicted: ((frameUrl: string) => void) | null = null;
+  private requestRepaintCallback: (() => void) | null = null;
   private frameCache = new LruStore<CachedFrame>();
   private frameCacheBytes = 0;
   private invalidFrameUrls = new Set<string>();
@@ -833,6 +836,14 @@ export class GridWebglLayerController {
       selection_key: this.selectionKey || null,
       webgl_backend: this.isWebGL2 ? "webgl2" : "webgl1",
     };
+  }
+
+  private requestRepaint() {
+    if (this.requestRepaintCallback) {
+      this.requestRepaintCallback();
+      return;
+    }
+    this.map?.triggerRepaint();
   }
 
   private buildPreparedUploadCacheKey(
@@ -1034,6 +1045,7 @@ export class GridWebglLayerController {
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
     this.onFrameEvicted = config.onFrameEvicted ?? null;
+    this.requestRepaintCallback = config.requestRepaint ?? null;
     if (this.legend !== config.legend) {
       this.legend = config.legend;
       this.rebuildLegendTexture();
@@ -1042,7 +1054,7 @@ export class GridWebglLayerController {
     const nextSignature = this.buildFrameSignature(this.frameUrl);
     if (!this.active || !this.frameUrl || !this.manifest) {
       this.currentFrameSignature = nextSignature;
-      this.map?.triggerRepaint();
+      this.requestRepaint();
       return;
     }
 
@@ -1065,7 +1077,7 @@ export class GridWebglLayerController {
       const prefetchUrl = prioritizedPrefetchUrls[index];
       this.scheduleTextureWarm(prefetchUrl, index < highPriorityCount ? "high" : "normal");
     }
-    this.map?.triggerRepaint();
+    this.requestRepaint();
   }
 
   remove(map?: maplibregl.Map | null) {
@@ -1763,7 +1775,7 @@ export class GridWebglLayerController {
     this.currentTextureSignature = signature;
     this.transitionStartedAt = performance.now();
     this.markFrameRetained(frameUrl);
-    this.map?.triggerRepaint();
+    this.requestRepaint();
   }
 
   private async ensureFrameLoaded(frameUrl: string, signature: string | null) {
@@ -2105,7 +2117,7 @@ export class GridWebglLayerController {
     }
 
     if (warmedAny) {
-      this.map?.triggerRepaint();
+      this.requestRepaint();
     }
 
     if (this.textureWarmQueue.length > 0 && this.textureWarmRafId === null && typeof window !== "undefined") {
@@ -2234,7 +2246,7 @@ export class GridWebglLayerController {
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     if (this.hasPreviousTexture && mixAmount < 1) {
-      this.map?.triggerRepaint();
+      this.requestRepaint();
     } else if (mixAmount >= 1) {
       this.hasPreviousTexture = false;
     }

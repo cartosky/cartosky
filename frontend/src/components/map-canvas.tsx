@@ -69,6 +69,7 @@ type AnimatedGridPlaybackState = {
     frameUrl: string | null;
     frameHour: number | null;
     legend: LegendPayload | null;
+    prefetchUrls?: string[];
   }>;
 };
 
@@ -1035,12 +1036,14 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
       },
-      {
-        id: "twf-labels",
-        type: "raster",
-        source: "twf-labels",
-        paint: labelPaint,
-      },
+      ...(screenshotMode
+        ? []
+        : [{
+            id: "twf-labels",
+            type: "raster",
+            source: "twf-labels",
+            paint: labelPaint,
+          } as LayerSpecification]),
       ...buildVectorBufferLayers(),
     ],
   };
@@ -1056,6 +1059,7 @@ type MapCanvasProps = {
     frameUrl: string | null;
     frameHour: number | null;
     legend: LegendPayload | null;
+    prefetchUrls?: string[];
   }>;
   gridLodLevel?: number | null;
   gridFrameUrl?: string | null;
@@ -1153,6 +1157,28 @@ export function MapCanvas({
     gridWebglControllerRef.current = new GridWebglLayerController();
   }
   const compositeGridControllersRef = useRef<Map<string, GridWebglLayerController>>(new Map());
+  const gridRepaintRafRef = useRef<number | null>(null);
+  const requestGridRepaint = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+    if (gridRepaintRafRef.current !== null) {
+      return;
+    }
+    gridRepaintRafRef.current = window.requestAnimationFrame(() => {
+      gridRepaintRafRef.current = null;
+      mapRef.current?.triggerRepaint();
+    });
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (gridRepaintRafRef.current !== null) {
+        window.cancelAnimationFrame(gridRepaintRafRef.current);
+        gridRepaintRafRef.current = null;
+      }
+    };
+  }, []);
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
@@ -1206,16 +1232,18 @@ export function MapCanvas({
     frameUrl: string | null;
     frameHour: number | null;
     prefetchPivotHour: number | null;
+    manifest?: GridManifestResponse | null;
   }): string[] => {
     const { frameUrl, frameHour, prefetchPivotHour } = params;
-    if (!gridManifest?.lods?.length || !frameUrl || !Number.isFinite(frameHour)) {
+    const sourceManifest = params.manifest ?? gridManifest;
+    if (!sourceManifest?.lods?.length || !frameUrl || !Number.isFinite(frameHour)) {
       return [] as string[];
     }
 
-    const isObservedGrid = String(gridManifest.model ?? "").trim().toLowerCase() === "mrms";
-    const lod = gridManifest.lods.find((entry) => Number(entry?.level) === Number(gridLodLevel))
-      ?? gridManifest.lods.find((entry) => Number(entry?.level) === 0)
-      ?? gridManifest.lods[0]
+    const isObservedGrid = String(sourceManifest.model ?? "").trim().toLowerCase() === "mrms";
+    const lod = sourceManifest.lods.find((entry) => Number(entry?.level) === Number(gridLodLevel))
+      ?? sourceManifest.lods.find((entry) => Number(entry?.level) === 0)
+      ?? sourceManifest.lods[0]
       ?? null;
     const frames = Array.isArray(lod?.frames) ? lod.frames : [];
     const frameByHour = new Map<number, typeof frames[number]>();
@@ -1408,6 +1436,7 @@ export function MapCanvas({
       frameUrl: gridFrameUrl,
       frameHour: gridFrameHour,
       prefetchPivotHour: gridPrefetchPivotHour,
+      manifest: gridManifest,
     });
   }, [buildGridPrefetchUrls, gridFrameHour, gridFrameUrl, gridPrefetchPivotHour]);
   const shouldUseGridController = Boolean(
@@ -1463,6 +1492,7 @@ export function MapCanvas({
       onFrameVisible: onGridFrameVisible,
       onFrameReady: onGridFrameReady,
       onFrameEvicted: onGridFrameEvicted,
+      requestRepaint: requestGridRepaint,
       isAnimating,
     });
 
@@ -1487,12 +1517,18 @@ export function MapCanvas({
         overlayFadeOutZoom,
         selectionEpoch,
         selectionKey: `${selectionKey}:${layer.id}`,
-        prefetchUrls: [],
+        prefetchUrls: layer.prefetchUrls ?? buildGridPrefetchUrls({
+          frameUrl: layer.frameUrl,
+          frameHour: layer.frameHour,
+          prefetchPivotHour,
+          manifest: layer.manifest,
+        }),
         contour: layer.id === compositeLayers[compositeLayers.length - 1]?.id ? gridContour : null,
         rasterPaint: getGridPaintSettings(variable, basemapMode),
         onFrameVisible: onGridFrameVisible,
         onFrameReady: onGridFrameReady,
         onFrameEvicted: onGridFrameEvicted,
+        requestRepaint: requestGridRepaint,
         isAnimating,
       });
     }
@@ -1519,6 +1555,7 @@ export function MapCanvas({
     onGridFrameVisible,
     opacity,
     overlayFadeOutZoom,
+    requestGridRepaint,
     selectionEpoch,
     selectionKey,
     variable,

@@ -1223,11 +1223,6 @@ export default function App() {
       };
     }).filter((layer) => layer.manifest && layer.frameUrl);
   }, [apiRoot, compositeGridManifests, compositeLayerSpecs, mapZoom, opacity, selectedGridLod]);
-  const compositeGridLayers = useMemo(() => {
-    return buildCompositeGridLayersForHour(
-      Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null,
-    );
-  }, [buildCompositeGridLayersForHour, resolvedGridDisplayHour]);
   const activeGridFrameUrl = useMemo(() => {
     const frameUrl = activeGridFrame?.url;
     if (!frameUrl) {
@@ -1272,23 +1267,39 @@ export default function App() {
     }
     return normalizeGridFrameUrl(frameUrl);
   }, [gridFrameByHour, normalizeGridFrameUrl]);
-  const isGridFrameReady = useCallback((frameUrl: string | null | undefined): boolean => {
-    const normalized = normalizeGridFrameUrl(frameUrl);
-    if (!normalized) {
+  const compositeFrameUrlsForHour = useCallback((hour: number | null | undefined): string[] => {
+    if (compositeLayerSpecs.length === 0 || !Number.isFinite(hour)) {
+      return [];
+    }
+    const layers = buildCompositeGridLayersForHour(Number(hour));
+    if (layers.length !== compositeLayerSpecs.length) {
+      return [];
+    }
+    return layers
+      .map((layer) => normalizeGridFrameUrl(layer.frameUrl))
+      .filter(Boolean);
+  }, [buildCompositeGridLayersForHour, compositeLayerSpecs.length, normalizeGridFrameUrl]);
+  const isGridHourReady = useCallback((hour: number | null | undefined): boolean => {
+    if (!Number.isFinite(hour)) {
       return false;
     }
-    return gridReadyFrameUrlsRef.current.has(normalized);
-  }, [normalizeGridFrameUrl]);
+    if (compositeLayerSpecs.length > 0) {
+      const frameUrls = compositeFrameUrlsForHour(Number(hour));
+      return frameUrls.length === compositeLayerSpecs.length
+        && frameUrls.every((frameUrl) => gridReadyFrameUrlsRef.current.has(frameUrl));
+    }
+    const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(Number(hour))?.url);
+    return Boolean(frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl));
+  }, [compositeFrameUrlsForHour, compositeLayerSpecs.length, gridFrameByHour, normalizeGridFrameUrl]);
   const gridReadyHours = useMemo(() => {
     const readyHours: number[] = [];
     for (const hour of gridFrameHours) {
-      const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(hour)?.url);
-      if (frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl)) {
+      if (isGridHourReady(hour)) {
         readyHours.push(hour);
       }
     }
     return readyHours;
-  }, [gridFrameByHour, gridFrameHours, gridReadyVersion, normalizeGridFrameUrl]);
+  }, [gridFrameHours, gridReadyVersion, isGridHourReady]);
   const gridReadyHourSet = useMemo(() => {
     return new Set(gridReadyHours);
   }, [gridReadyHours]);
@@ -1321,6 +1332,9 @@ export default function App() {
   const presentedGridFrameUrl = useMemo(() => {
     return gridFrameUrlForHour(presentedGridDisplayHour);
   }, [gridFrameUrlForHour, presentedGridDisplayHour]);
+  const compositeGridLayers = useMemo(() => {
+    return buildCompositeGridLayersForHour(presentedGridDisplayHour);
+  }, [buildCompositeGridLayersForHour, presentedGridDisplayHour]);
   const countGridAheadReadyFrames = useCallback((currentHour: number, maxAhead: number): number => {
     if (gridFrameHours.length === 0 || maxAhead <= 0) {
       return 0;
@@ -3040,12 +3054,7 @@ export default function App() {
     }
 
     const currentHour = Number(gridPlaybackStartHour);
-    const currentUrl = normalizeGridFrameUrl(gridFrameByHour.get(currentHour)?.url);
-    if (!currentUrl) {
-      return;
-    }
-
-    const currentReady = isGridFrameReady(currentUrl);
+    const currentReady = isGridHourReady(currentHour);
     const stalledMs = pendingLoopStartMetricRef.current
       ? Math.max(0, performance.now() - pendingLoopStartMetricRef.current.startedAt)
       : 0;
@@ -3063,16 +3072,14 @@ export default function App() {
     }
     setIsPlaying(true);
   }, [
-    gridFrameByHour,
     gridFrameHours,
     gridPlaybackStartHour,
     gridReadyVersion,
-    isGridFrameReady,
     isGridPlayable,
     isGridPlaybackStartReady,
     isGridPreloadingForPlay,
     gridPlayStallMs,
-    normalizeGridFrameUrl,
+    isGridHourReady,
     resetGridPlaybackWaitState,
     showTransientFrameStatus,
   ]);
@@ -3704,10 +3711,7 @@ export default function App() {
       }));
 
     const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode);
-    const normalizedActiveGridFrameUrl = normalizeGridFrameUrl(activeGridFrameUrl);
-    const gridReady = gridReadyVersion > 0
-      && Boolean(normalizedActiveGridFrameUrl)
-      && gridReadyFrameUrlsRef.current.has(normalizedActiveGridFrameUrl);
+    const gridReady = gridReadyVersion > 0 && isGridHourReady(resolvedGridDisplayHour);
 
     return {
       style,
@@ -3747,12 +3751,12 @@ export default function App() {
     contourGeoJsonUrl,
     vectorGeoJsonUrl,
     basemapMode,
-    activeGridFrameUrl,
     anchorDisplayGeoJson,
     selectedVariableLabel,
     forecastHour,
     gridReadyVersion,
-    normalizeGridFrameUrl,
+    isGridHourReady,
+    resolvedGridDisplayHour,
     selectedTimeAxisMode,
     currentFrameValidTimeISO,
     observedSourceStatus,
@@ -3930,8 +3934,8 @@ export default function App() {
           gridManifest={isGridLowMidActive ? gridManifest : null}
           compositeGridLayers={isGridLowMidActive ? compositeGridLayers : []}
           gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
-          gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? activeGridFrameUrl : null}
-          gridFrameHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
+          gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
+          gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridPrefetchPivotHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
