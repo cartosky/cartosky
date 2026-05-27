@@ -1278,13 +1278,13 @@ export function TwfShareModal({
         {/* Screenshot preview */}
         <TooltipProvider delayDuration={250}>
           <div className="px-4">
-            <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+            <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
               {screenshotBlobUrl ? (
                 <>
                   <img
                     src={screenshotBlobUrl}
                     alt="Screenshot preview"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-contain"
                   />
 
                   <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
