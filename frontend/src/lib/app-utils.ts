@@ -984,16 +984,17 @@ export function buildLegend(meta: LegendMeta | null | undefined, opacity: number
     return null;
   }
   const metaWithIds = meta as LegendMeta & { var_key?: string; spec_key?: string; id?: string; var?: string };
+  const legendId = String(metaWithIds.var_key ?? metaWithIds.spec_key ?? metaWithIds.id ?? metaWithIds.var ?? "").toLowerCase();
   const isPtypeIntensity = isPtypeIntensityLegendMeta(metaWithIds);
   const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
   const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
     ? "Legend"
-    : rawTitle;
+    : makeVariableLabel(legendId, rawTitle);
   const title = isPtypeIntensity ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
   const units = normalizeLegendUnits(meta.units, metaWithIds);
   const legendMetadata = {
     kind: metaWithIds.kind,
-    id: metaWithIds.var_key ?? metaWithIds.spec_key ?? metaWithIds.id ?? metaWithIds.var,
+    id: legendId || (metaWithIds.var_key ?? metaWithIds.spec_key ?? metaWithIds.id ?? metaWithIds.var),
     note: typeof meta.legend_note === "string" ? meta.legend_note.trim() || undefined : undefined,
     ptype_breaks: metaWithIds.ptype_breaks,
     ptype_order: metaWithIds.ptype_order,

@@ -27,17 +27,26 @@ export type ScreenshotExportState = {
   anchors?: Array<{ x: number; y: number; label: string; cityName: string }>;
 };
 
+export type ScreenshotCropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type ScreenshotExportOptions = {
   width?: number;
   height?: number;
   pixelRatio?: number;
   legend?: LegendPayload | null;
   overlayLines?: string[];
+  cropRect?: ScreenshotCropRect | null;
 };
 
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
 const NORMALIZED_OUTPUT_WIDTH = 1280;
+const CROPPED_OUTPUT_HEIGHT = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
@@ -831,12 +840,16 @@ export async function exportViewerScreenshotPng(
       }
     : null;
 
-  const width = Number.isFinite(opts.width)
+  const width = opts.cropRect
+    ? NORMALIZED_OUTPUT_WIDTH
+    : Number.isFinite(opts.width)
     ? Math.max(1, Math.round(Number(opts.width)))
     : normalizedViewportSize
       ? normalizedViewportSize.width
       : DEFAULT_WIDTH;
-  const height = Number.isFinite(opts.height)
+  const height = opts.cropRect
+    ? CROPPED_OUTPUT_HEIGHT
+    : Number.isFinite(opts.height)
     ? Math.max(1, Math.round(Number(opts.height)))
     : normalizedViewportSize
       ? normalizedViewportSize.height
@@ -860,7 +873,20 @@ export async function exportViewerScreenshotPng(
     outputCtx.imageSmoothingQuality = "high";
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
-    drawMapImageCover(outputCtx, mapImage, width, height);
+    if (opts.cropRect) {
+      const dims = imageSourceDimensions(mapImage);
+      if (dims) {
+        const sx = opts.cropRect.x * dims.width;
+        const sy = opts.cropRect.y * dims.height;
+        const sw = opts.cropRect.width * dims.width;
+        const sh = opts.cropRect.height * dims.height;
+        outputCtx.drawImage(mapImage, sx, sy, sw, sh, 0, 0, width, height);
+      } else {
+        drawMapImageCover(outputCtx, mapImage, width, height);
+      }
+    } else {
+      drawMapImageCover(outputCtx, mapImage, width, height);
+    }
     drawAnchors(outputCtx, state.anchors ?? [], width, height, state.isMobile, scaleFactor);
     drawOverlay(outputCtx, overlayLines, width, scaleFactor);
 
