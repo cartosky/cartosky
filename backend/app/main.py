@@ -19,7 +19,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
@@ -46,6 +46,7 @@ from .models.serialization import (
     serialize_variable_capability,
 )
 from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
+from .services.screenshot_service import screenshot_service
 from .services.boundary_tiles import (
     BOUNDARIES_MBTILES,
     BOUNDARY_CACHE_HIT,
@@ -499,6 +500,19 @@ app.add_middleware(
 # (e.g. pre-compressed boundary MVT tiles), so no interference with existing
 # endpoints.  Added *after* CORSMiddleware so it wraps the outermost layer.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    try:
+        await screenshot_service._ensure_browser()
+    except Exception as exc:
+        logger.warning("Screenshot service failed to warm browser: %s", exc)
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await screenshot_service.close()
 
 
 def _prometheus_route_label(request: Request) -> str:
@@ -1227,6 +1241,26 @@ async def twf_status(current_user: ClerkPrincipal = Depends(require_clerk_user))
     if sess.photo_url:
         payload["photo_url"] = sess.photo_url
     return payload
+
+
+@app.post("/api/v4/share/screenshot")
+async def generate_share_screenshot(request: Request) -> Response:
+    body = await request.json()
+    url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
+    if not url:
+        return JSONResponse({"error": "url is required"}, status_code=400)
+
+    parsed = urlparse(url)
+    allowed_hosts = {"cartosky.com", "www.cartosky.com", "127.0.0.1", "localhost"}
+    if parsed.hostname not in allowed_hosts:
+        return JSONResponse({"error": "URL not allowed"}, status_code=400)
+
+    try:
+        png_bytes = await screenshot_service.render(url)
+        return Response(content=png_bytes, media_type="image/png")
+    except Exception as exc:
+        logger.error("Screenshot render failed: %s", exc)
+        return JSONResponse({"error": "Screenshot render failed"}, status_code=500)
 
 
 class TelemetryEventBase(BaseModel):

@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
-import { API_ORIGIN } from "@/lib/config";
+import { API_ORIGIN, SERVER_SCREENSHOT_ENABLED } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
 import {
@@ -596,6 +596,56 @@ export function TwfShareModal({
     }
   }, [buildScreenshotState, getLegend]);
 
+  const generateServerScreenshot = useCallback(async (): Promise<{
+    blobUrl: string;
+    filename: string;
+    state: ScreenshotExportState;
+  } | null> => {
+    setScreenshotError(null);
+    const state = buildScreenshotState?.() ?? null;
+    if (!state) {
+      setScreenshotError("Map is still loading. Try again in a moment.");
+      return null;
+    }
+    setScreenshotBusy(true);
+    try {
+      const permalink = payload.permalink;
+      if (!permalink) {
+        throw new Error("No permalink available.");
+      }
+      const response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: `https://cartosky.com${permalink}` }),
+      });
+      if (!response.ok) {
+        throw new Error(`Server screenshot failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const filename = screenshotFilename(state);
+      setScreenshotStateSnapshot(state);
+      setScreenshotFilenameValue(filename);
+      setScreenshotUploadError(null);
+      setScreenshotUrl(null);
+      setScreenshotKey(null);
+      setIncludeScreenshotInPost(true);
+      setScreenshotBlobUrl((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return objectUrl;
+      });
+      return { blobUrl: objectUrl, filename, state };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Server screenshot failed.";
+      setScreenshotError(message);
+      return null;
+    } finally {
+      setScreenshotBusy(false);
+    }
+  }, [buildScreenshotState, payload.permalink]);
+
   useEffect(() => {
     if (!open) {
       wasOpenRef.current = false;
@@ -713,9 +763,10 @@ export function TwfShareModal({
       return;
     }
     setHasAttemptedAutoScreenshot(true);
-    void generatePreviewScreenshot();
+    void (SERVER_SCREENSHOT_ENABLED ? generateServerScreenshot() : generatePreviewScreenshot());
   }, [
     canPrepareScreenshot,
+    generateServerScreenshot,
     generatePreviewScreenshot,
     hasAttemptedAutoScreenshot,
     open,
@@ -1043,7 +1094,7 @@ export function TwfShareModal({
     if (screenshotBusy || screenshotUploadBusy) {
       return;
     }
-    await generatePreviewScreenshot();
+    await (SERVER_SCREENSHOT_ENABLED ? generateServerScreenshot() : generatePreviewScreenshot());
   };
 
   const ensurePreparedScreenshot = async (): Promise<string | null> => {
