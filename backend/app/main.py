@@ -1247,8 +1247,11 @@ async def twf_status(current_user: ClerkPrincipal = Depends(require_clerk_user))
 async def generate_share_screenshot(request: Request) -> Response:
     body = await request.json()
     url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
+    basemap = str(body.get("basemap", "light")).strip().lower() if isinstance(body, dict) else "light"
     if not url:
         return JSONResponse({"error": "url is required"}, status_code=400)
+    if basemap not in {"light", "dark"}:
+        basemap = "light"
 
     parsed = urlparse(url)
     allowed_hosts = {"cartosky.com", "www.cartosky.com", "127.0.0.1", "localhost"}
@@ -1256,7 +1259,7 @@ async def generate_share_screenshot(request: Request) -> Response:
         return JSONResponse({"error": "URL not allowed"}, status_code=400)
 
     try:
-        png_bytes = await screenshot_service.render(url)
+        png_bytes = await screenshot_service.render(url, basemap=basemap)
         return Response(content=png_bytes, media_type="image/png")
     except Exception as exc:
         logger.error("Screenshot render failed: %s", exc)

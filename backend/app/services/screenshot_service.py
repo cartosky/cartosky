@@ -33,7 +33,7 @@ class ScreenshotService:
             )
             return self._browser
 
-    async def render(self, url: str) -> bytes:
+    async def render(self, url: str, *, basemap: str = "light") -> bytes:
         async with self._semaphore:
             browser = await self._ensure_browser()
             context = await browser.new_context(
@@ -46,6 +46,7 @@ class ScreenshotService:
                 params = dict(parse_qsl(parsed.query, keep_blank_values=True))
                 params["screenshot"] = "1"
                 params["legend"] = "1"
+                params["basemap"] = basemap
                 render_url = urlunsplit(parsed._replace(query=urlencode(params)))
 
                 await page.goto(render_url, wait_until="domcontentloaded", timeout=SCREENSHOT_TIMEOUT_MS)

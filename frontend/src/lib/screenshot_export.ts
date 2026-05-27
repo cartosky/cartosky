@@ -10,6 +10,7 @@ export type ScreenshotExportState = {
   zoom: number;
   bearing?: number;
   pitch?: number;
+  basemapMode?: "light" | "dark";
   viewportWidth?: number;
   viewportHeight?: number;
   isMobile: boolean;

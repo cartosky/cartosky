@@ -620,7 +620,10 @@ export function TwfShareModal({
       const response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: screenshotUrl }),
+        body: JSON.stringify({
+          url: screenshotUrl,
+          basemap: state.basemapMode ?? "light",
+        }),
       });
       if (!response.ok) {
         throw new Error(`Server screenshot failed (${response.status})`);
@@ -639,15 +642,22 @@ export function TwfShareModal({
       if (!latestState) {
         throw new Error("No map state available.");
       }
+      const stateWithCapture: ScreenshotExportState = {
+        ...latestState,
+        capturedMapDataUrl: dataUrl,
+        viewportWidth: 1280,
+        viewportHeight: 720,
+        isMobile: false,
+      };
       const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");
       const finalBlob = await exportViewerScreenshotPng(
-        { ...latestState, capturedMapDataUrl: dataUrl },
+        stateWithCapture,
         { legend: getLegend?.() ?? null },
       );
       const objectUrl = URL.createObjectURL(finalBlob);
       const filename = screenshotFilename(state);
       setScreenshotBlob(finalBlob);
-      setScreenshotStateSnapshot(latestState);
+      setScreenshotStateSnapshot(stateWithCapture);
       setScreenshotFilenameValue(filename);
       setScreenshotUploadError(null);
       setScreenshotUrl(null);
@@ -659,7 +669,7 @@ export function TwfShareModal({
         }
         return objectUrl;
       });
-      return { blobUrl: objectUrl, filename, state: latestState };
+      return { blobUrl: objectUrl, filename, state: stateWithCapture };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Server screenshot failed.";
       setScreenshotError(message);

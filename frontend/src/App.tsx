@@ -327,7 +327,11 @@ export default function App() {
     if (params.get("legend") === "1") {
       setLegendVisible(true);
     }
-  }, [setLegendVisible]);
+    const basemap = params.get("basemap");
+    if (basemap === "dark" || basemap === "light") {
+      setBasemapMode(basemap);
+    }
+  }, [setBasemapMode, setLegendVisible]);
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3564,6 +3568,7 @@ export default function App() {
       zoom,
       bearing: map.getBearing(),
       pitch: map.getPitch(),
+      basemapMode,
       viewportWidth,
       viewportHeight,
       model: selectedModelLabel || model || "Model",
