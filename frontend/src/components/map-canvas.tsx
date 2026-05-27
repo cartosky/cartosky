@@ -856,6 +856,8 @@ export function buildMapStyle(
   basemapMode: BasemapMode = "light"
 ): StyleSpecification {
   void vectorGeoJsonUrl;
+  const screenshotMode = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("screenshot") === "1";
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
   const labelTiles = basemapMode === "dark" ? CARTO_DARK_LABEL_TILES : CARTO_LIGHT_LABEL_TILES;
   const mapBackgroundColor = getMapBackgroundColor(basemapMode);
@@ -872,11 +874,15 @@ export function buildMapStyle(
         tiles: basemapTiles,
         tileSize: CARTO_TILE_SIZE,
       },
-      "twf-labels": {
-        type: "raster",
-        tiles: labelTiles,
-        tileSize: CARTO_TILE_SIZE,
-      },
+      ...(screenshotMode
+        ? {}
+        : {
+            "twf-labels": {
+              type: "raster",
+              tiles: labelTiles,
+              tileSize: CARTO_TILE_SIZE,
+            },
+          }),
       [STATE_BOUNDARY_SOURCE_ID]: {
         type: "vector",
         url: BOUNDARIES_VECTOR_TILES_URL,
@@ -908,6 +914,14 @@ export function buildMapStyle(
         source: "twf-basemap",
         paint: basemapPaint,
       },
+      ...(screenshotMode
+        ? []
+        : [{
+            id: "twf-labels",
+            type: "raster",
+            source: "twf-labels",
+            paint: labelPaint,
+          } as LayerSpecification]),
       {
         id: COASTLINE_LAYER_ID,
         type: "line",
