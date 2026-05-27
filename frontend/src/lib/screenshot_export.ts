@@ -38,8 +38,6 @@ export type ScreenshotExportOptions = {
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
 const NORMALIZED_OUTPUT_WIDTH = 1280;
-const MIN_OUTPUT_ASPECT = 4 / 3;
-const MAX_OUTPUT_ASPECT = 16 / 9;
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
@@ -829,16 +827,7 @@ export async function exportViewerScreenshotPng(
     && stateViewportHeight > 0
     ? {
         width: NORMALIZED_OUTPUT_WIDTH,
-        height: Math.max(
-          1,
-          Math.round(
-            NORMALIZED_OUTPUT_WIDTH
-            / Math.max(
-              MIN_OUTPUT_ASPECT,
-              Math.min(MAX_OUTPUT_ASPECT, stateViewportWidth / stateViewportHeight)
-            )
-          )
-        ),
+        height: Math.max(1, Math.round(NORMALIZED_OUTPUT_WIDTH / (stateViewportWidth / stateViewportHeight))),
       }
     : null;
 
