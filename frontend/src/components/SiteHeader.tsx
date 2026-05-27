@@ -531,14 +531,11 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           {legendPanelOpen ? createPortal(
             <div
               ref={legendPanelRef}
-              className="fixed right-[3.25rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+              className="fixed right-[3.25rem] z-[70] w-[220px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
               style={{ top: legendPanelTop }}
             >
               <MapLegend
                 legend={legend}
-                onOpacityChange={onOpacityChange}
-                showOpacityControl={false}
-                displayPanelOpen={displayPanelOpen}
                 defaultExpanded={true}
                 inline={true}
               />
@@ -1072,12 +1069,9 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             onClick={() => onLegendPopoverOpenChange(false)}
             aria-hidden="true"
           />
-          <div className="fixed left-[58px] top-[calc(3.5rem+1rem)] z-[55] w-auto min-w-[140px] max-w-[200px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+          <div className="fixed left-[58px] top-[calc(3.5rem+1rem)] z-[55] w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
             <MapLegend
               legend={legend}
-              onOpacityChange={onOpacityChange}
-              showOpacityControl={false}
-              displayPanelOpen={false}
               defaultExpanded={true}
               inline={true}
             />

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
-import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 
 export type LegendEntry = {
@@ -72,11 +71,6 @@ type RadarLegendRow = {
   colors: string[];
 };
 
-const DENSE_LEGEND_THRESHOLD = 18;
-const DENSE_GRADIENT_LABEL_COUNT = 6;
-const DENSE_GRADIENT_HEIGHT_DEFAULT = "clamp(268px, calc(100vh - 24rem), 372px)";
-const DENSE_GRADIENT_HEIGHT_PANEL_OPEN = "clamp(228px, calc(100vh - 31rem), 300px)";
-
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
   if (normalized === "rain") return "Rain";
@@ -131,7 +125,7 @@ function isCategoricalLegend(legend: LegendPayload): boolean {
   return legend.entries.length > 0 && legend.entries.every((entry) => typeof entry.label === "string" && entry.label.trim().length > 0);
 }
 
-function buildDenseLegendTicks(entries: LegendEntry[], targetCount = DENSE_GRADIENT_LABEL_COUNT): LegendEntry[] {
+function buildDenseLegendTicks(entries: LegendEntry[], targetCount = 6): LegendEntry[] {
   const displayed = entries.slice().reverse();
   if (displayed.length === 0) return [];
 
@@ -161,39 +155,95 @@ function formatDenseTickValue(value: number): string {
   return formatValue(Math.round(value));
 }
 
-function DenseGradientLegend({ entries, height }: { entries: LegendEntry[]; height: string }) {
+function splitLegendTitle(title: string, units?: string): { title: string; unitsSuffix: string | null } {
+  const formattedTitle = formatLegendTitle(title, units);
+  const resolvedUnits = (units ?? "").trim();
+  if (!resolvedUnits) {
+    return { title: formattedTitle, unitsSuffix: null };
+  }
+
+  const unitsSuffix = `(${resolvedUnits})`;
+  if (!formattedTitle.endsWith(unitsSuffix)) {
+    return { title: formattedTitle, unitsSuffix: null };
+  }
+
+  return {
+    title: formattedTitle.slice(0, -unitsSuffix.length).trimEnd(),
+    unitsSuffix,
+  };
+}
+
+function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
   const displayed = entries.slice().reverse();
-  const ticks = buildDenseLegendTicks(entries);
+  const ticks = buildDenseLegendTicks(entries, 6);
   const stopCount = Math.max(displayed.length - 1, 1);
   const gradientStops = displayed
     .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
     .join(", ");
+  const indexByEntry = new Map(displayed.map((entry, index) => [entry, index]));
 
   return (
-    <div className="py-1.5">
-      <div className="flex justify-start px-0.5">
-        <div className="inline-grid grid-cols-[26px_auto] items-stretch gap-0">
-          <div
-            className="rounded-[14px] bg-black/14 p-[3px] ring-1 ring-inset ring-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_16px_rgba(0,0,0,0.18)]"
-            style={{ height }}
-          >
-            <div
-              className="h-full w-full rounded-[11px] shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]"
-              style={{ backgroundImage: `linear-gradient(to bottom, ${gradientStops})` }}
-            />
-          </div>
-          <div className="flex flex-col justify-between py-[2px]" style={{ height }}>
-            {ticks.map((entry, index) => (
-              <div key={`${entry.value}-${index}`} className="-ml-px flex items-center gap-[2px]">
-                <span className="h-0 w-[8px] shrink-0 border-t border-white/60" />
-                <span className="font-mono text-[10px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
-                  {formatDenseTickValue(entry.value)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+    <div className="px-0.5 py-1.5">
+      <div className="rounded-[14px] bg-black/14 p-[3px] ring-1 ring-inset ring-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_16px_rgba(0,0,0,0.18)]">
+        <div
+          className="h-3 rounded-[7px] shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]"
+          style={{
+            backgroundImage:
+              displayed.length === 1 ? undefined : `linear-gradient(to right, ${gradientStops})`,
+            backgroundColor: displayed.length === 1 ? displayed[0]?.color : undefined,
+          }}
+        />
       </div>
+      <div className="relative mt-2 h-7">
+        {ticks.map((entry, index) => {
+          const displayedIndex = indexByEntry.get(entry) ?? 0;
+          const offset = stopCount === 0 ? 0 : (displayedIndex / stopCount) * 100;
+          const isFirst = index === 0;
+          const isLast = index === ticks.length - 1;
+
+          return (
+            <div
+              key={`${entry.value}-${index}`}
+              className="absolute top-0"
+              style={{
+                left: `${offset}%`,
+                transform: isFirst ? "none" : isLast ? "translateX(-100%)" : "translateX(-50%)",
+              }}
+            >
+              <span className="font-mono text-[10px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
+                {formatDenseTickValue(entry.value)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CategoricalLegendEntries({ entries }: { entries: LegendEntry[] }) {
+  return (
+    <div className="legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth">
+      {entries.slice().reverse().map((entry, index) => (
+        <div
+          key={`${entry.value}-${entry.color}-${index}`}
+          className="flex items-center gap-1.5 rounded-[2px] px-0.5 py-0.5 transition-colors duration-150"
+        >
+          <div
+            className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
+            style={{ backgroundColor: entry.color }}
+          />
+          <span
+            className={
+              entry.label
+                ? "text-[10px] font-medium leading-none tracking-tight text-foreground/95"
+                : "font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"
+            }
+          >
+            {entry.label?.trim() || formatValue(entry.value)}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -344,10 +394,7 @@ function RadarGradientRows({ groups }: { groups: RadarLegendGroup[] }) {
 
 type MapLegendProps = {
   legend: LegendPayload | null;
-  onOpacityChange: (opacity: number) => void;
   containerRef?: Ref<HTMLDivElement>;
-  showOpacityControl?: boolean;
-  displayPanelOpen?: boolean;
   defaultExpanded?: boolean;
   /** When true, renders inline (no fixed positioning). Use inside popovers/portals. */
   inline?: boolean;
@@ -355,10 +402,7 @@ type MapLegendProps = {
 
 export function MapLegend({
   legend,
-  onOpacityChange,
   containerRef,
-  showOpacityControl = true,
-  displayPanelOpen = false,
   defaultExpanded = false,
   inline = false,
 }: MapLegendProps) {
@@ -409,7 +453,7 @@ export function MapLegend({
     );
   }
 
-  const opacityPercent = Math.round(legend.opacity * 100);
+  const { title: legendTitle, unitsSuffix } = splitLegendTitle(legend.title, legend.units);
   const ptypeIntensityRows = isPtypeIntensityLegend(legend)
     ? groupPtypeIntensityRows(legend.entries, legend.ptype_breaks, legend.ptype_order)
     : [];
@@ -418,12 +462,7 @@ export function MapLegend({
     ? groupRadarEntries(legend.entries, legend.ptype_breaks, legend.ptype_order)
     : [];
   const showGroupedRadar = groupedRadarEntries.length > 0;
-  const showDenseLegend =
-    !showPtypeIntensityRows &&
-    !showGroupedRadar &&
-    !isCategoricalLegend(legend) &&
-    legend.entries.length > DENSE_LEGEND_THRESHOLD;
-  const denseGradientHeight = displayPanelOpen ? DENSE_GRADIENT_HEIGHT_PANEL_OPEN : DENSE_GRADIENT_HEIGHT_DEFAULT;
+  const showCategoricalLegend = isCategoricalLegend(legend);
 
   return (
     <div
@@ -431,10 +470,10 @@ export function MapLegend({
       className={cn(
         "flex flex-col overflow-hidden transition-all duration-200",
         inline
-          ? "w-full" // popover controls size/position
+          ? "w-[220px]"
           : cn(
               "fixed z-[55] max-h-[70vh] rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
-              showPtypeIntensityRows ? "w-[220px]" : showGroupedRadar ? "w-[176px]" : showDenseLegend ? "w-[122px]" : "w-[156px]",
+              "w-[220px]",
               isSmallScreen ? "right-3 top-40 max-w-[min(72vw,220px)]" : "right-4 top-[7.75rem]"
             )
       )}
@@ -457,9 +496,10 @@ export function MapLegend({
         aria-expanded={!collapsed}
         aria-controls="legend-body"
       >
-          <span className="block min-w-0 text-sm font-semibold tracking-tight text-foreground/95">
-            {formatLegendTitle(legend.title, legend.units)}
-          </span>
+        <span className="block min-w-0 text-sm font-semibold tracking-tight text-foreground/95">
+          <span>{legendTitle}</span>
+          {unitsSuffix ? <span className="ml-1 text-foreground/60">{unitsSuffix}</span> : null}
+        </span>
         {collapsed ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150" />
         ) : (
@@ -473,7 +513,7 @@ export function MapLegend({
       >
         <div className="overflow-hidden">
           <div key={fadeKey} className="flex flex-col gap-1.5 px-1.5 py-1.5 animate-in fade-in duration-200">
-            <div className={cn(showDenseLegend ? "" : "legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth")}>
+            <div>
               {showPtypeIntensityRows
                 ? ptypeIntensityRows.map((row, rowIndex) => (
                     <div
@@ -496,49 +536,15 @@ export function MapLegend({
                   ))
                 : showGroupedRadar
                 ? <RadarGradientRows groups={groupedRadarEntries} />
-                : showDenseLegend
-                ? <DenseGradientLegend entries={legend.entries} height={denseGradientHeight} />
-                : legend.entries.slice().reverse().map((entry, index) => (
-                    <div
-                      key={`${entry.value}-${entry.color}-${index}`}
-                      className="flex items-center gap-1.5 rounded-[2px] px-0.5 py-0.5 transition-colors duration-150"
-                    >
-                      <span
-                        className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
-                        style={{ backgroundColor: entry.color }}
-                      />
-                      <span className={entry.label ? "text-[10px] font-medium leading-none tracking-tight text-foreground/95" : "font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"}>
-                        {entry.label?.trim() || formatValue(entry.value)}
-                      </span>
-                    </div>
-                  ))}
+                : showCategoricalLegend
+                ? <CategoricalLegendEntries entries={legend.entries} />
+                : <HorizontalGradientLegend entries={legend.entries} />}
             </div>
 
             {legend.note ? (
               <p className="border-t border-border/25 pt-1 text-[9px] font-medium leading-snug text-foreground/68">
                 {legend.note}
               </p>
-            ) : null}
-
-            {showOpacityControl ? (
-              <div className="border-t border-border/30 pt-1.5">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-foreground/65">
-                    Opacity
-                  </span>
-                  <span className="font-mono text-[10px] font-medium tabular-nums tracking-tight text-foreground/90">
-                    {opacityPercent}%
-                  </span>
-                </div>
-                <Slider
-                  value={[opacityPercent]}
-                  onValueChange={([value]) => onOpacityChange((value ?? 100) / 100)}
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-2.5 [&>*:first-child]:bg-secondary/55 [&>*:nth-child(2)]:h-[18px] [&>*:nth-child(2)]:w-[18px]"
-                />
-              </div>
             ) : null}
           </div>
         </div>
