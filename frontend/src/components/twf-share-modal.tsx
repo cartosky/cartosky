@@ -561,8 +561,9 @@ export function TwfShareModal({
     ? cropPos.y * cropTravel
     : cropFrameMetrics.initialY;
   const canReframeScreenshot = Boolean(screenshotBlobUrl)
-    && cropFrameMetrics.frameH > 0
-    && cropFrameMetrics.frameH < cropFrameMetrics.containerH - 1;
+    && previewImageNaturalSize.width > 0
+    && previewImageNaturalSize.height > 0
+    && (previewImageNaturalSize.height / previewImageNaturalSize.width) > (9 / 16 + 0.01);
 
   const resetCrop = useCallback(() => {
     const centeredY = cropFrameMetrics.containerH > 0 && cropFrameMetrics.frameH > 0
