@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -47,14 +48,45 @@ class ScreenshotService:
                 params["legend"] = "1"
                 render_url = urlunsplit(parsed._replace(query=urlencode(params)))
 
-                await page.goto(render_url, wait_until="networkidle", timeout=SCREENSHOT_TIMEOUT_MS)
-                map_el = await page.wait_for_selector(
+                await page.goto(render_url, wait_until="domcontentloaded", timeout=SCREENSHOT_TIMEOUT_MS)
+
+                await page.wait_for_selector(
                     'div[role="img"][aria-label="Weather map"] canvas',
                     timeout=SCREENSHOT_TIMEOUT_MS,
                 )
-                await page.wait_for_timeout(1500)
-                png = await map_el.screenshot()
-                return png
+
+                await page.wait_for_function(
+                    """() => {
+                        const canvas = document.querySelector(
+                            'div[role="img"][aria-label="Weather map"] canvas'
+                        );
+                        if (!canvas) return false;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return true;
+                        const data = ctx.getImageData(
+                            canvas.width / 2, canvas.height / 2, 1, 1
+                        ).data;
+                        return data[3] > 0;
+                    }""",
+                    timeout=8_000,
+                )
+
+                await page.wait_for_timeout(800)
+
+                data_url = await page.evaluate(
+                    """() => {
+                        const canvas = document.querySelector(
+                            'div[role="img"][aria-label="Weather map"] canvas'
+                        );
+                        return canvas ? canvas.toDataURL('image/png') : null;
+                    }"""
+                )
+
+                if not data_url or not data_url.startswith("data:image/png;base64,"):
+                    raise ValueError("Canvas data URL not available")
+
+                png_bytes = base64.b64decode(data_url.split(",", 1)[1])
+                return png_bytes
             finally:
                 await context.close()
 
