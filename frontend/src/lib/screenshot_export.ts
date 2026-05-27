@@ -27,26 +27,13 @@ export type ScreenshotExportState = {
   anchors?: Array<{ x: number; y: number; label: string; cityName: string }>;
 };
 
-export type ScreenshotCropRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
 export type ScreenshotExportOptions = {
-  width?: number;
-  height?: number;
   pixelRatio?: number;
   legend?: LegendPayload | null;
   overlayLines?: string[];
-  cropRect?: ScreenshotCropRect | null;
 };
 
-const DEFAULT_WIDTH = 1600;
-const DEFAULT_HEIGHT = 900;
 const NORMALIZED_OUTPUT_WIDTH = 1280;
-const CROPPED_OUTPUT_HEIGHT = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
 const DEFAULT_PIXEL_RATIO = 2;
 const MAP_SETTLE_DELAY_MS = 150;
 const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
@@ -828,32 +815,8 @@ export async function exportViewerScreenshotPng(
     throw new Error("Screenshot export is only available in browser environments.");
   }
 
-  const stateViewportWidth = Number.isFinite(state.viewportWidth) ? Number(state.viewportWidth) : null;
-  const stateViewportHeight = Number.isFinite(state.viewportHeight) ? Number(state.viewportHeight) : null;
-  const normalizedViewportSize = stateViewportWidth !== null
-    && stateViewportHeight !== null
-    && stateViewportWidth > 0
-    && stateViewportHeight > 0
-    ? {
-        width: NORMALIZED_OUTPUT_WIDTH,
-        height: Math.max(1, Math.round(NORMALIZED_OUTPUT_WIDTH / (stateViewportWidth / stateViewportHeight))),
-      }
-    : null;
-
-  const width = opts.cropRect
-    ? NORMALIZED_OUTPUT_WIDTH
-    : Number.isFinite(opts.width)
-    ? Math.max(1, Math.round(Number(opts.width)))
-    : normalizedViewportSize
-      ? normalizedViewportSize.width
-      : DEFAULT_WIDTH;
-  const height = opts.cropRect
-    ? CROPPED_OUTPUT_HEIGHT
-    : Number.isFinite(opts.height)
-    ? Math.max(1, Math.round(Number(opts.height)))
-    : normalizedViewportSize
-      ? normalizedViewportSize.height
-      : DEFAULT_HEIGHT;
+  const width = NORMALIZED_OUTPUT_WIDTH;
+  const height = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
   const pixelRatio = Number.isFinite(opts.pixelRatio)
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
@@ -873,20 +836,7 @@ export async function exportViewerScreenshotPng(
     outputCtx.imageSmoothingQuality = "high";
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
-    if (opts.cropRect) {
-      const dims = imageSourceDimensions(mapImage);
-      if (dims) {
-        const sx = opts.cropRect.x * dims.width;
-        const sy = opts.cropRect.y * dims.height;
-        const sw = opts.cropRect.width * dims.width;
-        const sh = opts.cropRect.height * dims.height;
-        outputCtx.drawImage(mapImage, sx, sy, sw, sh, 0, 0, width, height);
-      } else {
-        drawMapImageCover(outputCtx, mapImage, width, height);
-      }
-    } else {
-      drawMapImageCover(outputCtx, mapImage, width, height);
-    }
+    drawMapImageCover(outputCtx, mapImage, width, height);
     drawAnchors(outputCtx, state.anchors ?? [], width, height, state.isMobile, scaleFactor);
     drawOverlay(outputCtx, overlayLines, width, scaleFactor);
 

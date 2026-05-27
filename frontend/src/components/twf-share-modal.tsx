@@ -7,7 +7,7 @@ import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 import { API_ORIGIN } from "@/lib/config";
-import type { ScreenshotCropRect, ScreenshotExportState } from "@/lib/screenshot_export";
+import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
 import {
   getSharePrefs,
@@ -417,23 +417,6 @@ export function TwfShareModal({
   const [showDestinationEditor, setShowDestinationEditor] = useState(false);
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
-  const [cropPos, setCropPos] = useState({ x: 0, y: 0 });
-  const [cropFrameMetrics, setCropFrameMetrics] = useState({
-    containerW: 0,
-    containerH: 0,
-    frameW: 0,
-    frameH: 0,
-    initialY: 0,
-  });
-  const [previewImageNaturalSize, setPreviewImageNaturalSize] = useState({ width: 0, height: 0 });
-  const previewContainerRef = useRef<HTMLDivElement | null>(null);
-  const cropFrameRef = useRef<HTMLDivElement | null>(null);
-  const cropRectRef = useRef<ScreenshotCropRect | null>(null);
-  const cropDragRef = useRef<{
-    pointerId: number;
-    startClientY: number;
-    startTopPx: number;
-  } | null>(null);
 
   const twfFetch = useCallback(
     async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
@@ -556,69 +539,9 @@ export function TwfShareModal({
       (!statusResolved || statusLoading || topicsForumId !== selectedForumId));
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
-  const cropTravel = Math.max(0, cropFrameMetrics.containerH - cropFrameMetrics.frameH);
-  const cropTopPx = cropTravel > 0
-    ? cropPos.y * cropTravel
-    : cropFrameMetrics.initialY;
-  const canReframeScreenshot = Boolean(screenshotBlobUrl)
-    && previewImageNaturalSize.width > 0
-    && previewImageNaturalSize.height > 0
-    && (previewImageNaturalSize.height / previewImageNaturalSize.width) > (9 / 16 + 0.01);
-
-  const resetCrop = useCallback(() => {
-    const centeredY = cropFrameMetrics.containerH > 0 && cropFrameMetrics.frameH > 0
-      ? Math.max(0, (cropFrameMetrics.containerH - cropFrameMetrics.frameH) / 2) / cropFrameMetrics.containerH
-      : 0;
-    setCropPos({ x: 0, y: centeredY });
-    cropRectRef.current = null;
-    setScreenshotBlob(null);
-    setScreenshotUploadError(null);
-    setScreenshotUrl(null);
-    setScreenshotKey(null);
-  }, [cropFrameMetrics.containerH, cropFrameMetrics.frameH]);
-
-  const resolveCropRectFromPreview = useCallback((): ScreenshotCropRect | null => {
-    if (
-      !screenshotBlobUrl
-      || cropFrameMetrics.containerW <= 0
-      || cropFrameMetrics.containerH <= 0
-      || previewImageNaturalSize.width <= 0
-      || previewImageNaturalSize.height <= 0
-      || cropFrameMetrics.frameH <= 0
-    ) {
-      return null;
-    }
-
-    const renderedScale = Math.max(
-      cropFrameMetrics.containerW / previewImageNaturalSize.width,
-      cropFrameMetrics.containerH / previewImageNaturalSize.height,
-    );
-    if (!Number.isFinite(renderedScale) || renderedScale <= 0) {
-      return null;
-    }
-
-    const renderedWidth = previewImageNaturalSize.width * renderedScale;
-    const renderedHeight = previewImageNaturalSize.height * renderedScale;
-    const offsetX = (cropFrameMetrics.containerW - renderedWidth) / 2;
-    const offsetY = (cropFrameMetrics.containerH - renderedHeight) / 2;
-    const sourceX = Math.max(0, Math.min(previewImageNaturalSize.width, (0 - offsetX) / renderedScale));
-    const sourceY = Math.max(0, Math.min(previewImageNaturalSize.height, (cropTopPx - offsetY) / renderedScale));
-    const sourceWidth = Math.max(1, Math.min(previewImageNaturalSize.width - sourceX, cropFrameMetrics.frameW / renderedScale));
-    const sourceHeight = Math.max(1, Math.min(previewImageNaturalSize.height - sourceY, cropFrameMetrics.frameH / renderedScale));
-
-    return {
-      x: sourceX / previewImageNaturalSize.width,
-      y: sourceY / previewImageNaturalSize.height,
-      width: sourceWidth / previewImageNaturalSize.width,
-      height: sourceHeight / previewImageNaturalSize.height,
-    };
-  }, [cropFrameMetrics.containerH, cropFrameMetrics.containerW, cropFrameMetrics.frameH, cropFrameMetrics.frameW, cropTopPx, previewImageNaturalSize.height, previewImageNaturalSize.width, screenshotBlobUrl]);
-
-  const buildResolvedCropRect = useCallback((): ScreenshotCropRect | null => {
-    return cropRectRef.current ?? resolveCropRectFromPreview();
-  }, [resolveCropRectFromPreview]);
 
   const generatePreviewScreenshot = useCallback(async (): Promise<{
+    blob: Blob;
     blobUrl: string;
     filename: string;
     state: ScreenshotExportState;
@@ -643,7 +566,7 @@ export function TwfShareModal({
       });
       const objectUrl = URL.createObjectURL(blob);
       const filename = screenshotFilename(state);
-      setScreenshotBlob(null);
+      setScreenshotBlob(blob);
       setScreenshotStateSnapshot(state);
       setScreenshotFilenameValue(filename);
       setScreenshotUploadError(null);
@@ -657,6 +580,7 @@ export function TwfShareModal({
         return objectUrl;
       });
       return {
+        blob,
         blobUrl: objectUrl,
         filename,
         state,
@@ -719,11 +643,6 @@ export function TwfShareModal({
     setHasAttemptedAutoScreenshot(false);
     setShowDestinationEditor(false);
     setDestinationSaved(false);
-    setCropPos({ x: 0, y: 0 });
-    setCropFrameMetrics({ containerW: 0, containerH: 0, frameW: 0, frameH: 0, initialY: 0 });
-    setPreviewImageNaturalSize({ width: 0, height: 0 });
-    cropRectRef.current = null;
-    cropDragRef.current = null;
     setScreenshotBlobUrl((previous) => {
       if (previous) {
         URL.revokeObjectURL(previous);
@@ -804,89 +723,6 @@ export function TwfShareModal({
     screenshotBusy,
     screenshotUploadBusy,
   ]);
-
-  useEffect(() => {
-    if (!open || !previewContainerRef.current) {
-      return;
-    }
-    const element = previewContainerRef.current;
-    const updatePreviewBox = () => {
-      const containerW = element.offsetWidth;
-      const containerH = element.offsetHeight;
-      const TARGET_ASPECT = 16 / 9;
-      const frameByWidth = { w: containerW, h: Math.round(containerW / TARGET_ASPECT) };
-      const frameByHeight = { w: Math.round(containerH * TARGET_ASPECT), h: containerH };
-      const fits = frameByWidth.h <= containerH;
-      const frameW = fits ? frameByWidth.w : frameByHeight.w;
-      const frameH = fits ? frameByWidth.h : frameByHeight.h;
-      const initialY = Math.max(0, Math.round((containerH - frameH) / 2));
-      setCropFrameMetrics({ containerW, containerH, frameW, frameH, initialY });
-    };
-    updatePreviewBox();
-    const observer = new ResizeObserver(updatePreviewBox);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [open, screenshotBlobUrl]);
-
-  useEffect(() => {
-    if (!screenshotBlobUrl) {
-      return;
-    }
-    resetCrop();
-  }, [cropFrameMetrics.containerH, cropFrameMetrics.containerW, cropFrameMetrics.frameH, resetCrop, screenshotBlobUrl]);
-
-  useEffect(() => {
-    const el = cropFrameRef.current;
-    if (!el || !canReframeScreenshot) {
-      return;
-    }
-
-    const onDown = (e: PointerEvent) => {
-      e.preventDefault();
-      cropDragRef.current = {
-        pointerId: e.pointerId,
-        startClientY: e.clientY,
-        startTopPx: cropTopPx,
-      };
-      el.setPointerCapture(e.pointerId);
-    };
-
-    const onMove = (e: PointerEvent) => {
-      if (!cropDragRef.current || cropDragRef.current.pointerId !== e.pointerId) {
-        return;
-      }
-      e.preventDefault();
-      const nextTopPx = Math.max(0, Math.min(cropTravel, cropDragRef.current.startTopPx + (e.clientY - cropDragRef.current.startClientY)));
-      setCropPos({ x: 0, y: cropFrameMetrics.containerH > 0 ? nextTopPx / cropFrameMetrics.containerH : 0 });
-    };
-
-    const onUp = (e: PointerEvent) => {
-      if (!cropDragRef.current || cropDragRef.current.pointerId !== e.pointerId) {
-        return;
-      }
-      if (el.hasPointerCapture(e.pointerId)) {
-        el.releasePointerCapture(e.pointerId);
-      }
-      cropDragRef.current = null;
-      cropRectRef.current = buildResolvedCropRect();
-      setScreenshotBlob(null);
-      setScreenshotUploadError(null);
-      setScreenshotUrl(null);
-      setScreenshotKey(null);
-    };
-
-    el.addEventListener("pointerdown", onDown);
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-    el.addEventListener("pointercancel", onUp);
-
-    return () => {
-      el.removeEventListener("pointerdown", onDown);
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onUp);
-    };
-  }, [buildResolvedCropRect, canReframeScreenshot, cropFrameMetrics.containerH, cropTopPx, cropTravel]);
 
   useEffect(() => {
     if (!open) {
@@ -1159,49 +995,6 @@ export function TwfShareModal({
     return () => controller.abort();
   }, [open, selectedForumId, statusResolved, twfFetch, twfStatus]);
 
-  const generateScreenshot = useCallback(async (): Promise<{
-    blob: Blob;
-    filename: string;
-    state: ScreenshotExportState;
-  } | null> => {
-    setScreenshotError(null);
-    const state = screenshotStateSnapshot ?? buildScreenshotState?.() ?? null;
-    if (!state) {
-      setScreenshotError("Map is still loading. Try again in a moment.");
-      return null;
-    }
-
-    setScreenshotBusy(true);
-    try {
-      const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");
-      const blob = await exportViewerScreenshotPng(state, {
-        legend: getLegend?.() ?? null,
-        cropRect: buildResolvedCropRect() ?? undefined,
-      });
-      const filename = screenshotFilename(state);
-      setScreenshotBlob(blob);
-      setScreenshotStateSnapshot(state);
-      setScreenshotFilenameValue(filename);
-      setScreenshotUploadError(null);
-      setScreenshotUrl(null);
-      setScreenshotKey(null);
-      setIncludeScreenshotInPost(true);
-      return {
-        blob,
-        filename,
-        state,
-      };
-    } catch (error) {
-      const message = error instanceof Error && error.message
-        ? error.message
-        : "Screenshot generation failed.";
-      setScreenshotError(message);
-      return null;
-    } finally {
-      setScreenshotBusy(false);
-    }
-  }, [buildResolvedCropRect, buildScreenshotState, getLegend, screenshotStateSnapshot]);
-
   const uploadScreenshot = async (options?: {
     blob?: Blob | null;
     filename?: string | null;
@@ -1250,7 +1043,6 @@ export function TwfShareModal({
     if (screenshotBusy || screenshotUploadBusy) {
       return;
     }
-    resetCrop();
     await generatePreviewScreenshot();
   };
 
@@ -1270,7 +1062,7 @@ export function TwfShareModal({
           filename: screenshotFilenameValue,
           state: screenshotStateSnapshot,
         }
-      : await generateScreenshot();
+      : await generatePreviewScreenshot();
     if (!generated) {
       return null;
     }
@@ -1486,41 +1278,18 @@ export function TwfShareModal({
         {/* Screenshot preview */}
         <TooltipProvider delayDuration={250}>
           <div className="px-4">
-            <div ref={previewContainerRef} className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+            <div className="relative h-[260px] overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
               {screenshotBlobUrl ? (
                 <>
                   <img
                     src={screenshotBlobUrl}
                     alt="Screenshot preview"
                     className="h-full w-full object-cover"
-                    onLoad={(e) => {
-                      const img = e.currentTarget;
-                      setPreviewImageNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
-                    }}
                   />
-
-                  {canReframeScreenshot && (
-                    <div
-                      ref={cropFrameRef}
-                      style={{
-                        position: "absolute",
-                        left: Math.round((cropFrameMetrics.containerW - cropFrameMetrics.frameW) / 2),
-                        top: cropTopPx,
-                        width: cropFrameMetrics.frameW,
-                        height: cropFrameMetrics.frameH,
-                        boxShadow: "0 0 0 9999px rgba(0,0,0,0.52)",
-                        border: "2px solid rgba(255,255,255,0.9)",
-                        borderRadius: 2,
-                        cursor: canReframeScreenshot ? "ns-resize" : "default",
-                        touchAction: "none",
-                        userSelect: "none",
-                      }}
-                    />
-                  )}
 
                   <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
                     <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    {canReframeScreenshot ? "Drag to reframe" : "Screenshot ready"}
+                    Screenshot ready
                   </div>
                 </>
               ) : screenshotBusy ? (
@@ -1532,38 +1301,21 @@ export function TwfShareModal({
               )}
             </div>
 
-            <div className="mt-1.5 flex items-center justify-between px-1">
-              {canReframeScreenshot ? (
-                <span className="text-xs text-white/45">Drag the frame to adjust what gets shared</span>
-              ) : null}
-              <div className="ml-auto flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={resetCrop}
-                  disabled={!screenshotBlobUrl || screenshotBusy}
-                  className="inline-flex h-7 items-center rounded-md bg-white/[0.08] px-2 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:opacity-50"
-                >
-                  Reset
-                </button>
+            <div className="mt-1.5 flex items-center justify-end px-1">
+              <div className="flex items-center gap-1.5">
                 {screenshotBlobUrl && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        onClick={async () => {
-                          const generated = await generateScreenshot();
-                          if (!generated) {
-                            return;
-                          }
-                          const downloadUrl = URL.createObjectURL(generated.blob);
+                        onClick={() => {
                           const link = document.createElement("a");
-                          link.href = downloadUrl;
+                          link.href = screenshotBlobUrl;
                           link.download = screenshotFilenameValue;
                           link.rel = "noopener";
                           document.body.appendChild(link);
                           link.click();
                           link.remove();
-                          URL.revokeObjectURL(downloadUrl);
                         }}
                         className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
                         aria-label="Download screenshot"
@@ -1582,7 +1334,6 @@ export function TwfShareModal({
                       type="button"
                       onClick={() => {
                         setHasAttemptedAutoScreenshot(false);
-                        resetCrop();
                         void handlePrepareScreenshot();
                       }}
                       disabled={!canPrepareScreenshot || screenshotBusy}
