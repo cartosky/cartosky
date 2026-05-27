@@ -1514,7 +1514,7 @@ export function MapCanvas({
           frameHour: layer.frameHour,
           prefetchPivotHour,
           manifest: layer.manifest,
-        }),
+        }).slice(0, mode === "autoplay" ? 3 : 2),
         contour: layer.id === compositeLayers[compositeLayers.length - 1]?.id ? gridContour : null,
         rasterPaint: getGridPaintSettings(variable, basemapMode),
         onFrameVisible: onGridFrameVisible,
