@@ -87,8 +87,8 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         preserve_zero_support=False,
     ),
     ("hrrr", "radar_ptype"): GridDisplayPrepConfig(
-        id="hrrr_radar_ptype_display_v2",
-        upscale_factor=3,
+        id="hrrr_radar_ptype_display_v3",
+        upscale_factor=1,
         categorical_nearest=True,
         render_categorical_nearest=False,
     ),
@@ -121,8 +121,8 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         support_coverage_threshold=0.15,
     ),
     ("nam", "radar_ptype"): GridDisplayPrepConfig(
-        id="nam_radar_ptype_display_v2",
-        upscale_factor=3,
+        id="nam_radar_ptype_display_v3",
+        upscale_factor=1,
         categorical_nearest=True,
         render_categorical_nearest=False,
     ),

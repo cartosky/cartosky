@@ -1068,20 +1068,7 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     values = np.array([[0.0, 1.0], [np.nan, 15.0]], dtype=np.float32)
     _write_value_cog(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
-        json.dumps(
-            {
-                "fh": 0,
-                "units": "dBZ",
-                "valid_time": "2026-03-30T12:00:00Z",
-                "composite_mode": "max_alpha_stack",
-                "composite_layers": [
-                    {"id": "rain", "var": "radar_ptype_rain"},
-                    {"id": "snow", "var": "radar_ptype_snow"},
-                    {"id": "sleet", "var": "radar_ptype_sleet"},
-                    {"id": "frzr", "var": "radar_ptype_frzr"},
-                ],
-            }
-        )
+        json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
     ok, fail, manifest_ok = build_grid_for_run(
@@ -1103,19 +1090,16 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     assert frame_path.is_file()
     assert manifest_path.is_file()
 
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
-        values.shape[0] * 3,
-        values.shape[1] * 3,
-    )
-    assert np.all(encoded[0:3, 0:3] == 0)
-    assert np.all(encoded[0:3, 3:6] == 1)
-    assert np.all(encoded[3:6, 0:3] == 65535)
-    assert np.all(encoded[3:6, 3:6] == 15)
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 1
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 15
 
     frame_meta = json.loads(frame_meta_path.read_text())
-    assert frame_meta["width"] == values.shape[1] * 3
-    assert frame_meta["height"] == values.shape[0] * 3
-    assert frame_meta["display_prep"]["id"] == "hrrr_radar_ptype_display_v2"
+    assert frame_meta["width"] == values.shape[1]
+    assert frame_meta["height"] == values.shape[0]
+    assert frame_meta["display_prep"]["id"] == "hrrr_radar_ptype_display_v3"
     assert "categorical_nearest" not in frame_meta["display_prep"]
 
     manifest = json.loads(manifest_path.read_text())
@@ -1125,17 +1109,12 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "dBZ"
-    assert manifest["grid"]["width"] == values.shape[1] * 3
-    assert manifest["grid"]["height"] == values.shape[0] * 3
-    assert manifest["display_prep"]["id"] == "hrrr_radar_ptype_display_v2"
+    assert manifest["grid"]["width"] == values.shape[1]
+    assert manifest["grid"]["height"] == values.shape[0]
+    assert manifest["display_prep"]["id"] == "hrrr_radar_ptype_display_v3"
     assert "categorical_nearest" not in manifest["display_prep"]
-    assert manifest["composite_mode"] == "max_alpha_stack"
-    assert manifest["composite_layers"] == [
-        {"id": "rain", "var": "radar_ptype_rain"},
-        {"id": "snow", "var": "radar_ptype_snow"},
-        {"id": "sleet", "var": "radar_ptype_sleet"},
-        {"id": "frzr", "var": "radar_ptype_frzr"},
-    ]
+    assert "composite_mode" not in manifest
+    assert "composite_layers" not in manifest
 
 
 def test_build_grid_for_run_supports_hrrr_radar_ptype_component(
@@ -1442,19 +1421,16 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
     assert frame_meta_path.is_file()
     assert manifest_path.is_file()
 
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
-        values.shape[0] * 3,
-        values.shape[1] * 3,
-    )
-    assert np.all(encoded[0:3, 0:3] == 0)
-    assert np.all(encoded[0:3, 3:6] == 2)
-    assert np.all(encoded[3:6, 0:3] == 65535)
-    assert np.all(encoded[3:6, 3:6] == 9)
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    assert encoded[0, 0] == 0
+    assert encoded[0, 1] == 2
+    assert encoded[1, 0] == 65535
+    assert encoded[1, 1] == 9
 
     frame_meta = json.loads(frame_meta_path.read_text())
-    assert frame_meta["width"] == values.shape[1] * 3
-    assert frame_meta["height"] == values.shape[0] * 3
-    assert frame_meta["display_prep"]["id"] == "nam_radar_ptype_display_v2"
+    assert frame_meta["width"] == values.shape[1]
+    assert frame_meta["height"] == values.shape[0]
+    assert frame_meta["display_prep"]["id"] == "nam_radar_ptype_display_v3"
     assert "categorical_nearest" not in frame_meta["display_prep"]
 
     manifest = json.loads(manifest_path.read_text())
@@ -1464,9 +1440,9 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "dBZ"
-    assert manifest["grid"]["width"] == values.shape[1] * 3
-    assert manifest["grid"]["height"] == values.shape[0] * 3
-    assert manifest["display_prep"]["id"] == "nam_radar_ptype_display_v2"
+    assert manifest["grid"]["width"] == values.shape[1]
+    assert manifest["grid"]["height"] == values.shape[0]
+    assert manifest["display_prep"]["id"] == "nam_radar_ptype_display_v3"
     assert "categorical_nearest" not in manifest["display_prep"]
 
 

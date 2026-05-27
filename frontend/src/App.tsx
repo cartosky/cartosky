@@ -1034,6 +1034,11 @@ export default function App() {
     return 80;
   }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
   const autoplayStallSkipMs = useMemo(() => {
+    const normalizedModel = String(model ?? "").trim().toLowerCase();
+    const normalizedVariable = String(variable ?? "").trim().toLowerCase();
+    if ((normalizedModel === "hrrr" || normalizedModel === "nam") && normalizedVariable === "radar_ptype") {
+      return Number.POSITIVE_INFINITY;
+    }
     if (isVeryHighResObservedGridPlayback) {
       return VERY_HIGH_RES_AUTOPLAY_STALL_SKIP_MS;
     }
@@ -1041,7 +1046,7 @@ export default function App() {
       return HIGH_RES_AUTOPLAY_STALL_SKIP_MS;
     }
     return AUTOPLAY_STALL_SKIP_MS;
-  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback]);
+  }, [isHighResObservedGridPlayback, isVeryHighResObservedGridPlayback, model, variable]);
   const gridPlayStallMs = useMemo(() => {
     if (isVeryHighResObservedGridPlayback) {
       return VERY_HIGH_RES_GRID_PLAY_STALL_MS;

@@ -49,6 +49,16 @@ _GRID_LOD_CONFIG_BY_MODEL_VAR: dict[tuple[str, str], tuple[dict[str, Any], ...]]
         {"level": 1, "scale_factor": 2, "min_zoom": 4.0, "max_zoom": 5.5},
         {"level": 2, "scale_factor": 4, "max_zoom": 4.0},
     ),
+    ("hrrr", "radar_ptype"): (
+        {"level": 0, "scale_factor": 1, "min_zoom": 5.5},
+        {"level": 1, "scale_factor": 2, "min_zoom": 4.0, "max_zoom": 5.5},
+        {"level": 2, "scale_factor": 4, "max_zoom": 4.0},
+    ),
+    ("nam", "radar_ptype"): (
+        {"level": 0, "scale_factor": 1, "min_zoom": 5.5},
+        {"level": 1, "scale_factor": 2, "min_zoom": 4.0, "max_zoom": 5.5},
+        {"level": 2, "scale_factor": 4, "max_zoom": 4.0},
+    ),
 }
 
 GRID_GZIP_SIDECARS_ENABLED = str(os.getenv("CARTOSKY_GRID_GZIP_SIDECARS_ENABLED", "1")).strip().lower() not in {
