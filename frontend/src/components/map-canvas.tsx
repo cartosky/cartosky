@@ -1634,6 +1634,21 @@ export function MapCanvas({
   }, [clearAnchorMarkers, enforceLayerOrder]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!mapRef.current || !isLoaded) {
+      return;
+    }
+    if (new URLSearchParams(window.location.search).get("screenshot") === "1") {
+      (window as any)._cartosky_map = mapRef.current;
+      return () => {
+        delete (window as any)._cartosky_map;
+      };
+    }
+  }, [isLoaded]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
       latestMapDataUrlRef.current = null;

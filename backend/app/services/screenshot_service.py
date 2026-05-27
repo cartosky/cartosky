@@ -56,22 +56,26 @@ class ScreenshotService:
                 )
 
                 await page.wait_for_function(
-                    """() => {
-                        const canvas = document.querySelector(
-                            'div[role="img"][aria-label="Weather map"] canvas'
-                        );
-                        if (!canvas) return false;
-                        const ctx = canvas.getContext('2d');
-                        if (!ctx) return true;
-                        const data = ctx.getImageData(
-                            canvas.width / 2, canvas.height / 2, 1, 1
-                        ).data;
-                        return data[3] > 0;
-                    }""",
-                    timeout=8_000,
+                    """() => new Promise((resolve) => {
+                        const checkMap = () => {
+                            const mapInstance = window._cartosky_map;
+                            if (mapInstance) {
+                                if (mapInstance.loaded() && mapInstance.areTilesLoaded()) {
+                                    resolve(true);
+                                    return;
+                                }
+                                mapInstance.once('idle', () => resolve(true));
+                            } else {
+                                setTimeout(checkMap, 100);
+                            }
+                        };
+                        checkMap();
+                        setTimeout(() => resolve(true), 6000);
+                    })""",
+                    timeout=SCREENSHOT_TIMEOUT_MS,
                 )
 
-                await page.wait_for_timeout(800)
+                await page.wait_for_timeout(500)
 
                 data_url = await page.evaluate(
                     """() => {
