@@ -26,6 +26,7 @@ type VariablePickerProps = {
   onOpenChange?: (open: boolean) => void;
   inlinePanel?: boolean;
   inlinePanelClassName?: string;
+  panelOffset?: number;
 };
 
 type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
@@ -105,6 +106,7 @@ export function VariablePicker({
   onOpenChange,
   inlinePanel = false,
   inlinePanelClassName,
+  panelOffset = 6,
 }: VariablePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -218,8 +220,8 @@ export function VariablePicker({
     const rect = trigger.getBoundingClientRect();
     const panelWidth = Math.min(380, window.innerWidth - 16);
     const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - panelWidth - 8));
-    setPanelPosition({ left, top: rect.bottom + 6 });
-  }, []);
+    setPanelPosition({ left, top: rect.bottom + panelOffset });
+  }, [panelOffset]);
 
   useLayoutEffect(() => {
     if (!open) {

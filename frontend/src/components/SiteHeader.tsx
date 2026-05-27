@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Show, UserButton, useAuth } from "@clerk/react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
@@ -44,6 +44,10 @@ import type { GroupedOption } from "@/lib/app-utils";
 // ─── Shared types ────────────────────────────────────────────────────────────
 type Option = { value: string; label: string };
 type VariableOption = Option & { group: string | null };
+
+const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
+const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
+const DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME = "data-[side=bottom]:translate-y-0";
 
 function AvailabilityReadout({
   label,
@@ -112,6 +116,8 @@ function NavbarSelect(props: {
   menuActionDescription?: string | null;
   onMenuAction?: () => void;
   minWidth?: string;
+  contentOffset?: number;
+  contentClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const {
@@ -127,6 +133,8 @@ function NavbarSelect(props: {
     menuActionDescription,
     onMenuAction,
     minWidth = "min-w-[120px]",
+    contentOffset,
+    contentClassName,
   } = props;
 
   const selectedLabel = selectedLabelOverride ?? options.find((o) => o.value === value)?.label ?? placeholder;
@@ -215,7 +223,7 @@ function NavbarSelect(props: {
       >
         <span className="whitespace-nowrap">{selectedLabel}</span>
       </SelectTrigger>
-      <SelectContent>{resolvedContent}</SelectContent>
+      <SelectContent sideOffset={contentOffset} className={contentClassName}>{resolvedContent}</SelectContent>
     </Select>
   );
 }
@@ -281,12 +289,16 @@ function RegionUtilitySelect({
   options,
   disabled,
   currentRegionLabel,
+  contentOffset,
+  contentClassName,
 }: {
   value: string;
   onValueChange: (value: string) => void;
   options: Option[];
   disabled?: boolean;
   currentRegionLabel: string;
+  contentOffset?: number;
+  contentClassName?: string;
 }) {
   return (
     <Select
@@ -304,7 +316,7 @@ function RegionUtilitySelect({
           <Globe className="h-3.5 w-3.5" />
         </span>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent sideOffset={contentOffset} className={contentClassName}>
         <SelectGroup>
           <SelectLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
             Region
@@ -328,9 +340,24 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
   const legendRef = useRef<HTMLDivElement>(null);
   const legendPanelRef = useRef<HTMLDivElement>(null);
   const [legendPanelOpen, setLegendPanelOpen] = useState(false);
+  const [settingsPanelTop, setSettingsPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
+  const [legendPanelTop, setLegendPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
+
+  const updateSettingsPanelTop = useCallback(() => {
+    const rect = settingsRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setSettingsPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
+  }, []);
+
+  const updateLegendPanelTop = useCallback(() => {
+    const rect = legendRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setLegendPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
+  }, []);
 
   useEffect(() => {
     if (!toolbar?.displayPanelOpen) return;
+    updateSettingsPanelTop();
     function onPointerDown(e: MouseEvent | TouchEvent) {
       if (!(e.target instanceof Node)) return;
       if (settingsRef.current?.contains(e.target)) return;
@@ -340,18 +367,23 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") toolbar?.onDisplayPanelOpenChange(false);
     }
+    window.addEventListener("resize", updateSettingsPanelTop);
+    window.addEventListener("scroll", updateSettingsPanelTop, true);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("touchstart", onPointerDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("resize", updateSettingsPanelTop);
+      window.removeEventListener("scroll", updateSettingsPanelTop, true);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [toolbar?.displayPanelOpen]);
+  }, [toolbar?.displayPanelOpen, updateSettingsPanelTop]);
 
   useEffect(() => {
     if (!legendPanelOpen) return;
+    updateLegendPanelTop();
     function onPointerDown(e: MouseEvent | TouchEvent) {
       if (!(e.target instanceof Node)) return;
       if (legendRef.current?.contains(e.target)) return;
@@ -361,15 +393,19 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setLegendPanelOpen(false);
     }
+    window.addEventListener("resize", updateLegendPanelTop);
+    window.addEventListener("scroll", updateLegendPanelTop, true);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("touchstart", onPointerDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("resize", updateLegendPanelTop);
+      window.removeEventListener("scroll", updateLegendPanelTop, true);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [legendPanelOpen]);
+  }, [legendPanelOpen, updateLegendPanelTop]);
 
   if (!toolbar) return null;
 
@@ -408,6 +444,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             disabled={disabled}
             placeholder="Model"
             minWidth="min-w-[180px] max-w-[220px]"
+            panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
           />
         </HeaderSelectField>
         <HeaderSelectField label="Variable" icon={Layers}>
@@ -421,6 +458,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             placeholder="Variable"
             legend={legend}
             minWidth="min-w-[180px] max-w-[320px]"
+            panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
           />
         </HeaderSelectField>
         <HeaderSelectField label="Run Time" icon={CalendarClock}>
@@ -440,6 +478,8 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             }
             onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
             minWidth="min-w-[148px] max-w-[220px]"
+            contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
+            contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
           />
         </HeaderSelectField>
 
@@ -463,13 +503,18 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           options={regions}
           disabled={disabled}
           currentRegionLabel={selectedRegionLabel}
+          contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
+          contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
         />
 
         {/* Legend button */}
         <div className="relative shrink-0" ref={legendRef}>
           <button
             type="button"
-            onClick={() => setLegendPanelOpen((v) => !v)}
+            onClick={() => {
+              updateLegendPanelTop();
+              setLegendPanelOpen((v) => !v);
+            }}
             aria-expanded={legendPanelOpen}
             title="Legend"
             aria-label="Legend"
@@ -486,7 +531,8 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           {legendPanelOpen ? createPortal(
             <div
               ref={legendPanelRef}
-              className="fixed right-[3.25rem] top-[3.5rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+              className="fixed right-[3.25rem] z-[70] w-auto min-w-[148px] max-w-[240px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+              style={{ top: legendPanelTop }}
             >
               <MapLegend
                 legend={legend}
@@ -528,7 +574,10 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
         <div className="relative shrink-0" ref={settingsRef}>
           <button
             type="button"
-            onClick={() => onDisplayPanelOpenChange(!displayPanelOpen)}
+            onClick={() => {
+              updateSettingsPanelTop();
+              onDisplayPanelOpenChange(!displayPanelOpen);
+            }}
             aria-expanded={displayPanelOpen}
             title="Display settings"
             aria-label="Display settings"
@@ -545,7 +594,8 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           {displayPanelOpen ? createPortal(
             <div
               ref={settingsPanelRef}
-              className="fixed right-4 top-[3.5rem] z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+              className="fixed right-4 z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+              style={{ top: settingsPanelTop }}
             >
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-[#1a3a5c]/50 px-4 py-3">
