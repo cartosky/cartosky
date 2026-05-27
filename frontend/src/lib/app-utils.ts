@@ -26,7 +26,7 @@ import type { WeatherSubstrate } from "@/lib/config";
 import {
   formatObservedCompactTime,
   formatValidTime,
-  validDayLabel,
+  validAxisLabel,
   type TimeAxisMode,
 } from "@/lib/time-axis";
 
@@ -510,7 +510,7 @@ export function buildFallbackSharePayload(params: {
   const timeLabel = params.timeAxisMode === "observed"
     ? (params.validTimeISO ? `Observed ${formatObservedCompactTime(params.validTimeISO) ?? params.validTimeISO}` : "Observed time n/a")
     : params.timeAxisMode === "valid"
-      ? (params.validTimeISO ? `${validDayLabel(params.forecastHour)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}` : validDayLabel(params.forecastHour))
+      ? (params.validTimeISO ? `${validAxisLabel(params.forecastHour)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}` : validAxisLabel(params.forecastHour))
       : (Number.isFinite(params.forecastHour)
         ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
         : "FH n/a");

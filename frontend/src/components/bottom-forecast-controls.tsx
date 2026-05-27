@@ -11,7 +11,7 @@ import {
   formatObservedCompactTime,
   formatObservedValidTime,
   formatValidTime,
-  validDayLabel,
+  validAxisLabel,
 } from "@/lib/time-axis";
 import {
   Tooltip,
@@ -73,12 +73,13 @@ function formatTimelineDisplay(params: {
     if (!primary) {
       return null;
     }
+    const secondary = validAxisLabel(params.forecastHour);
     return {
       primary,
-      secondary: validDayLabel(params.forecastHour),
-      compactValue: validDayLabel(params.forecastHour),
+      secondary,
+      compactValue: secondary,
       shortDate: primary,
-      axisLabel: "Valid Day",
+      axisLabel: "Valid Time",
     };
   }
 
@@ -447,10 +448,10 @@ export function BottomForecastControls({
                 <div className="flex items-center justify-between px-0.5">
                   <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.26em] text-white/40">
                     <Clock className="h-2.5 w-2.5" />
-                    {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Day" : "Forecast Hour")}
+                    {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Time" : "Forecast Hour")}
                   </span>
                   <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
-                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validDayLabel(forecastHour) : `${forecastHour}h`)}
+                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour) : `${forecastHour}h`)}
                   </span>
                 </div>
                 <div className="px-0.5">

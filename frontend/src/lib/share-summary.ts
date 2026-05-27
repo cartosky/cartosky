@@ -1,4 +1,4 @@
-import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel, formatValidTime, validDayLabel } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel, formatValidTime, validAxisLabel } from "@/lib/time-axis";
 
 type BuildShareSummaryInput = {
   modelId: string;
@@ -114,7 +114,7 @@ function formatTimeSummary(input: BuildShareSummaryInput): string {
   }
   if (input.timeAxisMode === "valid") {
     const valid = formatValidTime(input.validTimeISO);
-    return valid ? `${validDayLabel(input.forecastHour)} • ${valid}` : validDayLabel(input.forecastHour);
+    return valid ? `${validAxisLabel(input.forecastHour)} • ${valid}` : validAxisLabel(input.forecastHour);
   }
   return formatForecastHour(input.forecastHour);
 }

@@ -149,6 +149,14 @@ export function validDayLabel(forecastHour: number | null | undefined): string {
   return `Day ${resolved + 1}`;
 }
 
+export function validAxisLabel(forecastHour: number | null | undefined): string {
+  const resolved = Number.isFinite(forecastHour) ? Math.max(0, Math.round(Number(forecastHour))) : 0;
+  if (resolved >= 6) {
+    return `FH ${resolved}`;
+  }
+  return validDayLabel(resolved);
+}
+
 export function frameValidTime(row: { valid_time?: string; meta?: { meta?: { valid_time?: string | null } | null } | null } | null | undefined): string | null {
   const direct = typeof row?.valid_time === "string" && row.valid_time.trim() ? row.valid_time.trim() : null;
   if (direct) {

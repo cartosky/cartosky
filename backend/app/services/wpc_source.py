@@ -58,6 +58,7 @@ def collect_latest_wpc_fields(
         for ref in selected_refs
     ]
     fields.sort(key=lambda item: item.forecast_hour)
+    fields = _cumulative_fields(fields)
     issue_time = max((field.issue_time for field in fields), default=run_time)
     return issue_time, {"precip_total": fields}
 
@@ -173,3 +174,31 @@ def _convert_precip_to_inches(values: np.ndarray, *, units_in: str) -> np.ndarra
     if not normalized_units:
         return output
     raise ValueError(f"Unsupported WPC precip units: {units_in}")
+
+
+def _cumulative_fields(fields: list[WPCSourceField]) -> list[WPCSourceField]:
+    cumulative: list[WPCSourceField] = []
+    running_total: np.ndarray | None = None
+    for field in fields:
+        values = np.asarray(field.values, dtype=np.float32)
+        if running_total is None:
+            running_total = np.array(values, dtype=np.float32, copy=True)
+        else:
+            running_total = np.nansum(
+                np.stack([running_total, values], axis=0),
+                axis=0,
+            ).astype(np.float32, copy=False)
+        cumulative.append(
+            WPCSourceField(
+                forecast_hour=field.forecast_hour,
+                valid_time=field.valid_time,
+                issue_time=field.issue_time,
+                values=np.array(running_total, dtype=np.float32, copy=True),
+                transform=field.transform,
+                crs=field.crs,
+                source_url=field.source_url,
+                source_filename=field.source_filename,
+                source_units=field.source_units,
+            )
+        )
+    return cumulative

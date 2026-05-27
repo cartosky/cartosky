@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.services.publish_utils import enforce_run_artifact_retention
 from app.services.run_ids import format_run_id
-from app.services.wpc_publish import publish_wpc_bundle
+from app.services.wpc_publish import WPC_PUBLISH_SOURCE, publish_wpc_bundle
 from app.services.wpc_source import WPC_LISTING_URL, collect_latest_wpc_fields
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,10 @@ def run_once(config: WPCPollerConfig) -> WPCPollerCycleResult:
     run_id = format_run_id(issue_time.astimezone(), include_minutes=True)
     latest_run_id = _latest_published_run_id(config.data_root)
     if latest_run_id == run_id and _bundle_exists(config.data_root, run_id):
-        if _manifest_variable_ids(config.data_root, run_id) == set(frames_by_var.keys()):
+        if (
+            _manifest_variable_ids(config.data_root, run_id) == set(frames_by_var.keys())
+            and _manifest_source(config.data_root, run_id) == WPC_PUBLISH_SOURCE
+        ):
             _enforce_retention(config)
             return WPCPollerCycleResult(
                 action="noop",
@@ -126,6 +129,21 @@ def _manifest_variable_ids(data_root: Path, run_id: str) -> set[str]:
     if not isinstance(variables, dict):
         return set()
     return {str(key).strip() for key in variables.keys() if str(key).strip()}
+
+
+def _manifest_source(data_root: Path, run_id: str) -> str | None:
+    manifest_path = data_root / "manifests" / "wpc" / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    source = metadata.get("source")
+    return str(source).strip() if isinstance(source, str) and source.strip() else None
 
 
 def _bundle_exists(data_root: Path, run_id: str) -> bool:

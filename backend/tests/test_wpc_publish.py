@@ -61,6 +61,37 @@ def test_discover_refs_and_select_latest_complete_run() -> None:
     assert [ref.forecast_hour for ref in selected_refs] == [6, 12]
 
 
+def test_cumulative_fields_roll_step_qpf_forward() -> None:
+    issue_time = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+    step_1 = WPCSourceField(
+        forecast_hour=6,
+        valid_time=datetime(2026, 5, 26, 18, 0, tzinfo=timezone.utc),
+        issue_time=issue_time,
+        values=np.array([[1.0, 2.0]], dtype=np.float32),
+        transform=from_origin(-130.0, 55.0, 0.01, 0.01),
+        crs="EPSG:4326",
+        source_url="https://example.com/f006.grb",
+        source_filename="f006.grb",
+        source_units="[kg/(m^2)]",
+    )
+    step_2 = WPCSourceField(
+        forecast_hour=12,
+        valid_time=datetime(2026, 5, 27, 0, 0, tzinfo=timezone.utc),
+        issue_time=issue_time,
+        values=np.array([[3.0, 4.0]], dtype=np.float32),
+        transform=from_origin(-130.0, 55.0, 0.01, 0.01),
+        crs="EPSG:4326",
+        source_url="https://example.com/f012.grb",
+        source_filename="f012.grb",
+        source_units="[kg/(m^2)]",
+    )
+
+    cumulative = wpc_source._cumulative_fields([step_1, step_2])
+
+    assert np.array_equal(cumulative[0].values, np.array([[1.0, 2.0]], dtype=np.float32))
+    assert np.array_equal(cumulative[1].values, np.array([[4.0, 6.0]], dtype=np.float32))
+
+
 def test_publish_wpc_bundle_warps_native_grid_before_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -128,7 +159,10 @@ def test_run_once_noops_when_latest_bundle_matches_formatter(
     (tmp_path / "published" / "wpc" / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
     manifests_dir = tmp_path / "manifests" / "wpc"
     manifests_dir.mkdir(parents=True, exist_ok=True)
-    (manifests_dir / f"{run_id}.json").write_text(json.dumps({"variables": {"precip_total": {}}}))
+    (manifests_dir / f"{run_id}.json").write_text(json.dumps({
+        "variables": {"precip_total": {}},
+        "metadata": {"source": wpc_publish.WPC_PUBLISH_SOURCE},
+    }));
 
     frame = WPCSourceField(
         forecast_hour=6,

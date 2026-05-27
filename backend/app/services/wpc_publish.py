@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 WPC_MODEL_ID = "wpc"
 WPC_REGION_ID = "conus"
+WPC_PUBLISH_SOURCE = "wpc_5km_qpf_cumulative_v2"
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,8 @@ def publish_wpc_bundle(
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "issue_time": issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "latest_valid_time": latest_valid_time.strftime("%Y-%m-%dT%H:%M:%SZ") if latest_valid_time is not None else None,
-        "source": "wpc_5km_qpf",
+        "source": WPC_PUBLISH_SOURCE,
+        "accumulation_mode": "cumulative",
     }
     write_run_manifest(
         data_root=data_root,
