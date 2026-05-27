@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -835,43 +835,58 @@ export function TwfShareModal({
     resetCrop();
   }, [cropFrameMetrics.containerH, cropFrameMetrics.containerW, cropFrameMetrics.frameH, resetCrop, screenshotBlobUrl]);
 
-  const handleCropPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canReframeScreenshot) {
+  useEffect(() => {
+    const el = cropFrameRef.current;
+    if (!el || !canReframeScreenshot) {
       return;
     }
-    cropDragRef.current = {
-      pointerId: event.pointerId,
-      startClientY: event.clientY,
-      startTopPx: cropTopPx,
+
+    const onDown = (e: PointerEvent) => {
+      e.preventDefault();
+      cropDragRef.current = {
+        pointerId: e.pointerId,
+        startClientY: e.clientY,
+        startTopPx: cropTopPx,
+      };
+      el.setPointerCapture(e.pointerId);
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }, [canReframeScreenshot, cropTopPx]);
 
-  const handleCropPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!cropDragRef.current || cropDragRef.current.pointerId !== event.pointerId || cropFrameMetrics.containerH <= 0) {
-      return;
-    }
-    const nextTopPx = Math.max(0, Math.min(cropTravel, cropDragRef.current.startTopPx + (event.clientY - cropDragRef.current.startClientY)));
-    setCropPos({
-      x: 0,
-      y: cropFrameMetrics.containerH > 0 ? nextTopPx / cropFrameMetrics.containerH : 0,
-    });
-  }, [cropFrameMetrics.containerH, cropTravel]);
+    const onMove = (e: PointerEvent) => {
+      if (!cropDragRef.current || cropDragRef.current.pointerId !== e.pointerId) {
+        return;
+      }
+      e.preventDefault();
+      const nextTopPx = Math.max(0, Math.min(cropTravel, cropDragRef.current.startTopPx + (e.clientY - cropDragRef.current.startClientY)));
+      setCropPos({ x: 0, y: cropFrameMetrics.containerH > 0 ? nextTopPx / cropFrameMetrics.containerH : 0 });
+    };
 
-  const handleCropPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!cropDragRef.current || cropDragRef.current.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    cropDragRef.current = null;
-    cropRectRef.current = buildResolvedCropRect();
-    setScreenshotBlob(null);
-    setScreenshotUploadError(null);
-    setScreenshotUrl(null);
-    setScreenshotKey(null);
-  }, [buildResolvedCropRect]);
+    const onUp = (e: PointerEvent) => {
+      if (!cropDragRef.current || cropDragRef.current.pointerId !== e.pointerId) {
+        return;
+      }
+      if (el.hasPointerCapture(e.pointerId)) {
+        el.releasePointerCapture(e.pointerId);
+      }
+      cropDragRef.current = null;
+      cropRectRef.current = buildResolvedCropRect();
+      setScreenshotBlob(null);
+      setScreenshotUploadError(null);
+      setScreenshotUrl(null);
+      setScreenshotKey(null);
+    };
+
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+    };
+  }, [buildResolvedCropRect, canReframeScreenshot, cropFrameMetrics.containerH, cropTopPx, cropTravel]);
 
   useEffect(() => {
     if (!open) {
@@ -1487,10 +1502,6 @@ export function TwfShareModal({
                   {canReframeScreenshot && (
                     <div
                       ref={cropFrameRef}
-                      onPointerDown={handleCropPointerDown}
-                      onPointerMove={handleCropPointerMove}
-                      onPointerUp={handleCropPointerUp}
-                      onPointerCancel={handleCropPointerUp}
                       style={{
                         position: "absolute",
                         left: Math.round((cropFrameMetrics.containerW - cropFrameMetrics.frameW) / 2),
@@ -1502,6 +1513,7 @@ export function TwfShareModal({
                         borderRadius: 2,
                         cursor: canReframeScreenshot ? "ns-resize" : "default",
                         touchAction: "none",
+                        userSelect: "none",
                       }}
                     />
                   )}
@@ -1521,8 +1533,10 @@ export function TwfShareModal({
             </div>
 
             <div className="mt-1.5 flex items-center justify-between px-1">
-              <span className="text-xs text-white/45">Drag the frame to adjust what gets shared</span>
-              <div className="flex items-center gap-1.5">
+              {canReframeScreenshot ? (
+                <span className="text-xs text-white/45">Drag the frame to adjust what gets shared</span>
+              ) : null}
+              <div className="ml-auto flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={resetCrop}
