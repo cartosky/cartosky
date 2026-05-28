@@ -55,13 +55,11 @@ MRMS_RECENT_PRECIP_VARIABLE_IDS = (
     "mrms_recent_precip_6h",
     "mrms_recent_precip_24h",
     "mrms_recent_precip_72h",
-    "mrms_recent_precip_168h",
 )
 MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
     "mrms_recent_precip_6h": "mrms_recent_precip_6h",
     "mrms_recent_precip_24h": "mrms_recent_precip_24h",
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
-    "mrms_recent_precip_168h": "mrms_recent_precip_168h",
 }
 
 # ---------------------------------------------------------------------------

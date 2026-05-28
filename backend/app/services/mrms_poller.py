@@ -646,33 +646,6 @@ def _build_recent_precip_frames(
             qpe_24h_scans = scans
             qpe_24h_frozen = frozen
 
-    if config.qpe_24h_listing_url:
-        if not qpe_24h_scans:
-            try:
-                qpe_24h_scans = discover_recent_scans_http(
-                    listing_url=config.qpe_24h_listing_url,
-                    file_re=MRMS_QPE_24H_PASS2_FILE_RE,
-                    limit=max(200, hourly_target_frame_count * 72),
-                    timeout_seconds=config.listing_timeout_seconds,
-                )
-                qpe_24h_frozen = freeze_bundle_scans(
-                    qpe_24h_scans,
-                    max_frames=hourly_target_frame_count,
-                    frame_cadence_minutes=DEFAULT_PRECIP_FRAME_CADENCE_MINUTES,
-                )
-            except Exception:
-                logger.exception("MRMS recent precip discovery failed for mrms_recent_precip_168h")
-                qpe_24h_scans = []
-                qpe_24h_frozen = []
-        frames_by_var["mrms_recent_precip_168h"] = _build_recent_precip_168h_frames(
-            target_scans=qpe_24h_frozen,
-            available_scans=qpe_24h_scans,
-            config=config,
-            download_dir=download_dir,
-            decode_cache=decode_cache,
-        )
-        expected_counts["mrms_recent_precip_168h"] = hourly_target_frame_count
-
     frames_by_var = {var_id: frames for var_id, frames in frames_by_var.items() if frames}
     return frames_by_var, expected_counts
 
@@ -721,75 +694,6 @@ def _decode_recent_precip_frame(
             "display_units": "in",
         },
     )
-
-
-def _build_recent_precip_168h_frames(
-    *,
-    target_scans: list[MRMSScanRef],
-    available_scans: list[MRMSScanRef],
-    config: MRMSPollerConfig,
-    download_dir: Path,
-    decode_cache: dict[tuple[str, str], Any],
-) -> list[MRMSSupplementalFrame]:
-    if not target_scans or not available_scans:
-        return []
-    available_by_time = {
-        scan.valid_time.astimezone(timezone.utc): scan
-        for scan in available_scans
-    }
-    frames: list[MRMSSupplementalFrame] = []
-    for target_scan in target_scans:
-        component_times = [
-            target_scan.valid_time.astimezone(timezone.utc) - timedelta(hours=24 * index)
-            for index in range(7)
-        ]
-        component_scans = [available_by_time.get(component_time) for component_time in component_times]
-        if any(component_scan is None for component_scan in component_scans):
-            continue
-
-        decoded_components = [
-            _decode_scan_cached(
-                scan=component_scan,
-                file_re=MRMS_QPE_24H_PASS2_FILE_RE,
-                config=config,
-                download_dir=download_dir,
-                decode_cache=decode_cache,
-            )
-            for component_scan in component_scans
-            if component_scan is not None
-        ]
-        if len(decoded_components) != 7:
-            continue
-
-        summed_inches = np.zeros_like(np.asarray(decoded_components[0].values, dtype=np.float32), dtype=np.float32)
-        for decoded_component in decoded_components:
-            component_inches = _precip_values_to_inches(decoded_component.values)
-            finite_mask = np.isfinite(component_inches)
-            summed_inches[~finite_mask] = np.nan
-            summed_inches[finite_mask] += component_inches[finite_mask]
-
-        frames.append(
-            MRMSSupplementalFrame(
-                valid_time=target_scan.valid_time,
-                source_valid_time=target_scan.valid_time,
-                values=summed_inches,
-                source_crs=getattr(decoded_components[0], "source_crs", None),
-                source_transform=getattr(decoded_components[0], "source_transform", None),
-                source_url=target_scan.url,
-                source_filename=target_scan.filename,
-                metadata={
-                    "decoder": decoded_components[0].decoder,
-                    "source_product": "mrms_recent_precip_168h",
-                    "accumulation_window_hours": 168,
-                    "component_valid_times": [
-                        component_time.strftime("%Y-%m-%dT%H:%M:%SZ") for component_time in component_times
-                    ],
-                    "upstream_units": "kg/m^2 equivalent",
-                    "display_units": "in",
-                },
-            )
-        )
-    return frames
 
 
 def _decode_scan_cached(

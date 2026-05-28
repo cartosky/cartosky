@@ -331,14 +331,6 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
                 source_filename="qpe06.grib2.gz",
             )
         ],
-        "mrms_recent_precip_168h": [
-            mrms_publish.MRMSSupplementalFrame(
-                valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
-                source_valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
-                values=np.array([[1.25, 1.5, 1.75], [2.0, 2.25, 2.5]], dtype=np.float32),
-                source_filename="qpe168.grib2.gz",
-            )
-        ],
     }
 
     result = mrms_publish.publish_mrms_bundle(
@@ -347,7 +339,6 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
         supplemental_variable_frames=recent_precip_frames,
         supplemental_expected_frame_counts={
             "mrms_recent_precip_6h": 1,
-            "mrms_recent_precip_168h": 1,
         },
         publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
     )
@@ -356,13 +347,9 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
     assert manifest["variables"]["mrms_recent_precip_6h"]["frames"] == [
         {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
     ]
-    assert manifest["variables"]["mrms_recent_precip_168h"]["frames"] == [
-        {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
-    ]
     precip_sidecar = json.loads((result.published_run_dir / "mrms_recent_precip_6h" / "fh000.json").read_text())
     assert precip_sidecar["var"] == "mrms_recent_precip_6h"
     assert precip_sidecar["source_filename"] == "qpe06.grib2.gz"
-    assert (result.published_run_dir / "mrms_recent_precip_168h" / "fh000.val.cog.tif").is_file()
 
 
 def test_publish_mrms_bundle_does_not_write_rgba_cogs(

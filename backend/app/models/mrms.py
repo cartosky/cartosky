@@ -35,8 +35,6 @@ class MRMSPlugin(BaseModelPlugin):
             "recent_precip_24h": "mrms_recent_precip_24h",
             "mrms_recent_precip_72h": "mrms_recent_precip_72h",
             "recent_precip_72h": "mrms_recent_precip_72h",
-            "mrms_recent_precip_168h": "mrms_recent_precip_168h",
-            "recent_precip_168h": "mrms_recent_precip_168h",
         }
         return aliases.get(normalized, normalized)
 
@@ -134,22 +132,6 @@ MRMS_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="in",
     ),
-    "mrms_recent_precip_168h": VarSpec(
-        id="mrms_recent_precip_168h",
-        name="168-h Recent Precip",
-        selectors=VarSelectors(
-            hints={
-                "display_kind": "recent_precip",
-                "accumulation_window_hours": "168",
-                "derive_strategy": "sum_non_overlapping_24h_pass2",
-                "upstream_product": "MRMS MultiSensor QPE 24H Pass2",
-                "upstream_transport": "noaa_ncep_http_grib2",
-            }
-        ),
-        primary=True,
-        kind="continuous",
-        units="in",
-    ),
 }
 
 
@@ -159,7 +141,6 @@ _MRMS_VAR_COLOR_MAPS: dict[str, str] = {
     "mrms_recent_precip_6h": "mrms_recent_precip_6h",
     "mrms_recent_precip_24h": "mrms_recent_precip_24h",
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
-    "mrms_recent_precip_168h": "mrms_recent_precip_168h",
 }
 
 _MRMS_VAR_ORDER: dict[str, int] = {
@@ -168,7 +149,6 @@ _MRMS_VAR_ORDER: dict[str, int] = {
     "mrms_recent_precip_6h": 10,
     "mrms_recent_precip_24h": 11,
     "mrms_recent_precip_72h": 12,
-    "mrms_recent_precip_168h": 13,
 }
 
 _MRMS_VAR_GROUPS: dict[str, str] = {
@@ -177,7 +157,6 @@ _MRMS_VAR_GROUPS: dict[str, str] = {
     "mrms_recent_precip_6h": "Precipitation",
     "mrms_recent_precip_24h": "Precipitation",
     "mrms_recent_precip_72h": "Precipitation",
-    "mrms_recent_precip_168h": "Precipitation",
 }
 
 

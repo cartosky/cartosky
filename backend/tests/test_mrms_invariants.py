@@ -28,7 +28,6 @@ def test_mrms_buildable_var_set_and_defaults_invariants() -> None:
         "mrms_recent_precip_6h",
         "mrms_recent_precip_24h",
         "mrms_recent_precip_72h",
-        "mrms_recent_precip_168h",
     }
 
     assert capabilities.ui_defaults["default_var_key"] == "reflectivity"
@@ -104,12 +103,6 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert recent_precip_72h["group"] == "Precipitation"
     assert recent_precip_72h["color_map_id"] == "mrms_recent_precip_72h"
 
-    recent_precip_168h = payload["variables"]["mrms_recent_precip_168h"]
-    assert recent_precip_168h["display_name"] == "168-h Recent Precip"
-    assert recent_precip_168h["order"] == 13
-    assert recent_precip_168h["group"] == "Precipitation"
-    assert recent_precip_168h["color_map_id"] == "mrms_recent_precip_168h"
-
 
 def test_mrms_aliases_normalize() -> None:
     assert MRMS_MODEL.normalize_var_id("reflectivity") == "reflectivity"
@@ -126,9 +119,6 @@ def test_mrms_aliases_normalize() -> None:
     assert MRMS_MODEL.normalize_var_id("recent_precip_24h") == "mrms_recent_precip_24h"
     assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_72h") == "mrms_recent_precip_72h"
     assert MRMS_MODEL.normalize_var_id("recent_precip_72h") == "mrms_recent_precip_72h"
-    assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_168h") == "mrms_recent_precip_168h"
-    assert MRMS_MODEL.normalize_var_id("recent_precip_168h") == "mrms_recent_precip_168h"
-
 
 def test_mrms_capability_advertises_grid_substrate() -> None:
     capabilities = MRMS_MODEL.capabilities
@@ -176,7 +166,6 @@ def test_mrms_reflectivity_grid_packing_config() -> None:
         ("mrms_recent_precip_6h", "uint16", 0.01, 0.0, 65535),
         ("mrms_recent_precip_24h", "uint16", 0.01, 0.0, 65535),
         ("mrms_recent_precip_72h", "uint16", 0.01, 0.0, 65535),
-        ("mrms_recent_precip_168h", "uint16", 0.01, 0.0, 65535),
     ],
 )
 def test_mrms_recent_precip_grid_packing_config(

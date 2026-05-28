@@ -879,6 +879,9 @@ export default function App() {
     if (selectedTimeAxisMode !== "observed") {
       return null;
     }
+    if (model === "mrms") {
+      return null;
+    }
     const availability = model ? capabilities?.availability?.[model] : null;
 
     // When we have live frame data, derive freshness client-side so the badge
