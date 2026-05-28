@@ -3584,11 +3584,215 @@
         "gridX": 147,
         "gridY": 44
       },
-        "geometry": {
+      "geometry": {
         "type": "Point",
         "coordinates": [
           -117.0002,
           46.7324
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "AK_1",
+      "properties": {
+        "st": "AK",
+        "state": "Alaska",
+        "city": "Anchorage",
+        "country": "US"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -149.9003,
+          61.2181
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "AK_2",
+      "properties": {
+        "st": "AK",
+        "state": "Alaska",
+        "city": "Fairbanks",
+        "country": "US"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -147.7164,
+          64.8378
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "AK_3",
+      "properties": {
+        "st": "AK",
+        "state": "Alaska",
+        "city": "Juneau",
+        "country": "US"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -134.4197,
+          58.3019
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_1",
+      "properties": {
+        "st": "BC",
+        "state": "British Columbia",
+        "city": "Vancouver",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.1207,
+          49.2827
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_2",
+      "properties": {
+        "st": "AB",
+        "state": "Alberta",
+        "city": "Calgary",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.0719,
+          51.0447
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_3",
+      "properties": {
+        "st": "AB",
+        "state": "Alberta",
+        "city": "Edmonton",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.4938,
+          53.5461
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_4",
+      "properties": {
+        "st": "MB",
+        "state": "Manitoba",
+        "city": "Winnipeg",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -97.1384,
+          49.8951
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_5",
+      "properties": {
+        "st": "ON",
+        "state": "Ontario",
+        "city": "Toronto",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -79.3832,
+          43.6532
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_6",
+      "properties": {
+        "st": "QC",
+        "state": "Quebec",
+        "city": "Montreal",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -73.5673,
+          45.5017
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_7",
+      "properties": {
+        "st": "NS",
+        "state": "Nova Scotia",
+        "city": "Halifax",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -63.5752,
+          44.6488
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_8",
+      "properties": {
+        "st": "YT",
+        "state": "Yukon",
+        "city": "Whitehorse",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -135.0568,
+          60.7212
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "CAN_9",
+      "properties": {
+        "st": "NT",
+        "state": "Northwest Territories",
+        "city": "Yellowknife",
+        "country": "CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.3718,
+          62.4540
         ]
       }
     }

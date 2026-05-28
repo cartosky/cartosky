@@ -110,6 +110,10 @@
     min-height: 44px;
   }
 
+  .map-anchor-marker__chip--static {
+    cursor: default;
+  }
+
   .map-pressure-center {
     position: absolute;
     z-index: 42;

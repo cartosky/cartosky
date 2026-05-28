@@ -4,6 +4,7 @@ export type AnchorFeatureProperties = {
   st?: string | null;
   state?: string | null;
   city?: string | null;
+  country?: string | null;
   label?: string;
   active?: boolean;
   value?: number | null;
@@ -37,6 +38,7 @@ export type ActiveAnchorLabel = {
   cityName: string;
   state: string;
   st: string;
+  supportsNws: boolean;
   priority: number;
 };
 
@@ -121,10 +123,14 @@ function buildAnchorFeatureProperties(
     st: readAnchorString(sourceProperties.st),
     state: readAnchorString(sourceProperties.state),
     city: readAnchorString(sourceProperties.city),
+    country: readAnchorString(sourceProperties.country),
     label: typeof overrides?.label === "string" ? overrides.label : "",
     active: overrides?.active === true,
     value: readAnchorNumber(overrides?.value),
     units: readAnchorString(overrides?.units),
+    wfo: readAnchorString(sourceProperties.wfo),
+    gridX: readAnchorNumber(sourceProperties.gridX),
+    gridY: readAnchorNumber(sourceProperties.gridY),
   };
 }
 
@@ -247,7 +253,9 @@ function anchorPriorityFromId(id: string): number {
 
 function interpolateAnchorCollisionRadiusKm(zoom: number): number {
   const zoomStops: Array<[number, number]> = [
-    [3, 170],
+    [2, 900],
+    [2.75, 650],
+    [3.5, 420],
     [4.5, 125],
     [6, 82],
     [7.5, 38],
@@ -311,6 +319,10 @@ export function getActiveAnchorLabels(
     const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
     const stateName = typeof feature.properties?.state === "string" ? feature.properties.state.trim() : "";
     const stAbbr = typeof feature.properties?.st === "string" ? feature.properties.st.trim() : "";
+    const wfo = typeof feature.properties?.wfo === "string" ? feature.properties.wfo.trim() : "";
+    const gridX = Number(feature.properties?.gridX);
+    const gridY = Number(feature.properties?.gridY);
+    const supportsNws = Boolean(wfo) && Number.isFinite(gridX) && Number.isFinite(gridY);
     const active = feature.properties?.active === true;
     if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
       continue;
@@ -322,6 +334,7 @@ export function getActiveAnchorLabels(
       cityName,
       state: stateName,
       st: stAbbr,
+      supportsNws,
       priority: anchorPriorityFromId(id),
     });
   }

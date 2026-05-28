@@ -1495,7 +1495,9 @@ export function MapCanvas({
         element.setAttribute("aria-hidden", "true");
 
         const chip = document.createElement("div");
-        chip.className = "map-anchor-marker__chip";
+        chip.className = activeMarker.supportsNws
+          ? "map-anchor-marker__chip"
+          : "map-anchor-marker__chip map-anchor-marker__chip--static";
         chip.textContent = activeMarker.label;
         chip.setAttribute("aria-label", activeMarker.cityName);
         chip.addEventListener("mouseenter", () => {
@@ -1538,6 +1540,9 @@ export function MapCanvas({
         });
         chip.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (!activeMarker.supportsNws) {
+            return;
+          }
           onAnchorClick?.({
             id: activeMarker.id,
             city: activeMarker.cityName,
