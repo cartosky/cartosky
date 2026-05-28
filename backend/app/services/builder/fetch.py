@@ -2611,6 +2611,28 @@ def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: in
     response.close()
     return data
 
+def _fetch_subset_bytes_from_full_source(
+    source_url: str,
+    *,
+    out_path: Path,
+    start_byte: int,
+    end_byte: int,
+) -> bytes:
+    temp_full_path: Path | None = None
+    source_path = source_url
+    try:
+        if source_url.startswith(("http://", "https://")):
+            temp_full_path = out_path.with_suffix(f"{out_path.suffix}.full")
+            downloaded_path = _download_full_grib_to_path(source_url=source_url, out_path=temp_full_path)
+            source_path = str(downloaded_path)
+
+        with open(source_path, "rb") as src:
+            src.seek(start_byte)
+            return src.read(end_byte - start_byte + 1)
+    finally:
+        if temp_full_path is not None:
+            _remove_file_quietly(temp_full_path)
+
 
 def _grib_payload_invalid_reason(payload: bytes) -> str | None:
     if not payload:
@@ -2822,17 +2844,33 @@ def _download_subset_with_inventory_byte_range(
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if source_url.startswith(("http://", "https://")):
-            payload = _fetch_range_bytes(
-                source=priority,
-                source_url=source_url,
-                model_id=model_id,
-                run_date=run_date,
-                fh=fh,
-                start_byte=start_byte,
-                end_byte=end_byte,
-                bundle_fetch_cache=bundle_fetch_cache,
-                require_grib_payload=True,
-            )
+            try:
+                payload = _fetch_range_bytes(
+                    source=priority,
+                    source_url=source_url,
+                    model_id=model_id,
+                    run_date=run_date,
+                    fh=fh,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                    bundle_fetch_cache=bundle_fetch_cache,
+                    require_grib_payload=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Byte-range subset fetch failed; retrying via full-file download (%s fh%03d %s; priority=%s): %s",
+                    model_id,
+                    fh,
+                    search_pattern,
+                    priority,
+                    exc,
+                )
+                payload = _fetch_subset_bytes_from_full_source(
+                    source_url,
+                    out_path=out_path,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                )
         else:
             with open(source_url, "rb") as src:
                 src.seek(start_byte)

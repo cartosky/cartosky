@@ -97,6 +97,54 @@ def test_fetch_range_cache_hit_store_and_single_http_call(monkeypatch: pytest.Mo
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
     assert metrics["counters"].get("fetch_cache_hit", 0) >= 1
 
+def test_download_subset_with_inventory_byte_range_falls_back_to_full_file_when_range_fetch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+    class _FakeHerbie:
+        idx = "https://nomads.example/aigfs.idx"
+        grib = "https://nomads.example/aigfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": ":UGRD:850 mb:", "start_byte": 4, "end_byte": 35}
+            ])
+
+    payload = b"GRIB" + (b"Z" * 28)
+    full_bytes = b"JUNK" + payload + b"TAIL"
+
+    def _fake_fetch_range_bytes(**kwargs):
+        raise RuntimeError("range blocked")
+
+    def _fake_download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
+        assert source_url == "https://nomads.example/aigfs.grib2"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(full_bytes)
+        return out_path
+
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _fake_fetch_range_bytes)
+    monkeypatch.setattr(fetch_module, "_download_full_grib_to_path", _fake_download_full_grib_to_path)
+
+    out_path = tmp_path / "subset.grib2"
+    subset_path = fetch_module._download_subset_with_inventory_byte_range(
+        _FakeHerbie(),
+        search_pattern=":UGRD:850 mb:",
+        out_path=out_path,
+        model_id="aigfs",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        product="pres",
+        fh=198,
+        priority="nomads",
+        bundle_fetch_cache=None,
+    )
+
+    assert subset_path == out_path
+    assert out_path.read_bytes() == payload
+    assert not out_path.with_suffix(".grib2.full").exists()
+
 
 def test_fetch_range_cache_singleflight_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
