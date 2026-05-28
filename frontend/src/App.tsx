@@ -1431,6 +1431,12 @@ export default function App() {
       && (presentedGridFrameUrl || compositeGridLayers.length > 0)
     );
   }, [compositeGridLayers.length, gridManifest, presentedGridFrameUrl, selectedGridLod]);
+  const controlAvailableFrameHours = useMemo(() => {
+    if (isGridLowMidActive && gridFrameHours.length > 0) {
+      return selectableFramesForVariable(gridFrameHours, selectedVariableDefaultFh);
+    }
+    return selectableFrameHours;
+  }, [gridFrameHours, isGridLowMidActive, selectableFrameHours, selectedVariableDefaultFh]);
   const isGridPlayable = useMemo(() => {
     return canUseGridPlayback;
   }, [canUseGridPlayback]);
@@ -4072,7 +4078,7 @@ export default function App() {
 
         <BottomForecastControls
           forecastHour={forecastHour}
-          availableFrames={selectableFrameHours}
+          availableFrames={controlAvailableFrameHours}
           onForecastHourChange={requestForecastHour}
           onScrubStateChange={setIsScrubbing}
           isPlaying={controlsIsPlaying}
@@ -4084,7 +4090,7 @@ export default function App() {
           sourceStatusLabel={observedSourceStatus?.label ?? null}
           sourceStatusTone={observedSourceStatus?.tone ?? null}
           disabled={loading}
-          playDisabled={loading || selectableFrameHours.length === 0}
+          playDisabled={loading || controlAvailableFrameHours.length === 0}
           transientStatus={frameStatusMessage}
           layoutMode={viewerLayoutMode}
           modelLabel={selectedModelLabel}
