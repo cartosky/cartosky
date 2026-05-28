@@ -86,11 +86,13 @@ class _FakeGFSBundlePlugin(_FakePlugin):
     id = "gfs"
 
     def get_var_capability(self, var_key: str):
-        del var_key
+        if var_key == "precip_5d_anom":
+            return types.SimpleNamespace(derive_strategy_id="precip_accum_anomaly_departure")
         return types.SimpleNamespace(derive_strategy_id="wspd10m")
 
     def get_var(self, var_key: str):
-        del var_key
+        if var_key == "precip_5d_anom":
+            return types.SimpleNamespace(derive="precip_accum_anomaly_departure")
         return types.SimpleNamespace(derive="wspd10m")
 
 
@@ -111,6 +113,7 @@ def test_eps_targets_are_derive_bundle_candidates() -> None:
     assert scheduler_module._is_derive_bundle_candidate(_FakeEPSBundlePlugin(), "hgt500_anom")
     assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity")
     assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "ptype_intensity_snow")
+    assert scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "precip_5d_anom")
     assert scheduler_module._is_derive_bundle_candidate(_FakePlugin(), "radar_ptype")
     assert scheduler_module._is_derive_bundle_candidate(_FakePlugin(), "radar_ptype_rain")
     assert scheduler_module._is_derive_bundle_candidate(_FakeNAMBundlePlugin(), "radar_ptype_snow")

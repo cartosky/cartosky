@@ -905,6 +905,11 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
         normalized == "ptype_intensity" or normalized.startswith("ptype_intensity_")
     ):
         return True
+    capability = plugin.get_var_capability(normalized) if hasattr(plugin, "get_var_capability") else None
+    if plugin_id == "gfs":
+        derive_strategy = getattr(capability, "derive_strategy_id", None)
+        if str(derive_strategy or "").strip().lower() == "precip_accum_anomaly_departure":
+            return True
     if plugin_id in {"hrrr", "nam"} and (
         normalized == "radar_ptype" or normalized.startswith("radar_ptype_")
     ):
@@ -916,7 +921,6 @@ def _is_derive_bundle_candidate(plugin: Any, var_id: str) -> bool:
     if normalized == "snowfall_total" or normalized.startswith("snowfall_"):
         return False
 
-    capability = plugin.get_var_capability(normalized) if hasattr(plugin, "get_var_capability") else None
     var_spec = plugin.get_var(normalized) if hasattr(plugin, "get_var") else None
     derive_kind = (
         getattr(capability, "derive_strategy_id", None)
