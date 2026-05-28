@@ -1390,7 +1390,21 @@ export function TwfShareModal({
                 </>
               ) : screenshotBusy ? (
                 <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
-                  <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    aria-label="Generating screenshot"
+                    className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
+                  >
+                    <div className="relative h-11 w-11">
+                      <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
+                      <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
+                      <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
+                    </div>
+                    <div className="text-center text-xs font-medium text-white/76">
+                      Generating screenshot
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
@@ -1436,11 +1450,7 @@ export function TwfShareModal({
                       className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
                       aria-label="Refresh screenshot"
                     >
-                      {screenshotBusy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
+                      <RefreshCw className="h-3.5 w-3.5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
