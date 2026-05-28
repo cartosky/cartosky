@@ -7,6 +7,8 @@ import { MapCanvas, buildMapStyle, type BasemapMode, type VectorHazardSelection 
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import SiteHeader from "@/components/SiteHeader";
+import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
+import { useTour } from "@/hooks/useTour";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
 import {
@@ -354,6 +356,91 @@ export default function App() {
   const { frameStatusMessage, showTransientFrameStatus, clearFrameStatusTimer } = useFrameStatusBadge();
   const [mapViewTick, setMapViewTick] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
+
+  const desktopTourSteps: TourStepDef[] = useMemo(() => [
+    {
+      targetSelector: '[data-tour-target="product-selector"]',
+      title: "Product",
+      body: "Switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
+    },
+    {
+      targetSelector: '[data-tour-target="variable-picker"]',
+      title: "Variable",
+      body: "Choose your weather variable — precip, temperature, wind, snow, and derived products",
+    },
+    {
+      targetSelector: '[data-tour-target="run-selector"]',
+      title: "Run Time",
+      body: "Select a model run or stay pinned to the latest available",
+    },
+    {
+      targetSelector: '[data-tour-target="forecast-scrubber"]',
+      title: "Forecast Hour",
+      body: "Drag or play through forecast hours. The timestamp updates in real time",
+    },
+    {
+      targetSelector: '[data-tour-target="freshness-indicator"]',
+      title: "Freshness",
+      body: "Shows how many forecast hours are loaded for the current run",
+    },
+    {
+      targetSelector: '[data-tour-target="share-button"]',
+      title: "Share / Screenshot",
+      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account is required",
+      linkText: "Learn more",
+      linkHref: "/account",
+    },
+  ], []);
+
+  const mobileTourSteps: TourStepDef[] = useMemo(() => [
+    {
+      targetSelector: null,
+      title: "Product",
+      body: "Open the controls panel to switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
+      tooltipAnchorBottom: true,
+    },
+    {
+      targetSelector: null,
+      title: "Variable",
+      body: "Choose your weather variable — precip, temperature, wind, snow, and derived products",
+      tooltipAnchorBottom: true,
+    },
+    {
+      targetSelector: null,
+      title: "Run Time",
+      body: "Select a model run or stay pinned to the latest available",
+      tooltipAnchorBottom: true,
+    },
+    {
+      targetSelector: null,
+      title: "Controls Panel",
+      body: "Tap any row to change product, variable, run time, or region",
+      tooltipAnchorBottom: true,
+    },
+    {
+      targetSelector: '[data-tour-target="share-button"]',
+      title: "Share / Screenshot",
+      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account is required",
+      tooltipAnchorBottom: true,
+      linkText: "Learn more",
+      linkHref: "/account",
+    },
+  ], []);
+
+  const tourSteps = isDesktopViewerLayout ? desktopTourSteps : mobileTourSteps;
+
+  const {
+    isActive: tourActive,
+    currentStep: tourCurrentStep,
+    nextStep: tourNext,
+    prevStep: tourPrev,
+    complete: tourComplete,
+    skip: tourSkip,
+    replayTour,
+    completionVisible: tourCompletionVisible,
+    dismissCompletion: tourDismissCompletion,
+  } = useTour({ isMapReady });
+
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
   // Coalesce rapid gridReadyVersion bumps into a single state update per
@@ -3982,6 +4069,7 @@ export default function App() {
     mobileControlsOpen,
     onMobileControlsOpenChange: setMobileControlsOpen,
     layoutMode: viewerLayoutMode,
+    onReplayTour: replayTour,
   }), [
     region, handleRegionChange, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
@@ -3990,7 +4078,7 @@ export default function App() {
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
-    telemetryRunId, forecastHour, mobileControlsOpen,
+    telemetryRunId, forecastHour, mobileControlsOpen, replayTour,
   ]);
 
   return (
@@ -4151,6 +4239,18 @@ export default function App() {
           />
         </Suspense>
       ) : null}
+
+      <TourOverlay
+        steps={tourSteps}
+        currentStep={tourCurrentStep}
+        isActive={tourActive}
+        onNext={tourNext}
+        onBack={tourPrev}
+        onSkip={tourSkip}
+        onComplete={tourComplete}
+        completionVisible={tourCompletionVisible}
+        onDismissCompletion={tourDismissCompletion}
+      />
     </div>
     </ViewerToolbarContext.Provider>
   );

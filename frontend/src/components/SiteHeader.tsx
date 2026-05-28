@@ -232,13 +232,15 @@ function HeaderSelectField({
   label,
   icon: Icon,
   children,
+  tourTarget,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
+  tourTarget?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
       <span className="flex items-center gap-1.5 pl-1 text-[9px] font-medium uppercase tracking-[0.18em] text-white/44">
         <Icon className="h-3 w-3" />
         {label}
@@ -436,7 +438,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
       {/* Controls group: selectors + divider + icons — all right-aligned */}
       <div className="flex shrink-0 items-end gap-1.5">
         {/* Primary selectors */}
-        <HeaderSelectField label="Product" icon={Boxes}>
+        <HeaderSelectField label="Product" icon={Boxes} tourTarget="product-selector">
           <ModelPicker
             value={model}
             onChange={onModelChange}
@@ -447,7 +449,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
           />
         </HeaderSelectField>
-        <HeaderSelectField label="Variable" icon={Layers}>
+        <HeaderSelectField label="Variable" icon={Layers} tourTarget="variable-picker">
           <VariablePicker
             modelId={model}
             value={variable}
@@ -461,7 +463,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
           />
         </HeaderSelectField>
-        <HeaderSelectField label="Run Time" icon={CalendarClock}>
+        <HeaderSelectField label="Run Time" icon={CalendarClock} tourTarget="run-selector">
           <NavbarSelect
             value={run}
             onValueChange={onRunChange}
@@ -483,19 +485,21 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           />
         </HeaderSelectField>
 
-        {runAvailabilityLabel ? (
-          <AvailabilityReadout
-            label={runAvailabilityLabel}
-            description={runAvailabilityDescription}
-            tone={runAvailabilityTone}
-          />
-        ) : sourceStatusLabel ? (
-          <AvailabilityReadout
-            label={sourceStatusLabel}
-            description={sourceStatusDescription}
-            tone={sourceStatusTone}
-          />
-        ) : null}
+        <div data-tour-target="freshness-indicator" className="flex items-center">
+          {runAvailabilityLabel ? (
+            <AvailabilityReadout
+              label={runAvailabilityLabel}
+              description={runAvailabilityDescription}
+              tone={runAvailabilityTone}
+            />
+          ) : sourceStatusLabel ? (
+            <AvailabilityReadout
+              label={sourceStatusLabel}
+              description={sourceStatusDescription}
+              tone={sourceStatusTone}
+            />
+          ) : null}
+        </div>
 
         <RegionUtilitySelect
           value={region}
@@ -549,6 +553,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             onClick={onShare}
             title="Share"
             aria-label="Share"
+            data-tour-target="share-button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
           >
             <Send className="h-3.5 w-3.5" />
@@ -657,6 +662,20 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                     className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                   />
                 </div>
+
+                {toolbar.onReplayTour ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toolbar.onReplayTour?.();
+                      onDisplayPanelOpenChange(false);
+                    }}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07]"
+                  >
+                    <span className="text-sm font-semibold text-white">Replay Tour</span>
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/70">?</span>
+                  </button>
+                ) : null}
 
                 <div className="border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/32">
                   Maps:{" "}
@@ -780,7 +799,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const selectionContent = (
     <>
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
+        <div data-tour-target="mobile-product-row" className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Boxes className="h-3 w-3" /> Product
           </span>
@@ -810,7 +829,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           />
         </div>
 
-        <div className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
+        <div data-tour-target="mobile-variable-row" className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <Layers className="h-3 w-3" /> Variable
           </span>
@@ -844,7 +863,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           />
         </div>
 
-        <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
+        <div data-tour-target="mobile-run-row" className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <CalendarClock className="h-3 w-3" /> Run Time
           </span>
@@ -938,6 +957,20 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
         />
       </div>
+
+      {toolbar.onReplayTour ? (
+        <button
+          type="button"
+          onClick={() => {
+            toolbar.onReplayTour?.();
+            closeSheet();
+          }}
+          className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
+        >
+          <span className="text-sm font-semibold text-white">Replay Tour</span>
+          <span className="text-xs font-medium text-cyan-300/70">?</span>
+        </button>
+      ) : null}
     </>
   );
 
@@ -975,6 +1008,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
           {/* Sheet panel */}
           <div
+            data-tour-target="mobile-bottom-sheet"
             style={isPhoneLayout ? {
               maxHeight: sheetSnap === "full" ? "90dvh" : "60dvh",
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",

@@ -329,6 +329,7 @@ export function BottomForecastControls({
                     type="button"
                     onClick={onShare}
                     aria-label="Share"
+                    data-tour-target="share-button"
                     className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <Send className="h-3.5 w-3.5" />
@@ -421,7 +422,7 @@ export function BottomForecastControls({
             </div>
           </div>
 
-            <div className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
+            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
               <div className="flex shrink-0 items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
