@@ -4,7 +4,7 @@ import maplibregl, { type LayerSpecification, type StyleSpecification } from "ma
 import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
-import { sanitizeAnchorFeatureCollection, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import { getActiveAnchorLabels, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import type { GridManifestResponse, PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
@@ -102,8 +102,6 @@ const OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET = 12;
 const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
-const ANCHOR_COLLISION_RADIUS_MIN_KM = 18;
-const ANCHOR_COLLISION_RADIUS_MAX_KM = 170;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
@@ -731,125 +729,6 @@ type AnchorTooltipState = {
   x: number;
   y: number;
 };
-
-type ActiveAnchorMarker = {
-  id: string;
-  lngLat: [number, number];
-  label: string;
-  cityName: string;
-  state: string;
-  st: string;
-  priority: number;
-};
-
-function haversineKm(a: [number, number], b: [number, number]): number {
-  const [lonA, latA] = a;
-  const [lonB, latB] = b;
-  const earthRadiusKm = 6371;
-  const latDelta = (latB - latA) * Math.PI / 180;
-  const lonDelta = (lonB - lonA) * Math.PI / 180;
-  const latARadians = latA * Math.PI / 180;
-  const latBRadians = latB * Math.PI / 180;
-  const latSin = Math.sin(latDelta / 2);
-  const lonSin = Math.sin(lonDelta / 2);
-  const arc = latSin * latSin
-    + Math.cos(latARadians) * Math.cos(latBRadians) * lonSin * lonSin;
-
-  return 2 * earthRadiusKm * Math.asin(Math.sqrt(arc));
-}
-
-function anchorPriorityFromId(id: string): number {
-  const parts = id.split("_");
-  const suffix = Number(parts[parts.length - 1]);
-  if (!Number.isFinite(suffix) || suffix < 1) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-  return suffix;
-}
-
-function interpolateAnchorCollisionRadiusKm(zoom: number): number {
-  const zoomStops: Array<[number, number]> = [
-    [3, ANCHOR_COLLISION_RADIUS_MAX_KM],
-    [4.5, 125],
-    [6, 82],
-    [7.5, 52],
-    [9, 30],
-    [11, ANCHOR_COLLISION_RADIUS_MIN_KM],
-  ];
-
-  if (zoom <= zoomStops[0][0]) {
-    return zoomStops[0][1];
-  }
-
-  for (let index = 1; index < zoomStops.length; index += 1) {
-    const [endZoom, endRadius] = zoomStops[index];
-    const [startZoom, startRadius] = zoomStops[index - 1];
-    if (zoom <= endZoom) {
-      const progress = (zoom - startZoom) / (endZoom - startZoom);
-      return startRadius + (endRadius - startRadius) * progress;
-    }
-  }
-
-  return ANCHOR_COLLISION_RADIUS_MIN_KM;
-}
-
-function thinAnchorMarkers(markers: ActiveAnchorMarker[], zoom: number): ActiveAnchorMarker[] {
-  const sorted = [...markers].sort((left, right) => {
-    if (left.priority !== right.priority) {
-      return left.priority - right.priority;
-    }
-    return left.id.localeCompare(right.id);
-  });
-
-  const collisionRadiusKm = interpolateAnchorCollisionRadiusKm(zoom);
-  const accepted: ActiveAnchorMarker[] = [];
-  for (const marker of sorted) {
-    const overlapsExisting = accepted.some(
-      (existing) => haversineKm(existing.lngLat, marker.lngLat) < collisionRadiusKm
-    );
-    if (!overlapsExisting) {
-      accepted.push(marker);
-    }
-  }
-  return accepted;
-}
-
-function getActiveAnchorMarkers(
-  collection: AnchorFeatureCollection | null | undefined,
-  zoom: number
-): ActiveAnchorMarker[] {
-  const sanitized = sanitizeAnchorFeatureCollection(collection);
-  if (!sanitized) {
-    return [];
-  }
-
-  const activeMarkers: ActiveAnchorMarker[] = [];
-  for (const feature of sanitized.features) {
-    const id = typeof feature.id === "string" ? feature.id : null;
-    const coordinates = feature.geometry?.type === "Point" ? feature.geometry.coordinates : null;
-    const lng = Number(coordinates?.[0]);
-    const lat = Number(coordinates?.[1]);
-    const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
-    const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
-    const stateName = typeof feature.properties?.state === "string" ? feature.properties.state.trim() : "";
-    const stAbbr = typeof feature.properties?.st === "string" ? feature.properties.st.trim() : "";
-    const active = feature.properties?.active === true;
-    if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
-      continue;
-    }
-    activeMarkers.push({
-      id,
-      lngLat: [lng, lat],
-      label,
-      cityName,
-      state: stateName,
-      st: stAbbr,
-      priority: anchorPriorityFromId(id),
-    });
-  }
-
-  return thinAnchorMarkers(activeMarkers, zoom);
-}
 
 export function buildMapStyle(
   contourGeoJsonUrl?: string | null,
@@ -1586,7 +1465,7 @@ export function MapCanvas({
         return;
       }
 
-      const activeMarkers = getActiveAnchorMarkers(data, map.getZoom());
+      const activeMarkers = getActiveAnchorLabels(data, map.getZoom());
       const nextIds = new Set(activeMarkers.map((item) => item.id));
 
       for (const [id, record] of anchorMarkersRef.current) {

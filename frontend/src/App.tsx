@@ -55,6 +55,7 @@ import {
   parseRunId,
   runIdToIso,
 } from "@/lib/time-axis";
+import { buildPermalinkSearch } from "@/lib/permalink";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/posthog";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
@@ -3813,11 +3814,26 @@ export default function App() {
   ]);
 
   const handleOpenShareModal = useCallback(() => {
-    const permalink = typeof window !== "undefined" ? window.location.href : "";
     const runForSummary = gridOnlySelection && run === "latest"
       ? resolvedRunForRequests
       : (run === "latest" ? (latestRunId ?? "latest") : run);
     const mapView = mapViewRef.current;
+    const permalinkSearch = buildPermalinkSearch({
+      model: model || undefined,
+      run: run || undefined,
+      var: variable || undefined,
+      ensembleView: ensembleView || undefined,
+      fh: Number.isFinite(resolvedForecastHourPermalink)
+        ? Number(resolvedForecastHourPermalink)
+        : undefined,
+      region: region || undefined,
+      lat: mapView.lat,
+      lon: mapView.lon,
+      z: mapView.z,
+    });
+    const permalink = typeof window !== "undefined"
+      ? `${window.location.origin}${window.location.pathname}${permalinkSearch}${window.location.hash}`
+      : permalinkSearch;
     const capabilityVariableLabel = selectedCapabilityVarMap.get(variable)?.displayName ?? null;
     const manifestVariable = runManifest?.variables?.[variable];
     const manifestVariableLabel = manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? null;
@@ -3886,6 +3902,8 @@ export default function App() {
     selectedTimeAxisMode,
     selectedVariableLabel,
     variable,
+    ensembleView,
+    resolvedForecastHourPermalink,
     displayedValidTimeISO,
     controlsIsPlaying,
     runDateTimeISO,

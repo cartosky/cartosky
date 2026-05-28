@@ -343,6 +343,25 @@ function screenshotFilename(state: ScreenshotExportState): string {
   return `cartosky-${parts.join("-")}.png`;
 }
 
+function screenshotUrlForState(permalink: string, state: ScreenshotExportState): string {
+  const base = typeof window !== "undefined" ? window.location.origin : "https://cartosky.com";
+  const url = new URL(permalink, base);
+  const [lng, lat] = state.center;
+  if (Number.isFinite(lat)) {
+    url.searchParams.set("lat", Number(lat).toFixed(5));
+  }
+  if (Number.isFinite(lng)) {
+    url.searchParams.set("lon", Number(lng).toFixed(5));
+  }
+  if (Number.isFinite(state.zoom)) {
+    url.searchParams.set("z", Number(state.zoom).toFixed(2));
+  }
+  if (Number.isFinite(state.fh)) {
+    url.searchParams.set("fh", String(Math.round(Number(state.fh))));
+  }
+  return url.toString();
+}
+
 function currentRouteWithSearch(): string {
   if (typeof window === "undefined") {
     return "/viewer";
@@ -613,10 +632,7 @@ export function TwfShareModal({
       if (!permalink) {
         throw new Error("No permalink available.");
       }
-      const screenshotUrl = new URL(
-        permalink,
-        typeof window !== "undefined" ? window.location.origin : "https://cartosky.com",
-      ).toString();
+      const screenshotUrl = screenshotUrlForState(permalink, state);
       const response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -638,12 +654,8 @@ export function TwfShareModal({
         binary += String.fromCharCode(...chunk);
       }
       const dataUrl = `data:image/png;base64,${btoa(binary)}`;
-      const latestState = buildScreenshotState?.() ?? null;
-      if (!latestState) {
-        throw new Error("No map state available.");
-      }
       const stateWithCapture: ScreenshotExportState = {
-        ...latestState,
+        ...state,
         capturedMapDataUrl: dataUrl,
         viewportWidth: 1280,
         viewportHeight: 720,

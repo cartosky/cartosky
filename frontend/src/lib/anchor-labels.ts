@@ -35,6 +35,8 @@ export type ActiveAnchorLabel = {
   lngLat: [number, number];
   label: string;
   cityName: string;
+  state: string;
+  st: string;
   priority: number;
 };
 
@@ -307,6 +309,8 @@ export function getActiveAnchorLabels(
     const lat = Number(coordinates?.[1]);
     const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
     const cityName = typeof feature.properties?.city === "string" ? feature.properties.city.trim() : "";
+    const stateName = typeof feature.properties?.state === "string" ? feature.properties.state.trim() : "";
+    const stAbbr = typeof feature.properties?.st === "string" ? feature.properties.st.trim() : "";
     const active = feature.properties?.active === true;
     if (!id || !active || !label || !cityName || !Number.isFinite(lng) || !Number.isFinite(lat)) {
       continue;
@@ -316,6 +320,8 @@ export function getActiveAnchorLabels(
       lngLat: [lng, lat],
       label,
       cityName,
+      state: stateName,
+      st: stAbbr,
       priority: anchorPriorityFromId(id),
     });
   }
