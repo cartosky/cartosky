@@ -149,8 +149,29 @@ export function validDayLabel(forecastHour: number | null | undefined): string {
   return `Day ${resolved + 1}`;
 }
 
-export function validAxisLabel(forecastHour: number | null | undefined): string {
+function validAxisForecastHour(forecastHour: number, variableId: string): number {
+  switch (variableId) {
+    case "wgust_6h_max":
+      return (forecastHour + 1) * 6;
+    case "wgust_24h_max":
+      return (forecastHour + 1) * 24;
+    default:
+      return forecastHour;
+  }
+}
+
+export function validAxisLabel(
+  forecastHour: number | null | undefined,
+  variableId?: string | null | undefined,
+): string {
   const resolved = Number.isFinite(forecastHour) ? Math.max(0, Math.round(Number(forecastHour))) : 0;
+  const normalizedVariableId = String(variableId ?? "").trim().toLowerCase();
+  if (normalizedVariableId === "maxt" || normalizedVariableId === "mint") {
+    return validDayLabel(resolved);
+  }
+  if (normalizedVariableId === "wgust_6h_max" || normalizedVariableId === "wgust_24h_max") {
+    return `FH ${validAxisForecastHour(resolved, normalizedVariableId)}`;
+  }
   if (resolved >= 6) {
     return `FH ${resolved}`;
   }

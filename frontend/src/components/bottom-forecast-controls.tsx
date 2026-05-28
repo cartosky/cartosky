@@ -38,6 +38,7 @@ type BottomForecastControlsProps = {
   transientStatus?: string | null;
   layoutMode?: ViewerLayoutMode;
   modelLabel?: string | null;
+  variableId?: string | null;
   variableLabel?: string | null;
 };
 
@@ -45,6 +46,7 @@ function formatTimelineDisplay(params: {
   runDateISO: string | null;
   forecastHour: number;
   timeAxisMode: TimeAxisMode;
+  variableId?: string | null;
   validTimeISO?: string | null;
 }): {
   primary: string;
@@ -73,7 +75,7 @@ function formatTimelineDisplay(params: {
     if (!primary) {
       return null;
     }
-    const secondary = validAxisLabel(params.forecastHour);
+    const secondary = validAxisLabel(params.forecastHour, params.variableId);
     return {
       primary,
       secondary,
@@ -159,6 +161,7 @@ export function BottomForecastControls({
   transientStatus,
   layoutMode = "desktop",
   modelLabel = null,
+  variableId = null,
   variableLabel = null,
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
@@ -177,6 +180,7 @@ export function BottomForecastControls({
       runDateISO: runDateTimeISO,
       forecastHour: previewHour ?? forecastHour,
       timeAxisMode,
+      variableId,
       validTimeISO:
         timeAxisMode === "observed"
           ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
@@ -451,7 +455,7 @@ export function BottomForecastControls({
                     {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Time" : "Forecast Hour")}
                   </span>
                   <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
-                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour) : `${forecastHour}h`)}
+                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour, variableId) : `${forecastHour}h`)}
                   </span>
                 </div>
                 <div className="px-0.5">

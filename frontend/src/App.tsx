@@ -3802,6 +3802,7 @@ export default function App() {
     const fallbackPayload = buildFallbackSharePayload({
       modelLabel: selectedModelLabel || model || "Model",
       runLabel: selectedRunLabel || runForSummary || "Run",
+      variableId: variable || null,
       variableLabel: selectedVariableLabel || variable || "Variable",
       forecastHour,
       timeAxisMode: selectedTimeAxisMode,
@@ -4068,6 +4069,7 @@ export default function App() {
           transientStatus={frameStatusMessage}
           layoutMode={viewerLayoutMode}
           modelLabel={selectedModelLabel}
+          variableId={variable}
           variableLabel={selectedVariableLabel}
         />
       </div>

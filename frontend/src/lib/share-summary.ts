@@ -114,7 +114,9 @@ function formatTimeSummary(input: BuildShareSummaryInput): string {
   }
   if (input.timeAxisMode === "valid") {
     const valid = formatValidTime(input.validTimeISO);
-    return valid ? `${validAxisLabel(input.forecastHour)} • ${valid}` : validAxisLabel(input.forecastHour);
+    return valid
+      ? `${validAxisLabel(input.forecastHour, input.variableId)} • ${valid}`
+      : validAxisLabel(input.forecastHour, input.variableId);
   }
   return formatForecastHour(input.forecastHour);
 }

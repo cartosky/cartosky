@@ -501,6 +501,7 @@ export function makeVariableLabel(id: string, preferredLabel?: string | null): s
 export function buildFallbackSharePayload(params: {
   modelLabel: string;
   runLabel: string;
+  variableId?: string | null;
   variableLabel: string;
   forecastHour: number;
   timeAxisMode: TimeAxisMode;
@@ -510,7 +511,11 @@ export function buildFallbackSharePayload(params: {
   const timeLabel = params.timeAxisMode === "observed"
     ? (params.validTimeISO ? `Observed ${formatObservedCompactTime(params.validTimeISO) ?? params.validTimeISO}` : "Observed time n/a")
     : params.timeAxisMode === "valid"
-      ? (params.validTimeISO ? `${validAxisLabel(params.forecastHour)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}` : validAxisLabel(params.forecastHour))
+      ? (
+        params.validTimeISO
+          ? `${validAxisLabel(params.forecastHour, params.variableId)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}`
+          : validAxisLabel(params.forecastHour, params.variableId)
+      )
       : (Number.isFinite(params.forecastHour)
         ? `FH ${Math.max(0, Math.round(params.forecastHour))}`
         : "FH n/a");

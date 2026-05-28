@@ -284,7 +284,7 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
   }
   if (state.timeAxisMode === "valid") {
     const validLabel = formatValidTime(state.validTimeISO) ?? "Valid time n/a";
-    return [`${model} • ${run} • ${validAxisLabel(state.fh)} • ${validLabel}`, variableLabel];
+    return [`${model} • ${run} • ${validAxisLabel(state.fh, state.variable.key)} • ${validLabel}`, variableLabel];
   }
   return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
 }
