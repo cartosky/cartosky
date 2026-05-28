@@ -30,6 +30,23 @@ MRMS_PRECIP_FLAG_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 
+MRMS_QPE_06H_PASS2_LISTING_URL = "https://mrms.ncep.noaa.gov/2D/MultiSensor_QPE_06H_Pass2/"
+MRMS_QPE_24H_PASS2_LISTING_URL = "https://mrms.ncep.noaa.gov/2D/MultiSensor_QPE_24H_Pass2/"
+MRMS_QPE_72H_PASS2_LISTING_URL = "https://mrms.ncep.noaa.gov/2D/MultiSensor_QPE_72H_Pass2/"
+
+MRMS_QPE_06H_PASS2_FILE_RE = re.compile(
+    r"MRMS_MultiSensor_QPE_06H_Pass2_00\.00_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
+    re.IGNORECASE,
+)
+MRMS_QPE_24H_PASS2_FILE_RE = re.compile(
+    r"MRMS_MultiSensor_QPE_24H_Pass2_00\.00_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
+    re.IGNORECASE,
+)
+MRMS_QPE_72H_PASS2_FILE_RE = re.compile(
+    r"MRMS_MultiSensor_QPE_72H_Pass2_00\.00_(?P<stamp>\d{8}-\d{6})\.grib2(?:\.gz)?$",
+    re.IGNORECASE,
+)
+
 WGRIB2_GRID_SHAPE_RE = re.compile(r"\((?P<nx>\d+)\s*x\s*(?P<ny>\d+)\)")
 WGRIB2_UNDEFINED_SENTINEL = np.float32(9.999e20)
 

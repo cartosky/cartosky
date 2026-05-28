@@ -22,7 +22,14 @@ def test_mrms_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"reflectivity", "mrms_radar_ptype"}
+    assert buildable_var_keys == {
+        "reflectivity",
+        "mrms_radar_ptype",
+        "mrms_recent_precip_6h",
+        "mrms_recent_precip_24h",
+        "mrms_recent_precip_72h",
+        "mrms_recent_precip_168h",
+    }
 
     assert capabilities.ui_defaults["default_var_key"] == "reflectivity"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -42,7 +49,7 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     payload = serialize_model_capability("mrms", capabilities)
 
     assert payload["model_id"] == "mrms"
-    assert payload["name"] == "Radar"
+    assert payload["name"] == "MRMS"
     assert payload["product"] == "obs"
     assert payload["canonical_region"] == "conus"
     assert payload["defaults"]["default_var_key"] == "reflectivity"
@@ -74,6 +81,35 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert mrms_radar_ptype["group"] == "Radar"
     assert mrms_radar_ptype["color_map_id"] == "mrms_radar_ptype"
 
+    recent_precip_6h = payload["variables"]["mrms_recent_precip_6h"]
+    assert recent_precip_6h["var_key"] == "mrms_recent_precip_6h"
+    assert recent_precip_6h["buildable"] is True
+    assert recent_precip_6h["derived"] is False
+    assert recent_precip_6h["kind"] == "continuous"
+    assert recent_precip_6h["units"] == "in"
+    assert recent_precip_6h["display_name"] == "6-h Recent Precip"
+    assert recent_precip_6h["order"] == 10
+    assert recent_precip_6h["group"] == "Precipitation"
+    assert recent_precip_6h["color_map_id"] == "mrms_recent_precip_6h"
+
+    recent_precip_24h = payload["variables"]["mrms_recent_precip_24h"]
+    assert recent_precip_24h["display_name"] == "24-h Recent Precip"
+    assert recent_precip_24h["order"] == 11
+    assert recent_precip_24h["group"] == "Precipitation"
+    assert recent_precip_24h["color_map_id"] == "mrms_recent_precip_24h"
+
+    recent_precip_72h = payload["variables"]["mrms_recent_precip_72h"]
+    assert recent_precip_72h["display_name"] == "72-h Recent Precip"
+    assert recent_precip_72h["order"] == 12
+    assert recent_precip_72h["group"] == "Precipitation"
+    assert recent_precip_72h["color_map_id"] == "mrms_recent_precip_72h"
+
+    recent_precip_168h = payload["variables"]["mrms_recent_precip_168h"]
+    assert recent_precip_168h["display_name"] == "168-h Recent Precip"
+    assert recent_precip_168h["order"] == 13
+    assert recent_precip_168h["group"] == "Precipitation"
+    assert recent_precip_168h["color_map_id"] == "mrms_recent_precip_168h"
+
 
 def test_mrms_aliases_normalize() -> None:
     assert MRMS_MODEL.normalize_var_id("reflectivity") == "reflectivity"
@@ -84,6 +120,14 @@ def test_mrms_aliases_normalize() -> None:
     assert MRMS_MODEL.normalize_var_id("mrms_radar_ptype") == "mrms_radar_ptype"
     assert MRMS_MODEL.normalize_var_id("radar_ptype") == "mrms_radar_ptype"
     assert MRMS_MODEL.normalize_var_id("reflectivity_ptype") == "mrms_radar_ptype"
+    assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_6h") == "mrms_recent_precip_6h"
+    assert MRMS_MODEL.normalize_var_id("recent_precip_6h") == "mrms_recent_precip_6h"
+    assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_24h") == "mrms_recent_precip_24h"
+    assert MRMS_MODEL.normalize_var_id("recent_precip_24h") == "mrms_recent_precip_24h"
+    assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_72h") == "mrms_recent_precip_72h"
+    assert MRMS_MODEL.normalize_var_id("recent_precip_72h") == "mrms_recent_precip_72h"
+    assert MRMS_MODEL.normalize_var_id("mrms_recent_precip_168h") == "mrms_recent_precip_168h"
+    assert MRMS_MODEL.normalize_var_id("recent_precip_168h") == "mrms_recent_precip_168h"
 
 
 def test_mrms_capability_advertises_grid_substrate() -> None:
@@ -94,6 +138,7 @@ def test_mrms_capability_advertises_grid_substrate() -> None:
 
     reflectivity = payload["variables"]["reflectivity"]
     assert reflectivity["render_substrates"] == ["grid"]
+    assert payload["variables"]["mrms_recent_precip_24h"]["render_substrates"] == ["grid"]
     assert payload["defaults"]["default_render_substrate"] == "grid"
 
 
@@ -123,6 +168,34 @@ def test_mrms_reflectivity_grid_packing_config() -> None:
     assert config["scale"] == 0.5
     assert config["offset"] == -10.0
     assert config["nodata"] == 255
+
+
+@pytest.mark.parametrize(
+    ("var_key", "expected_dtype", "expected_scale", "expected_offset", "expected_nodata"),
+    [
+        ("mrms_recent_precip_6h", "uint16", 0.01, 0.0, 65535),
+        ("mrms_recent_precip_24h", "uint16", 0.01, 0.0, 65535),
+        ("mrms_recent_precip_72h", "uint16", 0.01, 0.0, 65535),
+        ("mrms_recent_precip_168h", "uint16", 0.01, 0.0, 65535),
+    ],
+)
+def test_mrms_recent_precip_grid_packing_config(
+    var_key: str,
+    expected_dtype: str,
+    expected_scale: float,
+    expected_offset: float,
+    expected_nodata: int,
+) -> None:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    key = ("mrms", var_key)
+    assert key in _PACKING_BY_MODEL_VAR, f"Expected grid packing config for {key}"
+    config = _PACKING_BY_MODEL_VAR[key]
+    assert config["dtype"] == expected_dtype
+    assert config["scale"] == expected_scale
+    assert config["offset"] == expected_offset
+    assert config["nodata"] == expected_nodata
+    assert config["units"] == "in"
 
 
 def test_mrms_reflectivity_palette_uses_nws_enhanced_low_end() -> None:

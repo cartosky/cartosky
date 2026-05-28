@@ -17,6 +17,12 @@ from app.services.mrms_fetch import (
     MRMS_LISTING_URL,
     MRMS_PRECIP_FLAG_FILE_RE,
     MRMS_PRECIP_FLAG_LISTING_URL,
+    MRMS_QPE_06H_PASS2_FILE_RE,
+    MRMS_QPE_06H_PASS2_LISTING_URL,
+    MRMS_QPE_24H_PASS2_FILE_RE,
+    MRMS_QPE_24H_PASS2_LISTING_URL,
+    MRMS_QPE_72H_PASS2_FILE_RE,
+    MRMS_QPE_72H_PASS2_LISTING_URL,
     MRMSScanRef,
     decode_scan,
     discover_recent_scans_http,
@@ -26,6 +32,7 @@ from app.services.mrms_fetch import (
 from app.services.mrms_publish import (
     MRMSBundleFrame,
     MRMSPublishResult,
+    MRMSSupplementalFrame,
     load_latest_published_mrms_frames,
     publish_mrms_bundle,
 )
@@ -46,6 +53,14 @@ DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 DEFAULT_PREFERRED_DECODER = "wgrib2"
 DEFAULT_FALLBACK_DECODER = "pygrib"
 DEFAULT_FRAME_WRITE_WORKERS = 2
+DEFAULT_PRECIP_FRAME_CADENCE_MINUTES = 60
+KGM2_TO_INCHES = np.float32(1.0 / 25.4)
+
+MRMS_RECENT_PRECIP_PRODUCTS: dict[str, tuple[str, Any]] = {
+    "mrms_recent_precip_6h": (MRMS_QPE_06H_PASS2_LISTING_URL, MRMS_QPE_06H_PASS2_FILE_RE),
+    "mrms_recent_precip_24h": (MRMS_QPE_24H_PASS2_LISTING_URL, MRMS_QPE_24H_PASS2_FILE_RE),
+    "mrms_recent_precip_72h": (MRMS_QPE_72H_PASS2_LISTING_URL, MRMS_QPE_72H_PASS2_FILE_RE),
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,9 @@ class MRMSPollerConfig:
     preferred_decoder: str
     fallback_decoder: str
     frame_write_workers: int
+    qpe_06h_listing_url: str
+    qpe_24h_listing_url: str
+    qpe_72h_listing_url: str
 
 
 @dataclass(frozen=True)
@@ -193,6 +211,11 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
                 failed_scans.append(scan.filename)
 
+        recent_precip_frames, recent_precip_expected_counts = _build_recent_precip_frames(
+            config=config,
+            download_dir=download_dir,
+        )
+
     available_valid_times = {
         frame.valid_time.astimezone(timezone.utc)
         for frame in previous_frames
@@ -231,6 +254,8 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         previous_frames=previous_frames,
         target_frame_count=len(frozen),
         expected_frame_count=len(frozen),
+        supplemental_variable_frames=recent_precip_frames,
+        supplemental_expected_frame_counts=recent_precip_expected_counts,
     )
     _enforce_retention(config)
 
@@ -534,6 +559,18 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
             DEFAULT_FRAME_WRITE_WORKERS,
             minimum=1,
         ),
+        qpe_06h_listing_url=_env_value(
+            "CARTOSKY_MRMS_QPE_06H_PASS2_LISTING_URL",
+            default=MRMS_QPE_06H_PASS2_LISTING_URL,
+        ),
+        qpe_24h_listing_url=_env_value(
+            "CARTOSKY_MRMS_QPE_24H_PASS2_LISTING_URL",
+            default=MRMS_QPE_24H_PASS2_LISTING_URL,
+        ),
+        qpe_72h_listing_url=_env_value(
+            "CARTOSKY_MRMS_QPE_72H_PASS2_LISTING_URL",
+            default=MRMS_QPE_72H_PASS2_LISTING_URL,
+        ),
     )
 
 
@@ -553,6 +590,242 @@ def _format_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _build_recent_precip_frames(
+    *,
+    config: MRMSPollerConfig,
+    download_dir: Path,
+) -> tuple[dict[str, list[MRMSSupplementalFrame]], dict[str, int]]:
+    frames_by_var: dict[str, list[MRMSSupplementalFrame]] = {}
+    expected_counts: dict[str, int] = {}
+    decode_cache: dict[tuple[str, str], Any] = {}
+
+    hourly_target_frame_count = compute_target_frame_count(
+        window_minutes=config.window_minutes,
+        frame_cadence_minutes=DEFAULT_PRECIP_FRAME_CADENCE_MINUTES,
+    )
+    if hourly_target_frame_count < 1:
+        return frames_by_var, expected_counts
+
+    qpe_24h_scans: list[MRMSScanRef] = []
+    qpe_24h_frozen: list[MRMSScanRef] = []
+    for var_id, (default_listing_url, file_re) in MRMS_RECENT_PRECIP_PRODUCTS.items():
+        listing_url = _recent_precip_listing_url(config, var_id, default_listing_url)
+        if not listing_url:
+            continue
+        try:
+            scans = discover_recent_scans_http(
+                listing_url=listing_url,
+                file_re=file_re,
+                limit=max(hourly_target_frame_count * 4, hourly_target_frame_count + 8),
+                timeout_seconds=config.listing_timeout_seconds,
+            )
+            frozen = freeze_bundle_scans(
+                scans,
+                max_frames=hourly_target_frame_count,
+                frame_cadence_minutes=DEFAULT_PRECIP_FRAME_CADENCE_MINUTES,
+            )
+        except Exception:
+            logger.exception("MRMS recent precip discovery failed for %s", var_id)
+            continue
+
+        expected_counts[var_id] = hourly_target_frame_count
+        frames_by_var[var_id] = [
+            _decode_recent_precip_frame(
+                scan=scan,
+                file_re=file_re,
+                config=config,
+                download_dir=download_dir,
+                decode_cache=decode_cache,
+                metadata={"source_product": var_id, "accumulation_window_hours": int(var_id.rsplit("_", 1)[-1].removesuffix("h"))},
+            )
+            for scan in frozen
+        ]
+        if var_id == "mrms_recent_precip_24h":
+            qpe_24h_scans = scans
+            qpe_24h_frozen = frozen
+
+    if config.qpe_24h_listing_url:
+        if not qpe_24h_scans:
+            try:
+                qpe_24h_scans = discover_recent_scans_http(
+                    listing_url=config.qpe_24h_listing_url,
+                    file_re=MRMS_QPE_24H_PASS2_FILE_RE,
+                    limit=max(200, hourly_target_frame_count * 72),
+                    timeout_seconds=config.listing_timeout_seconds,
+                )
+                qpe_24h_frozen = freeze_bundle_scans(
+                    qpe_24h_scans,
+                    max_frames=hourly_target_frame_count,
+                    frame_cadence_minutes=DEFAULT_PRECIP_FRAME_CADENCE_MINUTES,
+                )
+            except Exception:
+                logger.exception("MRMS recent precip discovery failed for mrms_recent_precip_168h")
+                qpe_24h_scans = []
+                qpe_24h_frozen = []
+        frames_by_var["mrms_recent_precip_168h"] = _build_recent_precip_168h_frames(
+            target_scans=qpe_24h_frozen,
+            available_scans=qpe_24h_scans,
+            config=config,
+            download_dir=download_dir,
+            decode_cache=decode_cache,
+        )
+        expected_counts["mrms_recent_precip_168h"] = hourly_target_frame_count
+
+    frames_by_var = {var_id: frames for var_id, frames in frames_by_var.items() if frames}
+    return frames_by_var, expected_counts
+
+
+def _recent_precip_listing_url(config: MRMSPollerConfig, var_id: str, fallback: str) -> str:
+    del fallback
+    if var_id == "mrms_recent_precip_6h":
+        return config.qpe_06h_listing_url
+    if var_id == "mrms_recent_precip_24h":
+        return config.qpe_24h_listing_url
+    if var_id == "mrms_recent_precip_72h":
+        return config.qpe_72h_listing_url
+    return ""
+
+
+def _decode_recent_precip_frame(
+    *,
+    scan: MRMSScanRef,
+    file_re: Any,
+    config: MRMSPollerConfig,
+    download_dir: Path,
+    decode_cache: dict[tuple[str, str], Any],
+    metadata: dict[str, Any],
+) -> MRMSSupplementalFrame:
+    decoded = _decode_scan_cached(
+        scan=scan,
+        file_re=file_re,
+        config=config,
+        download_dir=download_dir,
+        decode_cache=decode_cache,
+    )
+    values_in = _precip_values_to_inches(decoded.values)
+    return MRMSSupplementalFrame(
+        valid_time=scan.valid_time,
+        source_valid_time=decoded.valid_time,
+        values=values_in,
+        source_crs=getattr(decoded, "source_crs", None),
+        source_transform=getattr(decoded, "source_transform", None),
+        source_url=scan.url,
+        source_filename=scan.filename,
+        metadata={
+            "decoder": decoded.decoder,
+            **dict(getattr(decoded, "metadata", {}) or {}),
+            **metadata,
+            "upstream_units": "kg/m^2 equivalent",
+            "display_units": "in",
+        },
+    )
+
+
+def _build_recent_precip_168h_frames(
+    *,
+    target_scans: list[MRMSScanRef],
+    available_scans: list[MRMSScanRef],
+    config: MRMSPollerConfig,
+    download_dir: Path,
+    decode_cache: dict[tuple[str, str], Any],
+) -> list[MRMSSupplementalFrame]:
+    if not target_scans or not available_scans:
+        return []
+    available_by_time = {
+        scan.valid_time.astimezone(timezone.utc): scan
+        for scan in available_scans
+    }
+    frames: list[MRMSSupplementalFrame] = []
+    for target_scan in target_scans:
+        component_times = [
+            target_scan.valid_time.astimezone(timezone.utc) - timedelta(hours=24 * index)
+            for index in range(7)
+        ]
+        component_scans = [available_by_time.get(component_time) for component_time in component_times]
+        if any(component_scan is None for component_scan in component_scans):
+            continue
+
+        decoded_components = [
+            _decode_scan_cached(
+                scan=component_scan,
+                file_re=MRMS_QPE_24H_PASS2_FILE_RE,
+                config=config,
+                download_dir=download_dir,
+                decode_cache=decode_cache,
+            )
+            for component_scan in component_scans
+            if component_scan is not None
+        ]
+        if len(decoded_components) != 7:
+            continue
+
+        summed_inches = np.zeros_like(np.asarray(decoded_components[0].values, dtype=np.float32), dtype=np.float32)
+        for decoded_component in decoded_components:
+            component_inches = _precip_values_to_inches(decoded_component.values)
+            finite_mask = np.isfinite(component_inches)
+            summed_inches[~finite_mask] = np.nan
+            summed_inches[finite_mask] += component_inches[finite_mask]
+
+        frames.append(
+            MRMSSupplementalFrame(
+                valid_time=target_scan.valid_time,
+                source_valid_time=target_scan.valid_time,
+                values=summed_inches,
+                source_crs=getattr(decoded_components[0], "source_crs", None),
+                source_transform=getattr(decoded_components[0], "source_transform", None),
+                source_url=target_scan.url,
+                source_filename=target_scan.filename,
+                metadata={
+                    "decoder": decoded_components[0].decoder,
+                    "source_product": "mrms_recent_precip_168h",
+                    "accumulation_window_hours": 168,
+                    "component_valid_times": [
+                        component_time.strftime("%Y-%m-%dT%H:%M:%SZ") for component_time in component_times
+                    ],
+                    "upstream_units": "kg/m^2 equivalent",
+                    "display_units": "in",
+                },
+            )
+        )
+    return frames
+
+
+def _decode_scan_cached(
+    *,
+    scan: MRMSScanRef,
+    file_re: Any,
+    config: MRMSPollerConfig,
+    download_dir: Path,
+    decode_cache: dict[tuple[str, str], Any],
+) -> Any:
+    cache_key = (scan.url, str(getattr(file_re, "pattern", file_re)))
+    cached = decode_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    downloaded = download_scan(
+        scan,
+        dest_dir=download_dir,
+        timeout_seconds=config.download_timeout_seconds,
+    )
+    decoded = decode_scan(
+        downloaded,
+        valid_time=scan.valid_time,
+        file_re=file_re,
+        preferred_decoder=config.preferred_decoder,
+        fallback_decoder=config.fallback_decoder,
+    )
+    decode_cache[cache_key] = decoded
+    return decoded
+
+
+def _precip_values_to_inches(values: np.ndarray) -> np.ndarray:
+    values_array = np.asarray(values, dtype=np.float32)
+    converted = values_array * KGM2_TO_INCHES
+    finite_mask = np.isfinite(converted)
+    converted = np.where(finite_mask, np.maximum(converted, 0.0), np.nan).astype(np.float32, copy=False)
+    return converted
 
 
 def main(argv: list[str] | None = None) -> int:

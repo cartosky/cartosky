@@ -151,11 +151,11 @@ const MODEL_REFERENCE: Record<string, ModelReference> = {
   },
   mrms: {
     eyebrow: "Operational Layer",
-    oneLiner: "Observed radar-style precipitation products for present-tense weather context.",
+    oneLiner: "Observed radar and recent-precip MRMS products for present-tense weather context.",
     coverage: "CONUS",
     cadence: "Observed / frequently updated",
     focus: [
-      "Current precipitation structure and type context",
+      "Current precipitation structure, type, and recent totals context",
       "Radar-style comparison against forecast fields",
       "Bridging observed conditions with near-term guidance",
     ],

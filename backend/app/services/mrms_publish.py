@@ -51,6 +51,18 @@ MRMS_DISPLAY_SMOOTHING_SIGMA = 0.45
 
 MRMS_RADAR_PTYPE_VARIABLE_ID = "mrms_radar_ptype"
 MRMS_RADAR_PTYPE_COLOR_MAP_ID = "mrms_radar_ptype"
+MRMS_RECENT_PRECIP_VARIABLE_IDS = (
+    "mrms_recent_precip_6h",
+    "mrms_recent_precip_24h",
+    "mrms_recent_precip_72h",
+    "mrms_recent_precip_168h",
+)
+MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
+    "mrms_recent_precip_6h": "mrms_recent_precip_6h",
+    "mrms_recent_precip_24h": "mrms_recent_precip_24h",
+    "mrms_recent_precip_72h": "mrms_recent_precip_72h",
+    "mrms_recent_precip_168h": "mrms_recent_precip_168h",
+}
 
 # ---------------------------------------------------------------------------
 # PrecipFlag → ptype mapping
@@ -82,6 +94,20 @@ class MRMSBundleFrame:
     source_filename: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     precip_flag_values: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class MRMSSupplementalFrame:
+    valid_time: datetime
+    values: np.ndarray
+    source_valid_time: datetime | None = None
+    source_crs: Any | None = None
+    source_transform: Affine | None = None
+    quality: str = "full"
+    quality_flags: list[str] = field(default_factory=list)
+    source_url: str | None = None
+    source_filename: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -208,6 +234,8 @@ def publish_mrms_bundle(
     previous_frames: list[MRMSPublishedFrame] | None = None,
     target_frame_count: int | None = None,
     expected_frame_count: int | None = None,
+    supplemental_variable_frames: dict[str, list[MRMSSupplementalFrame]] | None = None,
+    supplemental_expected_frame_counts: dict[str, int] | None = None,
 ) -> MRMSPublishResult:
     if not frames and not previous_frames:
         raise ValueError("MRMS bundle publish requires at least one frame")
@@ -299,7 +327,28 @@ def publish_mrms_bundle(
                     ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh_result))
     targets.sort(key=lambda item: item[1])
     ptype_targets.sort(key=lambda item: item[1])
-    all_targets = targets + ptype_targets
+    supplemental_targets: dict[str, list[tuple[str, int]]] = {}
+    for var_id, supplemental_frames in sorted((supplemental_variable_frames or {}).items()):
+        if var_id not in MRMS_RECENT_PRECIP_COLOR_MAP_IDS:
+            raise ValueError(f"Unsupported MRMS supplemental variable: {var_id}")
+        ordered_supplemental_frames = sorted(
+            supplemental_frames,
+            key=lambda item: item.valid_time.astimezone(timezone.utc),
+        )
+        for fh, supplemental_frame in enumerate(ordered_supplemental_frames):
+            write_mrms_supplemental_frame(
+                data_root=data_root,
+                run_id=run_id,
+                var_id=var_id,
+                forecast_hour=fh,
+                frame=supplemental_frame,
+            )
+            supplemental_targets.setdefault(var_id, []).append((var_id, fh))
+    all_targets = targets + ptype_targets + [
+        target
+        for var_targets in supplemental_targets.values()
+        for target in var_targets
+    ]
 
     ordered_valid_times = [
         item.valid_time.astimezone(timezone.utc)
@@ -319,12 +368,13 @@ def publish_mrms_bundle(
         grid_variables = [MRMS_VARIABLE_ID]
         if ptype_targets:
             grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
+        grid_variables.extend(var_id for var_id, var_targets in supplemental_targets.items() if var_targets)
         try:
             manifest_ok = build_grid_manifests_for_run_root(
                 run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
                 model=MRMS_MODEL_ID,
                 run=run_id,
-                variables=tuple(grid_variables),
+                variables=tuple(dict.fromkeys(grid_variables)),
             )
             logger.info("MRMS grid manifest build: run=%s manifests=%d", run_id, manifest_ok)
         except Exception:
@@ -357,6 +407,30 @@ def publish_mrms_bundle(
                 }
                 for fh in ptype_fhs
                 if fh < len(ordered_source_valid_times)
+            ],
+        }
+    for var_id, var_targets in supplemental_targets.items():
+        ordered_frames = sorted(
+            supplemental_variable_frames.get(var_id, []),
+            key=lambda item: item.valid_time.astimezone(timezone.utc),
+        ) if supplemental_variable_frames else []
+        expected_frames_for_var = (
+            max(0, int((supplemental_expected_frame_counts or {}).get(var_id, len(ordered_frames))))
+        )
+        manifest_variables[var_id] = {
+            "expected_frames": expected_frames_for_var,
+            "available_frames": len(var_targets),
+            "frames": [
+                {
+                    "fh": fh,
+                    "valid_time": (
+                        (ordered_frames[fh].source_valid_time or ordered_frames[fh].valid_time)
+                        .astimezone(timezone.utc)
+                        .strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ),
+                }
+                for _, fh in var_targets
+                if fh < len(ordered_frames)
             ],
         }
 
@@ -826,3 +900,84 @@ def write_mrms_radar_ptype_frame(
             values=indexed,
             transform=_target_grid_transform(),
         )
+
+
+def write_mrms_supplemental_frame(
+    *,
+    data_root: Path,
+    run_id: str,
+    var_id: str,
+    forecast_hour: int,
+    frame: MRMSSupplementalFrame,
+) -> None:
+    color_map_id = MRMS_RECENT_PRECIP_COLOR_MAP_IDS.get(var_id)
+    if not color_map_id:
+        raise ValueError(f"Unsupported MRMS supplemental variable: {var_id}")
+
+    warped_values = _warp_supplemental_values(frame.values, frame=frame)
+    fh_str = f"fh{int(forecast_hour):03d}"
+    staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / var_id
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    value_path = staging_dir / f"{fh_str}.val.cog.tif"
+    sidecar_path = staging_dir / f"{fh_str}.json"
+
+    _, colorize_meta = float_to_rgba(warped_values, color_map_id, meta_var_key=var_id)
+    write_value_cog(
+        warped_values,
+        value_path,
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+    )
+
+    run_dt = datetime.now(timezone.utc)
+    sidecar = build_sidecar_json(
+        model=MRMS_MODEL_ID,
+        region=MRMS_REGION_ID,
+        run_id=run_id,
+        var_id=var_id,
+        fh=int(forecast_hour),
+        run_date=run_dt,
+        colorize_meta=colorize_meta,
+        var_spec={"type": "continuous", "units": "in"},
+        var_spec_model=None,
+        value_downsample_factor=1,
+        quality=frame.quality,
+        quality_flags=frame.quality_flags,
+        valid_time_override=frame.valid_time.astimezone(timezone.utc),
+    )
+    if frame.source_url:
+        sidecar["source_url"] = frame.source_url
+    if frame.source_filename:
+        sidecar["source_filename"] = frame.source_filename
+    source_metadata = dict(frame.metadata) if frame.metadata else {}
+    if frame.source_valid_time is not None:
+        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if source_metadata:
+        sidecar["source_metadata"] = source_metadata
+    write_json_atomic(sidecar_path, sidecar)
+    if grid_build_enabled():
+        write_grid_frames_for_run_root(
+            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+            model=MRMS_MODEL_ID,
+            var=var_id,
+            fh=int(forecast_hour),
+            values=warped_values,
+            transform=_target_grid_transform(),
+        )
+
+
+def _warp_supplemental_values(values: np.ndarray, *, frame: MRMSSupplementalFrame) -> np.ndarray:
+    temp_frame = MRMSBundleFrame(
+        valid_time=frame.valid_time,
+        values=np.asarray(values, dtype=np.float32),
+        source_valid_time=frame.source_valid_time,
+        source_crs=frame.source_crs,
+        source_transform=frame.source_transform,
+        quality=frame.quality,
+        quality_flags=list(frame.quality_flags),
+        source_url=frame.source_url,
+        source_filename=frame.source_filename,
+        metadata=dict(frame.metadata),
+    )
+    return _warp_frame_to_target_grid(np.asarray(values, dtype=np.float32), frame=temp_frame)

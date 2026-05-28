@@ -85,6 +85,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     model = "mrms"
     run_id = "20260327_1206z"
     variable = "reflectivity"
+    precip_variable = "mrms_recent_precip_24h"
 
     manifest_dir = manifests_root / model
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,13 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                         "frames": [
                             {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
                             {"fh": 1, "valid_time": "2026-03-27T12:02:00Z"},
+                        ],
+                    },
+                    precip_variable: {
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [
+                            {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
                         ],
                     }
                 }
@@ -117,6 +125,12 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         (var_dir / f"fh{fh:03d}.json").write_text(
             json.dumps({"units": "dBZ", "valid_time": valid_time, "kind": "discrete"})
         )
+    precip_dir = model_root / run_id / precip_variable
+    precip_dir.mkdir(parents=True, exist_ok=True)
+    _write_value_raster(precip_dir / "fh000.val.cog.tif")
+    (precip_dir / "fh000.json").write_text(
+        json.dumps({"units": "in", "valid_time": "2026-03-27T12:00:00Z", "kind": "continuous"})
+    )
 
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
@@ -166,3 +180,13 @@ async def test_mrms_sampling_uses_minute_run_ids_after_loop_cutover(client: http
     assert sample_response.json()["run"] == "20260327_1206z"
     assert sample_response.json()["valid_time"] == "2026-03-27T12:00:00Z"
     assert sample_response.json()["value"] == 10.0
+
+
+async def test_mrms_recent_precip_frames_resolve(client: httpx.AsyncClient) -> None:
+    frames_response = await client.get("/api/v4/mrms/latest/mrms_recent_precip_24h/frames")
+    assert frames_response.status_code == 200
+    frames = frames_response.json()
+    assert [frame["fh"] for frame in frames] == [0]
+    assert frames[0]["run"] == "20260327_1206z"
+    assert frames[0]["meta"]["meta"]["valid_time"] == "2026-03-27T12:00:00Z"
+    assert frames[0]["meta"]["meta"]["units"] == "in"

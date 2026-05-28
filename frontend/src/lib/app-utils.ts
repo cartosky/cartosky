@@ -427,7 +427,7 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   aigfs: { label: "AIGFS", group: "MODELS", order: 6 },
   gefs: { label: "GEFS", group: "ENSEMBLES", order: 7 },
   eps: { label: "EPS", group: "ENSEMBLES", order: 8 },
-  mrms: { label: "Radar", group: "OBSERVATIONS", order: 10 },
+  mrms: { label: "MRMS", group: "OBSERVATIONS", order: 10 },
   "goes-east": { label: "Satellite", group: "OBSERVATIONS", order: 11 },
   current_analysis: { label: "Current Analysis", group: "OBSERVATIONS", order: 12 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 13 },

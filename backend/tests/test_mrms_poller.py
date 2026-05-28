@@ -30,6 +30,9 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
         preferred_decoder="wgrib2",
         fallback_decoder="pygrib",
         frame_write_workers=1,
+        qpe_06h_listing_url="",
+        qpe_24h_listing_url="",
+        qpe_72h_listing_url="",
     )
 
 
