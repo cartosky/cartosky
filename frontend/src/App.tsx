@@ -382,7 +382,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="region-selector"]',
       title: "Region",
-      body: "Zoom to a preset region — North America, CONUS, or any US region",
+      body: "Zoom to North America, CONUS, or any US region",
     },
     {
       targetSelector: '[data-tour-target="legend-button"]',
@@ -446,7 +446,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="mobile-product-row"]',
       title: "Product",
-      body: "Switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
+      body: "Switch between models, ensembles, forecasts, and observations",
       openMobileSheet: true,
     },
     {
@@ -464,7 +464,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="mobile-region-row"]',
       title: "Region",
-      body: "Zoom to a predefined region — CONUS, Alaska, Hawaii, or Puerto Rico",
+      body: "Zoom to North America, CONUS, or any US region",
       openMobileSheet: true,
     },
     {
