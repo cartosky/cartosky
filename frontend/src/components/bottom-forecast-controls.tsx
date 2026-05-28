@@ -193,6 +193,7 @@ export function BottomForecastControls({
   const hasFrames = availableFrames.length > 0;
   const isDesktopLayout = layoutMode === "desktop";
   const isTabletTouchLayout = layoutMode === "tablet-touch";
+  const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
   const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
 
@@ -261,7 +262,7 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[70] flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5">
+      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
         <div
           className={cn(
             "pointer-events-auto relative flex flex-col",
