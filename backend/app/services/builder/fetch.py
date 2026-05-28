@@ -975,6 +975,13 @@ def _inventory_cache_set(key: str, data: Any, ttl_seconds: float) -> None:
         )
 
 
+def _inventory_cache_delete(key: str) -> None:
+    if not key:
+        return
+    with _INVENTORY_CACHE_LOCK:
+        _INVENTORY_CACHE.pop(key, None)
+
+
 def _ecmwf_search_this_from_record(record: dict[str, Any]) -> str:
     param = str(record.get("param") or "").strip()
     if not param:
@@ -1061,11 +1068,15 @@ def _inventory_index_dataframe(
     H: Any,
     *,
     idx_key: str,
+    force_refresh: bool = False,
 ) -> Any | None:
-    cached = _inventory_cache_get(idx_key)
-    if cached is not None:
-        _metric_increment("idx_cache_hit")
-        return cached
+    if not force_refresh:
+        cached = _inventory_cache_get(idx_key)
+        if cached is not None:
+            _metric_increment("idx_cache_hit")
+            return cached
+    else:
+        _inventory_cache_delete(idx_key)
 
     downloader = False
     inflight_event: threading.Event
@@ -1223,6 +1234,21 @@ def _inventory_search(
 
     try:
         if len(filtered) == 0:
+            idx_ref_text = str(idx_ref or "").strip().lower()
+            if idx_ref_text.startswith(("http://", "https://")):
+                refreshed_df = _inventory_index_dataframe(H, idx_key=idx_key, force_refresh=True)
+                if refreshed_df is not None:
+                    parse_start = time.monotonic()
+                    refreshed_filtered = _inventory_filter(refreshed_df, search_pattern)
+                    _metric_observe_ms("idx_parse_ms", (time.monotonic() - parse_start) * 1000.0)
+                    if refreshed_filtered is None:
+                        return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
+                    try:
+                        if len(refreshed_filtered) > 0:
+                            _metric_increment("idx_cache_pattern_refresh")
+                            return _InventorySearchResult(inventory=refreshed_filtered, reason="ok", idx_key=idx_key)
+                    except Exception:
+                        return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
             return _InventorySearchResult(inventory=filtered, reason="pattern_missing", idx_key=idx_key)
     except Exception:
         return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)

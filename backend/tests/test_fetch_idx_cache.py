@@ -613,6 +613,54 @@ def test_inventory_cache_fetch_error_does_not_poison_cache(monkeypatch: pytest.M
     assert metrics["counters"].get("idx_cache_store", 0) == 1
 
 
+def test_inventory_search_refreshes_remote_idx_once_on_pattern_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    first_df = pd.DataFrame([
+        {"search_this": ":TMP:850 mb:", "start_byte": 0, "end_byte": 100}
+    ])
+    refreshed_df = pd.DataFrame([
+        {"search_this": ":TMP:850 mb:", "start_byte": 0, "end_byte": 100},
+        {"search_this": ":UGRD:850 mb:", "start_byte": 101, "end_byte": 200},
+    ])
+
+    class _FakeHerbie:
+        idx_df_calls = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            self.idx = "https://nomads.example/aigfs.t18z.pres.f198.grib2.idx"
+            self.grib = "https://nomads.example/aigfs.t18z.pres.f198.grib2"
+            self.priority = "nomads"
+            self.model = "aigfs"
+            self.product = "pres"
+            self.fxx = 198
+
+        @property
+        def index_as_dataframe(self):
+            type(self).idx_df_calls += 1
+            if type(self).idx_df_calls == 1:
+                return first_df
+            return refreshed_df
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS", "600")
+
+    lines = fetch_module.inventory_lines_for_pattern(
+        model_id="aigfs",
+        product="pres",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        fh=198,
+        search_pattern=":UGRD:850 mb:",
+        herbie_kwargs={"priority": "nomads"},
+    )
+
+    assert lines == [":UGRD:850 mb:"]
+    assert _FakeHerbie.idx_df_calls == 2
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("idx_cache_pattern_refresh", 0) == 1
+
+
 @pytest.mark.parametrize(
     "open_error_message",
     [
