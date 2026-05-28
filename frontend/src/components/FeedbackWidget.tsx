@@ -19,6 +19,7 @@ type CapturedContext = {
 type SubmitState = "idle" | "submitting" | "success" | "rate-limited" | "error";
 
 const MESSAGE_MAX_LENGTH = 1000;
+const REPORTER_NAME_MAX_LENGTH = 80;
 const APP_VERSION = String(import.meta.env.VITE_APP_VERSION ?? import.meta.env.VITE_RELEASE_SHA ?? "").trim() || null;
 
 const CATEGORY_OPTIONS: Array<{
@@ -61,27 +62,22 @@ export function FeedbackWidget() {
   const closeTimerRef = useRef<number | null>(null);
   const [capturedContext, setCapturedContext] = useState<CapturedContext | null>(null);
   const [category, setCategory] = useState<FeedbackCategory | null>(null);
+  const [reporterName, setReporterName] = useState("");
   const [message, setMessage] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
 
   const remainingChars = MESSAGE_MAX_LENGTH - message.length;
-  const canSubmit = Boolean(
-    category
-    && message.trim().length > 0
-    && isLoaded
-    && isSignedIn
-    && submitState !== "submitting"
-  );
+  const canSubmit = Boolean(category && message.trim().length > 0 && submitState !== "submitting");
 
   const sessionStatusLabel = useMemo(() => {
-    if (!isLoaded) {
-      return "Checking account session";
-    }
     if (isSignedIn) {
-      return "Submitting with your CartoSky account";
+      return "Signed-in feedback will still link to your CartoSky account. Add a name only if you want a different label shown in admin.";
     }
-    return "Sign in with your CartoSky account before submitting feedback.";
+    if (!isLoaded) {
+      return "Feedback works without signing in. Add a name or username only if you want us to know it was you.";
+    }
+    return "Feedback works without signing in. Add a name or username only if you want us to know it was you.";
   }, [isLoaded, isSignedIn]);
 
   // Capture page/viewer context and reset form state when the widget opens
@@ -97,6 +93,7 @@ export function FeedbackWidget() {
       fhrContext: feedbackContext.fhrContext,
     });
     setCategory(null);
+    setReporterName("");
     setMessage("");
     setSubmitState("idle");
     setSubmitMessage(null);
@@ -126,28 +123,27 @@ export function FeedbackWidget() {
       setSubmitMessage("Add a short note before sending.");
       return;
     }
-    if (!isLoaded || !isSignedIn) {
-      setSubmitMessage("Sign in with your CartoSky account before submitting feedback.");
-      return;
-    }
 
     setSubmitState("submitting");
     setSubmitMessage(null);
     try {
-      const token = await getToken({ template: clerkJwtTemplate() });
-      if (!token) {
-        throw new Error("Unable to verify your account session. Please sign in again.");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (isLoaded && isSignedIn) {
+        const token = await getToken({ template: clerkJwtTemplate() });
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
       }
       const response = await fetch(`${API_ORIGIN}/api/v4/feedback`, {
         method: "POST",
         credentials: "include",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           category,
           message: message.trim(),
+          reporter_name: reporterName.trim() || null,
           page_context: capturedContext.pageContext,
           model_context: capturedContext.modelContext,
           fhr_context: capturedContext.fhrContext,
@@ -233,6 +229,22 @@ export function FeedbackWidget() {
               </div>
 
               <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-white/44" htmlFor="feedback-reporter-name">
+                  Name / Username (optional)
+                </label>
+                <input
+                  id="feedback-reporter-name"
+                  type="text"
+                  value={reporterName}
+                  onChange={(event) => setReporterName(event.target.value.slice(0, REPORTER_NAME_MAX_LENGTH))}
+                  maxLength={REPORTER_NAME_MAX_LENGTH}
+                  className="w-full rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
+                  placeholder={isSignedIn ? "Optional display name override" : "Optional: how should we know it was you?"}
+                  autoComplete="nickname"
+                />
+              </div>
+
+              <div>
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value.slice(0, MESSAGE_MAX_LENGTH))}
@@ -262,14 +274,6 @@ export function FeedbackWidget() {
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-white/8 px-4 py-3 sm:px-5">
-              {isLoaded && !isSignedIn ? (
-                <a
-                  href="/login"
-                  className="mr-auto inline-flex h-9 items-center rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.07]"
-                >
-                  Sign in
-                </a>
-              ) : null}
               <button
                 type="button"
                 onClick={submitFeedback}

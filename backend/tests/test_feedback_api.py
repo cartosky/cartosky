@@ -85,6 +85,7 @@ def _authenticate_clerk_user(*, user_id: str = "user_beta", claims: dict[str, ob
         return main_module.ClerkPrincipal(user_id=user_id, claims=merged_claims, token="test-token")
 
     main_module.app.dependency_overrides[main_module.require_clerk_user] = require_test_clerk_user
+    main_module.app.dependency_overrides[main_module.maybe_clerk_user] = require_test_clerk_user
 
 
 async def test_feedback_submission_persists_and_admin_lists_record(client: httpx.AsyncClient) -> None:
@@ -208,17 +209,36 @@ async def test_feedback_submission_validates_category_and_required_fields(client
     assert missing_message.json()["error"]["code"] == "TWF_VALIDATION_ERROR"
 
 
-async def test_feedback_submission_requires_clerk_user(client: httpx.AsyncClient) -> None:
+async def test_feedback_submission_allows_anonymous_reports(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/v4/feedback",
         json={
             "category": "bug",
             "message": "Something happened.",
+            "reporter_name": "StormChaser42",
             "page_context": "/viewer",
         },
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 201
+    feedback = feedback_service.get_admin_feedback(page=1, page_size=10)
+    assert feedback["items"][0]["clerk_user_id"] is None
+    assert feedback["items"][0]["forums_display_name"] == "StormChaser42"
+
+
+async def test_feedback_submission_defaults_anonymous_display_name(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v4/feedback",
+        json={
+            "category": "bug",
+            "message": "Anonymous report.",
+            "page_context": "/viewer",
+        },
+    )
+
+    assert response.status_code == 201
+    feedback = feedback_service.get_admin_feedback(page=1, page_size=10)
+    assert feedback["items"][0]["forums_display_name"] == "Anonymous"
 
 
 async def test_admin_feedback_returns_aggregate_metadata(

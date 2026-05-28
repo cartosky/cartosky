@@ -97,6 +97,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 submitted_at TEXT NOT NULL,
                 category TEXT NOT NULL,
                 message TEXT NOT NULL,
+                rate_limit_key TEXT,
                 clerk_user_id TEXT,
                 member_id INTEGER NOT NULL,
                 forums_display_name TEXT NOT NULL,
@@ -118,8 +119,16 @@ def _init_db(conn: sqlite3.Connection) -> None:
             """
         )
         cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(feedback)").fetchall()}
+        if "rate_limit_key" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN rate_limit_key TEXT")
         if "clerk_user_id" not in cols:
             conn.execute("ALTER TABLE feedback ADD COLUMN clerk_user_id TEXT")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_feedback_rate_limit_key_submitted
+                ON feedback(rate_limit_key, submitted_at DESC)
+            """
+        )
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_feedback_clerk_user_submitted
@@ -192,10 +201,12 @@ def insert_feedback(
     fhr_context: int | None,
     user_agent: str,
     app_version: str | None,
+    rate_limit_key: str | None = None,
     clerk_user_id: str | None = None,
 ) -> dict[str, Any]:
     normalized_category = _validate_category(category)
     submitted_at = _format_utc(_utc_now())
+    normalized_rate_limit_key = rate_limit_key.strip() if rate_limit_key and rate_limit_key.strip() else None
     normalized_clerk_user_id = clerk_user_id.strip() if clerk_user_id and clerk_user_id.strip() else None
     stored_member_id = member_id if member_id is not None else 0
     with _connect() as conn:
@@ -205,6 +216,7 @@ def insert_feedback(
                 submitted_at,
                 category,
                 message,
+                rate_limit_key,
                 clerk_user_id,
                 member_id,
                 forums_display_name,
@@ -214,12 +226,13 @@ def insert_feedback(
                 user_agent,
                 app_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 submitted_at,
                 normalized_category,
                 message,
+                normalized_rate_limit_key,
                 normalized_clerk_user_id,
                 stored_member_id,
                 forums_display_name,
@@ -238,17 +251,30 @@ def insert_feedback(
 
 
 def check_rate_limit(*, clerk_user_id: str | None = None, member_id: int | None = None) -> int:
+    return check_rate_limit_for_identity(clerk_user_id=clerk_user_id, member_id=member_id)
+
+
+def check_rate_limit_for_identity(
+    *,
+    rate_limit_key: str | None = None,
+    clerk_user_id: str | None = None,
+    member_id: int | None = None,
+) -> int:
     now = _utc_now()
     cutoff = _format_utc(now - timedelta(seconds=FEEDBACK_RATE_LIMIT_WINDOW_SECONDS))
+    normalized_rate_limit_key = rate_limit_key.strip() if rate_limit_key and rate_limit_key.strip() else None
     normalized_clerk_user_id = clerk_user_id.strip() if clerk_user_id and clerk_user_id.strip() else None
-    if normalized_clerk_user_id:
+    if normalized_rate_limit_key:
+        identity_clause = "rate_limit_key = ?"
+        identity_value: str | int = normalized_rate_limit_key
+    elif normalized_clerk_user_id:
         identity_clause = "clerk_user_id = ?"
         identity_value: str | int = normalized_clerk_user_id
     elif member_id is not None:
         identity_clause = "member_id = ?"
         identity_value = member_id
     else:
-        raise ValueError("clerk_user_id or member_id is required for feedback rate limiting")
+        raise ValueError("rate_limit_key, clerk_user_id, or member_id is required for feedback rate limiting")
     with _connect() as conn:
         rows = conn.execute(
             f"""

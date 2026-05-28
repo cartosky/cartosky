@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export type TourStepDef = {
@@ -12,6 +12,8 @@ export type TourStepDef = {
   tooltipAnchorBottom?: boolean;
   /** Renders a full-screen welcome card instead of a spotlight step. */
   isWelcome?: boolean;
+  /** Signal to App.tsx to open the mobile controls sheet for this step. */
+  openMobileSheet?: boolean;
 };
 
 type Props = {
@@ -76,14 +78,32 @@ export function TourOverlay({
   const step = steps[currentStep];
   const isLastStep = currentStep === steps.length - 1;
   const isWelcome = step?.isWelcome === true;
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshRect = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     if (!isActive || !step || isWelcome) {
       setTargetRect(null);
       return;
     }
-    setTargetRect(queryTargetRect(step.targetSelector));
+    const rect = queryTargetRect(step.targetSelector);
+    setTargetRect(rect);
+    // Element not in DOM yet (e.g. mobile sheet still animating open) — retry
+    if (!rect && step.targetSelector) {
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        setTargetRect(queryTargetRect(step.targetSelector));
+      }, 450);
+    }
   }, [isActive, step, isWelcome]);
+
+  // Cancel any pending retry on unmount
+  useEffect(() => () => {
+    if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+  }, []);
 
   useEffect(() => {
     refreshRect();

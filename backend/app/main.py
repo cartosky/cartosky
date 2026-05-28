@@ -80,7 +80,7 @@ from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
-from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, require_clerk_admin, require_clerk_user
+from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, maybe_clerk_user, require_clerk_admin, require_clerk_user
 from backend.app.auth import twf_oauth
 
 logger = logging.getLogger(__name__)
@@ -1305,6 +1305,7 @@ class FeedbackSubmission(BaseModel):
 
     category: FeedbackCategory
     message: str = Field(min_length=1, max_length=1000)
+    reporter_name: str | None = Field(default=None, max_length=80)
     page_context: str = Field(min_length=1, max_length=300)
     model_context: str | None = Field(default=None, max_length=64)
     fhr_context: int | None = Field(default=None, ge=0, le=1000)
@@ -1314,6 +1315,8 @@ class FeedbackSubmission(BaseModel):
     def require_non_blank_text(self) -> "FeedbackSubmission":
         if not self.message.strip():
             raise ValueError("message must not be blank")
+        if self.reporter_name is not None and not self.reporter_name.strip():
+            raise ValueError("reporter_name must not be blank")
         if not self.page_context.strip():
             raise ValueError("page_context must not be blank")
         return self
@@ -1365,26 +1368,41 @@ async def _feedback_display_name(current_user: ClerkPrincipal) -> str:
     return f"Clerk user {current_user.user_id[:12]}"
 
 
+def _feedback_request_rate_limit_key(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    forwarded_ip = forwarded_for.split(",", 1)[0].strip() if forwarded_for else ""
+    client_ip = forwarded_ip or (request.client.host if request.client else "") or "unknown"
+    user_agent = (request.headers.get("user-agent") or "unknown").strip() or "unknown"
+    fingerprint = hashlib.sha256(f"{client_ip}|{user_agent}".encode("utf-8")).hexdigest()
+    return f"anon:{fingerprint}"
+
+
 @app.post("/api/v4/feedback", status_code=201)
 async def post_feedback(
     request: Request,
     background_tasks: BackgroundTasks,
     payload: FeedbackSubmission,
-    current_user: ClerkPrincipal = Depends(require_clerk_user),
+    current_user: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ) -> dict[str, Any]:
-    retry_after = feedback_service.check_rate_limit(clerk_user_id=current_user.user_id)
+    rate_limit_key = current_user.user_id if current_user else _feedback_request_rate_limit_key(request)
+    retry_after = feedback_service.check_rate_limit_for_identity(
+        rate_limit_key=rate_limit_key,
+        clerk_user_id=current_user.user_id if current_user else None,
+    )
     if retry_after > 0:
         raise TwfApiError(
             status_code=429,
             code="FEEDBACK_RATE_LIMITED",
             message="Too many feedback submissions. Please try again later.",
         )
-    display_name = await _feedback_display_name(current_user)
+    explicit_reporter_name = payload.reporter_name.strip() if payload.reporter_name and payload.reporter_name.strip() else None
+    display_name = explicit_reporter_name or (await _feedback_display_name(current_user) if current_user else "Anonymous")
     try:
         record = feedback_service.insert_feedback(
             category=payload.category,
             message=payload.message.strip(),
-            clerk_user_id=current_user.user_id,
+            rate_limit_key=rate_limit_key,
+            clerk_user_id=current_user.user_id if current_user else None,
             member_id=None,
             forums_display_name=display_name,
             page_context=payload.page_context.strip(),

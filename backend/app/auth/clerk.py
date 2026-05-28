@@ -178,6 +178,12 @@ async def require_clerk_user(request: Request) -> ClerkPrincipal:
     return ClerkPrincipal(user_id=user_id.strip(), claims=claims, token=token)
 
 
+async def maybe_clerk_user(request: Request) -> ClerkPrincipal | None:
+    if not request.headers.get("authorization", "").strip():
+        return None
+    return await require_clerk_user(request)
+
+
 async def require_clerk_admin(request: Request) -> ClerkPrincipal:
     principal = await require_clerk_user(request)
     if not principal.is_admin:

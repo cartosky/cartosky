@@ -392,7 +392,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="share-button"]',
       title: "Share / Screenshot",
-      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
+      body: "Share this exact map view. To share with The Weather Forums, a CartoSky account linked to your TWF account via the integrations tab is required",
       linkText: "Learn more",
       linkHref: "/account",
     },
@@ -421,34 +421,38 @@ export default function App() {
       isWelcome: true,
     },
     {
-      targetSelector: null,
-      title: "Product",
-      body: "Open the controls panel to switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
-      tooltipAnchorBottom: true,
+      targetSelector: '[data-tour-target="feedback-button"]',
+      title: "Feedback",
+      body: "Send us a note about missing data, display issues, or feature requests",
     },
     {
-      targetSelector: null,
+      targetSelector: '[data-tour-target="mobile-product-row"]',
+      title: "Product",
+      body: "Switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
+      openMobileSheet: true,
+    },
+    {
+      targetSelector: '[data-tour-target="mobile-variable-row"]',
       title: "Variable",
       body: "Choose your weather variable — precip, temperature, wind, snow, and derived products",
-      tooltipAnchorBottom: true,
+      openMobileSheet: true,
     },
     {
-      targetSelector: null,
+      targetSelector: '[data-tour-target="mobile-run-row"]',
       title: "Run Time",
       body: "Select a model run or stay pinned to the latest available",
-      tooltipAnchorBottom: true,
+      openMobileSheet: true,
     },
     {
-      targetSelector: null,
+      targetSelector: '[data-tour-target="mobile-bottom-sheet"]',
       title: "Controls Panel",
       body: "Tap any row to change product, variable, run time, or region",
-      tooltipAnchorBottom: true,
+      openMobileSheet: true,
     },
     {
       targetSelector: '[data-tour-target="share-button"]',
       title: "Share / Screenshot",
       body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
-      tooltipAnchorBottom: true,
       linkText: "Learn more",
       linkHref: "/account",
     },
@@ -467,6 +471,17 @@ export default function App() {
     completionVisible: tourCompletionVisible,
     dismissCompletion: tourDismissCompletion,
   } = useTour({ isMapReady });
+
+  // On mobile, open or close the controls sheet as the tour advances between steps
+  useEffect(() => {
+    if (isDesktopViewerLayout) return;
+    const step = tourSteps[tourCurrentStep];
+    if (tourActive && step) {
+      setMobileControlsOpen(step.openMobileSheet === true);
+    } else if (!tourActive) {
+      setMobileControlsOpen(false);
+    }
+  }, [tourActive, tourCurrentStep, tourSteps, isDesktopViewerLayout]);
 
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
