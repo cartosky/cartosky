@@ -1728,6 +1728,21 @@ export default function App() {
     }
     return currentFrame;
   }, [currentFrame, frameByHour, visibleOverlayHour]);
+  const displayedForecastHour = useMemo(() => {
+    if (isGridLowMidActive && Number.isFinite(visibleOverlayHour)) {
+      return Number(visibleOverlayHour);
+    }
+    return Number.isFinite(forecastHour) ? Number(forecastHour) : 0;
+  }, [forecastHour, isGridLowMidActive, visibleOverlayHour]);
+  const displayedValidTimeISO = useMemo(() => {
+    if (Number.isFinite(displayedForecastHour)) {
+      const mappedValidTime = frameValidTimesByHour[displayedForecastHour];
+      if (mappedValidTime) {
+        return mappedValidTime;
+      }
+    }
+    return frameValidTime(visibleOverlayFrame) ?? currentFrameValidTimeISO;
+  }, [currentFrameValidTimeISO, displayedForecastHour, frameValidTimesByHour, visibleOverlayFrame]);
   // Keep the legacy GeoJSON contour renderer as the production path for now.
   // The companion-grid shader path regressed line quality and frame availability
   // for GFS-style products, even though the shaded grid playback itself is good.
@@ -3752,11 +3767,12 @@ export default function App() {
         key: variable || "variable",
         label: selectedVariableLabel || variable || "Variable",
       },
-      fh: Number.isFinite(forecastHour) ? Math.round(forecastHour) : 0,
+      fh: Number.isFinite(displayedForecastHour) ? Math.round(displayedForecastHour) : 0,
       isMobile: viewerLayoutMode !== "desktop",
       gridReady,
       timeAxisMode: selectedTimeAxisMode,
-      validTimeISO: currentFrameValidTimeISO,
+      runTimeISO: runDateTimeISO,
+      validTimeISO: displayedValidTimeISO,
       sourceStatusLabel: observedSourceStatus?.label ?? null,
       region: {
         id: region || "region",
@@ -3777,12 +3793,13 @@ export default function App() {
     basemapMode,
     anchorDisplayGeoJson,
     selectedVariableLabel,
-    forecastHour,
+    displayedForecastHour,
     gridReadyVersion,
     isGridHourReady,
     resolvedGridDisplayHour,
     selectedTimeAxisMode,
-    currentFrameValidTimeISO,
+    displayedValidTimeISO,
+    runDateTimeISO,
     observedSourceStatus,
     region,
     selectedRegionLabel,
@@ -3804,9 +3821,10 @@ export default function App() {
       runLabel: selectedRunLabel || runForSummary || "Run",
       variableId: variable || null,
       variableLabel: selectedVariableLabel || variable || "Variable",
-      forecastHour,
+      forecastHour: displayedForecastHour,
       timeAxisMode: selectedTimeAxisMode,
-      validTimeISO: currentFrameValidTimeISO,
+      runTimeISO: runDateTimeISO,
+      validTimeISO: displayedValidTimeISO,
       permalink,
     });
 
@@ -3829,9 +3847,9 @@ export default function App() {
           variableDisplayName: preferredVariableLabel,
           regionId: region || "region",
           regionLabel: regionPresets[region]?.label ?? null,
-          forecastHour: Number.isFinite(forecastHour) ? forecastHour : null,
+          forecastHour: Number.isFinite(displayedForecastHour) ? displayedForecastHour : null,
           timeAxisMode: selectedTimeAxisMode,
-          validTimeISO: currentFrameValidTimeISO,
+          validTimeISO: displayedValidTimeISO,
           centerLat: Number.isFinite(mapView.lat) ? mapView.lat : null,
           centerLon: Number.isFinite(mapView.lon) ? mapView.lon : null,
           zoom: Number.isFinite(mapView.z) ? mapView.z : null,
@@ -3847,7 +3865,7 @@ export default function App() {
         // Leave the fallback payload in place on import/build errors.
       });
   }, [
-    forecastHour,
+    displayedForecastHour,
     gridOnlySelection,
     latestRunId,
     model,
@@ -3862,8 +3880,9 @@ export default function App() {
     selectedTimeAxisMode,
     selectedVariableLabel,
     variable,
-    currentFrameValidTimeISO,
+    displayedValidTimeISO,
     controlsIsPlaying,
+    runDateTimeISO,
   ]);
 
   usePermalinkSync({
@@ -4060,7 +4079,7 @@ export default function App() {
           setIsPlaying={handleSetIsPlaying}
           runDateTimeISO={runDateTimeISO}
           timeAxisMode={selectedTimeAxisMode}
-          validTimeISO={currentFrameValidTimeISO}
+          validTimeISO={displayedValidTimeISO}
           frameValidTimesByHour={frameValidTimesByHour}
           sourceStatusLabel={observedSourceStatus?.label ?? null}
           sourceStatusTone={observedSourceStatus?.tone ?? null}

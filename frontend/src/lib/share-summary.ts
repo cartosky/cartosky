@@ -1,4 +1,4 @@
-import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel, formatValidTime, validAxisLabel } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedRunLabel, formatRunLabel, formatValidTime, runIdToIso, validAxisLabel } from "@/lib/time-axis";
 
 type BuildShareSummaryInput = {
   modelId: string;
@@ -113,10 +113,10 @@ function formatTimeSummary(input: BuildShareSummaryInput): string {
     return observed ? `Observed ${observed}` : "Observed time n/a";
   }
   if (input.timeAxisMode === "valid") {
-    const valid = formatValidTime(input.validTimeISO);
+    const valid = formatValidTime(input.validTimeISO, input.variableId);
     return valid
-      ? `${validAxisLabel(input.forecastHour, input.variableId)} • ${valid}`
-      : validAxisLabel(input.forecastHour, input.variableId);
+      ? `${validAxisLabel(input.forecastHour, input.variableId, runIdToIso(input.runId), input.validTimeISO)} • ${valid}`
+      : validAxisLabel(input.forecastHour, input.variableId, runIdToIso(input.runId), input.validTimeISO);
   }
   return formatForecastHour(input.forecastHour);
 }

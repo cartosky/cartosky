@@ -20,6 +20,7 @@ export type ScreenshotExportState = {
   fh: number;
   gridReady: boolean;
   timeAxisMode?: TimeAxisMode;
+  runTimeISO?: string | null;
   validTimeISO?: string | null;
   sourceStatusLabel?: string | null;
   region?: { id: string; label: string };
@@ -283,8 +284,8 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
   }
   if (state.timeAxisMode === "valid") {
-    const validLabel = formatValidTime(state.validTimeISO) ?? "Valid time n/a";
-    return [`${model} • ${run} • ${validAxisLabel(state.fh, state.variable.key)} • ${validLabel}`, variableLabel];
+    const validLabel = formatValidTime(state.validTimeISO, state.variable.key) ?? "Valid time n/a";
+    return [`${model} • ${run} • ${validAxisLabel(state.fh, state.variable.key, state.runTimeISO, state.validTimeISO)} • ${validLabel}`, variableLabel];
   }
   return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
 }

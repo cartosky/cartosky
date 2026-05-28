@@ -505,6 +505,7 @@ export function buildFallbackSharePayload(params: {
   variableLabel: string;
   forecastHour: number;
   timeAxisMode: TimeAxisMode;
+  runTimeISO?: string | null;
   validTimeISO?: string | null;
   permalink: string;
 }): SharePayload {
@@ -513,8 +514,8 @@ export function buildFallbackSharePayload(params: {
     : params.timeAxisMode === "valid"
       ? (
         params.validTimeISO
-          ? `${validAxisLabel(params.forecastHour, params.variableId)} • ${formatValidTime(params.validTimeISO) ?? params.validTimeISO}`
-          : validAxisLabel(params.forecastHour, params.variableId)
+          ? `${validAxisLabel(params.forecastHour, params.variableId, params.runTimeISO, params.validTimeISO)} • ${formatValidTime(params.validTimeISO, params.variableId) ?? params.validTimeISO}`
+          : validAxisLabel(params.forecastHour, params.variableId, params.runTimeISO, params.validTimeISO)
       )
       : (Number.isFinite(params.forecastHour)
         ? `FH ${Math.max(0, Math.round(params.forecastHour))}`

@@ -119,10 +119,42 @@ export function formatObservedCompactTime(iso: string | null | undefined): strin
   }).format(parsed);
 }
 
-export function formatValidTime(iso: string | null | undefined): string | null {
+function isWindGustVariable(variableId: string | null | undefined): boolean {
+  const normalized = String(variableId ?? "").trim().toLowerCase();
+  return normalized === "wgust_6h_max" || normalized === "wgust_24h_max";
+}
+
+function forecastHourFromValidTime(
+  runTimeISO: string | null | undefined,
+  validTimeISO: string | null | undefined,
+): number | null {
+  const runTime = parseIsoDate(runTimeISO);
+  const validTime = parseIsoDate(validTimeISO);
+  if (!runTime || !validTime) {
+    return null;
+  }
+  const diffHours = Math.round((validTime.getTime() - runTime.getTime()) / 3_600_000);
+  return Number.isFinite(diffHours) && diffHours >= 0 ? diffHours : null;
+}
+
+export function formatValidTime(
+  iso: string | null | undefined,
+  variableId?: string | null | undefined,
+): string | null {
   const parsed = parseIsoDate(iso);
   if (!parsed) {
     return null;
+  }
+  if (isWindGustVariable(variableId)) {
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(parsed);
   }
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
@@ -133,10 +165,21 @@ export function formatValidTime(iso: string | null | undefined): string | null {
   }).format(parsed);
 }
 
-export function formatValidCompactTime(iso: string | null | undefined): string | null {
+export function formatValidCompactTime(
+  iso: string | null | undefined,
+  variableId?: string | null | undefined,
+): string | null {
   const parsed = parseIsoDate(iso);
   if (!parsed) {
     return null;
+  }
+  if (isWindGustVariable(variableId)) {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(parsed);
   }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -149,28 +192,22 @@ export function validDayLabel(forecastHour: number | null | undefined): string {
   return `Day ${resolved + 1}`;
 }
 
-function validAxisForecastHour(forecastHour: number, variableId: string): number {
-  switch (variableId) {
-    case "wgust_6h_max":
-      return (forecastHour + 1) * 6;
-    case "wgust_24h_max":
-      return (forecastHour + 1) * 24;
-    default:
-      return forecastHour;
-  }
-}
-
 export function validAxisLabel(
   forecastHour: number | null | undefined,
   variableId?: string | null | undefined,
+  runTimeISO?: string | null | undefined,
+  validTimeISO?: string | null | undefined,
 ): string {
   const resolved = Number.isFinite(forecastHour) ? Math.max(0, Math.round(Number(forecastHour))) : 0;
   const normalizedVariableId = String(variableId ?? "").trim().toLowerCase();
   if (normalizedVariableId === "maxt" || normalizedVariableId === "mint") {
     return validDayLabel(resolved);
   }
-  if (normalizedVariableId === "wgust_6h_max" || normalizedVariableId === "wgust_24h_max") {
-    return `FH ${validAxisForecastHour(resolved, normalizedVariableId)}`;
+  if (isWindGustVariable(normalizedVariableId)) {
+    const actualForecastHour = forecastHourFromValidTime(runTimeISO, validTimeISO);
+    if (actualForecastHour !== null) {
+      return `FH ${actualForecastHour}`;
+    }
   }
   if (resolved >= 6) {
     return `FH ${resolved}`;

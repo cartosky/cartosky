@@ -71,11 +71,11 @@ function formatTimelineDisplay(params: {
   }
 
   if (params.timeAxisMode === "valid") {
-    const primary = formatValidTime(params.validTimeISO);
+    const primary = formatValidTime(params.validTimeISO, params.variableId);
     if (!primary) {
       return null;
     }
-    const secondary = validAxisLabel(params.forecastHour, params.variableId);
+    const secondary = validAxisLabel(params.forecastHour, params.variableId, params.runDateISO, params.validTimeISO);
     return {
       primary,
       secondary,
@@ -174,6 +174,7 @@ export function BottomForecastControls({
   const lastSentHourRef = useRef<number | null>(null);
   const trailingRafRef = useRef<number | null>(null);
   const pendingEmitRef = useRef<number | null>(null);
+  const showInlineSecondary = !(timeAxisMode === "valid" && (variableId === "wgust_6h_max" || variableId === "wgust_24h_max"));
 
   const validTime = useMemo(
     () => formatTimelineDisplay({
@@ -186,7 +187,7 @@ export function BottomForecastControls({
           ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
           : validTimeISO,
     }),
-    [runDateTimeISO, forecastHour, previewHour, timeAxisMode, validTimeISO, frameValidTimesByHour]
+    [runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, validTimeISO, frameValidTimesByHour]
   );
 
   const hasFrames = availableFrames.length > 0;
@@ -410,7 +411,7 @@ export function BottomForecastControls({
                 {validTime ? (
                   <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
                     {validTime.shortDate}
-                    {validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                    {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
                       <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
                     ) : null}
                   </div>
@@ -455,7 +456,7 @@ export function BottomForecastControls({
                     {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Time" : "Forecast Hour")}
                   </span>
                   <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
-                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour, variableId) : `${forecastHour}h`)}
+                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour, variableId, runDateTimeISO, validTimeISO) : `${forecastHour}h`)}
                   </span>
                 </div>
                 <div className="px-0.5">
