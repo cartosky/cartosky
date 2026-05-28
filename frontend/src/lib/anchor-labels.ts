@@ -248,7 +248,7 @@ function interpolateAnchorCollisionRadiusKm(zoom: number): number {
     [3, 170],
     [4.5, 125],
     [6, 82],
-    [7.5, 52],
+    [7.5, 38],
     [9, 30],
     [11, 18],
   ];
