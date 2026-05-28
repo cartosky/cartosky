@@ -298,15 +298,16 @@ async function fetchAdminJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export async function fetchTwfStatus(): Promise<TwfStatus> {
   const token = await getClerkAuthToken();
-  if (token) {
-    const me = await fetchJson<ClerkMeResponse>(`${API_ORIGIN}/api/v4/auth/me`, withBearerToken(undefined, token));
-    return {
-      linked: true,
-      admin: me.is_admin,
-      display_name: me.user_id,
-    };
+  if (!token) {
+    return { linked: false, admin: false };
   }
-  return fetchJson<TwfStatus>(`${API_ORIGIN}/auth/twf/status`);
+
+  const me = await fetchJson<ClerkMeResponse>(`${API_ORIGIN}/api/v4/auth/me`, withBearerToken(undefined, token));
+  return {
+    linked: true,
+    admin: me.is_admin,
+    display_name: me.user_id,
+  };
 }
 
 export async function fetchAdminAuthStatus(): Promise<TwfStatus> {

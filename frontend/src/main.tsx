@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { ClerkProvider, type ClerkProviderProps } from "@clerk/react";
 import { BrowserRouter } from "react-router-dom";
 import RouterApp from "./RouterApp";
+import { ClerkAuthTokenBridge } from "./components/ClerkAuthTokenBridge";
 import { FeedbackWidget } from "./components/FeedbackWidget";
 import { PostHogBridge } from "./components/PostHogBridge";
 import { FeedbackProvider } from "./lib/feedback-context";
@@ -22,6 +23,7 @@ const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderPr
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <EnvClerkProvider afterSignOutUrl="/" appearance={clerkAppearance}>
+      <ClerkAuthTokenBridge />
       <BrowserRouter>
         <SiteLoadingProvider>
           <FeedbackProvider>
