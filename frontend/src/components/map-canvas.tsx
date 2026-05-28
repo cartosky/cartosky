@@ -952,6 +952,7 @@ type MapCanvasProps = {
   legendButtonActive?: boolean;
   onLegendButtonClick?: () => void;
   manualLocationJumpRef?: { current: boolean };
+  geolocationMarker?: { lat: number; lon: number } | null;
   region: string;
   regionViews?: Record<string, RegionView>;
   opacity: number;
@@ -1000,6 +1001,7 @@ export function MapCanvas({
   legendButtonActive = false,
   onLegendButtonClick,
   manualLocationJumpRef,
+  geolocationMarker = null,
   region,
   regionViews,
   opacity,
@@ -1059,6 +1061,7 @@ export function MapCanvas({
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
 
   const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
+  const geolocationMarkerRef = useRef<maplibregl.Marker | null>(null);
   const isHoveringAnchorRef = useRef(false);
   const anchorHoverLeaveTimeoutRef = useRef<number | null>(null);
   const prevGridFrameHourRef = useRef<number | null>(null);
@@ -1446,6 +1449,54 @@ export function MapCanvas({
     }
     anchorMarkersRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      geolocationMarkerRef.current?.remove();
+      geolocationMarkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    if (!geolocationMarker || !Number.isFinite(geolocationMarker.lat) || !Number.isFinite(geolocationMarker.lon)) {
+      geolocationMarkerRef.current?.remove();
+      geolocationMarkerRef.current = null;
+      return;
+    }
+
+    if (!geolocationMarkerRef.current) {
+      const element = document.createElement("div");
+      element.setAttribute("aria-hidden", "true");
+      element.style.width = "18px";
+      element.style.height = "18px";
+      element.style.borderRadius = "9999px";
+      element.style.background = "rgba(55,138,221,0.26)";
+      element.style.border = "1px solid rgba(55,138,221,0.42)";
+      element.style.display = "flex";
+      element.style.alignItems = "center";
+      element.style.justifyContent = "center";
+      element.style.boxShadow = "0 0 0 1px rgba(255,255,255,0.08), 0 6px 18px rgba(10,18,32,0.35)";
+
+      const core = document.createElement("div");
+      core.style.width = "8px";
+      core.style.height = "8px";
+      core.style.borderRadius = "9999px";
+      core.style.background = "rgba(117,196,255,0.98)";
+      core.style.boxShadow = "0 0 0 2px rgba(6,18,33,0.55)";
+      element.appendChild(core);
+
+      geolocationMarkerRef.current = new maplibregl.Marker({
+        element,
+        anchor: "center",
+      }).addTo(map);
+    }
+
+    geolocationMarkerRef.current.setLngLat([geolocationMarker.lon, geolocationMarker.lat]);
+  }, [geolocationMarker, isLoaded]);
 
   const showAnchorTooltip = useCallback((map: maplibregl.Map, cityName: string, lngLat: [number, number]) => {
     const projected = map.project(lngLat);

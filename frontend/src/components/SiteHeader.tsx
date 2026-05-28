@@ -308,7 +308,7 @@ function RegionUtilitySelect({
 }: {
   value: string;
   onValueChange: (value: string) => void;
-  onLocationJump?: (lat: number, lon: number, zoom?: number) => void;
+  onLocationJump?: (lat: number, lon: number, zoom?: number, source?: "search" | "geolocation") => void;
   options: Option[];
   disabled?: boolean;
   currentRegionLabel: string;
@@ -486,7 +486,7 @@ function RegionUtilitySelect({
   }
 
   function handleLocationResultSelect(result: LocationSearchResult) {
-    onLocationJump?.(result.latitude, result.longitude, 10);
+    onLocationJump?.(result.latitude, result.longitude, 10, "search");
     closeAfterLocationJump();
   }
 
@@ -499,7 +499,7 @@ function RegionUtilitySelect({
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        onLocationJump?.(position.coords.latitude, position.coords.longitude, 10);
+        onLocationJump?.(position.coords.latitude, position.coords.longitude, 10, "geolocation");
         closeAfterLocationJump();
       },
       () => {
@@ -642,11 +642,15 @@ function RegionUtilitySelect({
                       key={`${result.display_name}-${result.latitude}-${result.longitude}`}
                       type="button"
                       onClick={() => handleLocationResultSelect(result)}
-                      className="flex w-full flex-col items-start rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
+                      className="group flex w-full flex-col items-start rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/14 hover:text-cyan-50"
                     >
-                      <span className="text-sm font-medium text-white/92">{result.display_name}</span>
+                      <span className="text-sm font-medium text-white/92 transition-colors group-hover:text-cyan-50">
+                        {result.display_name}
+                      </span>
                       {secondaryLocationLabel(result) ? (
-                        <span className="mt-0.5 text-[11px] text-white/48">{secondaryLocationLabel(result)}</span>
+                        <span className="mt-0.5 text-[11px] text-white/48 transition-colors group-hover:text-cyan-100/72">
+                          {secondaryLocationLabel(result)}
+                        </span>
                       ) : null}
                     </button>
                   ))

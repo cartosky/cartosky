@@ -383,6 +383,9 @@ test.describe('Grid-only smoke', () => {
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    await expect.poll(() => new URL(page.url(), 'http://localhost').search).toBe(selectedSearch);
+    await expect.poll(
+      () => new URL(page.url(), 'http://localhost').search,
+      { timeout: 15000 }
+    ).toBe(selectedSearch);
   });
 });

@@ -355,6 +355,7 @@ export default function App() {
   });
   const { frameStatusMessage, showTransientFrameStatus, clearFrameStatusTimer } = useFrameStatusBadge();
   const [mapViewTick, setMapViewTick] = useState(0);
+  const [geolocationMarker, setGeolocationMarker] = useState<{ lat: number; lon: number } | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
 
   const desktopTourSteps: TourStepDef[] = useMemo(() => [
@@ -382,7 +383,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="region-selector"]',
       title: "Region",
-      body: "Zoom to North America, CONUS, or any US region",
+      body: "Search for a city, use GPS to find your location, or select from predefined regions",
     },
     {
       targetSelector: '[data-tour-target="legend-button"]',
@@ -464,7 +465,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="mobile-region-row"]',
       title: "Region",
-      body: "Zoom to North America, CONUS, or any US region",
+      body: "Search for a city, use GPS to find your location, or select from predefined regions",
       openMobileSheet: true,
     },
     {
@@ -3445,11 +3446,12 @@ export default function App() {
     setMapViewTick((current) => current + 1);
   }, []);
 
-  const handleLocationJump = useCallback((lat: number, lon: number, zoom = 10) => {
+  const handleLocationJump = useCallback((lat: number, lon: number, zoom = 10, source: "search" | "geolocation" = "search") => {
     const map = mapInstanceRef.current;
     if (!map || !isMapReady || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(zoom)) {
       return;
     }
+    setGeolocationMarker(source === "geolocation" ? { lat, lon } : null);
     manualLocationJumpRef.current = true;
     map.setMaxZoom(Math.max(map.getMaxZoom(), zoom));
     map.easeTo({
@@ -4209,6 +4211,7 @@ export default function App() {
           legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
           onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
           manualLocationJumpRef={manualLocationJumpRef}
+          geolocationMarker={geolocationMarker}
         />
 
         {/* Subtle radial vignette — darkens map edges for depth; never blocks interaction */}

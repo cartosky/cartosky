@@ -12,7 +12,7 @@ export type ViewerToolbarProps = {
   // Selectors
   region: string;
   onRegionChange: (value: string) => void;
-  onLocationJump?: (lat: number, lon: number, zoom?: number) => void;
+  onLocationJump?: (lat: number, lon: number, zoom?: number, source?: "search" | "geolocation") => void;
   model: string;
   onModelChange: (value: string) => void;
   run: string;
