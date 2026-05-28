@@ -1049,6 +1049,7 @@ for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", 
         _PACKING_BY_MODEL_VAR[(_precip_anom_model, _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
+_PACKING_BY_MODEL_VAR[("ecmwf", "precip_15d_anom")] = dict(_PRECIP_ANOM_PACKING)
 for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"):
     _PACKING_BY_MODEL_VAR[("aifs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
 _PACKING_BY_MODEL_VAR[("eps", "precip_15d_anom")] = dict(_PRECIP_ANOM_PACKING)

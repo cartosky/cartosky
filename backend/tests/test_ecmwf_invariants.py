@@ -29,7 +29,7 @@ def test_ecmwf_run_discovery_invariants() -> None:
 
 
 def test_ecmwf_target_fhs_invariants() -> None:
-    synoptic_expected = list(range(0, 145, 3)) + list(range(150, 385, 6))
+    synoptic_expected = list(range(0, 145, 3)) + list(range(150, 361, 6))
     off_cycle_expected = list(range(0, 145, 3))
     assert ECMWF_MODEL.target_fhs(0) == synoptic_expected
     assert ECMWF_MODEL.target_fhs(12) == synoptic_expected
@@ -73,6 +73,8 @@ def test_ecmwf_alias_and_herbie_request_invariants() -> None:
     assert ECMWF_MODEL.normalize_var_id("precip_total") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("apcp") == "precip_total"
     assert ECMWF_MODEL.normalize_var_id("qpf") == "precip_total"
+    assert ECMWF_MODEL.normalize_var_id("precip_15d_anom") == "precip_15d_anom"
+    assert ECMWF_MODEL.normalize_var_id("precip_16d_anom") == "precip_15d_anom"
     assert ECMWF_MODEL.normalize_var_id("snowfall_total") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("asnow") == "snowfall_total"
     assert ECMWF_MODEL.normalize_var_id("snow10") == "snowfall_total"
@@ -146,7 +148,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "ice_total", "wspd10m", "wgst10m", "mucape", "pwat"}
+    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "dp2m", "rh2m", "rh700", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "precip_total", "precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom", "ptype_intensity", "snowfall_total", "snowfall_kuchera_total", "ice_total", "wspd10m", "wgst10m", "mucape", "pwat"}
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -165,6 +167,7 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert ("ecmwf", "rh2m") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "rh700") in _PACKING_BY_MODEL_VAR
     assert ("ecmwf", "ice_total") in _PACKING_BY_MODEL_VAR
+    assert ("ecmwf", "precip_15d_anom") in _PACKING_BY_MODEL_VAR
 
     tmp2m_anom_spec = ECMWF_MODEL.get_var("tmp2m_anom")
     assert tmp2m_anom_spec is not None
@@ -190,6 +193,14 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     precip_spec = ECMWF_MODEL.get_var("precip_total")
     assert precip_spec is not None
     assert precip_spec.selectors.search == [":tp:sfc:", ":tp:"]
+
+    precip_15d_spec = ECMWF_MODEL.get_var("precip_15d_anom")
+    assert precip_15d_spec is not None
+    assert precip_15d_spec.selectors.hints["target_fh"] == "360"
+    assert ECMWF_MODEL.get_var_capability("precip_15d_anom") is not None
+    assert ECMWF_MODEL.get_var_capability("precip_15d_anom").default_fh == 360
+    assert ECMWF_MODEL.get_var_capability("precip_15d_anom").constraints == {"min_fh": 360, "max_fh": 360}
+    assert ECMWF_MODEL.get_var_capability("precip_16d_anom") is None
 
     snowfall_spec = ECMWF_MODEL.get_var("snowfall_total")
     assert snowfall_spec is not None
