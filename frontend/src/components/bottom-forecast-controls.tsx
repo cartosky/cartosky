@@ -455,9 +455,11 @@ export function BottomForecastControls({
                     <Clock className="h-2.5 w-2.5" />
                     {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Time" : "Forecast Hour")}
                   </span>
-                  <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
-                    {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : timeAxisMode === "valid" ? validAxisLabel(forecastHour, variableId, runDateTimeISO, validTimeISO) : `${forecastHour}h`)}
-                  </span>
+                  {timeAxisMode === "valid" ? null : (
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
+                      {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : `${forecastHour}h`)}
+                    </span>
+                  )}
                 </div>
                 <div className="px-0.5">
                   <Slider
