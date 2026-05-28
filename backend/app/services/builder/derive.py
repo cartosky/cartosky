@@ -23,7 +23,7 @@ import rasterio
 import rasterio.transform
 import rasterio.crs
 from rasterio.enums import Resampling
-from rasterio.warp import reproject
+from rasterio.warp import calculate_default_transform, reproject
 
 from app.services.builder.cog_writer import compute_transform_and_shape, warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
@@ -4264,6 +4264,37 @@ def _grid_center_coordinates_geographic(
     return lats_deg, lons_deg
 
 
+def _reproject_to_geographic_grid(
+    *,
+    data: np.ndarray,
+    src_crs: rasterio.crs.CRS,
+    src_transform: rasterio.transform.Affine,
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+    dst_crs = rasterio.crs.CRS.from_epsg(4326)
+    src_h, src_w = data.shape
+    src_bounds = rasterio.transform.array_bounds(src_h, src_w, src_transform)
+    dst_transform, dst_w, dst_h = calculate_default_transform(
+        src_crs,
+        dst_crs,
+        src_w,
+        src_h,
+        *src_bounds,
+    )
+    dst_data = np.full((dst_h, dst_w), np.nan, dtype=np.float32)
+    reproject(
+        source=np.asarray(data, dtype=np.float32),
+        destination=dst_data,
+        src_transform=src_transform,
+        src_crs=src_crs,
+        dst_transform=dst_transform,
+        dst_crs=dst_crs,
+        resampling=Resampling.bilinear,
+        src_nodata=None,
+        dst_nodata=float("nan"),
+    )
+    return dst_data.astype(np.float32, copy=False), dst_crs, dst_transform
+
+
 def _derive_vort500_from_uv(
     *,
     model_id: str,
@@ -4333,8 +4364,25 @@ def _derive_vort500_from_uv(
 
     if u_data.shape != v_data.shape:
         raise ValueError("vort500 derive requires matching u/v component shapes")
-    if src_crs is None or not bool(getattr(src_crs, "is_geographic", False)):
+    if src_crs is None:
         raise ValueError("vort500 derive requires a geographic source CRS")
+    if not bool(getattr(src_crs, "is_geographic", False)):
+        original_src_crs = src_crs
+        original_src_transform = src_transform
+        u_data, src_crs, src_transform = _reproject_to_geographic_grid(
+            data=u_data,
+            src_crs=original_src_crs,
+            src_transform=original_src_transform,
+        )
+        v_data, v_crs, v_transform = _reproject_to_geographic_grid(
+            data=v_data,
+            src_crs=original_src_crs,
+            src_transform=original_src_transform,
+        )
+        if v_data.shape != u_data.shape:
+            raise ValueError("vort500 derive reprojected u/v component shapes do not match")
+        if v_crs != src_crs or v_transform != src_transform:
+            raise ValueError("vort500 derive reprojected u/v grids do not align")
 
     lats_deg, lons_deg = _grid_center_coordinates_geographic(transform=src_transform, shape=u_data.shape)
     lats_rad = np.deg2rad(lats_deg)

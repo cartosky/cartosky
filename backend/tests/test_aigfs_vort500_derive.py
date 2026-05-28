@@ -89,3 +89,32 @@ def test_aigfs_vort500_derive_uses_warped_components_when_target_grid_requested(
     assert out_crs == crs
     assert out_transform == transform
     np.testing.assert_allclose(derived, zeros, rtol=1e-5, atol=1e-5)
+
+
+def test_aigfs_vort500_derive_reprojects_projected_crs_to_geographic(monkeypatch) -> None:
+    crs = CRS.from_epsg(3857)
+    transform = Affine(100000.0, 0.0, -200000.0, 0.0, -100000.0, 200000.0)
+    zeros = np.zeros((3, 4), dtype=np.float32)
+
+    def _fake_fetch_component(**kwargs):
+        return zeros, crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+    monkeypatch.setattr(derive_module, "convert_units", lambda data, **kwargs: data)
+
+    derived, out_crs, out_transform = derive_module._derive_vort500_from_uv(
+        model_id="aigfs",
+        var_key="vort500",
+        product="pres",
+        run_date=datetime(2026, 4, 16, 12, 0),
+        fh=0,
+        var_spec_model=_vort500_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert bool(getattr(out_crs, "is_geographic", False)) is True
+    assert derived.shape[0] >= 2
+    assert derived.shape[1] >= 2
+    assert out_transform != transform
+    np.testing.assert_allclose(derived, 0.0, rtol=1e-5, atol=1e-5)
