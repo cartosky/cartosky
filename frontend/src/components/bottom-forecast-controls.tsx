@@ -340,6 +340,7 @@ export function BottomForecastControls({
                     type="button"
                     onClick={() => onOpenControls(true)}
                     aria-label="Open controls"
+                    data-tour-target="mobile-controls-button"
                     className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <Settings className="h-3.5 w-3.5" />

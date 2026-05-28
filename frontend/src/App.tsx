@@ -426,6 +426,24 @@ export default function App() {
       body: "Send us a note about missing data, display issues, or feature requests",
     },
     {
+      targetSelector: '[data-tour-target="share-button"]',
+      title: "Share / Screenshot",
+      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
+      linkText: "Learn more",
+      linkHref: "/account",
+    },
+    {
+      targetSelector: '[data-tour-target="mobile-controls-button"]',
+      title: "Controls Panel",
+      body: "Tap here to open the controls panel and configure your product, variable, run time, and display options",
+    },
+    {
+      targetSelector: '[data-tour-target="mobile-bottom-sheet"]',
+      title: "Controls Panel",
+      body: "All your model and display settings live here",
+      openMobileSheet: true,
+    },
+    {
       targetSelector: '[data-tour-target="mobile-product-row"]',
       title: "Product",
       body: "Switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
@@ -444,17 +462,16 @@ export default function App() {
       openMobileSheet: true,
     },
     {
-      targetSelector: '[data-tour-target="mobile-bottom-sheet"]',
-      title: "Controls Panel",
-      body: "Tap any row to change product, variable, run time, or region",
+      targetSelector: '[data-tour-target="mobile-region-row"]',
+      title: "Region",
+      body: "Zoom to a predefined region — CONUS, Alaska, Hawaii, or Puerto Rico",
       openMobileSheet: true,
     },
     {
-      targetSelector: '[data-tour-target="share-button"]',
-      title: "Share / Screenshot",
-      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
-      linkText: "Learn more",
-      linkHref: "/account",
+      targetSelector: '[data-tour-target="mobile-display-tab"]',
+      title: "Display Settings",
+      body: "Switch to the Display tab to toggle the legend, city labels, and basemap style",
+      openMobileSheet: true,
     },
   ], []);
 

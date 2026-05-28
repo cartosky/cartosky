@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { AlertCircle, Bug, CheckCircle2, Gauge, Lightbulb, MessageSquareText, Send, Sparkles, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
@@ -69,16 +69,6 @@ export function FeedbackWidget() {
 
   const remainingChars = MESSAGE_MAX_LENGTH - message.length;
   const canSubmit = Boolean(category && message.trim().length > 0 && submitState !== "submitting");
-
-  const sessionStatusLabel = useMemo(() => {
-    if (isSignedIn) {
-      return "Signed-in feedback will still link to your CartoSky account. Add a name only if you want a different label shown in admin.";
-    }
-    if (!isLoaded) {
-      return "Feedback works without signing in. Add a name or username only if you want us to know it was you.";
-    }
-    return "Feedback works without signing in. Add a name or username only if you want us to know it was you.";
-  }, [isLoaded, isSignedIn]);
 
   // Capture page/viewer context and reset form state when the widget opens
   useEffect(() => {
@@ -190,7 +180,6 @@ export function FeedbackWidget() {
             <div className="flex items-center justify-between gap-3 border-b border-white/8 px-4 pb-3 pt-3 sm:px-5 sm:pt-4">
               <div>
                 <div className="text-base font-semibold tracking-tight text-white">Feedback</div>
-                <div className="mt-1 text-xs text-white/52">{sessionStatusLabel}</div>
               </div>
               <button
                 type="button"
@@ -239,13 +228,17 @@ export function FeedbackWidget() {
                   onChange={(event) => setReporterName(event.target.value.slice(0, REPORTER_NAME_MAX_LENGTH))}
                   maxLength={REPORTER_NAME_MAX_LENGTH}
                   className="w-full rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
-                  placeholder={isSignedIn ? "Optional display name override" : "Optional: how should we know it was you?"}
+                  placeholder="Enter a name with your report, or submit anonymously"
                   autoComplete="nickname"
                 />
               </div>
 
               <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-white/44" htmlFor="feedback-details">
+                  Details
+                </label>
                 <textarea
+                  id="feedback-details"
                   value={message}
                   onChange={(event) => setMessage(event.target.value.slice(0, MESSAGE_MAX_LENGTH))}
                   rows={6}

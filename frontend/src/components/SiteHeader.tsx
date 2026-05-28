@@ -896,7 +896,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           />
         </div>
 
-        <div className="space-y-1.5">
+        <div data-tour-target="mobile-region-row" className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <MapPin className="h-3 w-3" /> Region
           </span>
@@ -1063,6 +1063,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
                 <button
                   type="button"
                   onClick={() => setActiveTab("display")}
+                  data-tour-target="mobile-display-tab"
                   className={cn(
                     "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
                     activeTab === "display" ? "text-white" : "text-white/40 hover:text-white/65"
