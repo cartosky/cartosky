@@ -293,6 +293,7 @@ function RegionUtilitySelect({
   currentRegionLabel,
   contentOffset,
   contentClassName,
+  tourTarget,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -301,8 +302,10 @@ function RegionUtilitySelect({
   currentRegionLabel: string;
   contentOffset?: number;
   contentClassName?: string;
+  tourTarget?: string;
 }) {
   return (
+    <div className="shrink-0" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
     <Select
       value={value}
       onValueChange={onValueChange}
@@ -331,6 +334,7 @@ function RegionUtilitySelect({
         </SelectGroup>
       </SelectContent>
     </Select>
+    </div>
   );
 }
 
@@ -509,10 +513,11 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           currentRegionLabel={selectedRegionLabel}
           contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
           contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
+          tourTarget="region-selector"
         />
 
         {/* Legend button */}
-        <div className="relative shrink-0" ref={legendRef}>
+        <div className="relative shrink-0" ref={legendRef} data-tour-target="legend-button">
           <button
             type="button"
             onClick={() => {
@@ -566,6 +571,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             onClick={onFeedback}
             title="Send feedback"
             aria-label="Send feedback"
+            data-tour-target="feedback-button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
           >
             <MessageSquareText className="h-3.5 w-3.5" />
@@ -573,7 +579,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
         ) : null}
 
         {/* Settings / Display panel */}
-        <div className="relative shrink-0" ref={settingsRef}>
+        <div className="relative shrink-0" ref={settingsRef} data-tour-target="display-settings-button">
           <button
             type="button"
             onClick={() => {

@@ -359,9 +359,15 @@ export default function App() {
 
   const desktopTourSteps: TourStepDef[] = useMemo(() => [
     {
+      targetSelector: null,
+      title: "",
+      body: "",
+      isWelcome: true,
+    },
+    {
       targetSelector: '[data-tour-target="product-selector"]',
       title: "Product",
-      body: "Switch between HRRR, GFS, NAM, ECMWF, GEFS, EPS and more",
+      body: "Switch between models, ensembles, forecasts, and observations",
     },
     {
       targetSelector: '[data-tour-target="variable-picker"]',
@@ -374,25 +380,46 @@ export default function App() {
       body: "Select a model run or stay pinned to the latest available",
     },
     {
+      targetSelector: '[data-tour-target="region-selector"]',
+      title: "Region",
+      body: "Zoom to a preset region — CONUS, Alaska, Hawaii, or specific metro areas",
+    },
+    {
       targetSelector: '[data-tour-target="forecast-scrubber"]',
       title: "Forecast Hour",
       body: "Drag or play through forecast hours. The timestamp updates in real time",
     },
     {
-      targetSelector: '[data-tour-target="freshness-indicator"]',
-      title: "Freshness",
-      body: "Shows how many forecast hours are loaded for the current run",
+      targetSelector: '[data-tour-target="legend-button"]',
+      title: "Legend",
+      body: "Open the color scale legend for the current variable",
     },
     {
       targetSelector: '[data-tour-target="share-button"]',
       title: "Share / Screenshot",
-      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account is required",
+      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
       linkText: "Learn more",
       linkHref: "/account",
+    },
+    {
+      targetSelector: '[data-tour-target="feedback-button"]',
+      title: "Feedback",
+      body: "Send us a note about missing data, display issues, or feature requests",
+    },
+    {
+      targetSelector: '[data-tour-target="display-settings-button"]',
+      title: "Display Settings",
+      body: "Toggle city labels, zoom controls, basemap style, and overlay opacity",
     },
   ], []);
 
   const mobileTourSteps: TourStepDef[] = useMemo(() => [
+    {
+      targetSelector: null,
+      title: "",
+      body: "",
+      isWelcome: true,
+    },
     {
       targetSelector: null,
       title: "Product",
@@ -420,7 +447,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="share-button"]',
       title: "Share / Screenshot",
-      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account is required",
+      body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
       tooltipAnchorBottom: true,
       linkText: "Learn more",
       linkHref: "/account",

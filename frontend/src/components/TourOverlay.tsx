@@ -2,12 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 export type TourStepDef = {
+  /** CSS selector for the spotlight target. null = dim only, no cutout. */
   targetSelector: string | null;
   title: string;
   body: string;
   linkText?: string;
   linkHref?: string;
+  /** Force tooltip to float above the bottom bar (mobile). */
   tooltipAnchorBottom?: boolean;
+  /** Renders a full-screen welcome card instead of a spotlight step. */
+  isWelcome?: boolean;
 };
 
 type Props = {
@@ -29,6 +33,13 @@ const TOOLTIP_WIDTH = 260;
 const TOOLTIP_MARGIN = 14;
 const MOBILE_BOTTOM_OFFSET = 130;
 
+// Site's cyan palette (matches Tailwind cyan-300 / cyan-100)
+const CYAN = "rgb(103,232,249)";
+const CYAN_DIM = "rgba(103,232,249,0.28)";
+const CYAN_BG = "rgba(103,232,249,0.12)";
+const CYAN_BORDER = "rgba(103,232,249,0.30)";
+const CYAN_TEXT = "rgb(207,250,254)"; // cyan-100
+
 function queryTargetRect(selector: string | null): Rect | null {
   if (!selector) return null;
   const el = document.querySelector(selector);
@@ -36,6 +47,18 @@ function queryTargetRect(selector: string | null): Rect | null {
   const r = el.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return null;
   return { x: r.left, y: r.top, width: r.width, height: r.height };
+}
+
+// Number of non-welcome steps and index among them for a given absolute index
+function contentStepInfo(steps: TourStepDef[], absoluteIndex: number) {
+  const contentSteps = steps.filter((s) => !s.isWelcome);
+  const contentTotal = contentSteps.length;
+  // Count how many non-welcome steps appear before absoluteIndex
+  let contentIndex = 0;
+  for (let i = 0; i < absoluteIndex; i++) {
+    if (!steps[i].isWelcome) contentIndex++;
+  }
+  return { contentIndex, contentTotal };
 }
 
 export function TourOverlay({
@@ -52,14 +75,15 @@ export function TourOverlay({
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const step = steps[currentStep];
   const isLastStep = currentStep === steps.length - 1;
+  const isWelcome = step?.isWelcome === true;
 
   const refreshRect = useCallback(() => {
-    if (!isActive || !step) {
+    if (!isActive || !step || isWelcome) {
       setTargetRect(null);
       return;
     }
     setTargetRect(queryTargetRect(step.targetSelector));
-  }, [isActive, step]);
+  }, [isActive, step, isWelcome]);
 
   useEffect(() => {
     refreshRect();
@@ -95,6 +119,7 @@ export function TourOverlay({
   }, [completionVisible, onDismissCompletion]);
 
   if (!isActive && !completionVisible) return null;
+  if (!step) return null;
 
   const highlightRect = targetRect
     ? {
@@ -105,15 +130,127 @@ export function TourOverlay({
       }
     : null;
 
-  // Compute tooltip position
   const viewH = typeof window !== "undefined" ? window.innerHeight : 800;
   const viewW = typeof window !== "undefined" ? window.innerWidth : 1200;
 
+  // ── Welcome screen ────────────────────────────────────────────────────────
+  const welcomeOverlay = isActive && isWelcome ? (
+    <>
+      {/* Dim backdrop */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9990,
+          background: "rgba(0,0,0,0.65)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Welcome card */}
+      <div
+        role="dialog"
+        aria-label="Welcome to CartoSky Map Viewer"
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9995,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          style={{
+            pointerEvents: "auto",
+            background: "rgba(4,16,30,0.96)",
+            border: `1px solid ${CYAN_BORDER}`,
+            borderRadius: 16,
+            padding: "32px 36px",
+            maxWidth: 360,
+            width: "calc(100vw - 48px)",
+            textAlign: "center",
+            boxShadow: `0 20px 60px rgba(0,0,0,0.65), inset 0 1px 0 rgba(103,232,249,0.08)`,
+            fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+          }}
+        >
+          {/* Logo */}
+          <img
+            src="/assets/new_logo.png?v=cartosky-20260414"
+            alt="CartoSky"
+            style={{ height: 56, width: "auto", margin: "0 auto 20px" }}
+          />
+
+          <div
+            style={{
+              fontSize: 17,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.94)",
+              marginBottom: 10,
+              lineHeight: 1.3,
+            }}
+          >
+            Welcome to CartoSky Map Viewer
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              color: "rgba(255,255,255,0.52)",
+              lineHeight: 1.6,
+              marginBottom: 28,
+            }}
+          >
+            A quick tour will walk you through the key controls. It only takes a moment.
+          </div>
+
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button
+              type="button"
+              onClick={onSkip}
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.55)",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+                padding: "8px 18px",
+                borderRadius: 8,
+                lineHeight: 1,
+              }}
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              onClick={onNext}
+              style={{
+                background: CYAN_BG,
+                border: `1px solid ${CYAN_BORDER}`,
+                color: CYAN_TEXT,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: "8px 22px",
+                borderRadius: 8,
+                lineHeight: 1,
+              }}
+            >
+              Get started →
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  ) : null;
+
+  // ── Regular spotlight step ────────────────────────────────────────────────
   let tooltipStyle: React.CSSProperties = {};
 
-  if (!isActive || !step) {
-    tooltipStyle = {};
-  } else if (step.tooltipAnchorBottom) {
+  if (step.tooltipAnchorBottom) {
     tooltipStyle = {
       position: "fixed",
       bottom: MOBILE_BOTTOM_OFFSET,
@@ -157,9 +294,12 @@ export function TourOverlay({
     };
   }
 
-  const overlay = isActive && step ? (
+  const { contentIndex, contentTotal } = contentStepInfo(steps, currentStep);
+  // Only non-welcome steps that have been seen + current are "visited" in dots
+  const dotSteps = steps.filter((s) => !s.isWelcome);
+
+  const spotlightOverlay = isActive && !isWelcome ? (
     <>
-      {/* Full-viewport dim when no spotlight */}
       {!highlightRect ? (
         <div
           aria-hidden="true"
@@ -173,7 +313,6 @@ export function TourOverlay({
         />
       ) : null}
 
-      {/* Spotlight cutout using box-shadow technique */}
       {highlightRect ? (
         <div
           aria-hidden="true"
@@ -185,7 +324,7 @@ export function TourOverlay({
             height: highlightRect.height,
             borderRadius: 6,
             boxShadow: "0 0 0 9999px rgba(0,0,0,0.6)",
-            border: "1.5px solid #4a9eff",
+            border: `1.5px solid ${CYAN}`,
             zIndex: 9990,
             pointerEvents: "none",
           }}
@@ -195,15 +334,15 @@ export function TourOverlay({
       {/* Tooltip card */}
       <div
         role="dialog"
-        aria-label={`Tour step ${currentStep + 1} of ${steps.length}: ${step.title}`}
+        aria-label={`Tour step ${contentIndex + 1} of ${contentTotal}: ${step.title}`}
         style={{
           ...tooltipStyle,
           zIndex: 9995,
-          background: "#1e2330",
-          border: "1px solid rgba(74,158,255,0.2)",
+          background: "rgba(4,16,30,0.96)",
+          border: `1px solid ${CYAN_BORDER}`,
           borderRadius: 10,
           padding: "14px 16px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(100,180,255,0.07)",
+          boxShadow: `0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(103,232,249,0.07)`,
           color: "rgba(255,255,255,0.92)",
           fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         }}
@@ -218,7 +357,7 @@ export function TourOverlay({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {currentStep + 1} of {steps.length}
+          {contentIndex + 1} of {contentTotal}
         </div>
 
         {/* Title */}
@@ -242,7 +381,7 @@ export function TourOverlay({
               <a
                 href={step.linkHref}
                 style={{
-                  color: "#4a9eff",
+                  color: CYAN,
                   textDecoration: "underline",
                   textUnderlineOffset: 2,
                 }}
@@ -254,7 +393,14 @@ export function TourOverlay({
         </div>
 
         {/* Footer */}
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
           {/* Skip + dot progress */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <button
@@ -274,19 +420,19 @@ export function TourOverlay({
               Skip tour
             </button>
             <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-              {steps.map((_, i) => (
+              {dotSteps.map((_, i) => (
                 <span
                   key={i}
                   style={{
                     display: "inline-block",
-                    width: i === currentStep ? 14 : 6,
+                    width: i === contentIndex ? 14 : 6,
                     height: 6,
                     borderRadius: 9999,
                     background:
-                      i === currentStep
-                        ? "#4a9eff"
-                        : i < currentStep
-                          ? "rgba(74,158,255,0.45)"
+                      i === contentIndex
+                        ? CYAN
+                        : i < contentIndex
+                          ? CYAN_DIM
                           : "rgba(255,255,255,0.18)",
                     transition: "width 200ms ease, background 200ms ease",
                   }}
@@ -295,7 +441,7 @@ export function TourOverlay({
             </div>
           </div>
 
-          {/* Back / Next|Done buttons */}
+          {/* Back / Next|Done */}
           <div style={{ display: "flex", gap: 7, flexShrink: 0 }}>
             {currentStep > 0 ? (
               <button
@@ -320,9 +466,9 @@ export function TourOverlay({
               type="button"
               onClick={isLastStep ? onComplete : onNext}
               style={{
-                background: "#4a9eff",
-                border: "none",
-                color: "#fff",
+                background: CYAN_BG,
+                border: `1px solid ${CYAN_BORDER}`,
+                color: CYAN_TEXT,
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -339,6 +485,7 @@ export function TourOverlay({
     </>
   ) : null;
 
+  // ── Completion modal ──────────────────────────────────────────────────────
   const completionModal = completionVisible ? (
     <div
       style={{
@@ -357,8 +504,8 @@ export function TourOverlay({
         aria-live="polite"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "#1e2330",
-          border: "1px solid rgba(74,158,255,0.2)",
+          background: "rgba(4,16,30,0.96)",
+          border: `1px solid ${CYAN_BORDER}`,
           borderRadius: 14,
           padding: "24px 28px",
           maxWidth: 300,
@@ -375,9 +522,9 @@ export function TourOverlay({
           type="button"
           onClick={onDismissCompletion}
           style={{
-            background: "#4a9eff",
-            border: "none",
-            color: "#fff",
+            background: CYAN_BG,
+            border: `1px solid ${CYAN_BORDER}`,
+            color: CYAN_TEXT,
             fontSize: 12,
             fontWeight: 600,
             cursor: "pointer",
@@ -393,7 +540,8 @@ export function TourOverlay({
 
   return createPortal(
     <>
-      {overlay}
+      {welcomeOverlay}
+      {spotlightOverlay}
       {completionModal}
     </>,
     document.body
