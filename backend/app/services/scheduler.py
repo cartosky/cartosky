@@ -83,6 +83,7 @@ ENV_PROGRESS_PUBLISH_MIN_NEW_FRAMES = (
     "CARTOSKY_V3_PROGRESS_PUBLISH_MIN_NEW_FRAMES",
     "TWF_V3_PROGRESS_PUBLISH_MIN_NEW_FRAMES",
 )
+ENV_SCHEDULER_FH_LOOKAHEAD = "CARTOSKY_SCHEDULER_FH_LOOKAHEAD"
 ENV_LOOP_WEBP_QUALITY = ("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY")
 ENV_LOOP_WEBP_MAX_DIM = ("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM")
 ENV_LOOP_WEBP_TIER1_QUALITY = (
@@ -129,7 +130,8 @@ DEFAULT_LOOP_PREGENERATE_ENABLED = True
 DEFAULT_LOOP_CACHE_ROOT = DEFAULT_DATA_ROOT / "loop_cache"
 DEFAULT_LOOP_PREGENERATE_WORKERS = 4
 DEFAULT_LOOP_PREWARM_FRAME_COUNT = 8
-DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES = 12
+DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES = 4
+DEFAULT_SCHEDULER_FH_LOOKAHEAD = 4
 DEFAULT_LOOP_WEBP_QUALITY = 82
 DEFAULT_LOOP_WEBP_MAX_DIM = 2300
 DEFAULT_LOOP_WEBP_TIER1_QUALITY = 86
@@ -1671,6 +1673,11 @@ def _process_run(
         DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES,
         min_value=1,
     )
+    fh_lookahead = _int_from_env(
+        ENV_SCHEDULER_FH_LOOKAHEAD,
+        DEFAULT_SCHEDULER_FH_LOOKAHEAD,
+        min_value=1,
+    )
     loop_prewarm_var = _resolve_loop_prewarm_var(plugin, vars_to_build, primary_vars)
     loop_prewarm_fhs = _resolve_loop_prewarm_fhs(
         plugin,
@@ -1877,11 +1884,20 @@ def _process_run(
                 continue
             if (region, var_id) in transient_targets:
                 continue
+            collected = 0
+            frontier_started = False
             for fh in sorted(set(fhs)):
-                if _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region):
-                    continue
+                frame_exists = _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region)
+                if not frontier_started:
+                    if frame_exists:
+                        continue
+                    frontier_started = True
+                elif frame_exists:
+                    break
                 next_missing.append((region, var_id, fh))
-                break
+                collected += 1
+                if collected >= fh_lookahead:
+                    break
 
         rebuild_round = False
         round_work: list[BuildTarget]
@@ -1996,21 +2012,55 @@ def _process_run(
                         )
                     )
             else:
-                for region, var_id, fh in round_work:
-                    normalized_var_id = (
-                        plugin.normalize_var_id(var_id)
-                        if hasattr(plugin, "normalize_var_id")
-                        else str(var_id)
-                    )
-                    fetch_ctx_key = (str(region), str(normalized_var_id))
-                    shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
-                        fetch_ctx_key,
-                        FetchContext(coverage=region),
-                    )
-                    shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
-                    round_fetch_ctx_regions.add(str(region))
-                    futures.append(
-                        pool.submit(
+                if rebuild_round:
+                    for region, var_id, fh in round_work:
+                        normalized_var_id = (
+                            plugin.normalize_var_id(var_id)
+                            if hasattr(plugin, "normalize_var_id")
+                            else str(var_id)
+                        )
+                        fetch_ctx_key = (str(region), str(normalized_var_id))
+                        shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
+                            fetch_ctx_key,
+                            FetchContext(coverage=region),
+                        )
+                        shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
+                        round_fetch_ctx_regions.add(str(region))
+                        futures.append(
+                            pool.submit(
+                                _build_one,
+                                model_id=model_id,
+                                region=region,
+                                var_id=var_id,
+                                fh=fh,
+                                run_dt=run_dt,
+                                data_root=data_root,
+                                plugin=plugin,
+                                fetch_ctx=shared_fetch_ctx,
+                                readiness_cache=shared_readiness_cache,
+                                log_fetch_cache_stats=False,
+                                derive_component_warp_cache=True,
+                            )
+                        )
+                else:
+                    queued_by_target: dict[tuple[str, str], list[int]] = {}
+                    queue_order: list[tuple[str, str]] = []
+                    future_to_target: dict[concurrent.futures.Future, tuple[str, str]] = {}
+
+                    def _submit_single(region: str, var_id: str, fh: int) -> None:
+                        normalized_var_id = (
+                            plugin.normalize_var_id(var_id)
+                            if hasattr(plugin, "normalize_var_id")
+                            else str(var_id)
+                        )
+                        fetch_ctx_key = (str(region), str(normalized_var_id))
+                        shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
+                            fetch_ctx_key,
+                            FetchContext(coverage=region),
+                        )
+                        shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
+                        round_fetch_ctx_regions.add(str(region))
+                        future = pool.submit(
                             _build_one,
                             model_id=model_id,
                             region=region,
@@ -2024,7 +2074,91 @@ def _process_run(
                             log_fetch_cache_stats=False,
                             derive_component_warp_cache=True,
                         )
-                    )
+                        future_to_target[future] = (str(region), str(var_id))
+
+                    for region, var_id, fh in round_work:
+                        queue_key = (str(region), str(var_id))
+                        if queue_key not in queued_by_target:
+                            queued_by_target[queue_key] = []
+                            queue_order.append(queue_key)
+                        queued_by_target[queue_key].append(int(fh))
+
+                    for region, var_id in queue_order:
+                        target_fhs = queued_by_target[(region, var_id)]
+                        if target_fhs:
+                            _submit_single(region, var_id, target_fhs.pop(0))
+
+                    while future_to_target:
+                        done, _pending = concurrent.futures.wait(
+                            set(future_to_target),
+                            return_when=concurrent.futures.FIRST_COMPLETED,
+                        )
+                        for future in done:
+                            queue_key = future_to_target.pop(future)
+                            future_result = future.result()
+                            region, var_id, fh, ok, elapsed_ms, status = _coerce_build_outcome(tuple(future_result))
+                            rebuild_key = (run_id, str(region), str(var_id), int(fh))
+                            is_rebuild_job = rebuild_round and rebuild_key in rebuild_attempts
+                            _log_frame_timing(
+                                run_id=run_id,
+                                model_id=model_id,
+                                region=region,
+                                var_id=str(var_id),
+                                fh=int(fh),
+                                ok=ok,
+                                elapsed_ms=elapsed_ms,
+                                mode="single",
+                            )
+                            if ok:
+                                built_ok += 1
+                                round_successes += 1
+                                if is_rebuild_job:
+                                    quality, quality_flags = _sidecar_quality(
+                                        data_root,
+                                        model_id,
+                                        run_id,
+                                        str(var_id),
+                                        int(fh),
+                                        region=region,
+                                    )
+                                    logger.info(
+                                        "Rebuild success: %s %s/%s fh%03d quality=%s flags=%s attempt=%d/%d",
+                                        run_id,
+                                        region,
+                                        var_id,
+                                        fh,
+                                        quality,
+                                        quality_flags,
+                                        int(rebuild_attempts.get(rebuild_key, 0)),
+                                        rebuild_max_attempts,
+                                    )
+                                else:
+                                    logger.info("Build success: %s %s/%s fh%03d", run_id, region, var_id, fh)
+                            else:
+                                if is_rebuild_job:
+                                    logger.warning(
+                                        "Rebuild skipped/failed: %s %s/%s fh%03d attempt=%d/%d",
+                                        run_id,
+                                        region,
+                                        var_id,
+                                        fh,
+                                        int(rebuild_attempts.get(rebuild_key, 0)),
+                                        rebuild_max_attempts,
+                                    )
+                                elif status == BUILD_STATUS_TRANSIENT:
+                                    round_transient_failures += 1
+                                    transient_targets.add((region, var_id))
+                                    logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
+                                else:
+                                    blocked_targets.add((region, var_id))
+                                    logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
+
+                            if queue_key in blocked_targets or queue_key in transient_targets:
+                                continue
+                            remaining_fhs = queued_by_target.get(queue_key, [])
+                            if remaining_fhs:
+                                _submit_single(queue_key[0], queue_key[1], remaining_fhs.pop(0))
+                    futures = []
 
             for future in concurrent.futures.as_completed(futures):
                 future_result = future.result()

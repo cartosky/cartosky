@@ -17,6 +17,11 @@ from app.models.base import ModelCapabilities, VariableCapability
 from app.models.hrrr import HRRR_MODEL
 
 
+@pytest.fixture(autouse=True)
+def _default_scheduler_fh_lookahead(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "1")
+
+
 class _FakePlugin:
     id = "hrrr"
     capabilities = None
@@ -365,8 +370,12 @@ def test_process_run_uses_resolved_promotion_fhs(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin
+        del model_id, run_dt, data_root, plugin, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         return region, var_id, fh, False
 
     def fake_should_promote(
@@ -443,8 +452,12 @@ def test_process_run_catches_up_consecutive_available_hours(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         attempted.append((var_id, fh))
         ok = fh <= available_up_to[var_id]
         if ok:
@@ -483,6 +496,228 @@ def test_process_run_catches_up_consecutive_available_hours(
     assert attempted == [("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)]
 
 
+def test_process_run_submits_lookahead_window_per_round(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FourHourPlugin(_FakePlugin):
+        def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
+            del var_key, cycle_hour
+            return [0, 1, 2, 3]
+
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    attempted: list[tuple[str, int]] = []
+    built: set[tuple[str, int]] = set()
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run, region
+        return (var_id, fh) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
+    ) -> tuple[str, str, int, bool, int, str]:
+        del model_id, run_dt, data_root, plugin, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
+        attempted.append((var_id, fh))
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "4")
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    with caplog.at_level("INFO"):
+        scheduler_module._process_run(
+            plugin=_FourHourPlugin(),
+            model_id="hrrr",
+            vars_to_build=["tmp2m"],
+            primary_vars=["tmp2m"],
+            run_dt=run_dt,
+            data_root=tmp_path,
+            workers=2,
+            keep_runs=2,
+            loop_pregenerate_enabled=False,
+            loop_cache_root=tmp_path / "loop-cache",
+            loop_workers=1,
+            loop_tier0_quality=82,
+            loop_tier0_max_dim=2300,
+            loop_tier0_fixed_w=2300,
+            loop_tier1_quality=86,
+            loop_tier1_max_dim=2400,
+            loop_tier1_fixed_w=2400,
+            rebuild_existing=False,
+        )
+
+    assert attempted == [("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3)]
+    assert "catchup_round=1 pending=4" in caplog.text
+
+
+def test_process_run_lookahead_stops_submitting_after_blocked_hour(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    attempted: list[tuple[str, int]] = []
+    built: set[tuple[str, int]] = set()
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run, region
+        return (var_id, fh) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
+    ) -> tuple[str, str, int, bool, int, str]:
+        del model_id, run_dt, data_root, plugin, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
+        attempted.append((var_id, fh))
+        if fh == 0:
+            built.add((var_id, fh))
+            return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+        return region, var_id, fh, False, 5, scheduler_module.BUILD_STATUS_FAILED
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "4")
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    scheduler_module._process_run(
+        plugin=_FakePlugin(),
+        model_id="hrrr",
+        vars_to_build=["tmp2m"],
+        primary_vars=["tmp2m"],
+        run_dt=run_dt,
+        data_root=tmp_path,
+        workers=2,
+        keep_runs=2,
+        loop_pregenerate_enabled=False,
+        loop_cache_root=tmp_path / "loop-cache",
+        loop_workers=1,
+        loop_tier0_quality=82,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
+        loop_tier1_quality=86,
+        loop_tier1_max_dim=2400,
+        loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
+    )
+
+    assert attempted == [("tmp2m", 0), ("tmp2m", 1)]
+
+
+def test_process_run_lookahead_one_matches_single_hour_rounds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    attempted: list[tuple[str, int]] = []
+    built: set[tuple[str, int]] = set()
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run, region
+        return (var_id, fh) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
+    ) -> tuple[str, str, int, bool, int, str]:
+        del model_id, run_dt, data_root, plugin, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
+        attempted.append((var_id, fh))
+        if fh <= 3:
+            built.add((var_id, fh))
+            return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+        return region, var_id, fh, False, 5, scheduler_module.BUILD_STATUS_FAILED
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "1")
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    with caplog.at_level("INFO"):
+        scheduler_module._process_run(
+            plugin=_FakePlugin(),
+            model_id="hrrr",
+            vars_to_build=["tmp2m"],
+            primary_vars=["tmp2m"],
+            run_dt=run_dt,
+            data_root=tmp_path,
+            workers=2,
+            keep_runs=2,
+            loop_pregenerate_enabled=False,
+            loop_cache_root=tmp_path / "loop-cache",
+            loop_workers=1,
+            loop_tier0_quality=82,
+            loop_tier0_max_dim=2300,
+            loop_tier0_fixed_w=2300,
+            loop_tier1_quality=86,
+            loop_tier1_max_dim=2400,
+            loop_tier1_fixed_w=2400,
+            rebuild_existing=False,
+        )
+
+    assert attempted == [("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)]
+    assert "catchup_round=1 pending=1" in caplog.text
+
+
 def test_process_run_defers_transient_unavailable_targets_during_progress(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -515,8 +750,12 @@ def test_process_run_defers_transient_unavailable_targets_during_progress(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool, int, str]:
-        del model_id, run_dt, data_root, plugin
+        del model_id, run_dt, data_root, plugin, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         attempts.append((var_id, fh))
         if var_id == "dp2m" and fh == 0 and (var_id, fh) not in transient_seen:
             transient_seen.add((var_id, fh))
@@ -589,8 +828,12 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
@@ -850,8 +1093,12 @@ def test_process_run_republishes_progress_during_long_catchup(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
@@ -1345,8 +1592,12 @@ def test_process_run_skips_loop_pregen_for_incomplete_run(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
@@ -1418,8 +1669,12 @@ def test_process_run_does_not_pregenerate_loop_cache_when_run_is_complete(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         ok = fh <= available_up_to[var_id]
         if ok:
             built.add((var_id, fh))
@@ -1525,8 +1780,12 @@ def test_process_run_requeues_only_slr_fallback_degraded_frames(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, plugin, region
+        del model_id, run_dt, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         attempted.append((var_id, fh))
         _write_sidecar(
             data_root,
@@ -1596,8 +1855,12 @@ def test_process_run_caps_degraded_rebuild_attempts_at_two(
         run_dt: datetime,
         data_root: Path,
         plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
     ) -> tuple[str, str, int, bool]:
-        del model_id, run_dt, data_root, plugin, region
+        del model_id, run_dt, data_root, plugin, region, fetch_ctx, readiness_cache, log_fetch_cache_stats, derive_component_warp_cache
         attempted.append((var_id, fh))
         return scheduler_module.CANONICAL_COVERAGE, var_id, fh, False
 
