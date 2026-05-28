@@ -69,6 +69,41 @@ VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
 
+def _derived_output_matches_target_grid(
+    *,
+    values: np.ndarray,
+    src_crs: Any,
+    src_transform: Any,
+    model: str,
+    region: str,
+) -> bool:
+    if values.ndim != 2:
+        return False
+    try:
+        bbox, grid_m = get_grid_params(model, region)
+        expected_transform, expected_h, expected_w = compute_transform_and_shape(bbox, grid_m)
+    except Exception:
+        return False
+
+    if tuple(values.shape) != (expected_h, expected_w):
+        return False
+
+    expected_crs = rasterio.crs.CRS.from_epsg(3857)
+    try:
+        normalized_src_crs = rasterio.crs.CRS.from_user_input(src_crs)
+    except Exception:
+        return False
+    if normalized_src_crs != expected_crs:
+        return False
+
+    try:
+        src_transform_values = tuple(src_transform)[:6]
+    except TypeError:
+        return False
+    expected_transform_values = tuple(expected_transform)[:6]
+    return bool(np.allclose(src_transform_values, expected_transform_values, rtol=0.0, atol=1.0e-6))
+
+
 def _warp_resampling_for_variable(*, model_id: str | None, var_key: str | None, kind: str | None) -> str:
     """Return warp resampling method for a variable.
 
@@ -1494,7 +1529,22 @@ def build_frame(
             )
 
         # --- Step 3: Warp to target grid ---
-        if getattr(var_spec_model, "derived", False) and derive_component_warp_cache and derive_grid_matches_output:
+        derive_output_matches_target_grid = False
+        if getattr(var_spec_model, "derived", False):
+            derive_output_matches_target_grid = _derived_output_matches_target_grid(
+                values=converted_data,
+                src_crs=src_crs,
+                src_transform=src_transform,
+                model=model,
+                region=region,
+            )
+
+        if (
+            getattr(var_spec_model, "derived", False)
+            and derive_component_warp_cache
+            and derive_grid_matches_output
+            and derive_output_matches_target_grid
+        ):
             logger.info("Step 3/6: Warping to target grid (reused cached component warps)")
             warped_data = converted_data.astype(np.float32, copy=False)
             dst_transform = src_transform
