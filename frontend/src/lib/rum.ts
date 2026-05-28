@@ -181,7 +181,6 @@ export function trackRumDiagnosticMetric(params: {
     | "sample_request_duration"
     | "sample_batch_request_duration"
     | "contour_fetch_duration"
-    | "vector_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
     | "animation_stall_count"

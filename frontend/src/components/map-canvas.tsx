@@ -2119,14 +2119,6 @@ export function MapCanvas({
           throw new Error(`Vector request failed: ${response.status}`);
         }
         const payload = (await response.json()) as GeoJSON.FeatureCollection;
-        trackNetworkFetchDuration({
-          metric_name: "vector_fetch_duration",
-          started_at_ms: startedAtMs,
-          response,
-          meta: {
-            vector_url_path: normalizedUrl,
-          },
-        });
         return payload;
       })
       .then((payload) => {

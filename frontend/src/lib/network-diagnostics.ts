@@ -14,8 +14,7 @@ export type NetworkDiagnosticMetricName =
   | "grid_webgl1_expand_duration"
   | "sample_request_duration"
   | "sample_batch_request_duration"
-  | "contour_fetch_duration"
-  | "vector_fetch_duration";
+  | "contour_fetch_duration";
 
 function nowMs(): number {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {

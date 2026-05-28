@@ -187,7 +187,6 @@ const NETWORK_P95_TARGETS: Partial<Record<NetworkDiagnosticMetricName, number>> 
   sample_request_duration: 450,
   sample_batch_request_duration: 700,
   contour_fetch_duration: 500,
-  vector_fetch_duration: 500,
 };
 
 const NETWORK_CARD_METRICS: NetworkDiagnosticMetricName[] = [

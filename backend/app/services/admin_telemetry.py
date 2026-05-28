@@ -70,7 +70,6 @@ ALLOWED_RUM_METRIC_NAMES = {
     "sample_request_duration",
     "sample_batch_request_duration",
     "contour_fetch_duration",
-    "vector_fetch_duration",
     "first_map_render_duration",
     "first_overlay_visible_duration",
     "tile_request_failure_count",
@@ -96,7 +95,6 @@ RUM_METRIC_UNITS = {
     "sample_request_duration": "ms",
     "sample_batch_request_duration": "ms",
     "contour_fetch_duration": "ms",
-    "vector_fetch_duration": "ms",
     "first_map_render_duration": "ms",
     "first_overlay_visible_duration": "ms",
     "tile_request_failure_count": "count",
@@ -119,7 +117,6 @@ NETWORK_DIAGNOSTIC_METRIC_NAMES = (
     "sample_request_duration",
     "sample_batch_request_duration",
     "contour_fetch_duration",
-    "vector_fetch_duration",
 )
 
 NETWORK_DIAGNOSTIC_LABELS = {
@@ -137,7 +134,6 @@ NETWORK_DIAGNOSTIC_LABELS = {
     "sample_request_duration": "Sample",
     "sample_batch_request_duration": "Sample Batch",
     "contour_fetch_duration": "Contour",
-    "vector_fetch_duration": "Vector",
 }
 
 WEB_VITAL_THRESHOLDS = {
@@ -2261,7 +2257,6 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
         "sample_request_duration",
         "sample_batch_request_duration",
         "contour_fetch_duration",
-        "vector_fetch_duration",
         "first_map_render_duration",
         "first_overlay_visible_duration",
         "tile_request_failure_count",
