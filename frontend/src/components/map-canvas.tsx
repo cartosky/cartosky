@@ -1492,7 +1492,10 @@ export function MapCanvas({
       geolocationMarkerRef.current = new maplibregl.Marker({
         element,
         anchor: "center",
-      }).addTo(map);
+      })
+        .setLngLat([geolocationMarker.lon, geolocationMarker.lat])
+        .addTo(map);
+      return;
     }
 
     geolocationMarkerRef.current.setLngLat([geolocationMarker.lon, geolocationMarker.lat]);
