@@ -231,6 +231,42 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
 
 
+def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
+    calls = {"count": 0}
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+        del url, headers, timeout
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return _FakeResponse(b"<Error>not ready</Error>")
+        return _FakeResponse(b"GRIB" + (b"\0" * 28))
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    kwargs = dict(
+        source="nomads",
+        source_url="https://nomads.example/gfs-not-ready.grib2",
+        model_id="gfs",
+        run_date=datetime(2026, 5, 28, 12, 0),
+        fh=156,
+        start_byte=436043999,
+        end_byte=436044030,
+        bundle_fetch_cache=cache,
+        require_grib_payload=True,
+    )
+    with pytest.raises(RuntimeError, match="Invalid GRIB range payload"):
+        fetch_module._fetch_range_bytes(**kwargs)
+    second = fetch_module._fetch_range_bytes(**kwargs)
+
+    assert second.startswith(b"GRIB")
+    assert calls["count"] == 2
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("invalid_grib_range_payload", 0) == 1
+    assert metrics["counters"].get("fetch_cache_store", 0) == 1
+
+
 def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     _install_fake_rasterio_open(monkeypatch, value=1.0)
@@ -268,7 +304,7 @@ def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, 
     def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
         del url, headers, timeout
         request_calls["count"] += 1
-        return _FakeResponse(b"X" * 32)
+        return _FakeResponse(b"GRIB" + (b"X" * 28))
 
     monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
     monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
@@ -292,6 +328,16 @@ def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, 
             return SimpleNamespace(
                 selectors=SimpleNamespace(search=search, filter_by_keys={}, hints={}),
             )
+
+        def search_patterns_for_var(self, *, var_key: str, fh: int, product: str, var_spec):
+            del fh, product, var_spec
+            spec = self.get_var(var_key)
+            selectors = getattr(spec, "selectors", None)
+            return list(getattr(selectors, "search", []) or [])
+
+        def herbie_request(self, *, product: str, var_key: str, run_date: datetime, fh: int, search_pattern: str):
+            del var_key, run_date, fh, search_pattern
+            return SimpleNamespace(model="hrrr", product=product, herbie_kwargs=None)
 
     ctx = derive_module.FetchContext(bundle_fetch_cache=fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024))
     var_spec_model = SimpleNamespace(

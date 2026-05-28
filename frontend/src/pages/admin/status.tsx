@@ -380,10 +380,6 @@ export default function AdminStatusPage() {
             </select>
           </label>
         </div>
-
-        <div className="mt-4 text-sm text-white/48">
-          Healthy runs: <span className="text-white/72">{healthyRows.length}</span>. The page scans the latest four retained published runs per model directly from disk.
-        </div>
       </AdminHero>
 
       <AdminSurface className="p-4" title="Current View" headerRight={<div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">{filteredRows.length} rows</div>}>

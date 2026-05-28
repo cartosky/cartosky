@@ -1679,6 +1679,7 @@ def _process_run(
     rebuild_attempts: dict[tuple[str, str, str, int], int] = {}
     rebuild_max_attempts = 2
     rebuild_existing_pending = bool(rebuild_existing)
+    transient_targets: set[tuple[str, str]] = set()
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
@@ -1840,6 +1841,8 @@ def _process_run(
         next_missing: list[BuildTarget] = []
         for (region, var_id), fhs in fhs_by_target.items():
             if (region, var_id) in blocked_targets:
+                continue
+            if (region, var_id) in transient_targets:
                 continue
             for fh in sorted(set(fhs)):
                 if _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region):
@@ -2017,6 +2020,7 @@ def _process_run(
                             )
                         elif status == BUILD_STATUS_TRANSIENT:
                             round_transient_failures += 1
+                            transient_targets.add((region, var_id))
                             logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
                             blocked_targets.add((region, var_id))
@@ -2025,18 +2029,20 @@ def _process_run(
         if round_successes == 0 and not rebuild_round:
             if round_transient_failures > 0:
                 logger.info(
-                    "Catch-up paused: run=%s no progress in round=%d; transient_unavailable=%d blocked_vars=%s",
+                    "Catch-up paused: run=%s no progress in round=%d; transient_unavailable=%d blocked_vars=%s transient_vars=%s",
                     run_id,
                     rounds,
                     round_transient_failures,
                     sorted(f"{region}/{var_id}" for region, var_id in blocked_targets),
+                    sorted(f"{region}/{var_id}" for region, var_id in transient_targets),
                 )
                 break
             logger.info(
-                "Catch-up paused: run=%s no progress in round=%d; blocked_vars=%s",
+                "Catch-up paused: run=%s no progress in round=%d; blocked_vars=%s transient_vars=%s",
                 run_id,
                 rounds,
                 sorted(f"{region}/{var_id}" for region, var_id in blocked_targets),
+                sorted(f"{region}/{var_id}" for region, var_id in transient_targets),
             )
             break
 

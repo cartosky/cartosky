@@ -480,7 +480,7 @@ def test_process_run_catches_up_consecutive_available_hours(
     assert attempted == [("tmp2m", 0), ("tmp2m", 1), ("tmp2m", 2), ("tmp2m", 3), ("tmp2m", 4)]
 
 
-def test_process_run_retries_transient_unavailable_targets_during_progress(
+def test_process_run_defers_transient_unavailable_targets_during_progress(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -550,8 +550,8 @@ def test_process_run_retries_transient_unavailable_targets_during_progress(
         rebuild_existing=False,
     )
 
-    assert attempts.count(("dp2m", 0)) == 2
-    assert ("dp2m", 0) in built
+    assert attempts.count(("dp2m", 0)) == 1
+    assert ("dp2m", 0) not in built
     assert ("tmp2m", 1) in built
 
 

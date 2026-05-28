@@ -134,6 +134,10 @@ class HerbieTransientUnavailableError(RuntimeError):
     """Raised when all Herbie attempts fail due to transient source/index availability."""
 
 
+class _InvalidGribSubsetError(RuntimeError):
+    """Raised when an upstream byte-range response is not a GRIB payload."""
+
+
 @dataclass
 class _IdxNegativeCacheEntry:
     expires_at: float
@@ -198,6 +202,14 @@ class BundleFetchCache:
             self._entries_bytes = max(0, self._entries_bytes - len(removed))
             evicted += 1
         return evicted
+
+    def evict(self, key: str) -> bool:
+        with self._lock:
+            removed = self._entries.pop(key, None)
+            if removed is None:
+                return False
+            self._entries_bytes = max(0, self._entries_bytes - len(removed))
+            return True
 
     def get_or_fetch(
         self,
@@ -1420,6 +1432,7 @@ def _download_subset_with_inventory_rows(
             start_byte=start_byte,
             end_byte=end_byte,
             bundle_fetch_cache=bundle_fetch_cache,
+            require_grib_payload=True,
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1452,6 +1465,16 @@ def _download_subset_with_inventory_rows(
                     payload = src.read(end_byte - start_byte + 1)
                 if not payload:
                     continue
+                _validate_grib_range_payload(
+                    payload,
+                    source=priority,
+                    source_url=str(source_url),
+                    model_id=model_id,
+                    run_date=run_date,
+                    fh=fh,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                )
                 dst.write(payload)
                 wrote_bytes = True
         finally:
@@ -2538,6 +2561,44 @@ def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: in
     return data
 
 
+def _grib_payload_invalid_reason(payload: bytes) -> str | None:
+    if not payload:
+        return "empty"
+    if len(payload) < 16:
+        return f"too_small:{len(payload)}"
+    header = bytes(payload[:64])
+    if b"GRIB" in header:
+        return None
+    stripped = header.lstrip()
+    lowered = stripped[:32].lower()
+    if lowered.startswith((b"<!doctype", b"<html", b"<?xml", b"<error", b"{", b"[")):
+        return "looks_like_text_error"
+    return "missing_grib_signature"
+
+
+def _validate_grib_range_payload(
+    payload: bytes,
+    *,
+    source: str,
+    source_url: str,
+    model_id: str,
+    run_date: datetime,
+    fh: int,
+    start_byte: int,
+    end_byte: int,
+) -> None:
+    reason = _grib_payload_invalid_reason(payload)
+    if reason is None:
+        return
+    _metric_increment("invalid_grib_range_payload")
+    raise _InvalidGribSubsetError(
+        f"Invalid GRIB range payload source={source} model={model_id} "
+        f"run={_run_id_from_date(run_date)} fh{int(fh):03d} "
+        f"range={int(start_byte)}-{int(end_byte)} url_hash={_url_hash(source_url)} "
+        f"size={len(payload)} reason={reason}"
+    )
+
+
 def _fetch_range_bytes(
     *,
     source: str,
@@ -2548,6 +2609,7 @@ def _fetch_range_bytes(
     start_byte: int,
     end_byte: int,
     bundle_fetch_cache: BundleFetchCache | None,
+    require_grib_payload: bool = False,
 ) -> bytes:
     total_start = time.monotonic()
     lookup_start = time.monotonic()
@@ -2569,6 +2631,17 @@ def _fetch_range_bytes(
             start_byte=start_byte,
             end_byte=end_byte,
         )
+        if require_grib_payload:
+            _validate_grib_range_payload(
+                payload,
+                source=source,
+                source_url=source_url,
+                model_id=model_id,
+                run_date=run_date,
+                fh=fh,
+                start_byte=start_byte,
+                end_byte=end_byte,
+            )
         _metric_observe_ms("fetch_http_ms", (time.monotonic() - http_start) * 1000.0)
         return payload
 
@@ -2598,6 +2671,22 @@ def _fetch_range_bytes(
         cacheable=cacheable,
         expected_size=expected_size if expected_size > 0 else None,
     )
+    if require_grib_payload:
+        try:
+            _validate_grib_range_payload(
+                payload,
+                source=source,
+                source_url=source_url,
+                model_id=model_id,
+                run_date=run_date,
+                fh=fh,
+                start_byte=start_byte,
+                end_byte=end_byte,
+            )
+        except _InvalidGribSubsetError:
+            if bundle_fetch_cache.evict(cache_key):
+                _metric_increment("fetch_cache_evict_invalid_grib")
+            raise
     if event in {"hit", "wait"}:
         _metric_increment("fetch_cache_hit")
         logger.info(
@@ -2689,6 +2778,7 @@ def _download_subset_with_inventory_byte_range(
                 start_byte=start_byte,
                 end_byte=end_byte,
                 bundle_fetch_cache=bundle_fetch_cache,
+                require_grib_payload=True,
             )
         else:
             with open(source_url, "rb") as src:
@@ -2697,11 +2787,28 @@ def _download_subset_with_inventory_byte_range(
 
         if not payload:
             return None
+        _validate_grib_range_payload(
+            payload,
+            source=priority,
+            source_url=source_url,
+            model_id=model_id,
+            run_date=run_date,
+            fh=fh,
+            start_byte=start_byte,
+            end_byte=end_byte,
+        )
         out_path.write_bytes(payload)
         subset_ok, _subset_size = _subset_file_status(out_path)
         if not subset_ok:
             return None
         return out_path
+    except _InvalidGribSubsetError:
+        try:
+            if out_path.exists():
+                out_path.unlink()
+        except OSError:
+            pass
+        raise
     except Exception:
         return None
 
@@ -3171,6 +3278,21 @@ def fetch_variable(
                     break
             except Exception as exc:
                 last_exc = exc
+                if isinstance(exc, _InvalidGribSubsetError):
+                    saw_missing_subset_file = True
+                    logger.warning(
+                        "Herbie subset unavailable: invalid GRIB byte-range payload (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
+                        model_id,
+                        fh,
+                        search_pattern,
+                        priority,
+                        attempt_idx,
+                        attempts_for_priority,
+                        exc,
+                    )
+                    if sleep_s > 0 and attempt_idx < attempts_for_priority:
+                        time.sleep(sleep_s)
+                    continue
                 if _is_missing_index_error(exc):
                     saw_missing_index = True
                     _record_and_log_idx_missing(
@@ -3299,6 +3421,18 @@ def fetch_variable(
                     )
             except OSError:
                 pass
+        if _is_unsupported_file_format_error(exc):
+            subset_path = Path(grib_path)
+            try:
+                if subset_path.exists():
+                    subset_path.unlink()
+            except OSError:
+                pass
+            _metric_increment("invalid_grib_subset_open")
+            raise HerbieTransientUnavailableError(
+                f"Herbie subset unreadable after refresh for {model_id} fh{fh:03d} "
+                f"pattern={search_pattern!r} path={grib_path}"
+            ) from exc
         raise
 
     logger.debug(
