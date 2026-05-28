@@ -661,6 +661,92 @@ def test_inventory_search_refreshes_remote_idx_once_on_pattern_miss(monkeypatch:
     assert metrics["counters"].get("idx_cache_pattern_refresh", 0) == 1
 
 
+def test_grib_not_found_falls_back_to_manual_byte_range_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pattern = ":UGRD:850 mb:"
+    subset_path = tmp_path / "manual_refresh.grib2"
+
+    class _FakeHerbie:
+        download_calls = 0
+
+        def __init__(self, date: datetime, **kwargs):
+            del date, kwargs
+            self.idx = "https://nomads.example/aigfs.t18z.pres.f198.grib2.idx"
+            self.grib = "https://nomads.example/aigfs.t18z.pres.f198.grib2"
+            self.priority = "nomads"
+            self.model = "aigfs"
+            self.product = "pres"
+            self.fxx = 198
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": pattern, "start_byte": 0, "end_byte": 99}
+            ])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(subset_path)
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+            del errors, overwrite
+            assert search_pattern == pattern
+            type(self).download_calls += 1
+            raise RuntimeError("grib2 file not found")
+
+    class _FakeDataset:
+        crs = "EPSG:4326"
+        transform = fetch_module.rasterio.transform.Affine.identity()
+        nodata = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self, _band: int, masked: bool = True):
+            del masked
+            return np.ma.array([[1.0]], mask=[[False]], dtype=np.float32)
+
+        def tags(self, *_args):
+            return {}
+
+    def _fake_download_subset(*args, **kwargs):
+        force_inventory_refresh = bool(kwargs.get("force_inventory_refresh"))
+        out_path = Path(kwargs["out_path"])
+        if not force_inventory_refresh:
+            return None
+        out_path.write_bytes(b"grib")
+        return out_path
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    _install_fake_rasterio_open(monkeypatch)
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", _fake_download_subset)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+
+    data, crs, transform = fetch_module.fetch_variable(
+        model_id="aigfs",
+        product="pres",
+        search_pattern=pattern,
+        run_date=datetime(2026, 5, 28, 18, 0),
+        fh=198,
+        herbie_kwargs={"priority": ["nomads"]},
+    )
+
+    assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+    assert crs == "EPSG:4326"
+    assert transform == fetch_module.rasterio.transform.Affine.identity()
+    assert _FakeHerbie.download_calls == 1
+    assert subset_path.read_bytes() == b"grib"
+
+
 @pytest.mark.parametrize(
     "open_error_message",
     [

@@ -1184,6 +1184,7 @@ def _inventory_search(
     run_date: datetime | None = None,
     product: str = "",
     fh: int | None = None,
+    force_inventory_refresh: bool = False,
 ) -> _InventorySearchResult:
     idx_ref: Any
     try:
@@ -1214,7 +1215,7 @@ def _inventory_search(
         return _InventorySearchResult(inventory=None, reason="idx_missing")
 
     try:
-        index_df = _inventory_index_dataframe(H, idx_key=idx_key)
+        index_df = _inventory_index_dataframe(H, idx_key=idx_key, force_refresh=force_inventory_refresh)
     except Exception:
         return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
     if index_df is None:
@@ -2193,6 +2194,28 @@ def _is_grib_not_found_error(exc: Exception) -> bool:
     return "grib2 file not found" in text
 
 
+def _default_subset_target_path(
+    H: Any,
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    priority: str,
+    fh: int,
+    search_pattern: str,
+) -> Path:
+    try:
+        return Path(H.get_localFilePath(search_pattern))
+    except Exception:
+        return Path("/tmp") / (
+            "twf_subset_"
+            + hashlib.sha1(
+                f"{model_id}|{product}|{_run_id_from_date(run_date)}|{priority}|{fh}|{search_pattern}".encode("utf-8")
+            ).hexdigest()
+            + ".grib2"
+        )
+
+
 def _parse_float_tag(value: Any) -> float | None:
     try:
         parsed = float(value)
@@ -2512,6 +2535,7 @@ def _inventory_primary_byte_range(
     product: str,
     fh: int,
     priority: str,
+    force_inventory_refresh: bool = False,
 ) -> tuple[str, int, int] | None:
     try:
         inv_result = _inventory_search(
@@ -2522,6 +2546,7 @@ def _inventory_primary_byte_range(
             run_date=run_date,
             product=product,
             fh=fh,
+            force_inventory_refresh=force_inventory_refresh,
         )
         inv = inv_result.inventory
     except Exception:
@@ -2765,6 +2790,7 @@ def _download_subset_with_inventory_byte_range(
     fh: int,
     priority: str,
     bundle_fetch_cache: BundleFetchCache | None,
+    force_inventory_refresh: bool = False,
 ) -> Path | None:
     source_url = str(getattr(H, "grib", "") or "")
     cached_full_path = _maybe_get_eps_full_grib_path(
@@ -2785,6 +2811,7 @@ def _download_subset_with_inventory_byte_range(
         product=product,
         fh=fh,
         priority=priority,
+        force_inventory_refresh=force_inventory_refresh,
     )
     if primary_range is None:
         return None
@@ -2850,6 +2877,7 @@ def _manual_subset_download_with_corrected_range(
     fh: int,
     priority: str,
     bundle_fetch_cache: BundleFetchCache | None = None,
+    force_inventory_refresh: bool = False,
 ) -> Path | None:
     """Fallback subset fetch for edge-case index rows with duplicate start bytes.
 
@@ -2868,6 +2896,7 @@ def _manual_subset_download_with_corrected_range(
         fh=fh,
         priority=priority,
         bundle_fetch_cache=bundle_fetch_cache,
+        force_inventory_refresh=force_inventory_refresh,
     )
     if subset_path is None:
         logger.warning(
@@ -3060,6 +3089,7 @@ def fetch_variable(
         for attempt_idx in range(1, attempts_for_priority + 1):
             run_kwargs = _quiet_herbie_kwargs(kwargs)
             run_kwargs["priority"] = priority
+            subset_target: Path | None = None
             try:
                 H = Herbie(herbie_date, **run_kwargs)
                 precheck_ok, precheck_reason = _precheck_subset_available(
@@ -3098,12 +3128,18 @@ def fetch_variable(
                     run_date=run_date,
                     priority=priority,
                 )
+                subset_target = _default_subset_target_path(
+                    H,
+                    model_id=model_id,
+                    product=product,
+                    run_date=run_date,
+                    priority=priority,
+                    fh=fh,
+                    search_pattern=search_pattern,
+                )
                 subset_hint: Path | None = None
                 if lock_enabled:
-                    try:
-                        subset_hint = Path(H.get_localFilePath(search_pattern))
-                    except Exception:
-                        subset_hint = None
+                    subset_hint = subset_target
 
                 if lock_enabled and subset_hint is not None:
                     with _subset_download_lock(subset_hint):
@@ -3204,28 +3240,10 @@ def fetch_variable(
                         selected_meta = attempt_meta
                         break
                 else:
-                    subset_target: Path | None = None
-                    try:
-                        subset_target = Path(H.get_localFilePath(search_pattern))
-                    except Exception:
-                        subset_target = None
                     subset_path = _download_subset_with_inventory_byte_range(
                         H,
                         search_pattern=search_pattern,
-                        out_path=(
-                            subset_target
-                            if subset_target is not None
-                            else Path("/tmp")
-                            / (
-                                "twf_subset_"
-                                + hashlib.sha1(
-                                    f"{model_id}|{product}|{_run_id_from_date(run_date)}|{priority}|{fh}|{search_pattern}".encode(
-                                        "utf-8"
-                                    )
-                                ).hexdigest()
-                                + ".grib2"
-                            )
-                        ),
+                        out_path=subset_target,
                         model_id=model_id,
                         run_date=run_date,
                         product=product,
@@ -3335,6 +3353,52 @@ def fetch_variable(
                         force_nomads_after_prs_idx_lag = True
                     break
                 if _is_grib_not_found_error(exc):
+                    manual_subset = None
+                    if 'H' in locals():
+                        manual_out_path = subset_target
+                        if manual_out_path is None:
+                            manual_out_path = _default_subset_target_path(
+                                H,
+                                model_id=model_id,
+                                product=product,
+                                run_date=run_date,
+                                priority=priority,
+                                fh=fh,
+                                search_pattern=search_pattern,
+                            )
+                        try:
+                            manual_subset = _manual_subset_download_with_corrected_range(
+                                H,
+                                search_pattern=search_pattern,
+                                out_path=manual_out_path,
+                                model_id=model_id,
+                                run_date=run_date,
+                                product=product,
+                                fh=fh,
+                                priority=priority,
+                                bundle_fetch_cache=bundle_fetch_cache,
+                                force_inventory_refresh=True,
+                            )
+                        except _InvalidGribSubsetError:
+                            raise
+                        except Exception:
+                            manual_subset = None
+                    if manual_subset is not None:
+                        grib_path = manual_subset
+                        try:
+                            selected_meta = attempt_meta
+                        except Exception:
+                            pass
+                        logger.info(
+                            "Recovered GRIB after Herbie download miss via manual byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d)",
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            attempt_idx,
+                            attempts_for_priority,
+                        )
+                        break
                     saw_missing_subset_file = True
                     logger.warning(
                         "Herbie subset unavailable (%s fh%03d %s; priority=%s; attempt=%d/%d): grib not found",
