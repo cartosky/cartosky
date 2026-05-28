@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -384,6 +385,59 @@ async def test_admin_overview_summary_requires_admin_membership(client: httpx.As
             "message": "Admin access required",
         }
     }
+
+
+async def test_admin_overview_summary_ignores_retired_rum_metrics(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    response = await client.post(
+        "/api/v4/telemetry/rum",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+        json={
+            "metric_name": "manifest_fetch_duration",
+            "metric_value": 340.0,
+            "metric_unit": "ms",
+            "sample_rate": 0.1,
+            "session_id": "viewer-session-1",
+            "page": "/viewer",
+        },
+    )
+    assert response.status_code == 204
+
+    with admin_telemetry._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO rum_events (
+                metric_name,
+                metric_value,
+                metric_unit,
+                sample_rate,
+                session_id,
+                page,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "vector_fetch_duration",
+                1250.0,
+                "ms",
+                0.1,
+                "legacy-session",
+                "/viewer",
+                int(time.time()),
+            ),
+        )
+        conn.commit()
+
+    summary = await client.get(
+        "/api/v4/admin/overview/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["rum_diagnostics"]["manifest_fetch_duration"]["count"] == 1
+    assert body["telemetry_health"]["rum_sample_count"] == 1
 
 
 async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_device(client: httpx.AsyncClient) -> None:

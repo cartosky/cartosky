@@ -2229,6 +2229,8 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
     last_seen_by_metric: dict[str, int | None] = {name: None for name in ALLOWED_RUM_METRIC_NAMES}
     for row in rows:
         metric_name = str(row["metric_name"])
+        if metric_name not in values_by_metric:
+            continue
         values_by_metric[metric_name].append(float(row["metric_value"]))
         last_seen_by_metric[metric_name] = int(row["created_at"])
 
