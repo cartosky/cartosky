@@ -48,6 +48,20 @@ class _FakePlugin:
             )
         )
 
+    def search_patterns_for_var(self, *, var_key: str, fh: int, product: str, var_spec=None) -> list[str]:
+        del fh, product
+        resolved_spec = var_spec or self.get_var(var_key)
+        selectors = getattr(resolved_spec, "selectors", None)
+        return [
+            str(pattern)
+            for pattern in getattr(selectors, "search", []) or []
+            if str(pattern).strip()
+        ]
+
+    def herbie_request(self, *, product=None, var_key=None, run_date=None, fh=None, search_pattern=None):
+        del var_key, run_date, fh, search_pattern
+        return SimpleNamespace(model="gfs", product=product or "pgrb2.0p25", herbie_kwargs=None)
+
 
 def test_derive_bundle_reuses_fetch_and_warp_cache(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)

@@ -1684,6 +1684,8 @@ def _process_run(
     rebuild_max_attempts = 2
     rebuild_existing_pending = bool(rebuild_existing)
     transient_targets: set[tuple[str, str]] = set()
+    shared_parallel_fetch_ctx_by_target: dict[tuple[str, str], FetchContext] = {}
+    shared_parallel_readiness_cache_by_target: dict[tuple[str, str], dict[str, bool]] = {}
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
@@ -1726,6 +1728,33 @@ def _process_run(
             ready_regions,
             canonical_region,
         )
+
+    def _log_parallel_shared_fetch_cache(*, regions: set[str]) -> None:
+        if not regions:
+            return
+        totals_by_region: dict[str, dict[str, int]] = {}
+        for (region, _var_id), shared_fetch_ctx in shared_parallel_fetch_ctx_by_target.items():
+            if region not in regions:
+                continue
+            totals = totals_by_region.setdefault(
+                region,
+                {"hits": 0, "misses": 0, "warp_hits": 0, "warp_misses": 0},
+            )
+            totals["hits"] += int(shared_fetch_ctx.stats.get("hits", 0))
+            totals["misses"] += int(shared_fetch_ctx.stats.get("misses", 0))
+            totals["warp_hits"] += int(shared_fetch_ctx.warp_stats.get("hits", 0))
+            totals["warp_misses"] += int(shared_fetch_ctx.warp_stats.get("misses", 0))
+
+        for region in sorted(totals_by_region):
+            totals = totals_by_region[region]
+            logger.info(
+                "catchup shared_fetch_cache region=%s hits=%d misses=%d warp_hits=%d warp_misses=%d",
+                region,
+                totals["hits"],
+                totals["misses"],
+                totals["warp_hits"],
+                totals["warp_misses"],
+            )
 
     rounds = 0
     while True:
@@ -1911,6 +1940,7 @@ def _process_run(
 
         round_successes = 0
         round_transient_failures = 0
+        round_fetch_ctx_regions: set[str] = set()
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures: list[concurrent.futures.Future] = []
             if derive_bundle_enabled and not rebuild_round:
@@ -1937,6 +1967,18 @@ def _process_run(
                     )
 
                 for region, var_id, fh in single_jobs:
+                    normalized_var_id = (
+                        plugin.normalize_var_id(var_id)
+                        if hasattr(plugin, "normalize_var_id")
+                        else str(var_id)
+                    )
+                    fetch_ctx_key = (str(region), str(normalized_var_id))
+                    shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
+                        fetch_ctx_key,
+                        FetchContext(coverage=region),
+                    )
+                    shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
+                    round_fetch_ctx_regions.add(str(region))
                     futures.append(
                         pool.submit(
                             _build_one,
@@ -1947,22 +1989,42 @@ def _process_run(
                             run_dt=run_dt,
                             data_root=data_root,
                             plugin=plugin,
+                            fetch_ctx=shared_fetch_ctx,
+                            readiness_cache=shared_readiness_cache,
+                            log_fetch_cache_stats=False,
+                            derive_component_warp_cache=True,
                         )
                     )
             else:
-                futures = [
-                    pool.submit(
-                        _build_one,
-                        model_id=model_id,
-                        region=region,
-                        var_id=var_id,
-                        fh=fh,
-                        run_dt=run_dt,
-                        data_root=data_root,
-                        plugin=plugin,
+                for region, var_id, fh in round_work:
+                    normalized_var_id = (
+                        plugin.normalize_var_id(var_id)
+                        if hasattr(plugin, "normalize_var_id")
+                        else str(var_id)
                     )
-                    for region, var_id, fh in round_work
-                ]
+                    fetch_ctx_key = (str(region), str(normalized_var_id))
+                    shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
+                        fetch_ctx_key,
+                        FetchContext(coverage=region),
+                    )
+                    shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
+                    round_fetch_ctx_regions.add(str(region))
+                    futures.append(
+                        pool.submit(
+                            _build_one,
+                            model_id=model_id,
+                            region=region,
+                            var_id=var_id,
+                            fh=fh,
+                            run_dt=run_dt,
+                            data_root=data_root,
+                            plugin=plugin,
+                            fetch_ctx=shared_fetch_ctx,
+                            readiness_cache=shared_readiness_cache,
+                            log_fetch_cache_stats=False,
+                            derive_component_warp_cache=True,
+                        )
+                    )
 
             for future in concurrent.futures.as_completed(futures):
                 future_result = future.result()
@@ -2029,6 +2091,8 @@ def _process_run(
                         else:
                             blocked_targets.add((region, var_id))
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
+
+        _log_parallel_shared_fetch_cache(regions=round_fetch_ctx_regions)
 
         if round_successes == 0 and not rebuild_round:
             if round_transient_failures > 0:

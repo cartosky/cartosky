@@ -730,6 +730,94 @@ def test_process_run_logs_frame_timing_for_single_and_bundle(
     assert "Frame timing: run=20260227_12z model=gfs region=conus var=tmp2m fh000 ok=true mode=single elapsed_ms=222" in caplog.text
 
 
+def test_process_run_reuses_parallel_fetch_context_per_variable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run_dt = datetime(2026, 2, 27, 12, tzinfo=timezone.utc)
+    built: set[tuple[str, str, int]] = set()
+    seen_fetch_ctx_ids: dict[str, list[int]] = {"tmp2m": [], "mlcape": []}
+    seen_readiness_cache_ids: dict[str, list[int]] = {"tmp2m": [], "mlcape": []}
+
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run
+        return (str(region), str(var_id), int(fh)) in built
+
+    def fake_build_one(
+        *,
+        model_id: str,
+        region: str,
+        var_id: str,
+        fh: int,
+        run_dt: datetime,
+        data_root: Path,
+        plugin: object,
+        fetch_ctx: object | None = None,
+        readiness_cache: dict[str, bool] | None = None,
+        log_fetch_cache_stats: bool = True,
+        derive_component_warp_cache: bool = False,
+    ) -> tuple[str, str, int, bool, int, str]:
+        del model_id, run_dt, data_root, plugin
+        assert fetch_ctx is not None
+        assert readiness_cache is not None
+        assert log_fetch_cache_stats is False
+        assert derive_component_warp_cache is True
+        seen_fetch_ctx_ids[str(var_id)].append(id(fetch_ctx))
+        seen_readiness_cache_ids[str(var_id)].append(id(readiness_cache))
+        fetch_ctx.stats["hits"] = int(fetch_ctx.stats.get("hits", 0)) + 1
+        fetch_ctx.stats["misses"] = int(fetch_ctx.stats.get("misses", 0)) + 2
+        fetch_ctx.warp_stats["hits"] = int(fetch_ctx.warp_stats.get("hits", 0)) + 3
+        fetch_ctx.warp_stats["misses"] = int(fetch_ctx.warp_stats.get("misses", 0)) + 4
+        built.add((str(region), str(var_id), int(fh)))
+        return str(region), str(var_id), int(fh), True, 17, "ok"
+
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", fake_build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    with caplog.at_level("INFO"):
+        scheduler_module._process_run(
+            plugin=_FakePlugin(),
+            model_id="hrrr",
+            vars_to_build=["tmp2m", "mlcape"],
+            primary_vars=["tmp2m"],
+            run_dt=run_dt,
+            data_root=tmp_path,
+            workers=2,
+            keep_runs=2,
+            loop_pregenerate_enabled=False,
+            loop_cache_root=tmp_path / "loop-cache",
+            loop_workers=1,
+            loop_tier0_quality=82,
+            loop_tier0_max_dim=2300,
+            loop_tier0_fixed_w=2300,
+            loop_tier1_quality=86,
+            loop_tier1_max_dim=2400,
+            loop_tier1_fixed_w=2400,
+            rebuild_existing=False,
+        )
+
+    assert len(seen_fetch_ctx_ids["tmp2m"]) == 5
+    assert len(set(seen_fetch_ctx_ids["tmp2m"])) == 1
+    assert len(seen_fetch_ctx_ids["mlcape"]) == 5
+    assert len(set(seen_fetch_ctx_ids["mlcape"])) == 1
+    assert seen_fetch_ctx_ids["tmp2m"][0] != seen_fetch_ctx_ids["mlcape"][0]
+    assert len(set(seen_readiness_cache_ids["tmp2m"])) == 1
+    assert len(set(seen_readiness_cache_ids["mlcape"])) == 1
+    assert seen_readiness_cache_ids["tmp2m"][0] != seen_readiness_cache_ids["mlcape"][0]
+    assert "catchup shared_fetch_cache region=conus hits=2 misses=4 warp_hits=6 warp_misses=8" in caplog.text
+
+
 def test_process_run_republishes_progress_during_long_catchup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
