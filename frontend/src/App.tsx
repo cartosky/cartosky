@@ -382,12 +382,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="region-selector"]',
       title: "Region",
-      body: "Zoom to a preset region — CONUS, Alaska, Hawaii, or specific metro areas",
-    },
-    {
-      targetSelector: '[data-tour-target="forecast-scrubber"]',
-      title: "Forecast Hour",
-      body: "Drag or play through forecast hours. The timestamp updates in real time",
+      body: "Zoom to a preset region — North America, CONUS, or any US region",
     },
     {
       targetSelector: '[data-tour-target="legend-button"]',
@@ -410,6 +405,11 @@ export default function App() {
       targetSelector: '[data-tour-target="display-settings-button"]',
       title: "Display Settings",
       body: "Toggle city labels, zoom controls, basemap style, and overlay opacity",
+    },
+    {
+      targetSelector: '[data-tour-target="forecast-scrubber"]',
+      title: "Forecast Hour",
+      body: "Drag or play through forecast hours. The timestamp updates in real time",
     },
   ], []);
 

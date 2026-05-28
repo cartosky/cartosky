@@ -380,6 +380,8 @@ export function TourOverlay({
               {" "}
               <a
                 href={step.linkHref}
+                target="_blank"
+                rel="noreferrer"
                 style={{
                   color: CYAN,
                   textDecoration: "underline",
