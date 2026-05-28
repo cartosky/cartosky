@@ -3249,6 +3249,348 @@
           42.8501
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_5",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Tacoma",
+        "wfo": "SEW",
+        "gridX": 118,
+        "gridY": 52
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4443,
+          47.2529
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_6",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Olympia",
+        "wfo": "SEW",
+        "gridX": 101,
+        "gridY": 45
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.9007,
+          47.0379
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_7",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Everett",
+        "wfo": "SEW",
+        "gridX": 132,
+        "gridY": 85
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.2021,
+          47.979
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_8",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Yakima",
+        "wfo": "PDT",
+        "gridX": 84,
+        "gridY": 153
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.5059,
+          46.6021
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_9",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Wenatchee",
+        "wfo": "OTX",
+        "gridX": 47,
+        "gridY": 95
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.3103,
+          47.4235
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_10",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Mount Vernon",
+        "wfo": "SEW",
+        "gridX": 132,
+        "gridY": 106
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.3343,
+          48.4226
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_11",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Aberdeen",
+        "wfo": "SEW",
+        "gridX": 72,
+        "gridY": 48
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.8154,
+          46.9757
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "WA_12",
+      "properties": {
+        "st": "WA",
+        "state": "Washington",
+        "city": "Walla Walla",
+        "wfo": "PDT",
+        "gridX": 149,
+        "gridY": 115
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.343,
+          46.0646
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_5",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Salem",
+        "wfo": "PQR",
+        "gridX": 96,
+        "gridY": 80
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+         -123.0351,
+          44.9429
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_6",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Corvallis",
+        "wfo": "PQR",
+        "gridX": 85,
+        "gridY": 64
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.262,
+          44.5646
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_7",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Roseburg",
+        "wfo": "MFR",
+        "gridX": 98,
+        "gridY": 116
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.3417,
+          43.2165
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_8",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Klamath Falls",
+        "wfo": "MFR",
+        "gridX": 141,
+        "gridY": 61
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.7817,
+          42.2249
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_9",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Pendleton",
+        "wfo": "PDT",
+        "gridX": 132,
+        "gridY": 100
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.7886,
+          45.6721
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "OR_10",
+      "properties": {
+        "st": "OR",
+        "state": "Oregon",
+        "city": "Astoria",
+        "wfo": "PQR",
+        "gridX": 82,
+        "gridY": 142
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.8313,
+          46.1879
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ID_5",
+      "properties": {
+        "st": "ID",
+        "state": "Idaho",
+        "city": "Twin Falls",
+        "wfo": "BOI",
+        "gridX": 184,
+        "gridY": 29
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.4609,
+          42.563
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ID_6",
+      "properties": {
+        "st": "ID",
+        "state": "Idaho",
+        "city": "Lewiston",
+        "wfo": "OTX",
+        "gridX": 144,
+        "gridY": 30
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.0177,
+          46.4165
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ID_7",
+      "properties": {
+        "st": "ID",
+        "state": "Idaho",
+        "city": "Sandpoint",
+        "wfo": "OTX",
+        "gridX": 173,
+        "gridY": 115
+      },
+      "geometry": {
+        "type": "Point",
+      "coordinates": [
+          -116.5531,
+          48.2766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ID_8",
+      "properties": {
+        "st": "ID",
+        "state": "Idaho",
+        "city": "Moscow",
+        "wfo": "OTX",
+        "gridX": 147,
+        "gridY": 44
+      },
+        "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.0002,
+          46.7324
+        ]
+      }
     }
   ]
 }
