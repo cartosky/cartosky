@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.builder import derive as derive_module
+from app.models.gefs import GEFS_VARS
 
 
 class _FakePlugin:
@@ -31,7 +32,7 @@ class _FakePlugin:
 
     def herbie_request(self, *, product: str, var_key: str, run_date, fh: int, search_pattern: str):
         del var_key, run_date, fh, search_pattern
-        return SimpleNamespace(product=product, herbie_kwargs=None)
+        return SimpleNamespace(model="gfs", product=product, herbie_kwargs=None)
 
     def get_var_capability(self, var_key: str):
         del var_key
@@ -258,6 +259,99 @@ def test_gefs_snowfall_derive_uses_fractional_mean_csnow_without_binary_threshol
     assert data.dtype == np.float32
     assert data.shape == (2, 2)
     np.testing.assert_allclose(data, expected, rtol=1e-6, atol=1e-6, equal_nan=True)
+
+
+def test_gefs_snowfall_incremental_reuses_mean_precip_cache_and_endpoint_csnow(monkeypatch, caplog) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    load_keys: list[tuple[str, int]] = []
+    fetch_calls: list[tuple[str, int]] = []
+
+    def _fake_load_prior_cumulative(
+        *,
+        model_id,
+        run_date,
+        var_key,
+        fh,
+        ctx,
+        grid_cache_key,
+        scale_divisor=0.03937007874015748,
+    ):
+        del model_id, run_date, ctx, grid_cache_key, scale_divisor
+        load_keys.append((str(var_key), int(fh)))
+        if int(fh) != 372:
+            return None
+        if str(var_key) == "snowfall_total__mean":
+            return np.full((2, 2), 10.0, dtype=np.float32), crs, transform, {"coverage_start_fh": 0}
+        if str(var_key) == "precip_total__mean":
+            return np.full((2, 2), 20.0, dtype=np.float32), crs, transform, {"coverage_start_fh": 0}
+        return None
+
+    def _fake_fetch_step_component(**kwargs):
+        step_fh = int(kwargs["step_fh"])
+        var_key = str(kwargs["var_key"])
+        fetch_calls.append((var_key, step_fh))
+        if var_key == "apcp_step__mean" and step_fh == 378:
+            return np.full((2, 2), 2.0, dtype=np.float32), crs, transform
+        if var_key == "csnow__mean" and step_fh in {372, 378}:
+            value = 0.5 if step_fh == 372 else 1.0
+            return np.full((2, 2), value, dtype=np.float32), crs, transform
+        raise AssertionError(f"Unexpected component fetch var_key={var_key!r} fh={step_fh}")
+
+    monkeypatch.setattr(derive_module, "_kuchera_load_prior_cumulative", _fake_load_prior_cumulative)
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+    monkeypatch.setattr(derive_module, "_kuchera_store_cumulative_cache", lambda **kwargs: None)
+
+    var_spec_model = SimpleNamespace(
+        selectors=SimpleNamespace(
+            hints={
+                "apcp_component": "apcp_step__mean",
+                "precip_cumulative_component": "precip_total__mean",
+                "snow_component": "csnow__mean",
+                "step_hours": "6",
+                "snow_interval_sample_mode": "step_endpoints",
+                "skip_zero_hour_sample": "true",
+                "slr": "10",
+                "min_step_lwe_kgm2": "0.01",
+            }
+        )
+    )
+
+    with caplog.at_level("INFO"):
+        data, out_crs, out_transform = derive_module._derive_snowfall_total_10to1_cumulative(
+            model_id="gefs",
+            var_key="snowfall_total__mean",
+            product="atmos.5",
+            run_date=datetime(2026, 5, 28, 6, 0),
+            fh=378,
+            var_spec_model=var_spec_model,
+            var_capability=None,
+            model_plugin=object(),
+        )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert ("precip_total", 372) not in load_keys
+    assert ("precip_total__mean", 372) in load_keys
+    assert fetch_calls == [
+        ("apcp_step__mean", 378),
+        ("csnow__mean", 372),
+        ("csnow__mean", 378),
+    ]
+    assert "computed_steps=1" in caplog.text
+    assert "reused_prev_cumulative=true" in caplog.text
+    assert "base_fh=372" in caplog.text
+    expected = np.full((2, 2), 11.5 * 0.03937007874015748 * 10.0, dtype=np.float32)
+    np.testing.assert_allclose(data, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_gefs_snowfall_mean_declares_incremental_precip_cache_and_endpoint_sampling() -> None:
+    hints = GEFS_VARS["snowfall_total__mean"].selectors.hints
+
+    assert hints["apcp_component"] == "apcp_step__mean"
+    assert hints["precip_cumulative_component"] == "precip_total__mean"
+    assert hints["snow_component"] == "csnow__mean"
+    assert hints["snow_interval_sample_mode"] == "step_endpoints"
 
 
 def test_snowfall_derive_inventory_differences_gfs_cumulative_apcp(monkeypatch) -> None:

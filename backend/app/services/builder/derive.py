@@ -3775,7 +3775,11 @@ def _interval_sample_fhs(step_fh: int, step_len: int, *, sample_mode: str = "aut
         raise ValueError(f"Invalid cumulative step length={step_len} for fh={step_fh}")
     start_fh = step_fh - step_len
     normalized_sample_mode = str(sample_mode).strip().lower()
-    if normalized_sample_mode == "three_point":
+    if normalized_sample_mode in {"step_endpoints", "endpoints"}:
+        candidates = [start_fh, step_fh]
+    elif normalized_sample_mode in {"step_end", "end"}:
+        candidates = [step_fh]
+    elif normalized_sample_mode == "three_point":
         mid_offset = max(1, step_len // 2)
         mid_fh = start_fh + mid_offset
         candidates = [start_fh, mid_fh, step_fh]
@@ -5104,6 +5108,10 @@ def _derive_snowfall_total_10to1_cumulative(
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     apcp_component = hints.get("apcp_component", "apcp_step")
     snow_component = hints.get("snow_component", "csnow")
+    precip_cumulative_component = str(
+        hints.get("precip_cumulative_component")
+        or "precip_total"
+    ).strip() or "precip_total"
     slr_raw = hints.get("slr", "10")
     snow_mask_threshold_raw = hints.get("snow_mask_threshold")
     snow_interval_sample_mode = str(hints.get("snow_interval_sample_mode", "auto")).strip().lower() or "auto"
@@ -5223,7 +5231,7 @@ def _derive_snowfall_total_10to1_cumulative(
         prior_precip = _kuchera_load_prior_cumulative(
             model_id=model_id,
             run_date=run_date,
-            var_key="precip_total",
+            var_key=precip_cumulative_component,
             fh=prev_fh,
             ctx=ctx,
             grid_cache_key=cumulative_cache_grid_key,

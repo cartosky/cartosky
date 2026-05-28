@@ -561,8 +561,10 @@ GEFS_VARS: dict[str, VarSpec] = {
         selectors=VarSelectors(
             hints={
                 "apcp_component": "apcp_step__mean",
+                "precip_cumulative_component": "precip_total__mean",
                 "snow_component": "csnow__mean",
                 "step_hours": "6",
+                "snow_interval_sample_mode": "step_endpoints",
                 "skip_zero_hour_sample": "true",
                 "slr": "10",
                 "min_step_lwe_kgm2": "0.01",
@@ -576,8 +578,10 @@ GEFS_VARS: dict[str, VarSpec] = {
         selectors=VarSelectors(
             hints={
                 "apcp_component": "apcp_step__mean",
+                "precip_cumulative_component": "precip_total__mean",
                 "snow_component": "csnow__mean",
                 "step_hours": "6",
+                "snow_interval_sample_mode": "step_endpoints",
                 "skip_zero_hour_sample": "true",
                 "slr": "10",
                 "min_step_lwe_kgm2": "0.01",
