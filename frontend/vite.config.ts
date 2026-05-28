@@ -10,6 +10,18 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  server: {
+    proxy: {
+      "/api": {
+        target: "https://api.cartosky.com",
+        changeOrigin: true,
+      },
+      "/tiles": {
+        target: "https://api.cartosky.com",
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     rollupOptions: {
       output: {
