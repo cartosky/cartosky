@@ -16,49 +16,22 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.builder import derive as derive_module
 
 
-def _vort500_var_spec() -> SimpleNamespace:
+def _wspd_var_spec() -> SimpleNamespace:
     return SimpleNamespace(
         selectors=SimpleNamespace(
             hints={
-                "u_component": "u500",
-                "v_component": "v500",
+                "u_component": "u850",
+                "v_component": "v850",
             }
         )
     )
 
 
-def test_aigfs_vort500_derive_zero_wind_returns_zero_relative_vorticity(monkeypatch) -> None:
-    crs = CRS.from_epsg(4326)
-    transform = Affine(1.0, 0.0, -2.0, 0.0, -1.0, 2.0)
-    zeros = np.zeros((3, 4), dtype=np.float32)
-
-    def _fake_fetch_component(**kwargs):
-        return zeros, crs, transform
-
-    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
-
-    derived, out_crs, out_transform = derive_module._derive_vort500_from_uv(
-        model_id="aigfs",
-        var_key="vort500",
-        product="pres",
-        run_date=datetime(2026, 4, 16, 12, 0),
-        fh=0,
-        var_spec_model=_vort500_var_spec(),
-        var_capability=None,
-        model_plugin=object(),
-    )
-
-    expected = np.zeros((3, 4), dtype=np.float32)
-
-    assert out_crs == crs
-    assert out_transform == transform
-    np.testing.assert_allclose(derived, expected, rtol=1e-5, atol=1e-5)
-
-
-def test_aigfs_vort500_derive_uses_warped_components_when_target_grid_requested(monkeypatch) -> None:
+def test_aigfs_wspd_derive_uses_warped_components_when_target_grid_requested(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine(0.5, 0.0, -130.0, 0.0, -0.5, 55.0)
-    zeros = np.zeros((657, 682), dtype=np.float32)
+    u_data = np.full((657, 682), 3.0, dtype=np.float32)
+    v_data = np.full((657, 682), 4.0, dtype=np.float32)
 
     def _unexpected_native_fetch(**kwargs):
         raise AssertionError("native fetch path should not be used")
@@ -66,19 +39,23 @@ def test_aigfs_vort500_derive_uses_warped_components_when_target_grid_requested(
     def _fake_fetch_component_warped(**kwargs):
         assert kwargs["target_region"] == "na"
         assert kwargs["target_grid_id"] == "climatology:era5:na:25000.0m"
-        return zeros, crs, transform
+        if kwargs["var_key"] == "u850":
+            return u_data, crs, transform
+        if kwargs["var_key"] == "v850":
+            return v_data, crs, transform
+        raise AssertionError(f"unexpected component {kwargs['var_key']}")
 
     monkeypatch.setattr(derive_module, "_fetch_component", _unexpected_native_fetch)
     monkeypatch.setattr(derive_module, "_fetch_component_warped", _fake_fetch_component_warped)
     monkeypatch.setattr(derive_module, "convert_units", lambda data, **kwargs: data)
 
-    derived, out_crs, out_transform = derive_module._derive_vort500_from_uv(
+    derived, out_crs, out_transform = derive_module._derive_wspd10m(
         model_id="aigfs",
-        var_key="vort500",
+        var_key="wspd850",
         product="pres",
-        run_date=datetime(2026, 4, 16, 12, 0),
-        fh=0,
-        var_spec_model=_vort500_var_spec(),
+        run_date=datetime(2026, 5, 28, 12, 0),
+        fh=120,
+        var_spec_model=_wspd_var_spec(),
         var_capability=None,
         model_plugin=object(),
         derive_component_target_grid={"region": "na", "id": "climatology:era5:na:25000.0m"},
@@ -88,4 +65,4 @@ def test_aigfs_vort500_derive_uses_warped_components_when_target_grid_requested(
     assert derived.shape == (657, 682)
     assert out_crs == crs
     assert out_transform == transform
-    np.testing.assert_allclose(derived, zeros, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(derived, 5.0, rtol=0.0, atol=1e-6)

@@ -3894,11 +3894,14 @@ def _derive_wspd10m(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     u_component = hints.get("u_component", "10u")
     v_component = hints.get("v_component", "10v")
     speed_component = hints.get("speed_component")
+    use_warped = _derive_uses_warped_components(derive_component_target_grid, derive_component_resampling)
+    target_region = str((derive_component_target_grid or {}).get("region", "")).strip()
+    target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+    resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
 
     # Prefer a direct wind-speed field when available.
     if speed_component:
@@ -3908,15 +3911,29 @@ def _derive_wspd10m(
                 model_id,
                 speed_component,
             )
-            speed_data, src_crs, src_transform = _fetch_component(
-                model_id=model_id,
-                product=product,
-                run_date=run_date,
-                fh=fh,
-                model_plugin=model_plugin,
-                var_key=str(speed_component),
-                ctx=ctx,
-            )
+            if use_warped:
+                speed_data, src_crs, src_transform = _fetch_component_warped(
+                    model_id=model_id,
+                    product=product,
+                    run_date=run_date,
+                    fh=fh,
+                    model_plugin=model_plugin,
+                    var_key=str(speed_component),
+                    target_region=target_region,
+                    target_grid_id=target_grid_id,
+                    resampling=resampling,
+                    ctx=ctx,
+                )
+            else:
+                speed_data, src_crs, src_transform = _fetch_component(
+                    model_id=model_id,
+                    product=product,
+                    run_date=run_date,
+                    fh=fh,
+                    model_plugin=model_plugin,
+                    var_key=str(speed_component),
+                    ctx=ctx,
+                )
             wspd = convert_units(
                 speed_data.astype(np.float32, copy=False),
                 var_key=var_key,
@@ -3929,24 +3946,50 @@ def _derive_wspd10m(
             pass
 
     try:
-        u_data, src_crs, src_transform = _fetch_component(
-            model_id=model_id,
-            product=product,
-            run_date=run_date,
-            fh=fh,
-            model_plugin=model_plugin,
-            var_key=u_component,
-            ctx=ctx,
-        )
-        v_data, _, _ = _fetch_component(
-            model_id=model_id,
-            product=product,
-            run_date=run_date,
-            fh=fh,
-            model_plugin=model_plugin,
-            var_key=v_component,
-            ctx=ctx,
-        )
+        if use_warped:
+            u_data, src_crs, src_transform = _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=fh,
+                model_plugin=model_plugin,
+                var_key=u_component,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                ctx=ctx,
+            )
+            v_data, _, _ = _fetch_component_warped(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=fh,
+                model_plugin=model_plugin,
+                var_key=v_component,
+                target_region=target_region,
+                target_grid_id=target_grid_id,
+                resampling=resampling,
+                ctx=ctx,
+            )
+        else:
+            u_data, src_crs, src_transform = _fetch_component(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=fh,
+                model_plugin=model_plugin,
+                var_key=u_component,
+                ctx=ctx,
+            )
+            v_data, _, _ = _fetch_component(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                fh=fh,
+                model_plugin=model_plugin,
+                var_key=v_component,
+                ctx=ctx,
+            )
     except (HerbieTransientUnavailableError, RuntimeError, ValueError):
         if not speed_component:
             raise
@@ -4235,29 +4278,58 @@ def _derive_vort500_from_uv(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del derive_component_target_grid, derive_component_resampling
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     u_component = str(hints.get("u_component") or "u500")
     v_component = str(hints.get("v_component") or "v500")
+    use_warped = _derive_uses_warped_components(derive_component_target_grid, derive_component_resampling)
+    target_region = str((derive_component_target_grid or {}).get("region", "")).strip()
+    target_grid_id = str((derive_component_target_grid or {}).get("id", "")).strip()
+    resampling = str(derive_component_resampling or "bilinear").strip() or "bilinear"
 
-    u_data, src_crs, src_transform = _fetch_component(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        model_plugin=model_plugin,
-        var_key=u_component,
-        ctx=ctx,
-    )
-    v_data, _, _ = _fetch_component(
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        model_plugin=model_plugin,
-        var_key=v_component,
-        ctx=ctx,
-    )
+    if use_warped:
+        u_data, src_crs, src_transform = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=u_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+        v_data, _, _ = _fetch_component_warped(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=v_component,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+            ctx=ctx,
+        )
+    else:
+        u_data, src_crs, src_transform = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=u_component,
+            ctx=ctx,
+        )
+        v_data, _, _ = _fetch_component(
+            model_id=model_id,
+            product=product,
+            run_date=run_date,
+            fh=fh,
+            model_plugin=model_plugin,
+            var_key=v_component,
+            ctx=ctx,
+        )
 
     if u_data.shape != v_data.shape:
         raise ValueError("vort500 derive requires matching u/v component shapes")
