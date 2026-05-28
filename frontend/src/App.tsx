@@ -542,6 +542,7 @@ export default function App() {
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
+  const manualLocationJumpRef = useRef(false);
   const latestMapDataUrlGetterRef = useRef<(() => string | null) | null>(null);
   const mapViewRef = useRef({
     lat: MAP_VIEW_DEFAULTS.center[0],
@@ -1838,6 +1839,7 @@ export default function App() {
       if (cancelled || mapViewHydratedRef.current) {
         return;
       }
+      map.setMaxZoom(Math.max(map.getMaxZoom(), targetView.z));
       map.jumpTo({
         center: [targetView.lon, targetView.lat],
         zoom: targetView.z,
@@ -3443,6 +3445,20 @@ export default function App() {
     setMapViewTick((current) => current + 1);
   }, []);
 
+  const handleLocationJump = useCallback((lat: number, lon: number, zoom = 10) => {
+    const map = mapInstanceRef.current;
+    if (!map || !isMapReady || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(zoom)) {
+      return;
+    }
+    manualLocationJumpRef.current = true;
+    map.setMaxZoom(Math.max(map.getMaxZoom(), zoom));
+    map.easeTo({
+      center: [lon, lat],
+      zoom,
+      duration: 600,
+    });
+  }, [isMapReady]);
+
   const handleGridFrameVisible = useCallback((payload: {
     frameHour: number;
     selectionEpoch?: number;
@@ -4074,6 +4090,7 @@ export default function App() {
   const toolbarContextValue = useMemo(() => ({
     region,
     onRegionChange: handleRegionChange,
+    onLocationJump: handleLocationJump,
     model,
     onModelChange: handleModelChange,
     run,
@@ -4130,7 +4147,7 @@ export default function App() {
     layoutMode: viewerLayoutMode,
     onReplayTour: replayTour,
   }), [
-    region, handleRegionChange, model, handleModelChange, run, handleRunChange,
+    region, handleRegionChange, handleLocationJump, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
     allVariableCatalog, supportedVariableIds,
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
@@ -4191,6 +4208,7 @@ export default function App() {
           legendButtonVisible={!isDesktopViewerLayout && legendVisible}
           legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
           onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
+          manualLocationJumpRef={manualLocationJumpRef}
         />
 
         {/* Subtle radial vignette — darkens map edges for depth; never blocks interaction */}

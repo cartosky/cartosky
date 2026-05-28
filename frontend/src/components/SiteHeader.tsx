@@ -3,6 +3,7 @@ import { Show, UserButton, useAuth } from "@clerk/react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import {
+  Check,
   Boxes,
   CalendarClock,
   Globe,
@@ -11,6 +12,7 @@ import {
   MessageSquareText,
   Moon,
   Palette,
+  Search,
   Send,
   Settings,
   Sun,
@@ -19,7 +21,7 @@ import {
 } from "lucide-react";
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
-import { API_ORIGIN } from "@/lib/config";
+import { API_ORIGIN, API_V4_BASE } from "@/lib/config";
 import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 import { cn } from "@/lib/utils";
 import { useFeedbackContext } from "@/lib/feedback-context";
@@ -44,6 +46,16 @@ import type { GroupedOption } from "@/lib/app-utils";
 // ─── Shared types ────────────────────────────────────────────────────────────
 type Option = { value: string; label: string };
 type VariableOption = Option & { group: string | null };
+
+type LocationSearchResult = {
+  display_name: string;
+  latitude: number;
+  longitude: number;
+  timezone?: string | null;
+  country_code?: string | null;
+  admin1?: string | null;
+  country?: string | null;
+};
 
 const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
@@ -288,52 +300,385 @@ function DisplayRow({
 function RegionUtilitySelect({
   value,
   onValueChange,
+  onLocationJump,
   options,
   disabled,
   currentRegionLabel,
-  contentOffset,
-  contentClassName,
   tourTarget,
 }: {
   value: string;
   onValueChange: (value: string) => void;
+  onLocationJump?: (lat: number, lon: number, zoom?: number) => void;
   options: Option[];
   disabled?: boolean;
   currentRegionLabel: string;
-  contentOffset?: number;
-  contentClassName?: string;
   tourTarget?: string;
 }) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const debounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<LocationSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [inlineError, setInlineError] = useState<string | null>(null);
+  const [panelTop, setPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
+  const [panelRight, setPanelRight] = useState<number>(16);
+
+  const activeSearch = query.trim().length > 0;
+
+  const updatePanelPosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    setPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
+    setPanelRight(Math.max(window.innerWidth - rect.right, 16));
+  }, []);
+
+  const clearInlineError = useCallback(() => {
+    if (errorTimerRef.current) {
+      window.clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = null;
+    }
+    setInlineError(null);
+  }, []);
+
+  const showInlineError = useCallback((message: string) => {
+    if (errorTimerRef.current) {
+      window.clearTimeout(errorTimerRef.current);
+    }
+    setInlineError(message);
+    errorTimerRef.current = window.setTimeout(() => {
+      errorTimerRef.current = null;
+      setInlineError(null);
+    }, 2800);
+  }, []);
+
+  const resetSearch = useCallback(() => {
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+    setQuery("");
+    setResults([]);
+    setIsSearching(false);
+    clearInlineError();
+  }, [clearInlineError]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    updatePanelPosition();
+    function onPointerDown(event: MouseEvent | TouchEvent) {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (triggerRef.current?.contains(event.target)) {
+        return;
+      }
+      if (panelRef.current?.contains(event.target)) {
+        return;
+      }
+      setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("resize", updatePanelPosition);
+    window.addEventListener("scroll", updatePanelPosition, true);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("resize", updatePanelPosition);
+      window.removeEventListener("scroll", updatePanelPosition, true);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, updatePanelPosition]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!open) {
+      return;
+    }
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+
+    if (!trimmed) {
+      setResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    if (trimmed.length < 2) {
+      setResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    setIsSearching(true);
+    debounceRef.current = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_V4_BASE}/locations/search?q=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error("Location search is temporarily unavailable.");
+        }
+        const payload = (await response.json()) as { results?: LocationSearchResult[] };
+        setResults(Array.isArray(payload.results) ? payload.results.slice(0, 5) : []);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setResults([]);
+        showInlineError("Location search is temporarily unavailable.");
+      } finally {
+        if (searchAbortRef.current === controller) {
+          searchAbortRef.current = null;
+        }
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      controller.abort();
+    };
+  }, [open, query, showInlineError]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+      }
+      searchAbortRef.current?.abort();
+      if (errorTimerRef.current) {
+        window.clearTimeout(errorTimerRef.current);
+      }
+    };
+  }, []);
+
+  function closeAfterLocationJump() {
+    setOpen(false);
+    resetSearch();
+    setIsLocating(false);
+  }
+
+  function handleLocationResultSelect(result: LocationSearchResult) {
+    onLocationJump?.(result.latitude, result.longitude, 10);
+    closeAfterLocationJump();
+  }
+
+  function handleUseMyLocation() {
+    if (!navigator.geolocation) {
+      showInlineError("Geolocation is not available in this browser.");
+      return;
+    }
+    clearInlineError();
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        onLocationJump?.(position.coords.latitude, position.coords.longitude, 10);
+        closeAfterLocationJump();
+      },
+      () => {
+        setIsLocating(false);
+        showInlineError("Unable to access your location.");
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000,
+      }
+    );
+  }
+
+  function secondaryLocationLabel(result: LocationSearchResult): string | null {
+    const pieces: string[] = [];
+    const admin1 = result.admin1?.trim();
+    const country = result.country?.trim();
+    if (admin1) {
+      pieces.push(admin1);
+    }
+    if (country && (!admin1 || country.toLowerCase() !== admin1.toLowerCase())) {
+      pieces.push(country);
+    }
+    if (pieces.length === 0 && result.country_code && result.country_code !== "US") {
+      pieces.push(result.country_code);
+    }
+    return pieces.length > 0 ? pieces.join(" • ") : null;
+  }
+
   return (
     <div className="shrink-0" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
-    <Select
-      value={value}
-      onValueChange={onValueChange}
-      disabled={disabled || options.length === 0}
-    >
-      <SelectTrigger
+      <button
+        ref={triggerRef}
+        type="button"
         title={`Region: ${currentRegionLabel}`}
         aria-label={`Region: ${currentRegionLabel}`}
-        hideChevron
-        className="h-8 w-8 items-center justify-center rounded-xl border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:ring-0"
+        aria-expanded={open}
+        disabled={disabled || options.length === 0}
+        onClick={() => {
+          if (disabled || options.length === 0) {
+            return;
+          }
+          updatePanelPosition();
+          setOpen((currentOpen) => !currentOpen);
+        }}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span className="flex h-full w-full items-center justify-center">
           <Globe className="h-3.5 w-3.5" />
         </span>
-      </SelectTrigger>
-      <SelectContent sideOffset={contentOffset} className={contentClassName}>
-        <SelectGroup>
-          <SelectLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
-            Region
-          </SelectLabel>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value} className="text-xs font-medium">
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+      </button>
+
+      {open ? createPortal(
+        <div
+          ref={panelRef}
+          className={cn(
+            "fixed z-[90] w-[296px] overflow-hidden rounded-2xl border bg-[#04101e]/[0.92] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+            activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60"
+          )}
+          style={{ top: panelTop, right: panelRight }}
+        >
+          <div className="border-b border-white/8 px-3 py-3">
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
+              <Search className="h-3.5 w-3.5 flex-none text-white/45" />
+              <input
+                value={query}
+                onChange={(event) => {
+                  clearInlineError();
+                  setQuery(event.target.value);
+                }}
+                placeholder="Search city or zip…"
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+              />
+              {query.trim().length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => resetSearch()}
+                  className="flex h-5 w-5 flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68"
+                  aria-label="Clear location search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </label>
+          </div>
+
+          <div className="max-h-[320px] overflow-y-auto px-2 py-2">
+            {!activeSearch ? (
+              <>
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+                  Region
+                </div>
+                <div className="space-y-0.5">
+                  {options.map((opt) => {
+                    const selected = opt.value === value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          onValueChange(opt.value);
+                          setOpen(false);
+                          clearInlineError();
+                        }}
+                        className={cn(
+                          "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50",
+                          selected && "bg-cyan-300/14 text-cyan-50"
+                        )}
+                      >
+                        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-cyan-200">
+                          {selected ? <Check className="h-4 w-4" /> : null}
+                        </span>
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-0.5">
+                {isSearching ? (
+                  <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/58">
+                    <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+                    Searching…
+                  </div>
+                ) : query.trim().length < 2 ? (
+                  <div className="rounded-lg px-3 py-2 text-xs text-white/48">
+                    Type at least 2 characters.
+                  </div>
+                ) : results.length === 0 ? (
+                  <div className="rounded-lg px-3 py-2 text-xs text-white/48">
+                    No locations found.
+                  </div>
+                ) : (
+                  results.map((result) => (
+                    <button
+                      key={`${result.display_name}-${result.latitude}-${result.longitude}`}
+                      type="button"
+                      onClick={() => handleLocationResultSelect(result)}
+                      className="flex w-full flex-col items-start rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
+                    >
+                      <span className="text-sm font-medium text-white/92">{result.display_name}</span>
+                      {secondaryLocationLabel(result) ? (
+                        <span className="mt-0.5 text-[11px] text-white/48">{secondaryLocationLabel(result)}</span>
+                      ) : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+
+            {inlineError ? (
+              <div className="mt-2 rounded-lg border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-[11px] text-rose-100">
+                {inlineError}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="border-t border-white/8 px-2 py-2">
+            <button
+              type="button"
+              onClick={handleUseMyLocation}
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
+            >
+              <span className="flex items-center gap-2 text-sm font-medium text-white/88">
+                <MapPin className="h-3.5 w-3.5 text-cyan-200/85" />
+                Use my location
+              </span>
+              {isLocating ? (
+                <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+              ) : null}
+            </button>
+          </div>
+        </div>,
+        document.body
+      ) : null}
     </div>
   );
 }
@@ -417,7 +762,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
 
   const {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
-    run, onRunChange, runs, region, onRegionChange, regions,
+    run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
     sourceStatusTone, runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
@@ -508,11 +853,10 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
         <RegionUtilitySelect
           value={region}
           onValueChange={onRegionChange}
+          onLocationJump={onLocationJump}
           options={regions}
           disabled={disabled}
           currentRegionLabel={selectedRegionLabel}
-          contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-          contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
           tourTarget="region-selector"
         />
 

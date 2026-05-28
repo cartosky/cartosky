@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const GRID_RUN_ID = '20260330_12z';
 const GRID_FRAME_A = new Uint16Array([1320, 1405, 65535, 877]);
@@ -192,6 +192,123 @@ function gridManifestPayload(varKey: string) {
   };
 }
 
+async function stubViewerGridRoutes(page: Page) {
+  await page.route('https://us.i.posthog.com/**', async (route) => {
+    await route.fulfill({ status: 204, body: '' });
+  });
+  await page.route('**/api/regions', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regionPayload()) });
+  });
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 250);
+    });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
+  });
+  await page.route(`**/api/v4/hrrr/runs`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/manifest`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/manifest`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/hrrr/latest/tmp2m/frames`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/dp2m/frames`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/frames`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/frames`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/grid-manifest`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/tmp2m/grid-manifest`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/grid-manifest`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/dp2m/grid-manifest`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_DP.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+  await page.route('**/api/v4/sample/batch', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/tiles/v3/boundaries/v1/tilejson.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        tilejson: '2.2.0',
+        name: 'Boundaries',
+        id: 'boundaries',
+        scheme: 'xyz',
+        format: 'pbf',
+        minzoom: 0,
+        maxzoom: 10,
+        bounds: [-180, -85.0511, 180, 85.0511],
+        center: [-98.58, 39.83, 4],
+        tiles: ['https://api.cartosky.com/tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt'],
+      }),
+    });
+  });
+  await page.route('**/tiles/v3/boundaries/v1/**/*.mvt', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/vnd.mapbox-vector-tile', body: '' });
+  });
+  await page.route('**/api/v4/**/loop-manifest', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/api/v4/**/loop.webp**', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/tiles/v3/**/*.png**', async (route) => {
+    await route.fulfill({ status: 404, body: '' });
+  });
+}
+
 test.describe('Grid-only smoke', () => {
   test('grid-default viewer path avoids retired legacy requests', async ({ page }) => {
     const loopRequests: string[] = [];
@@ -210,120 +327,7 @@ test.describe('Grid-only smoke', () => {
       }
     });
 
-    await page.route('https://us.i.posthog.com/**', async (route) => {
-      await route.fulfill({ status: 204, body: '' });
-    });
-    await page.route('**/api/regions', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regionPayload()) });
-    });
-    await page.route('**/api/v4/capabilities', async (route) => {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 250);
-      });
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
-    });
-    await page.route(`**/api/v4/hrrr/runs`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
-    });
-    await page.route(`**/api/v4/hrrr/latest/manifest`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          model: 'hrrr',
-          run: GRID_RUN_ID,
-          region: 'conus',
-          variables: {
-            tmp2m: manifestPayload('tmp2m').variables.tmp2m,
-            dp2m: manifestPayload('dp2m').variables.dp2m,
-          },
-        }),
-      });
-    });
-    await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/manifest`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          model: 'hrrr',
-          run: GRID_RUN_ID,
-          region: 'conus',
-          variables: {
-            tmp2m: manifestPayload('tmp2m').variables.tmp2m,
-            dp2m: manifestPayload('dp2m').variables.dp2m,
-          },
-        }),
-      });
-    });
-    await page.route(`**/api/v4/hrrr/latest/tmp2m/frames`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/latest/dp2m/frames`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/frames`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/frames`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/grid-manifest`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/latest/tmp2m/grid-manifest`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/grid-manifest`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
-    });
-    await page.route(`**/api/v4/hrrr/latest/dp2m/grid-manifest`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
-    });
-    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
-    });
-    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
-    });
-    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_DP.buffer) });
-    });
-    await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
-    });
-    await page.route('**/api/v4/sample/batch', async (route) => {
-      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
-    });
-    await page.route('**/tiles/v3/boundaries/v1/tilejson.json', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          tilejson: '2.2.0',
-          name: 'Boundaries',
-          id: 'boundaries',
-          scheme: 'xyz',
-          format: 'pbf',
-          minzoom: 0,
-          maxzoom: 10,
-          bounds: [-180, -85.0511, 180, 85.0511],
-          center: [-98.58, 39.83, 4],
-          tiles: ['https://api.cartosky.com/tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt'],
-        }),
-      });
-    });
-    await page.route('**/tiles/v3/boundaries/v1/**/*.mvt', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/vnd.mapbox-vector-tile', body: '' });
-    });
-    await page.route('**/api/v4/**/loop-manifest', async (route) => {
-      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
-    });
-    await page.route('**/api/v4/**/loop.webp**', async (route) => {
-      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
-    });
-    await page.route('**/tiles/v3/**/*.png**', async (route) => {
-      await route.fulfill({ status: 404, body: '' });
-    });
+    await stubViewerGridRoutes(page);
 
     await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
     await page.waitForLoadState('networkidle');
@@ -332,5 +336,53 @@ test.describe('Grid-only smoke', () => {
     expect(gridManifestRequests.length).toBeGreaterThanOrEqual(1);
     expect(loopRequests).toEqual([]);
     expect(tileRequests).toEqual([]);
+  });
+
+  test('viewer globe dropdown location search updates and restores permalink camera', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only globe dropdown control.');
+
+    await stubViewerGridRoutes(page);
+    await page.route('**/api/v4/locations/search**', async (route) => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get('q')?.toLowerCase() ?? '';
+      const results = query.includes('denver')
+        ? [{
+            display_name: 'Denver, CO',
+            latitude: 39.7392,
+            longitude: -104.9903,
+            timezone: 'America/Denver',
+            country_code: 'US',
+            admin1: 'Colorado',
+            country: 'United States',
+          }]
+        : [];
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ query, results }) });
+    });
+
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByLabel('Region: CONUS').click();
+    await page.getByPlaceholder('Search city or zip…').fill('Denver');
+    await page.getByRole('button', { name: 'Denver, CO' }).click();
+
+    await expect.poll(() => {
+      const url = new URL(page.url(), 'http://localhost');
+      return {
+        lat: url.searchParams.get('lat'),
+        lon: url.searchParams.get('lon'),
+        z: url.searchParams.get('z'),
+      };
+    }).toEqual({
+      lat: '39.73920',
+      lon: '-104.99030',
+      z: '10.00',
+    });
+
+    const selectedSearch = new URL(page.url(), 'http://localhost').search;
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    await expect.poll(() => new URL(page.url(), 'http://localhost').search).toBe(selectedSearch);
   });
 });

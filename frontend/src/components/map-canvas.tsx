@@ -951,6 +951,7 @@ type MapCanvasProps = {
   legendButtonVisible?: boolean;
   legendButtonActive?: boolean;
   onLegendButtonClick?: () => void;
+  manualLocationJumpRef?: { current: boolean };
   region: string;
   regionViews?: Record<string, RegionView>;
   opacity: number;
@@ -998,6 +999,7 @@ export function MapCanvas({
   legendButtonVisible = false,
   legendButtonActive = false,
   onLegendButtonClick,
+  manualLocationJumpRef,
   region,
   regionViews,
   opacity,
@@ -2445,6 +2447,10 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    if (manualLocationJumpRef?.current) {
+      manualLocationJumpRef.current = false;
+      return;
+    }
     if (view.bbox) {
       const [west, south, east, north] = view.bbox;
       const fitMinZoom = Number.isFinite(view.fitMinZoom) ? Number(view.fitMinZoom) : null;
@@ -2468,7 +2474,7 @@ export function MapCanvas({
     } else {
       map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
     }
-  }, [isLoaded, view]);
+  }, [isLoaded, manualLocationJumpRef, view]);
 
   const onMapHoverRef = useRef(onMapHover);
   onMapHoverRef.current = onMapHover;
