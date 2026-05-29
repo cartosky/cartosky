@@ -398,6 +398,14 @@ def _resolve_probe_fhs(plugin: Any) -> list[int]:
     return [0]
 
 
+def _is_missing_index_probe_error(exc: Exception) -> bool:
+    return "no index file was found for none" in str(exc).lower()
+
+
+def _is_inventory_parse_probe_error(exc: Exception) -> bool:
+    return "cannot set a dataframe with multiple columns to the single column search_this" in str(exc).lower()
+
+
 def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
     from herbie.core import Herbie
 
@@ -453,9 +461,19 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
                     return True
             except Exception as exc:
                 last_exc = exc
-                if allow_grib_without_idx and "no index file was found for" in str(exc).lower() and getattr(H, "grib", None):
+                if allow_grib_without_idx and _is_missing_index_probe_error(exc) and getattr(H, "grib", None):
                     logger.info(
                         "Run probe success via GRIB fallback: model=%s run=%s probe_var=%s fh=%s priority=%s",
+                        plugin.id,
+                        _run_id_from_dt(run_dt),
+                        probe_var_key,
+                        probe_fh,
+                        priority,
+                    )
+                    return True
+                if _is_inventory_parse_probe_error(exc) and getattr(H, "grib", None) and getattr(H, "idx", None):
+                    logger.info(
+                        "Run probe success via inventory parse fallback: model=%s run=%s probe_var=%s fh=%s priority=%s",
                         plugin.id,
                         _run_id_from_dt(run_dt),
                         probe_var_key,

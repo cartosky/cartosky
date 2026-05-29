@@ -327,6 +327,34 @@ def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: py
     assert found is True
 
 
+def test_probe_run_exists_accepts_inventory_parse_fallback_when_grib_and_idx_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeHerbie:
+        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
+            del run_dt, model, product, kwargs
+            self.fxx = int(fxx)
+            self.priority = str(priority)
+            self.grib = "https://aws.example/hrrr.grib2"
+            self.idx = "https://aws.example/hrrr.idx"
+
+        def inventory(self, pattern: str):
+            del pattern
+            raise ValueError(
+                "Cannot set a DataFrame with multiple columns to the single column search_this"
+            )
+
+    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+
+    found = scheduler_module._probe_run_exists(
+        plugin=_FakeProbePlugin(),
+        run_dt=datetime(2026, 4, 13, 12, tzinfo=timezone.utc),
+        probe_var="tmp2m",
+    )
+
+    assert found is True
+
+
 class _FakeGFSPlugin:
     id = "gfs"
 
