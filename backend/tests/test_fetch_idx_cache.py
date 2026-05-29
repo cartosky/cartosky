@@ -661,6 +661,54 @@ def test_inventory_search_refreshes_remote_idx_once_on_pattern_miss(monkeypatch:
     assert metrics["counters"].get("idx_cache_pattern_refresh", 0) == 1
 
 
+def test_inventory_search_refreshes_remote_idx_once_on_empty_idx(monkeypatch: pytest.MonkeyPatch) -> None:
+    empty_df = pd.DataFrame(columns=["search_this", "start_byte", "end_byte"])
+    refreshed_df = pd.DataFrame([
+        {"search_this": ":UGRD:850 mb:", "start_byte": 101, "end_byte": 200},
+    ])
+
+    class _FakeHerbie:
+        idx_df_calls = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            self.idx = "https://nomads.example/aigfs.t18z.pres.f198.grib2.idx"
+            self.grib = "https://nomads.example/aigfs.t18z.pres.f198.grib2"
+            self.priority = "nomads"
+            self.model = "aigfs"
+            self.product = "pres"
+            self.fxx = 198
+
+        @property
+        def index_as_dataframe(self):
+            cached = self.__dict__.get("index_as_dataframe")
+            if cached is not None:
+                return cached
+            type(self).idx_df_calls += 1
+            result = empty_df if type(self).idx_df_calls == 1 else refreshed_df
+            self.__dict__["index_as_dataframe"] = result
+            return result
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS", "600")
+
+    lines = fetch_module.inventory_lines_for_pattern(
+        model_id="aigfs",
+        product="pres",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        fh=198,
+        search_pattern=":UGRD:850 mb:",
+        herbie_kwargs={"priority": "nomads"},
+    )
+
+    assert lines == [":UGRD:850 mb:"]
+    assert _FakeHerbie.idx_df_calls == 2
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("idx_cache_empty_refresh", 0) == 1
+
+
 def test_grib_not_found_falls_back_to_manual_byte_range_refresh(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

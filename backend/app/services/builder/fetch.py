@@ -1077,6 +1077,18 @@ def _inventory_index_dataframe(
             return cached
     else:
         _inventory_cache_delete(idx_key)
+        # Herbie memoizes `index_as_dataframe` on the object. Clear that cached
+        # value too so a remote IDX that was briefly empty can be re-fetched.
+        try:
+            instance_dict = getattr(H, "__dict__", None)
+            if isinstance(instance_dict, dict):
+                instance_dict.pop("index_as_dataframe", None)
+        except Exception:
+            pass
+        try:
+            delattr(H, "index_as_dataframe")
+        except Exception:
+            pass
 
     downloader = False
     inflight_event: threading.Event
@@ -1223,7 +1235,21 @@ def _inventory_search(
 
     try:
         if len(index_df) == 0:
-            return _InventorySearchResult(inventory=index_df, reason="idx_empty", idx_key=idx_key)
+            idx_ref_text = str(idx_ref or "").strip().lower()
+            if idx_ref_text.startswith(("http://", "https://")):
+                refreshed_df = _inventory_index_dataframe(H, idx_key=idx_key, force_refresh=True)
+                if refreshed_df is None:
+                    return _InventorySearchResult(inventory=None, reason="idx_empty", idx_key=idx_key)
+                try:
+                    if len(refreshed_df) > 0:
+                        _metric_increment("idx_cache_empty_refresh")
+                        index_df = refreshed_df
+                    else:
+                        return _InventorySearchResult(inventory=refreshed_df, reason="idx_empty", idx_key=idx_key)
+                except Exception:
+                    return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
+            else:
+                return _InventorySearchResult(inventory=index_df, reason="idx_empty", idx_key=idx_key)
     except Exception:
         return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
 
