@@ -15,31 +15,31 @@ import rasterio
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from app.config import grid_build_enabled
-from app.models.mrms import MRMS_MODEL
-from app.services.builder.colorize import float_to_rgba
-from app.services.builder.cog_writer import (
+from ..config import grid_build_enabled
+from ..models.mrms import MRMS_MODEL
+from .builder.colorize import float_to_rgba
+from .builder.cog_writer import (
     compute_transform_and_shape,
     get_grid_params,
     warp_to_target_grid,
     write_value_cog,
 )
-from app.services.builder.pipeline import build_sidecar_json
-from app.services.colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER
-from app.services.observed_bundle_health import build_observed_bundle_health
-from app.services.publish_utils import (
+from .builder.pipeline import build_sidecar_json
+from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER
+from .observed_bundle_health import build_observed_bundle_health
+from .publish_utils import (
     promote_run,
     write_json_atomic,
     write_latest_pointer,
     write_run_manifest,
 )
-from app.services.grid import (
+from .grid import (
     build_grid_manifests_for_run_root,
     grid_dir_for_run_root,
     resolved_grid_dir_for_run_root,
     write_grid_frames_for_run_root,
 )
-from app.services.run_ids import format_run_id
+from .run_ids import format_run_id
 
 logger = logging.getLogger(__name__)
 

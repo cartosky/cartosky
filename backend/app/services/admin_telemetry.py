@@ -22,8 +22,8 @@ TELEMETRY_DB_PATH = Path(
     os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
     or os.environ.get("TWM_TELEMETRY_DB_PATH", "./data/admin_telemetry.sqlite3")
 )
-from .mrms_publish import MRMS_RUNTIME_ARTIFACTS_PENDING_KEY
 
+MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
 STATUS_DB_PATH = Path(
     os.environ.get("CARTOSKY_STATUS_DB_PATH")
