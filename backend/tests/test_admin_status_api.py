@@ -230,7 +230,7 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield test_client
 
 
-async def test_status_results_reports_incomplete_and_artifact_failures(
+async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,31 +242,39 @@ async def test_status_results_reports_incomplete_and_artifact_failures(
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return real_datetime(2026, 3, 11, 14, 0, tzinfo=tz)
+            return real_datetime(2026, 5, 29, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
 
     _seed_run(
         main_module.DATA_ROOT,
         model_id="hrrr",
-        run_id="20260311_13z",
+        run_id="20260529_13z",
         variables={"tmp2m": [0, 1], "precip_total": [0, 1]},
         available_override={"precip_total": 1},
     )
+    hrrr_manifest_path = main_module.DATA_ROOT / "manifests" / "hrrr" / "20260529_13z.json"
+    hrrr_manifest_payload = json.loads(hrrr_manifest_path.read_text())
+    hrrr_manifest_payload["last_updated"] = "2026-05-29T13:45:00Z"
+    hrrr_manifest_path.write_text(json.dumps(hrrr_manifest_payload))
     _write_manifest(
-        main_module.DATA_ROOT / "manifests" / "spc" / "20260311_1200z.json",
+        main_module.DATA_ROOT / "manifests" / "spc" / "20260529_1200z.json",
         model_id="spc",
-        run_id="20260311_1200z",
+        run_id="20260529_1200z",
         variables={"convective": [0]},
     )
-    spc_var_dir = main_module.DATA_ROOT / "published" / "spc" / "20260311_1200z" / "convective"
+    spc_manifest_path = main_module.DATA_ROOT / "manifests" / "spc" / "20260529_1200z.json"
+    spc_manifest_payload = json.loads(spc_manifest_path.read_text())
+    spc_manifest_payload["last_updated"] = "2026-05-29T12:05:00Z"
+    spc_manifest_path.write_text(json.dumps(spc_manifest_payload))
+    spc_var_dir = main_module.DATA_ROOT / "published" / "spc" / "20260529_1200z" / "convective"
     spc_var_dir.mkdir(parents=True, exist_ok=True)
     (spc_var_dir / "fh000.json").write_text(
         json.dumps(
             {
                 "contract_version": "3.0",
                 "model": "spc",
-                "run": "20260311_1200z",
+                "run": "20260529_1200z",
                 "var": "convective",
                 "fh": 0,
                 "vector_layers": {
@@ -286,7 +294,10 @@ async def test_status_results_reports_incomplete_and_artifact_failures(
 
     assert response.status_code == 200
     rows = response.json()["results"]
-    assert any(row["issue_type"] == "run_incomplete" and row["model_id"] == "hrrr" for row in rows)
+    ongoing_row = next(row for row in rows if row["model_id"] == "hrrr")
+    assert ongoing_row["status"] == "info"
+    assert ongoing_row["issue_type"] == "run_ongoing"
+    assert ongoing_row["summary"] == "Latest published run is still building at 3/4 frames."
     artifact_row = next(row for row in rows if row["issue_type"] == "artifact_failure")
     assert artifact_row["model_id"] == "spc"
     assert artifact_row["missing_artifact_count"] >= 1
@@ -350,7 +361,7 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return real_datetime(2026, 5, 19, 14, 0, tzinfo=tz)
+            return real_datetime(2026, 5, 19, 20, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
 
@@ -366,6 +377,12 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
     manifest_payload["last_updated"] = "2026-05-19T13:30:00Z"
     manifest_path.write_text(json.dumps(manifest_payload))
     (main_module.DATA_ROOT / "published" / "gfs" / "20260519_12z" / "ptype_intensity").mkdir(parents=True)
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="gfs",
+        run_id="20260519_18z",
+        variables={"tmp2m": [0]},
+    )
 
     response = await client.get(
         "/api/v4/admin/status/results?window=30d&model=gfs&include_details=true",
@@ -374,13 +391,13 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
 
     assert response.status_code == 200
     rows = response.json()["results"]
-    assert len(rows) == 1
-    assert rows[0]["status"] == "warning"
-    assert rows[0]["issue_type"] == "run_incomplete"
-    assert rows[0]["missing_artifact_count"] == 0
-    assert rows[0]["unreadable_artifact_count"] == 0
-    assert rows[0]["incomplete_variable_count"] == 1
-    assert rows[0]["incomplete_variables"] == ["ptype_intensity"]
+    incomplete_row = next(row for row in rows if row["run_id"] == "20260519_12z")
+    assert incomplete_row["status"] == "warning"
+    assert incomplete_row["issue_type"] == "run_incomplete"
+    assert incomplete_row["missing_artifact_count"] == 0
+    assert incomplete_row["unreadable_artifact_count"] == 0
+    assert incomplete_row["incomplete_variable_count"] == 1
+    assert incomplete_row["incomplete_variables"] == ["ptype_intensity"]
 
 
 async def test_status_results_suppresses_latest_artifact_failures_while_runtime_artifacts_pending(

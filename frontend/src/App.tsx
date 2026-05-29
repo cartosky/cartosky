@@ -906,14 +906,30 @@ export default function App() {
     if (!gridOnlySelection || run !== "latest") {
       return [] as string[];
     }
-    return Array.from(new Set([latestRunId, ...runs].filter((value): value is string => Boolean(value))));
+    // Only probe runs still present in the retained runs list. A stale
+    // latestRunId (e.g. from the bootstrap availability snapshot, used as a
+    // fallback while `runs` is briefly empty during a model switch) can point
+    // at a pruned run and would otherwise trigger 404s.
+    const retained = new Set(runs);
+    return Array.from(
+      new Set(
+        [latestRunId, ...runs]
+          .filter((value): value is string => Boolean(value))
+          .filter((value) => retained.has(value)),
+      ),
+    );
   }, [gridOnlySelection, latestRunId, run, runs]);
   const resolvedRunForRequests = useMemo(() => {
+    // Never resolve "latest" to a client-side run id that is no longer in the
+    // retained runs list — that produces 404s for pruned runs. Fall back to the
+    // "latest" sentinel and let the server resolve the current run.
+    const retainedOrLatest = (candidate: string | null) =>
+      candidate && runs.includes(candidate) ? candidate : "latest";
     if (gridOnlySelection && run === "latest") {
-      return resolvedGridLatestRunId ?? (latestRunId ?? "latest");
+      return retainedOrLatest(resolvedGridLatestRunId ?? latestRunId);
     }
-    return run === "latest" ? (latestRunId ?? "latest") : run;
-  }, [gridOnlySelection, latestRunId, resolvedGridLatestRunId, run]);
+    return run === "latest" ? retainedOrLatest(latestRunId) : run;
+  }, [gridOnlySelection, latestRunId, resolvedGridLatestRunId, run, runs]);
   const selectionRunKey = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? lastResolvedGridRunRef.current ?? "pending-grid")
     : resolvedRunForRequests;
@@ -2559,7 +2575,7 @@ export default function App() {
           ? fetchRuns(model, { signal: controller.signal })
           : Promise.resolve(runs);
         const manifestRunKey = run === "latest"
-          ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : run)
+          ? ((gridOnlySelection && resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : run)
           : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
@@ -2573,7 +2589,7 @@ export default function App() {
         const nextRun = run !== "latest" && runData.includes(run) ? run : "latest";
         let manifestData = requestedManifest;
         const nextManifestRunKey = nextRun === "latest"
-          ? ((gridOnlySelection && resolvedGridLatestRunId) ? resolvedGridLatestRunId : nextRun)
+          ? ((gridOnlySelection && resolvedGridLatestRunId && runData.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : nextRun)
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
           manifestData = await fetchManifest(model, nextManifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null);
@@ -2965,7 +2981,7 @@ export default function App() {
 
           if (manifestMatchesSelection) {
             const manifestRunKey = gridOnlySelection && run === "latest"
-              ? (resolvedGridLatestRunId ?? run)
+              ? ((resolvedGridLatestRunId && nextRuns.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : run)
               : run;
             const manifestData = await fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {

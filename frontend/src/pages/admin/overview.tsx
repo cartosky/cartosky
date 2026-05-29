@@ -330,7 +330,7 @@ export default function AdminOverviewPage() {
     };
   }, []);
 
-  const issueRows = useMemo(() => results.filter((row) => row.status !== "healthy"), [results]);
+  const issueRows = useMemo(() => results.filter((row) => row.status === "warning" || row.status === "error"), [results]);
   const artifactRows = useMemo(
     () => results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid"),
     [results],

@@ -120,7 +120,7 @@ export type StatusResult = {
   model_id: string;
   run_id: string;
   time_axis_mode?: "forecast" | "observed" | "valid";
-  status: "healthy" | "warning" | "error";
+  status: "healthy" | "info" | "warning" | "error";
   issue_type: string;
   summary: string;
   latest_for_model: boolean;

@@ -13,6 +13,7 @@ import { formatObservedValidTime, formatRunLabel } from "@/lib/time-axis";
 
 type WindowValue = "24h" | "7d" | "30d";
 type ViewFilter = "issues" | "artifacts" | "stale" | "all";
+type StatusTone = "pass" | "info" | "warning" | "fail";
 
 function formatTimestamp(value: number | null | undefined): string {
   if (!value) return "—";
@@ -29,15 +30,17 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-function issueTone(result: StatusResult): "pass" | "warning" | "fail" {
+function issueTone(result: StatusResult): StatusTone {
   if (result.status === "error") return "fail";
   if (result.status === "warning") return "warning";
+  if (result.status === "info") return "info";
   return "pass";
 }
 
 function issueLabel(issueType: string): string {
   if (issueType === "artifact_failure") return "Artifact failure";
   if (issueType === "run_stalled") return "Run stalled";
+  if (issueType === "run_ongoing") return "Run ongoing";
   if (issueType === "run_incomplete") return "Run incomplete";
   if (issueType === "stale_run") return "Stale latest run";
   if (issueType === "bundle_unavailable") return "Bundle unavailable";
@@ -49,17 +52,19 @@ function issueLabel(issueType: string): string {
   return "Healthy";
 }
 
-function freshnessTone(state: string | null | undefined): "pass" | "warning" | "fail" {
+function freshnessTone(state: string | null | undefined): StatusTone {
   if (state === "live") return "pass";
   if (state === "delayed") return "warning";
   if (state === "stale" || state === "unavailable") return "fail";
   return "pass";
 }
 
-function StatusBadge(props: { tone: "pass" | "warning" | "fail"; label: string }) {
+function StatusBadge(props: { tone: StatusTone; label: string }) {
   const className =
     props.tone === "pass"
       ? "border-emerald-400/25 bg-emerald-500/12 text-emerald-100"
+      : props.tone === "info"
+        ? "border-sky-400/25 bg-sky-500/12 text-sky-100"
       : props.tone === "warning"
         ? "border-amber-400/25 bg-amber-500/12 text-amber-100"
         : "border-rose-400/25 bg-rose-500/12 text-rose-100";
@@ -133,7 +138,7 @@ function CompactMetric(props: {
 
 function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
-  if (view === "issues") return rows.filter((row) => row.status !== "healthy");
+  if (view === "issues") return rows.filter((row) => row.status === "warning" || row.status === "error");
   if (view === "artifacts") return rows.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   return rows.filter((row) => (
     row.issue_type === "stale_run"
@@ -263,7 +268,7 @@ export default function AdminStatusPage() {
   }
 
   const modelOptions = Array.from(new Set(results.map((item) => item.model_id))).sort();
-  const issueRows = results.filter((row) => row.status !== "healthy");
+  const issueRows = results.filter((row) => row.status === "warning" || row.status === "error");
   const artifactRows = results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   const staleRows = results.filter((row) => (
     row.issue_type === "stale_run"
@@ -421,9 +426,11 @@ export default function AdminStatusPage() {
                       item.id === selectedId
                         ? "bg-emerald-500/10 text-white"
                         : item.status === "error"
-                          ? "border-rose-400/15 bg-rose-500/[0.06] text-white/84 hover:bg-rose-500/[0.1]"
-                          : item.status === "warning"
-                            ? "border-amber-400/15 bg-amber-500/[0.05] text-white/84 hover:bg-amber-500/[0.08]"
+                        ? "border-rose-400/15 bg-rose-500/[0.06] text-white/84 hover:bg-rose-500/[0.1]"
+                        : item.status === "warning"
+                          ? "border-amber-400/15 bg-amber-500/[0.05] text-white/84 hover:bg-amber-500/[0.08]"
+                          : item.status === "info"
+                            ? "border-sky-400/15 bg-sky-500/[0.05] text-white/84 hover:bg-sky-500/[0.08]"
                             : "bg-white/[0.03] text-white/84 hover:bg-white/[0.05]",
                     ].join(" ")}
                   >

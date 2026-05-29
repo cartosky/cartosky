@@ -2066,6 +2066,10 @@ def _scan_run_issue(
         status = "warning"
         issue_type = "stale_run"
         summary = "Latest published run is older than the expected cycle for this model."
+    elif latest_for_model and available_frames < expected_frames:
+        status = "info"
+        issue_type = "run_ongoing"
+        summary = f"Latest published run is still building at {available_frames}/{expected_frames} frames."
     elif available_frames < expected_frames:
         status = "warning"
         issue_type = "run_incomplete"
@@ -2133,7 +2137,7 @@ def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = Non
 
     rows.sort(
         key=lambda item: (
-            0 if item["status"] == "error" else 1 if item["status"] == "warning" else 2,
+            0 if item["status"] == "error" else 1 if item["status"] == "warning" else 2 if item["status"] == "info" else 3,
             -int(item.get("last_updated_at") or 0),
             item["model_id"],
             item["run_id"],
