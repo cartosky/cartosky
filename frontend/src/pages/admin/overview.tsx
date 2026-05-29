@@ -24,6 +24,8 @@ import {
 } from "@/lib/admin-api";
 import { isPostHogEnabled, isPostHogReplayEnabled } from "@/lib/config";
 
+const ADMIN_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 function AdminGate(props: {
   status: TwfStatus | null;
   children: React.ReactNode;
@@ -284,8 +286,12 @@ export default function AdminOverviewPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let loading = false;
 
     async function load() {
+      if (loading) return;
+      loading = true;
+
       try {
         const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
@@ -321,12 +327,19 @@ export default function AdminOverviewPage() {
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : "Failed to load admin overview");
+      } finally {
+        loading = false;
       }
     }
 
     void load();
+    const intervalId = window.setInterval(() => {
+      void load();
+    }, ADMIN_POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, []);
 

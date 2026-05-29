@@ -136,7 +136,7 @@ const HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 6_000_000;
 const VERY_HIGH_RES_GRID_LOD_PIXEL_THRESHOLD = 10_000_000;
 const HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES = 4;
 const VERY_HIGH_RES_GRID_PLAY_START_AHEAD_FRAMES = 3;
-const HIGH_RES_AUTOPLAY_READY_AHEAD = 2;
+const HIGH_RES_AUTOPLAY_READY_AHEAD = 3;
 const VERY_HIGH_RES_AUTOPLAY_READY_AHEAD = 2;
 const HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 250;
 const VERY_HIGH_RES_AUTOPLAY_LOOKAHEAD_GRACE_MS = 250;
@@ -1968,10 +1968,10 @@ export default function App() {
     const candidateRows = pivotIndex >= 0
       ? [
           orderedRows[pivotIndex],
-          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 9),
-          ...orderedRows.slice(Math.max(0, pivotIndex - 2), pivotIndex).reverse(),
+          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 13),
+          ...orderedRows.slice(Math.max(0, pivotIndex - 4), pivotIndex).reverse(),
         ]
-      : orderedRows.slice(1, 11);
+      : orderedRows.slice(1, 17);
     const urls: string[] = [];
     for (const row of candidateRows) {
       if (!row) {

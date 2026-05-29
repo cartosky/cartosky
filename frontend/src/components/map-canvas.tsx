@@ -1952,11 +1952,15 @@ export function MapCanvas({
       return;
     }
 
-    activeContourUrlRef.current = "";
-    activeContourPayloadRef.current = null;
-    setContourScreenLabels([]);
-    setLayerVisibility(map, CONTOUR_LAYER_ID, false);
-    source.setData(EMPTY_FEATURE_COLLECTION as any);
+    if (!isAnimating || !activeContourPayloadRef.current) {
+      activeContourUrlRef.current = "";
+      activeContourPayloadRef.current = null;
+      setContourScreenLabels([]);
+      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+      source.setData(EMPTY_FEATURE_COLLECTION as any);
+    } else {
+      setLayerVisibility(map, CONTOUR_LAYER_ID, true);
+    }
 
     const controller = new AbortController();
     contourAbortRef.current = controller;
@@ -2013,7 +2017,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [applyContourPayload, contourGeoJsonUrl, isLoaded]);
+  }, [applyContourPayload, contourGeoJsonUrl, isAnimating, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;

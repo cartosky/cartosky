@@ -15,6 +15,8 @@ type WindowValue = "24h" | "7d" | "30d";
 type ViewFilter = "issues" | "ongoing" | "artifacts" | "stale" | "all";
 type StatusTone = "pass" | "info" | "warning" | "fail";
 
+const ADMIN_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 function formatTimestamp(value: number | null | undefined): string {
   if (!value) return "—";
   return new Date(value * 1000).toLocaleString("en-US", {
@@ -194,8 +196,12 @@ export default function AdminStatusPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let loading = false;
 
     async function load() {
+      if (loading) return;
+      loading = true;
+
       try {
         const authStatus = await fetchAdminAuthStatus();
         if (cancelled) return;
@@ -210,17 +216,23 @@ export default function AdminStatusPage() {
         });
         if (cancelled) return;
         setResults(response.results);
-        setSelectedDetail(null);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
         setError(nextError instanceof Error ? nextError.message : "Failed to load pipeline status");
+      } finally {
+        loading = false;
       }
     }
 
     void load();
+    const intervalId = window.setInterval(() => {
+      void load();
+    }, ADMIN_POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [windowValue, modelFilter]);
 
@@ -237,6 +249,7 @@ export default function AdminStatusPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let loading = false;
 
     if (!selectedSummary) {
       setSelectedDetail(null);
@@ -244,30 +257,46 @@ export default function AdminStatusPage() {
       return;
     }
 
-    setSelectedDetail(null);
-    setSelectedDetailLoading(true);
+    const summary = selectedSummary;
 
-    void fetchAdminStatusRunDetail({
-      model: selectedSummary.model_id,
-      run: selectedSummary.run_id,
-    })
-      .then((response) => {
+    async function loadDetail() {
+      if (loading) return;
+      loading = true;
+      setSelectedDetailLoading(true);
+
+      try {
+        const response = await fetchAdminStatusRunDetail({
+          model: summary.model_id,
+          run: summary.run_id,
+        });
         if (cancelled) return;
         setSelectedDetail(response.result);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
         setSelectedDetail(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setSelectedDetailLoading(false);
-      });
+      } finally {
+        if (!cancelled) {
+          setSelectedDetailLoading(false);
+        }
+        loading = false;
+      }
+    }
+
+    void loadDetail();
+    const intervalId = window.setInterval(() => {
+      void loadDetail();
+    }, ADMIN_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
-  }, [selectedSummary?.id, selectedSummary?.model_id, selectedSummary?.run_id]);
+  }, [
+    selectedSummary?.id,
+    selectedSummary?.model_id,
+    selectedSummary?.run_id,
+    selectedSummary?.last_updated_at,
+  ]);
 
   useEffect(() => {
     function updateScrollWidth() {
