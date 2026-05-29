@@ -1245,7 +1245,7 @@ ECMWF_CAPABILITIES = ModelCapabilities(
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
-        "stale_cycle_release_minutes_by_hour": {0: 150, 6: 90, 12: 150, 18: 90},
+        "stale_cycle_release_minutes_by_hour": {0: 180, 6: 120, 12: 180, 18: 120},
         "allow_grib_without_idx": True,
         "source_priority": ["azure", "aws", "ecmwf"],
     },

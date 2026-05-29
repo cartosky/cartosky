@@ -737,7 +737,7 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return base_day.replace(hour=7, minute=29, tzinfo=tz)
+            return base_day.replace(hour=7, minute=59, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenBeforeRelease)
 
@@ -755,7 +755,7 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return base_day.replace(hour=7, minute=31, tzinfo=tz)
+            return base_day.replace(hour=8, minute=1, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenAfterRelease)
 
