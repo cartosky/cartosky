@@ -352,7 +352,7 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
     assert precip_sidecar["source_filename"] == "qpe06.grib2.gz"
 
 
-def test_publish_mrms_bundle_marks_runtime_artifacts_pending_when_grid_deferred(
+def test_publish_mrms_bundle_writes_primary_grid_artifacts_when_supplemental_grid_deferred(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -372,7 +372,8 @@ def test_publish_mrms_bundle_marks_runtime_artifacts_pending_when_grid_deferred(
     )
 
     manifest = json.loads(result.manifest_path.read_text())
-    assert manifest["metadata"][mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] is True
+    assert mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY not in manifest["metadata"]
+    assert (result.published_run_dir / "reflectivity" / "grid" / "manifest.json").is_file()
 
 
 def test_finalize_mrms_published_run_clears_runtime_artifacts_pending(
@@ -401,6 +402,29 @@ def test_finalize_mrms_published_run_clears_runtime_artifacts_pending(
 
     manifest = json.loads(result.manifest_path.read_text())
     assert mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY not in manifest["metadata"]
+
+
+def test_publish_mrms_bundle_writes_ptype_grid_manifest_on_fast_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[20.0, 25.0, 30.0], [35.0, 40.0, 45.0]], dtype=np.float32),
+        precip_flag_values=np.array([[1.0, 1.0, 3.0], [3.0, 1.0, 1.0]], dtype=np.float32),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+        build_grid_artifacts=False,
+    )
+
+    assert (result.published_run_dir / "mrms_radar_ptype" / "grid" / "manifest.json").is_file()
 
 
 def test_publish_mrms_bundle_does_not_write_rgba_cogs(

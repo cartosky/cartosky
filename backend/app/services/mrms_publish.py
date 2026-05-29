@@ -264,6 +264,9 @@ def publish_mrms_bundle(
 
     _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
 
+    build_primary_grid_artifacts = bool(grid_build_enabled())
+    build_supplemental_grid_artifacts = bool(build_grid_artifacts and grid_build_enabled())
+
     targets: list[tuple[str, int]] = []
     ptype_targets: list[tuple[str, int]] = []
     max_workers = max(1, int(frame_write_workers))
@@ -275,7 +278,7 @@ def publish_mrms_bundle(
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
-                build_grid_artifacts=build_grid_artifacts,
+                build_grid_artifacts=build_primary_grid_artifacts,
             )
             targets.append((MRMS_VARIABLE_ID, fh))
             if reused_ptype:
@@ -293,7 +296,7 @@ def publish_mrms_bundle(
             run_id=run_id,
             forecast_hour=fh,
             frame=frame,
-            build_grid_artifacts=build_grid_artifacts,
+            build_grid_artifacts=build_primary_grid_artifacts,
         )
         has_ptype = frame.precip_flag_values is not None
         if has_ptype:
@@ -303,7 +306,7 @@ def publish_mrms_bundle(
                     run_id=run_id,
                     forecast_hour=fh,
                     frame=frame,
-                    build_grid_artifacts=build_grid_artifacts,
+                    build_grid_artifacts=build_primary_grid_artifacts,
                 )
             except Exception:
                 logger.warning(
@@ -349,7 +352,7 @@ def publish_mrms_bundle(
                 var_id=var_id,
                 forecast_hour=fh,
                 frame=supplemental_frame,
-                build_grid_artifacts=build_grid_artifacts,
+                build_grid_artifacts=build_supplemental_grid_artifacts,
             )
             supplemental_targets.setdefault(var_id, []).append((var_id, fh))
     all_targets = targets + ptype_targets + [
@@ -371,13 +374,14 @@ def publish_mrms_bundle(
         if expected_frame_count is not None
         else len(ordered_valid_times)
     )
-    runtime_artifacts_pending = bool(not build_grid_artifacts and grid_build_enabled())
+    runtime_artifacts_pending = False
 
-    if build_grid_artifacts and grid_build_enabled():
+    if build_primary_grid_artifacts:
         grid_variables = [MRMS_VARIABLE_ID]
         if ptype_targets:
             grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
-        grid_variables.extend(var_id for var_id, var_targets in supplemental_targets.items() if var_targets)
+        if build_supplemental_grid_artifacts:
+            grid_variables.extend(var_id for var_id, var_targets in supplemental_targets.items() if var_targets)
         try:
             manifest_ok = build_grid_manifests_for_run_root(
                 run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
