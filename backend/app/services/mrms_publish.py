@@ -61,6 +61,7 @@ MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
     "mrms_recent_precip_24h": "mrms_recent_precip_24h",
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
 }
+MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 
 # ---------------------------------------------------------------------------
 # PrecipFlag → ptype mapping
@@ -77,6 +78,10 @@ MRMS_PRECIP_FLAG_TO_PTYPE: dict[int, str | None] = {
     96: "rain",    # tropical/convective rain mix
 }
 # Any unknown flag values → None (transparent)
+
+MRMS_PTYPE_CATEGORY_INDEX: dict[str, int] = {
+    code: idx for idx, code in enumerate(MRMS_RADAR_PTYPE_ORDER)
+}
 
 
 @dataclass(frozen=True)
@@ -366,6 +371,7 @@ def publish_mrms_bundle(
         if expected_frame_count is not None
         else len(ordered_valid_times)
     )
+    runtime_artifacts_pending = bool(not build_grid_artifacts and grid_build_enabled())
 
     if build_grid_artifacts and grid_build_enabled():
         grid_variables = [MRMS_VARIABLE_ID]
@@ -443,14 +449,12 @@ def publish_mrms_bundle(
         run_id=run_id,
         targets=all_targets,
         plugin=MRMS_MODEL,
-        metadata=build_observed_bundle_health(
-            latest_run=run_id,
-            manifest={
-                "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "variables": manifest_variables,
-            },
-            source=MRMS_MODEL_ID,
+        metadata=_mrms_manifest_metadata(
+            run_id=run_id,
+            manifest_variables=manifest_variables,
+            manifest_last_updated=publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             now_utc=publish_dt,
+            runtime_artifacts_pending=runtime_artifacts_pending,
         ),
     )
     write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
@@ -799,30 +803,42 @@ def compose_mrms_radar_ptype(
             f"refl={refl.shape} flags={flags.shape}"
         )
 
-    # Map integer flag codes to ptype strings (vectorised)
-    ptype = np.empty(refl.shape, dtype="U5")  # max len "sleet"
-    ptype[:] = ""
-    flag_int = np.rint(flags).astype(np.int32)
+    # Map finite integer flag codes to compact category indices. Using
+    # integers avoids expensive large unicode arrays and suppresses NaN cast
+    # warnings from upstream missing-data cells.
+    rounded_flags = np.zeros(flags.shape, dtype=np.float32)
+    finite_flag_mask = np.isfinite(flags)
+    np.rint(flags, out=rounded_flags, where=finite_flag_mask)
+    flag_int = np.zeros(flags.shape, dtype=np.int16)
+    flag_int[finite_flag_mask] = rounded_flags[finite_flag_mask].astype(np.int16, copy=False)
+
+    category_idx = np.full(refl.shape, -1, dtype=np.int8)
     for flag_code, ptype_name in MRMS_PRECIP_FLAG_TO_PTYPE.items():
-        if ptype_name is not None:
-            ptype[flag_int == flag_code] = ptype_name
+        if ptype_name is None:
+            continue
+        category_idx[flag_int == flag_code] = MRMS_PTYPE_CATEGORY_INDEX[ptype_name]
 
     # Normalise reflectivity to [0, 1] for binning (same as forecast)
     refl_safe = np.where(np.isfinite(refl), np.maximum(refl, 0.0), np.nan)
     normalized = np.clip(refl_safe / 70.0, 0.0, 1.0)
+    visible_refl_mask = np.isfinite(refl_safe) & (refl_safe >= min_visible_dbz)
 
     indexed = np.full(refl.shape, np.nan, dtype=np.float32)
-    for code in MRMS_RADAR_PTYPE_ORDER:
+    for idx, code in enumerate(MRMS_RADAR_PTYPE_ORDER):
         breaks = MRMS_RADAR_PTYPE_BREAKS[code]
         offset = int(breaks["offset"])
         count = int(breaks["count"])
-        local_bin = np.clip(
-            np.rint(normalized * (count - 1)), 0, count - 1,
-        ).astype(np.int32)
+        local_bin = np.zeros(refl.shape, dtype=np.int32)
+        if visible_refl_mask.any():
+            scaled_visible = np.clip(
+                np.rint(normalized[visible_refl_mask] * (count - 1)),
+                0,
+                count - 1,
+            )
+            local_bin[visible_refl_mask] = scaled_visible.astype(np.int32, copy=False)
         selector = (
-            (ptype == code)
-            & np.isfinite(refl_safe)
-            & (refl_safe >= min_visible_dbz)
+            (category_idx == idx)
+            & visible_refl_mask
         )
         indexed[selector] = (offset + local_bin[selector]).astype(np.float32)
 
@@ -1044,17 +1060,18 @@ def finalize_mrms_published_run(
             expected_frame_count=max(0, int(expected_counts.get(var_id, len(ordered_frames)))),
         )
 
-    if manifest_variables != manifest.get("variables"):
-        manifest_last_updated = manifest.get("last_updated")
+    manifest_last_updated = manifest.get("last_updated")
+    metadata_before = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
+    should_rewrite_manifest = manifest_variables != manifest.get("variables") or bool(metadata_before.get(MRMS_RUNTIME_ARTIFACTS_PENDING_KEY))
+
+    if should_rewrite_manifest:
         manifest["variables"] = manifest_variables
-        manifest["metadata"] = build_observed_bundle_health(
-            latest_run=run_id,
-            manifest={
-                "last_updated": manifest_last_updated,
-                "variables": manifest_variables,
-            },
-            source=MRMS_MODEL_ID,
+        manifest["metadata"] = _mrms_manifest_metadata(
+            run_id=run_id,
+            manifest_variables=manifest_variables,
+            manifest_last_updated=manifest_last_updated,
             now_utc=datetime.now(timezone.utc),
+            runtime_artifacts_pending=False,
         )
         write_json_atomic(manifest_path, manifest)
 
@@ -1072,8 +1089,6 @@ def finalize_mrms_published_run(
             run_id=run_id,
             variables=tuple(dict.fromkeys(grid_variables)),
         )
-
-
 def _supplemental_manifest_entry(
     *,
     frames: list[MRMSSupplementalFrame],
@@ -1094,6 +1109,29 @@ def _supplemental_manifest_entry(
             for fh, frame in enumerate(frames)
         ],
     }
+
+
+def _mrms_manifest_metadata(
+    *,
+    run_id: str,
+    manifest_variables: dict[str, Any],
+    manifest_last_updated: str | None,
+    now_utc: datetime,
+    runtime_artifacts_pending: bool,
+) -> dict[str, Any]:
+    last_updated = str(manifest_last_updated or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")).strip()
+    metadata = build_observed_bundle_health(
+        latest_run=run_id,
+        manifest={
+            "last_updated": last_updated,
+            "variables": manifest_variables,
+        },
+        source=MRMS_MODEL_ID,
+        now_utc=now_utc,
+    )
+    if runtime_artifacts_pending:
+        metadata[MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] = True
+    return metadata
 
 
 def _copy_published_variable_artifacts(

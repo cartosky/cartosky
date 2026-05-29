@@ -22,6 +22,9 @@ TELEMETRY_DB_PATH = Path(
     os.environ.get("CARTOSKY_TELEMETRY_DB_PATH")
     or os.environ.get("TWM_TELEMETRY_DB_PATH", "./data/admin_telemetry.sqlite3")
 )
+from .mrms_publish import MRMS_RUNTIME_ARTIFACTS_PENDING_KEY
+
+RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
 STATUS_DB_PATH = Path(
     os.environ.get("CARTOSKY_STATUS_DB_PATH")
     or os.environ.get("TWM_STATUS_DB_PATH", str(TELEMETRY_DB_PATH))
@@ -1719,6 +1722,14 @@ def _scan_run_issue(
         if observed_model
         else {}
     )
+    runtime_artifacts_pending = _runtime_artifacts_pending(
+        manifest=manifest,
+        latest_for_model=latest_for_model,
+        now_utc=now_utc,
+    )
+        validation_hours = _artifact_validation_hours(frame_hours, include_details=include_details)
+        if runtime_artifacts_pending:
+            continue
 
     base_row = {
         "id": f"{model_id}:{run_id}",
@@ -1744,6 +1755,7 @@ def _scan_run_issue(
         "usable": observed_bundle.get("usable"),
         "degraded_reason": observed_bundle.get("degraded_reason"),
         "observation_to_publish_latency_seconds": observed_bundle.get("observation_to_publish_latency_seconds"),
+        "runtime_artifacts_pending": runtime_artifacts_pending,
     }
 
     if manifest is None:
@@ -2081,7 +2093,28 @@ def _scan_run_issue(
         "incomplete_variable_count": incomplete_variable_count,
         "incomplete_variables": incomplete_variables[:12] if include_details else [],
         "sample_paths": sample_paths if include_details else [],
+        "runtime_artifacts_pending": runtime_artifacts_pending,
     }
+
+
+def _runtime_artifacts_pending(
+    *,
+    manifest: dict[str, Any] | None,
+    latest_for_model: bool,
+    now_utc: datetime,
+) -> bool:
+    if not latest_for_model or not isinstance(manifest, dict):
+        return False
+    metadata = manifest.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get(MRMS_RUNTIME_ARTIFACTS_PENDING_KEY) is not True:
+        return False
+    bundle_published_at = parse_iso_datetime(metadata.get("bundle_published_at"))
+    if bundle_published_at is None:
+        bundle_published_at = _parse_manifest_timestamp(manifest.get("last_updated"))
+    if bundle_published_at is None:
+        return True
+    age_seconds = max(0, int((now_utc - bundle_published_at).total_seconds()))
+    return age_seconds < RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS
 
 
 def _scan_operational_status_rows(*, data_root: Path, model_id: str | None = None, include_details: bool = True) -> list[dict[str, Any]]:

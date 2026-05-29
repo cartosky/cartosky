@@ -352,6 +352,57 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
     assert precip_sidecar["source_filename"] == "qpe06.grib2.gz"
 
 
+def test_publish_mrms_bundle_marks_runtime_artifacts_pending_when_grid_deferred(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+        build_grid_artifacts=False,
+    )
+
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["metadata"][mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] is True
+
+
+def test_finalize_mrms_published_run_clears_runtime_artifacts_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: False)
+
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32),
+    )
+
+    result = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[frame],
+        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+        build_grid_artifacts=False,
+    )
+    mrms_publish.finalize_mrms_published_run(
+        data_root=tmp_path,
+        run_id=result.run_id,
+        build_grid_artifacts=False,
+    )
+
+    manifest = json.loads(result.manifest_path.read_text())
+    assert mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY not in manifest["metadata"]
+
+
 def test_publish_mrms_bundle_does_not_write_rgba_cogs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -498,6 +549,15 @@ def test_compose_mrms_radar_ptype_unknown_flag_is_nan() -> None:
     """Unknown/unmapped PrecipFlag values produce NaN."""
     refl = np.array([[40.0]], dtype=np.float32)
     flags = np.array([[99.0]], dtype=np.float32)  # not in the mapping
+
+    indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
+
+    assert np.isnan(indexed[0, 0])
+
+
+def test_compose_mrms_radar_ptype_nan_precip_flag_is_nan_without_warning() -> None:
+    refl = np.array([[40.0]], dtype=np.float32)
+    flags = np.array([[np.nan]], dtype=np.float32)
 
     indexed = mrms_publish.compose_mrms_radar_ptype(refl, flags)
 

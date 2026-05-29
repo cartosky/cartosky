@@ -383,6 +383,57 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
     assert rows[0]["incomplete_variables"] == ["ptype_intensity"]
 
 
+async def test_status_results_suppresses_latest_artifact_failures_while_runtime_artifacts_pending(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 5, 29, 13, 34, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+
+    run_id = "20260529_1333z"
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "mrms" / f"{run_id}.json",
+        model_id="mrms",
+        run_id=run_id,
+        variables={"reflectivity": [0], "mrms_radar_ptype": [0]},
+    )
+    manifest_path = main_module.DATA_ROOT / "manifests" / "mrms" / f"{run_id}.json"
+    manifest_payload = json.loads(manifest_path.read_text())
+    manifest_payload["metadata"] = {
+        "source": "mrms",
+        "time_axis_mode": "observed",
+        "latest_scan_valid_time": "2026-05-29T13:33:00Z",
+        "bundle_published_at": "2026-05-29T13:33:20Z",
+        "freshness_state": "live",
+        "usable": True,
+        "runtime_artifacts_pending": True,
+    }
+    manifest_path.write_text(json.dumps(manifest_payload))
+    published_var_dir = main_module.DATA_ROOT / "published" / "mrms" / run_id / "reflectivity"
+    published_var_dir.mkdir(parents=True, exist_ok=True)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=mrms&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["issue_type"] != "artifact_failure"
+    assert rows[0]["missing_artifact_count"] == 0
+    assert rows[0]["runtime_artifacts_pending"] is True
+
+
 async def test_status_results_reuses_cached_operational_scan(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
