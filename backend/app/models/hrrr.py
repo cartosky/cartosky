@@ -706,6 +706,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "snow_component": "csnow",
                 "sleet_component": "cicep",
                 "frzr_component": "cfrzr",
+                "min_visible_dbz": "5.0",
             }
         ),
         derived=True,

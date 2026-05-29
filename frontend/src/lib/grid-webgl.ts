@@ -1500,7 +1500,9 @@ export class GridWebglLayerController {
         float packedValue = selectedCode * 66.0 + localBin;
         float t = clamp((packedValue + 0.5) / 264.0, 0.0, 1.0);
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
-        color.a *= smoothstep(0.0, 0.5, selectedWeight);
+        float edgeAlpha = smoothstep(0.0, 0.5, selectedWeight);
+        float intensityAlpha = smoothstep(0.0, 10.0, localBin);
+        color.a *= edgeAlpha * intensityAlpha;
         return color;
       }
 

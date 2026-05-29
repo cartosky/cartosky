@@ -717,7 +717,7 @@ NAM_VARS: dict[str, VarSpec] = {
                 "frzr_component": "cfrzr",
                 # NAM ptype masks can be noisy at low signal; keep modest gates
                 # while preserving light precip that should remain visible.
-                "min_visible_dbz": "10.0",
+                "min_visible_dbz": "5.0",
                 "min_mask_value": "0.5",
                 "despeckle_min_neighbors": "2",
             },

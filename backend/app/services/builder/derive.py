@@ -4546,9 +4546,9 @@ def _derive_radar_ptype_family(
             return cached
 
     try:
-        min_visible_dbz = float(hints.get("min_visible_dbz", "10.0"))
+        min_visible_dbz = float(hints.get("min_visible_dbz", str(_RADAR_PTYPE_REFL_MIN)))
     except (TypeError, ValueError):
-        min_visible_dbz = 10.0
+        min_visible_dbz = _RADAR_PTYPE_REFL_MIN
     try:
         min_mask_value = float(hints.get("min_mask_value", "0.0"))
     except (TypeError, ValueError):

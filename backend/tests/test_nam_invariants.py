@@ -252,7 +252,7 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
         assert capability.frontend == {"internal_only": True, "allow_dry_frame": True}
     radar_ptype_spec = NAM_MODEL.get_var("radar_ptype")
     assert radar_ptype_spec is not None
-    assert radar_ptype_spec.selectors.hints["min_visible_dbz"] == "10.0"
+    assert radar_ptype_spec.selectors.hints["min_visible_dbz"] == "5.0"
     assert radar_ptype_spec.selectors.hints["min_mask_value"] == "0.5"
     assert radar_ptype_spec.selectors.hints["despeckle_min_neighbors"] == "2"
 
