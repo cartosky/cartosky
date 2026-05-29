@@ -482,3 +482,77 @@ def test_run_once_fast_publishes_and_queues_postprocess(tmp_path: Path, monkeypa
     assert queued[0].supplemental_plans[0].var_id == "mrms_recent_precip_6h"
     assert queued[0].supplemental_plans[0].mode == "build"
 
+
+def test_run_postprocess_request_reuses_existing_supplemental_artifacts(tmp_path: Path, monkeypatch) -> None:
+    config = _config_with_recent_precip(tmp_path)
+    previous_run_id = "20260327_1200z"
+    current_run_id = "20260327_1204z"
+
+    source_dir = tmp_path / "published" / "mrms" / previous_run_id / "mrms_recent_precip_6h"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "fh000.json").write_text("{}")
+    (source_dir / "fh000.val.cog.tif").write_bytes(b"cog")
+
+    current_run_dir = tmp_path / "published" / "mrms" / current_run_id
+    current_run_dir.mkdir(parents=True, exist_ok=True)
+    manifest_dir = tmp_path / "manifests" / "mrms"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{current_run_id}.json").write_text(
+        json.dumps(
+            {
+                "run": current_run_id,
+                "last_updated": "2026-03-27T12:04:00Z",
+                "variables": {
+                    "reflectivity": {
+                        "expected_frames": 1,
+                        "available_frames": 1,
+                        "frames": [{"fh": 0, "valid_time": "2026-03-27T12:00:00Z"}],
+                    },
+                },
+                "metadata": {},
+            }
+        )
+    )
+
+    captured: dict[str, object] = {}
+
+    def _finalize(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(mrms_poller, "finalize_mrms_published_run", _finalize)
+    monkeypatch.setattr(mrms_poller, "grid_build_enabled", lambda: False)
+
+    plan = mrms_poller.MRMSSupplementalPlan(
+        var_id="mrms_recent_precip_6h",
+        expected_frame_count=1,
+        mode="reuse",
+        frozen_scans=(),
+        file_re=object(),
+        previous_manifest_entry={
+            "expected_frames": 1,
+            "available_frames": 1,
+            "frames": [{"fh": 0, "valid_time": "2026-03-27T12:00:00Z"}],
+        },
+    )
+
+    mrms_poller._run_postprocess_request(
+        mrms_poller.MRMSPostprocessRequest(
+            data_root=tmp_path,
+            run_id=current_run_id,
+            previous_run_id=previous_run_id,
+            config=config,
+            supplemental_plans=(plan,),
+        )
+    )
+
+    assert captured["run_id"] == current_run_id
+    assert captured["reused_supplemental_from_run_id"] == previous_run_id
+    assert captured["reused_supplemental_manifest_entries"] == {
+        "mrms_recent_precip_6h": {
+            "expected_frames": 1,
+            "available_frames": 1,
+            "frames": [{"fh": 0, "valid_time": "2026-03-27T12:00:00Z"}],
+        }
+    }
+    assert captured["supplemental_variable_frames"] == {}
+
