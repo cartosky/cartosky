@@ -597,6 +597,57 @@ def _manifest_path(data_root: Path, model_id: str, run_id: str) -> Path:
     return data_root / "manifests" / model_id / f"{run_id}.json"
 
 
+def _run_build_started_at(data_root: Path, model_id: str, run_id: str, manifest_path: Path) -> int | None:
+    candidates: list[int] = []
+    run_root = data_root / "published" / model_id / run_id
+    if run_root.is_dir():
+        for root, _dirs, files in os.walk(run_root):
+            for filename in files:
+                try:
+                    candidates.append(int((Path(root) / filename).stat().st_mtime))
+                except OSError:
+                    continue
+    try:
+        if manifest_path.exists():
+            candidates.append(int(manifest_path.stat().st_mtime))
+    except OSError:
+        pass
+    return min(candidates) if candidates else None
+
+
+def _scheduled_forecast_hours_for_variable(
+    *,
+    plugin: Any,
+    variable_id: str,
+    run_dt: datetime | None,
+    expected_frames: int,
+    available_hours: list[int],
+) -> list[int]:
+    cycle_hour = int(run_dt.hour) if run_dt is not None else 0
+    raw_hours: Iterable[Any] = []
+    if plugin is not None and hasattr(plugin, "scheduled_fhs_for_var"):
+        try:
+            raw_hours = plugin.scheduled_fhs_for_var(variable_id, cycle_hour)
+        except Exception:
+            raw_hours = []
+    if not raw_hours and plugin is not None and hasattr(plugin, "target_fhs"):
+        try:
+            raw_hours = plugin.target_fhs(cycle_hour)
+        except Exception:
+            raw_hours = []
+
+    resolved: list[int] = []
+    for raw_hour in raw_hours:
+        parsed = _normalize_forecast_hour(raw_hour)
+        if parsed is not None:
+            resolved.append(parsed)
+    if resolved:
+        return sorted(set(resolved))
+    if available_hours and expected_frames <= len(available_hours):
+        return sorted(set(available_hours))
+    return []
+
+
 def _reviewable_run_ids_from_disk(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
     published_model_root = data_root / "published" / model_id
     manifests_model_root = data_root / "manifests" / model_id
@@ -1706,8 +1757,10 @@ def _scan_run_issue(
     manifest_path = _manifest_path(data_root, model_id, run_id)
     manifest = _load_json_file(manifest_path)
     now_utc = datetime.now(timezone.utc)
+    now_ts = int(now_utc.timestamp())
     run_dt = _parse_run_id_datetime(run_id)
     run_timestamp = int(run_dt.timestamp()) if run_dt is not None else None
+    build_started_at = _run_build_started_at(data_root, model_id, run_id, manifest_path)
     latest_for_model = run_id == latest_run_id
     plugin = MODEL_REGISTRY.get(model_id)
     model_capability = getattr(plugin, "capabilities", None) if plugin is not None else None
@@ -1735,10 +1788,17 @@ def _scan_run_issue(
         "latest_for_model": latest_for_model,
         "time_axis_mode": _time_axis_mode_for_model(model_id),
         "run_timestamp": run_timestamp,
-        "run_age_hours": round(max(0.0, (now_utc.timestamp() - (run_timestamp or now_utc.timestamp())) / 3600.0), 1),
+        "build_started_at": build_started_at,
+        "cycle_age_hours": round(max(0.0, (now_ts - (run_timestamp or now_ts)) / 3600.0), 1),
+        "run_age_hours": round(max(0.0, (now_ts - (build_started_at or now_ts)) / 3600.0), 1),
         "expected_frames": 0,
         "available_frames": 0,
         "completion_pct": 0.0,
+        "latest_forecast_hour_min": None,
+        "latest_forecast_hour_max": None,
+        "target_forecast_hour_min": None,
+        "target_forecast_hour_max": None,
+        "variable_forecast_progress": [],
         "missing_artifact_count": 0,
         "unreadable_artifact_count": 0,
         "incomplete_variable_count": 0,
@@ -1781,6 +1841,9 @@ def _scan_run_issue(
     unreadable_artifact_count = 0
     sample_paths: list[dict[str, Any]] = [] if include_details else []
     incomplete_variable_count = 0
+    latest_forecast_hours: list[int] = []
+    target_forecast_hours: list[int] = []
+    variable_forecast_progress: list[dict[str, Any]] = []
 
     for variable_id, entry in sorted(variables.items()):
         if not isinstance(entry, dict):
@@ -1805,6 +1868,30 @@ def _scan_run_issue(
             for frame in frame_entries
             if isinstance(frame, dict) and isinstance(frame.get("fh"), int)
         )
+        expected_hours = _scheduled_forecast_hours_for_variable(
+            plugin=plugin,
+            variable_id=public_variable_id,
+            run_dt=run_dt,
+            expected_frames=max(0, expected),
+            available_hours=frame_hours,
+        )
+        latest_forecast_hour = max(frame_hours) if frame_hours else None
+        target_forecast_hour = max(expected_hours) if expected_hours else None
+        if latest_forecast_hour is not None:
+            latest_forecast_hours.append(latest_forecast_hour)
+        if target_forecast_hour is not None:
+            target_forecast_hours.append(target_forecast_hour)
+        if include_details:
+            variable_forecast_progress.append(
+                {
+                    "variable_id": public_variable_id,
+                    "display_name": str(entry.get("display_name") or public_variable_id),
+                    "latest_forecast_hour": latest_forecast_hour,
+                    "target_forecast_hour": target_forecast_hour,
+                    "available_frames": max(0, available),
+                    "expected_frames": max(0, expected),
+                }
+            )
         substrates = _variable_render_substrates(model_id, public_variable_id)
         has_vector_substrate = "vector" in substrates
         uses_grid_runtime = "grid" in substrates and grid_supported(model_id, artifact_variable_id)
@@ -2075,20 +2162,29 @@ def _scan_run_issue(
         issue_type = "run_incomplete"
         summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
 
+    last_updated_at = _parse_manifest_timestamp(manifest.get("last_updated")) or int(manifest_path.stat().st_mtime)
+    build_age_reference_ts = now_ts if latest_for_model and available_frames < expected_frames else last_updated_at
+    run_age_hours = (
+        round(max(0.0, (build_age_reference_ts - build_started_at) / 3600.0), 1)
+        if build_started_at is not None
+        else base_row["run_age_hours"]
+    )
+
     return {
         **base_row,
-        "run_age_hours": (
-            round(float(observed_bundle["latest_scan_age_minutes"]) / 60.0, 1)
-            if observed_model and isinstance(observed_bundle.get("latest_scan_age_minutes"), (int, float))
-            else base_row["run_age_hours"]
-        ),
+        "run_age_hours": run_age_hours,
         "status": status,
         "issue_type": issue_type,
         "summary": summary,
-        "last_updated_at": _parse_manifest_timestamp(manifest.get("last_updated")) or int(manifest_path.stat().st_mtime),
+        "last_updated_at": last_updated_at,
         "expected_frames": expected_frames,
         "available_frames": available_frames,
         "completion_pct": completion_pct,
+        "latest_forecast_hour_min": min(latest_forecast_hours) if latest_forecast_hours else None,
+        "latest_forecast_hour_max": max(latest_forecast_hours) if latest_forecast_hours else None,
+        "target_forecast_hour_min": min(target_forecast_hours) if target_forecast_hours else None,
+        "target_forecast_hour_max": max(target_forecast_hours) if target_forecast_hours else None,
+        "variable_forecast_progress": variable_forecast_progress if include_details else [],
         "missing_artifact_count": missing_artifact_count,
         "unreadable_artifact_count": unreadable_artifact_count,
         "incomplete_variable_count": incomplete_variable_count,

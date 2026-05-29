@@ -257,6 +257,11 @@ async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
     hrrr_manifest_payload = json.loads(hrrr_manifest_path.read_text())
     hrrr_manifest_payload["last_updated"] = "2026-05-29T13:45:00Z"
     hrrr_manifest_path.write_text(json.dumps(hrrr_manifest_payload))
+    hrrr_build_started_at = int(real_datetime(2026, 5, 29, 13, 10, tzinfo=admin_telemetry.timezone.utc).timestamp())
+    for root, _dirs, files in os.walk(main_module.DATA_ROOT / "published" / "hrrr" / "20260529_13z"):
+        for filename in files:
+            os.utime(Path(root) / filename, (hrrr_build_started_at, hrrr_build_started_at))
+    os.utime(hrrr_manifest_path, (hrrr_build_started_at, hrrr_build_started_at))
     _write_manifest(
         main_module.DATA_ROOT / "manifests" / "spc" / "20260529_1200z.json",
         model_id="spc",
@@ -298,6 +303,15 @@ async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
     assert ongoing_row["status"] == "info"
     assert ongoing_row["issue_type"] == "run_ongoing"
     assert ongoing_row["summary"] == "Latest published run is still building at 3/4 frames."
+    assert ongoing_row["run_age_hours"] == 0.8
+    assert ongoing_row["latest_forecast_hour_min"] == 0
+    assert ongoing_row["latest_forecast_hour_max"] == 1
+    assert ongoing_row["target_forecast_hour_min"] == 18
+    assert ongoing_row["target_forecast_hour_max"] == 18
+    progress_by_var = {item["variable_id"]: item for item in ongoing_row["variable_forecast_progress"]}
+    assert progress_by_var["tmp2m"]["latest_forecast_hour"] == 1
+    assert progress_by_var["tmp2m"]["target_forecast_hour"] == 18
+    assert progress_by_var["precip_total"]["available_frames"] == 1
     artifact_row = next(row for row in rows if row["issue_type"] == "artifact_failure")
     assert artifact_row["model_id"] == "spc"
     assert artifact_row["missing_artifact_count"] >= 1

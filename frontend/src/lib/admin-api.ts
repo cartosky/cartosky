@@ -125,6 +125,8 @@ export type StatusResult = {
   summary: string;
   latest_for_model: boolean;
   run_timestamp?: number | null;
+  build_started_at?: number | null;
+  cycle_age_hours?: number | null;
   run_age_hours: number;
   last_updated_at?: number | null;
   latest_scan_valid_time?: string | null;
@@ -138,6 +140,18 @@ export type StatusResult = {
   expected_frames: number;
   available_frames: number;
   completion_pct: number;
+  latest_forecast_hour_min?: number | null;
+  latest_forecast_hour_max?: number | null;
+  target_forecast_hour_min?: number | null;
+  target_forecast_hour_max?: number | null;
+  variable_forecast_progress: Array<{
+    variable_id: string;
+    display_name: string;
+    latest_forecast_hour?: number | null;
+    target_forecast_hour?: number | null;
+    available_frames: number;
+    expected_frames: number;
+  }>;
   missing_artifact_count: number;
   unreadable_artifact_count: number;
   incomplete_variable_count: number;

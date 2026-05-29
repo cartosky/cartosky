@@ -30,6 +30,25 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+function formatForecastHour(value: number | null | undefined): string {
+  return Number.isFinite(value) ? `fh${String(Math.trunc(Number(value))).padStart(3, "0")}` : "—";
+}
+
+function formatForecastHourRange(minValue: number | null | undefined, maxValue: number | null | undefined): string {
+  if (!Number.isFinite(minValue) && !Number.isFinite(maxValue)) return "—";
+  if (Number.isFinite(minValue) && Number.isFinite(maxValue) && Number(minValue) !== Number(maxValue)) {
+    return `${formatForecastHour(minValue)}-${formatForecastHour(maxValue)}`;
+  }
+  return formatForecastHour(maxValue ?? minValue);
+}
+
+function forecastProgressLabel(result: StatusResult): string {
+  const latest = formatForecastHourRange(result.latest_forecast_hour_min, result.latest_forecast_hour_max);
+  const target = formatForecastHourRange(result.target_forecast_hour_min, result.target_forecast_hour_max);
+  if (latest === "—" && target === "—") return "—";
+  return `${latest} / ${target}`;
+}
+
 function issueTone(result: StatusResult): StatusTone {
   if (result.status === "error") return "fail";
   if (result.status === "warning") return "warning";
@@ -406,7 +425,7 @@ export default function AdminStatusPage() {
         </div>
 
         <div ref={tableScrollRef} onScroll={() => syncScroll("table")} className="overflow-x-auto pb-2">
-          <table className="w-max min-w-[1420px] border-separate border-spacing-y-2 text-left text-sm">
+          <table className="w-max min-w-[1540px] border-separate border-spacing-y-2 text-left text-sm">
             <thead className="text-white/48">
               <tr>
                 <th className="px-3 py-2 font-medium">Model</th>
@@ -416,16 +435,17 @@ export default function AdminStatusPage() {
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Issue type</th>
                 <th className="px-3 py-2 font-medium">Summary</th>
+                <th className="px-3 py-2 font-medium">Forecast Hour</th>
                 <th className="px-3 py-2 font-medium">Frames</th>
                 <th className="px-3 py-2 font-medium">Completion</th>
-                <th className="px-3 py-2 font-medium">Age</th>
+                <th className="px-3 py-2 font-medium">Build Age</th>
                 <th className="px-3 py-2 font-medium">Updated</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/48">
+                  <td colSpan={12} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/48">
                     {emptyStateMessage}
                   </td>
                 </tr>
@@ -470,6 +490,7 @@ export default function AdminStatusPage() {
                     <td className="max-w-[420px] border-y border-white/10 px-3 py-3 text-white/68">
                       <div className="line-clamp-2">{item.summary}</div>
                     </td>
+                    <td className="border-y border-white/10 px-3 py-3 font-medium text-white/76">{forecastProgressLabel(item)}</td>
                     <td className="border-y border-white/10 px-3 py-3">{item.available_frames}/{item.expected_frames}</td>
                     <td className="border-y border-white/10 px-3 py-3">{formatPercent(item.completion_pct)}</td>
                     <td className="border-y border-white/10 px-3 py-3">{item.run_age_hours.toFixed(1)}h</td>
@@ -558,18 +579,55 @@ export default function AdminStatusPage() {
                 <div className="mt-3 text-sm leading-6 text-white/78">{selected.summary}</div>
               </div>
 
-              <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-2">
+              <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
+                <div className="border-l border-white/10 pl-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Forecast hour</div>
+                  <div className="mt-2 text-2xl font-semibold text-white">{forecastProgressLabel(selected)}</div>
+                  <div className="mt-1 text-sm text-white/60">Latest built / target</div>
+                </div>
                 <div className="border-l border-white/10 pl-4">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Frames</div>
                   <div className="mt-2 text-2xl font-semibold text-white">{selected.available_frames}/{selected.expected_frames}</div>
                   <div className="mt-1 text-sm text-white/60">{formatPercent(selected.completion_pct)} complete</div>
                 </div>
                 <div className="border-l border-white/10 pl-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Run age</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Build age</div>
                   <div className="mt-2 text-2xl font-semibold text-white">{selected.run_age_hours.toFixed(1)}h</div>
-                  <div className="mt-1 text-sm text-white/60">{selected.latest_for_model ? "Latest retained cycle" : "Historical retained cycle"}</div>
+                  <div className="mt-1 text-sm text-white/60">
+                    {selected.latest_for_model && selected.available_frames < selected.expected_frames
+                      ? "Since first artifact"
+                      : "First artifact to last update"}
+                  </div>
                 </div>
               </div>
+
+              {(selected.variable_forecast_progress ?? []).length > 0 ? (
+                <div className="border-t border-white/8 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Variable forecast progress</div>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full min-w-[460px] text-left text-sm">
+                      <thead className="text-white/44">
+                        <tr>
+                          <th className="border-b border-white/8 px-3 py-2 font-medium">Variable</th>
+                          <th className="border-b border-white/8 px-3 py-2 font-medium">Forecast hour</th>
+                          <th className="border-b border-white/8 px-3 py-2 font-medium">Frames</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(selected.variable_forecast_progress ?? []).map((variable) => (
+                          <tr key={variable.variable_id}>
+                            <td className="border-b border-white/6 px-3 py-2 text-white/78">{variable.display_name || variable.variable_id}</td>
+                            <td className="border-b border-white/6 px-3 py-2 font-medium text-white">
+                              {formatForecastHour(variable.latest_forecast_hour)} / {formatForecastHour(variable.target_forecast_hour)}
+                            </td>
+                            <td className="border-b border-white/6 px-3 py-2 text-white/68">{variable.available_frames}/{variable.expected_frames}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
                 <div className="border-l border-rose-400/22 pl-4">
