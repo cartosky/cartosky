@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -49,6 +50,10 @@ MRMS_QPE_72H_PASS2_FILE_RE = re.compile(
 
 WGRIB2_GRID_SHAPE_RE = re.compile(r"\((?P<nx>\d+)\s*x\s*(?P<ny>\d+)\)")
 WGRIB2_UNDEFINED_SENTINEL = np.float32(9.999e20)
+WGRIB2_UNSUPPORTED_PACKING_RE = re.compile(r"packing type\s+\d+\s+not supported", re.IGNORECASE)
+
+_DISABLED_DECODERS_LOCK = threading.Lock()
+_DISABLED_DECODERS: set[str] = set()
 
 
 class MRMSFetchError(RuntimeError):
@@ -224,7 +229,7 @@ def decode_scan(
         last_error: Exception | None = None
         for decoder_name in decoder_order:
             normalized = str(decoder_name or "").strip().lower()
-            if not normalized or normalized in seen:
+            if not normalized or normalized in seen or _decoder_disabled(normalized):
                 continue
             seen.add(normalized)
             try:
@@ -235,6 +240,8 @@ def decode_scan(
                 raise MRMSDecodeError(f"Unsupported MRMS decoder: {decoder_name!r}")
             except Exception as exc:
                 last_error = exc
+                if normalized == "wgrib2" and _is_wgrib2_unsupported_packing_error(exc):
+                    _disable_decoder(normalized, reason=str(exc))
                 logger.warning("MRMS decode attempt failed via %s for %s: %s", normalized, scan_path, exc)
                 continue
         raise MRMSDecodeError(f"Unable to decode MRMS scan {scan_path}") from last_error
@@ -394,6 +401,23 @@ def _parse_wgrib2_grid_shape(stdout: str) -> tuple[int, int]:
     if match is None:
         raise MRMSDecodeError("Unable to parse wgrib2 grid dimensions from command output")
     return int(match.group("nx")), int(match.group("ny"))
+
+
+def _decoder_disabled(name: str) -> bool:
+    with _DISABLED_DECODERS_LOCK:
+        return name in _DISABLED_DECODERS
+
+
+def _disable_decoder(name: str, *, reason: str) -> None:
+    with _DISABLED_DECODERS_LOCK:
+        already_disabled = name in _DISABLED_DECODERS
+        _DISABLED_DECODERS.add(name)
+    if not already_disabled:
+        logger.warning("MRMS decoder disabled for current process decoder=%s reason=%s", name, reason)
+
+
+def _is_wgrib2_unsupported_packing_error(exc: Exception) -> bool:
+    return WGRIB2_UNSUPPORTED_PACKING_RE.search(str(exc) or "") is not None
 
 
 def _pygrib_source_transform(message: Any, values: np.ndarray) -> tuple[Affine, np.ndarray]:

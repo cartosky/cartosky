@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import numpy.testing as npt
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -15,6 +16,7 @@ from app.services.mrms_fetch import (
     WGRIB2_UNDEFINED_SENTINEL,
     _decode_with_wgrib2,
     _pygrib_source_transform,
+    decode_scan,
     discover_recent_scans_from_listing_html,
     freeze_bundle_scans,
 )
@@ -153,7 +155,7 @@ def test_wgrib2_decoder_extracts_binary_grid_without_netcdf(monkeypatch, tmp_pat
     assert decoded.decoder == "wgrib2"
     assert decoded.metadata["grid_shape"] == [2, 3]
     assert decoded.metadata["grid_order"] == "we:ns"
-    np.testing.assert_allclose(decoded.values[0, :], np.array([1.0, 2.0, 3.0], dtype=np.float32))
+    npt.assert_allclose(decoded.values[0, :], np.array([1.0, 2.0, 3.0], dtype=np.float32))
     assert np.isnan(decoded.values[1, 1])
     assert decoded.values[1, 2] == np.float32(6.0)
 
@@ -184,7 +186,56 @@ def test_wgrib2_decoder_falls_back_when_order_option_fails(monkeypatch, tmp_path
     )
 
     assert decoded.metadata["grid_order"] == "we:sn"
-    np.testing.assert_allclose(decoded.values, np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32))
+    npt.assert_allclose(decoded.values, np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32))
+
+
+def test_decode_scan_disables_wgrib2_after_unsupported_packing(monkeypatch, tmp_path: Path) -> None:
+    from app.services import mrms_fetch
+
+    mrms_fetch._DISABLED_DECODERS.clear()
+
+    scan_path = tmp_path / "MRMS_MergedBaseReflectivityQC_00.50_20260327-120200.grib2"
+    scan_path.write_bytes(b"fake-grib")
+
+    wgrib2_calls: list[list[str]] = []
+
+    def _run(cmd: list[str], *, check: bool, capture_output: bool, text: bool):
+        wgrib2_calls.append(cmd)
+        if "-grid" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Lambert grid: (2 x 2) points", stderr="")
+        raise subprocess.CalledProcessError(8, cmd, output="", stderr="*** FATAL ERROR: packing type 41 not supported ***")
+
+    class _Message:
+        values = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+
+        def latlons(self):
+            lats = np.array([[31.0, 31.0], [30.0, 30.0]], dtype=np.float64)
+            lons = np.array([[-100.0, -99.0], [-100.0, -99.0]], dtype=np.float64)
+            return lats, lons
+
+    class _PygribFile:
+        def __enter__(self):
+            return [ _Message() ]
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _PygribModule:
+        @staticmethod
+        def open(_path: str):
+            return _PygribFile()
+
+    monkeypatch.setattr("app.services.mrms_fetch.shutil.which", lambda name: "/usr/local/bin/wgrib2")
+    monkeypatch.setattr("app.services.mrms_fetch.subprocess.run", _run)
+    monkeypatch.setitem(sys.modules, "pygrib", _PygribModule())
+
+    first = decode_scan(scan_path, valid_time=datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc), preferred_decoder="wgrib2", fallback_decoder="pygrib")
+    second = decode_scan(scan_path, valid_time=datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc), preferred_decoder="wgrib2", fallback_decoder="pygrib")
+
+    assert first.decoder == "pygrib"
+    assert second.decoder == "pygrib"
+    assert mrms_fetch._decoder_disabled("wgrib2") is True
+    assert len(wgrib2_calls) == 3
 
 
 def test_discover_recent_scans_parses_precip_flag_listing_filenames() -> None:
