@@ -261,21 +261,15 @@ def test_main_parses_explicit_env_vars_when_present(
 
 
 def test_probe_run_exists_checks_multiple_probe_fhs(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen_fxxs: list[tuple[int, str]] = []
+    seen_calls: list[tuple[int, tuple[str, ...], bool]] = []
 
-    class _FakeHerbie:
-        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
-            del run_dt, model, product, kwargs
-            self.fxx = int(fxx)
-            self.priority = str(priority)
+    def _fake_product_hour_has_any_idx(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+        del model_id, product, run_date
+        priorities = tuple((herbie_kwargs or {}).get("priority", []))
+        seen_calls.append((int(fh), priorities, bool(allow_grib_without_idx)))
+        return int(fh) == 3
 
-        def inventory(self, pattern: str):
-            seen_fxxs.append((self.fxx, self.priority))
-            if self.fxx == 3 and self.priority == "azure" and pattern == ":2t:":
-                return [object()]
-            return []
-
-    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+    monkeypatch.setattr(scheduler_module, "product_hour_has_any_idx", _fake_product_hour_has_any_idx)
 
     found = scheduler_module._probe_run_exists(
         plugin=_FakeProbePlugin(),
@@ -284,7 +278,10 @@ def test_probe_run_exists_checks_multiple_probe_fhs(monkeypatch: pytest.MonkeyPa
     )
 
     assert found is True
-    assert seen_fxxs == [(0, "azure"), (0, "aws"), (3, "azure")]
+    assert seen_calls == [
+        (0, ("azure", "aws"), False),
+        (3, ("azure", "aws"), False),
+    ]
 
 
 def test_resolve_probe_fhs_defaults_to_zero() -> None:
@@ -302,21 +299,14 @@ class _FakeProbePluginAllowGrib(_FakeProbePlugin):
 
 
 def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _FakeHerbie:
-        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
-            del run_dt, model, product, kwargs
-            self.fxx = int(fxx)
-            self.priority = str(priority)
-            self.grib = "https://azure.example/ecmwf.grib2"
+    seen_calls: list[bool] = []
 
-        def inventory(self, pattern: str):
-            del pattern
-            raise ValueError(
-                "No index file was found for None\n"
-                "Download the full file first (with `H.download()`)."
-            )
+    def _fake_product_hour_has_any_idx(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+        del model_id, product, run_date, fh, herbie_kwargs
+        seen_calls.append(bool(allow_grib_without_idx))
+        return bool(allow_grib_without_idx)
 
-    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+    monkeypatch.setattr(scheduler_module, "product_hour_has_any_idx", _fake_product_hour_has_any_idx)
 
     found = scheduler_module._probe_run_exists(
         plugin=_FakeProbePluginAllowGrib(),
@@ -325,26 +315,30 @@ def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: py
     )
 
     assert found is True
+    assert seen_calls == [True]
 
 
 def test_probe_run_exists_accepts_inventory_parse_fallback_when_grib_and_idx_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _FakeHerbie:
-        def __init__(self, run_dt, *, model, product, fxx, priority, **kwargs):
-            del run_dt, model, product, kwargs
-            self.fxx = int(fxx)
-            self.priority = str(priority)
-            self.grib = "https://aws.example/hrrr.grib2"
+        def __init__(self, date, **kwargs):
+            del date, kwargs
             self.idx = "https://aws.example/hrrr.idx"
+            self.grib = "https://aws.example/hrrr.grib2"
 
         def inventory(self, pattern: str):
             del pattern
             raise ValueError(
-                "Cannot set a DataFrame with multiple columns to the single column search_this"
+                "Cannot set a DataFrame without columns to the column search_this"
             )
 
-    monkeypatch.setitem(sys.modules, "herbie.core", types.SimpleNamespace(Herbie=_FakeHerbie))
+    fake_core = types.ModuleType("herbie.core")
+    fake_core.Herbie = _FakeHerbie
+    fake_pkg = types.ModuleType("herbie")
+    fake_pkg.core = fake_core
+    monkeypatch.setitem(sys.modules, "herbie", fake_pkg)
+    monkeypatch.setitem(sys.modules, "herbie.core", fake_core)
 
     found = scheduler_module._probe_run_exists(
         plugin=_FakeProbePlugin(),

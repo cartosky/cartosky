@@ -23,7 +23,7 @@ from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable
+from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
 from app.services.builder.derive import FetchContext
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
@@ -398,21 +398,8 @@ def _resolve_probe_fhs(plugin: Any) -> list[int]:
     return [0]
 
 
-def _is_missing_index_probe_error(exc: Exception) -> bool:
-    return "no index file was found for none" in str(exc).lower()
-
-
-def _is_inventory_parse_probe_error(exc: Exception) -> bool:
-    return "cannot set a dataframe with multiple columns to the single column search_this" in str(exc).lower()
-
-
 def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
-    from herbie.core import Herbie
-
-    search_pattern = _probe_search_pattern(plugin, probe_var)
     probe_var_key = plugin.normalize_var_id(probe_var)
-    herbie_date = run_dt.replace(tzinfo=None) if run_dt.tzinfo else run_dt
-    last_exc: Exception | None = None
     probe_fhs = _resolve_probe_fhs(plugin)
     run_discovery = plugin.run_discovery_config() if hasattr(plugin, "run_discovery_config") else {}
     allow_grib_without_idx = bool(run_discovery.get("allow_grib_without_idx", False))
@@ -423,73 +410,32 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
             ensemble_view=_var_default_ensemble_view(plugin, probe_var_key),
             run_date=run_dt,
             fh=probe_fh,
-            search_pattern=search_pattern,
+            search_pattern=_probe_search_pattern(plugin, probe_var),
         )
         request_kwargs = dict(getattr(request, "herbie_kwargs", {}) or {})
-        raw_priorities = request_kwargs.pop("priority", None)
-        if isinstance(raw_priorities, (list, tuple)):
-            priorities = [str(item).strip().lower() for item in raw_priorities if str(item).strip()]
-        elif raw_priorities:
-            priorities = [str(raw_priorities).strip().lower()]
-        else:
-            priority_raw = _env_value(ENV_HERBIE_PRIORITY, "aws,nomads,google,azure,pando,pando2")
-            priorities = [item.strip().lower() for item in priority_raw.split(",") if item.strip()]
-        if not priorities:
-            priorities = ["aws", "nomads", "google", "azure", "pando", "pando2"]
-
-        for priority in priorities:
-            H = None
-            try:
-                H = Herbie(
-                    herbie_date,
-                    model=request.model,
-                    product=request.product,
-                    fxx=probe_fh,
-                    priority=priority,
-                    **request_kwargs,
-                )
-                inventory = H.inventory(search_pattern)
-                if inventory is not None and len(inventory) > 0:
-                    logger.info(
-                        "Run probe success: model=%s run=%s probe_var=%s fh=%s priority=%s",
-                        plugin.id,
-                        _run_id_from_dt(run_dt),
-                        probe_var_key,
-                        probe_fh,
-                        priority,
-                    )
-                    return True
-            except Exception as exc:
-                last_exc = exc
-                if allow_grib_without_idx and _is_missing_index_probe_error(exc) and getattr(H, "grib", None):
-                    logger.info(
-                        "Run probe success via GRIB fallback: model=%s run=%s probe_var=%s fh=%s priority=%s",
-                        plugin.id,
-                        _run_id_from_dt(run_dt),
-                        probe_var_key,
-                        probe_fh,
-                        priority,
-                    )
-                    return True
-                if _is_inventory_parse_probe_error(exc) and getattr(H, "grib", None) and getattr(H, "idx", None):
-                    logger.info(
-                        "Run probe success via inventory parse fallback: model=%s run=%s probe_var=%s fh=%s priority=%s",
-                        plugin.id,
-                        _run_id_from_dt(run_dt),
-                        probe_var_key,
-                        probe_fh,
-                        priority,
-                    )
-                    return True
-                continue
+        if product_hour_has_any_idx(
+            model_id=request.model,
+            product=request.product,
+            run_date=run_dt,
+            fh=probe_fh,
+            herbie_kwargs=request_kwargs,
+            allow_grib_without_idx=allow_grib_without_idx,
+        ):
+            logger.info(
+                "Run probe success: model=%s run=%s probe_var=%s fh=%s",
+                plugin.id,
+                _run_id_from_dt(run_dt),
+                probe_var_key,
+                probe_fh,
+            )
+            return True
 
     logger.info(
-        "Run probe miss: model=%s run=%s probe_var=%s fhs=%s (%s)",
+        "Run probe miss: model=%s run=%s probe_var=%s fhs=%s (product readiness probe returned unavailable)",
         plugin.id,
         _run_id_from_dt(run_dt),
         probe_var_key,
         probe_fhs,
-        last_exc,
     )
     return False
 
