@@ -25,6 +25,7 @@ TELEMETRY_DB_PATH = Path(
 
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
+DEFAULT_STALLED_RUN_IDLE_MINUTES = 90
 STATUS_DB_PATH = Path(
     os.environ.get("CARTOSKY_STATUS_DB_PATH")
     or os.environ.get("TWM_STATUS_DB_PATH", str(TELEMETRY_DB_PATH))
@@ -453,6 +454,20 @@ def _expected_latest_run_time(*, model_id: str, now_utc: datetime) -> datetime |
     reference = now_utc - timedelta(hours=max(0, fallback_lag))
     floored_hour = reference.hour - (reference.hour % cadence)
     return reference.replace(hour=floored_hour, minute=0, second=0, microsecond=0)
+
+
+def _stalled_run_idle_minutes(model_id: str) -> int:
+    plugin = MODEL_REGISTRY.get(model_id)
+    capabilities = getattr(plugin, "capabilities", None) if plugin is not None else None
+    run_discovery = getattr(capabilities, "run_discovery", {}) if capabilities is not None else {}
+    if isinstance(run_discovery, dict):
+        try:
+            configured = int(run_discovery.get("stalled_run_idle_minutes") or 0)
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return configured
+    return DEFAULT_STALLED_RUN_IDLE_MINUTES
 
 
 def clear_operational_status_cache() -> None:
@@ -2141,6 +2156,9 @@ def _scan_run_issue(
                             break
 
     completion_pct = round((available_frames / expected_frames) * 100.0, 1) if expected_frames > 0 else 0.0
+    last_updated_at = _parse_manifest_timestamp(manifest.get("last_updated")) or int(manifest_path.stat().st_mtime)
+    idle_minutes = max(0.0, (now_ts - last_updated_at) / 60.0)
+    stalled_run_idle_minutes = _stalled_run_idle_minutes(model_id)
     expected_latest_dt = _expected_latest_run_time(model_id=model_id, now_utc=now_utc)
     stale_latest = bool(
         latest_for_model
@@ -2148,6 +2166,8 @@ def _scan_run_issue(
         and expected_latest_dt is not None
         and run_dt < expected_latest_dt
     )
+    stale_latest_incomplete = latest_for_model and stale_latest and available_frames < expected_frames
+    stale_latest_incomplete_idle = stale_latest_incomplete and idle_minutes >= stalled_run_idle_minutes
 
     status = "healthy"
     issue_type = "healthy"
@@ -2172,10 +2192,20 @@ def _scan_run_issue(
         status = "warning"
         issue_type = "delayed_bundle"
         summary = "Latest observed bundle is delayed beyond the normal freshness window."
-    elif latest_for_model and stale_latest and available_frames < expected_frames:
+    elif stale_latest_incomplete_idle:
         status = "error"
         issue_type = "run_stalled"
-        summary = f"Latest published run is stale and incomplete at {available_frames}/{expected_frames} frames."
+        summary = (
+            f"Latest published run is stale, incomplete at {available_frames}/{expected_frames} frames, "
+            f"and idle for {int(idle_minutes)} minutes."
+        )
+    elif stale_latest_incomplete:
+        status = "info"
+        issue_type = "run_ongoing"
+        summary = (
+            f"Latest published run is older than the expected cycle but still updating "
+            f"at {available_frames}/{expected_frames} frames."
+        )
     elif latest_for_model and stale_latest:
         status = "warning"
         issue_type = "stale_run"
@@ -2189,7 +2219,6 @@ def _scan_run_issue(
         issue_type = "run_incomplete"
         summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
 
-    last_updated_at = _parse_manifest_timestamp(manifest.get("last_updated")) or int(manifest_path.stat().st_mtime)
     build_age_reference_ts = now_ts if latest_for_model and available_frames < expected_frames else last_updated_at
     run_age_hours = (
         round(max(0.0, (build_age_reference_ts - build_started_at) / 3600.0), 1)

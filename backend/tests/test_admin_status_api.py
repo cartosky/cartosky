@@ -722,7 +722,7 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
 ) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
     base_day = admin_telemetry.datetime.now(admin_telemetry.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    last_updated = base_day.replace(hour=7, minute=31).isoformat().replace("+00:00", "Z")
+    last_updated = base_day.replace(hour=12, minute=31).isoformat().replace("+00:00", "Z")
     _seed_run(
         main_module.DATA_ROOT,
         model_id="ecmwf",
@@ -737,7 +737,7 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return base_day.replace(hour=7, minute=59, tzinfo=tz)
+            return base_day.replace(hour=12, minute=29, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenBeforeRelease)
 
@@ -755,7 +755,7 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return base_day.replace(hour=8, minute=1, tzinfo=tz)
+            return base_day.replace(hour=12, minute=31, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenAfterRelease)
 
@@ -768,6 +768,67 @@ async def test_status_results_respects_ecmwf_release_offsets_before_marking_stal
     rows = response.json()["results"]
     assert rows[0]["issue_type"] == "stale_run"
     assert rows[0]["status"] == "warning"
+
+
+@pytest.mark.parametrize("model_id", ["ecmwf", "eps"])
+async def test_status_results_keeps_stale_incomplete_ecmwf_family_run_ongoing_until_idle(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+    base_day = admin_telemetry.datetime.now(admin_telemetry.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    last_updated = (base_day + admin_telemetry.timedelta(days=1)).replace(hour=0, minute=30).isoformat().replace("+00:00", "Z")
+    variable_id = "tmp2m__mean" if model_id == "eps" else "tmp2m"
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id=model_id,
+        run_id=base_day.replace(hour=12).strftime("%Y%m%d_%Hz"),
+        variables={variable_id: [0, 6, 12]},
+        available_override={variable_id: 2},
+        last_updated=last_updated,
+    )
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenStillUpdating(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return (base_day + admin_telemetry.timedelta(days=1)).replace(hour=0, minute=45, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenStillUpdating)
+
+    response = await client.get(
+        f"/api/v4/admin/status/results?window=30d&model={model_id}",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert rows[0]["issue_type"] == "run_ongoing"
+    assert rows[0]["status"] == "info"
+    assert "still updating" in rows[0]["summary"]
+    admin_telemetry.clear_operational_status_cache()
+
+    class FrozenIdle(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return (base_day + admin_telemetry.timedelta(days=1)).replace(hour=2, minute=1, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenIdle)
+
+    response = await client.get(
+        f"/api/v4/admin/status/results?window=30d&model={model_id}",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert rows[0]["issue_type"] == "run_stalled"
+    assert rows[0]["status"] == "error"
+    assert "idle for 91 minutes" in rows[0]["summary"]
 
 
 async def test_status_results_treats_vector_only_spc_run_as_valid_bundle(client: httpx.AsyncClient) -> None:
