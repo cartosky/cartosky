@@ -571,6 +571,7 @@ export default function App() {
   const telemetryRunIdRef = useRef<string | null>(null);
   const targetForecastHourRef = useRef(targetForecastHour);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
+  const contourReadyUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
   const gridPlaybackWaitStateRef = useRef({
     stalledOnHour: null as number | null,
@@ -1083,6 +1084,7 @@ export default function App() {
 
   useEffect(() => {
     gridReadyFrameUrlsRef.current = new Set();
+    contourReadyUrlsRef.current = new Set();
     gridPlaybackHourRef.current = null;
     gridPlaybackWaitStateRef.current = {
       stalledOnHour: null,
@@ -1447,6 +1449,9 @@ export default function App() {
     }
     return normalizeGridFrameUrl(frameUrl);
   }, [gridFrameByHour, normalizeGridFrameUrl]);
+  // During a variable switch the old variable's imagery is still on screen;
+  // keep its paint settings in effect until the new variable is promoting.
+  const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
   const compositeFrameUrlsForHour = useCallback((hour: number | null | undefined): string[] => {
     if (compositeLayerSpecs.length === 0 || !Number.isFinite(hour)) {
       return [];
@@ -1459,6 +1464,32 @@ export default function App() {
       .map((layer) => normalizeGridFrameUrl(layer.frameUrl))
       .filter(Boolean);
   }, [buildCompositeGridLayersForHour, compositeLayerSpecs.length, normalizeGridFrameUrl]);
+  const contourGeoJsonUrlForHour = useCallback((hour: number | null | undefined): string | null => {
+    if (!model || !displayedOverlayVariable || !resolvedRunForRequests || !Number.isFinite(hour)) {
+      return null;
+    }
+    const frame = frameByHour.get(Number(hour)) ?? null;
+    const frameMeta = extractLegendMeta(frame) ?? extractLegendMeta(frameRows[0] ?? null);
+    const contours = gridManifest?.contours ?? frameMeta?.contours;
+    if (!contours || typeof contours !== "object") {
+      return null;
+    }
+    const contourKey = Object.keys(contours)[0];
+    if (!contourKey) {
+      return null;
+    }
+    return buildContourUrl({
+      model,
+      run: resolvedRunForRequests,
+      varKey: displayedOverlayVariable,
+      fh: Number(hour),
+      key: contourKey,
+    });
+  }, [displayedOverlayVariable, frameByHour, frameRows, gridManifest, model, resolvedRunForRequests]);
+  const isContourHourReady = useCallback((hour: number | null | undefined): boolean => {
+    const contourUrl = contourGeoJsonUrlForHour(hour);
+    return !contourUrl || contourReadyUrlsRef.current.has(contourUrl);
+  }, [contourGeoJsonUrlForHour]);
   const isGridHourReady = useCallback((hour: number | null | undefined): boolean => {
     if (!Number.isFinite(hour)) {
       return false;
@@ -1466,11 +1497,12 @@ export default function App() {
     if (compositeLayerSpecs.length > 0) {
       const frameUrls = compositeFrameUrlsForHour(Number(hour));
       return frameUrls.length === compositeLayerSpecs.length
-        && frameUrls.every((frameUrl) => gridReadyFrameUrlsRef.current.has(frameUrl));
+        && frameUrls.every((frameUrl) => gridReadyFrameUrlsRef.current.has(frameUrl))
+        && isContourHourReady(hour);
     }
     const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(Number(hour))?.url);
-    return Boolean(frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl));
-  }, [compositeFrameUrlsForHour, compositeLayerSpecs.length, gridFrameByHour, normalizeGridFrameUrl]);
+    return Boolean(frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl) && isContourHourReady(hour));
+  }, [compositeFrameUrlsForHour, compositeLayerSpecs.length, gridFrameByHour, isContourHourReady, normalizeGridFrameUrl]);
   const gridReadyHours = useMemo(() => {
     const readyHours: number[] = [];
     for (const hour of gridFrameHours) {
@@ -1923,67 +1955,42 @@ export default function App() {
   // for GFS-style products, even though the shaded grid playback itself is good.
   const gridContour: GridContourLayerConfig | null = null;
 
-  // During a variable switch the old variable's imagery is still on screen;
-  // keep its paint settings in effect until the new variable is promoting.
-  const displayedOverlayVariable = isVariableSwitching ? (visualVariable || variable) : variable;
   const contourGeoJsonUrl = useMemo(() => {
-    if (!model || !displayedOverlayVariable || !visibleOverlayFrame || !resolvedRunForRequests) {
-      return null;
-    }
-    const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
-    const contours = gridManifest?.contours ?? frameMeta?.contours;
-    if (!contours || typeof contours !== "object") {
-      return null;
-    }
-    const contourKey = Object.keys(contours)[0];
-    if (!contourKey) {
-      return null;
-    }
-    return buildContourUrl({
-      model,
-      run: resolvedRunForRequests,
-      varKey: displayedOverlayVariable,
-      fh: Number(visibleOverlayFrame.fh),
-      key: contourKey,
-    });
-  }, [displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame]);
+    const contourHour = isGridLowMidActive && Number.isFinite(presentedGridDisplayHour)
+      ? Number(presentedGridDisplayHour)
+      : Number(visibleOverlayFrame?.fh);
+    return contourGeoJsonUrlForHour(contourHour);
+  }, [contourGeoJsonUrlForHour, isGridLowMidActive, presentedGridDisplayHour, visibleOverlayFrame]);
   const contourPrefetchUrls = useMemo(() => {
     if (!model || !displayedOverlayVariable || frameRows.length <= 1 || !resolvedRunForRequests) {
       return [] as string[];
     }
-    const currentHour = Number.isFinite(visibleOverlayHour) ? Number(visibleOverlayHour) : Number(visibleOverlayFrame?.fh);
+    const currentHour = Number.isFinite(resolvedGridDisplayHour)
+      ? Number(resolvedGridDisplayHour)
+      : Number.isFinite(visibleOverlayHour)
+        ? Number(visibleOverlayHour)
+        : Number(visibleOverlayFrame?.fh);
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
     const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
     const candidateRows = pivotIndex >= 0
       ? [
+          orderedRows[pivotIndex],
           ...orderedRows.slice(pivotIndex + 1, pivotIndex + 9),
           ...orderedRows.slice(Math.max(0, pivotIndex - 2), pivotIndex).reverse(),
         ]
       : orderedRows.slice(1, 11);
     const urls: string[] = [];
     for (const row of candidateRows) {
-      const meta = extractLegendMeta(row);
-      const contours = gridManifest?.contours ?? meta?.contours;
-      if (!contours || typeof contours !== "object") {
+      if (!row) {
         continue;
       }
-      const contourKey = Object.keys(contours)[0];
-      if (!contourKey) {
-        continue;
-      }
-      const url = buildContourUrl({
-        model,
-        run: resolvedRunForRequests,
-        varKey: displayedOverlayVariable,
-        fh: Number(row.fh),
-        key: contourKey,
-      });
+      const url = contourGeoJsonUrlForHour(Number(row.fh));
       if (url && url !== contourGeoJsonUrl && !urls.includes(url)) {
         urls.push(url);
       }
     }
     return urls;
-  }, [contourGeoJsonUrl, displayedOverlayVariable, frameRows, gridManifest, model, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  }, [contourGeoJsonUrl, contourGeoJsonUrlForHour, displayedOverlayVariable, frameRows, model, resolvedGridDisplayHour, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
   const pressureCenters = useMemo(() => {
     const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
     return Array.isArray(frameMeta?.pressure_centers) ? frameMeta.pressure_centers : [];
@@ -3511,6 +3518,19 @@ export default function App() {
       void attemptGridPlaybackAdvance();
     }
   }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying, normalizeGridFrameUrl]);
+  const handleContourFrameReady = useCallback((contourUrl: string) => {
+    const normalized = String(contourUrl ?? "").trim();
+    if (!normalized) {
+      return;
+    }
+    if (!contourReadyUrlsRef.current.has(normalized)) {
+      contourReadyUrlsRef.current.add(normalized);
+      bumpGridReadyVersion();
+    }
+    if (isPlaying && canUseGridPlayback) {
+      void attemptGridPlaybackAdvance();
+    }
+  }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying]);
   const handleGridFrameEvicted = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4210,6 +4230,7 @@ export default function App() {
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
+          onContourFrameReady={handleContourFrameReady}
           getAnimatedGridPlaybackState={getAnimatedGridPlaybackState}
           isAnimating={isPlaying || isScrubbing}
           onZoomBucketChange={setZoomBucket}

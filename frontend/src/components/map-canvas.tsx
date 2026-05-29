@@ -102,6 +102,7 @@ const OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET = 12;
 const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
+const CONTOUR_CACHE_MAX_ENTRIES = 96;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
@@ -658,6 +659,10 @@ function gridOverlayBeforeLayerId(map: maplibregl.Map): string {
   return COASTLINE_LAYER_ID;
 }
 
+function normalizeDataUrl(value: string | null | undefined): string {
+  return String(value ?? "").trim();
+}
+
 function buildVectorBufferLayers(): LayerSpecification[] {
   return [0, 1].flatMap((bufferIndex) => {
     const sourceId = VECTOR_SOURCE_IDS[bufferIndex as 0 | 1];
@@ -966,6 +971,7 @@ type MapCanvasProps = {
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
+  onContourFrameReady?: (contourUrl: string) => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
@@ -1015,6 +1021,7 @@ export function MapCanvas({
   onGridFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
+  onContourFrameReady,
   getAnimatedGridPlaybackState = null,
   isAnimating = false,
   onMapReady,
@@ -1078,6 +1085,7 @@ export function MapCanvas({
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
   const contourPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const activeContourPayloadRef = useRef<GeoJSON.FeatureCollection | null>(null);
+  const activeContourUrlRef = useRef("");
   const vectorRequestTokenRef = useRef(0);
   const vectorAbortRef = useRef<AbortController | null>(null);
   const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
@@ -1102,6 +1110,26 @@ export function MapCanvas({
     }
     setContourScreenLabels(buildContourScreenLabels(activeContourPayloadRef.current, map));
   }, []);
+  const markContourFrameReady = useCallback((rawUrl: string) => {
+    const normalizedUrl = normalizeDataUrl(rawUrl);
+    if (!normalizedUrl) {
+      return;
+    }
+    onContourFrameReady?.(normalizedUrl);
+  }, [onContourFrameReady]);
+  const applyContourPayload = useCallback((
+    map: maplibregl.Map,
+    source: maplibregl.GeoJSONSource,
+    rawUrl: string,
+    payload: GeoJSON.FeatureCollection,
+  ) => {
+    const normalizedUrl = normalizeDataUrl(rawUrl);
+    activeContourUrlRef.current = normalizedUrl;
+    activeContourPayloadRef.current = payload;
+    setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
+    source.setData(buildContourLineDisplayPayload(payload, map) as any);
+    refreshContourScreenLabels();
+  }, [refreshContourScreenLabels]);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const buildGridPrefetchUrls = useCallback((params: {
@@ -1350,6 +1378,14 @@ export function MapCanvas({
       return;
     }
 
+    const normalizedContourUrl = normalizeDataUrl(contourGeoJsonUrl);
+    const contourSource = map.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    const cachedContourPayload = normalizedContourUrl ? contourCacheRef.current.get(normalizedContourUrl) : null;
+    if (contourSource && typeof contourSource.setData === "function" && cachedContourPayload) {
+      applyContourPayload(map, contourSource, normalizedContourUrl, cachedContourPayload);
+      markContourFrameReady(normalizedContourUrl);
+    }
+
     controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
     controller.update({
       active: Boolean(gridActive && gridManifest && frameUrl),
@@ -1417,8 +1453,10 @@ export function MapCanvas({
       compositeGridControllersRef.current.delete(layerId);
     }
   }, [
+    applyContourPayload,
     basemapMode,
     buildGridPrefetchUrls,
+    contourGeoJsonUrl,
     gridActive,
     gridContour,
     gridLegend,
@@ -1426,6 +1464,7 @@ export function MapCanvas({
     gridManifest,
     isAnimating,
     isLoaded,
+    markContourFrameReady,
     onGridFrameEvicted,
     onGridFrameReady,
     onGridFrameVisible,
@@ -1839,17 +1878,27 @@ export function MapCanvas({
           compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
         }
       }
-      setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(contourGeoJsonUrl));
+      const contourSource = map.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (contourSource && typeof contourSource.setData === "function") {
+        const activeUrl = activeContourUrlRef.current;
+        const activePayload = activeUrl ? contourCacheRef.current.get(activeUrl) ?? activeContourPayloadRef.current : null;
+        if (activeUrl && activePayload) {
+          applyContourPayload(map, contourSource, activeUrl, activePayload);
+        } else {
+          setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+          contourSource.setData(EMPTY_FEATURE_COLLECTION as any);
+        }
+      }
       enforceLayerOrder(map);
     };
 
     map.once("styledata", onStyleData);
-    map.setStyle(buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode));
+    map.setStyle(buildMapStyle(null, null, basemapMode));
 
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [basemapMode, contourGeoJsonUrl, enforceLayerOrder, isLoaded, shouldUseGridController, vectorGeoJsonUrl]);
+  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, shouldUseGridController]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1894,26 +1943,32 @@ export function MapCanvas({
       return;
     }
 
-    const normalizedUrl = String(contourGeoJsonUrl ?? "").trim();
+    const normalizedUrl = normalizeDataUrl(contourGeoJsonUrl);
     const requestToken = ++contourRequestTokenRef.current;
     contourAbortRef.current?.abort();
     contourAbortRef.current = null;
-    setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
 
     if (!normalizedUrl) {
+      activeContourUrlRef.current = "";
       activeContourPayloadRef.current = null;
       setContourScreenLabels([]);
+      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
       source.setData(EMPTY_FEATURE_COLLECTION as any);
       return;
     }
 
     const cached = contourCacheRef.current.get(normalizedUrl);
     if (cached) {
-      activeContourPayloadRef.current = cached;
-      source.setData(buildContourLineDisplayPayload(cached, map) as any);
-      refreshContourScreenLabels();
+      markContourFrameReady(normalizedUrl);
+      applyContourPayload(map, source, normalizedUrl, cached);
       return;
     }
+
+    activeContourUrlRef.current = "";
+    activeContourPayloadRef.current = null;
+    setContourScreenLabels([]);
+    setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+    source.setData(EMPTY_FEATURE_COLLECTION as any);
 
     const controller = new AbortController();
     contourAbortRef.current = controller;
@@ -1943,16 +1998,15 @@ export function MapCanvas({
           return;
         }
         contourCacheRef.current.set(normalizedUrl, payload);
-        while (contourCacheRef.current.size > 32) {
+        markContourFrameReady(normalizedUrl);
+        while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
           const oldestKey = contourCacheRef.current.keys().next().value;
           if (!oldestKey) {
             break;
           }
           contourCacheRef.current.delete(oldestKey);
         }
-        activeContourPayloadRef.current = payload;
-        source.setData(buildContourLineDisplayPayload(payload, map) as any);
-        refreshContourScreenLabels();
+        applyContourPayload(map, source, normalizedUrl, payload);
       })
       .catch((error) => {
         if (controller.signal.aborted) {
@@ -1972,7 +2026,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [basemapMode, contourGeoJsonUrl, isLoaded, refreshContourScreenLabels]);
+  }, [applyContourPayload, contourGeoJsonUrl, isLoaded, markContourFrameReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2013,7 +2067,7 @@ export function MapCanvas({
 
     const controller = new AbortController();
     for (const rawUrl of contourPrefetchUrls) {
-      const normalizedUrl = String(rawUrl ?? "").trim();
+      const normalizedUrl = normalizeDataUrl(rawUrl);
       if (
         !normalizedUrl
         || contourCacheRef.current.has(normalizedUrl)
@@ -2038,7 +2092,8 @@ export function MapCanvas({
             return;
           }
           contourCacheRef.current.set(normalizedUrl, payload);
-          while (contourCacheRef.current.size > 40) {
+          markContourFrameReady(normalizedUrl);
+          while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
             const oldestKey = contourCacheRef.current.keys().next().value;
             if (!oldestKey) {
               break;
@@ -2060,7 +2115,7 @@ export function MapCanvas({
     return () => {
       controller.abort();
     };
-  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded]);
+  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded, markContourFrameReady]);
 
   useEffect(() => {
     const map = mapRef.current;
