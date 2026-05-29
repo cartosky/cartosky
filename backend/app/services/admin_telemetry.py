@@ -15,7 +15,7 @@ import rasterio
 
 from ..models.registry import MODEL_REGISTRY
 from .grid import expected_grid_frame_size_bytes, grid_manifest_path, grid_supported
-from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
+from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability, parse_iso_datetime
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
 
 TELEMETRY_DB_PATH = Path(
