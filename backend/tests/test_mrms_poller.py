@@ -36,8 +36,35 @@ def _config(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
     )
 
 
+def _config_with_recent_precip(tmp_path: Path) -> mrms_poller.MRMSPollerConfig:
+    base = _config(tmp_path)
+    return mrms_poller.MRMSPollerConfig(
+        data_root=base.data_root,
+        listing_url=base.listing_url,
+        precip_flag_listing_url=base.precip_flag_listing_url,
+        poll_seconds=base.poll_seconds,
+        keep_runs=base.keep_runs,
+        window_minutes=base.window_minutes,
+        frame_cadence_minutes=base.frame_cadence_minutes,
+        listing_timeout_seconds=base.listing_timeout_seconds,
+        download_timeout_seconds=base.download_timeout_seconds,
+        preferred_decoder=base.preferred_decoder,
+        fallback_decoder=base.fallback_decoder,
+        frame_write_workers=base.frame_write_workers,
+        qpe_06h_listing_url="https://example.test/qpe/06h/",
+        qpe_24h_listing_url="",
+        qpe_72h_listing_url="",
+    )
+
+
+def _disable_postprocess(monkeypatch) -> None:
+    monkeypatch.setattr(mrms_poller, "grid_build_enabled", lambda: False)
+    monkeypatch.setattr(mrms_poller, "_schedule_postprocess", lambda *_args, **_kwargs: None)
+
+
 def test_run_once_publishes_when_new_scan_exists(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
+    _disable_postprocess(monkeypatch)
     scans = [
         MRMSScanRef(
             valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
@@ -94,6 +121,7 @@ def test_run_once_publishes_when_new_scan_exists(tmp_path: Path, monkeypatch) ->
 
 def test_run_once_skips_when_latest_scan_already_published(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
+    _disable_postprocess(monkeypatch)
     newest = datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc)
     scans = [
         MRMSScanRef(
@@ -120,6 +148,7 @@ def test_run_once_skips_when_latest_scan_already_published(tmp_path: Path, monke
 
 def test_run_once_publishes_partial_bundle_when_one_scan_fails(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
+    _disable_postprocess(monkeypatch)
     scans = [
         MRMSScanRef(
             valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
@@ -171,6 +200,7 @@ def test_run_once_publishes_partial_bundle_when_one_scan_fails(tmp_path: Path, m
 
 def test_run_once_retries_same_latest_scan_when_existing_bundle_is_incomplete(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
+    _disable_postprocess(monkeypatch)
     newest = datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc)
     scans = [
         MRMSScanRef(
@@ -267,6 +297,7 @@ def test_find_closest_precip_flag_scan_empty_dict_returns_none() -> None:
 
 def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
+    _disable_postprocess(monkeypatch)
     older = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
     newer = datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc)
     scans = [
@@ -344,3 +375,110 @@ def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: P
     assert len(captured["previous_frames"]) == 1
     assert len(captured["frames"]) == 1
     assert captured["target_frame_count"] == 2
+
+
+def test_plan_recent_precip_postprocess_reuses_unchanged_upstream_timestamps(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _config_with_recent_precip(tmp_path)
+    valid_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    qpe_scan = MRMSScanRef(
+        valid_time=valid_time,
+        source_valid_time=valid_time,
+        url="https://example.test/qpe/06h/a.grib2.gz",
+        filename="a.grib2.gz",
+    )
+
+    monkeypatch.setattr(mrms_poller, "discover_recent_scans_http", lambda **_: [qpe_scan])
+    monkeypatch.setattr(mrms_poller, "freeze_bundle_scans", lambda items, **_: items)
+
+    plans = mrms_poller._plan_recent_precip_postprocess(
+        config=config,
+        previous_run_id="20260327_1158z",
+        previous_manifest={
+            "variables": {
+                "mrms_recent_precip_6h": {
+                    "available_frames": 1,
+                    "frames": [
+                        {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
+                    ],
+                },
+            },
+        },
+    )
+
+    assert len(plans) == 1
+    assert plans[0].var_id == "mrms_recent_precip_6h"
+    assert plans[0].mode == "reuse"
+    assert plans[0].expected_frame_count == 3
+
+
+def test_run_once_fast_publishes_and_queues_postprocess(tmp_path: Path, monkeypatch) -> None:
+    config = _config_with_recent_precip(tmp_path)
+    radar_scans = [
+        MRMSScanRef(
+            valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+            url="https://example.test/mrms/a.grib2.gz",
+            filename="a.grib2.gz",
+        ),
+        MRMSScanRef(
+            valid_time=datetime(2026, 3, 27, 12, 2, tzinfo=timezone.utc),
+            url="https://example.test/mrms/b.grib2.gz",
+            filename="b.grib2.gz",
+        ),
+    ]
+    qpe_scan = MRMSScanRef(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        source_valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        url="https://example.test/qpe/06h/a.grib2.gz",
+        filename="qpe06.grib2.gz",
+    )
+
+    def _discover(**kwargs):
+        if kwargs.get("listing_url") == config.listing_url:
+            return radar_scans
+        return [qpe_scan]
+
+    monkeypatch.setattr(mrms_poller, "discover_recent_scans_http", _discover)
+    monkeypatch.setattr(mrms_poller, "freeze_bundle_scans", lambda items, **_: items)
+    monkeypatch.setattr(mrms_poller, "_latest_published_bundle_state", lambda _: (None, False))
+    monkeypatch.setattr(mrms_poller, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(mrms_poller, "download_scan", lambda scan, **_: tmp_path / scan.filename)
+
+    class _Decoded:
+        def __init__(self, valid_time):
+            self.valid_time = valid_time
+            self.values = np.ones((2, 2), dtype=np.float32)
+            self.decoder = "wgrib2"
+            self.metadata = {}
+
+    monkeypatch.setattr(mrms_poller, "decode_scan", lambda path, valid_time, **_: _Decoded(valid_time))
+
+    published: dict[str, object] = {}
+    queued: list[mrms_poller.MRMSPostprocessRequest] = []
+
+    def _publish(**kwargs):
+        published.update(kwargs)
+        return MRMSPublishResult(
+            run_id="20260327_1204z",
+            published_run_dir=tmp_path / "published" / "mrms" / "20260327_1204z",
+            manifest_path=tmp_path / "manifests" / "mrms" / "20260327_1204z.json",
+            frame_count=2,
+        )
+
+    monkeypatch.setattr(mrms_poller, "publish_mrms_bundle", _publish)
+    monkeypatch.setattr(mrms_poller, "_schedule_postprocess", lambda request: queued.append(request))
+    monkeypatch.setattr(mrms_poller, "_enforce_retention", lambda _: None)
+
+    result = mrms_poller.run_once(config)
+
+    assert result.action == "published"
+    assert published["build_grid_artifacts"] is False
+    assert published.get("supplemental_variable_frames") is None
+    assert len(queued) == 1
+    assert queued[0].run_id == "20260327_1204z"
+    assert len(queued[0].supplemental_plans) == 1
+    assert queued[0].supplemental_plans[0].var_id == "mrms_recent_precip_6h"
+    assert queued[0].supplemental_plans[0].mode == "build"
+

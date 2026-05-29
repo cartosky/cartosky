@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -13,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from app.config import grid_build_enabled
 from app.services.mrms_fetch import (
     MRMS_LISTING_URL,
     MRMS_PRECIP_FLAG_FILE_RE,
@@ -33,6 +36,7 @@ from app.services.mrms_publish import (
     MRMSBundleFrame,
     MRMSPublishResult,
     MRMSSupplementalFrame,
+    finalize_mrms_published_run,
     load_latest_published_mrms_frames,
     publish_mrms_bundle,
 )
@@ -93,6 +97,31 @@ class MRMSPollerCycleResult:
     message: str
 
 
+@dataclass(frozen=True)
+class MRMSSupplementalPlan:
+    var_id: str
+    expected_frame_count: int
+    mode: str
+    frozen_scans: tuple[MRMSScanRef, ...]
+    file_re: Any
+    previous_manifest_entry: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class MRMSPostprocessRequest:
+    data_root: Path
+    run_id: str
+    previous_run_id: str | None
+    config: MRMSPollerConfig
+    supplemental_plans: tuple[MRMSSupplementalPlan, ...] = ()
+
+
+_POSTPROCESS_LOCK = threading.Lock()
+_POSTPROCESS_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_POSTPROCESS_FUTURE: concurrent.futures.Future[None] | None = None
+_PENDING_POSTPROCESS: MRMSPostprocessRequest | None = None
+
+
 def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
     target_frame_count = compute_target_frame_count(
         window_minutes=config.window_minutes,
@@ -145,6 +174,7 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
     newest_scan_valid_time = frozen[-1].valid_time.astimezone(timezone.utc)
     latest_published_valid_time, latest_bundle_complete = _latest_published_bundle_state(config.data_root)
     latest_run_id, previous_frames = load_latest_published_mrms_frames(config.data_root)
+    previous_manifest = _load_manifest_for_run(config.data_root, latest_run_id)
     previously_published_valid_times = {
         frame.valid_time.astimezone(timezone.utc)
         for frame in previous_frames
@@ -177,6 +207,11 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
 
     frames: list[MRMSBundleFrame] = []
     failed_scans: list[str] = []
+    supplemental_plans = _plan_recent_precip_postprocess(
+        config=config,
+        previous_run_id=latest_run_id,
+        previous_manifest=previous_manifest,
+    )
     with tempfile.TemporaryDirectory(prefix="cartosky-mrms-") as tmpdir:
         download_dir = Path(tmpdir)
         total_scans = len(scans_to_decode)
@@ -210,11 +245,6 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
             except Exception as exc:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
                 failed_scans.append(scan.filename)
-
-        recent_precip_frames, recent_precip_expected_counts = _build_recent_precip_frames(
-            config=config,
-            download_dir=download_dir,
-        )
 
     available_valid_times = {
         frame.valid_time.astimezone(timezone.utc)
@@ -254,9 +284,18 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         previous_frames=previous_frames,
         target_frame_count=len(frozen),
         expected_frame_count=len(frozen),
-        supplemental_variable_frames=recent_precip_frames,
-        supplemental_expected_frame_counts=recent_precip_expected_counts,
+        build_grid_artifacts=False,
     )
+    if supplemental_plans or grid_build_enabled():
+        _schedule_postprocess(
+            MRMSPostprocessRequest(
+                data_root=config.data_root,
+                run_id=publish_result.run_id,
+                previous_run_id=latest_run_id,
+                config=config,
+                supplemental_plans=tuple(supplemental_plans),
+            )
+        )
     _enforce_retention(config)
 
     message = (
@@ -456,6 +495,127 @@ def _latest_published_bundle_state(data_root: Path) -> tuple[datetime | None, bo
     return newest, bundle_complete
 
 
+def _load_manifest_for_run(data_root: Path, run_id: str | None) -> dict[str, Any] | None:
+    if not run_id:
+        return None
+    manifest_path = data_root / "manifests" / "mrms" / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _schedule_postprocess(request: MRMSPostprocessRequest) -> None:
+    global _POSTPROCESS_EXECUTOR, _POSTPROCESS_FUTURE, _PENDING_POSTPROCESS
+
+    with _POSTPROCESS_LOCK:
+        if _POSTPROCESS_EXECUTOR is None:
+            _POSTPROCESS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="mrms-postprocess",
+            )
+
+        if _POSTPROCESS_FUTURE is None or _POSTPROCESS_FUTURE.done():
+            _POSTPROCESS_FUTURE = _POSTPROCESS_EXECUTOR.submit(_run_postprocess_worker, request)
+            logger.info("MRMS postprocess queued run=%s mode=immediate", request.run_id)
+            return
+
+        _PENDING_POSTPROCESS = request
+        logger.info("MRMS postprocess queued run=%s mode=replace-pending", request.run_id)
+
+
+def _run_postprocess_worker(initial_request: MRMSPostprocessRequest) -> None:
+    global _POSTPROCESS_FUTURE, _PENDING_POSTPROCESS
+
+    current_request: MRMSPostprocessRequest | None = initial_request
+    while current_request is not None:
+        try:
+            _run_postprocess_request(current_request)
+        except Exception:
+            logger.exception("MRMS postprocess failed run=%s", current_request.run_id)
+
+        with _POSTPROCESS_LOCK:
+            if _PENDING_POSTPROCESS is None:
+                _POSTPROCESS_FUTURE = None
+                current_request = None
+            else:
+                current_request = _PENDING_POSTPROCESS
+                _PENDING_POSTPROCESS = None
+
+
+def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
+    if not request.supplemental_plans and not grid_build_enabled():
+        return
+
+    logger.info(
+        "MRMS postprocess starting run=%s supplemental=%d grid=%s",
+        request.run_id,
+        len(request.supplemental_plans),
+        "yes" if grid_build_enabled() else "no",
+    )
+
+    decode_cache: dict[tuple[str, str], Any] = {}
+    supplemental_frames: dict[str, list[MRMSSupplementalFrame]] = {}
+    supplemental_expected_counts: dict[str, int] = {}
+    reused_manifest_entries: dict[str, dict[str, Any]] = {}
+
+    with tempfile.TemporaryDirectory(prefix="cartosky-mrms-post-") as tmpdir:
+        download_dir = Path(tmpdir)
+        for plan in request.supplemental_plans:
+            supplemental_expected_counts[plan.var_id] = plan.expected_frame_count
+            can_reuse = (
+                plan.mode == "reuse"
+                and request.previous_run_id is not None
+                and plan.previous_manifest_entry is not None
+                and _published_variable_artifacts_exist(
+                    request.data_root,
+                    run_id=request.previous_run_id,
+                    var_id=plan.var_id,
+                )
+            )
+            if can_reuse:
+                reused_manifest_entries[plan.var_id] = json.loads(json.dumps(plan.previous_manifest_entry))
+                continue
+
+            ordered_frames = [
+                _decode_recent_precip_frame(
+                    scan=scan,
+                    file_re=plan.file_re,
+                    config=request.config,
+                    download_dir=download_dir,
+                    decode_cache=decode_cache,
+                    metadata={
+                        "source_product": plan.var_id,
+                        "accumulation_window_hours": int(plan.var_id.rsplit("_", 1)[-1].removesuffix("h")),
+                    },
+                )
+                for scan in plan.frozen_scans
+            ]
+            if ordered_frames:
+                supplemental_frames[plan.var_id] = ordered_frames
+
+    finalize_mrms_published_run(
+        data_root=request.data_root,
+        run_id=request.run_id,
+        reused_supplemental_from_run_id=request.previous_run_id,
+        reused_supplemental_manifest_entries=reused_manifest_entries,
+        supplemental_variable_frames=supplemental_frames,
+        supplemental_expected_frame_counts=supplemental_expected_counts,
+        build_grid_artifacts=grid_build_enabled(),
+    )
+    logger.info("MRMS postprocess complete run=%s", request.run_id)
+
+
+def _published_variable_artifacts_exist(data_root: Path, *, run_id: str, var_id: str) -> bool:
+    var_dir = data_root / "published" / MRMS_MODEL_ID / run_id / var_id
+    if not var_dir.is_dir():
+        return False
+    return any(var_dir.glob("fh*.json")) and any(var_dir.glob("fh*.val.cog.tif"))
+
+
 def _enforce_retention(config: MRMSPollerConfig) -> None:
     enforce_run_artifact_retention(config.data_root / "staging" / "mrms", config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "published" / "mrms", config.keep_runs)
@@ -592,24 +752,22 @@ def _format_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _build_recent_precip_frames(
+def _plan_recent_precip_postprocess(
     *,
     config: MRMSPollerConfig,
-    download_dir: Path,
-) -> tuple[dict[str, list[MRMSSupplementalFrame]], dict[str, int]]:
-    frames_by_var: dict[str, list[MRMSSupplementalFrame]] = {}
-    expected_counts: dict[str, int] = {}
-    decode_cache: dict[tuple[str, str], Any] = {}
+    previous_run_id: str | None,
+    previous_manifest: dict[str, Any] | None,
+) -> list[MRMSSupplementalPlan]:
+    plans: list[MRMSSupplementalPlan] = []
 
     hourly_target_frame_count = compute_target_frame_count(
         window_minutes=config.window_minutes,
         frame_cadence_minutes=DEFAULT_PRECIP_FRAME_CADENCE_MINUTES,
     )
     if hourly_target_frame_count < 1:
-        return frames_by_var, expected_counts
+        return plans
 
-    qpe_24h_scans: list[MRMSScanRef] = []
-    qpe_24h_frozen: list[MRMSScanRef] = []
+    previous_variables = previous_manifest.get("variables") if isinstance(previous_manifest, dict) else None
     for var_id, (default_listing_url, file_re) in MRMS_RECENT_PRECIP_PRODUCTS.items():
         listing_url = _recent_precip_listing_url(config, var_id, default_listing_url)
         if not listing_url:
@@ -630,24 +788,40 @@ def _build_recent_precip_frames(
             logger.exception("MRMS recent precip discovery failed for %s", var_id)
             continue
 
-        expected_counts[var_id] = hourly_target_frame_count
-        frames_by_var[var_id] = [
-            _decode_recent_precip_frame(
-                scan=scan,
-                file_re=file_re,
-                config=config,
-                download_dir=download_dir,
-                decode_cache=decode_cache,
-                metadata={"source_product": var_id, "accumulation_window_hours": int(var_id.rsplit("_", 1)[-1].removesuffix("h"))},
-            )
+        previous_entry = previous_variables.get(var_id) if isinstance(previous_variables, dict) else None
+        previous_frames = previous_entry.get("frames") if isinstance(previous_entry, dict) else None
+        previous_signature = tuple(
+            str(frame.get("valid_time")).strip()
+            for frame in previous_frames
+            if isinstance(frame, dict) and str(frame.get("valid_time") or "").strip()
+        ) if isinstance(previous_frames, list) else ()
+        current_signature = tuple(
+            (scan.source_valid_time or scan.valid_time)
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
             for scan in frozen
-        ]
-        if var_id == "mrms_recent_precip_24h":
-            qpe_24h_scans = scans
-            qpe_24h_frozen = frozen
+        )
+        mode = "build"
+        if (
+            previous_run_id
+            and isinstance(previous_entry, dict)
+            and int(previous_entry.get("available_frames") or 0) > 0
+            and previous_signature == current_signature
+        ):
+            mode = "reuse"
 
-    frames_by_var = {var_id: frames for var_id, frames in frames_by_var.items() if frames}
-    return frames_by_var, expected_counts
+        plans.append(
+            MRMSSupplementalPlan(
+                var_id=var_id,
+                expected_frame_count=hourly_target_frame_count,
+                mode=mode,
+                frozen_scans=tuple(frozen),
+                file_re=file_re,
+                previous_manifest_entry=dict(previous_entry) if isinstance(previous_entry, dict) else None,
+            )
+        )
+
+    return plans
 
 
 def _recent_precip_listing_url(config: MRMSPollerConfig, var_id: str, fallback: str) -> str:

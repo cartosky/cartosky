@@ -234,6 +234,7 @@ def publish_mrms_bundle(
     expected_frame_count: int | None = None,
     supplemental_variable_frames: dict[str, list[MRMSSupplementalFrame]] | None = None,
     supplemental_expected_frame_counts: dict[str, int] | None = None,
+    build_grid_artifacts: bool = True,
 ) -> MRMSPublishResult:
     if not frames and not previous_frames:
         raise ValueError("MRMS bundle publish requires at least one frame")
@@ -269,6 +270,7 @@ def publish_mrms_bundle(
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
+                build_grid_artifacts=build_grid_artifacts,
             )
             targets.append((MRMS_VARIABLE_ID, fh))
             if reused_ptype:
@@ -286,6 +288,7 @@ def publish_mrms_bundle(
             run_id=run_id,
             forecast_hour=fh,
             frame=frame,
+            build_grid_artifacts=build_grid_artifacts,
         )
         has_ptype = frame.precip_flag_values is not None
         if has_ptype:
@@ -295,6 +298,7 @@ def publish_mrms_bundle(
                     run_id=run_id,
                     forecast_hour=fh,
                     frame=frame,
+                    build_grid_artifacts=build_grid_artifacts,
                 )
             except Exception:
                 logger.warning(
@@ -340,6 +344,7 @@ def publish_mrms_bundle(
                 var_id=var_id,
                 forecast_hour=fh,
                 frame=supplemental_frame,
+                build_grid_artifacts=build_grid_artifacts,
             )
             supplemental_targets.setdefault(var_id, []).append((var_id, fh))
     all_targets = targets + ptype_targets + [
@@ -362,7 +367,7 @@ def publish_mrms_bundle(
         else len(ordered_valid_times)
     )
 
-    if grid_build_enabled():
+    if build_grid_artifacts and grid_build_enabled():
         grid_variables = [MRMS_VARIABLE_ID]
         if ptype_targets:
             grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
@@ -466,6 +471,7 @@ def write_mrms_frame(
     run_id: str,
     forecast_hour: int,
     frame: MRMSBundleFrame,
+    build_grid_artifacts: bool = True,
 ) -> None:
     values = np.asarray(frame.values, dtype=np.float32)
     values = _warp_frame_to_target_grid(values, frame=frame)
@@ -512,7 +518,7 @@ def write_mrms_frame(
     if source_metadata:
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
-    if grid_build_enabled():
+    if build_grid_artifacts and grid_build_enabled():
         write_grid_frames_for_run_root(
             run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
             model=MRMS_MODEL_ID,
@@ -529,6 +535,7 @@ def reuse_mrms_frame(
     run_id: str,
     forecast_hour: int,
     frame: MRMSPublishedFrame,
+    build_grid_artifacts: bool = True,
 ) -> bool:
     """Reuse a previously published reflectivity frame (and its ptype frame if available).
 
@@ -552,7 +559,7 @@ def reuse_mrms_frame(
         source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
-    if grid_build_enabled():
+    if build_grid_artifacts and grid_build_enabled():
         if not _reuse_mrms_grid_artifacts(
             data_root=data_root,
             run_id=run_id,
@@ -592,7 +599,7 @@ def reuse_mrms_frame(
                 ptype_source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 ptype_sc["source_metadata"] = ptype_source_metadata
             write_json_atomic(ptype_sidecar_path, ptype_sc)
-            if grid_build_enabled():
+            if build_grid_artifacts and grid_build_enabled():
                 if not _reuse_mrms_grid_artifacts(
                     data_root=data_root,
                     run_id=run_id,
@@ -828,6 +835,7 @@ def write_mrms_radar_ptype_frame(
     run_id: str,
     forecast_hour: int,
     frame: MRMSBundleFrame,
+    build_grid_artifacts: bool = True,
 ) -> None:
     """Write an mrms_radar_ptype frame by compositing reflectivity + PrecipFlag."""
     if frame.precip_flag_values is None:
@@ -889,7 +897,7 @@ def write_mrms_radar_ptype_frame(
     if source_metadata:
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
-    if grid_build_enabled():
+    if build_grid_artifacts and grid_build_enabled():
         write_grid_frames_for_run_root(
             run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
             model=MRMS_MODEL_ID,
@@ -907,6 +915,26 @@ def write_mrms_supplemental_frame(
     var_id: str,
     forecast_hour: int,
     frame: MRMSSupplementalFrame,
+    build_grid_artifacts: bool = True,
+) -> None:
+    _write_mrms_supplemental_frame_to_run_root(
+        run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+        run_id=run_id,
+        var_id=var_id,
+        forecast_hour=forecast_hour,
+        frame=frame,
+        build_grid_artifacts=build_grid_artifacts,
+    )
+
+
+def _write_mrms_supplemental_frame_to_run_root(
+    *,
+    run_root: Path,
+    run_id: str,
+    var_id: str,
+    forecast_hour: int,
+    frame: MRMSSupplementalFrame,
+    build_grid_artifacts: bool,
 ) -> None:
     color_map_id = MRMS_RECENT_PRECIP_COLOR_MAP_IDS.get(var_id)
     if not color_map_id:
@@ -914,7 +942,7 @@ def write_mrms_supplemental_frame(
 
     warped_values = _warp_supplemental_values(frame.values, frame=frame)
     fh_str = f"fh{int(forecast_hour):03d}"
-    staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / var_id
+    staging_dir = run_root / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
@@ -954,14 +982,189 @@ def write_mrms_supplemental_frame(
     if source_metadata:
         sidecar["source_metadata"] = source_metadata
     write_json_atomic(sidecar_path, sidecar)
-    if grid_build_enabled():
+    if build_grid_artifacts and grid_build_enabled():
         write_grid_frames_for_run_root(
-            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+            run_root=run_root,
             model=MRMS_MODEL_ID,
             var=var_id,
             fh=int(forecast_hour),
             values=warped_values,
             transform=_target_grid_transform(),
+        )
+
+
+def finalize_mrms_published_run(
+    *,
+    data_root: Path,
+    run_id: str,
+    reused_supplemental_from_run_id: str | None = None,
+    reused_supplemental_manifest_entries: dict[str, dict[str, Any]] | None = None,
+    supplemental_variable_frames: dict[str, list[MRMSSupplementalFrame]] | None = None,
+    supplemental_expected_frame_counts: dict[str, int] | None = None,
+    build_grid_artifacts: bool = True,
+) -> None:
+    published_run_root = data_root / "published" / MRMS_MODEL_ID / run_id
+    if not published_run_root.is_dir():
+        raise ValueError(f"Cannot finalize missing published MRMS run: {published_run_root}")
+
+    manifest_path = data_root / "manifests" / MRMS_MODEL_ID / f"{run_id}.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"Cannot finalize MRMS run without manifest: {manifest_path}")
+
+    manifest = json.loads(manifest_path.read_text())
+    manifest_variables = dict(manifest.get("variables") or {})
+    expected_counts = dict(supplemental_expected_frame_counts or {})
+
+    for var_id, previous_entry in sorted((reused_supplemental_manifest_entries or {}).items()):
+        if reused_supplemental_from_run_id:
+            _copy_published_variable_artifacts(
+                data_root=data_root,
+                source_run_id=reused_supplemental_from_run_id,
+                target_run_id=run_id,
+                var_id=var_id,
+            )
+        manifest_variables[var_id] = json.loads(json.dumps(previous_entry))
+
+    for var_id, supplemental_frames in sorted((supplemental_variable_frames or {}).items()):
+        ordered_frames = sorted(
+            supplemental_frames,
+            key=lambda item: item.valid_time.astimezone(timezone.utc),
+        )
+        for fh, supplemental_frame in enumerate(ordered_frames):
+            _write_mrms_supplemental_frame_to_run_root(
+                run_root=published_run_root,
+                run_id=run_id,
+                var_id=var_id,
+                forecast_hour=fh,
+                frame=supplemental_frame,
+                build_grid_artifacts=False,
+            )
+        manifest_variables[var_id] = _supplemental_manifest_entry(
+            frames=ordered_frames,
+            expected_frame_count=max(0, int(expected_counts.get(var_id, len(ordered_frames)))),
+        )
+
+    if manifest_variables != manifest.get("variables"):
+        manifest_last_updated = manifest.get("last_updated")
+        manifest["variables"] = manifest_variables
+        manifest["metadata"] = build_observed_bundle_health(
+            latest_run=run_id,
+            manifest={
+                "last_updated": manifest_last_updated,
+                "variables": manifest_variables,
+            },
+            source=MRMS_MODEL_ID,
+            now_utc=datetime.now(timezone.utc),
+        )
+        write_json_atomic(manifest_path, manifest)
+
+    if build_grid_artifacts and grid_build_enabled():
+        grid_variables = [MRMS_VARIABLE_ID]
+        if (published_run_root / MRMS_RADAR_PTYPE_VARIABLE_ID).is_dir():
+            grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
+        grid_variables.extend(
+            var_id
+            for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
+            if (published_run_root / var_id).is_dir()
+        )
+        _build_published_run_grid_artifacts(
+            data_root=data_root,
+            run_id=run_id,
+            variables=tuple(dict.fromkeys(grid_variables)),
+        )
+
+
+def _supplemental_manifest_entry(
+    *,
+    frames: list[MRMSSupplementalFrame],
+    expected_frame_count: int,
+) -> dict[str, Any]:
+    return {
+        "expected_frames": max(0, int(expected_frame_count)),
+        "available_frames": len(frames),
+        "frames": [
+            {
+                "fh": fh,
+                "valid_time": (
+                    (frame.source_valid_time or frame.valid_time)
+                    .astimezone(timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                ),
+            }
+            for fh, frame in enumerate(frames)
+        ],
+    }
+
+
+def _copy_published_variable_artifacts(
+    *,
+    data_root: Path,
+    source_run_id: str,
+    target_run_id: str,
+    var_id: str,
+) -> None:
+    source_dir = data_root / "published" / MRMS_MODEL_ID / source_run_id / var_id
+    if not source_dir.is_dir():
+        raise ValueError(f"Cannot reuse missing MRMS supplemental directory: {source_dir}")
+
+    target_dir = data_root / "published" / MRMS_MODEL_ID / target_run_id / var_id
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_path in sorted(source_dir.glob("fh*")):
+        if source_path.is_dir() or source_path.name.startswith("grid"):
+            continue
+        _link_or_copy(source_path, target_dir / source_path.name)
+
+
+def _build_published_run_grid_artifacts(
+    *,
+    data_root: Path,
+    run_id: str,
+    variables: tuple[str, ...],
+) -> None:
+    run_root = data_root / "published" / MRMS_MODEL_ID / run_id
+    built_variables: list[str] = []
+
+    for var_id in variables:
+        var_dir = run_root / var_id
+        if not var_dir.is_dir():
+            continue
+
+        grid_dir = var_dir / "grid"
+        if grid_dir.exists():
+            shutil.rmtree(grid_dir, ignore_errors=True)
+
+        wrote_any = False
+        for sidecar_path in sorted(var_dir.glob("fh*.json")):
+            fh = _forecast_hour_from_artifact_name(sidecar_path)
+            if fh is None:
+                continue
+            value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
+            if not value_path.is_file():
+                continue
+            with rasterio.open(value_path) as ds:
+                write_grid_frames_for_run_root(
+                    run_root=run_root,
+                    model=MRMS_MODEL_ID,
+                    var=var_id,
+                    fh=fh,
+                    values=ds.read(1).astype(np.float32, copy=False),
+                    transform=ds.transform,
+                    projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+                )
+            wrote_any = True
+
+        if wrote_any:
+            built_variables.append(var_id)
+
+    if built_variables:
+        build_grid_manifests_for_run_root(
+            run_root=run_root,
+            model=MRMS_MODEL_ID,
+            run=run_id,
+            variables=tuple(dict.fromkeys(built_variables)),
         )
 
 
