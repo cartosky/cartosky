@@ -23,6 +23,10 @@ class _KucheraPlugin:
     def normalize_var_id(self, var_key: str) -> str:
         return str(var_key)
 
+    def herbie_request(self, *, product: str | None = None, var_key: str | None = None, run_date=None, fh: int | None = None, search_pattern: str | None = None):
+        del var_key, run_date, fh, search_pattern
+        return SimpleNamespace(model="test", product=product, herbie_kwargs=None)
+
     def get_var_capability(self, var_key: str):
         del var_key
         return None
@@ -43,6 +47,13 @@ class _KucheraPlugin:
                 hints={},
             )
         )
+
+    def search_patterns_for_var(self, *, var_key: str, fh: int | None = None, product: str | None = None, var_spec=None):
+        del fh, product, var_spec
+        resolved = self.get_var(var_key)
+        if resolved is None:
+            return []
+        return list(getattr(resolved.selectors, "search", []) or [])
 
 
 def _kuchera_var_spec() -> SimpleNamespace:
@@ -187,3 +198,71 @@ def test_kuchera_apcp_falls_back_once_when_exact_has_no_inventory(monkeypatch, c
     assert "exact_guess_used=true" in caplog.text
     assert 'reason="inventory_exact_match_invalid_result"' in caplog.text
     assert np.isfinite(data).all()
+
+
+def test_resolve_apcp_step_data_exact_match_uses_explicit_target_grid_warp(monkeypatch) -> None:
+    plugin = _KucheraPlugin()
+    raw_crs = CRS.from_epsg(4326)
+    raw_transform = Affine.identity()
+    warped_transform = Affine.translation(1000.0, 2000.0)
+    exact_pattern = derive_module._apcp_exact_window_pattern(0, 1)
+    raw_data = np.arange(16, dtype=np.float32).reshape(4, 4)
+    warped_data = np.arange(4, dtype=np.float32).reshape(2, 2)
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, fh, herbie_kwargs
+        pattern = str(search_pattern)
+        meta = {"inventory_line": exact_pattern.rstrip("$"), "search_pattern": pattern}
+        return (raw_data, raw_crs, raw_transform, meta) if return_meta else (raw_data, raw_crs, raw_transform)
+
+    def _fake_warp_component_to_target_grid(*, raw_data, raw_crs, raw_transform, model_id, target_region, target_grid_id, resampling):
+        assert model_id == "nam"
+        assert target_region == "conus"
+        assert target_grid_id == "climatology:era5:conus:25000.0m"
+        assert resampling == "bilinear"
+        np.testing.assert_array_equal(raw_data, np.arange(16, dtype=np.float32).reshape(4, 4))
+        assert raw_crs == CRS.from_epsg(4326)
+        assert raw_transform == Affine.identity()
+        return warped_data, warped_transform
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_pattern],
+    )
+    monkeypatch.setattr(derive_module, "_warp_component_to_target_grid", _fake_warp_component_to_target_grid)
+
+    ctx = derive_module.FetchContext(coverage="conus")
+    step_data, apcp_valid, step_crs, step_transform, step_mode = derive_module._resolve_apcp_step_data(
+        step_fh=1,
+        step_index=0,
+        step_fhs=[1],
+        model_id="nam",
+        product="conusnest.hiresf",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        model_plugin=plugin,
+        ctx=ctx,
+        apcp_component="apcp_step",
+        apcp_product=None,
+        use_warped=True,
+        target_region="conus",
+        target_grid_id="climatology:era5:conus:25000.0m",
+        resampling="bilinear",
+        cum_diff_state=derive_module._ApcpCumDiffState(),
+    )
+
+    np.testing.assert_array_equal(step_data, warped_data)
+    np.testing.assert_array_equal(apcp_valid, np.isfinite(warped_data) & (warped_data >= 0.0))
+    assert step_crs == CRS.from_epsg(3857)
+    assert step_transform == warped_transform
+    assert step_mode == "exact_step"

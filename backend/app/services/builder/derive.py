@@ -3365,15 +3365,14 @@ def _resolve_apcp_step_data(
                 selected_meta = dict(selected_meta)
 
                 if use_warped:
-                    warped_data, warped_transform = warp_to_target_grid(
-                        selected_data,
-                        selected_crs,
-                        selected_transform,
-                        model=model_id,
-                        region=target_region,
+                    warped_data, warped_transform = _warp_component_to_target_grid(
+                        raw_data=selected_data,
+                        raw_crs=selected_crs,
+                        raw_transform=selected_transform,
+                        model_id=model_id,
+                        target_region=target_region,
+                        target_grid_id=target_grid_id,
                         resampling=resampling,
-                        src_nodata=None,
-                        dst_nodata=float("nan"),
                     )
                     selected_data = warped_data.astype(np.float32, copy=False)
                     selected_crs = rasterio.crs.CRS.from_epsg(3857)
