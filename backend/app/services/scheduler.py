@@ -47,11 +47,14 @@ DEFAULT_DATA_ROOT = Path("/opt/cartosky/data")
 DEFAULT_PRIMARY_VAR = "tmp2m"
 DEFAULT_VARS = "auto"
 DEFAULT_POLL_SECONDS = 300
+DEFAULT_KEEP_RUNS = 4
 INCOMPLETE_RUN_POLL_SECONDS = 60
 DEFAULT_PROMOTION_FHS = (0, 1, 2)
 DEFAULT_PROBE_VAR = "tmp2m"
 CANONICAL_COVERAGE = "conus"
 AUTO_VARS_TOKENS = {"auto", "default", "all", "buildable", "*"}
+MODEL_CATEGORY_KEEP_RUNS = 6
+ENSEMBLE_CATEGORY_KEEP_RUNS = 6
 ENV_DEFAULT_VARS = ("CARTOSKY_SCHEDULER_VARS", "CARTOSKY_V3_SCHEDULER_VARS", "TWF_V3_SCHEDULER_VARS")
 ENV_DEFAULT_PRIMARY_VARS = (
     "CARTOSKY_SCHEDULER_PRIMARY_VARS",
@@ -1520,6 +1523,41 @@ def _enforce_run_retention(root: Path, keep_runs: int) -> None:
         shutil.rmtree(old_run_dir, ignore_errors=True)
 
 
+def _scheduler_product_category(plugin: Any | None) -> str:
+    capabilities = getattr(plugin, "capabilities", None)
+    if capabilities is None:
+        return "model"
+
+    time_axis_mode = str(getattr(capabilities, "ui_constraints", {}).get("time_axis_mode", "") or "").strip().lower()
+    if time_axis_mode == "observed":
+        return "obs"
+    if time_axis_mode == "valid":
+        return "forecasts"
+
+    product = str(getattr(capabilities, "product", "") or getattr(plugin, "product", "") or "").strip().lower()
+    if product == "obs":
+        return "obs"
+    if product == "forecast":
+        return "forecasts"
+
+    ensemble = getattr(capabilities, "ensemble", None)
+    if isinstance(ensemble, dict) and ensemble:
+        return "ensemble"
+
+    return "model"
+
+
+def _resolved_keep_runs_for_scheduler_plugin(plugin: Any | None, keep_runs: int) -> int:
+    category = _scheduler_product_category(plugin)
+    if keep_runs != DEFAULT_KEEP_RUNS:
+        return keep_runs
+    if category == "ensemble":
+        return ENSEMBLE_CATEGORY_KEEP_RUNS
+    if category == "model":
+        return MODEL_CATEGORY_KEEP_RUNS
+    return keep_runs
+
+
 def _extract_herbie_run_id(path: Path, *, model_root: Path) -> str | None:
     try:
         relative = path.relative_to(model_root)
@@ -2272,8 +2310,9 @@ def _process_run(
             published_once = True
             built_ok_at_last_publish = available
 
-    _enforce_run_retention(data_root / "staging" / model_id, keep_runs)
-    _enforce_run_retention(data_root / "published" / model_id, keep_runs)
+    effective_keep_runs = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
+    _enforce_run_retention(data_root / "staging" / model_id, effective_keep_runs)
+    _enforce_run_retention(data_root / "published" / model_id, effective_keep_runs)
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         herbie_model_id = model_id
@@ -2284,7 +2323,7 @@ def _process_run(
                 herbie_model_id = resolved_model
         except Exception:
             logger.exception("Failed resolving Herbie cache model for retention: scheduler_model=%s", model_id)
-        _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), herbie_model_id, keep_runs)
+        _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), herbie_model_id, effective_keep_runs)
 
     return run_id, available, total
 
@@ -2471,7 +2510,7 @@ def main(argv: list[str] | None = None) -> int:
     keep_runs = (
         int(args.keep_runs)
         if args.keep_runs is not None
-        else _int_from_env(ENV_DEFAULT_KEEP_RUNS, 4, min_value=1)
+        else _int_from_env(ENV_DEFAULT_KEEP_RUNS, DEFAULT_KEEP_RUNS, min_value=1)
     )
     probe_var = None
     if isinstance(args.probe_var, str) and args.probe_var.strip():

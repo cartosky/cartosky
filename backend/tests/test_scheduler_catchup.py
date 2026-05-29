@@ -105,6 +105,46 @@ class _FakeNAMBundlePlugin(_FakePlugin):
     id = "nam"
 
 
+class _FakeObservedRetentionPlugin(_FakePlugin):
+    id = "mrms"
+    capabilities = ModelCapabilities(
+        model_id="mrms",
+        name="MRMS",
+        product="obs",
+        ui_constraints={"time_axis_mode": "observed"},
+    )
+
+
+class _FakeForecastRetentionPlugin(_FakePlugin):
+    id = "wpc"
+    capabilities = ModelCapabilities(
+        model_id="wpc",
+        name="WPC",
+        product="forecast",
+        ui_constraints={"time_axis_mode": "valid"},
+    )
+
+
+class _FakeEnsembleRetentionPlugin(_FakePlugin):
+    id = "eps"
+    capabilities = ModelCapabilities(
+        model_id="eps",
+        name="EPS",
+        product="enfo",
+        ensemble={"supported_views": ["mean"], "default_view": "mean"},
+    )
+
+
+class _FakeModelRetentionPlugin(_FakePlugin):
+    id = "gfs"
+    product = "pgrb2.0p25"
+    capabilities = ModelCapabilities(
+        model_id="gfs",
+        name="GFS",
+        product="pgrb2.0p25",
+    )
+
+
 def test_parse_vars_or_auto_supports_auto_tokens() -> None:
     assert scheduler_module._parse_vars_or_auto(None) == []
     assert scheduler_module._parse_vars_or_auto("") == []
@@ -123,6 +163,19 @@ def test_eps_targets_are_derive_bundle_candidates() -> None:
     assert scheduler_module._is_derive_bundle_candidate(_FakePlugin(), "radar_ptype_rain")
     assert scheduler_module._is_derive_bundle_candidate(_FakeNAMBundlePlugin(), "radar_ptype_snow")
     assert not scheduler_module._is_derive_bundle_candidate(_FakeGFSBundlePlugin(), "wspd10m")
+
+
+def test_scheduler_retention_categories_only_expand_models_and_ensembles() -> None:
+    assert scheduler_module._scheduler_product_category(_FakeModelRetentionPlugin()) == "model"
+    assert scheduler_module._scheduler_product_category(_FakeEnsembleRetentionPlugin()) == "ensemble"
+    assert scheduler_module._scheduler_product_category(_FakeObservedRetentionPlugin()) == "obs"
+    assert scheduler_module._scheduler_product_category(_FakeForecastRetentionPlugin()) == "forecasts"
+
+    assert scheduler_module._resolved_keep_runs_for_scheduler_plugin(_FakeModelRetentionPlugin(), 4) == 6
+    assert scheduler_module._resolved_keep_runs_for_scheduler_plugin(_FakeEnsembleRetentionPlugin(), 4) == 6
+    assert scheduler_module._resolved_keep_runs_for_scheduler_plugin(_FakeObservedRetentionPlugin(), 4) == 4
+    assert scheduler_module._resolved_keep_runs_for_scheduler_plugin(_FakeForecastRetentionPlugin(), 4) == 4
+    assert scheduler_module._resolved_keep_runs_for_scheduler_plugin(_FakeModelRetentionPlugin(), 2) == 2
 
 
 def test_promotion_filter_keeps_ensemble_runtime_variable_dirs(tmp_path: Path) -> None:
@@ -1361,7 +1414,7 @@ def test_process_run_enforces_herbie_retention_for_resolved_cache_model(
         rebuild_existing=False,
     )
 
-    assert captured == [(tmp_path / "herbie_cache", "ifs", 4)]
+    assert captured == [(tmp_path / "herbie_cache", "ifs", 6)]
 
 
 def test_promote_run_merges_existing_published_vars(tmp_path: Path) -> None:
