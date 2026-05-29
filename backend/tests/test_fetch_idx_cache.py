@@ -760,6 +760,55 @@ def test_inventory_search_falls_back_to_raw_wgrib2_idx_when_herbie_df_is_empty(
     assert _FakeHerbie.idx_df_calls == 1
 
 
+def test_inventory_search_falls_back_from_empty_local_idx_file_to_remote_idx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    local_idx = tmp_path / "cached-empty.idx"
+    local_idx.write_text("", encoding="utf-8")
+    remote_idx = "https://example.test/nam.t18z.conusnest.hiresf16.tm00.grib2.idx"
+
+    class _FakeHerbie:
+        idx_df_calls = 0
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            self.idx = str(local_idx)
+            self.grib = "https://example.test/nam.t18z.conusnest.hiresf16.tm00.grib2"
+            self.priority = "aws"
+            self.model = "nam"
+            self.product = "conusnest.hiresf"
+            self.fxx = 16
+
+        @property
+        def index_as_dataframe(self):
+            type(self).idx_df_calls += 1
+            return pd.DataFrame(columns=["search_this", "start_byte", "end_byte"])
+
+    def _fake_idx_text_parser(idx_ref):
+        if idx_ref == remote_idx:
+            return pd.DataFrame([
+                {"search_this": ":TMP:2 m above ground:", "start_byte": 0, "end_byte": 100}
+            ])
+        return fetch_module._inventory_index_dataframe_from_wgrib2_lines(idx_ref)
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS", "600")
+    monkeypatch.setattr(fetch_module, "_inventory_index_dataframe_from_idx_text", _fake_idx_text_parser)
+
+    lines = fetch_module.inventory_lines_for_pattern(
+        model_id="nam",
+        product="conusnest.hiresf",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        fh=16,
+        search_pattern=":TMP:2 m above ground:",
+        herbie_kwargs={"priority": "aws"},
+    )
+
+    assert lines == [":TMP:2 m above ground:"]
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("idx_cache_alt_source_refresh", 0) == 1
+
+
 def test_grib_not_found_falls_back_to_manual_byte_range_refresh(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

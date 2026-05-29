@@ -1272,6 +1272,9 @@ def _inventory_search(
         grib_ref = getattr(H, "grib", None)
     except Exception:
         grib_ref = None
+    idx_ref_text = str(idx_ref or "").strip()
+    idx_ref_lower = idx_ref_text.lower()
+    grib_ref_text = str(grib_ref or "").strip()
     priority_token = str(priority).strip() or str(getattr(H, "priority", "") or "")
     model_token = str(model_id).strip() or str(getattr(H, "model", "") or "")
     run_token = run_date if isinstance(run_date, datetime) else getattr(H, "date", None)
@@ -1298,8 +1301,20 @@ def _inventory_search(
 
     try:
         if len(index_df) == 0:
-            idx_ref_text = str(idx_ref or "").strip().lower()
-            if idx_ref_text.startswith(("http://", "https://")):
+            if not idx_ref_lower.startswith(("http://", "https://")) and grib_ref_text.startswith(("http://", "https://")):
+                alternate_idx_ref = f"{grib_ref_text}.idx"
+                alternate_df = _inventory_index_dataframe_from_idx_text(alternate_idx_ref)
+                if alternate_df is not None:
+                    try:
+                        if len(alternate_df) > 0:
+                            _inventory_cache_set(idx_key, alternate_df, _inventory_cache_ttl_seconds())
+                            _metric_increment("idx_cache_alt_source_refresh")
+                            index_df = alternate_df
+                        else:
+                            return _InventorySearchResult(inventory=alternate_df, reason="idx_empty", idx_key=idx_key)
+                    except Exception:
+                        return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
+            elif idx_ref_lower.startswith(("http://", "https://")):
                 refreshed_df = _inventory_index_dataframe(H, idx_key=idx_key, force_refresh=True)
                 if refreshed_df is None:
                     return _InventorySearchResult(inventory=None, reason="idx_empty", idx_key=idx_key)
