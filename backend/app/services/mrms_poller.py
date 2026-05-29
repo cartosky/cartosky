@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -120,7 +121,7 @@ class MRMSPostprocessRequest:
 _POSTPROCESS_LOCK = threading.Lock()
 _POSTPROCESS_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 _POSTPROCESS_FUTURE: concurrent.futures.Future[None] | None = None
-_PENDING_POSTPROCESS: MRMSPostprocessRequest | None = None
+_PENDING_POSTPROCESS: deque[MRMSPostprocessRequest] = deque()
 
 
 def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
@@ -524,8 +525,12 @@ def _schedule_postprocess(request: MRMSPostprocessRequest) -> None:
             logger.info("MRMS postprocess queued run=%s mode=immediate", request.run_id)
             return
 
-        _PENDING_POSTPROCESS = request
-        logger.info("MRMS postprocess queued run=%s mode=replace-pending", request.run_id)
+        _PENDING_POSTPROCESS.append(request)
+        logger.info(
+            "MRMS postprocess queued run=%s mode=append-pending pending=%d",
+            request.run_id,
+            len(_PENDING_POSTPROCESS),
+        )
 
 
 def _run_postprocess_worker(initial_request: MRMSPostprocessRequest) -> None:
@@ -539,12 +544,11 @@ def _run_postprocess_worker(initial_request: MRMSPostprocessRequest) -> None:
             logger.exception("MRMS postprocess failed run=%s", current_request.run_id)
 
         with _POSTPROCESS_LOCK:
-            if _PENDING_POSTPROCESS is None:
+            if not _PENDING_POSTPROCESS:
                 _POSTPROCESS_FUTURE = None
                 current_request = None
             else:
-                current_request = _PENDING_POSTPROCESS
-                _PENDING_POSTPROCESS = None
+                current_request = _PENDING_POSTPROCESS.popleft()
 
 
 def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:

@@ -556,3 +556,43 @@ def test_run_postprocess_request_reuses_existing_supplemental_artifacts(tmp_path
     }
     assert captured["supplemental_variable_frames"] == {}
 
+
+def test_run_postprocess_worker_drains_all_queued_requests(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    processed: list[str] = []
+
+    monkeypatch.setattr(
+        mrms_poller,
+        "_run_postprocess_request",
+        lambda request: processed.append(request.run_id),
+    )
+
+    first = mrms_poller.MRMSPostprocessRequest(
+        data_root=tmp_path,
+        run_id="20260327_1204z",
+        previous_run_id=None,
+        config=config,
+    )
+    second = mrms_poller.MRMSPostprocessRequest(
+        data_root=tmp_path,
+        run_id="20260327_1206z",
+        previous_run_id="20260327_1204z",
+        config=config,
+    )
+    third = mrms_poller.MRMSPostprocessRequest(
+        data_root=tmp_path,
+        run_id="20260327_1208z",
+        previous_run_id="20260327_1206z",
+        config=config,
+    )
+
+    mrms_poller._PENDING_POSTPROCESS.clear()
+    mrms_poller._POSTPROCESS_FUTURE = object()  # non-None sentinel while worker is active
+    mrms_poller._PENDING_POSTPROCESS.extend((second, third))
+
+    mrms_poller._run_postprocess_worker(first)
+
+    assert processed == ["20260327_1204z", "20260327_1206z", "20260327_1208z"]
+    assert list(mrms_poller._PENDING_POSTPROCESS) == []
+    assert mrms_poller._POSTPROCESS_FUTURE is None
+
