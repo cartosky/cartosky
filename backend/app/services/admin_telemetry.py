@@ -1727,9 +1727,6 @@ def _scan_run_issue(
         latest_for_model=latest_for_model,
         now_utc=now_utc,
     )
-        validation_hours = _artifact_validation_hours(frame_hours, include_details=include_details)
-        if runtime_artifacts_pending:
-            continue
 
     base_row = {
         "id": f"{model_id}:{run_id}",
