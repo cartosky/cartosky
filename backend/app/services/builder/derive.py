@@ -3037,6 +3037,7 @@ def _seed_overlap_prior_bucket_window(
     apcp_component: str,
     apcp_product: str | None,
     use_warped: bool,
+    target_region: str,
     target_grid_id: str,
     resampling: str,
     start_fh: int,
@@ -3088,6 +3089,19 @@ def _seed_overlap_prior_bucket_window(
             )
         except Exception:
             return None
+
+    if use_warped:
+        step_data, warped_transform = _warp_component_to_target_grid(
+            raw_data=np.asarray(step_data, dtype=np.float32),
+            raw_crs=step_crs,
+            raw_transform=step_transform,
+            model_id=model_id,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
+        )
+        step_crs = rasterio.crs.CRS.from_epsg(3857)
+        step_transform = warped_transform
 
     inventory_line = str((apcp_meta or {}).get("inventory_line", search_pattern[:-1])).strip()
     window = _parse_apcp_accum_window_hours(inventory_line)
@@ -3518,6 +3532,7 @@ def _resolve_apcp_step_data(
                     apcp_component=apcp_component,
                     apcp_product=apcp_product,
                     use_warped=use_warped,
+                    target_region=target_region,
                     target_grid_id=target_grid_id,
                     resampling=resampling,
                     start_fh=int(window[0]),

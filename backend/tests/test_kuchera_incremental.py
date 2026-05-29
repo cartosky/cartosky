@@ -373,6 +373,69 @@ def test_incremental_recovery_uses_bounded_window_when_prev_missing(monkeypatch,
     assert "computed_steps=2" in caplog.text
 
 
+def test_seed_overlap_prior_bucket_window_warps_before_caching(monkeypatch) -> None:
+    raw_crs = CRS.from_epsg(4326)
+    raw_transform = Affine.identity()
+    warped_transform = Affine.translation(10.0, 20.0)
+    raw_data = np.arange(16, dtype=np.float32).reshape(4, 4)
+    warped_data = np.arange(4, dtype=np.float32).reshape(2, 2)
+
+    def _fake_fetch_variable(*, model_id, product, search_pattern, run_date, fh, herbie_kwargs=None, return_meta=False):
+        del model_id, product, run_date, fh, herbie_kwargs
+        meta = {
+            "inventory_line": ":APCP:surface:0-2 hour acc fcst:",
+            "search_pattern": str(search_pattern),
+        }
+        return (raw_data, raw_crs, raw_transform, meta) if return_meta else (raw_data, raw_crs, raw_transform)
+
+    def _fake_warp_component_to_target_grid(*, raw_data, raw_crs, raw_transform, model_id, target_region, target_grid_id, resampling):
+        assert model_id == "nam"
+        assert target_region == "conus"
+        assert target_grid_id == "nam:conus"
+        assert resampling == "bilinear"
+        assert raw_data.shape == (4, 4)
+        assert raw_crs == raw_crs
+        assert raw_transform == raw_transform
+        return warped_data, warped_transform
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(derive_module, "_warp_component_to_target_grid", _fake_warp_component_to_target_grid)
+
+    ctx = derive_module.FetchContext(coverage="conus")
+    cum_diff_state = derive_module._ApcpCumDiffState(consumed_through_fh=2)
+
+    seeded = derive_module._seed_overlap_prior_bucket_window(
+        model_id="nam",
+        product="conusnest.hiresf",
+        run_date=datetime(2026, 5, 28, 18, 0),
+        model_plugin=_Plugin(),
+        ctx=ctx,
+        apcp_component="apcp_step",
+        apcp_product=None,
+        use_warped=True,
+        target_region="conus",
+        target_grid_id="nam:conus",
+        resampling="bilinear",
+        start_fh=0,
+        through_fh=2,
+        cum_diff_state=cum_diff_state,
+    )
+
+    assert seeded is not None
+    step_clean, step_valid, step_crs, step_transform = seeded
+    assert step_clean.shape == (2, 2)
+    assert step_valid.shape == (2, 2)
+    assert step_crs == CRS.from_epsg(3857)
+    assert step_transform == warped_transform
+    np.testing.assert_array_equal(step_clean, warped_data)
+    assert len(ctx.resolved_apcp_cache) == 1
+    cached_step, cached_crs, cached_transform, cached_meta = next(iter(ctx.resolved_apcp_cache.values()))
+    np.testing.assert_array_equal(cached_step, warped_data)
+    assert cached_crs == CRS.from_epsg(3857)
+    assert cached_transform == warped_transform
+    assert cached_meta["selected_window"] == "0-2"
+
+
 def test_incremental_reuse_with_cumulative_apcp_does_not_overcount(monkeypatch) -> None:
     """Regression: when incremental reuse is active and the only available APCP
     window for the final step is a cumulative 0-N field, the derive must NOT
