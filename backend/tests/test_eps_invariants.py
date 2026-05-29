@@ -14,6 +14,22 @@ from app.models.eps import EPS_MODEL
 from app.services.scheduler import _resolve_vars_to_schedule
 
 
+def test_eps_run_discovery_invariants() -> None:
+    capabilities = EPS_MODEL.capabilities
+    assert capabilities is not None
+    assert capabilities.run_discovery == {
+        "probe_var_key": "tmp2m",
+        "probe_fhs": [0, 6],
+        "probe_enabled": True,
+        "probe_attempts": 4,
+        "cycle_cadence_hours": 6,
+        "fallback_lag_hours": 6,
+        "stale_cycle_release_minutes_by_hour": {0: 150, 6: 90, 12: 150, 18: 90},
+        "source_priority": ["azure", "aws", "ecmwf"],
+        "probe_ensemble_view": "mean",
+    }
+
+
 def test_eps_target_fhs_invariants() -> None:
     synoptic = list(range(0, 361, 6))
     off_cycle = list(range(0, 145, 6))

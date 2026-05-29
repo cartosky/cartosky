@@ -419,6 +419,33 @@ def _expected_latest_run_time(*, model_id: str, now_utc: datetime) -> datetime |
     plugin = MODEL_REGISTRY.get(model_id)
     capabilities = getattr(plugin, "capabilities", None) if plugin is not None else None
     run_discovery = getattr(capabilities, "run_discovery", {}) if capabilities is not None else {}
+    cycle_release_offsets = run_discovery.get("stale_cycle_release_minutes_by_hour") if isinstance(run_discovery, dict) else None
+    if isinstance(cycle_release_offsets, dict):
+        resolved_offsets: dict[int, int] = {}
+        for raw_hour, raw_minutes in cycle_release_offsets.items():
+            try:
+                hour = int(raw_hour)
+                minutes = int(raw_minutes)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23 and minutes >= 0:
+                resolved_offsets[hour] = minutes
+
+        if resolved_offsets:
+            latest_expected: datetime | None = None
+            base_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            for day_offset in (-1, 0, 1):
+                day_base = base_day + timedelta(days=day_offset)
+                for hour, release_offset_minutes in resolved_offsets.items():
+                    cycle_dt = day_base.replace(hour=hour)
+                    if cycle_dt > now_utc:
+                        continue
+                    release_dt = cycle_dt + timedelta(minutes=release_offset_minutes)
+                    if release_dt <= now_utc and (latest_expected is None or cycle_dt > latest_expected):
+                        latest_expected = cycle_dt
+            if latest_expected is not None:
+                return latest_expected
+
     cadence = int(run_discovery.get("cycle_cadence_hours") or 0)
     fallback_lag = int(run_discovery.get("fallback_lag_hours") or 0)
     if cadence <= 0:

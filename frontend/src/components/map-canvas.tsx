@@ -971,7 +971,6 @@ type MapCanvasProps = {
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
-  onContourFrameReady?: (contourUrl: string) => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   isAnimating?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
@@ -1021,7 +1020,6 @@ export function MapCanvas({
   onGridFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
-  onContourFrameReady,
   getAnimatedGridPlaybackState = null,
   isAnimating = false,
   onMapReady,
@@ -1110,13 +1108,6 @@ export function MapCanvas({
     }
     setContourScreenLabels(buildContourScreenLabels(activeContourPayloadRef.current, map));
   }, []);
-  const markContourFrameReady = useCallback((rawUrl: string) => {
-    const normalizedUrl = normalizeDataUrl(rawUrl);
-    if (!normalizedUrl) {
-      return;
-    }
-    onContourFrameReady?.(normalizedUrl);
-  }, [onContourFrameReady]);
   const applyContourPayload = useCallback((
     map: maplibregl.Map,
     source: maplibregl.GeoJSONSource,
@@ -1383,7 +1374,6 @@ export function MapCanvas({
     const cachedContourPayload = normalizedContourUrl ? contourCacheRef.current.get(normalizedContourUrl) : null;
     if (contourSource && typeof contourSource.setData === "function" && cachedContourPayload) {
       applyContourPayload(map, contourSource, normalizedContourUrl, cachedContourPayload);
-      markContourFrameReady(normalizedContourUrl);
     }
 
     controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
@@ -1464,7 +1454,6 @@ export function MapCanvas({
     gridManifest,
     isAnimating,
     isLoaded,
-    markContourFrameReady,
     onGridFrameEvicted,
     onGridFrameReady,
     onGridFrameVisible,
@@ -1959,7 +1948,6 @@ export function MapCanvas({
 
     const cached = contourCacheRef.current.get(normalizedUrl);
     if (cached) {
-      markContourFrameReady(normalizedUrl);
       applyContourPayload(map, source, normalizedUrl, cached);
       return;
     }
@@ -1998,7 +1986,6 @@ export function MapCanvas({
           return;
         }
         contourCacheRef.current.set(normalizedUrl, payload);
-        markContourFrameReady(normalizedUrl);
         while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
           const oldestKey = contourCacheRef.current.keys().next().value;
           if (!oldestKey) {
@@ -2026,7 +2013,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [applyContourPayload, contourGeoJsonUrl, isLoaded, markContourFrameReady]);
+  }, [applyContourPayload, contourGeoJsonUrl, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2092,7 +2079,6 @@ export function MapCanvas({
             return;
           }
           contourCacheRef.current.set(normalizedUrl, payload);
-          markContourFrameReady(normalizedUrl);
           while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
             const oldestKey = contourCacheRef.current.keys().next().value;
             if (!oldestKey) {
@@ -2115,7 +2101,7 @@ export function MapCanvas({
     return () => {
       controller.abort();
     };
-  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded, markContourFrameReady]);
+  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;

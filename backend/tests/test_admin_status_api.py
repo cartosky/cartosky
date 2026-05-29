@@ -154,12 +154,20 @@ def _write_grid_runtime(
     (grid_dir / "manifest.json").write_text(json.dumps(manifest_payload))
 
 
-def _write_manifest(path: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]], available_override: dict[str, int] | None = None) -> None:
+def _write_manifest(
+    path: Path,
+    *,
+    model_id: str,
+    run_id: str,
+    variables: dict[str, list[int]],
+    available_override: dict[str, int] | None = None,
+    last_updated: str = "2026-04-17T18:00:00Z",
+) -> None:
     payload = {
         "contract_version": "3.0",
         "model": model_id,
         "run": run_id,
-        "last_updated": "2026-04-17T18:00:00Z",
+        "last_updated": last_updated,
         "variables": {},
     }
     for variable_id, hours in variables.items():
@@ -178,13 +186,23 @@ def _write_manifest(path: Path, *, model_id: str, run_id: str, variables: dict[s
     path.write_text(json.dumps(payload))
 
 
-def _seed_run(root: Path, *, model_id: str, run_id: str, variables: dict[str, list[int]], available_override: dict[str, int] | None = None, missing_value_grid: tuple[str, int] | None = None) -> None:
+def _seed_run(
+    root: Path,
+    *,
+    model_id: str,
+    run_id: str,
+    variables: dict[str, list[int]],
+    available_override: dict[str, int] | None = None,
+    missing_value_grid: tuple[str, int] | None = None,
+    last_updated: str = "2026-04-17T18:00:00Z",
+) -> None:
     _write_manifest(
         root / "manifests" / model_id / f"{run_id}.json",
         model_id=model_id,
         run_id=run_id,
         variables=variables,
         available_override=available_override,
+        last_updated=last_updated,
     )
     for variable_id, hours in variables.items():
         available = available_override.get(variable_id, len(hours)) if available_override else len(hours)
@@ -667,11 +685,14 @@ async def test_status_results_only_scans_retained_published_runs(client: httpx.A
 
 async def test_status_results_flags_stale_latest_run(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
+    base_day = admin_telemetry.datetime.now(admin_telemetry.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    last_updated = base_day.replace(hour=15).isoformat().replace("+00:00", "Z")
     _seed_run(
         main_module.DATA_ROOT,
         model_id="hrrr",
-        run_id="20260311_08z",
+        run_id=base_day.replace(hour=8).strftime("%Y%m%d_%Hz"),
         variables={"tmp2m": [0]},
+        last_updated=last_updated,
     )
 
     real_datetime = admin_telemetry.datetime
@@ -680,12 +701,66 @@ async def test_status_results_flags_stale_latest_run(client: httpx.AsyncClient, 
         @classmethod
         def now(cls, tz=None):
             assert tz is not None
-            return real_datetime(2026, 3, 11, 15, 0, tzinfo=tz)
+            return base_day.replace(hour=15, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
 
     response = await client.get(
         "/api/v4/admin/status/results?window=30d&model=hrrr",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert rows[0]["issue_type"] == "stale_run"
+    assert rows[0]["status"] == "warning"
+
+
+async def test_status_results_respects_ecmwf_release_offsets_before_marking_stale(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+    base_day = admin_telemetry.datetime.now(admin_telemetry.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    last_updated = base_day.replace(hour=7, minute=31).isoformat().replace("+00:00", "Z")
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="ecmwf",
+        run_id=base_day.strftime("%Y%m%d_00z"),
+        variables={"tmp2m": [0]},
+        last_updated=last_updated,
+    )
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenBeforeRelease(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return base_day.replace(hour=7, minute=29, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenBeforeRelease)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=ecmwf",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert rows[0]["issue_type"] != "stale_run"
+    admin_telemetry.clear_operational_status_cache()
+
+    class FrozenAfterRelease(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return base_day.replace(hour=7, minute=31, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenAfterRelease)
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=ecmwf",
         cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
     )
 

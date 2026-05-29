@@ -571,7 +571,6 @@ export default function App() {
   const telemetryRunIdRef = useRef<string | null>(null);
   const targetForecastHourRef = useRef(targetForecastHour);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
-  const contourReadyUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
   const gridPlaybackWaitStateRef = useRef({
     stalledOnHour: null as number | null,
@@ -1084,7 +1083,6 @@ export default function App() {
 
   useEffect(() => {
     gridReadyFrameUrlsRef.current = new Set();
-    contourReadyUrlsRef.current = new Set();
     gridPlaybackHourRef.current = null;
     gridPlaybackWaitStateRef.current = {
       stalledOnHour: null,
@@ -1486,10 +1484,6 @@ export default function App() {
       key: contourKey,
     });
   }, [displayedOverlayVariable, frameByHour, frameRows, gridManifest, model, resolvedRunForRequests]);
-  const isContourHourReady = useCallback((hour: number | null | undefined): boolean => {
-    const contourUrl = contourGeoJsonUrlForHour(hour);
-    return !contourUrl || contourReadyUrlsRef.current.has(contourUrl);
-  }, [contourGeoJsonUrlForHour]);
   const isGridHourReady = useCallback((hour: number | null | undefined): boolean => {
     if (!Number.isFinite(hour)) {
       return false;
@@ -1497,12 +1491,11 @@ export default function App() {
     if (compositeLayerSpecs.length > 0) {
       const frameUrls = compositeFrameUrlsForHour(Number(hour));
       return frameUrls.length === compositeLayerSpecs.length
-        && frameUrls.every((frameUrl) => gridReadyFrameUrlsRef.current.has(frameUrl))
-        && isContourHourReady(hour);
+        && frameUrls.every((frameUrl) => gridReadyFrameUrlsRef.current.has(frameUrl));
     }
     const frameUrl = normalizeGridFrameUrl(gridFrameByHour.get(Number(hour))?.url);
-    return Boolean(frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl) && isContourHourReady(hour));
-  }, [compositeFrameUrlsForHour, compositeLayerSpecs.length, gridFrameByHour, isContourHourReady, normalizeGridFrameUrl]);
+    return Boolean(frameUrl && gridReadyFrameUrlsRef.current.has(frameUrl));
+  }, [compositeFrameUrlsForHour, compositeLayerSpecs.length, gridFrameByHour, normalizeGridFrameUrl]);
   const gridReadyHours = useMemo(() => {
     const readyHours: number[] = [];
     for (const hour of gridFrameHours) {
@@ -3518,19 +3511,6 @@ export default function App() {
       void attemptGridPlaybackAdvance();
     }
   }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying, normalizeGridFrameUrl]);
-  const handleContourFrameReady = useCallback((contourUrl: string) => {
-    const normalized = String(contourUrl ?? "").trim();
-    if (!normalized) {
-      return;
-    }
-    if (!contourReadyUrlsRef.current.has(normalized)) {
-      contourReadyUrlsRef.current.add(normalized);
-      bumpGridReadyVersion();
-    }
-    if (isPlaying && canUseGridPlayback) {
-      void attemptGridPlaybackAdvance();
-    }
-  }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying]);
   const handleGridFrameEvicted = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4230,7 +4210,6 @@ export default function App() {
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
-          onContourFrameReady={handleContourFrameReady}
           getAnimatedGridPlaybackState={getAnimatedGridPlaybackState}
           isAnimating={isPlaying || isScrubbing}
           onZoomBucketChange={setZoomBucket}

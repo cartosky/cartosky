@@ -710,6 +710,7 @@ EPS_CAPABILITIES = ModelCapabilities(
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
+        "stale_cycle_release_minutes_by_hour": {0: 150, 6: 90, 12: 150, 18: 90},
         "source_priority": ["azure", "aws", "ecmwf"],
         "probe_ensemble_view": "mean",
     },
