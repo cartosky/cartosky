@@ -12,7 +12,7 @@ import {
 import { formatObservedValidTime, formatRunLabel } from "@/lib/time-axis";
 
 type WindowValue = "24h" | "7d" | "30d";
-type ViewFilter = "issues" | "artifacts" | "stale" | "all";
+type ViewFilter = "issues" | "ongoing" | "artifacts" | "stale" | "all";
 type StatusTone = "pass" | "info" | "warning" | "fail";
 
 function formatTimestamp(value: number | null | undefined): string {
@@ -139,6 +139,7 @@ function CompactMetric(props: {
 function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
   if (view === "issues") return rows.filter((row) => row.status === "warning" || row.status === "error");
+  if (view === "ongoing") return rows.filter((row) => row.issue_type === "run_ongoing");
   if (view === "artifacts") return rows.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   return rows.filter((row) => (
     row.issue_type === "stale_run"
@@ -152,6 +153,7 @@ function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
 
 function viewLabel(view: ViewFilter): string {
   if (view === "issues") return "Open pipeline issues";
+  if (view === "ongoing") return "Ongoing runs";
   if (view === "artifacts") return "Artifact and manifest failures";
   if (view === "stale") return "Stale or stalled runs";
   return "All retained runs";
@@ -269,6 +271,7 @@ export default function AdminStatusPage() {
 
   const modelOptions = Array.from(new Set(results.map((item) => item.model_id))).sort();
   const issueRows = results.filter((row) => row.status === "warning" || row.status === "error");
+  const ongoingRows = results.filter((row) => row.issue_type === "run_ongoing");
   const artifactRows = results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   const staleRows = results.filter((row) => (
     row.issue_type === "stale_run"
@@ -284,6 +287,8 @@ export default function AdminStatusPage() {
       ? "No retained published runs were found for the current window."
       : viewFilter === "issues"
         ? "No operational issues were found in the retained published runs."
+        : viewFilter === "ongoing"
+          ? "No retained latest runs are currently building."
         : viewFilter === "artifacts"
           ? "No artifact or manifest failures were found."
           : viewFilter === "stale"
@@ -311,7 +316,7 @@ export default function AdminStatusPage() {
         ) : null}
 
         <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <CompactMetric
               label="Retained runs"
               value={results.length}
@@ -324,6 +329,13 @@ export default function AdminStatusPage() {
               accentClassName="text-amber-300"
               active={viewFilter === "issues"}
               onClick={() => setViewFilter("issues")}
+            />
+            <CompactMetric
+              label="Ongoing runs"
+              value={ongoingRows.length}
+              accentClassName="text-sky-300"
+              active={viewFilter === "ongoing"}
+              onClick={() => setViewFilter("ongoing")}
             />
             <CompactMetric
               label="Artifact failures"
@@ -379,6 +391,7 @@ export default function AdminStatusPage() {
               className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="issues">Open issues</option>
+              <option value="ongoing">Ongoing runs</option>
               <option value="artifacts">Artifact failures</option>
               <option value="stale">Stale or stalled</option>
               <option value="all">All retained runs</option>

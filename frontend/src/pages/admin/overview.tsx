@@ -331,6 +331,7 @@ export default function AdminOverviewPage() {
   }, []);
 
   const issueRows = useMemo(() => results.filter((row) => row.status === "warning" || row.status === "error"), [results]);
+  const ongoingRows = useMemo(() => results.filter((row) => row.issue_type === "run_ongoing"), [results]);
   const artifactRows = useMemo(
     () => results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid"),
     [results],
@@ -369,8 +370,9 @@ export default function AdminOverviewPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <SummaryCard title="Open Issues" value={String(issueRows.length)} hint="Run warnings &amp; errors" icon={AlertTriangle} accentClassName="text-amber-300" topBorderClass="border-t-amber-400/60" />
+            <SummaryCard title="Ongoing Runs" value={String(ongoingRows.length)} hint="Latest cycles building" icon={Activity} accentClassName="text-sky-300" topBorderClass="border-t-sky-400/40" />
             <SummaryCard title="Artifact Failures" value={String(artifactRows.length)} hint="Missing or unreadable" icon={ClipboardCheck} accentClassName="text-rose-300" topBorderClass="border-t-rose-400/60" />
             <SummaryCard title="Stale / Stalled" value={String(staleRows.length)} hint="Runs needing attention" icon={Activity} accentClassName="text-[#9dd5bf]" topBorderClass={staleRows.length > 0 ? "border-t-amber-400/60" : "border-t-emerald-400/40"} />
             <SummaryCard
