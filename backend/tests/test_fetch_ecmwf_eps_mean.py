@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
@@ -148,6 +149,79 @@ def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
     assert meta["member_count"] == 2
 
 
+def test_fetch_variable_recovers_from_local_eps_idx_cache_using_signed_remote_index() -> None:
+    fake_herbie_core = ModuleType("herbie.core")
+
+    class _FakeHerbieLocalIdxCache(_FakeHerbie):
+        def __init__(self, *_args, **kwargs) -> None:
+            super().__init__(*_args, **kwargs)
+            self.grib = "https://example.invalid/20260528120000-186h-enfo-ef.grib2?sig=abc123"
+            self.idx = "/tmp/corrupt-local.index"
+
+        @property
+        def index_as_dataframe(self):
+            raise RuntimeError("idx parser failed on cached local file")
+
+    fake_herbie_core.Herbie = _FakeHerbieLocalIdxCache
+
+    index_lines = "\n".join(
+        [
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "cf", "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 0, "_length": 10}),
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "pf", "number": 1, "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 10, "_length": 10}),
+            json.dumps({"param": "2t", "levtype": "sfc", "type": "pf", "number": 2, "domain": "g", "expver": "0001", "class": "od", "stream": "enfo", "_offset": 20, "_length": 10}),
+        ]
+    )
+    requested_urls: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    def _fake_requests_get(url: str, timeout: int = 45):
+        requested_urls.append(url)
+        assert url == "https://example.invalid/20260528120000-186h-enfo-ef.index?sig=abc123"
+        assert timeout == 45
+        return _FakeResponse(index_lines)
+
+    def _fake_download_subset(_herbie, **kwargs):
+        inventory = kwargs["inventory"]
+        assert list(inventory["type"].astype(str)) == ["pf", "pf"]
+        return kwargs["out_path"]
+
+    def _fake_aggregate_subset(_path):
+        data = np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform, 2
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch("app.services.builder.fetch.requests.get", side_effect=_fake_requests_get), patch(
+            "app.services.builder.fetch._download_subset_with_inventory_rows", side_effect=_fake_download_subset
+        ), patch("app.services.builder.fetch._aggregate_grib_subset_mean", side_effect=_fake_aggregate_subset):
+            data, crs, transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":2t:",
+                run_date=datetime(2026, 4, 20, 0, 0),
+                fh=186,
+                herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
+                return_meta=True,
+            )
+
+    assert requested_urls
+    assert set(requested_urls) == {"https://example.invalid/20260528120000-186h-enfo-ef.index?sig=abc123"}
+    assert np.array_equal(data, np.array([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32))
+    assert crs.to_epsg() == 4326
+    assert transform.c == -101.0
+    assert meta["member_count"] == 2
+
+
 def test_ecmwf_eps_statistics_url_rewrites_grib_and_index_forms() -> None:
     base = "https://example.invalid/20260424120000-42h-enfo-ef"
     assert fetch_module._ecmwf_eps_statistics_url(
@@ -165,6 +239,15 @@ def test_ecmwf_eps_statistics_url_rewrites_grib_and_index_forms() -> None:
         requested_fh=42,
         statistics_fh=240,
     ).endswith("-240h-enfo-ep.grib2.index")
+
+
+def test_eps_subset_fallback_path_uses_writable_temp_root(monkeypatch) -> None:
+    monkeypatch.delenv("CARTOSKY_HERBIE_SAVE_DIR", raising=False)
+    monkeypatch.delenv("HERBIE_SAVE_DIR", raising=False)
+
+    path = fetch_module._eps_subset_fallback_path(prefix="eps_direct_mean", token="abc123")
+
+    assert path == Path(tempfile.gettempdir()) / "cartosky-eps-subsets" / "eps_direct_mean_abc123.grib2"
 
 
 def test_ecmwf_eps_step_filter_handles_herbie_timedelta_steps() -> None:
@@ -248,6 +331,57 @@ def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: P
     assert meta["aggregation"] == "ecmwf_direct_mean"
     assert meta["member_count"] == 1
     assert calls == {"download": 1, "aggregate": 0, "read": 1}
+
+
+def test_fetch_variable_rebuilds_unreadable_cached_eps_pf_subset(tmp_path: Path) -> None:
+    fake_herbie_core = ModuleType("herbie.core")
+
+    class _FakeHerbieUnreadableSubset(_FakeHerbie):
+        def get_localFilePath(self, search_pattern: str) -> str:
+            return str(tmp_path / f"cached-{search_pattern.strip(':') or 'subset'}.grib2")
+
+    fake_herbie_core.Herbie = _FakeHerbieUnreadableSubset
+    subset_downloads = {"count": 0}
+
+    def _fake_download_subset(_herbie, **kwargs):
+        subset_downloads["count"] += 1
+        out_path = kwargs["out_path"]
+        out_path.write_bytes(b"GRIB")
+        return out_path
+
+    subset_path = tmp_path / "cached-2t.cartosky_pf.grib2"
+    subset_path.write_bytes(b"corrupt")
+    aggregate_calls = {"count": 0}
+
+    def _fake_aggregate_subset(_path):
+        aggregate_calls["count"] += 1
+        if aggregate_calls["count"] == 1:
+            raise rasterio.errors.RasterioIOError("no raster dataset was successfully identified")
+        data = np.array([[7.0, 8.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform, 2
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch("app.services.builder.fetch._download_subset_with_inventory_rows", side_effect=_fake_download_subset), patch(
+            "app.services.builder.fetch._aggregate_grib_subset_mean", side_effect=_fake_aggregate_subset
+        ):
+            data, crs, transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":2t:",
+                run_date=datetime(2026, 4, 19, 0, 0),
+                fh=0,
+                herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
+                return_meta=True,
+            )
+
+    assert subset_downloads["count"] == 1
+    assert aggregate_calls["count"] == 2
+    assert np.array_equal(data, np.array([[7.0, 8.0]], dtype=np.float32))
+    assert crs.to_epsg() == 4326
+    assert transform.c == -101.0
+    assert meta["member_count"] == 2
 
 
 def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path: Path) -> None:
@@ -471,8 +605,8 @@ def test_build_contour_metadata_reuses_cached_warped_aifs_anomaly_component_with
 
 def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path) -> None:
     pattern = ":TMP:2 m above ground:"
-    full_payload = b"0123456789abcdefghij"
-    expected_subset = full_payload[4:10]
+    full_payload = b"GRIB0123456789abcdefghij"
+    expected_subset = full_payload[:20]
 
     class _FakeHerbieFullCache:
         def __init__(self, *_args, **kwargs) -> None:
@@ -483,7 +617,7 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
         @property
         def index_as_dataframe(self):
             return pd.DataFrame([
-                {"search_this": pattern, "start_byte": 4, "end_byte": 9},
+                {"search_this": pattern, "start_byte": 0, "end_byte": 19},
             ])
 
         def get_localFilePath(self, search_pattern: str) -> str:

@@ -30,10 +30,12 @@ import os
 import re
 import threading
 import time
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, overload
+from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
 import rasterio
@@ -564,6 +566,19 @@ def _eps_full_file_cache_root() -> Path:
     return Path("/tmp/cartosky-eps-full-files")
 
 
+def _eps_subset_fallback_root() -> Path:
+    herbie_save_dir = _env_value(("CARTOSKY_HERBIE_SAVE_DIR", "HERBIE_SAVE_DIR"))
+    if herbie_save_dir:
+        return Path(herbie_save_dir).expanduser() / "eps_subset_fallbacks"
+    return Path(tempfile.gettempdir()) / "cartosky-eps-subsets"
+
+
+def _eps_subset_fallback_path(*, prefix: str, token: str) -> Path:
+    safe_prefix = str(prefix).strip() or "eps_subset"
+    safe_token = str(token).strip() or hashlib.sha1(safe_prefix.encode("utf-8")).hexdigest()[:16]
+    return _eps_subset_fallback_root() / f"{safe_prefix}_{safe_token}.grib2"
+
+
 def _eps_full_file_cache_max_bytes() -> int:
     return _int_from_env(
         ENV_EPS_FULL_FILE_CACHE_MAX_BYTES,
@@ -1020,6 +1035,40 @@ def _fetch_inventory_index_text(idx_ref: Any) -> str:
     return Path(idx_text).read_text(encoding="utf-8")
 
 
+def _remote_idx_refs_from_grib_ref(grib_ref: Any) -> list[str]:
+    grib_text = str(grib_ref or "").strip()
+    if not grib_text.startswith(("http://", "https://")):
+        return []
+
+    try:
+        parsed = urlsplit(grib_text)
+    except Exception:
+        return [f"{grib_text}.idx"]
+
+    path = parsed.path or ""
+    if not path:
+        return [grib_text]
+
+    candidate_paths: list[str] = []
+    if path.endswith(".grib2"):
+        candidate_paths.extend(
+            [
+                f"{path[:-6]}.index",
+                f"{path}.index",
+                f"{path}.idx",
+            ]
+        )
+    else:
+        candidate_paths.extend([f"{path}.index", f"{path}.idx"])
+
+    candidates: list[str] = []
+    for candidate_path in candidate_paths:
+        candidate_url = urlunsplit((parsed.scheme, parsed.netloc, candidate_path, parsed.query, parsed.fragment))
+        if candidate_url not in candidates:
+            candidates.append(candidate_url)
+    return candidates
+
+
 def _inventory_index_dataframe_from_json_lines(idx_ref: Any) -> Any | None:
     try:
         import pandas as pd
@@ -1121,6 +1170,8 @@ def _inventory_index_dataframe(
     *,
     idx_key: str,
     force_refresh: bool = False,
+    idx_ref: Any | None = None,
+    grib_ref: Any | None = None,
 ) -> Any | None:
     if not force_refresh:
         cached = _inventory_cache_get(idx_key)
@@ -1175,7 +1226,23 @@ def _inventory_index_dataframe(
         try:
             dataframe = H.index_as_dataframe
         except Exception:
-            dataframe = _inventory_index_dataframe_from_idx_text(getattr(H, "idx", None))
+            fallback_refs: list[Any] = []
+            for candidate in (idx_ref, getattr(H, "idx", None)):
+                candidate_text = str(candidate or "").strip()
+                if candidate_text and candidate_text not in {str(item or "").strip() for item in fallback_refs}:
+                    fallback_refs.append(candidate)
+            for candidate in _remote_idx_refs_from_grib_ref(grib_ref):
+                if candidate not in fallback_refs:
+                    fallback_refs.append(candidate)
+
+            dataframe = None
+            for candidate in fallback_refs:
+                try:
+                    dataframe = _inventory_index_dataframe_from_idx_text(candidate)
+                except Exception:
+                    dataframe = None
+                if dataframe is not None:
+                    break
         _metric_observe_ms("idx_fetch_ms", (time.monotonic() - fetch_start) * 1000.0)
         if dataframe is None:
             _metric_increment("idx_cache_error")
@@ -1293,7 +1360,13 @@ def _inventory_search(
         return _InventorySearchResult(inventory=None, reason="idx_missing")
 
     try:
-        index_df = _inventory_index_dataframe(H, idx_key=idx_key, force_refresh=force_inventory_refresh)
+        index_df = _inventory_index_dataframe(
+            H,
+            idx_key=idx_key,
+            force_refresh=force_inventory_refresh,
+            idx_ref=idx_ref,
+            grib_ref=grib_ref,
+        )
     except Exception:
         return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
     if index_df is None:
@@ -1302,8 +1375,14 @@ def _inventory_search(
     try:
         if len(index_df) == 0:
             if not idx_ref_lower.startswith(("http://", "https://")) and grib_ref_text.startswith(("http://", "https://")):
-                alternate_idx_ref = f"{grib_ref_text}.idx"
-                alternate_df = _inventory_index_dataframe_from_idx_text(alternate_idx_ref)
+                alternate_df = None
+                for alternate_idx_ref in _remote_idx_refs_from_grib_ref(grib_ref_text):
+                    try:
+                        alternate_df = _inventory_index_dataframe_from_idx_text(alternate_idx_ref)
+                    except Exception:
+                        alternate_df = None
+                    if alternate_df is not None:
+                        break
                 if alternate_df is not None:
                     try:
                         if len(alternate_df) > 0:
@@ -1788,7 +1867,7 @@ def _fetch_ecmwf_pf_mean_variable(
                     fallback_name = hashlib.sha1(
                         f"{model_id}|{product}|{fh}|{search_pattern}|{priority}".encode("utf-8")
                     ).hexdigest()[:16]
-                    subset_hint = Path(os.getcwd()) / f"eps_pf_mean_{fallback_name}.grib2"
+                    subset_hint = _eps_subset_fallback_path(prefix="eps_pf_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, "cartosky_pf")
                 with _subset_download_lock(subset_path):
@@ -1809,7 +1888,31 @@ def _fetch_ecmwf_pf_mean_variable(
                             raise RuntimeError(
                                 f"ECMWF EPS pf-mean subset download failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
                             )
-                    data, crs, transform, member_count = _aggregate_grib_subset_mean(subset_path)
+                    try:
+                        data, crs, transform, member_count = _aggregate_grib_subset_mean(subset_path)
+                    except rasterio.errors.RasterioIOError as exc:
+                        if not _is_unsupported_file_format_error(exc):
+                            raise
+                        try:
+                            subset_path.unlink()
+                        except OSError:
+                            pass
+                        downloaded_subset = _download_subset_with_inventory_rows(
+                            H,
+                            inventory=pf_inventory,
+                            out_path=subset_path,
+                            model_id=model_id,
+                            product=product,
+                            run_date=run_date,
+                            fh=fh,
+                            priority=priority,
+                            bundle_fetch_cache=bundle_fetch_cache,
+                        )
+                        if downloaded_subset is None:
+                            raise RuntimeError(
+                                f"ECMWF EPS pf-mean subset refresh failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                            ) from exc
+                        data, crs, transform, member_count = _aggregate_grib_subset_mean(subset_path)
 
                 meta = {
                     "inventory_line": first_inventory_line or f"aggregate:{search_pattern}:pf_mean",
@@ -1987,7 +2090,7 @@ def _fetch_ecmwf_direct_mean_variable(
                     fallback_name = hashlib.sha1(
                         f"{model_id}|{product}|{fh}|{search_pattern}|{priority}|em".encode("utf-8")
                     ).hexdigest()[:16]
-                    subset_hint = Path(os.getcwd()) / f"eps_direct_mean_{fallback_name}.grib2"
+                    subset_hint = _eps_subset_fallback_path(prefix="eps_direct_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, "cartosky_em")
                 with _subset_download_lock(subset_path):
