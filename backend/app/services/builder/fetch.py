@@ -1064,6 +1064,58 @@ def _inventory_index_dataframe_from_json_lines(idx_ref: Any) -> Any | None:
     return pd.DataFrame.from_records(records)
 
 
+def _inventory_index_dataframe_from_wgrib2_lines(idx_ref: Any) -> Any | None:
+    try:
+        import pandas as pd
+    except Exception:
+        return None
+
+    text = _fetch_inventory_index_text(idx_ref)
+    if not text.strip():
+        return pd.DataFrame()
+
+    records: list[dict[str, Any]] = []
+    pending_start: int | None = None
+    pending_record: dict[str, Any] | None = None
+
+    for raw_line in text.splitlines():
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        parts = line.split(":")
+        if len(parts) < 3:
+            continue
+        try:
+            start_byte = int(parts[1])
+        except (TypeError, ValueError):
+            continue
+
+        if pending_record is not None and pending_start is not None:
+            pending_record.setdefault("end_byte", start_byte - 1)
+            records.append(pending_record)
+
+        pending_start = start_byte
+        pending_record = {
+            "start_byte": start_byte,
+            "search_this": line,
+            "inventory_line": line,
+            "line": line,
+        }
+
+    if pending_record is not None:
+        records.append(pending_record)
+
+    return pd.DataFrame.from_records(records)
+
+
+def _inventory_index_dataframe_from_idx_text(idx_ref: Any) -> Any | None:
+    text = _fetch_inventory_index_text(idx_ref)
+    first_nonblank = next((char for char in text if not char.isspace()), "")
+    if first_nonblank == "{":
+        return _inventory_index_dataframe_from_json_lines(idx_ref)
+    return _inventory_index_dataframe_from_wgrib2_lines(idx_ref)
+
+
 def _inventory_index_dataframe(
     H: Any,
     *,
@@ -1123,7 +1175,7 @@ def _inventory_index_dataframe(
         try:
             dataframe = H.index_as_dataframe
         except Exception:
-            dataframe = _inventory_index_dataframe_from_json_lines(getattr(H, "idx", None))
+            dataframe = _inventory_index_dataframe_from_idx_text(getattr(H, "idx", None))
         _metric_observe_ms("idx_fetch_ms", (time.monotonic() - fetch_start) * 1000.0)
         if dataframe is None:
             _metric_increment("idx_cache_error")
@@ -1133,6 +1185,17 @@ def _inventory_index_dataframe(
         except Exception:
             _metric_increment("idx_cache_error")
             raise
+        if dataframe_len == 0:
+            reparsed = _inventory_index_dataframe_from_idx_text(getattr(H, "idx", None))
+            if reparsed is not None:
+                dataframe = reparsed
+                try:
+                    dataframe_len = len(dataframe)
+                except Exception:
+                    _metric_increment("idx_cache_error")
+                    raise
+                if dataframe_len > 0:
+                    _metric_increment("idx_cache_empty_refresh")
         if dataframe_len > 0:
             _inventory_cache_set(idx_key, dataframe, _inventory_cache_ttl_seconds())
             _metric_increment("idx_cache_store")
