@@ -16,7 +16,7 @@ from rasterio.transform import Affine, array_bounds
 from scipy.ndimage import zoom as ndimage_zoom
 
 from ..config import grid_supported_pair
-from .colormaps import get_color_map_spec
+from .colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER, get_color_map_spec
 from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import resampling_name_for_kind, variable_color_map_id
 
@@ -1410,12 +1410,60 @@ def _resize_nearest_grid(values: np.ndarray, *, target_height: int, target_width
     return np.asarray(resized, dtype=np.float32)
 
 
+_RADAR_PTYPE_BIN_COUNT = int(RADAR_PTYPE_BREAKS[RADAR_PTYPE_ORDER[0]]["count"])
+_RADAR_PTYPE_CODE_COUNT = len(RADAR_PTYPE_ORDER)
+
+
+def _resize_radar_ptype_grid(values: np.ndarray, *, target_height: int, target_width: int) -> np.ndarray:
+    source = np.asarray(values, dtype=np.float32)
+    if source.shape == (target_height, target_width):
+        return source
+    if target_height >= source.shape[0] or target_width >= source.shape[1]:
+        return _resize_nearest_grid(source, target_height=target_height, target_width=target_width)
+
+    output = np.full((target_height, target_width), np.nan, dtype=np.float32)
+    source_height, source_width = source.shape
+    for y in range(target_height):
+        y0 = int(np.floor((y * source_height) / target_height))
+        y1 = int(np.floor(((y + 1) * source_height) / target_height))
+        y1 = max(y0 + 1, min(source_height, y1))
+        for x in range(target_width):
+            x0 = int(np.floor((x * source_width) / target_width))
+            x1 = int(np.floor(((x + 1) * source_width) / target_width))
+            x1 = max(x0 + 1, min(source_width, x1))
+            block = source[y0:y1, x0:x1]
+            finite = block[np.isfinite(block)]
+            if finite.size == 0:
+                continue
+
+            rounded = np.rint(finite).astype(np.int32, copy=False)
+            codes = np.floor_divide(rounded, _RADAR_PTYPE_BIN_COUNT)
+            valid = (codes >= 0) & (codes < _RADAR_PTYPE_CODE_COUNT)
+            if not np.any(valid):
+                continue
+
+            codes = codes[valid]
+            rounded = rounded[valid]
+            counts = np.bincount(codes, minlength=_RADAR_PTYPE_CODE_COUNT)
+            selected_code = int(np.argmax(counts))
+            selected = rounded[codes == selected_code]
+            local = np.clip(
+                selected - (selected_code * _RADAR_PTYPE_BIN_COUNT),
+                0,
+                _RADAR_PTYPE_BIN_COUNT - 1,
+            )
+            output[y, x] = float(selected_code * _RADAR_PTYPE_BIN_COUNT + int(np.rint(float(np.mean(local)))))
+    return output
+
+
 def _values_for_lod(values: np.ndarray, *, model: str, var: str, scale_factor: int) -> np.ndarray:
     source = np.asarray(values, dtype=np.float32)
     if scale_factor <= 1:
         return source
 
     target_height, target_width = _lod_target_shape(source.shape[0], source.shape[1], scale_factor)
+    if variable_color_map_id(model, var) == "radar_ptype":
+        return _resize_radar_ptype_grid(source, target_height=target_height, target_width=target_width)
     if resampling_name_for_kind(model_id=model, var_key=var) == "nearest":
         return _resize_nearest_grid(source, target_height=target_height, target_width=target_width)
     return _resize_continuous_grid(source, target_height=target_height, target_width=target_width)

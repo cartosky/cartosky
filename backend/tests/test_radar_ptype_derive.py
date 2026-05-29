@@ -8,6 +8,15 @@ from rasterio.crs import CRS
 from rasterio.transform import Affine
 
 from app.services.builder import derive as derive_module
+from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
+
+
+def _expected_radar_ptype_index(ptype: str, reflectivity: float) -> float:
+    breaks = RADAR_PTYPE_BREAKS[ptype]
+    offset = int(breaks["offset"])
+    count = int(breaks["count"])
+    normalized = np.clip((float(reflectivity) - 5.0) / 65.0, 0.0, 1.0)
+    return float(offset + int(np.clip(np.rint(normalized * (count - 1)), 0, count - 1)))
 
 
 def _radar_ptype_var_spec(component: str | None = None) -> SimpleNamespace:
@@ -105,8 +114,12 @@ def test_radar_ptype_components_preserve_classified_reflectivity(monkeypatch) ->
     assert fetch_calls == ["refc", "crain", "csnow", "cicep", "cfrzr"]
     assert np.isfinite(indexed[0, :4]).all()
     assert np.isnan(indexed[0, 4])
+    assert float(indexed[0, 0]) == _expected_radar_ptype_index("rain", 35.0)
+    assert float(indexed[0, 1]) == _expected_radar_ptype_index("snow", 28.0)
+    assert float(indexed[0, 2]) == _expected_radar_ptype_index("sleet", 42.0)
+    assert float(indexed[0, 3]) == _expected_radar_ptype_index("frzr", 55.0)
+    assert tuple(RADAR_PTYPE_ORDER) == ("rain", "snow", "sleet", "frzr")
     np.testing.assert_array_equal(rain_values, np.array([[35.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(snow_values, np.array([[0.0, 28.0, 0.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(sleet_values, np.array([[0.0, 0.0, 42.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(frzr_values, np.array([[0.0, 0.0, 0.0, 55.0, 0.0]], dtype=np.float32))
-

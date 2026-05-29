@@ -58,15 +58,15 @@ def test_gfs_ptype_intensity_maps_to_nearest(monkeypatch):
     assert render_resampling.rasterio_resampling_for_loop(model_id="gfs", var_key="ptype_intensity").name == "nearest"
 
 
-def test_radar_ptype_keeps_crisp_backend_loop_resampling(monkeypatch):
+def test_radar_ptype_uses_bilinear_display_override(monkeypatch):
     _set_capabilities(
         monkeypatch,
         {"radar_ptype": SimpleNamespace(kind="indexed", color_map_id="radar_ptype")},
     )
 
     for model_id in ("hrrr", "nam"):
-        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="radar_ptype") == "nearest"
-        assert render_resampling.rasterio_resampling_for_loop(model_id=model_id, var_key="radar_ptype").name == "nearest"
+        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="radar_ptype") == "bilinear"
+        assert render_resampling.rasterio_resampling_for_loop(model_id=model_id, var_key="radar_ptype").name == "bilinear"
 
 
 def test_unknown_kind_falls_back_to_bilinear_and_warns(monkeypatch, caplog):

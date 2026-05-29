@@ -1499,7 +1499,9 @@ export class GridWebglLayerController {
         float localBin = localSum / selectedWeight;
         float packedValue = selectedCode * 66.0 + localBin;
         float t = clamp((packedValue + 0.5) / 264.0, 0.0, 1.0);
-        return texture2D(u_lut, vec2(t, 0.5));
+        vec4 color = texture2D(u_lut, vec2(t, 0.5));
+        color.a *= smoothstep(0.0, 0.5, selectedWeight);
+        return color;
       }
 
       void main() {

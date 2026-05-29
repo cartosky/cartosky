@@ -32,6 +32,7 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 
 from app import main as main_module
 from app.services.grid import (
+    _values_for_lod,
     build_grid_for_run,
     build_grid_manifests_for_run_root,
     grid_dir,
@@ -40,6 +41,7 @@ from app.services.grid import (
     write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
+from app.services.colormaps import RADAR_PTYPE_BREAKS
 
 
 def _write_value_cog(path: Path, values: np.ndarray) -> None:
@@ -61,6 +63,23 @@ def _write_value_cog(path: Path, values: np.ndarray) -> None:
 
 def _grid_artifact_dir(data_root: Path, model: str, run_id: str, var: str) -> Path:
     return grid_dir(data_root, model, run_id, var)
+
+
+def test_radar_ptype_lod_downsample_keeps_phase_offsets_separate() -> None:
+    rain_offset = int(RADAR_PTYPE_BREAKS["rain"]["offset"])
+    snow_offset = int(RADAR_PTYPE_BREAKS["snow"]["offset"])
+    values = np.array(
+        [
+            [rain_offset + 50.0, snow_offset + 10.0],
+            [np.nan, snow_offset + 20.0],
+        ],
+        dtype=np.float32,
+    )
+
+    downsampled = _values_for_lod(values, model="hrrr", var="radar_ptype", scale_factor=2)
+
+    assert downsampled.shape == (1, 1)
+    assert downsampled[0, 0] == snow_offset + 15.0
 
 
 def test_write_grid_frame_for_run_root_writes_manifest_without_value_cog(tmp_path: Path) -> None:

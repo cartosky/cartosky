@@ -348,7 +348,7 @@ def test_phase2_value_grid_semantics():
         assert np.all(np.isfinite(radar_idx))
         assert np.allclose(radar_idx, np.rint(radar_idx))
 
-        normalized = np.clip(35.0 / 70.0, 0.0, 1.0)
+        normalized = np.clip((35.0 - 5.0) / (70.0 - 5.0), 0.0, 1.0)
         expected_indices = []
         for code in ["rain", "snow", "sleet", "frzr"]:
             offset = int(RADAR_PTYPE_BREAKS[code]["offset"])

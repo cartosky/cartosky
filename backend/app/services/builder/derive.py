@@ -39,9 +39,12 @@ from app.services.climatology import (
 from app.services.colormaps import (
     RADAR_PTYPE_BREAKS,
     RADAR_PTYPE_ORDER,
+    RADAR_PTYPE_LEVELS_BY_TYPE,
 )
 
 logger = logging.getLogger(__name__)
+_RADAR_PTYPE_REFL_MIN = float(RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]][0])
+_RADAR_PTYPE_REFL_MAX = float(RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]][-1])
 _EARTH_RADIUS_M = np.float64(6_371_000.0)
 _EARTH_ANGULAR_VELOCITY_RAD_S = np.float64(7.2921159e-5)
 _MIN_COS_LAT = np.float64(1.0e-6)
@@ -4592,7 +4595,8 @@ def _derive_radar_ptype_family(
 
     refl_safe = np.where(np.isfinite(refl), np.maximum(refl, 0.0), np.nan)
     bins_per_type = {k: int(v["count"]) for k, v in RADAR_PTYPE_BREAKS.items()}
-    normalized = np.clip(refl_safe / 70.0, 0.0, 1.0)
+    refl_span = max(_RADAR_PTYPE_REFL_MAX - _RADAR_PTYPE_REFL_MIN, 1.0)
+    normalized = np.clip((refl_safe - _RADAR_PTYPE_REFL_MIN) / refl_span, 0.0, 1.0)
 
     indexed = np.full(refl.shape, np.nan, dtype=np.float32)
     for code in RADAR_PTYPE_ORDER:
