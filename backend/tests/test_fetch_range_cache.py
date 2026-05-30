@@ -374,7 +374,8 @@ def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, 
             return str(tmp_path / f"{token}.grib2")
 
         def download(self, *args, **kwargs):
-            raise AssertionError("download() should not be used when inventory byte-range fetch is available")
+            del args, kwargs
+            raise RuntimeError("grib2 file not found")
 
     _install_fake_herbie(monkeypatch, _FakeHerbie)
 

@@ -2455,6 +2455,15 @@ def _is_grib_not_found_error(exc: Exception) -> bool:
     return "grib2 file not found" in text
 
 
+def _is_herbie_index_unavailable_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "cant open index file" in text
+        or "can't open index file" in text
+        or "download the full file first" in text
+    )
+
+
 def _default_subset_target_path(
     H: Any,
     *,
@@ -3471,19 +3480,35 @@ def fetch_variable(
                             selected_meta = attempt_meta
                             break
 
-                        subset_path = _download_subset_with_inventory_byte_range(
-                            H,
-                            search_pattern=search_pattern,
-                            out_path=subset_hint,
-                            model_id=model_id,
-                            run_date=run_date,
-                            product=product,
-                            fh=fh,
-                            priority=priority,
-                            bundle_fetch_cache=bundle_fetch_cache,
-                        )
-                        if subset_path is None:
+                        try:
                             subset_path = H.download(search_pattern, errors="raise", overwrite=False)
+                        except Exception as herbie_exc:
+                            if _is_no_space_error(herbie_exc):
+                                raise
+                            logger.warning(
+                                "Herbie subset download failed; trying direct byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
+                                model_id,
+                                fh,
+                                search_pattern,
+                                priority,
+                                attempt_idx,
+                                attempts_for_priority,
+                                herbie_exc,
+                            )
+                            subset_path = _download_subset_with_inventory_byte_range(
+                                H,
+                                search_pattern=search_pattern,
+                                out_path=subset_hint,
+                                model_id=model_id,
+                                run_date=run_date,
+                                product=product,
+                                fh=fh,
+                                priority=priority,
+                                bundle_fetch_cache=bundle_fetch_cache,
+                                force_inventory_refresh=True,
+                            )
+                            if subset_path is None:
+                                raise herbie_exc
                         if subset_path is None:
                             saw_missing_subset_file = True
                             logger.warning(
@@ -3551,19 +3576,35 @@ def fetch_variable(
                         selected_meta = attempt_meta
                         break
                 else:
-                    subset_path = _download_subset_with_inventory_byte_range(
-                        H,
-                        search_pattern=search_pattern,
-                        out_path=subset_target,
-                        model_id=model_id,
-                        run_date=run_date,
-                        product=product,
-                        fh=fh,
-                        priority=priority,
-                        bundle_fetch_cache=bundle_fetch_cache,
-                    )
-                    if subset_path is None:
+                    try:
                         subset_path = H.download(search_pattern, errors="raise", overwrite=True)
+                    except Exception as herbie_exc:
+                        if _is_no_space_error(herbie_exc):
+                            raise
+                        logger.warning(
+                            "Herbie subset download failed; trying direct byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            attempt_idx,
+                            attempts_for_priority,
+                            herbie_exc,
+                        )
+                        subset_path = _download_subset_with_inventory_byte_range(
+                            H,
+                            search_pattern=search_pattern,
+                            out_path=subset_target,
+                            model_id=model_id,
+                            run_date=run_date,
+                            product=product,
+                            fh=fh,
+                            priority=priority,
+                            bundle_fetch_cache=bundle_fetch_cache,
+                            force_inventory_refresh=True,
+                        )
+                        if subset_path is None:
+                            raise herbie_exc
                     if subset_path is None:
                         saw_missing_subset_file = True
                         logger.warning(
@@ -3667,6 +3708,21 @@ def fetch_variable(
                     saw_missing_subset_file = True
                     logger.warning(
                         "Herbie subset transiently unavailable: no disk space for cache/write (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
+                        model_id,
+                        fh,
+                        search_pattern,
+                        priority,
+                        attempt_idx,
+                        attempts_for_priority,
+                        exc,
+                    )
+                    if sleep_s > 0 and attempt_idx < attempts_for_priority:
+                        time.sleep(sleep_s)
+                    continue
+                if _is_herbie_index_unavailable_error(exc):
+                    saw_missing_index = True
+                    logger.warning(
+                        "Herbie subset transiently unavailable: index unavailable (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
                         model_id,
                         fh,
                         search_pattern,

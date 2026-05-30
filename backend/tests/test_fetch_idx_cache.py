@@ -676,6 +676,102 @@ def test_no_space_left_on_device_is_transient(monkeypatch: pytest.MonkeyPatch, t
         )
 
 
+def test_herbie_index_unavailable_is_transient(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pattern = ":REFC:"
+
+    class _FakeHerbie:
+        idx = "https://nomads.example/hrrr.idx"
+        grib = "https://nomads.example/hrrr.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 31}])
+
+        def get_localFilePath(self, search_pattern: str):
+            del search_pattern
+            return str(tmp_path / "hrrr-refc.grib2")
+
+        def download(self, search_pattern: str, **kwargs):
+            del search_pattern, kwargs
+            raise RuntimeError(
+                "Cant open index file https://nomads.example/hrrr.idx\n"
+                "Download the full file first (with `H.download()`)."
+            )
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            model_id="hrrr",
+            product="sfc",
+            search_pattern=pattern,
+            run_date=datetime(2026, 5, 30, 12, 0),
+            fh=0,
+            herbie_kwargs={"priority": "nomads"},
+        )
+
+
+def test_herbie_download_runs_before_direct_byte_range_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_rasterio_open(monkeypatch)
+    pattern = ":TMP:2 m above ground:"
+    events: list[str] = []
+
+    class _FakeHerbie:
+        idx = "https://aws.example/hrrr.idx"
+        grib = "https://aws.example/hrrr.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 31}])
+
+        def get_localFilePath(self, search_pattern: str):
+            del search_pattern
+            return str(tmp_path / "hrrr-tmp2m.grib2")
+
+        def download(self, search_pattern: str, **kwargs):
+            del search_pattern, kwargs
+            events.append("herbie")
+            raise RuntimeError("grib2 file not found")
+
+    def _fake_direct(*args, **kwargs):
+        del args
+        events.append("direct")
+        out_path = Path(kwargs["out_path"])
+        out_path.write_bytes(b"GRIB" + (b"\0" * 28))
+        return out_path
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", _fake_direct)
+
+    data, _crs, _transform = fetch_module.fetch_variable(
+        model_id="hrrr",
+        product="sfc",
+        search_pattern=pattern,
+        run_date=datetime(2026, 5, 30, 12, 0),
+        fh=0,
+        herbie_kwargs={"priority": "aws"},
+    )
+
+    assert data.shape == (1, 1)
+    assert events == ["herbie", "direct"]
+
+
 def test_inventory_cache_dedupes_inflight_idx_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
     index_df = pd.DataFrame(
         [
