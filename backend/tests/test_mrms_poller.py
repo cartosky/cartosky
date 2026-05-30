@@ -608,7 +608,22 @@ def test_run_postprocess_request_reuses_existing_supplemental_artifacts(tmp_path
             "frames": [{"fh": 0, "valid_time": "2026-03-27T12:00:00Z"}],
         }
     }
-    assert captured["supplemental_variable_frames"] == {}
+    assert captured.get("supplemental_variable_frames") is None
+
+
+def test_run_once_defers_while_postprocess_is_active(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+
+    class _ActiveFuture:
+        def done(self) -> bool:
+            return False
+
+    monkeypatch.setattr(mrms_poller, "_POSTPROCESS_FUTURE", _ActiveFuture())
+
+    result = mrms_poller.run_once(config)
+
+    assert result.action == "noop"
+    assert "postprocess is still running" in result.message
 
 
 def test_run_postprocess_worker_drains_all_queued_requests(tmp_path: Path, monkeypatch) -> None:

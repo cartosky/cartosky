@@ -1034,6 +1034,7 @@ def finalize_mrms_published_run(
     manifest = json.loads(manifest_path.read_text())
     manifest_variables = dict(manifest.get("variables") or {})
     expected_counts = dict(supplemental_expected_frame_counts or {})
+    changed_supplemental_vars: set[str] = set()
 
     for var_id, previous_entry in sorted((reused_supplemental_manifest_entries or {}).items()):
         if reused_supplemental_from_run_id:
@@ -1044,6 +1045,7 @@ def finalize_mrms_published_run(
                 var_id=var_id,
             )
         manifest_variables[var_id] = json.loads(json.dumps(previous_entry))
+        changed_supplemental_vars.add(var_id)
 
     for var_id, supplemental_frames in sorted((supplemental_variable_frames or {}).items()):
         ordered_frames = sorted(
@@ -1063,6 +1065,7 @@ def finalize_mrms_published_run(
             frames=ordered_frames,
             expected_frame_count=max(0, int(expected_counts.get(var_id, len(ordered_frames)))),
         )
+        changed_supplemental_vars.add(var_id)
 
     manifest_last_updated = manifest.get("last_updated")
     metadata_before = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
@@ -1080,14 +1083,21 @@ def finalize_mrms_published_run(
         write_json_atomic(manifest_path, manifest)
 
     if build_grid_artifacts and grid_build_enabled():
-        grid_variables = [MRMS_VARIABLE_ID]
-        if (published_run_root / MRMS_RADAR_PTYPE_VARIABLE_ID).is_dir():
-            grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
-        grid_variables.extend(
-            var_id
-            for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
-            if (published_run_root / var_id).is_dir()
-        )
+        if changed_supplemental_vars:
+            grid_variables = [
+                var_id
+                for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
+                if var_id in changed_supplemental_vars and (published_run_root / var_id).is_dir()
+            ]
+        else:
+            grid_variables = [MRMS_VARIABLE_ID]
+            if (published_run_root / MRMS_RADAR_PTYPE_VARIABLE_ID).is_dir():
+                grid_variables.append(MRMS_RADAR_PTYPE_VARIABLE_ID)
+            grid_variables.extend(
+                var_id
+                for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
+                if (published_run_root / var_id).is_dir()
+            )
         _build_published_run_grid_artifacts(
             data_root=data_root,
             run_id=run_id,

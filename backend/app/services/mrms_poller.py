@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import gc
 import json
 import logging
 import os
@@ -127,6 +128,17 @@ _PENDING_POSTPROCESS: deque[MRMSPostprocessRequest] = deque()
 
 
 def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
+    if _postprocess_in_progress():
+        return MRMSPollerCycleResult(
+            action="noop",
+            latest_scan_valid_time=None,
+            published_run_id=None,
+            expected_frame_count=0,
+            decoded_frame_count=0,
+            failed_scan_count=0,
+            message="MRMS postprocess is still running; deferring next poll cycle.",
+        )
+
     target_frame_count = compute_target_frame_count(
         window_minutes=config.window_minutes,
         frame_cadence_minutes=config.frame_cadence_minutes,
@@ -545,6 +557,11 @@ def _schedule_postprocess(request: MRMSPostprocessRequest) -> None:
         )
 
 
+def _postprocess_in_progress() -> bool:
+    with _POSTPROCESS_LOCK:
+        return _POSTPROCESS_FUTURE is not None and not _POSTPROCESS_FUTURE.done()
+
+
 def _run_postprocess_worker(initial_request: MRMSPostprocessRequest) -> None:
     global _POSTPROCESS_FUTURE, _PENDING_POSTPROCESS
 
@@ -575,14 +592,10 @@ def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
     )
 
     decode_cache: dict[tuple[str, str], Any] = {}
-    supplemental_frames: dict[str, list[MRMSSupplementalFrame]] = {}
-    supplemental_expected_counts: dict[str, int] = {}
-    reused_manifest_entries: dict[str, dict[str, Any]] = {}
 
     with tempfile.TemporaryDirectory(prefix="cartosky-mrms-post-") as tmpdir:
         download_dir = Path(tmpdir)
         for plan in request.supplemental_plans:
-            supplemental_expected_counts[plan.var_id] = plan.expected_frame_count
             can_reuse = (
                 plan.mode == "reuse"
                 and request.previous_run_id is not None
@@ -594,7 +607,17 @@ def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
                 )
             )
             if can_reuse:
-                reused_manifest_entries[plan.var_id] = json.loads(json.dumps(plan.previous_manifest_entry))
+                finalize_mrms_published_run(
+                    data_root=request.data_root,
+                    run_id=request.run_id,
+                    reused_supplemental_from_run_id=request.previous_run_id,
+                    reused_supplemental_manifest_entries={
+                        plan.var_id: json.loads(json.dumps(plan.previous_manifest_entry))
+                    },
+                    supplemental_expected_frame_counts={plan.var_id: plan.expected_frame_count},
+                    build_grid_artifacts=grid_build_enabled(),
+                )
+                gc.collect()
                 continue
 
             ordered_frames = [
@@ -612,17 +635,16 @@ def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
                 for scan in plan.frozen_scans
             ]
             if ordered_frames:
-                supplemental_frames[plan.var_id] = ordered_frames
-
-    finalize_mrms_published_run(
-        data_root=request.data_root,
-        run_id=request.run_id,
-        reused_supplemental_from_run_id=request.previous_run_id,
-        reused_supplemental_manifest_entries=reused_manifest_entries,
-        supplemental_variable_frames=supplemental_frames,
-        supplemental_expected_frame_counts=supplemental_expected_counts,
-        build_grid_artifacts=grid_build_enabled(),
-    )
+                finalize_mrms_published_run(
+                    data_root=request.data_root,
+                    run_id=request.run_id,
+                    supplemental_variable_frames={plan.var_id: ordered_frames},
+                    supplemental_expected_frame_counts={plan.var_id: plan.expected_frame_count},
+                    build_grid_artifacts=grid_build_enabled(),
+                )
+            del ordered_frames
+            decode_cache.clear()
+            gc.collect()
     logger.info("MRMS postprocess complete run=%s", request.run_id)
 
 
