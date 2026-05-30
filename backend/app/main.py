@@ -2673,6 +2673,11 @@ def _capabilities_catalog_signature() -> str:
     return _make_etag_from_parts(CAPABILITIES_CONTRACT_VERSION, supported_models, model_catalog)
 
 
+@lru_cache(maxsize=1)
+def _region_presets_signature() -> str:
+    return _make_etag_from_parts(REGION_PRESETS)
+
+
 def _capabilities_state_etag(
     capabilities_by_model: dict[str, Any],
     availability: dict[str, dict[str, Any]],
@@ -2808,7 +2813,6 @@ def _bootstrap_selection_state(
 def _bootstrap_state_etag(
     *,
     requested_run: str,
-    capabilities_etag: str,
     selection_state: dict[str, Any],
 ) -> str:
     selected_model = str(selection_state.get("selected_model") or "")
@@ -2836,7 +2840,8 @@ def _bootstrap_state_etag(
     )
     return _make_etag_from_parts(
         CAPABILITIES_CONTRACT_VERSION,
-        capabilities_etag,
+        _capabilities_catalog_signature(),
+        _region_presets_signature(),
         selected_model,
         selected_run or requested_run,
         selected_var,
@@ -3720,7 +3725,6 @@ def get_bootstrap_v4(
     capabilities_by_model = list_model_capabilities()
     supported_models = sorted(capabilities_by_model.keys())
     availability = _resolve_capabilities_availability(supported_models, capabilities_by_model)
-    capabilities_etag = _capabilities_state_etag(capabilities_by_model, availability)
 
     manifest_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -3751,7 +3755,6 @@ def get_bootstrap_v4(
     cache_control = "public, max-age=60"
     etag = _bootstrap_state_etag(
         requested_run=run,
-        capabilities_etag=capabilities_etag,
         selection_state=selection_state,
     )
     prebuild_timing_header = _format_server_timing(

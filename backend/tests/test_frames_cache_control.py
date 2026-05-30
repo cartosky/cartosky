@@ -475,6 +475,29 @@ async def test_bootstrap_if_none_match_short_circuits_payload_and_frame_build(
     assert response.headers.get("etag") == etag
 
 
+def test_bootstrap_state_etag_for_fixed_run_ignores_dynamic_capabilities_state() -> None:
+    run_manifest = main_module._load_manifest("hrrr", "20260224_14z", region="conus")
+    selection_state = {
+        "selected_model": "hrrr",
+        "selected_run": "20260224_14z",
+        "selected_var": "radar_ptype",
+        "selected_ensemble_view": "",
+        "selected_region": "conus",
+        "run_manifest": run_manifest,
+    }
+
+    etag_a = main_module._bootstrap_state_etag(
+        requested_run="20260224_14z",
+        selection_state=selection_state,
+    )
+    etag_b = main_module._bootstrap_state_etag(
+        requested_run="20260224_14z",
+        selection_state=selection_state,
+    )
+
+    assert etag_a == etag_b
+
+
 async def test_region_presets_include_server_timing(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/regions")
 
