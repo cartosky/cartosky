@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -377,6 +378,59 @@ def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: P
     assert captured["target_frame_count"] == 2
 
 
+def test_run_once_limits_decode_backlog_to_newest_slice(tmp_path: Path, monkeypatch) -> None:
+    config = replace(_config(tmp_path), max_decode_frames_per_cycle=2)
+    _disable_postprocess(monkeypatch)
+    scans = [
+        MRMSScanRef(
+            valid_time=datetime(2026, 3, 27, 12, minute, tzinfo=timezone.utc),
+            url=f"https://example.test/{minute}.grib2.gz",
+            filename=f"{minute}.grib2.gz",
+        )
+        for minute in range(0, 10, 2)
+    ]
+
+    monkeypatch.setattr(mrms_poller, "discover_recent_scans_http", lambda **_: scans)
+    monkeypatch.setattr(mrms_poller, "freeze_bundle_scans", lambda items, **_: items)
+    monkeypatch.setattr(mrms_poller, "_latest_published_bundle_state", lambda _: (None, False))
+    monkeypatch.setattr(mrms_poller, "download_scan", lambda scan, **_: tmp_path / scan.filename)
+
+    decoded_times: list[datetime] = []
+
+    class _Decoded:
+        def __init__(self, valid_time):
+            self.valid_time = valid_time
+            self.values = np.ones((2, 2), dtype=np.float32)
+            self.decoder = "pygrib"
+            self.metadata = {}
+
+    def _decode(path, valid_time, **_):
+        decoded_times.append(valid_time)
+        return _Decoded(valid_time)
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(mrms_poller, "decode_scan", _decode)
+    monkeypatch.setattr(
+        mrms_poller,
+        "publish_mrms_bundle",
+        lambda **kwargs: captured.update(kwargs) or MRMSPublishResult(
+            run_id="20260327_1208z",
+            published_run_dir=tmp_path / "published" / "mrms" / "20260327_1208z",
+            manifest_path=tmp_path / "manifests" / "mrms" / "20260327_1208z.json",
+            frame_count=2,
+        ),
+    )
+    monkeypatch.setattr(mrms_poller, "_enforce_retention", lambda _: None)
+
+    result = mrms_poller.run_once(config)
+
+    assert result.action == "published"
+    assert result.expected_frame_count == 5
+    assert result.decoded_frame_count == 2
+    assert decoded_times == [scans[-2].valid_time, scans[-1].valid_time]
+    assert captured["target_frame_count"] == 5
+
+
 def test_plan_recent_precip_postprocess_reuses_unchanged_upstream_timestamps(
     tmp_path: Path,
     monkeypatch,
@@ -595,4 +649,3 @@ def test_run_postprocess_worker_drains_all_queued_requests(tmp_path: Path, monke
     assert processed == ["20260327_1204z", "20260327_1206z", "20260327_1208z"]
     assert list(mrms_poller._PENDING_POSTPROCESS) == []
     assert mrms_poller._POSTPROCESS_FUTURE is None
-

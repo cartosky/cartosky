@@ -60,6 +60,7 @@ DEFAULT_PREFERRED_DECODER = "wgrib2"
 DEFAULT_FALLBACK_DECODER = "pygrib"
 DEFAULT_FRAME_WRITE_WORKERS = 2
 DEFAULT_PRECIP_FRAME_CADENCE_MINUTES = 60
+DEFAULT_MAX_DECODE_FRAMES_PER_CYCLE = 8
 KGM2_TO_INCHES = np.float32(1.0 / 25.4)
 
 MRMS_RECENT_PRECIP_PRODUCTS: dict[str, tuple[str, Any]] = {
@@ -86,6 +87,7 @@ class MRMSPollerConfig:
     qpe_06h_listing_url: str
     qpe_24h_listing_url: str
     qpe_72h_listing_url: str
+    max_decode_frames_per_cycle: int = DEFAULT_MAX_DECODE_FRAMES_PER_CYCLE
 
 
 @dataclass(frozen=True)
@@ -200,10 +202,20 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         scan for scan in frozen
         if scan.valid_time.astimezone(timezone.utc) not in previously_published_valid_times
     ]
+    decode_backlog_count = len(scans_to_decode)
+    decode_limit = max(0, int(config.max_decode_frames_per_cycle))
+    if decode_limit > 0 and decode_backlog_count > decode_limit:
+        scans_to_decode = scans_to_decode[-decode_limit:]
+        logger.info(
+            "MRMS decode backlog limited decode_total=%d decode_now=%d limit=%d",
+            decode_backlog_count,
+            len(scans_to_decode),
+            decode_limit,
+        )
     logger.info(
         "MRMS incremental window previous_run=%s reused=%d decode=%d",
         latest_run_id or "<none>",
-        max(0, len(frozen) - len(scans_to_decode)),
+        max(0, len(frozen) - decode_backlog_count),
         len(scans_to_decode),
     )
 
@@ -735,6 +747,11 @@ def build_config(args: argparse.Namespace) -> MRMSPollerConfig:
         qpe_72h_listing_url=_env_value(
             "CARTOSKY_MRMS_QPE_72H_PASS2_LISTING_URL",
             default=MRMS_QPE_72H_PASS2_LISTING_URL,
+        ),
+        max_decode_frames_per_cycle=_int_env(
+            "CARTOSKY_MRMS_MAX_DECODE_FRAMES_PER_CYCLE",
+            DEFAULT_MAX_DECODE_FRAMES_PER_CYCLE,
+            minimum=0,
         ),
     )
 
