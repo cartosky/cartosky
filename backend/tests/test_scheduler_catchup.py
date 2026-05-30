@@ -263,8 +263,18 @@ def test_main_parses_explicit_env_vars_when_present(
 def test_probe_run_exists_checks_multiple_probe_fhs(monkeypatch: pytest.MonkeyPatch) -> None:
     seen_calls: list[tuple[int, tuple[str, ...], bool]] = []
 
-    def _fake_product_hour_has_any_idx(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+    def _fake_product_hour_has_any_idx(
+        *,
+        model_id,
+        product,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        allow_grib_without_idx=False,
+        search_pattern=None,
+    ):
         del model_id, product, run_date
+        assert search_pattern == ":2t:"
         priorities = tuple((herbie_kwargs or {}).get("priority", []))
         seen_calls.append((int(fh), priorities, bool(allow_grib_without_idx)))
         return int(fh) == 3
@@ -301,8 +311,18 @@ class _FakeProbePluginAllowGrib(_FakeProbePlugin):
 def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     seen_calls: list[bool] = []
 
-    def _fake_product_hour_has_any_idx(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+    def _fake_product_hour_has_any_idx(
+        *,
+        model_id,
+        product,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        allow_grib_without_idx=False,
+        search_pattern=None,
+    ):
         del model_id, product, run_date, fh, herbie_kwargs
+        assert search_pattern == ":2t:"
         seen_calls.append(bool(allow_grib_without_idx))
         return bool(allow_grib_without_idx)
 
@@ -318,7 +338,7 @@ def test_probe_run_exists_accepts_grib_fallback_when_idx_missing(monkeypatch: py
     assert seen_calls == [True]
 
 
-def test_probe_run_exists_accepts_inventory_parse_fallback_when_grib_and_idx_exist(
+def test_probe_run_exists_rejects_empty_inventory_for_probe_pattern(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _FakeHerbie:
@@ -346,7 +366,7 @@ def test_probe_run_exists_accepts_inventory_parse_fallback_when_grib_and_idx_exi
         probe_var="tmp2m",
     )
 
-    assert found is True
+    assert found is False
 
 
 class _FakeGFSPlugin:

@@ -420,6 +420,7 @@ def _probe_run_exists(*, plugin: Any, run_dt: datetime, probe_var: str) -> bool:
             fh=probe_fh,
             herbie_kwargs=request_kwargs,
             allow_grib_without_idx=allow_grib_without_idx,
+            search_pattern=_probe_search_pattern(plugin, probe_var),
         ):
             logger.info(
                 "Run probe success: model=%s run=%s probe_var=%s fh=%s",

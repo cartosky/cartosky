@@ -2291,6 +2291,7 @@ def product_hour_has_any_idx(
     fh: int,
     herbie_kwargs: dict[str, Any] | None = None,
     allow_grib_without_idx: bool = False,
+    search_pattern: str | None = None,
 ) -> bool:
     """Cheap run-hour readiness probe using IDX, with optional GRIB fallback."""
     from herbie.core import Herbie
@@ -2374,6 +2375,38 @@ def product_hour_has_any_idx(
                 source="readiness_probe",
             )
             continue
+        if search_pattern:
+            inv_result = _inventory_search(
+                H,
+                search_pattern=str(search_pattern),
+                priority=priority,
+                model_id=model_id,
+                run_date=run_date,
+                product=product,
+                fh=fh,
+            )
+            if inv_result.reason != "ok":
+                if inv_result.reason == "idx_missing":
+                    _record_and_log_idx_missing(
+                        model_id=model_id,
+                        run_date=run_date,
+                        product=product,
+                        fh=fh,
+                        priority=priority,
+                        search_pattern="(readiness_probe)",
+                        source="readiness_probe_inventory",
+                    )
+                else:
+                    logger.warning(
+                        "Herbie readiness probe unavailable (%s %s fh%03d; priority=%s; pattern=%s): %s",
+                        model_id,
+                        product,
+                        int(fh),
+                        priority,
+                        search_pattern,
+                        inv_result.reason,
+                    )
+                continue
         return True
     if all_cached_missing:
         logger.warning(
@@ -2393,6 +2426,15 @@ def _is_missing_index_error(exc: Exception) -> bool:
 def _is_empty_inventory_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return "cannot set a dataframe without columns to the column search_this" in text
+
+
+def _is_no_space_error(exc: Exception) -> bool:
+    if isinstance(exc, OSError):
+        try:
+            return int(getattr(exc, "errno", 0)) == 28
+        except Exception:
+            return False
+    return "no space left on device" in str(exc).lower()
 
 
 def _is_missing_file_error(exc: Exception) -> bool:
@@ -3372,10 +3414,22 @@ def fetch_variable(
                         prs_idx_lag_reason = precheck_reason
                         force_nomads_after_prs_idx_lag = True
                         break
-                    saw_missing_subset_file = True
-                    if sleep_s > 0 and attempt_idx < attempts_for_priority:
-                        time.sleep(sleep_s)
-                    continue
+                    if precheck_reason in {"idx_empty", "idx_unparseable", "pattern_missing", "no_inventory"}:
+                        logger.info(
+                            "Herbie precheck failed open; trying subset download anyway (%s fh%03d %s; priority=%s; reason=%s; attempt=%d/%d)",
+                            model_id,
+                            fh,
+                            search_pattern,
+                            priority,
+                            precheck_reason,
+                            attempt_idx,
+                            attempts_for_priority,
+                        )
+                    else:
+                        saw_missing_subset_file = True
+                        if sleep_s > 0 and attempt_idx < attempts_for_priority:
+                            time.sleep(sleep_s)
+                        continue
                 attempt_meta = _inventory_meta_from_herbie(
                     H,
                     search_pattern=search_pattern,
@@ -3609,6 +3663,21 @@ def fetch_variable(
                         prs_idx_lag_reason = "idx_missing_exception"
                         force_nomads_after_prs_idx_lag = True
                     break
+                if _is_no_space_error(exc):
+                    saw_missing_subset_file = True
+                    logger.warning(
+                        "Herbie subset transiently unavailable: no disk space for cache/write (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
+                        model_id,
+                        fh,
+                        search_pattern,
+                        priority,
+                        attempt_idx,
+                        attempts_for_priority,
+                        exc,
+                    )
+                    if sleep_s > 0 and attempt_idx < attempts_for_priority:
+                        time.sleep(sleep_s)
+                    continue
                 if _is_grib_not_found_error(exc):
                     manual_subset = None
                     if 'H' in locals():

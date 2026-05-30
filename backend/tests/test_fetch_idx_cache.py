@@ -562,6 +562,120 @@ def test_empty_inventory_dataframe_error_is_transient(monkeypatch: pytest.Monkey
         )
 
 
+def test_readiness_probe_rejects_empty_inventory_for_probe_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeHerbie:
+        idx = "https://nomads.example/aigfs.idx"
+        grib = "https://nomads.example/aigfs.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame()
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+    assert fetch_module.product_hour_has_any_idx(
+        model_id="aigfs",
+        product="sfc",
+        search_pattern=":TMP:2 m above ground:",
+        run_date=datetime(2026, 5, 30, 12, 0),
+        fh=0,
+        herbie_kwargs={"priority": "nomads"},
+    ) is False
+
+
+def test_precheck_empty_idx_fails_open_to_herbie_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_rasterio_open(monkeypatch)
+
+    class _FakeHerbie:
+        idx = "https://nomads.example/aigfs.idx"
+        grib = "https://nomads.example/aigfs.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame()
+
+        def get_localFilePath(self, search_pattern: str):
+            del search_pattern
+            return str(tmp_path / "aigfs-herbie-download.grib2")
+
+        def download(self, search_pattern: str, **kwargs):
+            del search_pattern, kwargs
+            out_path = tmp_path / "aigfs-herbie-download.grib2"
+            out_path.write_bytes(b"GRIB" + (b"\0" * 28))
+            return out_path
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+
+    data, _crs, _transform = fetch_module.fetch_variable(
+        model_id="aigfs",
+        product="sfc",
+        search_pattern=":TMP:2 m above ground:",
+        run_date=datetime(2026, 5, 30, 12, 0),
+        fh=0,
+        herbie_kwargs={"priority": "nomads"},
+    )
+
+    assert data.shape == (1, 1)
+
+
+def test_no_space_left_on_device_is_transient(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class _FakeHerbie:
+        idx = "https://aws.example/hrrr.idx"
+        grib = "https://aws.example/hrrr.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame(
+                [
+                    {
+                        "search_this": ":CAPE:90-0 mb above ground:",
+                        "start_byte": 0,
+                        "end_byte": 31,
+                    }
+                ]
+            )
+
+        def get_localFilePath(self, search_pattern: str):
+            del search_pattern
+            raise OSError(28, "No space left on device", str(tmp_path))
+
+        def download(self, search_pattern: str, **kwargs):
+            del search_pattern, kwargs
+            raise OSError(28, "No space left on device", str(tmp_path))
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            model_id="hrrr",
+            product="sfc",
+            search_pattern=":CAPE:90-0 mb above ground:",
+            run_date=datetime(2026, 5, 30, 12, 0),
+            fh=0,
+            herbie_kwargs={"priority": "aws"},
+        )
+
+
 def test_inventory_cache_dedupes_inflight_idx_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
     index_df = pd.DataFrame(
         [
