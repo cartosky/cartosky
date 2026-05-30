@@ -126,6 +126,12 @@ _JSON_CACHE_RECHECK_SECONDS = float(
         default="1.0",
     )
 )
+CAPABILITIES_AVAILABILITY_CACHE_TTL_SECONDS = float(
+    _env_value(
+        "CARTOSKY_CAPABILITIES_AVAILABILITY_CACHE_TTL_SECONDS",
+        default="10",
+    )
+)
 
 
 def _env_bool(*names: str, default: bool) -> bool:
@@ -2196,6 +2202,12 @@ _sample_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _sample_inflight: dict[str, _SampleInflight] = {}
 _sample_rate_window: dict[str, list[float]] = {}
 _sample_lock = threading.Lock()
+_capabilities_availability_cache_lock = threading.Lock()
+_capabilities_availability_cache: dict[str, Any] = {
+    "expires_at": 0.0,
+    "key": "",
+    "availability": None,
+}
 
 LOOP_MANIFEST_VERSION = 1
 LOOP_MANIFEST_PROJECTION = "EPSG:4326"
@@ -2540,9 +2552,32 @@ def _availability_for_models(
     return availability
 
 
+def _resolve_capabilities_availability(
+    model_ids: list[str],
+    capabilities_by_model: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    cache_key = _make_etag_from_parts(_capabilities_catalog_signature(), sorted(model_ids))
+    now = time.monotonic()
+
+    with _capabilities_availability_cache_lock:
+        cached_key = str(_capabilities_availability_cache.get("key") or "")
+        cached_expires_at = float(_capabilities_availability_cache.get("expires_at") or 0.0)
+        cached_availability = _capabilities_availability_cache.get("availability")
+        if cached_key == cache_key and cached_expires_at > now and isinstance(cached_availability, dict):
+            return cached_availability
+
+    availability = _availability_for_models(model_ids, capabilities_by_model)
+
+    with _capabilities_availability_cache_lock:
+        _capabilities_availability_cache["key"] = cache_key
+        _capabilities_availability_cache["expires_at"] = now + CAPABILITIES_AVAILABILITY_CACHE_TTL_SECONDS
+        _capabilities_availability_cache["availability"] = availability
+    return availability
+
+
 def _published_run_observability_rows() -> list[dict[str, float | str]]:
     capabilities_by_model = list_model_capabilities()
-    availability = _availability_for_models(sorted(capabilities_by_model.keys()), capabilities_by_model)
+    availability = _resolve_capabilities_availability(sorted(capabilities_by_model.keys()), capabilities_by_model)
     rows: list[dict[str, float | str]] = []
     now_utc = datetime.utcnow()
     for model_id, item in availability.items():
@@ -2642,14 +2677,10 @@ def _capabilities_state_etag(
     capabilities_by_model: dict[str, Any],
     availability: dict[str, dict[str, Any]],
 ) -> str:
-    observed_minute_bucket = int(time.time() // 60) if any(
-        is_observed_model_capability(capability) for capability in capabilities_by_model.values()
-    ) else None
     return _make_etag_from_parts(
         CAPABILITIES_CONTRACT_VERSION,
         _capabilities_catalog_signature(),
         availability,
-        observed_minute_bucket,
     )
 
 
@@ -3653,7 +3684,7 @@ def get_capabilities_v4(request: Request):
     started_at = time.perf_counter()
     capabilities_by_model = list_model_capabilities()
     supported_models = sorted(capabilities_by_model.keys())
-    availability = _availability_for_models(supported_models, capabilities_by_model)
+    availability = _resolve_capabilities_availability(supported_models, capabilities_by_model)
     cache_control = "public, max-age=60"
     etag = _capabilities_state_etag(capabilities_by_model, availability)
     timing_header = _format_server_timing(
@@ -3688,7 +3719,7 @@ def get_bootstrap_v4(
     started_at = time.perf_counter()
     capabilities_by_model = list_model_capabilities()
     supported_models = sorted(capabilities_by_model.keys())
-    availability = _availability_for_models(supported_models, capabilities_by_model)
+    availability = _resolve_capabilities_availability(supported_models, capabilities_by_model)
     capabilities_etag = _capabilities_state_etag(capabilities_by_model, availability)
 
     manifest_started_at = time.perf_counter()

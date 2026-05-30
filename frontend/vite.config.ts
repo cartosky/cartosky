@@ -22,8 +22,32 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          maplibre: ["maplibre-gl"],
+        manualChunks(id) {
+          if (!id.includes("node_modules")) {
+            return undefined;
+          }
+          if (id.includes("maplibre-gl")) {
+            return "maplibre";
+          }
+          if (id.includes("@clerk/")) {
+            return "clerk";
+          }
+          if (id.includes("@radix-ui/")) {
+            return "radix";
+          }
+          if (id.includes("recharts")) {
+            return "recharts";
+          }
+          if (id.includes("@posthog/") || id.includes("posthog-js")) {
+            return "posthog";
+          }
+          if (id.includes("lucide-react")) {
+            return "icons";
+          }
+          if (id.includes("react-router") || id.includes("@remix-run/router")) {
+            return "router";
+          }
+          return undefined;
         },
       },
     },

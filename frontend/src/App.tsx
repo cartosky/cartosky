@@ -79,6 +79,7 @@ import {
   AUTOPLAY_STALL_SKIP_MS,
   GRID_PLAY_START_AHEAD_FRAMES,
   GRID_PLAY_STALL_MS,
+  SCRUB_COMMIT_NEIGHBOR_WINDOW,
   VARIABLE_SWITCH_TIMEOUT_MS,
   // Pure helpers
   viewportSignatureFromState,
@@ -1624,6 +1625,44 @@ export default function App() {
       && (presentedGridFrameUrl || compositeGridLayers.length > 0)
     );
   }, [compositeGridLayers.length, gridManifest, presentedGridFrameUrl, selectedGridLod]);
+  const gridPrefetchPivotHour = useMemo(() => {
+    if (!isGridLowMidActive) {
+      return null;
+    }
+
+    if (scrubCommitIntent && Number.isFinite(scrubCommitIntent.hour)) {
+      const commitHour = Number(scrubCommitIntent.hour);
+      const commitIndex = gridFrameHours.indexOf(commitHour);
+      const presentedHour = Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null;
+      const presentedIndex = presentedHour !== null ? gridFrameHours.indexOf(presentedHour) : -1;
+
+      if (
+        commitIndex >= 0
+        && presentedIndex >= 0
+        && Math.abs(commitIndex - presentedIndex) > SCRUB_COMMIT_NEIGHBOR_WINDOW
+      ) {
+        return commitHour;
+      }
+      if (commitIndex >= 0 && presentedIndex < 0) {
+        return commitHour;
+      }
+    }
+
+    if (Number.isFinite(requestedGridDisplayHour)) {
+      return Number(requestedGridDisplayHour);
+    }
+    if (Number.isFinite(resolvedGridDisplayHour)) {
+      return Number(resolvedGridDisplayHour);
+    }
+    return null;
+  }, [
+    gridFrameHours,
+    isGridLowMidActive,
+    presentedGridDisplayHour,
+    requestedGridDisplayHour,
+    resolvedGridDisplayHour,
+    scrubCommitIntent,
+  ]);
   const controlAvailableFrameHours = useMemo(() => {
     if (isGridLowMidActive && gridFrameHours.length > 0) {
       return selectableFramesForVariable(gridFrameHours, selectedVariableDefaultFh);
@@ -4189,7 +4228,7 @@ export default function App() {
           gridLodLevel={isGridLowMidActive ? Number(selectedGridLod?.level ?? 0) : null}
           gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
-          gridPrefetchPivotHour={isGridLowMidActive && Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null}
+          gridPrefetchPivotHour={gridPrefetchPivotHour}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
           gridContour={isGridLowMidActive ? gridContour : null}

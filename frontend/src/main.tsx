@@ -1,10 +1,9 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { ClerkProvider, type ClerkProviderProps } from "@clerk/react";
 import { BrowserRouter } from "react-router-dom";
 import RouterApp from "./RouterApp";
 import { ClerkAuthTokenBridge } from "./components/ClerkAuthTokenBridge";
-import { FeedbackWidget } from "./components/FeedbackWidget";
 import { PostHogBridge } from "./components/PostHogBridge";
 import { FeedbackProvider } from "./lib/feedback-context";
 import { initPostHogAnalytics } from "./lib/posthog";
@@ -19,6 +18,9 @@ initPostHogAnalytics();
 
 type EnvClerkProviderProps = Omit<ClerkProviderProps, "publishableKey">;
 const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderProps>;
+const FeedbackWidget = lazy(() =>
+  import("./components/FeedbackWidget").then((module) => ({ default: module.FeedbackWidget }))
+);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -29,7 +31,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <FeedbackProvider>
             <PostHogBridge />
             <RouterApp />
-            <FeedbackWidget />
+            <Suspense fallback={null}>
+              <FeedbackWidget />
+            </Suspense>
           </FeedbackProvider>
         </SiteLoadingProvider>
       </BrowserRouter>

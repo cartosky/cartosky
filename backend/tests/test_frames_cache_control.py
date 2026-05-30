@@ -401,6 +401,16 @@ async def test_capabilities_if_none_match_short_circuits_payload_build(
     assert response.headers.get("etag") == etag
 
 
+def test_capabilities_etag_stable_across_minute_boundaries_for_observed_models() -> None:
+    capabilities_by_model = {"mrms": main_module.list_model_capabilities()["mrms"]}
+    availability = main_module._availability_for_models(["mrms"], capabilities_by_model)
+
+    etag_a = main_module._capabilities_state_etag(capabilities_by_model, availability)
+    etag_b = main_module._capabilities_state_etag(capabilities_by_model, availability)
+
+    assert etag_a == etag_b
+
+
 async def test_latest_run_skips_newer_grid_unsupported_published_run(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/gfs/latest/tmp2m/grid-manifest")
 
