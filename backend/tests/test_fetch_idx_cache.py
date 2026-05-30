@@ -517,6 +517,51 @@ def test_herbie_construction_defaults_to_quiet_verbose_false(monkeypatch: pytest
     assert seen_verbose == [False]
 
 
+def test_empty_inventory_dataframe_error_is_transient(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class _FakeHerbie:
+        idx = "https://nomads.example/aigfs.idx"
+        grib = "https://nomads.example/aigfs.grib2"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame(
+                [
+                    {
+                        "search_this": ":APCP:surface:0-1 day acc:",
+                        "start_byte": 0,
+                        "end_byte": 31,
+                    }
+                ]
+            )
+
+        def get_localFilePath(self, search_pattern: str):
+            del search_pattern
+            return str(tmp_path / "aigfs-empty-inventory.grib2")
+
+        def download(self, *args, **kwargs):
+            del args, kwargs
+            raise ValueError("Cannot set a DataFrame without columns to the column search_this")
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+
+    with pytest.raises(fetch_module.HerbieTransientUnavailableError):
+        fetch_module.fetch_variable(
+            model_id="aigfs",
+            product="sfc",
+            search_pattern=":APCP:surface:0-[0-9]+ day acc[^:]*:$",
+            run_date=datetime(2026, 5, 29, 18, 0),
+            fh=168,
+            herbie_kwargs={"priority": "nomads"},
+        )
+
+
 def test_inventory_cache_dedupes_inflight_idx_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
     index_df = pd.DataFrame(
         [

@@ -224,8 +224,14 @@ class BundleFetchCache:
         with self._lock:
             cached = self._entries.get(key)
             if cached is not None:
-                self._entries.move_to_end(key)
-                return cached, "hit", 0
+                if len(cached) == 0:
+                    removed = self._entries.pop(key, None)
+                    if removed is not None:
+                        self._entries_bytes = max(0, self._entries_bytes - len(removed))
+                    _metric_increment("fetch_cache_evict_empty")
+                else:
+                    self._entries.move_to_end(key)
+                    return cached, "hit", 0
             inflight = self._inflight.get(key)
             if inflight is None:
                 inflight = _RangeFetchInflight(event=threading.Event(), waiters=1)
@@ -261,6 +267,7 @@ class BundleFetchCache:
             if (
                 cacheable
                 and complete
+                and len(payload) > 0
                 and len(payload) <= self.max_cacheable_bytes
                 and len(payload) <= self.max_bytes
             ):
@@ -2383,6 +2390,11 @@ def _is_missing_index_error(exc: Exception) -> bool:
     return "no index file was found for none" in text
 
 
+def _is_empty_inventory_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "cannot set a dataframe without columns to the column search_this" in text
+
+
 def _is_missing_file_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return "no such file or directory" in text
@@ -3582,7 +3594,7 @@ def fetch_variable(
                     if sleep_s > 0 and attempt_idx < attempts_for_priority:
                         time.sleep(sleep_s)
                     continue
-                if _is_missing_index_error(exc):
+                if _is_missing_index_error(exc) or _is_empty_inventory_error(exc):
                     saw_missing_index = True
                     _record_and_log_idx_missing(
                         model_id=model_id,

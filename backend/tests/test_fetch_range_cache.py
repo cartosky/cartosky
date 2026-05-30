@@ -279,6 +279,37 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
 
 
+def test_fetch_range_cache_does_not_store_empty_payloads() -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
+    calls = {"count": 0}
+
+    def _fetcher() -> bytes:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return b""
+        return b"GRIB" + (b"\0" * 28)
+
+    first, first_event, _first_evicted = cache.get_or_fetch(
+        "empty-then-ready",
+        fetcher=_fetcher,
+        cacheable=True,
+        expected_size=None,
+    )
+    second, second_event, _second_evicted = cache.get_or_fetch(
+        "empty-then-ready",
+        fetcher=_fetcher,
+        cacheable=True,
+        expected_size=None,
+    )
+
+    assert first == b""
+    assert first_event == "miss"
+    assert second.startswith(b"GRIB")
+    assert second_event == "miss"
+    assert calls["count"] == 2
+
+
 def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
