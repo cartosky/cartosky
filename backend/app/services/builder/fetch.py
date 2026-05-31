@@ -3265,6 +3265,7 @@ def fetch_variable(
     bundle_fetch_cache: BundleFetchCache | None = None,
     return_meta: bool = False,
     _retry_on_invalid_subset: bool = True,
+    _skip_priorities: frozenset[str] | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
     """Fetch a single GRIB variable via Herbie and return its data.
 
@@ -3354,7 +3355,12 @@ def fetch_variable(
     # Strip tzinfo to avoid pandas tz-naive vs tz-aware comparison errors.
     herbie_date = run_date.replace(tzinfo=None) if run_date.tzinfo else run_date
 
-    priority_list = [_priority_normalized(item) for item in _priority_candidates(raw_herbie_kwargs) if str(item).strip()]
+    skip_priorities = frozenset(_skip_priorities or ())
+    priority_list = [
+        _priority_normalized(item)
+        for item in _priority_candidates(raw_herbie_kwargs)
+        if str(item).strip() and _priority_normalized(item) not in skip_priorities
+    ]
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
     lock_enabled = _grib_disk_cache_lock_enabled()
@@ -3364,6 +3370,7 @@ def fetch_variable(
     saw_missing_subset_file = False
     saw_non_transient_failure = False
     grib_path: Path | None = None
+    grib_priority: str | None = None
     selected_meta: dict[str, Any] = {
         "inventory_line": "",
         "search_pattern": str(search_pattern),
@@ -3466,6 +3473,7 @@ def fetch_variable(
                         cached_ok, cached_size = _subset_file_status(subset_hint)
                         if cached_ok:
                             grib_path = subset_hint
+                            grib_priority = priority
                             logger.info(
                                 "Reusing cached GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d; size=%d)",
                                 grib_path.name,
@@ -3551,6 +3559,7 @@ def fetch_variable(
                             )
                             if manual_subset is not None:
                                 grib_path = manual_subset
+                                grib_priority = priority
                                 selected_meta = attempt_meta
                                 break
                             try:
@@ -3563,6 +3572,7 @@ def fetch_variable(
                             continue
 
                         grib_path = subset_candidate
+                        grib_priority = priority
                         logger.info(
                             "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
                             grib_path.name,
@@ -3648,6 +3658,7 @@ def fetch_variable(
                         )
                         if manual_subset is not None:
                             grib_path = manual_subset
+                            grib_priority = priority
                             selected_meta = attempt_meta
                             break
                         try:
@@ -3660,6 +3671,7 @@ def fetch_variable(
                         continue
 
                     grib_path = subset_candidate
+                    grib_priority = priority
                     logger.info(
                         "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
                         grib_path.name,
@@ -3767,6 +3779,7 @@ def fetch_variable(
                             manual_subset = None
                     if manual_subset is not None:
                         grib_path = manual_subset
+                        grib_priority = priority
                         try:
                             selected_meta = attempt_meta
                         except Exception:
@@ -3890,6 +3903,9 @@ def fetch_variable(
                         bundle_fetch_cache=None,
                         return_meta=return_meta,
                         _retry_on_invalid_subset=False,
+                        _skip_priorities=skip_priorities | frozenset(
+                            item for item in (grib_priority,) if item
+                        ),
                     )
             except OSError:
                 pass
