@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -178,3 +179,42 @@ def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: 
     sidecar_path = tmp_path / "staging" / "nbm" / "20260305_17z" / "tmp2m" / "fh028.json"
     sidecar = json.loads(sidecar_path.read_text())
     assert "contours" not in sidecar
+
+
+def test_build_iso_contour_geojson_uses_output_parent_for_scratch(monkeypatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "staging" / "nam" / "20260531_00z" / "vort500" / "contours" / "fh016_height_500mb.geojson"
+    temp_dir_calls: list[Path] = []
+
+    real_temporary_directory = tempfile.TemporaryDirectory
+
+    def _recording_temp_dir(*args, **kwargs):
+        temp_dir_calls.append(Path(kwargs["dir"]))
+        return real_temporary_directory(*args, **kwargs)
+
+    def _fake_gdal(binary_name: str) -> str:
+        return binary_name
+
+    def _fake_run(cmd, check, capture_output, text):
+        del check, capture_output, text
+        command_name = Path(cmd[0]).name
+        if command_name == "gdalwarp":
+            Path(cmd[-1]).write_bytes(b"warped")
+        elif command_name == "gdal_contour":
+            Path(cmd[-1]).write_text('{"type":"FeatureCollection","features":[]}')
+        else:
+            raise AssertionError(f"unexpected command: {cmd}")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(pipeline_module.tempfile, "TemporaryDirectory", _recording_temp_dir)
+    monkeypatch.setattr(pipeline_module, "_gdal", _fake_gdal)
+    monkeypatch.setattr(pipeline_module.subprocess, "run", _fake_run)
+
+    pipeline_module.build_iso_contour_geojson(
+        value_data=np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        value_transform=from_origin(-130.0, 50.0, 1.0, 1.0),
+        out_geojson_path=output_path,
+        levels=[2.0, 3.0],
+    )
+
+    assert output_path.exists()
+    assert temp_dir_calls == [output_path.parent]

@@ -893,22 +893,23 @@ def build_iso_contour_geojson(
 ) -> None:
     """Generate iso-contour GeoJSON from a full-resolution value grid.
 
-    Writes a temporary in-memory-source GTiff from the provided
+    Writes temporary GTiffs under the output directory from the provided
     array/transform, then warps/contours via GDAL CLI. This avoids depending
-    on the on-disk hover value COG resolution.
+    on the on-disk hover value COG resolution and keeps contour scratch work
+    on the same filesystem as the staged artifacts.
     """
     out_geojson_path.parent.mkdir(parents=True, exist_ok=True)
 
     gdalwarp_bin = _gdal("gdalwarp")
     gdal_contour_bin = _gdal("gdal_contour")
 
-    tmp_path: Path | None = None
-    src_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as src_file:
-            src_path = Path(src_file.name)
-        with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp_file:
-            tmp_path = Path(tmp_file.name)
+    with tempfile.TemporaryDirectory(
+        prefix="cartosky-contours-",
+        dir=out_geojson_path.parent,
+    ) as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        src_path = tmp_dir_path / "source.tif"
+        tmp_path = tmp_dir_path / "warped.tif"
 
         value_f32 = value_data.astype(np.float32, copy=False)
         with rasterio.open(
@@ -982,19 +983,6 @@ def build_iso_contour_geojson(
                 )
         except Exception:
             logger.warning("Unable to inspect contour GeoJSON output: %s", out_geojson_path)
-    finally:
-        if src_path is not None:
-            try:
-                if src_path.exists():
-                    src_path.unlink()
-            except Exception:
-                pass
-        if tmp_path is not None:
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except Exception:
-                pass
 
 
 def _build_legend(
