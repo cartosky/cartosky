@@ -1697,6 +1697,71 @@ def _process_run(
     shared_parallel_fetch_ctx_by_target: dict[tuple[str, str], FetchContext] = {}
     shared_parallel_readiness_cache_by_target: dict[tuple[str, str], dict[str, bool]] = {}
 
+    def _log_fetch_context_stats(*, stage: str) -> None:
+        if not shared_parallel_fetch_ctx_by_target:
+            logger.info(
+                "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=0 fetch=0 warp=0 meta=0 warp_meta=0 resolved_apcp=0 ptype=0 derive_quality=0",
+                stage,
+                run_id,
+                model_id,
+            )
+            return
+
+        total_fetch = 0
+        total_warp = 0
+        total_meta = 0
+        total_warp_meta = 0
+        total_resolved_apcp = 0
+        total_ptype = 0
+        total_derive_quality = 0
+        for (region, var_id), ctx in sorted(shared_parallel_fetch_ctx_by_target.items()):
+            fetch_count = len(ctx.fetch_cache)
+            warp_count = len(ctx.warp_cache)
+            meta_count = len(ctx.fetch_meta_cache)
+            warp_meta_count = len(ctx.warp_meta_cache)
+            resolved_apcp_count = len(ctx.resolved_apcp_cache)
+            ptype_count = len(ctx.ptype_family_cache)
+            derive_quality_count = len(ctx.derive_quality)
+
+            total_fetch += fetch_count
+            total_warp += warp_count
+            total_meta += meta_count
+            total_warp_meta += warp_meta_count
+            total_resolved_apcp += resolved_apcp_count
+            total_ptype += ptype_count
+            total_derive_quality += derive_quality_count
+
+            logger.info(
+                "FetchContext stats: stage=%s run=%s model=%s target=%s/%s fetch=%d warp=%d meta=%d warp_meta=%d resolved_apcp=%d ptype=%d derive_quality=%d",
+                stage,
+                run_id,
+                model_id,
+                region,
+                var_id,
+                fetch_count,
+                warp_count,
+                meta_count,
+                warp_meta_count,
+                resolved_apcp_count,
+                ptype_count,
+                derive_quality_count,
+            )
+
+        logger.info(
+            "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=%d fetch=%d warp=%d meta=%d warp_meta=%d resolved_apcp=%d ptype=%d derive_quality=%d",
+            stage,
+            run_id,
+            model_id,
+            len(shared_parallel_fetch_ctx_by_target),
+            total_fetch,
+            total_warp,
+            total_meta,
+            total_warp_meta,
+            total_resolved_apcp,
+            total_ptype,
+            total_derive_quality,
+        )
+
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
         ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
@@ -1765,6 +1830,8 @@ def _process_run(
                 totals["warp_hits"],
                 totals["warp_misses"],
             )
+
+    _log_fetch_context_stats(stage="run_start")
 
     rounds = 0
     while True:
@@ -2289,6 +2356,9 @@ def _process_run(
         except Exception:
             logger.exception("Failed resolving Herbie cache model for retention: scheduler_model=%s", model_id)
         _enforce_herbie_cache_retention(Path(herbie_save_dir_raw).resolve(), herbie_model_id, effective_keep_runs)
+
+    _log_fetch_context_stats(stage="run_end")
+    _log_fetch_context_stats(stage="before_destroy")
 
     return run_id, available, total
 
