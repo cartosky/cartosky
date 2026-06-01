@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -52,6 +53,7 @@ def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _configure_small_grid(monkeypatch)
 
@@ -71,11 +73,12 @@ def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
         ),
     ]
 
-    result = mrms_publish.publish_mrms_bundle(
-        data_root=tmp_path,
-        frames=frames,
-        publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
-    )
+    with caplog.at_level(logging.INFO):
+        result = mrms_publish.publish_mrms_bundle(
+            data_root=tmp_path,
+            frames=frames,
+            publish_time=datetime(2026, 3, 27, 12, 6, tzinfo=timezone.utc),
+        )
 
     assert result.run_id == "20260327_1206z"
     assert result.frame_count == 2
@@ -100,6 +103,11 @@ def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
     sidecar = json.loads((result.published_run_dir / "reflectivity" / "fh001.json").read_text())
     assert sidecar["valid_time"] == "2026-03-27T12:02:00Z"
     assert sidecar["source_filename"] == "scan1.grib2.gz"
+    assert "MRMS publish phase=start run=20260327_1206z frames=2 previous_frames=0 supplemental_vars=0 workers=1" in caplog.text
+    assert "MRMS publish phase=frame_prepare run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
+    assert "MRMS publish phase=reproject run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
+    assert "MRMS publish phase=cog_write run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
+    assert "MRMS publish phase=complete run=20260327_1206z elapsed=" in caplog.text
 
 
 def test_publish_mrms_bundle_warps_native_grid_before_write(

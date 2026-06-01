@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -246,6 +247,15 @@ def publish_mrms_bundle(
 
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
+    started_at = time.monotonic()
+    logger.info(
+        "MRMS publish phase=start run=%s frames=%d previous_frames=%d supplemental_vars=%d workers=%d",
+        run_id,
+        len(frames),
+        len(previous_frames or []),
+        len(supplemental_variable_frames or {}),
+        int(frame_write_workers),
+    )
 
     merged_by_valid_time: dict[datetime, MRMSPublishedFrame | MRMSBundleFrame] = {}
     for frame in sorted(previous_frames or [], key=lambda item: item.valid_time.astimezone(timezone.utc)):
@@ -465,6 +475,12 @@ def publish_mrms_bundle(
 
     manifest_path = data_root / "manifests" / MRMS_MODEL_ID / f"{run_id}.json"
     published_run_dir = data_root / "published" / MRMS_MODEL_ID / run_id
+    logger.info(
+        "MRMS publish phase=complete run=%s elapsed=%.1fs frame_count=%d",
+        run_id,
+        time.monotonic() - started_at,
+        len(ordered_valid_times),
+    )
     return MRMSPublishResult(
         run_id=run_id,
         published_run_dir=published_run_dir,
@@ -481,8 +497,32 @@ def write_mrms_frame(
     frame: MRMSBundleFrame,
     build_grid_artifacts: bool = True,
 ) -> None:
+    phase_started_at = time.monotonic()
+    logger.info(
+        "MRMS publish phase=start run=%s var=%s fh=%03d",
+        run_id,
+        MRMS_VARIABLE_ID,
+        int(forecast_hour),
+    )
+
     values = np.asarray(frame.values, dtype=np.float32)
+    logger.info(
+        "MRMS publish phase=frame_prepare run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
+
     values = _warp_frame_to_target_grid(values, frame=frame)
+    logger.info(
+        "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
+
     display_values = _display_values_for_colorize(values)
 
     fh_str = f"fh{int(forecast_hour):03d}"
@@ -498,6 +538,13 @@ def write_mrms_frame(
         value_path,
         model=MRMS_MODEL_ID,
         region=MRMS_REGION_ID,
+    )
+    logger.info(
+        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
     )
 
     run_dt = datetime.now(timezone.utc)
@@ -535,6 +582,21 @@ def write_mrms_frame(
             values=values,
             transform=_target_grid_transform(),
         )
+        logger.info(
+            "MRMS publish phase=grid_build run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            MRMS_VARIABLE_ID,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
+
+    logger.info(
+        "MRMS publish phase=complete run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
 
 
 def reuse_mrms_frame(
@@ -861,7 +923,23 @@ def write_mrms_radar_ptype_frame(
     if frame.precip_flag_values is None:
         raise ValueError("Cannot write mrms_radar_ptype frame without precip_flag_values")
 
+    phase_started_at = time.monotonic()
+    logger.info(
+        "MRMS publish phase=start run=%s var=%s fh=%03d",
+        run_id,
+        MRMS_RADAR_PTYPE_VARIABLE_ID,
+        int(forecast_hour),
+    )
+
     reflectivity = np.asarray(frame.values, dtype=np.float32)
+    logger.info(
+        "MRMS publish phase=frame_prepare run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_RADAR_PTYPE_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
+
     reflectivity = _warp_frame_to_target_grid(reflectivity, frame=frame)
 
     precip_flag = np.asarray(frame.precip_flag_values, dtype=np.float32)
@@ -873,6 +951,13 @@ def write_mrms_radar_ptype_frame(
         source_transform=frame.source_transform,
     )
     precip_flag = _warp_frame_to_target_grid(precip_flag, frame=pf_frame)
+    logger.info(
+        "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_RADAR_PTYPE_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
 
     indexed = compose_mrms_radar_ptype(reflectivity, precip_flag)
 
@@ -889,6 +974,13 @@ def write_mrms_radar_ptype_frame(
         value_path,
         model=MRMS_MODEL_ID,
         region=MRMS_REGION_ID,
+    )
+    logger.info(
+        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_RADAR_PTYPE_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
     )
 
     run_dt = datetime.now(timezone.utc)
@@ -926,6 +1018,21 @@ def write_mrms_radar_ptype_frame(
             values=indexed,
             transform=_target_grid_transform(),
         )
+        logger.info(
+            "MRMS publish phase=grid_build run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            MRMS_RADAR_PTYPE_VARIABLE_ID,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
+
+    logger.info(
+        "MRMS publish phase=complete run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        MRMS_RADAR_PTYPE_VARIABLE_ID,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
 
 
 def write_mrms_supplemental_frame(
@@ -960,7 +1067,23 @@ def _write_mrms_supplemental_frame_to_run_root(
     if not color_map_id:
         raise ValueError(f"Unsupported MRMS supplemental variable: {var_id}")
 
+    phase_started_at = time.monotonic()
+    logger.info(
+        "MRMS publish phase=start run=%s var=%s fh=%03d",
+        run_id,
+        var_id,
+        int(forecast_hour),
+    )
+
     warped_values = _warp_supplemental_values(frame.values, frame=frame)
+    logger.info(
+        "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        var_id,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
+
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = run_root / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -974,6 +1097,13 @@ def _write_mrms_supplemental_frame_to_run_root(
         value_path,
         model=MRMS_MODEL_ID,
         region=MRMS_REGION_ID,
+    )
+    logger.info(
+        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        var_id,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
     )
 
     run_dt = datetime.now(timezone.utc)
@@ -1011,6 +1141,21 @@ def _write_mrms_supplemental_frame_to_run_root(
             values=warped_values,
             transform=_target_grid_transform(),
         )
+        logger.info(
+            "MRMS publish phase=grid_build run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            var_id,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
+
+    logger.info(
+        "MRMS publish phase=complete run=%s var=%s fh=%03d elapsed=%.1fs",
+        run_id,
+        var_id,
+        int(forecast_hour),
+        time.monotonic() - phase_started_at,
+    )
 
 
 def finalize_mrms_published_run(
