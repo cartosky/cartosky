@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import gc
 import json
 import logging
 import os
 import re
+import resource
 import shutil
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -23,6 +26,7 @@ from app.models.registry import MODEL_REGISTRY
 from app.config import grid_build_enabled
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
+from app.services.builder import fetch as builder_fetch
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
 from app.services.builder.derive import FetchContext
 from app.services.builder.pipeline import build_frame, build_frame_bundle
@@ -42,6 +46,35 @@ from app.services.render_resampling import (
 from app.services.run_ids import RUN_ID_RE, format_run_id, parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _process_rss_bytes() -> int:
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return rss
+    return rss * 1024
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _estimate_array_bytes(value: Any, *, _seen: set[int] | None = None) -> int:
+    if _seen is None:
+        _seen = set()
+    obj_id = id(value)
+    if obj_id in _seen:
+        return 0
+    if isinstance(value, np.ndarray):
+        _seen.add(obj_id)
+        return int(value.nbytes)
+    if isinstance(value, dict):
+        _seen.add(obj_id)
+        return sum(_estimate_array_bytes(item, _seen=_seen) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        _seen.add(obj_id)
+        return sum(_estimate_array_bytes(item, _seen=_seen) for item in value)
+    return 0
 
 DEFAULT_DATA_ROOT = Path("/opt/cartosky/data")
 DEFAULT_PRIMARY_VAR = "tmp2m"
@@ -1697,13 +1730,26 @@ def _process_run(
     shared_parallel_fetch_ctx_by_target: dict[tuple[str, str], FetchContext] = {}
     shared_parallel_readiness_cache_by_target: dict[tuple[str, str], dict[str, bool]] = {}
 
+    def _log_process_cache_stats(*, stage: str) -> None:
+        logger.info(
+            "scheduler process cache stats: stage=%s run=%s model=%s inventory_entries=%d idx_negative_entries=%d rss_mib=%.1f",
+            stage,
+            run_id,
+            model_id,
+            len(builder_fetch._INVENTORY_CACHE),
+            len(builder_fetch._IDX_NEGATIVE_CACHE),
+            _bytes_to_mib(_process_rss_bytes()),
+        )
+
     def _log_fetch_context_stats(*, stage: str) -> None:
+        rss_mib = _bytes_to_mib(_process_rss_bytes())
         if not shared_parallel_fetch_ctx_by_target:
             logger.info(
-                "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=0 fetch=0 warp=0 meta=0 warp_meta=0 resolved_apcp=0 ptype=0 derive_quality=0",
+                "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0 meta=0 warp_meta=0 resolved_apcp=0 resolved_apcp_mib=0.0 ptype=0 ptype_mib=0.0 kuchera=0 kuchera_mib=0.0 derive_quality=0 rss_mib=%.1f",
                 stage,
                 run_id,
                 model_id,
+                rss_mib,
             )
             return
 
@@ -1713,7 +1759,13 @@ def _process_run(
         total_warp_meta = 0
         total_resolved_apcp = 0
         total_ptype = 0
+        total_kuchera = 0
         total_derive_quality = 0
+        total_fetch_bytes = 0
+        total_warp_bytes = 0
+        total_resolved_apcp_bytes = 0
+        total_ptype_bytes = 0
+        total_kuchera_bytes = 0
         for (region, var_id), ctx in sorted(shared_parallel_fetch_ctx_by_target.items()):
             fetch_count = len(ctx.fetch_cache)
             warp_count = len(ctx.warp_cache)
@@ -1721,7 +1773,14 @@ def _process_run(
             warp_meta_count = len(ctx.warp_meta_cache)
             resolved_apcp_count = len(ctx.resolved_apcp_cache)
             ptype_count = len(ctx.ptype_family_cache)
+            kuchera_cache = getattr(ctx, "kuchera_cumulative_cache", None)
+            kuchera_count = len(kuchera_cache) if isinstance(kuchera_cache, dict) else 0
             derive_quality_count = len(ctx.derive_quality)
+            fetch_bytes = _estimate_array_bytes(ctx.fetch_cache)
+            warp_bytes = _estimate_array_bytes(ctx.warp_cache)
+            resolved_apcp_bytes = _estimate_array_bytes(ctx.resolved_apcp_cache)
+            ptype_bytes = _estimate_array_bytes(ctx.ptype_family_cache)
+            kuchera_bytes = _estimate_array_bytes(kuchera_cache) if kuchera_count else 0
 
             total_fetch += fetch_count
             total_warp += warp_count
@@ -1729,38 +1788,60 @@ def _process_run(
             total_warp_meta += warp_meta_count
             total_resolved_apcp += resolved_apcp_count
             total_ptype += ptype_count
+            total_kuchera += kuchera_count
             total_derive_quality += derive_quality_count
+            total_fetch_bytes += fetch_bytes
+            total_warp_bytes += warp_bytes
+            total_resolved_apcp_bytes += resolved_apcp_bytes
+            total_ptype_bytes += ptype_bytes
+            total_kuchera_bytes += kuchera_bytes
 
             logger.info(
-                "FetchContext stats: stage=%s run=%s model=%s target=%s/%s fetch=%d warp=%d meta=%d warp_meta=%d resolved_apcp=%d ptype=%d derive_quality=%d",
+                "FetchContext stats: stage=%s run=%s model=%s target=%s/%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d rss_mib=%.1f",
                 stage,
                 run_id,
                 model_id,
                 region,
                 var_id,
                 fetch_count,
+                _bytes_to_mib(fetch_bytes),
                 warp_count,
+                _bytes_to_mib(warp_bytes),
                 meta_count,
                 warp_meta_count,
                 resolved_apcp_count,
+                _bytes_to_mib(resolved_apcp_bytes),
                 ptype_count,
+                _bytes_to_mib(ptype_bytes),
+                kuchera_count,
+                _bytes_to_mib(kuchera_bytes),
                 derive_quality_count,
+                rss_mib,
             )
 
         logger.info(
-            "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=%d fetch=%d warp=%d meta=%d warp_meta=%d resolved_apcp=%d ptype=%d derive_quality=%d",
+            "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=%d fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d rss_mib=%.1f",
             stage,
             run_id,
             model_id,
             len(shared_parallel_fetch_ctx_by_target),
             total_fetch,
+            _bytes_to_mib(total_fetch_bytes),
             total_warp,
+            _bytes_to_mib(total_warp_bytes),
             total_meta,
             total_warp_meta,
             total_resolved_apcp,
+            _bytes_to_mib(total_resolved_apcp_bytes),
             total_ptype,
+            _bytes_to_mib(total_ptype_bytes),
+            total_kuchera,
+            _bytes_to_mib(total_kuchera_bytes),
             total_derive_quality,
+            rss_mib,
         )
+
+    _log_process_cache_stats(stage="run_start")
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
@@ -2359,6 +2440,17 @@ def _process_run(
 
     _log_fetch_context_stats(stage="run_end")
     _log_fetch_context_stats(stage="before_destroy")
+    rss_before_gc_bytes = _process_rss_bytes()
+    gc_collected = gc.collect()
+    rss_after_gc_bytes = _process_rss_bytes()
+    logger.info(
+        "scheduler rss checkpoint: stage=post_run_gc run=%s model=%s rss_before_gc_mib=%.1f rss_after_gc_mib=%.1f gc_collected=%d",
+        run_id,
+        model_id,
+        _bytes_to_mib(rss_before_gc_bytes),
+        _bytes_to_mib(rss_after_gc_bytes),
+        gc_collected,
+    )
 
     return run_id, available, total
 

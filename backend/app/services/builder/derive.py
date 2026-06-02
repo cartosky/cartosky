@@ -15,6 +15,8 @@ import logging
 import os
 from pathlib import Path
 import re
+import resource
+import sys
 import time
 from typing import Any, Callable, Literal, overload
 
@@ -106,6 +108,99 @@ class FetchContext:
     coverage: str | None = None
     bundle_fetch_cache: Any | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+
+def _process_rss_bytes() -> int:
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return rss
+    return rss * 1024
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _estimate_array_bytes(value: Any, *, _seen: set[int] | None = None) -> int:
+    if _seen is None:
+        _seen = set()
+    obj_id = id(value)
+    if obj_id in _seen:
+        return 0
+    if isinstance(value, np.ndarray):
+        _seen.add(obj_id)
+        return int(value.nbytes)
+    if isinstance(value, dict):
+        _seen.add(obj_id)
+        return sum(_estimate_array_bytes(item, _seen=_seen) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        _seen.add(obj_id)
+        return sum(_estimate_array_bytes(item, _seen=_seen) for item in value)
+    return 0
+
+
+def _fetch_context_array_stats(ctx: FetchContext | None) -> dict[str, int]:
+    if ctx is None:
+        return {
+            "fetch": 0,
+            "fetch_bytes": 0,
+            "warp": 0,
+            "warp_bytes": 0,
+            "resolved_apcp": 0,
+            "resolved_apcp_bytes": 0,
+            "ptype": 0,
+            "ptype_bytes": 0,
+            "kuchera": 0,
+            "kuchera_bytes": 0,
+        }
+    kuchera_cache = getattr(ctx, "kuchera_cumulative_cache", None)
+    kuchera_count = len(kuchera_cache) if isinstance(kuchera_cache, dict) else 0
+    kuchera_bytes = _estimate_array_bytes(kuchera_cache) if kuchera_count else 0
+    return {
+        "fetch": len(ctx.fetch_cache),
+        "fetch_bytes": _estimate_array_bytes(ctx.fetch_cache),
+        "warp": len(ctx.warp_cache),
+        "warp_bytes": _estimate_array_bytes(ctx.warp_cache),
+        "resolved_apcp": len(ctx.resolved_apcp_cache),
+        "resolved_apcp_bytes": _estimate_array_bytes(ctx.resolved_apcp_cache),
+        "ptype": len(ctx.ptype_family_cache),
+        "ptype_bytes": _estimate_array_bytes(ctx.ptype_family_cache),
+        "kuchera": kuchera_count,
+        "kuchera_bytes": kuchera_bytes,
+    }
+
+
+def _log_fetch_context_memory(
+    *,
+    label: str,
+    ctx: FetchContext | None,
+    model_id: str | None = None,
+    var_key: str | None = None,
+    fh: int | None = None,
+    step_fh: int | None = None,
+    extra: str | None = None,
+) -> None:
+    stats = _fetch_context_array_stats(ctx)
+    logger.info(
+        "fetch_ctx_memory label=%s model=%s var=%s fh=%s step_fh=%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f rss_mib=%.1f%s",
+        label,
+        model_id or "-",
+        var_key or "-",
+        f"{fh:03d}" if fh is not None else "-",
+        f"{step_fh:03d}" if step_fh is not None else "-",
+        stats["fetch"],
+        _bytes_to_mib(stats["fetch_bytes"]),
+        stats["warp"],
+        _bytes_to_mib(stats["warp_bytes"]),
+        stats["resolved_apcp"],
+        _bytes_to_mib(stats["resolved_apcp_bytes"]),
+        stats["ptype"],
+        _bytes_to_mib(stats["ptype_bytes"]),
+        stats["kuchera"],
+        _bytes_to_mib(stats["kuchera_bytes"]),
+        _bytes_to_mib(_process_rss_bytes()),
+        f" {extra}" if extra else "",
+    )
 
 
 @dataclass(frozen=True)
@@ -1060,10 +1155,21 @@ def _prefetch_components_parallel(
         return 0
 
     workers = min(_prefetch_max_workers(), len(unique))
+    _log_fetch_context_memory(
+        label="prefetch_before",
+        ctx=ctx,
+        extra=f"requested={len(tasks)} unique={len(unique)} workers={workers} label={label or '-'}",
+    )
 
     # For very small task lists, skip the thread-pool overhead entirely.
     if workers <= 1 or len(unique) <= 2:
-        return _prefetch_sequential(unique, ctx)
+        succeeded = _prefetch_sequential(unique, ctx)
+        _log_fetch_context_memory(
+            label="prefetch_after",
+            ctx=ctx,
+            extra=f"requested={len(tasks)} unique={len(unique)} ok={succeeded} failed={len(unique) - succeeded} workers=sequential label={label or '-'}",
+        )
+        return succeeded
 
     succeeded = 0
     failed = 0
@@ -1145,6 +1251,11 @@ def _prefetch_components_parallel(
         failed,
         workers,
         elapsed_ms,
+    )
+    _log_fetch_context_memory(
+        label="prefetch_after",
+        ctx=ctx,
+        extra=f"requested={len(tasks)} unique={len(unique)} ok={succeeded} failed={failed} workers={workers} label={label or '-'} elapsed_ms={elapsed_ms:.0f}",
     )
     return succeeded
 
@@ -1987,6 +2098,14 @@ def _derive_ptype_intensity_rates_ecmwf(
     derive_component_resampling: str | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    _log_fetch_context_memory(
+        label="ptype_intensity_ecmwf_entry",
+        ctx=ctx,
+        model_id=model_id,
+        var_key="ptype_intensity_ecmwf",
+        fh=fh,
+        extra=f"product={product}",
+    )
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid,
         derive_component_resampling,
@@ -2038,6 +2157,14 @@ def _derive_ptype_intensity_rates_ecmwf(
         )
         snow_step = np.zeros(total_step.shape, dtype=np.float32)
         snow_step[~np.isfinite(total_step)] = np.nan
+    _log_fetch_context_memory(
+        label="ptype_intensity_ecmwf_after_fetch",
+        ctx=ctx,
+        model_id=model_id,
+        var_key="ptype_intensity_ecmwf",
+        fh=fh,
+        extra=f"shape={total_step.shape}",
+    )
 
     deep_cold, surface_cold, warm_nose = _ptype_intensity_ecmwf_phase_signals(
         model_id=model_id,
@@ -2049,12 +2176,28 @@ def _derive_ptype_intensity_rates_ecmwf(
         hints=hints,
         expected_shape=total_step.shape,
     )
+    _log_fetch_context_memory(
+        label="ptype_intensity_ecmwf_after_phase_signals",
+        ctx=ctx,
+        model_id=model_id,
+        var_key="ptype_intensity_ecmwf",
+        fh=fh,
+        extra=f"shape={total_step.shape}",
+    )
     _, rain_rate, snow_rate, ice_rate = _ptype_intensity_family_rates_ecmwf(
         intensity=total_step,
         snow_lwe=snow_step,
         deep_cold=deep_cold,
         surface_cold=surface_cold,
         warm_nose=warm_nose,
+    )
+    _log_fetch_context_memory(
+        label="ptype_intensity_ecmwf_exit",
+        ctx=ctx,
+        model_id=model_id,
+        var_key="ptype_intensity_ecmwf",
+        fh=fh,
+        extra=f"shape={rain_rate.shape}",
     )
     return rain_rate, snow_rate, ice_rate, src_crs, src_transform
 
@@ -3597,6 +3740,18 @@ def _resolve_apcp_step_data(
         selector_reason.replace('"', "'"),
         apcp_search_pattern.replace('"', "'"),
     )
+    _log_fetch_context_memory(
+        label="apcp_step_resolved",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=apcp_component,
+        fh=step_fh,
+        step_fh=step_fh,
+        extra=(
+            f"mode={apcp_mode} selected_window={selected_window} inventory_selected={'true' if inventory_selected else 'false'} "
+            f"selector_fallback={'true' if selector_fallback_used else 'false'}"
+        ),
+    )
 
     # 5. Advance consumed-sum tracking for all modes.
     increment_for_sum = np.where(apcp_valid, step_apcp_data, 0.0).astype(np.float32, copy=False)
@@ -4795,6 +4950,14 @@ def _derive_ptype_accumulation_ecmwf(
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    _log_fetch_context_memory(
+        label="ptype_accumulation_ecmwf_entry",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=var_key,
+        fh=fh,
+        extra=f"product={product}",
+    )
     component = str(hints.get("ptype_component") or "ice").strip().lower()
     precip_component = str(hints.get("precip_component") or "precip_total")
     snow_component = str(hints.get("snow_component") or "sf")
@@ -4943,6 +5106,14 @@ def _derive_ptype_accumulation_ecmwf(
     if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
         raise ValueError(f"No cumulative ECMWF ptype source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     result = np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False)
+    _log_fetch_context_memory(
+        label="ptype_accumulation_ecmwf_after_loop",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=var_key,
+        fh=fh,
+        extra=f"computed_steps={len(subset_step_fhs)} reused_prev_cumulative={'true' if reused_prev_cumulative else 'false'}",
+    )
     logger.info(
         "ptype_accumulation_ecmwf incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s base_fh=%s",
         model_id,
@@ -4964,6 +5135,14 @@ def _derive_ptype_accumulation_ecmwf(
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
         coverage_start_fh=0,
+    )
+    _log_fetch_context_memory(
+        label="ptype_accumulation_ecmwf_exit",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=var_key,
+        fh=fh,
+        extra=f"result_shape={result.shape}",
     )
     return result, src_crs, src_transform
 
@@ -5627,6 +5806,14 @@ def _derive_snowfall_kuchera_total_cumulative(
     del var_capability
     frame_start = time.perf_counter()
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    _log_fetch_context_memory(
+        label="kuchera_entry",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=var_key,
+        fh=fh,
+        extra=f"product={product}",
+    )
     kuchera_lwe_component_raw = str(hints.get("kuchera_lwe_component", "")).strip()
     use_direct_cumulative_lwe = bool(kuchera_lwe_component_raw)
     apcp_component = str(kuchera_lwe_component_raw or hints.get("apcp_component", "apcp_step"))
@@ -6102,6 +6289,14 @@ def _derive_snowfall_kuchera_total_cumulative(
                         resampling=resampling,
                     ))
         _prefetch_components_parallel(_prefetch_tasks, ctx, label=f"kuchera fh{fh:03d}")
+        _log_fetch_context_memory(
+            label="kuchera_after_prefetch",
+            ctx=ctx,
+            model_id=model_id,
+            var_key=var_key,
+            fh=fh,
+            extra=f"subset_steps={len(subset_step_fhs)} start_index={start_index}",
+        )
         del _prefetch_tasks
 
         cum_diff_state = _ApcpCumDiffState()
@@ -6436,6 +6631,18 @@ def _derive_snowfall_kuchera_total_cumulative(
                 subset_cumulative = (subset_cumulative + contribution).astype(np.float32, copy=False)
                 subset_valid_mask = np.logical_or(subset_valid_mask, step_valid)
 
+        _log_fetch_context_memory(
+            label="kuchera_after_step_loop",
+            ctx=ctx,
+            model_id=model_id,
+            var_key=var_key,
+            fh=fh,
+            extra=(
+                f"subset_steps={len(subset_step_fhs)} processed={steps_processed} "
+                f"rebuild_required={'true' if requires_full_history_rebuild else 'false'}"
+            ),
+        )
+
         if requires_full_history_rebuild and start_index > 0:
             logger.info(
                 "kuchera_incremental cumulative_apcp_requires_full_rebuild fh=%03d step_fh=%03d start_index=%d",
@@ -6591,6 +6798,14 @@ def _derive_snowfall_kuchera_total_cumulative(
         transform=src_transform,
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
+    )
+    _log_fetch_context_memory(
+        label="kuchera_exit",
+        ctx=ctx,
+        model_id=model_id,
+        var_key=var_key,
+        fh=fh,
+        extra=f"result_shape={cumulative_snow_inches.shape}",
     )
     return cumulative_snow_inches.astype(np.float32, copy=False), src_crs, src_transform
 
