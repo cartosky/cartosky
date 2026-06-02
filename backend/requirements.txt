@@ -16,6 +16,7 @@ clerk-backend-api
 boto3
 python-multipart
 prometheus-client
+psutil
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http

@@ -7,9 +7,7 @@ import json
 import logging
 import os
 import re
-import resource
 import shutil
-import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -31,6 +29,7 @@ from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_va
 from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
@@ -46,13 +45,6 @@ from app.services.render_resampling import (
 from app.services.run_ids import RUN_ID_RE, format_run_id, parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
-
-
-def _process_rss_bytes() -> int:
-    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-    if sys.platform == "darwin":
-        return rss
-    return rss * 1024
 
 
 def _bytes_to_mib(num_bytes: int) -> float:
@@ -1756,24 +1748,27 @@ def _process_run(
 
     def _log_process_cache_stats(*, stage: str) -> None:
         logger.info(
-            "scheduler process cache stats: stage=%s run=%s model=%s inventory_entries=%d idx_negative_entries=%d rss_mib=%.1f",
+            "scheduler process cache stats: stage=%s run=%s model=%s inventory_entries=%d idx_negative_entries=%d current_rss_mib=%.1f peak_rss_mib=%.1f",
             stage,
             run_id,
             model_id,
             len(builder_fetch._INVENTORY_CACHE),
             len(builder_fetch._IDX_NEGATIVE_CACHE),
-            _bytes_to_mib(_process_rss_bytes()),
+            _bytes_to_mib(current_rss_bytes()),
+            _bytes_to_mib(peak_rss_bytes()),
         )
 
     def _log_fetch_context_stats(*, stage: str) -> None:
-        rss_mib = _bytes_to_mib(_process_rss_bytes())
+        current_rss_mib = _bytes_to_mib(current_rss_bytes())
+        peak_rss_mib = _bytes_to_mib(peak_rss_bytes())
         if not shared_parallel_fetch_ctx_by_target:
             logger.info(
-                "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0 meta=0 warp_meta=0 resolved_apcp=0 resolved_apcp_mib=0.0 ptype=0 ptype_mib=0.0 kuchera=0 kuchera_mib=0.0 derive_quality=0 rss_mib=%.1f",
+                "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0 meta=0 warp_meta=0 resolved_apcp=0 resolved_apcp_mib=0.0 ptype=0 ptype_mib=0.0 kuchera=0 kuchera_mib=0.0 derive_quality=0 current_rss_mib=%.1f peak_rss_mib=%.1f",
                 stage,
                 run_id,
                 model_id,
-                rss_mib,
+                current_rss_mib,
+                peak_rss_mib,
             )
             return
 
@@ -1821,7 +1816,7 @@ def _process_run(
             total_kuchera_bytes += kuchera_bytes
 
             logger.info(
-                "FetchContext stats: stage=%s run=%s model=%s target=%s/%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d rss_mib=%.1f",
+                "FetchContext stats: stage=%s run=%s model=%s target=%s/%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d current_rss_mib=%.1f peak_rss_mib=%.1f",
                 stage,
                 run_id,
                 model_id,
@@ -1840,11 +1835,12 @@ def _process_run(
                 kuchera_count,
                 _bytes_to_mib(kuchera_bytes),
                 derive_quality_count,
-                rss_mib,
+                current_rss_mib,
+                peak_rss_mib,
             )
 
         logger.info(
-            "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=%d fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d rss_mib=%.1f",
+            "FetchContext stats: stage=%s run=%s model=%s target=<summary> contexts=%d fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f meta=%d warp_meta=%d resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f derive_quality=%d current_rss_mib=%.1f peak_rss_mib=%.1f",
             stage,
             run_id,
             model_id,
@@ -1862,7 +1858,8 @@ def _process_run(
             total_kuchera,
             _bytes_to_mib(total_kuchera_bytes),
             total_derive_quality,
-            rss_mib,
+            current_rss_mib,
+            peak_rss_mib,
         )
 
     _log_process_cache_stats(stage="run_start")
@@ -2465,15 +2462,19 @@ def _process_run(
 
     _log_fetch_context_stats(stage="run_end")
     _log_fetch_context_stats(stage="before_destroy")
-    rss_before_gc_bytes = _process_rss_bytes()
+    current_rss_before_gc_bytes = current_rss_bytes()
+    peak_rss_before_gc_bytes = peak_rss_bytes()
     gc_collected = gc.collect()
-    rss_after_gc_bytes = _process_rss_bytes()
+    current_rss_after_gc_bytes = current_rss_bytes()
+    peak_rss_after_gc_bytes = peak_rss_bytes()
     logger.info(
-        "scheduler rss checkpoint: stage=post_run_gc run=%s model=%s rss_before_gc_mib=%.1f rss_after_gc_mib=%.1f gc_collected=%d",
+        "scheduler rss checkpoint: stage=post_run_gc run=%s model=%s current_rss_before_gc_mib=%.1f current_rss_after_gc_mib=%.1f peak_rss_before_gc_mib=%.1f peak_rss_after_gc_mib=%.1f gc_collected=%d",
         run_id,
         model_id,
-        _bytes_to_mib(rss_before_gc_bytes),
-        _bytes_to_mib(rss_after_gc_bytes),
+        _bytes_to_mib(current_rss_before_gc_bytes),
+        _bytes_to_mib(current_rss_after_gc_bytes),
+        _bytes_to_mib(peak_rss_before_gc_bytes),
+        _bytes_to_mib(peak_rss_after_gc_bytes),
         gc_collected,
     )
 

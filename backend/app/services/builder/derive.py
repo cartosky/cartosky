@@ -15,8 +15,6 @@ import logging
 import os
 from pathlib import Path
 import re
-import resource
-import sys
 import time
 from typing import Any, Callable, Literal, overload
 
@@ -43,6 +41,7 @@ from app.services.colormaps import (
     RADAR_PTYPE_ORDER,
     RADAR_PTYPE_LEVELS_BY_TYPE,
 )
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 
 logger = logging.getLogger(__name__)
 _RADAR_PTYPE_REFL_MIN = float(RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]][0])
@@ -110,13 +109,6 @@ class FetchContext:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
-def _process_rss_bytes() -> int:
-    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-    if sys.platform == "darwin":
-        return rss
-    return rss * 1024
-
-
 def _bytes_to_mib(num_bytes: int) -> float:
     return float(num_bytes) / (1024.0 * 1024.0)
 
@@ -182,7 +174,7 @@ def _log_fetch_context_memory(
 ) -> None:
     stats = _fetch_context_array_stats(ctx)
     logger.info(
-        "fetch_ctx_memory label=%s model=%s var=%s fh=%s step_fh=%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f rss_mib=%.1f%s",
+        "fetch_ctx_memory label=%s model=%s var=%s fh=%s step_fh=%s fetch=%d fetch_mib=%.1f warp=%d warp_mib=%.1f resolved_apcp=%d resolved_apcp_mib=%.1f ptype=%d ptype_mib=%.1f kuchera=%d kuchera_mib=%.1f current_rss_mib=%.1f peak_rss_mib=%.1f%s",
         label,
         model_id or "-",
         var_key or "-",
@@ -198,7 +190,8 @@ def _log_fetch_context_memory(
         _bytes_to_mib(stats["ptype_bytes"]),
         stats["kuchera"],
         _bytes_to_mib(stats["kuchera_bytes"]),
-        _bytes_to_mib(_process_rss_bytes()),
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
         f" {extra}" if extra else "",
     )
 
