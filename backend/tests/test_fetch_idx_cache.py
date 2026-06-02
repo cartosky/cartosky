@@ -1328,3 +1328,85 @@ def test_invalid_subset_falls_through_to_next_priority(monkeypatch: pytest.Monke
     assert download_calls == ["aws", "nomads"]
     assert not aws_subset.exists()
     assert nomads_subset.read_bytes() == b"grib"
+
+
+def test_invalid_subset_retries_same_single_priority(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pattern = ":TMP:850 mb:"
+    subset_path = tmp_path / "nomads_retry.grib2"
+    download_calls: list[str] = []
+
+    class _FakeHerbie:
+        def __init__(self, date: datetime, **kwargs):
+            del date
+            self.priority = str(kwargs.get("priority"))
+            self.idx = f"https://{self.priority}.example/aigfs.idx"
+            self.grib = f"https://{self.priority}.example/aigfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 99}])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(subset_path)
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+            del errors, overwrite
+            assert search_pattern == pattern
+            download_calls.append(self.priority)
+            if len(download_calls) == 1:
+                subset_path.write_bytes(b"not-grib")
+            else:
+                subset_path.write_bytes(b"grib")
+            return str(subset_path)
+
+    class _FakeDataset:
+        crs = "EPSG:4326"
+        transform = fetch_module.rasterio.transform.Affine.identity()
+        nodata = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self, _band: int, masked: bool = True):
+            del masked
+            return np.ma.array([[1.0]], mask=[[False]], dtype=np.float32)
+
+        def tags(self, *_args):
+            return {}
+
+    def _fake_rasterio_open(path: str | Path):
+        payload = Path(path).read_bytes()
+        if payload != b"grib":
+            raise fetch_module.rasterio.errors.RasterioIOError(
+                f"{path!s} not recognized as being in a supported file format."
+            )
+        return _FakeDataset()
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fetch_module.rasterio, "open", _fake_rasterio_open)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("TWF_V3_GRIB_DISK_CACHE_LOCK", "1")
+
+    data, crs, transform = fetch_module.fetch_variable(
+        model_id="aigfs",
+        product="pres",
+        search_pattern=pattern,
+        run_date=datetime(2026, 6, 2, 12, 0),
+        fh=240,
+        herbie_kwargs={"priority": ["nomads"]},
+    )
+
+    assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+    assert crs == "EPSG:4326"
+    assert transform == fetch_module.rasterio.transform.Affine.identity()
+    assert download_calls == ["nomads", "nomads"]
+    assert subset_path.read_bytes() == b"grib"

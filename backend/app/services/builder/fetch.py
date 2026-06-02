@@ -3903,8 +3903,10 @@ def fetch_variable(
                         bundle_fetch_cache=None,
                         return_meta=return_meta,
                         _retry_on_invalid_subset=False,
-                        _skip_priorities=skip_priorities | frozenset(
-                            item for item in (grib_priority,) if item
+                        _skip_priorities=(
+                            skip_priorities
+                            if len(priority_list) <= 1
+                            else skip_priorities | frozenset(item for item in (grib_priority,) if item)
                         ),
                     )
             except OSError:
