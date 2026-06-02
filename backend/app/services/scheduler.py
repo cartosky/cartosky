@@ -25,11 +25,11 @@ from app.config import grid_build_enabled
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
+from app.services.admin_telemetry import record_build_duration
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
 from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
-from app.services.prometheus_metrics import observe_build_duration
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.render_resampling import (
     compute_loop_output_shape,
@@ -2598,10 +2598,14 @@ def run_scheduler(
                 rebuild_existing=rebuild_existing,
             )
             _build_duration = time.monotonic() - _build_start
-            observe_build_duration(
-                model_id=model,
-                duration_seconds=_build_duration,
-            )
+            try:
+                record_build_duration(
+                    model_id=model,
+                    run_id=processed_run_id,
+                    duration_seconds=_build_duration,
+                )
+            except Exception as _exc:
+                logger.warning("Failed to record build duration: %s", _exc)
             last_run_id = processed_run_id
             last_run_available = available
             last_run_total = total

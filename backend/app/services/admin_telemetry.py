@@ -317,6 +317,17 @@ def _init_db(conn: sqlite3.Connection) -> None:
             CREATE INDEX IF NOT EXISTS idx_synthetic_perf_runs_metric_created
                 ON synthetic_perf_runs(metric_name, created_at);
 
+            CREATE TABLE IF NOT EXISTS build_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                model_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                duration_seconds REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_build_events_model_created
+                ON build_events(model_id, created_at DESC);
+
             """
         )
         _db_initialized = True
@@ -1361,6 +1372,39 @@ def record_perf_event(payload: dict[str, Any], *, member_id: int | None = None) 
                 _serialize_meta(payload.get("meta")),
             ),
         )
+
+
+def record_build_duration(*, model_id: str, run_id: str, duration_seconds: float) -> None:
+    safe_model_id = _normalize_text(model_id, max_length=32)
+    safe_run_id = _normalize_text(run_id, max_length=32)
+    safe_duration = max(0.0, float(duration_seconds))
+    if not safe_model_id or not safe_run_id:
+        return
+    created_at = int(time.time())
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO build_events (created_at, model_id, run_id, duration_seconds)
+            VALUES (?, ?, ?, ?)
+            """,
+            (created_at, safe_model_id, safe_run_id, safe_duration),
+        )
+
+
+def get_latest_build_durations() -> list[dict[str, Any]]:
+    """Return the most recent build duration for each model."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT model_id, run_id, duration_seconds, created_at
+            FROM build_events
+            WHERE id IN (
+                SELECT MAX(id) FROM build_events GROUP BY model_id
+            )
+            ORDER BY model_id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def record_usage_event(payload: dict[str, Any], *, member_id: int | None = None) -> None:

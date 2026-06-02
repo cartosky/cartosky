@@ -2635,6 +2635,15 @@ def _refresh_prometheus_gauges() -> None:
         active_entries = sum(1 for expires_at, _ in _sample_cache.values() if expires_at > time.monotonic())
     prometheus_metrics.set_sample_cache_entries(endpoint="all", entries=active_entries)
     prometheus_metrics.replace_published_run_health(_published_run_observability_rows())
+    try:
+        from app.services.admin_telemetry import get_latest_build_durations
+        for _row in get_latest_build_durations():
+            prometheus_metrics.observe_build_duration(
+                model_id=str(_row["model_id"]),
+                duration_seconds=float(_row["duration_seconds"]),
+            )
+    except Exception:
+        pass
 
 
 def _build_capabilities_payload() -> dict[str, Any]:
