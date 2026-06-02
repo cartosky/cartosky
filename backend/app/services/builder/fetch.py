@@ -3266,6 +3266,7 @@ def fetch_variable(
     return_meta: bool = False,
     _retry_on_invalid_subset: bool = True,
     _skip_priorities: frozenset[str] | None = None,
+    _prefer_inventory_byte_range: bool = False,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
     """Fetch a single GRIB variable via Herbie and return its data.
 
@@ -3489,7 +3490,23 @@ def fetch_variable(
                             break
 
                         try:
-                            subset_path = H.download(search_pattern, errors="raise", overwrite=False)
+                            if _prefer_inventory_byte_range:
+                                subset_path = _download_subset_with_inventory_byte_range(
+                                    H,
+                                    search_pattern=search_pattern,
+                                    out_path=subset_hint,
+                                    model_id=model_id,
+                                    run_date=run_date,
+                                    product=product,
+                                    fh=fh,
+                                    priority=priority,
+                                    bundle_fetch_cache=bundle_fetch_cache,
+                                    force_inventory_refresh=True,
+                                )
+                                if subset_path is None:
+                                    raise RuntimeError("inventory byte-range unavailable")
+                            else:
+                                subset_path = H.download(search_pattern, errors="raise", overwrite=False)
                         except Exception as herbie_exc:
                             if _is_no_space_error(herbie_exc):
                                 raise
@@ -3587,7 +3604,23 @@ def fetch_variable(
                         break
                 else:
                     try:
-                        subset_path = H.download(search_pattern, errors="raise", overwrite=True)
+                        if _prefer_inventory_byte_range:
+                            subset_path = _download_subset_with_inventory_byte_range(
+                                H,
+                                search_pattern=search_pattern,
+                                out_path=subset_target,
+                                model_id=model_id,
+                                run_date=run_date,
+                                product=product,
+                                fh=fh,
+                                priority=priority,
+                                bundle_fetch_cache=bundle_fetch_cache,
+                                force_inventory_refresh=True,
+                            )
+                            if subset_path is None:
+                                raise RuntimeError("inventory byte-range unavailable")
+                        else:
+                            subset_path = H.download(search_pattern, errors="raise", overwrite=True)
                     except Exception as herbie_exc:
                         if _is_no_space_error(herbie_exc):
                             raise
@@ -3903,6 +3936,7 @@ def fetch_variable(
                         bundle_fetch_cache=None,
                         return_meta=return_meta,
                         _retry_on_invalid_subset=False,
+                        _prefer_inventory_byte_range=len(priority_list) <= 1,
                         _skip_priorities=(
                             skip_priorities
                             if len(priority_list) <= 1

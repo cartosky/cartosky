@@ -29,6 +29,7 @@ from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_va
 from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
+from app.services.prometheus_metrics import observe_build_duration
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.render_resampling import (
     compute_loop_output_shape,
@@ -2575,6 +2576,7 @@ def run_scheduler(
                 time.sleep(poll_seconds)
                 continue
 
+            _build_start = time.monotonic()
             processed_run_id, available, total = _process_run(
                 plugin=plugin,
                 model_id=model,
@@ -2594,6 +2596,11 @@ def run_scheduler(
                 loop_tier1_max_dim=loop_tier1_max_dim,
                 loop_tier1_fixed_w=loop_tier1_fixed_w,
                 rebuild_existing=rebuild_existing,
+            )
+            _build_duration = time.monotonic() - _build_start
+            observe_build_duration(
+                model_id=processed_run_id.split("_")[0],
+                duration_seconds=_build_duration,
             )
             last_run_id = processed_run_id
             last_run_available = available
