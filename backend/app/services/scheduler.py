@@ -2599,7 +2599,7 @@ def run_scheduler(
             )
             _build_duration = time.monotonic() - _build_start
             observe_build_duration(
-                model_id=processed_run_id.split("_")[0],
+                model_id=model,
                 duration_seconds=_build_duration,
             )
             last_run_id = processed_run_id
