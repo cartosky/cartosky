@@ -42,7 +42,13 @@ from app.services.builder.cog_writer import (
     warp_to_target_grid,
 )
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.derive import FetchContext, derive_variable, get_cached_warped_component
+from app.services.builder.derive import (
+    FetchContext,
+    derive_variable,
+    destroy_fetch_context,
+    get_cached_warped_component,
+    prune_fetch_context_after_frame,
+)
 from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,
@@ -1314,6 +1320,7 @@ def build_frame(
             return path, status
         return path
 
+    owns_fetch_ctx = fetch_ctx is None
     local_fetch_ctx = fetch_ctx or FetchContext(coverage=region)
     setattr(local_fetch_ctx, "data_root", str(data_root))
     setattr(local_fetch_ctx, "run_id", run_id)
@@ -1704,6 +1711,23 @@ def build_frame(
         _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
         return _result(None, "failed")
     finally:
+        if 'var_spec_model' in locals() and getattr(var_spec_model, "derived", False):
+            removed = prune_fetch_context_after_frame(
+                ctx=local_fetch_ctx,
+                var_spec_model=var_spec_model,
+                fh=fh,
+            )
+            if removed:
+                logger.info(
+                    "fetch_ctx prune after frame: model=%s region=%s var=%s fh=%03d removed=%s",
+                    model,
+                    region,
+                    locals().get("var_key", var_id),
+                    fh,
+                    removed,
+                )
+        if owns_fetch_ctx:
+            destroy_fetch_context(local_fetch_ctx)
         _log_fetch_cache_stats_once()
 
 
@@ -1742,37 +1766,40 @@ def build_frame_bundle(
     results: dict[str, Path | None] = {}
     timings_ms: dict[str, int] = {}
     statuses: dict[str, str] = {}
-    for var_key in ordered_vars:
-        started_at = time.perf_counter()
-        frame_result = build_frame(
-            model=model,
-            region=region,
-            var_id=var_key,
-            fh=fh,
-            run_date=run_date,
-            data_root=data_root,
-            product=product,
-            model_plugin=resolved_plugin,
-            ensemble_view=resolved_plugin.default_ensemble_view(var_key)
-            if hasattr(resolved_plugin, "default_ensemble_view")
-            else None,
-            fetch_ctx=shared_ctx,
-            readiness_cache=readiness_cache,
-            log_fetch_cache_stats=False,
-            derive_component_warp_cache=True,
-            return_status=include_statuses,
-        )
-        if include_statuses:
-            frame_path, frame_status = (
-                frame_result
-                if isinstance(frame_result, tuple)
-                else (frame_result, "ok" if frame_result is not None else "failed")
+    try:
+        for var_key in ordered_vars:
+            started_at = time.perf_counter()
+            frame_result = build_frame(
+                model=model,
+                region=region,
+                var_id=var_key,
+                fh=fh,
+                run_date=run_date,
+                data_root=data_root,
+                product=product,
+                model_plugin=resolved_plugin,
+                ensemble_view=resolved_plugin.default_ensemble_view(var_key)
+                if hasattr(resolved_plugin, "default_ensemble_view")
+                else None,
+                fetch_ctx=shared_ctx,
+                readiness_cache=readiness_cache,
+                log_fetch_cache_stats=False,
+                derive_component_warp_cache=True,
+                return_status=include_statuses,
             )
-            results[var_key] = frame_path
-            statuses[var_key] = str(frame_status)
-        else:
-            results[var_key] = frame_result if not isinstance(frame_result, tuple) else frame_result[0]
-        timings_ms[var_key] = int((time.perf_counter() - started_at) * 1000)
+            if include_statuses:
+                frame_path, frame_status = (
+                    frame_result
+                    if isinstance(frame_result, tuple)
+                    else (frame_result, "ok" if frame_result is not None else "failed")
+                )
+                results[var_key] = frame_path
+                statuses[var_key] = str(frame_status)
+            else:
+                results[var_key] = frame_result if not isinstance(frame_result, tuple) else frame_result[0]
+            timings_ms[var_key] = int((time.perf_counter() - started_at) * 1000)
+    finally:
+        destroy_fetch_context(shared_ctx)
 
     fetch_hits = int(shared_ctx.stats.get("hits", 0))
     fetch_misses = int(shared_ctx.stats.get("misses", 0))

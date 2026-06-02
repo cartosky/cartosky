@@ -203,6 +203,105 @@ def _log_fetch_context_memory(
     )
 
 
+def _prune_cache_dict_by_forecast_hours(cache: dict[Any, Any], *, keep_fhs: set[int]) -> int:
+    removed = 0
+    for key in list(cache.keys()):
+        if not isinstance(key, tuple) or len(key) < 4:
+            continue
+        try:
+            cache_fh = int(key[3])
+        except (TypeError, ValueError):
+            continue
+        if cache_fh in keep_fhs:
+            continue
+        cache.pop(key, None)
+        removed += 1
+    return removed
+
+
+def _prune_kuchera_cumulative_cache(cache: dict[Any, Any], *, keep_fhs: set[int]) -> int:
+    removed = 0
+    for key in list(cache.keys()):
+        if not isinstance(key, tuple) or len(key) < 4:
+            continue
+        try:
+            cache_fh = int(key[3])
+        except (TypeError, ValueError):
+            continue
+        if cache_fh in keep_fhs:
+            continue
+        cache.pop(key, None)
+        removed += 1
+    return removed
+
+
+def prune_fetch_context_after_frame(
+    *,
+    ctx: FetchContext | None,
+    var_spec_model: Any,
+    fh: int,
+) -> dict[str, int]:
+    if ctx is None:
+        return {}
+    derive_kind = str(getattr(var_spec_model, "derive", "") or "").strip().lower()
+    handled_derive_kinds = {
+        "snowfall_kuchera_total_cumulative",
+        "ptype_accumulation_ecmwf",
+        "ptype_accumulation_cumulative",
+        "ptype_intensity_ecmwf",
+        "ptype_intensity_gfs",
+        "radar_ptype_combo",
+    }
+    if derive_kind not in handled_derive_kinds:
+        return {}
+
+    keep_fhs = {int(fh)}
+    removed_fetch = _prune_cache_dict_by_forecast_hours(ctx.fetch_cache, keep_fhs=keep_fhs)
+    removed_fetch_meta = _prune_cache_dict_by_forecast_hours(ctx.fetch_meta_cache, keep_fhs=keep_fhs)
+    removed_warp = _prune_cache_dict_by_forecast_hours(ctx.warp_cache, keep_fhs=keep_fhs)
+    removed_warp_meta = _prune_cache_dict_by_forecast_hours(ctx.warp_meta_cache, keep_fhs=keep_fhs)
+    removed_resolved_apcp = _prune_cache_dict_by_forecast_hours(ctx.resolved_apcp_cache, keep_fhs=keep_fhs)
+    removed_ptype = _prune_cache_dict_by_forecast_hours(ctx.ptype_family_cache, keep_fhs=keep_fhs)
+    kuchera_cache = getattr(ctx, "kuchera_cumulative_cache", None)
+    removed_kuchera = 0
+    if isinstance(kuchera_cache, dict):
+        removed_kuchera = _prune_kuchera_cumulative_cache(kuchera_cache, keep_fhs=keep_fhs)
+
+    return {
+        "fetch": removed_fetch,
+        "fetch_meta": removed_fetch_meta,
+        "warp": removed_warp,
+        "warp_meta": removed_warp_meta,
+        "resolved_apcp": removed_resolved_apcp,
+        "ptype": removed_ptype,
+        "kuchera": removed_kuchera,
+    }
+
+
+def destroy_fetch_context(ctx: FetchContext | None) -> None:
+    if ctx is None:
+        return
+    ctx.fetch_cache.clear()
+    ctx.warp_cache.clear()
+    ctx.fetch_meta_cache.clear()
+    ctx.warp_meta_cache.clear()
+    ctx.resolved_apcp_cache.clear()
+    ctx.ptype_family_cache.clear()
+    ctx.derive_quality.clear()
+    ctx.stats.clear()
+    ctx.warp_stats.clear()
+    kuchera_cache = getattr(ctx, "kuchera_cumulative_cache", None)
+    if isinstance(kuchera_cache, dict):
+        kuchera_cache.clear()
+    bundle_fetch_cache = getattr(ctx, "bundle_fetch_cache", None)
+    if hasattr(bundle_fetch_cache, "clear"):
+        try:
+            bundle_fetch_cache.clear()
+        except Exception:
+            pass
+    ctx.bundle_fetch_cache = None
+
+
 @dataclass(frozen=True)
 class DeriveStrategy:
     id: str

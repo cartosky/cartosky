@@ -28,7 +28,7 @@ from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
-from app.services.builder.derive import FetchContext
+from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
 from app.services.render_resampling import (
@@ -1730,6 +1730,30 @@ def _process_run(
     shared_parallel_fetch_ctx_by_target: dict[tuple[str, str], FetchContext] = {}
     shared_parallel_readiness_cache_by_target: dict[tuple[str, str], dict[str, bool]] = {}
 
+    def _shared_fetch_ctx_key(region: str, var_id: str) -> tuple[str, str]:
+        normalized_var_id = (
+            plugin.normalize_var_id(var_id)
+            if hasattr(plugin, "normalize_var_id")
+            else str(var_id)
+        )
+        return str(region), str(normalized_var_id)
+
+    def _release_shared_fetch_ctx(region: str, var_id: str, *, reason: str) -> None:
+        fetch_ctx_key = _shared_fetch_ctx_key(region, var_id)
+        shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.pop(fetch_ctx_key, None)
+        shared_parallel_readiness_cache_by_target.pop(fetch_ctx_key, None)
+        if shared_fetch_ctx is None:
+            return
+        logger.info(
+            "Releasing FetchContext: run=%s model=%s target=%s/%s reason=%s",
+            run_id,
+            model_id,
+            fetch_ctx_key[0],
+            fetch_ctx_key[1],
+            reason,
+        )
+        destroy_fetch_context(shared_fetch_ctx)
+
     def _log_process_cache_stats(*, stage: str) -> None:
         logger.info(
             "scheduler process cache stats: stage=%s run=%s model=%s inventory_entries=%d idx_negative_entries=%d rss_mib=%.1f",
@@ -2110,6 +2134,8 @@ def _process_run(
         round_fetch_ctx_regions: set[str] = set()
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures: list[concurrent.futures.Future] = []
+            future_to_fetch_ctx_key: dict[concurrent.futures.Future, tuple[str, str]] = {}
+            outstanding_fetch_ctx_jobs: dict[tuple[str, str], int] = {}
             if derive_bundle_enabled and not rebuild_round:
                 bundle_by_region_fh: dict[tuple[str, int], list[str]] = {}
                 single_jobs: list[BuildTarget] = []
@@ -2134,20 +2160,41 @@ def _process_run(
                     )
 
                 for region, var_id, fh in single_jobs:
-                    normalized_var_id = (
-                        plugin.normalize_var_id(var_id)
-                        if hasattr(plugin, "normalize_var_id")
-                        else str(var_id)
-                    )
-                    fetch_ctx_key = (str(region), str(normalized_var_id))
+                    fetch_ctx_key = _shared_fetch_ctx_key(region, var_id)
                     shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
                         fetch_ctx_key,
                         FetchContext(coverage=region),
                     )
                     shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
                     round_fetch_ctx_regions.add(str(region))
-                    futures.append(
-                        pool.submit(
+                    future = pool.submit(
+                        _build_one,
+                        model_id=model_id,
+                        region=region,
+                        var_id=var_id,
+                        fh=fh,
+                        run_dt=run_dt,
+                        data_root=data_root,
+                        plugin=plugin,
+                        fetch_ctx=shared_fetch_ctx,
+                        readiness_cache=shared_readiness_cache,
+                        log_fetch_cache_stats=False,
+                        derive_component_warp_cache=True,
+                    )
+                    futures.append(future)
+                    future_to_fetch_ctx_key[future] = fetch_ctx_key
+                    outstanding_fetch_ctx_jobs[fetch_ctx_key] = int(outstanding_fetch_ctx_jobs.get(fetch_ctx_key, 0)) + 1
+            else:
+                if rebuild_round:
+                    for region, var_id, fh in round_work:
+                        fetch_ctx_key = _shared_fetch_ctx_key(region, var_id)
+                        shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
+                            fetch_ctx_key,
+                            FetchContext(coverage=region),
+                        )
+                        shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
+                        round_fetch_ctx_regions.add(str(region))
+                        future = pool.submit(
                             _build_one,
                             model_id=model_id,
                             region=region,
@@ -2161,50 +2208,16 @@ def _process_run(
                             log_fetch_cache_stats=False,
                             derive_component_warp_cache=True,
                         )
-                    )
-            else:
-                if rebuild_round:
-                    for region, var_id, fh in round_work:
-                        normalized_var_id = (
-                            plugin.normalize_var_id(var_id)
-                            if hasattr(plugin, "normalize_var_id")
-                            else str(var_id)
-                        )
-                        fetch_ctx_key = (str(region), str(normalized_var_id))
-                        shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
-                            fetch_ctx_key,
-                            FetchContext(coverage=region),
-                        )
-                        shared_readiness_cache = shared_parallel_readiness_cache_by_target.setdefault(fetch_ctx_key, {})
-                        round_fetch_ctx_regions.add(str(region))
-                        futures.append(
-                            pool.submit(
-                                _build_one,
-                                model_id=model_id,
-                                region=region,
-                                var_id=var_id,
-                                fh=fh,
-                                run_dt=run_dt,
-                                data_root=data_root,
-                                plugin=plugin,
-                                fetch_ctx=shared_fetch_ctx,
-                                readiness_cache=shared_readiness_cache,
-                                log_fetch_cache_stats=False,
-                                derive_component_warp_cache=True,
-                            )
-                        )
+                        futures.append(future)
+                        future_to_fetch_ctx_key[future] = fetch_ctx_key
+                        outstanding_fetch_ctx_jobs[fetch_ctx_key] = int(outstanding_fetch_ctx_jobs.get(fetch_ctx_key, 0)) + 1
                 else:
                     queued_by_target: dict[tuple[str, str], list[int]] = {}
                     queue_order: list[tuple[str, str]] = []
                     future_to_target: dict[concurrent.futures.Future, tuple[str, str]] = {}
 
                     def _submit_single(region: str, var_id: str, fh: int) -> None:
-                        normalized_var_id = (
-                            plugin.normalize_var_id(var_id)
-                            if hasattr(plugin, "normalize_var_id")
-                            else str(var_id)
-                        )
-                        fetch_ctx_key = (str(region), str(normalized_var_id))
+                        fetch_ctx_key = _shared_fetch_ctx_key(region, var_id)
                         shared_fetch_ctx = shared_parallel_fetch_ctx_by_target.setdefault(
                             fetch_ctx_key,
                             FetchContext(coverage=region),
@@ -2305,10 +2318,13 @@ def _process_run(
                                     logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
                             if queue_key in blocked_targets or queue_key in transient_targets:
+                                _release_shared_fetch_ctx(queue_key[0], queue_key[1], reason="target_blocked_or_transient")
                                 continue
                             remaining_fhs = queued_by_target.get(queue_key, [])
                             if remaining_fhs:
                                 _submit_single(queue_key[0], queue_key[1], remaining_fhs.pop(0))
+                            else:
+                                _release_shared_fetch_ctx(queue_key[0], queue_key[1], reason="target_queue_drained")
                     futures = []
 
             for future in concurrent.futures.as_completed(futures):
@@ -2376,6 +2392,15 @@ def _process_run(
                         else:
                             blocked_targets.add((region, var_id))
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
+
+                fetch_ctx_key = future_to_fetch_ctx_key.pop(future, None)
+                if fetch_ctx_key is not None:
+                    remaining = int(outstanding_fetch_ctx_jobs.get(fetch_ctx_key, 0)) - 1
+                    if remaining <= 0:
+                        outstanding_fetch_ctx_jobs.pop(fetch_ctx_key, None)
+                        _release_shared_fetch_ctx(fetch_ctx_key[0], fetch_ctx_key[1], reason="round_futures_drained")
+                    else:
+                        outstanding_fetch_ctx_jobs[fetch_ctx_key] = remaining
 
         _log_parallel_shared_fetch_cache(regions=round_fetch_ctx_regions)
 

@@ -1149,17 +1149,18 @@ def test_process_run_reuses_parallel_fetch_context_per_variable(
         )
 
     assert len(seen_fetch_ctx_ids["tmp2m"]) == 5
-    assert len(set(seen_fetch_ctx_ids["tmp2m"])) == 1
+    assert len(set(seen_fetch_ctx_ids["tmp2m"])) == 5
     assert len(seen_fetch_ctx_ids["mlcape"]) == 5
-    assert len(set(seen_fetch_ctx_ids["mlcape"])) == 1
+    assert len(set(seen_fetch_ctx_ids["mlcape"])) == 5
     assert seen_fetch_ctx_ids["tmp2m"][0] != seen_fetch_ctx_ids["mlcape"][0]
-    assert len(set(seen_readiness_cache_ids["tmp2m"])) == 1
-    assert len(set(seen_readiness_cache_ids["mlcape"])) == 1
+    assert len(set(seen_readiness_cache_ids["tmp2m"])) == 5
+    assert len(set(seen_readiness_cache_ids["mlcape"])) == 5
     assert seen_readiness_cache_ids["tmp2m"][0] != seen_readiness_cache_ids["mlcape"][0]
-    assert "FetchContext stats: stage=run_start run=20260227_12z model=hrrr target=<summary> contexts=0 fetch=0 warp=0 meta=0" in caplog.text
-    assert "FetchContext stats: stage=run_end run=20260227_12z model=hrrr target=conus/mlcape fetch=5 warp=5 meta=5" in caplog.text
-    assert "FetchContext stats: stage=before_destroy run=20260227_12z model=hrrr target=<summary> contexts=2 fetch=10 warp=10 meta=10" in caplog.text
-    assert "catchup shared_fetch_cache region=conus hits=2 misses=4 warp_hits=6 warp_misses=8" in caplog.text
+    assert "FetchContext stats: stage=run_start run=20260227_12z model=hrrr target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0" in caplog.text
+    assert "Releasing FetchContext: run=20260227_12z model=hrrr target=conus/tmp2m reason=target_queue_drained" in caplog.text
+    assert "Releasing FetchContext: run=20260227_12z model=hrrr target=conus/mlcape reason=target_queue_drained" in caplog.text
+    assert "FetchContext stats: stage=run_end run=20260227_12z model=hrrr target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0" in caplog.text
+    assert "FetchContext stats: stage=before_destroy run=20260227_12z model=hrrr target=<summary> contexts=0 fetch=0 fetch_mib=0.0 warp=0 warp_mib=0.0" in caplog.text
 
 
 def test_process_run_republishes_progress_during_long_catchup(
