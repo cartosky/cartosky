@@ -504,16 +504,16 @@ export function BottomForecastControls({
                       disabled={disabled || !hasFrames || playDisabled}
                       aria-label={isPlaying ? "Pause animation" : "Play animation"}
                       className={cn(
-                        "flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
+                        "flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
                         isPlaying
                           ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                           : "bg-white/[0.06] text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:text-white hover:bg-white/[0.1]"
                       )}
                     >
                       {isPlaying ? (
-                        <Pause className="h-4 w-4" />
+                        <Pause className="h-[17px] w-[17px]" />
                       ) : (
-                        <Play className="h-4 w-4 translate-x-[1px]" />
+                        <Play className="h-[17px] w-[17px] translate-x-[1px]" />
                       )}
                     </button>
                   </TooltipTrigger>
@@ -523,9 +523,9 @@ export function BottomForecastControls({
                 </Tooltip>
               </div>
 
-              <div className="flex flex-1 flex-col gap-1.5">
-                <div className="relative px-0.5 pb-5">
-                  <div className="relative h-5">
+              <div className="flex flex-1 items-center">
+                <div className="relative w-full px-0.5">
+                  <div className="relative h-10">
                     {desktopEnhancedTrack ? (
                       <>
                         <div
