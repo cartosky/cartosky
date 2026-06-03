@@ -2566,6 +2566,8 @@ def run_scheduler(
         last_run_id: str | None = None
         last_run_available: int = 0
         last_run_total: int = 0
+        _current_build_start: float | None = None
+        _current_build_run_id: str | None = None
         while True:
             run_dt = _resolve_run_dt(run_arg, plugin=plugin, probe_var=resolved_probe_var)
             run_id = _run_id_from_dt(run_dt)
@@ -2576,7 +2578,10 @@ def run_scheduler(
                 time.sleep(poll_seconds)
                 continue
 
-            _build_start = time.monotonic()
+            if run_id != _current_build_run_id:
+                _current_build_start = time.monotonic()
+                _current_build_run_id = run_id
+
             processed_run_id, available, total = _process_run(
                 plugin=plugin,
                 model_id=model,
@@ -2597,15 +2602,19 @@ def run_scheduler(
                 loop_tier1_fixed_w=loop_tier1_fixed_w,
                 rebuild_existing=rebuild_existing,
             )
-            _build_duration = time.monotonic() - _build_start
-            try:
-                record_build_duration(
-                    model_id=model,
-                    run_id=processed_run_id,
-                    duration_seconds=_build_duration,
-                )
-            except Exception as _exc:
-                logger.warning("Failed to record build duration: %s", _exc)
+            run_now_complete = total > 0 and available >= total
+            if run_now_complete and _current_build_start is not None:
+                _build_duration = time.monotonic() - _current_build_start
+                try:
+                    record_build_duration(
+                        model_id=model,
+                        run_id=processed_run_id,
+                        duration_seconds=_build_duration,
+                    )
+                except Exception as _exc:
+                    logger.warning("Failed to record build duration: %s", _exc)
+                _current_build_start = None
+                _current_build_run_id = None
             last_run_id = processed_run_id
             last_run_available = available
             last_run_total = total

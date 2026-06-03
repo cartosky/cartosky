@@ -288,8 +288,26 @@ def _build_gfs_ptype_intensity_flat_palette() -> tuple[
 
 RADAR_PTYPE_ORDER = ("rain", "snow", "sleet", "frzr")
 
+_MODELED_RAIN_REFL_LEVELS = [float(value) for value in range(8, 73)]
+_MODELED_RAIN_REFL_COLORS = [
+    "#ffffff", "#c9c9c9", "#c5c5c5", "#b1b1b1", "#a3a3a3", "#959595",
+    "#767676", "#686868", "#5a5a5a", "#4c784c", "#448944", "#3c993b",
+    "#39bf28", "#40d31c", "#46e70c", "#4efd00", "#4bf508", "#47ea12",
+    "#42db24", "#40d32c", "#3cc930", "#35b32a", "#31a727", "#2d9d26",
+    "#2e931e", "#52a318", "#74b315", "#bbd507", "#dde503", "#efed0c",
+    "#efe735", "#efe54c", "#efe161", "#efd378", "#edc168", "#efb158",
+    "#ef8d36", "#ef7c26", "#f16e22", "#f55627", "#f54a2b", "#f53e2d",
+    "#f53034", "#e9303b", "#dd2f43", "#c13055", "#b5305d", "#b13060",
+    "#b13060", "#b13060", "#b13060", "#b2346e", "#b33a83", "#b54097",
+    "#c24abd", "#c04dd6", "#c04dd6", "#dd2be9", "#ee16f5", "#ee16f5",
+    "#f62efd", "#f752ff", "#f87dfd", "#fcd5ff",
+]
+
 
 def _build_modeled_reflectivity_palette(ptype: str) -> tuple[list[float], list[str]]:
+    if ptype == "rain":
+        return list(_MODELED_RAIN_REFL_LEVELS), list(_MODELED_RAIN_REFL_COLORS)
+
     levels = [float(value) for value in range(5, 71)]
 
     anchors_by_ptype = {
@@ -434,7 +452,7 @@ def _build_radar_ptype_flat_palette(
 
 RADAR_PTYPE_LEVELS, RADAR_PTYPE_COLORS, RADAR_PTYPE_BREAKS = _build_radar_ptype_flat_palette()
 RADAR_PTYPE_LEVELS_BY_TYPE = {
-    key: list(_MODELED_REFL_CONFIG[key]["levels"][: len(_MODELED_REFL_CONFIG[key]["colors"])])
+    key: list(_MODELED_REFL_CONFIG[key]["levels"])
     for key in RADAR_PTYPE_ORDER
 }
 MRMS_RADAR_PTYPE_ORDER = RADAR_PTYPE_ORDER

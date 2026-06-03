@@ -210,9 +210,15 @@ def test_modeled_reflectivity_palette_helper_shapes() -> None:
 
     for ptype in ("rain", "frzr", "sleet", "snow"):
         levels, colors = _build_modeled_reflectivity_palette(ptype)
-        assert len(levels) == len(colors), f"{ptype}: level/color length mismatch"
-        assert levels[0] == 5.0
-        assert levels[-1] == 70.0
+        assert len(levels) in {len(colors), len(colors) + 1}, f"{ptype}: level/color length mismatch"
+        if ptype == "rain":
+            assert levels[0] == 8.0
+            assert levels[-1] == 72.0
+            assert colors[0] == "#ffffff"
+            assert colors[-1] == "#fcd5ff"
+        else:
+            assert levels[0] == 5.0
+            assert levels[-1] == 70.0
         assert all(color.startswith("#") for color in colors)
 
 
