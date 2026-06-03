@@ -548,11 +548,7 @@ export function BottomForecastControls({
                             aria-hidden="true"
                             className="pointer-events-none absolute top-1/2 z-20 h-4 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
                             style={{ left: `${freshnessProgressPercent}%` }}
-                          >
-                            <span className="absolute left-1/2 top-[13px] -translate-x-1/2 rounded-[3px] border border-emerald-300/35 bg-emerald-300/12 px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[8px] font-medium lowercase leading-none tracking-[0.08em] text-emerald-200">
-                              pending
-                            </span>
-                          </div>
+                          />
                         ) : null}
                       </>
                     ) : null}
