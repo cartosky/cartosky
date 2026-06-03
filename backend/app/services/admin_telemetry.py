@@ -1433,6 +1433,48 @@ def get_build_duration_averages() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_build_events(
+    *,
+    since_ts: int,
+    model_id: str | None = None,
+    cycle_hour: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    clauses = ["created_at >= ?"]
+    params: list[Any] = [since_ts]
+    if model_id:
+        clauses.append("model_id = ?")
+        params.append(model_id)
+    if cycle_hour:
+        clauses.append("cycle_hour = ?")
+        params.append(cycle_hour)
+    params.append(max(1, min(5000, int(limit))))
+
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT created_at, model_id, cycle_hour, run_id,
+                   ROUND(duration_seconds / 60.0, 2) AS duration_minutes
+            FROM build_events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    return [
+        {
+            "created_at": int(row["created_at"]),
+            "model_id": str(row["model_id"]),
+            "cycle_hour": str(row["cycle_hour"]) if row["cycle_hour"] is not None else None,
+            "run_id": str(row["run_id"]),
+            "duration_minutes": float(row["duration_minutes"]),
+        }
+        for row in rows
+    ]
+
+
 def record_usage_event(payload: dict[str, Any], *, member_id: int | None = None) -> None:
     event_name = _normalize_text(payload.get("event_name") or payload.get("name"), max_length=64)
     if event_name not in ALLOWED_USAGE_EVENT_NAMES:
