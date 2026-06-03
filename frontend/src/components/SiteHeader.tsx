@@ -62,8 +62,8 @@ const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
 const DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME = "data-[side=bottom]:translate-y-0";
 const DESKTOP_ICON_CLUSTER_CLASSNAME = "flex items-center gap-px rounded-[7px] border-[0.5px] border-white/[0.11] bg-white/[0.06] p-0.5";
 const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
-const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-[#4a9eff]/[0.18] text-[#4a9eff] hover:bg-[#4a9eff]/[0.18] hover:text-[#4a9eff]";
-const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-px shrink-0 bg-white/10";
+const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-cyan-300/[0.12] text-cyan-200 hover:bg-cyan-300/[0.12] hover:text-cyan-200";
+const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-px shrink-0 bg-cyan-300/25";
 
 function AvailabilityReadout({
   label,

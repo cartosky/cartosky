@@ -451,7 +451,7 @@ export function BottomForecastControls({
                         className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
                       >
                         <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-500/70 via-cyan-300 to-emerald-300"
+                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
                           style={{ width: `${freshnessProgressPercent}%` }}
                         />
                         {!runIsComplete ? (
@@ -538,7 +538,7 @@ export function BottomForecastControls({
                   </span>
                   <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-cyan-500/60 via-cyan-300 to-emerald-300"
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
                       style={{ width: `${freshnessProgressPercent}%` }}
                     />
                   </div>
