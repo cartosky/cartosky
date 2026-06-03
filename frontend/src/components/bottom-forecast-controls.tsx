@@ -215,16 +215,23 @@ export function BottomForecastControls({
   const freshnessProgressPercent = hasFreshnessTotal
     ? Math.max(0, Math.min(100, (cappedAvailableForecastHours / freshnessTotal) * 100))
     : 0;
+  const enhancedAvailabilityTrack = hasFreshnessTotal && timeAxisMode !== "observed";
   const desktopEnhancedTrack = isDesktopLayout && hasFreshnessTotal && timeAxisMode !== "observed";
-  const desktopPublishedFrames = useMemo(() => {
-    if (!desktopEnhancedTrack) {
+  const publishedFrames = useMemo(() => {
+    if (!enhancedAvailabilityTrack) {
       return availableFrames;
     }
     const published = availableFrames.filter((frame) => Number.isFinite(frame) && frame <= cappedAvailableForecastHours);
     return published.length > 0 ? published : availableFrames.slice(0, 1);
-  }, [availableFrames, cappedAvailableForecastHours, desktopEnhancedTrack]);
-  const desktopSliderIndex = Math.max(0, desktopPublishedFrames.indexOf(effectiveHour));
+  }, [availableFrames, cappedAvailableForecastHours, enhancedAvailabilityTrack]);
+  const publishedSliderIndex = Math.max(0, publishedFrames.indexOf(effectiveHour));
   const desktopInteractiveTrackPercent = desktopEnhancedTrack
+    ? runIsComplete
+      ? 100
+      : Math.max(0.5, freshnessProgressPercent)
+    : 100;
+  const mobileEnhancedTrack = !isDesktopLayout && enhancedAvailabilityTrack;
+  const mobileInteractiveTrackPercent = mobileEnhancedTrack
     ? runIsComplete
       ? 100
       : Math.max(0.5, freshnessProgressPercent)
@@ -437,32 +444,70 @@ export function BottomForecastControls({
 
               <div className="min-w-0 flex-1">
                 <div className="relative h-8">
-                  <Slider
-                    value={[sliderIndex]}
-                    onValueChange={([value]) => {
-                      const next = availableFrames[Math.round(value ?? 0)];
-                      if (Number.isFinite(next)) {
-                        if (!isScrubbing) {
-                          setIsScrubbing(true);
+                  {mobileEnhancedTrack ? (
+                    <>
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
+                      >
+                        <div
+                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-500/70 via-cyan-300 to-emerald-300"
+                          style={{ width: `${freshnessProgressPercent}%` }}
+                        />
+                        {!runIsComplete ? (
+                          <div
+                            className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
+                            style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
+                          />
+                        ) : null}
+                      </div>
+                      {!runIsComplete ? (
+                        <div
+                          aria-hidden="true"
+                          className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
+                          style={{ left: `${freshnessProgressPercent}%` }}
+                        />
+                      ) : null}
+                    </>
+                  ) : null}
+                  <div
+                    className="absolute inset-y-0 left-0"
+                    style={{ width: mobileEnhancedTrack ? `${mobileInteractiveTrackPercent}%` : "100%" }}
+                  >
+                    <Slider
+                      value={[mobileEnhancedTrack ? publishedSliderIndex : sliderIndex]}
+                      onValueChange={([value]) => {
+                        const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
+                        const next = frames[Math.round(value ?? 0)];
+                        if (Number.isFinite(next)) {
+                          if (!isScrubbing) {
+                            setIsScrubbing(true);
+                          }
+                          setPreviewHour(next);
+                          emitForecastHour(next, false);
                         }
-                        setPreviewHour(next);
-                        emitForecastHour(next, false);
-                      }
-                    }}
-                    onValueCommit={([value]) => {
-                      const next = availableFrames[Math.round(value ?? 0)];
-                      if (Number.isFinite(next)) {
-                        setPreviewHour(null);
-                        setIsScrubbing(false);
-                        emitForecastHour(next, true);
-                      }
-                    }}
-                    min={0}
-                    max={Math.max(0, availableFrames.length - 1)}
-                    step={1}
-                    disabled={disabled || isPlaying || !hasFrames}
-                    className="absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                  />
+                      }}
+                      onValueCommit={([value]) => {
+                        const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
+                        const next = frames[Math.round(value ?? 0)];
+                        if (Number.isFinite(next)) {
+                          setPreviewHour(null);
+                          setIsScrubbing(false);
+                          emitForecastHour(next, true);
+                        }
+                      }}
+                      min={0}
+                      max={Math.max(0, (mobileEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
+                      step={1}
+                      disabled={disabled || isPlaying || !hasFrames || (mobileEnhancedTrack && publishedFrames.length === 0)}
+                      className={cn(
+                        "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5",
+                        mobileEnhancedTrack
+                          ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
+                          : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+                      )}
+                    />
+                  </div>
                 </div>
                 {validTime ? (
                   <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
@@ -493,7 +538,7 @@ export function BottomForecastControls({
                   </span>
                   <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-200"
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-500/60 via-cyan-300 to-emerald-300"
                       style={{ width: `${freshnessProgressPercent}%` }}
                     />
                   </div>
@@ -568,9 +613,9 @@ export function BottomForecastControls({
                       style={{ width: desktopEnhancedTrack ? `${desktopInteractiveTrackPercent}%` : "100%" }}
                     >
                       <Slider
-                        value={[desktopEnhancedTrack ? desktopSliderIndex : sliderIndex]}
+                        value={[desktopEnhancedTrack ? publishedSliderIndex : sliderIndex]}
                         onValueChange={([value]) => {
-                          const frames = desktopEnhancedTrack ? desktopPublishedFrames : availableFrames;
+                          const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
                           const next = frames[Math.round(value ?? 0)];
                           if (Number.isFinite(next)) {
                             if (!isScrubbing) {
@@ -581,7 +626,7 @@ export function BottomForecastControls({
                           }
                         }}
                         onValueCommit={([value]) => {
-                          const frames = desktopEnhancedTrack ? desktopPublishedFrames : availableFrames;
+                          const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
                           const next = frames[Math.round(value ?? 0)];
                           if (Number.isFinite(next)) {
                             setPreviewHour(null);
@@ -590,9 +635,9 @@ export function BottomForecastControls({
                           }
                         }}
                         min={0}
-                        max={Math.max(0, (desktopEnhancedTrack ? desktopPublishedFrames : availableFrames).length - 1)}
+                        max={Math.max(0, (desktopEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
                         step={1}
-                        disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && desktopPublishedFrames.length === 0)}
+                        disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && publishedFrames.length === 0)}
                         className={desktopSliderClassName}
                       />
                     </div>

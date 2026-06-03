@@ -1493,7 +1493,11 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
   const isMarketingVariant = variant === "marketing";
   const isViewerRoute = location.pathname === "/viewer";
   const showAppNav = isAppVariant && !isViewerRoute;
-  const isViewerDesktop = isViewerRoute && (toolbar?.layoutMode === "desktop" || toolbar?.layoutMode === undefined);
+  const isViewerDesktop = isViewerRoute && (
+    toolbar?.layoutMode === "desktop"
+    || toolbar?.layoutMode === "tablet-touch"
+    || toolbar?.layoutMode === undefined
+  );
   const isViewerMobile = isViewerRoute && !isViewerDesktop;
 
   useEffect(() => {
