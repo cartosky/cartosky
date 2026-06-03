@@ -117,6 +117,9 @@ const COUNTRY_BOUNDARY_LAYER_ID = "twf-country-boundaries";
 const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
+const CONTOUR_LINE_COLOR = "#000000";
+const CONTOUR_LABEL_COLOR = "rgba(0,0,0,0.72)";
+const CONTOUR_LABEL_SHADOW = "0 1px 2px rgba(255,255,255,0.62)";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -907,7 +910,7 @@ export function buildMapStyle(
           "line-cap": "round",
         },
         paint: {
-          "line-color": boundaryLineColor,
+          "line-color": CONTOUR_LINE_COLOR,
           "line-opacity": 0.9,
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
         },
@@ -2726,8 +2729,8 @@ export function MapCanvas({
             left: item.x,
             top: item.y,
             transform: `translate(-50%, -50%) rotate(${item.angle}deg)`,
-            color: basemapMode === "dark" ? "rgba(255,255,255,0.82)" : "rgba(0,0,0,0.72)",
-            textShadow: basemapMode === "dark" ? "0 1px 2px rgba(0,0,0,0.62)" : "0 1px 2px rgba(255,255,255,0.62)",
+            color: CONTOUR_LABEL_COLOR,
+            textShadow: CONTOUR_LABEL_SHADOW,
           }}
           aria-hidden="true"
         >
