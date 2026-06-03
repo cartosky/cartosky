@@ -60,6 +60,10 @@ type LocationSearchResult = {
 const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
 const DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME = "data-[side=bottom]:translate-y-0";
+const DESKTOP_ICON_CLUSTER_CLASSNAME = "flex items-center gap-px rounded-[7px] border-[0.5px] border-white/[0.11] bg-white/[0.06] p-0.5";
+const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
+const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-[#4a9eff]/[0.18] text-[#4a9eff] hover:bg-[#4a9eff]/[0.18] hover:text-[#4a9eff]";
+const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-px shrink-0 bg-white/10";
 
 function AvailabilityReadout({
   label,
@@ -546,7 +550,10 @@ function RegionUtilitySelect({
           updatePanelPosition();
           setOpen((currentOpen) => !currentOpen);
         }}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] px-0 text-white/60 shadow-none transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+        className={cn(
+          DESKTOP_ICON_BUTTON_CLASSNAME,
+          open ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
+        )}
       >
         <span className="flex h-full w-full items-center justify-center">
           <Globe className="h-3.5 w-3.5" />
@@ -848,98 +855,99 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
           ) : null}
         </div>
 
-        <RegionUtilitySelect
-          value={region}
-          onValueChange={onRegionChange}
-          onLocationJump={onLocationJump}
-          options={regions}
-          disabled={disabled}
-          currentRegionLabel={selectedRegionLabel}
-          tourTarget="region-selector"
-        />
+        <div className={DESKTOP_ICON_CLUSTER_CLASSNAME}>
+          <RegionUtilitySelect
+            value={region}
+            onValueChange={onRegionChange}
+            onLocationJump={onLocationJump}
+            options={regions}
+            disabled={disabled}
+            currentRegionLabel={selectedRegionLabel}
+            tourTarget="region-selector"
+          />
 
-        {/* Legend button */}
-        <div className="relative shrink-0" ref={legendRef} data-tour-target="legend-button">
-          <button
-            type="button"
-            onClick={() => {
-              updateLegendPanelTop();
-              setLegendPanelOpen((v) => !v);
-            }}
-            aria-expanded={legendPanelOpen}
-            title="Legend"
-            aria-label="Legend"
-            className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150",
-              legendPanelOpen
-                ? "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100"
-                : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
-            )}
-          >
-            <Palette className="h-3.5 w-3.5" />
-          </button>
+          <div aria-hidden="true" className={DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME} />
 
-          {legendPanelOpen ? createPortal(
-            <div
-              ref={legendPanelRef}
-              className="fixed right-[3.25rem] z-[70] w-[220px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
-              style={{ top: legendPanelTop }}
+          {/* Legend button */}
+          <div className="relative shrink-0" ref={legendRef} data-tour-target="legend-button">
+            <button
+              type="button"
+              onClick={() => {
+                updateLegendPanelTop();
+                setLegendPanelOpen((v) => !v);
+              }}
+              aria-expanded={legendPanelOpen}
+              title="Legend"
+              aria-label="Legend"
+              className={cn(
+                DESKTOP_ICON_BUTTON_CLASSNAME,
+                legendPanelOpen ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
+              )}
             >
-              <MapLegend
-                legend={legend}
-                defaultExpanded={true}
-                inline={true}
-              />
-            </div>
-          , document.body) : null}
-        </div>
+              <Palette className="h-3.5 w-3.5" />
+            </button>
 
-        {onShare ? (
-          <button
-            type="button"
-            onClick={onShare}
-            title="Share"
-            aria-label="Share"
-            data-tour-target="share-button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
-          >
-            <Send className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
+            {legendPanelOpen ? createPortal(
+              <div
+                ref={legendPanelRef}
+                className="fixed right-[3.25rem] z-[70] w-[220px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+                style={{ top: legendPanelTop }}
+              >
+                <MapLegend
+                  legend={legend}
+                  defaultExpanded={true}
+                  inline={true}
+                />
+              </div>
+            , document.body) : null}
+          </div>
 
-        {onFeedback ? (
-          <button
-            type="button"
-            onClick={onFeedback}
-            title="Send feedback"
-            aria-label="Send feedback"
-            data-tour-target="feedback-button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
-          >
-            <MessageSquareText className="h-3.5 w-3.5" />
-          </button>
-        ) : null}
+          {onShare ? (
+            <button
+              type="button"
+              onClick={onShare}
+              title="Share"
+              aria-label="Share"
+              data-tour-target="share-button"
+              className={DESKTOP_ICON_BUTTON_CLASSNAME}
+            >
+              <Send className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
 
-        {/* Settings / Display panel */}
-        <div className="relative shrink-0" ref={settingsRef} data-tour-target="display-settings-button">
-          <button
-            type="button"
-            onClick={() => {
-              updateSettingsPanelTop();
-              onDisplayPanelOpenChange(!displayPanelOpen);
-            }}
-            aria-expanded={displayPanelOpen}
-            title="Display settings"
-            aria-label="Display settings"
-            className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150",
-              displayPanelOpen
-                ? "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100"
-                : "border-white/10 bg-white/[0.05] text-white/60 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
-            )}
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </button>
+          {onFeedback ? (
+            <button
+              type="button"
+              onClick={onFeedback}
+              title="Send feedback"
+              aria-label="Send feedback"
+              data-tour-target="feedback-button"
+              className={DESKTOP_ICON_BUTTON_CLASSNAME}
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+
+          <div aria-hidden="true" className={DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME} />
+
+          {/* Settings / Display panel */}
+          <div className="relative shrink-0" ref={settingsRef} data-tour-target="display-settings-button">
+            <button
+              type="button"
+              onClick={() => {
+                updateSettingsPanelTop();
+                onDisplayPanelOpenChange(!displayPanelOpen);
+              }}
+              aria-expanded={displayPanelOpen}
+              title="Display settings"
+              aria-label="Display settings"
+              className={cn(
+                DESKTOP_ICON_BUTTON_CLASSNAME,
+                displayPanelOpen ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
+              )}
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
 
           {displayPanelOpen ? createPortal(
             <div
@@ -1036,6 +1044,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
               </div>
             </div>
           , document.body) : null}
+          </div>
         </div>
       </div>
     </div>

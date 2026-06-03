@@ -1622,24 +1622,6 @@ async def admin_feedback(
         raise TwfApiError(status_code=400, code="INVALID_FEEDBACK_QUERY", message=str(exc)) from exc
 
 
-@app.get("/api/v4/admin/build-events")
-async def admin_build_events(
-    request: Request,
-    model_id: str | None = Query(None),
-    cycle_hour: str | None = Query(None),
-    days: int = Query(30, ge=1),
-    limit: int = Query(1000, ge=1, le=5000),
-    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
-) -> list[dict[str, Any]]:
-    since_ts = int(time.time()) - (days * 24 * 60 * 60)
-    return admin_telemetry.get_build_events(
-        since_ts=since_ts,
-        model_id=_normalize_filter_value(model_id),
-        cycle_hour=_normalize_filter_value(cycle_hour),
-        limit=limit,
-    )
-
-
 @app.get("/api/v4/admin/overview/summary")
 async def admin_overview_summary(
     request: Request,
