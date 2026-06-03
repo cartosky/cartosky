@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Clock, Pause, Play, Send, Settings } from "lucide-react";
+import { AlertCircle, Pause, Play, Send, Settings } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
@@ -524,17 +524,6 @@ export function BottomForecastControls({
               </div>
 
               <div className="flex flex-1 flex-col gap-1.5">
-                <div className="flex items-center justify-between px-0.5">
-                  <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.26em] text-white/40">
-                    <Clock className="h-2.5 w-2.5" />
-                    {validTime?.axisLabel ?? (timeAxisMode === "observed" ? "Observed Time" : timeAxisMode === "valid" ? "Valid Time" : "Forecast Hour")}
-                  </span>
-                  {timeAxisMode === "valid" ? null : (
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.1em] text-white/80 transition-all duration-150">
-                      {validTime?.compactValue ?? (timeAxisMode === "observed" ? "--" : `${forecastHour}h`)}
-                    </span>
-                  )}
-                </div>
                 <div className="relative px-0.5 pb-5">
                   <div className="relative h-5">
                     {desktopEnhancedTrack ? (
