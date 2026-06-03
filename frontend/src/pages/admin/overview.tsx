@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, BarChart3, ClipboardCheck, Database, Gauge, Waypoints } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, ClipboardCheck, Gauge, Waypoints } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { AdminEmpty, AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
@@ -9,7 +9,6 @@ import {
   fetchAdminObservabilitySummary,
   fetchAdminOverviewSummary,
   fetchAdminStatusResults,
-  fetchAdminStatusQaSummary,
   fetchAdminTracesSummary,
   type AdminNetworkDiagnosticsResponse,
   type AdminObservabilitySummaryResponse,
@@ -19,7 +18,6 @@ import {
   type AdminTracesSummaryResponse,
   type OverviewMetricSummary,
   type StatusResult,
-  type StatusQaSummaryResponse,
   type TwfStatus,
 } from "@/lib/admin-api";
 import { isPostHogEnabled, isPostHogReplayEnabled } from "@/lib/config";
@@ -281,7 +279,6 @@ export default function AdminOverviewPage() {
   const [networkDiagnostics, setNetworkDiagnostics] = useState<AdminNetworkDiagnosticsResponse | null>(null);
   const [observability, setObservability] = useState<AdminObservabilitySummaryResponse | null>(null);
   const [traces, setTraces] = useState<AdminTracesSummaryResponse | null>(null);
-  const [qaSummary, setQaSummary] = useState<StatusQaSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -310,19 +307,17 @@ export default function AdminOverviewPage() {
             setError(nextError instanceof Error ? nextError.message : "Failed to load admin overview");
           });
 
-        const [overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse, qaSummaryResponse] = await Promise.all([
+        const [overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse] = await Promise.all([
           fetchAdminOverviewSummary("7d"),
           fetchAdminNetworkDiagnostics("7d"),
           fetchAdminObservabilitySummary(),
           fetchAdminTracesSummary(),
-          fetchAdminStatusQaSummary(),
         ]);
         if (cancelled) return;
         setOverview(overviewResponse);
         setNetworkDiagnostics(networkDiagnosticsResponse);
         setObservability(observabilityResponse);
         setTraces(tracesResponse);
-        setQaSummary(qaSummaryResponse);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -368,7 +363,6 @@ export default function AdminOverviewPage() {
   const tracesLive = Boolean(traces?.enabled && traces.recent.last_trace_at);
   const posthogEnabled = isPostHogEnabled();
   const posthogReplayEnabled = isPostHogReplayEnabled();
-  const qaStoreMode = qaSummary?.store_mode === "separate" ? "Separate" : qaSummary?.store_mode === "shared" ? "Shared" : "Awaiting data";
 
   return (
     <AdminGate status={status} loadingLabel="Loading admin overview...">
@@ -383,19 +377,11 @@ export default function AdminOverviewPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <SummaryCard title="Open Issues" value={String(issueRows.length)} hint="Run warnings &amp; errors" icon={AlertTriangle} accentClassName="text-amber-300" topBorderClass="border-t-amber-400/60" />
             <SummaryCard title="Ongoing Runs" value={String(ongoingRows.length)} hint="Latest cycles building" icon={Activity} accentClassName="text-sky-300" topBorderClass="border-t-sky-400/40" />
             <SummaryCard title="Artifact Failures" value={String(artifactRows.length)} hint="Missing or unreadable" icon={ClipboardCheck} accentClassName="text-rose-300" topBorderClass="border-t-rose-400/60" />
             <SummaryCard title="Stale / Stalled" value={String(staleRows.length)} hint="Runs needing attention" icon={Activity} accentClassName="text-[#9dd5bf]" topBorderClass={staleRows.length > 0 ? "border-t-amber-400/60" : "border-t-emerald-400/40"} />
-            <SummaryCard
-              title="QA Reviews"
-              value={new Intl.NumberFormat("en-US").format(qaSummary?.total_reviews ?? 0)}
-              hint={qaSummary ? `${qaSummary.warning_reviews} warnings · ${qaStoreMode.toLowerCase()}` : "Awaiting summary"}
-              icon={Database}
-              accentClassName="text-sky-300"
-              topBorderClass="border-t-sky-400/40"
-            />
           </div>
         </AdminHero>
 
