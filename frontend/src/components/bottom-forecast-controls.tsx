@@ -220,7 +220,7 @@ export function BottomForecastControls({
       "repeating-linear-gradient(135deg, rgba(148,163,184,0.18) 0px, rgba(148,163,184,0.18) 3px, rgba(15,23,42,0.2) 3px, rgba(15,23,42,0.2) 7px)",
   };
   const desktopSliderClassName = cn(
-    "w-full transition-opacity duration-150 [&>*:first-child]:h-1",
+    "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4",
     desktopEnhancedTrack
       ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
       : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
@@ -296,7 +296,7 @@ export function BottomForecastControls({
           className={cn(
             "pointer-events-auto relative flex flex-col",
             isDesktopLayout
-              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-3.5"
+              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-4"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -481,7 +481,7 @@ export function BottomForecastControls({
             ) : null}
           </div>
 
-            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
+            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3 py-0.5" : "hidden"}>
               <div className="flex shrink-0 items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -510,7 +510,7 @@ export function BottomForecastControls({
                 </Tooltip>
               </div>
 
-              <div className="flex flex-1 flex-col gap-1">
+              <div className="flex flex-1 flex-col gap-1.5">
                 <div className="flex items-center justify-between px-0.5">
                   <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.26em] text-white/40">
                     <Clock className="h-2.5 w-2.5" />
@@ -522,63 +522,65 @@ export function BottomForecastControls({
                     </span>
                   )}
                 </div>
-                <div className="relative px-0.5 pb-4">
-                  {desktopEnhancedTrack ? (
-                    <>
-                      <div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute left-0.5 right-0.5 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
-                      >
-                        <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
-                          style={{ width: `${freshnessProgressPercent}%` }}
-                        />
-                        {!runIsComplete ? (
-                          <div
-                            className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
-                            style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
-                          />
-                        ) : null}
-                      </div>
-                      {!runIsComplete ? (
+                <div className="relative px-0.5 pb-5">
+                  <div className="relative h-5">
+                    {desktopEnhancedTrack ? (
+                      <>
                         <div
                           aria-hidden="true"
-                          className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
-                          style={{ left: `${freshnessProgressPercent}%` }}
+                          className="pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
                         >
-                          <span className="absolute left-1/2 top-[12px] -translate-x-1/2 rounded-[3px] border border-emerald-300/35 bg-emerald-300/12 px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[8px] font-medium lowercase leading-none tracking-[0.08em] text-emerald-200">
-                            frontier
-                          </span>
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
+                            style={{ width: `${freshnessProgressPercent}%` }}
+                          />
+                          {!runIsComplete ? (
+                            <div
+                              className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
+                              style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
+                            />
+                          ) : null}
                         </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <Slider
-                    value={[sliderIndex]}
-                    onValueChange={([value]) => {
-                      const next = availableFrames[Math.round(value ?? 0)];
-                      if (Number.isFinite(next)) {
-                        if (!isScrubbing) {
-                          setIsScrubbing(true);
+                        {!runIsComplete ? (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute top-1/2 z-20 h-4 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
+                            style={{ left: `${freshnessProgressPercent}%` }}
+                          >
+                            <span className="absolute left-1/2 top-[13px] -translate-x-1/2 rounded-[3px] border border-emerald-300/35 bg-emerald-300/12 px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[8px] font-medium lowercase leading-none tracking-[0.08em] text-emerald-200">
+                              pending
+                            </span>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <Slider
+                      value={[sliderIndex]}
+                      onValueChange={([value]) => {
+                        const next = availableFrames[Math.round(value ?? 0)];
+                        if (Number.isFinite(next)) {
+                          if (!isScrubbing) {
+                            setIsScrubbing(true);
+                          }
+                          setPreviewHour(next);
+                          emitForecastHour(next, false);
                         }
-                        setPreviewHour(next);
-                        emitForecastHour(next, false);
-                      }
-                    }}
-                    onValueCommit={([value]) => {
-                      const next = availableFrames[Math.round(value ?? 0)];
-                      if (Number.isFinite(next)) {
-                        setPreviewHour(null);
-                        setIsScrubbing(false);
-                        emitForecastHour(next, true);
-                      }
-                    }}
-                    min={0}
-                    max={Math.max(0, availableFrames.length - 1)}
-                    step={1}
-                    disabled={disabled || isPlaying || !hasFrames}
-                    className={desktopSliderClassName}
-                  />
+                      }}
+                      onValueCommit={([value]) => {
+                        const next = availableFrames[Math.round(value ?? 0)];
+                        if (Number.isFinite(next)) {
+                          setPreviewHour(null);
+                          setIsScrubbing(false);
+                          emitForecastHour(next, true);
+                        }
+                      }}
+                      min={0}
+                      max={Math.max(0, availableFrames.length - 1)}
+                      step={1}
+                      disabled={disabled || isPlaying || !hasFrames}
+                      className={desktopSliderClassName}
+                    />
+                  </div>
                 </div>
               </div>
 
