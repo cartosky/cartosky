@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Pause, Play, Send, Settings } from "lucide-react";
+import { AlertCircle, MessageSquareText, Pause, Play, Send, Settings } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
@@ -171,6 +171,7 @@ export function BottomForecastControls({
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
   const onShare = toolbar?.onShare;
+  const onFeedback = toolbar?.onFeedback;
   const onOpenControls = toolbar?.onMobileControlsOpenChange;
   const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
@@ -377,6 +378,17 @@ export function BottomForecastControls({
                     <Send className="h-3.5 w-3.5" />
                   </button>
                 ) : null}
+                {onFeedback ? (
+                  <button
+                    type="button"
+                    onClick={onFeedback}
+                    aria-label="Send feedback"
+                    data-tour-target="feedback-button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                  >
+                    <MessageSquareText className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
                 {onOpenControls ? (
                   <button
                     type="button"
@@ -390,9 +402,6 @@ export function BottomForecastControls({
                 ) : null}
               </div>
             </div>
-
-            {/* Hairline divider */}
-            <div className="mb-2 border-t border-white/[0.08]" />
 
             {transientStatus ? (
               <div className="mb-2 flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
@@ -489,7 +498,7 @@ export function BottomForecastControls({
                     />
                   </div>
                   {!runIsComplete ? (
-                    <span className="shrink-0 text-white/45">building...</span>
+                    <span className="shrink-0 text-emerald-300/75">building...</span>
                   ) : null}
                 </div>
               </>

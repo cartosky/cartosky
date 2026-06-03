@@ -59,6 +59,8 @@ export type ViewerToolbarProps = {
   legend: LegendPayload | null;
   // Share
   onShare?: () => void;
+  // Feedback
+  onFeedback?: () => void;
   // Tour
   onReplayTour?: () => void;
   // Mobile controls sheet

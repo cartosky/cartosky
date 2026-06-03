@@ -1327,19 +1327,6 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
       {/* Spacer so logo stays left-aligned with nothing on the right */}
       <div className="flex-1" />
 
-      {onFeedback ? (
-        <button
-          type="button"
-          onClick={onFeedback}
-          title="Send feedback"
-          aria-label="Send feedback"
-          data-tour-target="feedback-button"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-all duration-150 hover:border-cyan-300/25 hover:bg-cyan-300/[0.08] hover:text-cyan-100"
-        >
-          <MessageSquareText className="h-3.5 w-3.5" />
-        </button>
-      ) : null}
-
       {/* Slide-up sheet */}
       {sheetOpen ? createPortal(
         <>

@@ -243,7 +243,7 @@ function pickDefaultVariableForModel(
 
 export default function App() {
   const { start: startSiteLoading } = useSiteLoading();
-  const { setViewerContext, clearViewerContext } = useFeedbackContext();
+  const { setViewerContext, clearViewerContext, openFeedback } = useFeedbackContext();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
@@ -4203,6 +4203,7 @@ export default function App() {
     onDisplayPanelOpenChange: setDisplayPanelOpen,
     legend,
     onShare: handleOpenShareModal,
+    onFeedback: openFeedback,
     mobileControlsOpen,
     onMobileControlsOpenChange: setMobileControlsOpen,
     layoutMode: viewerLayoutMode,
@@ -4215,7 +4216,7 @@ export default function App() {
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
-    telemetryRunId, forecastHour, mobileControlsOpen, replayTour,
+    telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
   ]);
 
   return (
