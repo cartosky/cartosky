@@ -104,6 +104,7 @@ function formatTimelineDisplay(params: {
     }).format(validDate);
 
     const rawShort = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
       month: "numeric",
       day: "numeric",
       year: "2-digit",
