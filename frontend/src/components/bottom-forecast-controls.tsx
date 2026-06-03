@@ -40,6 +40,8 @@ type BottomForecastControlsProps = {
   modelLabel?: string | null;
   variableId?: string | null;
   variableLabel?: string | null;
+  totalForecastHours?: number | null;
+  runIsComplete?: boolean;
 };
 
 function formatTimelineDisplay(params: {
@@ -164,6 +166,8 @@ export function BottomForecastControls({
   modelLabel = null,
   variableId = null,
   variableLabel = null,
+  totalForecastHours = null,
+  runIsComplete = false,
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
   const onShare = toolbar?.onShare;
@@ -197,6 +201,30 @@ export function BottomForecastControls({
   const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
   const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
+  const availableForecastHours = useMemo(() => {
+    const finiteFrames = availableFrames.filter(Number.isFinite);
+    return finiteFrames.length > 0 ? Math.max(...finiteFrames) : 0;
+  }, [availableFrames]);
+  const freshnessTotal = Number.isFinite(totalForecastHours) ? Math.max(0, Number(totalForecastHours)) : null;
+  const cappedAvailableForecastHours = freshnessTotal !== null
+    ? Math.max(0, Math.min(availableForecastHours, freshnessTotal))
+    : availableForecastHours;
+  const hasFreshnessTotal = freshnessTotal !== null && freshnessTotal > 0;
+  const showFreshnessStrip = !isDesktopLayout && timeAxisMode !== "observed" && hasFreshnessTotal;
+  const freshnessProgressPercent = hasFreshnessTotal
+    ? Math.max(0, Math.min(100, (cappedAvailableForecastHours / freshnessTotal) * 100))
+    : 0;
+  const desktopEnhancedTrack = isDesktopLayout && hasFreshnessTotal && timeAxisMode !== "observed";
+  const trackHatchStyle = {
+    backgroundImage:
+      "repeating-linear-gradient(135deg, rgba(148,163,184,0.18) 0px, rgba(148,163,184,0.18) 3px, rgba(15,23,42,0.2) 3px, rgba(15,23,42,0.2) 7px)",
+  };
+  const desktopSliderClassName = cn(
+    "w-full transition-opacity duration-150 [&>*:first-child]:h-1",
+    desktopEnhancedTrack
+      ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
+      : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+  );
 
   useEffect(() => {
     setPreviewHour(null);
@@ -268,7 +296,7 @@ export function BottomForecastControls({
           className={cn(
             "pointer-events-auto relative flex flex-col",
             isDesktopLayout
-              ? "w-full max-w-[42rem] gap-2 rounded-2xl px-5 py-3.5"
+              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-3.5"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -422,6 +450,35 @@ export function BottomForecastControls({
                 ) : null}
               </div>
             </div>
+
+            {showFreshnessStrip && freshnessTotal !== null ? (
+              <>
+                <div className="mt-2 border-t border-white/[0.08]" />
+                <div className="flex items-center gap-2 px-0.5 pt-2 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/55">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      runIsComplete ? "bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.45)]" : "bg-emerald-400"
+                    )}
+                  />
+                  <span className="shrink-0 tabular-nums text-emerald-100/80">
+                    {runIsComplete
+                      ? `${cappedAvailableForecastHours} of ${freshnessTotal} hrs complete`
+                      : `${cappedAvailableForecastHours} of ${freshnessTotal} hrs available`}
+                  </span>
+                  <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-200"
+                      style={{ width: `${freshnessProgressPercent}%` }}
+                    />
+                  </div>
+                  {!runIsComplete ? (
+                    <span className="shrink-0 text-white/45">building...</span>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
 
             <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
@@ -465,7 +522,37 @@ export function BottomForecastControls({
                     </span>
                   )}
                 </div>
-                <div className="px-0.5">
+                <div className="relative px-0.5 pb-4">
+                  {desktopEnhancedTrack ? (
+                    <>
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-0.5 right-0.5 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
+                      >
+                        <div
+                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
+                          style={{ width: `${freshnessProgressPercent}%` }}
+                        />
+                        {!runIsComplete ? (
+                          <div
+                            className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
+                            style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
+                          />
+                        ) : null}
+                      </div>
+                      {!runIsComplete ? (
+                        <div
+                          aria-hidden="true"
+                          className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
+                          style={{ left: `${freshnessProgressPercent}%` }}
+                        >
+                          <span className="absolute left-1/2 top-[12px] -translate-x-1/2 rounded-[3px] border border-emerald-300/35 bg-emerald-300/12 px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[8px] font-medium lowercase leading-none tracking-[0.08em] text-emerald-200">
+                            frontier
+                          </span>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
                   <Slider
                     value={[sliderIndex]}
                     onValueChange={([value]) => {
@@ -490,10 +577,29 @@ export function BottomForecastControls({
                     max={Math.max(0, availableFrames.length - 1)}
                     step={1}
                     disabled={disabled || isPlaying || !hasFrames}
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+                    className={desktopSliderClassName}
                   />
                 </div>
               </div>
+
+              {hasFreshnessTotal && freshnessTotal !== null ? (
+                <>
+                  <div className="h-9 w-px shrink-0 bg-white/[0.1]" />
+                  <div className="flex shrink-0 flex-col items-center gap-0.5 px-1.5 font-['IBM_Plex_Mono',monospace]">
+                    <div className="text-[12px] font-semibold leading-none tracking-tight text-emerald-300 tabular-nums">
+                      {cappedAvailableForecastHours}
+                      <span className="text-[10px] font-medium text-white/40">/{freshnessTotal}</span>
+                    </div>
+                    <div className="text-[8px] font-medium uppercase leading-none tracking-[0.18em] text-white/45">
+                      {runIsComplete ? "HRS COMPLETE" : "HRS READY"}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {hasFreshnessTotal ? (
+                <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
+              ) : null}
 
               <div className="flex shrink-0 flex-col items-end gap-0.5 pl-3 sm:min-w-[160px]">
                 {transientStatus ? (

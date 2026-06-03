@@ -3923,6 +3923,8 @@ export default function App() {
         label: `${cappedAvailable}/${resolvedTotalForecastHour} forecast hours ${isComplete ? "complete" : "available"}`,
         description,
         tone: isComplete ? (resolvedTone === "live" ? "live" : resolvedTone) : resolvedTone,
+        totalForecastHours: resolvedTotalForecastHour,
+        isComplete,
       };
     }
 
@@ -3932,6 +3934,8 @@ export default function App() {
       label: fallbackLabel,
       description: fallbackDescription,
       tone: resolvedTone,
+      totalForecastHours: null,
+      isComplete: false,
     };
   }, [
     latestRunId,
@@ -4340,6 +4344,8 @@ export default function App() {
           modelLabel={selectedModelLabel}
           variableId={variable}
           variableLabel={selectedVariableLabel}
+          totalForecastHours={runAvailability?.totalForecastHours ?? null}
+          runIsComplete={runAvailability?.isComplete ?? false}
         />
       </div>
 

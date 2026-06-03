@@ -769,7 +769,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
-    sourceStatusTone, runAvailabilityLabel, runAvailabilityDescription, runAvailabilityTone,
+    sourceStatusTone,
     onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
@@ -839,13 +839,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
         </HeaderSelectField>
 
         <div data-tour-target="freshness-indicator" className="flex items-center">
-          {runAvailabilityLabel ? (
-            <AvailabilityReadout
-              label={runAvailabilityLabel}
-              description={runAvailabilityDescription}
-              tone={runAvailabilityTone}
-            />
-          ) : sourceStatusLabel ? (
+          {sourceStatusLabel ? (
             <AvailabilityReadout
               label={sourceStatusLabel}
               description={sourceStatusDescription}
