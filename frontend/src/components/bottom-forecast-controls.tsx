@@ -538,7 +538,7 @@ export function BottomForecastControls({
                   </span>
                   <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-500/55 via-emerald-400 to-emerald-300"
                       style={{ width: `${freshnessProgressPercent}%` }}
                     />
                   </div>
