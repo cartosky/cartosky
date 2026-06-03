@@ -322,6 +322,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 created_at INTEGER NOT NULL,
                 model_id TEXT NOT NULL,
                 run_id TEXT NOT NULL,
+                cycle_hour TEXT,
                 duration_seconds REAL NOT NULL
             );
 
@@ -330,6 +331,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
             """
         )
+        try:
+            conn.execute("ALTER TABLE build_events ADD COLUMN cycle_hour TEXT")
+        except Exception:
+            pass
         _db_initialized = True
 
 
@@ -1374,9 +1379,10 @@ def record_perf_event(payload: dict[str, Any], *, member_id: int | None = None) 
         )
 
 
-def record_build_duration(*, model_id: str, run_id: str, duration_seconds: float) -> None:
+def record_build_duration(*, model_id: str, run_id: str, duration_seconds: float, cycle_hour: str | None = None) -> None:
     safe_model_id = _normalize_text(model_id, max_length=32)
     safe_run_id = _normalize_text(run_id, max_length=32)
+    safe_cycle_hour = _normalize_text(cycle_hour, max_length=4) if cycle_hour else None
     safe_duration = max(0.0, float(duration_seconds))
     if not safe_model_id or not safe_run_id:
         return
@@ -1384,24 +1390,24 @@ def record_build_duration(*, model_id: str, run_id: str, duration_seconds: float
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO build_events (created_at, model_id, run_id, duration_seconds)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO build_events (created_at, model_id, run_id, cycle_hour, duration_seconds)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (created_at, safe_model_id, safe_run_id, safe_duration),
+            (created_at, safe_model_id, safe_run_id, safe_cycle_hour, safe_duration),
         )
 
 
 def get_latest_build_durations() -> list[dict[str, Any]]:
-    """Return the most recent build duration for each model."""
+    """Return the most recent build duration for each model and cycle hour."""
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT model_id, run_id, duration_seconds, created_at
+            SELECT model_id, run_id, cycle_hour, duration_seconds, created_at
             FROM build_events
             WHERE id IN (
-                SELECT MAX(id) FROM build_events GROUP BY model_id
+                SELECT MAX(id) FROM build_events GROUP BY model_id, cycle_hour
             )
-            ORDER BY model_id
+            ORDER BY model_id, cycle_hour
             """
         ).fetchall()
     return [dict(row) for row in rows]

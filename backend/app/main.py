@@ -2641,6 +2641,7 @@ def _refresh_prometheus_gauges() -> None:
             prometheus_metrics.observe_build_duration(
                 model_id=str(_row["model_id"]),
                 duration_seconds=float(_row["duration_seconds"]),
+                cycle_hour=str(_row["cycle_hour"]) if _row.get("cycle_hour") else None,
             )
     except Exception as _exc:
         logger.warning("Failed to emit build duration metrics: %s", _exc)

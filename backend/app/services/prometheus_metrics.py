@@ -59,6 +59,14 @@ PUBLISHED_RUN_COMPLETION_RATIO = Gauge(
     registry=_REGISTRY,
 )
 
+BUILD_DURATION_SECONDS = Histogram(
+    "cartosky_build_duration_seconds",
+    "Time in seconds to complete a full model run build.",
+    labelnames=("model_id", "cycle_hour"),
+    buckets=(60, 120, 300, 600, 900, 1800, 3600, 7200, 14400),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -140,6 +148,12 @@ def replace_published_run_health(rows: list[dict[str, float | str | bool | None]
     with _SUMMARY_LOCK:
         _PUBLISHED_RUN_HEALTH.clear()
         _PUBLISHED_RUN_HEALTH.update(next_snapshot)
+
+
+def observe_build_duration(*, model_id: str, duration_seconds: float, cycle_hour: str | None = None) -> None:
+    safe_duration = max(0.0, float(duration_seconds))
+    safe_cycle_hour = str(cycle_hour).zfill(2) if cycle_hour is not None else "unknown"
+    BUILD_DURATION_SECONDS.labels(model_id=model_id, cycle_hour=safe_cycle_hour).observe(safe_duration)
 
 
 def metrics_payload() -> bytes:
@@ -225,3 +239,4 @@ def reset_metrics_for_tests() -> None:
     SAMPLE_CACHE_ENTRIES.clear()
     PUBLISHED_RUN_AGE_HOURS.clear()
     PUBLISHED_RUN_COMPLETION_RATIO.clear()
+    BUILD_DURATION_SECONDS.clear()

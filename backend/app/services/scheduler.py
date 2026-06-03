@@ -2606,10 +2606,15 @@ def run_scheduler(
             if run_now_complete and _current_build_start is not None:
                 _build_duration = time.monotonic() - _current_build_start
                 try:
+                    _cycle_hour = processed_run_id.split("_")[1].replace("z", "").zfill(2)
+                except Exception:
+                    _cycle_hour = None
+                try:
                     record_build_duration(
                         model_id=model,
                         run_id=processed_run_id,
                         duration_seconds=_build_duration,
+                        cycle_hour=_cycle_hour,
                     )
                 except Exception as _exc:
                     logger.warning("Failed to record build duration: %s", _exc)
