@@ -596,10 +596,10 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
           <text
             x={0}
             y={PRECIP_T - 8}
-            fontSize={8}
+            fontSize={7}
             fontWeight="500"
-            fill="rgba(255,255,255,0.28)"
-            letterSpacing="0.18em"
+            fill="rgba(255,255,255,0.22)"
+            letterSpacing="0.16em"
             textAnchor="start"
           >
             PRECIP CHANCE
@@ -729,8 +729,8 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
               fontSize={9} fontWeight="500" fill="rgba(255,255,255,0.75)">
               {e.high_f != null ? `${e.high_f}°` : ""}
             </text>
-            <text x={x} y={yAt(e.low_f ?? rawMin) + 11} textAnchor={anchor}
-              fontSize={8.5} fill="rgba(255,255,255,0.28)">
+            <text x={x} y={yAt(e.low_f ?? rawMin) + 13} textAnchor={anchor}
+              fontSize={8} fill="rgba(255,255,255,0.22)">
               {e.low_f != null ? `${e.low_f}°` : ""}
             </text>
             <text x={x} y={VH - 3} textAnchor={anchor}
@@ -890,18 +890,18 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap gap-4">
+      <div className="mb-3 flex flex-wrap gap-4">
         <div className="flex items-center gap-2">
-          <span className="h-[5px] w-[18px] rounded-sm bg-cyan-300/85" />
-          <span className="text-[10.5px] text-white/38">High temp</span>
+          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/85" />
+          <span className="text-[10px] text-white/30">High temp</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="h-[5px] w-[18px] rounded-sm bg-cyan-300/32" />
-          <span className="text-[10.5px] text-white/38">Low temp</span>
+          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/32" />
+          <span className="text-[10px] text-white/30">Low temp</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-sky-400/75" />
-          <span className="text-[10.5px] text-white/38">Precip chance</span>
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-400/75" />
+          <span className="text-[10px] text-white/30">Precip chance</span>
         </div>
       </div>
       {entries.map((entry, i) => {
@@ -926,7 +926,7 @@ function DayListTable({ daily }: { daily: DailyEntry[] }) {
               {formatDayLabel(entry.date, i)}
             </div>
             <WeatherIcon code={entry.icon} size={16} className="flex-none" />
-            <div className="relative" style={{ paddingTop: 18 }}>
+            <div className="relative" style={{ paddingTop: 22 }}>
               <span
                 className="absolute text-[10px] text-white/[0.38]"
                 style={lowLabelStyle}
@@ -1067,33 +1067,61 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
       {attribution && (
         <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
       )}
+      <div className="mb-3 flex flex-wrap gap-4">
+        <div className="flex items-center gap-2">
+          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/85" />
+          <span className="text-[10px] text-white/30">High temp</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/32" />
+          <span className="text-[10px] text-white/30">Low temp</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-400/75" />
+          <span className="text-[10px] text-white/30">Precip chance</span>
+        </div>
+      </div>
       {daily.map((entry, i) => {
         const low  = entry.low_f  ?? globalMin;
         const high = entry.high_f ?? globalMax;
         const leftPct  = ((low  - globalMin) / span) * 100;
         const widthPct = ((high - low) / span) * 100;
+        const highPct = leftPct + widthPct;
         const pop = entry.pop_pct ?? 0;
+        const lowLabelStyle = leftPct < 5
+          ? { top: "1px", left: 0, transform: "none" as const }
+          : { top: "1px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
+        const highLabelStyle = highPct > 95
+          ? { top: "1px", right: 0, left: "auto", transform: "none" as const }
+          : { top: "1px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
         return (
           <div
             key={i}
-            className={`flex items-center gap-3 py-3 ${i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
+            className={`grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 rounded-md py-3 transition-colors hover:bg-white/[0.035] ${i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
           >
-            <div className="w-10 flex-none text-[13px] font-medium text-white/60">
+            <div className="text-[13px] font-medium text-white/60">
               {formatDayLabel(entry.date, i)}
             </div>
             <WeatherIcon code={entry.icon} size={16} className="flex-none" />
-            <div className="flex-none w-52 text-[13px] text-white/50 truncate hidden sm:block">
-              {entry.short_text ?? ""}
-            </div>
-            <div className="relative flex-1 h-[3px] rounded-full bg-slate-100 dark:bg-white/[0.07] overflow-hidden">
-              <div
-                className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/60 dark:to-cyan-300/80"
-                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-              />
-            </div>
-            <div className="flex gap-1.5 w-16 flex-none justify-end text-[13px]">
-              <span className="font-medium text-white">{entry.high_f ?? "--"}°</span>
-              <span className="text-white/30">{entry.low_f ?? "--"}°</span>
+            <div className="relative" style={{ paddingTop: 22 }}>
+              <span
+                className="absolute text-[10px] text-white/[0.38]"
+                style={lowLabelStyle}
+              >
+                {entry.low_f ?? "--"}°
+              </span>
+              <span
+                className="absolute text-[10.5px] font-medium text-white/[0.82]"
+                style={highLabelStyle}
+              >
+                {entry.high_f ?? "--"}°
+              </span>
+              <div className="relative h-[6px] overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.07]">
+                <div
+                  className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                />
+              </div>
             </div>
             <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
               {pop > 0 ? `${pop}%` : ""}
@@ -1101,6 +1129,15 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
           </div>
         );
       })}
+      <div className="mt-2 grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
+        <div />
+        <div />
+        <div className="flex items-center justify-between text-[10px] text-white/22">
+          <span>{`← ${globalMin}° week low`}</span>
+          <span>{`${globalMax}° week high →`}</span>
+        </div>
+        <div className="text-right text-[10px] text-white/22">💧 PoP</div>
+      </div>
       </div>
     </div>
   );
