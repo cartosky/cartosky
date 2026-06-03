@@ -77,7 +77,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services.admin_telemetry import get_latest_build_durations
+from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
@@ -2645,6 +2645,16 @@ def _refresh_prometheus_gauges() -> None:
             )
     except Exception as _exc:
         logger.warning("Failed to emit build duration metrics: %s", _exc)
+    try:
+        prometheus_metrics.reset_build_duration_avgs()
+        for _row in get_build_duration_averages():
+            prometheus_metrics.set_build_duration_avg(
+                model_id=str(_row["model_id"]),
+                cycle_hour=str(_row["cycle_hour"]),
+                avg_minutes=float(_row["avg_minutes"]),
+            )
+    except Exception as _exc:
+        logger.warning("Failed to emit build duration avg metrics: %s", _exc)
 
 
 def _build_capabilities_payload() -> dict[str, Any]:

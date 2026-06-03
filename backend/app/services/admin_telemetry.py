@@ -1413,6 +1413,26 @@ def get_latest_build_durations() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_build_duration_averages() -> list[dict[str, Any]]:
+    """Return average build duration in minutes per model and cycle hour."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                model_id,
+                cycle_hour,
+                ROUND(AVG(duration_seconds) / 60.0, 2) as avg_minutes,
+                COUNT(*) as build_count
+            FROM build_events
+            WHERE cycle_hour IS NOT NULL
+              AND duration_seconds > 60
+            GROUP BY model_id, cycle_hour
+            ORDER BY model_id, cycle_hour
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def record_usage_event(payload: dict[str, Any], *, member_id: int | None = None) -> None:
     event_name = _normalize_text(payload.get("event_name") or payload.get("name"), max_length=64)
     if event_name not in ALLOWED_USAGE_EVENT_NAMES:

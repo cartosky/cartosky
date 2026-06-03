@@ -67,6 +67,13 @@ BUILD_DURATION_SECONDS = Histogram(
     registry=_REGISTRY,
 )
 
+BUILD_DURATION_AVG_MINUTES = Gauge(
+    "cartosky_build_duration_avg_minutes",
+    "Average build duration in minutes per model and cycle hour.",
+    labelnames=("model_id", "cycle_hour"),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -154,6 +161,17 @@ def observe_build_duration(*, model_id: str, duration_seconds: float, cycle_hour
     safe_duration = max(0.0, float(duration_seconds))
     safe_cycle_hour = str(cycle_hour).zfill(2) if cycle_hour is not None else "unknown"
     BUILD_DURATION_SECONDS.labels(model_id=model_id, cycle_hour=safe_cycle_hour).observe(safe_duration)
+
+
+def set_build_duration_avg(*, model_id: str, cycle_hour: str, avg_minutes: float) -> None:
+    BUILD_DURATION_AVG_MINUTES.labels(
+        model_id=model_id,
+        cycle_hour=cycle_hour,
+    ).set(avg_minutes)
+
+
+def reset_build_duration_avgs() -> None:
+    BUILD_DURATION_AVG_MINUTES.clear()
 
 
 def metrics_payload() -> bytes:
