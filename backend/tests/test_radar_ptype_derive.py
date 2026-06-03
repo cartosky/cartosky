@@ -8,14 +8,17 @@ from rasterio.crs import CRS
 from rasterio.transform import Affine
 
 from app.services.builder import derive as derive_module
-from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
+from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_LEVELS_BY_TYPE, RADAR_PTYPE_ORDER
 
 
 def _expected_radar_ptype_index(ptype: str, reflectivity: float) -> float:
     breaks = RADAR_PTYPE_BREAKS[ptype]
     offset = int(breaks["offset"])
     count = int(breaks["count"])
-    normalized = np.clip((float(reflectivity) - 5.0) / 65.0, 0.0, 1.0)
+    levels = RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]]
+    refl_min = float(levels[0])
+    refl_max = float(levels[-1])
+    normalized = np.clip((float(reflectivity) - refl_min) / max(refl_max - refl_min, 1.0), 0.0, 1.0)
     return float(offset + int(np.clip(np.rint(normalized * (count - 1)), 0, count - 1)))
 
 
@@ -31,6 +34,50 @@ def _radar_ptype_var_spec(component: str | None = None) -> SimpleNamespace:
     if component is not None:
         hints["ptype_component"] = component
     return SimpleNamespace(selectors=SimpleNamespace(hints=hints))
+
+
+def test_nam_radar_ptype_preserves_single_light_pixel_without_extra_gating(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "refc": np.array([[8.0]], dtype=np.float32),
+        "crain": np.array([[0.25]], dtype=np.float32),
+        "csnow": np.array([[0.0]], dtype=np.float32),
+        "cicep": np.array([[0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        return component_data[str(kwargs["var_key"])], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    indexed, out_crs, out_transform = derive_module._derive_radar_ptype_combo(
+        model_id="nam",
+        var_key="radar_ptype",
+        product="sfc",
+        run_date=datetime(2026, 5, 26, 18),
+        fh=1,
+        var_spec_model=SimpleNamespace(
+            selectors=SimpleNamespace(
+                hints={
+                    "refl_component": "refc",
+                    "rain_component": "crain",
+                    "snow_component": "csnow",
+                    "sleet_component": "cicep",
+                    "frzr_component": "cfrzr",
+                    "min_visible_dbz": "5.0",
+                }
+            )
+        ),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=derive_module.FetchContext(coverage="conus"),
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert float(indexed[0, 0]) == _expected_radar_ptype_index("rain", 8.0)
 
 
 def test_radar_ptype_components_preserve_classified_reflectivity(monkeypatch) -> None:
