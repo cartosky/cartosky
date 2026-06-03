@@ -468,10 +468,6 @@ export default function AdminOverviewPage() {
                     <span className={`h-1.5 w-1.5 rounded-full ${tracesLive ? "bg-emerald-400" : traces?.enabled ? "bg-amber-400" : "bg-white/30"}`} />
                     Tempo {tracesLive ? "live" : traces?.enabled ? "armed" : "off"}
                   </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
-                    QA {qaStoreMode}
-                  </span>
                 </div>
               </div>
             </div>
