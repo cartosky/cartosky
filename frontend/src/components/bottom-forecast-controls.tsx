@@ -196,7 +196,7 @@ export function BottomForecastControls({
   );
 
   const hasFrames = availableFrames.length > 0;
-  const isDesktopLayout = layoutMode === "desktop";
+  const isDesktopLayout = layoutMode === "desktop" || layoutMode === "tablet-touch";
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
@@ -427,34 +427,36 @@ export function BottomForecastControls({
               </Tooltip>
 
               <div className="min-w-0 flex-1">
-                <Slider
-                  value={[sliderIndex]}
-                  onValueChange={([value]) => {
-                    const next = availableFrames[Math.round(value ?? 0)];
-                    if (Number.isFinite(next)) {
-                      if (!isScrubbing) {
-                        setIsScrubbing(true);
+                <div className="relative h-8">
+                  <Slider
+                    value={[sliderIndex]}
+                    onValueChange={([value]) => {
+                      const next = availableFrames[Math.round(value ?? 0)];
+                      if (Number.isFinite(next)) {
+                        if (!isScrubbing) {
+                          setIsScrubbing(true);
+                        }
+                        setPreviewHour(next);
+                        emitForecastHour(next, false);
                       }
-                      setPreviewHour(next);
-                      emitForecastHour(next, false);
-                    }
-                  }}
-                  onValueCommit={([value]) => {
-                    const next = availableFrames[Math.round(value ?? 0)];
-                    if (Number.isFinite(next)) {
-                      setPreviewHour(null);
-                      setIsScrubbing(false);
-                      emitForecastHour(next, true);
-                    }
-                  }}
-                  min={0}
-                  max={Math.max(0, availableFrames.length - 1)}
-                  step={1}
-                  disabled={disabled || isPlaying || !hasFrames}
-                  className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                />
+                    }}
+                    onValueCommit={([value]) => {
+                      const next = availableFrames[Math.round(value ?? 0)];
+                      if (Number.isFinite(next)) {
+                        setPreviewHour(null);
+                        setIsScrubbing(false);
+                        emitForecastHour(next, true);
+                      }
+                    }}
+                    min={0}
+                    max={Math.max(0, availableFrames.length - 1)}
+                    step={1}
+                    disabled={disabled || isPlaying || !hasFrames}
+                    className="absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+                  />
+                </div>
                 {validTime ? (
-                  <div className="pt-1 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                  <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
                     {validTime.shortDate}
                     {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
                       <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
@@ -477,8 +479,8 @@ export function BottomForecastControls({
                   />
                   <span className="shrink-0 tabular-nums text-emerald-100/80">
                     {runIsComplete
-                      ? `${cappedAvailableForecastHours} of ${freshnessTotal} hrs complete`
-                      : `${cappedAvailableForecastHours} of ${freshnessTotal} hrs available`}
+                      ? `${cappedAvailableForecastHours}/${freshnessTotal} hrs complete`
+                      : `${cappedAvailableForecastHours}/${freshnessTotal} hrs available`}
                   </span>
                   <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
                     <div
