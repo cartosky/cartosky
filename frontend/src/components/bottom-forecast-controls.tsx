@@ -215,6 +215,19 @@ export function BottomForecastControls({
     ? Math.max(0, Math.min(100, (cappedAvailableForecastHours / freshnessTotal) * 100))
     : 0;
   const desktopEnhancedTrack = isDesktopLayout && hasFreshnessTotal && timeAxisMode !== "observed";
+  const desktopPublishedFrames = useMemo(() => {
+    if (!desktopEnhancedTrack) {
+      return availableFrames;
+    }
+    const published = availableFrames.filter((frame) => Number.isFinite(frame) && frame <= cappedAvailableForecastHours);
+    return published.length > 0 ? published : availableFrames.slice(0, 1);
+  }, [availableFrames, cappedAvailableForecastHours, desktopEnhancedTrack]);
+  const desktopSliderIndex = Math.max(0, desktopPublishedFrames.indexOf(effectiveHour));
+  const desktopInteractiveTrackPercent = desktopEnhancedTrack
+    ? runIsComplete
+      ? 100
+      : Math.max(0.5, freshnessProgressPercent)
+    : 100;
   const trackHatchStyle = {
     backgroundImage:
       "repeating-linear-gradient(135deg, rgba(148,163,184,0.18) 0px, rgba(148,163,184,0.18) 3px, rgba(15,23,42,0.2) 3px, rgba(15,23,42,0.2) 7px)",
@@ -296,7 +309,7 @@ export function BottomForecastControls({
           className={cn(
             "pointer-events-auto relative flex flex-col",
             isDesktopLayout
-              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-4"
+              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -481,7 +494,7 @@ export function BottomForecastControls({
             ) : null}
           </div>
 
-            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3 py-0.5" : "hidden"}>
+            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
               <div className="flex shrink-0 items-center gap-2">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -554,32 +567,39 @@ export function BottomForecastControls({
                         ) : null}
                       </>
                     ) : null}
-                    <Slider
-                      value={[sliderIndex]}
-                      onValueChange={([value]) => {
-                        const next = availableFrames[Math.round(value ?? 0)];
-                        if (Number.isFinite(next)) {
-                          if (!isScrubbing) {
-                            setIsScrubbing(true);
+                    <div
+                      className="absolute inset-y-0 left-0"
+                      style={{ width: desktopEnhancedTrack ? `${desktopInteractiveTrackPercent}%` : "100%" }}
+                    >
+                      <Slider
+                        value={[desktopEnhancedTrack ? desktopSliderIndex : sliderIndex]}
+                        onValueChange={([value]) => {
+                          const frames = desktopEnhancedTrack ? desktopPublishedFrames : availableFrames;
+                          const next = frames[Math.round(value ?? 0)];
+                          if (Number.isFinite(next)) {
+                            if (!isScrubbing) {
+                              setIsScrubbing(true);
+                            }
+                            setPreviewHour(next);
+                            emitForecastHour(next, false);
                           }
-                          setPreviewHour(next);
-                          emitForecastHour(next, false);
-                        }
-                      }}
-                      onValueCommit={([value]) => {
-                        const next = availableFrames[Math.round(value ?? 0)];
-                        if (Number.isFinite(next)) {
-                          setPreviewHour(null);
-                          setIsScrubbing(false);
-                          emitForecastHour(next, true);
-                        }
-                      }}
-                      min={0}
-                      max={Math.max(0, availableFrames.length - 1)}
-                      step={1}
-                      disabled={disabled || isPlaying || !hasFrames}
-                      className={desktopSliderClassName}
-                    />
+                        }}
+                        onValueCommit={([value]) => {
+                          const frames = desktopEnhancedTrack ? desktopPublishedFrames : availableFrames;
+                          const next = frames[Math.round(value ?? 0)];
+                          if (Number.isFinite(next)) {
+                            setPreviewHour(null);
+                            setIsScrubbing(false);
+                            emitForecastHour(next, true);
+                          }
+                        }}
+                        min={0}
+                        max={Math.max(0, (desktopEnhancedTrack ? desktopPublishedFrames : availableFrames).length - 1)}
+                        step={1}
+                        disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && desktopPublishedFrames.length === 0)}
+                        className={desktopSliderClassName}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
