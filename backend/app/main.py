@@ -77,6 +77,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
+from .services.admin_telemetry import get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
 from .services import nws as nws_service
 from backend.app import config as app_config
@@ -2636,14 +2637,13 @@ def _refresh_prometheus_gauges() -> None:
     prometheus_metrics.set_sample_cache_entries(endpoint="all", entries=active_entries)
     prometheus_metrics.replace_published_run_health(_published_run_observability_rows())
     try:
-        from app.services.admin_telemetry import get_latest_build_durations
         for _row in get_latest_build_durations():
             prometheus_metrics.observe_build_duration(
                 model_id=str(_row["model_id"]),
                 duration_seconds=float(_row["duration_seconds"]),
             )
-    except Exception:
-        pass
+    except Exception as _exc:
+        logger.warning("Failed to emit build duration metrics: %s", _exc)
 
 
 def _build_capabilities_payload() -> dict[str, Any]:
