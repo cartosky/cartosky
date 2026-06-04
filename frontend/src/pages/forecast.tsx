@@ -733,8 +733,8 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
               fontSize={8} fill="rgba(255,255,255,0.22)">
               {e.low_f != null ? `${e.low_f}°` : ""}
             </text>
-            <text x={x} y={VH - 6} textAnchor={anchor}
-              dominantBaseline="middle"
+            <text x={x} y={VH - 4} textAnchor={anchor}
+              dominantBaseline="alphabetic"
               fontSize={5.8} fontWeight="400" fill="rgba(255,255,255,0.24)">
               {formatDayLabel(e.date, i)}
             </text>
