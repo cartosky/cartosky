@@ -463,6 +463,68 @@ async def test_get_forecast_page_by_query_uses_night_icon_for_nws_current(monkey
     assert payload["current"]["icon"] == "partly-cloudy-night"
 
 
+async def test_degraded_us_hybrid_payload_does_not_poison_forecast_page_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    _freeze_now(monkeypatch)
+    points_calls = 0
+
+    async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
+        return nws_service.AfdResult(
+            wfo=office,
+            office_name="FSD",
+            issued_at="2026-04-18T16:42:00-05:00",
+            product_text="Area forecast discussion text.",
+            product_id="AFDFSD",
+        )
+
+    monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal points_calls
+        host = request.url.host
+        path = request.url.path
+        if host == "api.open-meteo.com" and path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
+            points_calls += 1
+            if points_calls == 1:
+                return httpx.Response(404, json={"title": "temporary points miss"})
+            return httpx.Response(200, json=_nws_points_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast":
+            return httpx.Response(200, json=_nws_forecast_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast/hourly":
+            return httpx.Response(200, json=_nws_hourly_payload())
+        if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/stations":
+            return httpx.Response(200, json=_nws_station_collection())
+        if host == "api.weather.gov" and path == "/stations/KFSD/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-18T16:15:00+00:00", description="Partly Cloudy"))
+        if host == "api.weather.gov" and path == "/stations/K9V9/observations/latest":
+            return httpx.Response(200, json=_nws_observation(timestamp="2026-04-18T16:20:00+00:00", description="Mostly Sunny"))
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    location_hint = forecast_page_service.LocationHint(
+        display_name="Sioux Falls, SD",
+        timezone="America/Chicago",
+        country_code="US",
+        admin1="South Dakota",
+        country="United States",
+    )
+
+    first_payload = await forecast_page_service.get_forecast_page(43.55, -96.73, location_hint=location_hint)
+    second_payload = await forecast_page_service.get_forecast_page(43.55, -96.73, location_hint=location_hint)
+
+    assert first_payload["source_status"]["primary_region_mode"] == "us_hybrid"
+    assert first_payload["source_status"]["nws"] == "unavailable"
+    assert first_payload["current"]["source"] == "open_meteo"
+    assert second_payload["source_status"]["nws"] == "ok"
+    assert second_payload["current"]["source"] == "nws"
+    assert second_payload["hourly"][0]["source"] == "nws"
+    assert points_calls == 2
+
+
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
 

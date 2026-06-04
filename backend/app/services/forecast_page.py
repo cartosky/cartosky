@@ -947,6 +947,12 @@ def _forecast_location_cache_key(location: ResolvedLocation) -> str:
     return f"{country}:{location.latitude:.3f}:{location.longitude:.3f}"
 
 
+def _cached_forecast_page_should_retry_nws(payload: dict[str, Any]) -> bool:
+    source_status = payload.get("source_status") or {}
+    nws_status = source_status.get("nws")
+    return nws_status not in {None, "ok", "not_applicable"}
+
+
 async def _fetch_open_meteo_forecast(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
     timezone_name = location.timezone or "auto"
     cache_key = f"{location.latitude:.3f}:{location.longitude:.3f}:{timezone_name}"
@@ -1553,7 +1559,7 @@ def _build_freshness_payload(
 async def _build_forecast_page_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
     cache_key = _forecast_location_cache_key(location)
     cached_payload = _cache_get("forecast-page", cache_key)
-    if cached_payload is not None:
+    if cached_payload is not None and not _cached_forecast_page_should_retry_nws(cached_payload):
         payload = copy.deepcopy(cached_payload)
         payload["location"]["query"] = location.query
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
@@ -1726,7 +1732,8 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
             alerts_freshness=alerts_freshness,
         ),
     }
-    _cache_set("forecast-page", cache_key, payload, FORECAST_PAGE_CACHE_TTL)
+    if not _cached_forecast_page_should_retry_nws(payload):
+        _cache_set("forecast-page", cache_key, payload, FORECAST_PAGE_CACHE_TTL)
     return payload
 
 

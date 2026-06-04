@@ -492,7 +492,7 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   const VH = 145;
   const TEMP_T = 18;
   const TEMP_B = 90;
-  const PRECIP_T = 97;
+  const PRECIP_T = 108;
   const PRECIP_B = 135;
 
   const xAt = (i: number) => (i / (entries.length - 1)) * VW;
@@ -593,11 +593,11 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
 
       {hasPrecip && (
         <>
-          <line x1={0} y1={PRECIP_T - 14} x2={VW} y2={PRECIP_T - 14}
+          <line x1={0} y1={TEMP_B} x2={VW} y2={TEMP_B}
             stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
           <text
             x={0}
-            y={PRECIP_T - 5}
+            y={TEMP_B + 8}
             fontSize={4.8}
             fontWeight="500"
             fill="rgba(255,255,255,0.40)"
@@ -733,8 +733,9 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
               fontSize={8} fill="rgba(255,255,255,0.22)">
               {e.low_f != null ? `${e.low_f}°` : ""}
             </text>
-            <text x={x} y={VH - 3} textAnchor={anchor}
-              fontSize={7.4} fontWeight="500" fill="rgba(255,255,255,0.28)">
+            <text x={x} y={VH - 6} textAnchor={anchor}
+              dominantBaseline="middle"
+              fontSize={5.8} fontWeight="400" fill="rgba(255,255,255,0.24)">
               {formatDayLabel(e.date, i)}
             </text>
           </g>
@@ -864,11 +865,11 @@ function DailyRangeRows({
           ? { top: "0px", right: 0, left: "auto", transform: "none" as const }
           : { top: "0px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
         const row = (
-          <div className="grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 py-3">
+          <div className="grid grid-cols-[44px_34px_1fr_40px] items-center gap-3 py-3">
             <div className="text-[13px] font-medium text-white/65">
               {formatDayLabel(entry.date, i)}
             </div>
-            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
+            <WeatherIcon code={entry.icon} size={30} className="flex-none" />
             <div className="relative" style={{ paddingTop: 24 }}>
               <span
                 className="absolute text-[11px] font-medium text-white/55"
@@ -910,14 +911,14 @@ function DailyRangeRows({
               </button>
             ) : row}
             {expandable && isOpen && (
-              <div className="pb-3 sm:pl-[74px] sm:pr-[52px]">
+              <div className="pb-3 sm:pl-[90px] sm:pr-[52px]">
                 <DailyDetailGrid entry={entry} />
               </div>
             )}
           </div>
         );
       })}
-      <div className="mt-2 grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
+      <div className="mt-2 grid grid-cols-[44px_34px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
         <div />
         <div />
         <div className="flex items-center justify-between text-[11px] font-medium text-white/42">
