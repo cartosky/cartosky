@@ -1652,6 +1652,34 @@ def _enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -
         _prune_empty_dirs(model_root)
 
 
+def _log_runtime_cache_prune(*, run_id: str, model_id: str, reason: str) -> None:
+    cache_prune_stats = builder_fetch.prune_runtime_caches()
+    logger.info(
+        "scheduler runtime cache prune: run=%s model=%s reason=%s "
+        "inventory=%d->%d (removed=%d expired=%d capped=%d) "
+        "idx_negative=%d->%d (removed=%d expired=%d capped=%d) "
+        "idx_negative_log_suppress=%d->%d (removed=%d expired=%d capped=%d)",
+        run_id,
+        model_id,
+        reason,
+        cache_prune_stats["inventory_before"],
+        cache_prune_stats["inventory_after"],
+        cache_prune_stats["inventory_removed"],
+        cache_prune_stats["inventory_expired"],
+        cache_prune_stats["inventory_capped"],
+        cache_prune_stats["idx_negative_before"],
+        cache_prune_stats["idx_negative_after"],
+        cache_prune_stats["idx_negative_removed"],
+        cache_prune_stats["idx_negative_expired"],
+        cache_prune_stats["idx_negative_capped"],
+        cache_prune_stats["idx_negative_log_suppress_before"],
+        cache_prune_stats["idx_negative_log_suppress_after"],
+        cache_prune_stats["idx_negative_log_suppress_removed"],
+        cache_prune_stats["idx_negative_log_suppress_expired"],
+        cache_prune_stats["idx_negative_log_suppress_capped"],
+    )
+
+
 def _process_run(
     *,
     plugin,
@@ -2463,6 +2491,7 @@ def _process_run(
 
     _log_fetch_context_stats(stage="run_end")
     _log_fetch_context_stats(stage="before_destroy")
+    _log_runtime_cache_prune(run_id=run_id, model_id=model_id, reason="run_end")
     current_rss_before_gc_bytes = current_rss_bytes()
     peak_rss_before_gc_bytes = peak_rss_bytes()
     gc_collected = gc.collect()
@@ -2582,26 +2611,33 @@ def run_scheduler(
                 _current_build_start = time.monotonic()
                 _current_build_run_id = run_id
 
-            processed_run_id, available, total = _process_run(
-                plugin=plugin,
-                model_id=model,
-                vars_to_build=normalized_vars,
-                primary_vars=resolved_primary,
-                run_dt=run_dt,
-                data_root=data_root,
-                workers=workers,
-                keep_runs=keep_runs,
-                loop_pregenerate_enabled=loop_pregenerate_enabled,
-                loop_cache_root=loop_cache_root,
-                loop_workers=loop_workers,
-                loop_tier0_quality=loop_tier0_quality,
-                loop_tier0_max_dim=loop_tier0_max_dim,
-                loop_tier0_fixed_w=loop_tier0_fixed_w,
-                loop_tier1_quality=loop_tier1_quality,
-                loop_tier1_max_dim=loop_tier1_max_dim,
-                loop_tier1_fixed_w=loop_tier1_fixed_w,
-                rebuild_existing=rebuild_existing,
-            )
+            try:
+                processed_run_id, available, total = _process_run(
+                    plugin=plugin,
+                    model_id=model,
+                    vars_to_build=normalized_vars,
+                    primary_vars=resolved_primary,
+                    run_dt=run_dt,
+                    data_root=data_root,
+                    workers=workers,
+                    keep_runs=keep_runs,
+                    loop_pregenerate_enabled=loop_pregenerate_enabled,
+                    loop_cache_root=loop_cache_root,
+                    loop_workers=loop_workers,
+                    loop_tier0_quality=loop_tier0_quality,
+                    loop_tier0_max_dim=loop_tier0_max_dim,
+                    loop_tier0_fixed_w=loop_tier0_fixed_w,
+                    loop_tier1_quality=loop_tier1_quality,
+                    loop_tier1_max_dim=loop_tier1_max_dim,
+                    loop_tier1_fixed_w=loop_tier1_fixed_w,
+                    rebuild_existing=rebuild_existing,
+                )
+            except Exception:
+                try:
+                    _log_runtime_cache_prune(run_id=run_id, model_id=model, reason="process_run_exception")
+                except Exception:
+                    logger.exception("scheduler runtime cache prune failed during process_run_exception")
+                raise
             run_now_complete = total > 0 and available >= total
             if run_now_complete and _current_build_start is not None:
                 _build_duration = time.monotonic() - _current_build_start

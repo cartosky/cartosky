@@ -51,6 +51,87 @@ def _install_fake_rasterio_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch_module.rasterio, "open", lambda _path: _FakeDataset())
 
 
+def test_inventory_cache_cap_uses_recent_hits(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_INVENTORY_CACHE_MAX_ENTRIES", "2")
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fetch_module.time, "monotonic", lambda: float(clock["now"]))
+
+    fetch_module._inventory_cache_set("old-hit", object(), 600)
+    clock["now"] += 1.0
+    fetch_module._inventory_cache_set("old-unused", object(), 600)
+    clock["now"] += 1.0
+
+    assert fetch_module._inventory_cache_get("old-hit") is not None
+    clock["now"] += 1.0
+    fetch_module._inventory_cache_set("new-entry", object(), 600)
+
+    assert "old-hit" in fetch_module._INVENTORY_CACHE
+    assert "new-entry" in fetch_module._INVENTORY_CACHE
+    assert "old-unused" not in fetch_module._INVENTORY_CACHE
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("inventory_cache_pruned", 0) == 1
+
+
+def test_idx_negative_suppress_cap_preserves_new_suppression(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES", "2")
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fetch_module.time, "monotonic", lambda: float(clock["now"]))
+
+    run_a = datetime(2026, 3, 5, 0, 0)
+    run_b = datetime(2026, 3, 5, 6, 0)
+    run_new = datetime(2026, 3, 5, 12, 0)
+    for run_date in (run_a, run_b):
+        fetch_module._log_idx_missing_once(
+            model_id="eps",
+            run_date=run_date,
+            product="enfo",
+            fh=6,
+            priority="aws",
+            search_pattern=":TMP:",
+            ttl_seconds=300,
+            source="test",
+        )
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=fetch_module.logger.name):
+        fetch_module._log_idx_missing_once(
+            model_id="eps",
+            run_date=run_new,
+            product="enfo",
+            fh=6,
+            priority="aws",
+            search_pattern=":TMP:",
+            ttl_seconds=10,
+            source="test",
+        )
+        fetch_module._log_idx_missing_once(
+            model_id="eps",
+            run_date=run_new,
+            product="enfo",
+            fh=6,
+            priority="aws",
+            search_pattern=":TMP:",
+            ttl_seconds=10,
+            source="test",
+        )
+
+    new_key = fetch_module._idx_negative_log_key(
+        model_id="eps",
+        run_date=run_new,
+        product="enfo",
+        fh=6,
+    )
+    assert new_key in fetch_module._IDX_NEGATIVE_LOG_SUPPRESS
+    assert len(fetch_module._IDX_NEGATIVE_LOG_SUPPRESS) == 2
+    assert sum(1 for record in caplog.records if "Herbie precheck unavailable" in record.message) == 1
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("idx_negative_log_suppress_pruned", 0) == 1
+
+
 def test_no_idx_negative_cache_skips_repeated_herbie_calls_within_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeHerbie:
         calls = 0

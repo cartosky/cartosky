@@ -63,6 +63,14 @@ ENV_HERBIE_INVENTORY_CACHE_TTL = (
     "CARTOSKY_HERBIE_INVENTORY_CACHE_TTL_SECONDS",
     "TWF_HERBIE_INVENTORY_CACHE_TTL_SECONDS",
 )
+ENV_HERBIE_INVENTORY_CACHE_MAX_ENTRIES = (
+    "CARTOSKY_HERBIE_INVENTORY_CACHE_MAX_ENTRIES",
+    "TWF_HERBIE_INVENTORY_CACHE_MAX_ENTRIES",
+)
+ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES = (
+    "CARTOSKY_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES",
+    "TWF_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES",
+)
 ENV_HERBIE_FETCH_CACHE_MAX_ENTRIES = (
     "CARTOSKY_HERBIE_FETCH_CACHE_MAX_ENTRIES",
     "TWF_HERBIE_FETCH_CACHE_MAX_ENTRIES",
@@ -103,6 +111,8 @@ DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS = 0.1
 DEFAULT_IDX_NEGATIVE_INITIAL_TTL_SECONDS = 20.0
 DEFAULT_IDX_NEGATIVE_MAX_TTL_SECONDS = 90.0
 DEFAULT_INVENTORY_CACHE_TTL_SECONDS = 600.0
+DEFAULT_INVENTORY_CACHE_MAX_ENTRIES = 2048
+DEFAULT_IDX_NEGATIVE_CACHE_MAX_ENTRIES = 8192
 DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
 DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
 DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES = 4 * 1024 * 1024
@@ -450,6 +460,22 @@ def _inventory_cache_ttl_seconds() -> float:
         ENV_HERBIE_INVENTORY_CACHE_TTL,
         DEFAULT_INVENTORY_CACHE_TTL_SECONDS,
         minimum=1.0,
+    )
+
+
+def _inventory_cache_max_entries() -> int:
+    return _int_from_env(
+        ENV_HERBIE_INVENTORY_CACHE_MAX_ENTRIES,
+        DEFAULT_INVENTORY_CACHE_MAX_ENTRIES,
+        minimum=1,
+    )
+
+
+def _idx_negative_cache_max_entries() -> int:
+    return _int_from_env(
+        ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES,
+        DEFAULT_IDX_NEGATIVE_CACHE_MAX_ENTRIES,
+        minimum=1,
     )
 
 
@@ -849,6 +875,7 @@ def _idx_negative_cache_remaining(cache_key: tuple[str, str, str, int, str]) -> 
         if now >= entry.expires_at:
             _IDX_NEGATIVE_CACHE.pop(cache_key, None)
             return 0.0
+        entry.updated_at = now
         return max(0.0, entry.expires_at - now)
 
 
@@ -867,6 +894,9 @@ def _record_idx_negative_cache(cache_key: tuple[str, str, str, int, str]) -> flo
             ttl_seconds=ttl,
             updated_at=now,
         )
+        evicted = _evict_oldest_by_updated_at_locked(_IDX_NEGATIVE_CACHE, _idx_negative_cache_max_entries())
+    if evicted > 0:
+        _metric_increment("idx_negative_cache_pruned", evicted)
     return ttl
 
 
@@ -893,7 +923,16 @@ def _log_idx_missing_once(
         suppress_until = _IDX_NEGATIVE_LOG_SUPPRESS.get(log_key, 0.0)
         if now >= suppress_until:
             _IDX_NEGATIVE_LOG_SUPPRESS[log_key] = now + max(1.0, ttl_seconds)
+            evicted = _evict_oldest_by_value_locked(
+                _IDX_NEGATIVE_LOG_SUPPRESS,
+                _idx_negative_cache_max_entries(),
+                protected_keys={log_key},
+            )
             should_log = True
+        else:
+            evicted = 0
+    if evicted > 0:
+        _metric_increment("idx_negative_log_suppress_pruned", evicted)
     if should_log:
         logger.warning(
             "Herbie precheck unavailable (%s %s %s fh%03d; priority=%s; pattern=%s): no idx (%s; suppress=%ds)",
@@ -984,6 +1023,7 @@ def _inventory_cache_get(key: str) -> Any | None:
         if now >= entry.expires_at:
             _INVENTORY_CACHE.pop(key, None)
             return None
+        entry.updated_at = now
         return entry.data
 
 
@@ -995,6 +1035,9 @@ def _inventory_cache_set(key: str, data: Any, ttl_seconds: float) -> None:
             expires_at=now + max(1.0, ttl_seconds),
             updated_at=now,
         )
+        evicted = _evict_oldest_by_updated_at_locked(_INVENTORY_CACHE, _inventory_cache_max_entries())
+    if evicted > 0:
+        _metric_increment("inventory_cache_pruned", evicted)
 
 
 def _inventory_cache_delete(key: str) -> None:
@@ -1002,6 +1045,107 @@ def _inventory_cache_delete(key: str) -> None:
         return
     with _INVENTORY_CACHE_LOCK:
         _INVENTORY_CACHE.pop(key, None)
+
+
+def _evict_oldest_by_updated_at_locked(store: dict[Any, Any], max_entries: int) -> int:
+    """Evict the oldest entries (by ``.updated_at``) until ``len(store) <= max_entries``.
+
+    The caller must already hold the store's lock. Returns the number evicted.
+    """
+    overflow = len(store) - max(1, int(max_entries))
+    if overflow <= 0:
+        return 0
+    oldest = sorted(store, key=lambda entry_key: store[entry_key].updated_at)[:overflow]
+    for entry_key in oldest:
+        store.pop(entry_key, None)
+    return len(oldest)
+
+
+def _evict_oldest_by_value_locked(
+    store: dict[Any, float],
+    max_entries: int,
+    *,
+    protected_keys: set[Any] | None = None,
+) -> int:
+    """Evict the lowest-valued (earliest-expiring) entries until within ``max_entries``.
+
+    Used for ``_IDX_NEGATIVE_LOG_SUPPRESS``, whose values are monotonic expiry
+    deadlines. The caller must already hold the store's lock. Returns the count evicted.
+    """
+    limit = max(1, int(max_entries))
+    overflow = len(store) - limit
+    if overflow <= 0:
+        return 0
+    protected = protected_keys or set()
+    candidates = [entry_key for entry_key in store if entry_key not in protected]
+    if not candidates:
+        return 0
+    oldest = sorted(candidates, key=lambda entry_key: store[entry_key])[:overflow]
+    for entry_key in oldest:
+        store.pop(entry_key, None)
+    return len(oldest)
+
+
+def prune_runtime_caches(*, now: float | None = None) -> dict[str, int]:
+    """Drop expired entries and enforce hard caps on the process-local Herbie caches.
+
+    Intended to be called once per scheduler cycle from a long-lived process. Removes
+    entries whose TTL has elapsed (which otherwise only expire lazily when their exact
+    run/forecast-hour key is read again — never, for retired runs), then trims each cache
+    to its configured ``max_entries`` by evicting the oldest. Returns before/after counts
+    per cache for logging/metrics. Does not change cache-hit behavior for live entries.
+    """
+    current = time.monotonic() if now is None else float(now)
+    inventory_max = _inventory_cache_max_entries()
+    idx_negative_max = _idx_negative_cache_max_entries()
+
+    with _INVENTORY_CACHE_LOCK:
+        inventory_before = len(_INVENTORY_CACHE)
+        inventory_expired = [k for k, entry in _INVENTORY_CACHE.items() if current >= entry.expires_at]
+        for k in inventory_expired:
+            _INVENTORY_CACHE.pop(k, None)
+        inventory_capped = _evict_oldest_by_updated_at_locked(_INVENTORY_CACHE, inventory_max)
+        inventory_after = len(_INVENTORY_CACHE)
+
+    with _IDX_NEGATIVE_CACHE_LOCK:
+        idx_negative_before = len(_IDX_NEGATIVE_CACHE)
+        suppress_before = len(_IDX_NEGATIVE_LOG_SUPPRESS)
+        idx_negative_expired = [k for k, entry in _IDX_NEGATIVE_CACHE.items() if current >= entry.expires_at]
+        for k in idx_negative_expired:
+            _IDX_NEGATIVE_CACHE.pop(k, None)
+        suppress_expired = [k for k, until in _IDX_NEGATIVE_LOG_SUPPRESS.items() if current >= until]
+        for k in suppress_expired:
+            _IDX_NEGATIVE_LOG_SUPPRESS.pop(k, None)
+        idx_negative_capped = _evict_oldest_by_updated_at_locked(_IDX_NEGATIVE_CACHE, idx_negative_max)
+        suppress_capped = _evict_oldest_by_value_locked(_IDX_NEGATIVE_LOG_SUPPRESS, idx_negative_max)
+        idx_negative_after = len(_IDX_NEGATIVE_CACHE)
+        suppress_after = len(_IDX_NEGATIVE_LOG_SUPPRESS)
+
+    inventory_removed = inventory_before - inventory_after
+    idx_negative_removed = idx_negative_before - idx_negative_after
+    suppress_removed = suppress_before - suppress_after
+
+    _metric_increment("inventory_cache_pruned", max(0, inventory_removed))
+    _metric_increment("idx_negative_cache_pruned", max(0, idx_negative_removed))
+    _metric_increment("idx_negative_log_suppress_pruned", max(0, suppress_removed))
+
+    return {
+        "inventory_before": inventory_before,
+        "inventory_after": inventory_after,
+        "inventory_removed": inventory_removed,
+        "inventory_expired": len(inventory_expired),
+        "inventory_capped": inventory_capped,
+        "idx_negative_before": idx_negative_before,
+        "idx_negative_after": idx_negative_after,
+        "idx_negative_removed": idx_negative_removed,
+        "idx_negative_expired": len(idx_negative_expired),
+        "idx_negative_capped": idx_negative_capped,
+        "idx_negative_log_suppress_before": suppress_before,
+        "idx_negative_log_suppress_after": suppress_after,
+        "idx_negative_log_suppress_removed": suppress_removed,
+        "idx_negative_log_suppress_expired": len(suppress_expired),
+        "idx_negative_log_suppress_capped": suppress_capped,
+    }
 
 
 def _ecmwf_search_this_from_record(record: dict[str, Any]) -> str:
