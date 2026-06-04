@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { Show, UserButton, useAuth } from "@clerk/react";
+import { Show, UserButton, useAuth, useUser } from "@clerk/react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -15,6 +15,7 @@ import {
   Search,
   Send,
   Settings,
+  Star,
   Sun,
   X,
   ZoomIn,
@@ -56,6 +57,14 @@ type LocationSearchResult = {
   admin1?: string | null;
   country?: string | null;
 };
+
+type ViewerFavoriteLocation = LocationSearchResult & {
+  id: string;
+};
+
+const VIEWER_LOCATION_FAVORITES_STORAGE_KEY = "cartosky_viewer_location_favorites_v1";
+const VIEWER_LOCATION_FAVORITES_METADATA_KEY = "viewerLocationFavorites";
+const MAX_VIEWER_LOCATION_FAVORITES = 5;
 
 const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
@@ -104,6 +113,143 @@ function AvailabilityReadout({
       {label}
     </div>
   );
+}
+
+function viewerLocationId(result: Pick<LocationSearchResult, "display_name" | "latitude" | "longitude">): string {
+  const label = result.display_name
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (label) return label;
+  return `coords-${result.latitude.toFixed(4).replace(/[^0-9-]/g, "")}-${result.longitude.toFixed(4).replace(/[^0-9-]/g, "")}`;
+}
+
+function toViewerFavoriteLocation(result: LocationSearchResult): ViewerFavoriteLocation {
+  return {
+    id: viewerLocationId(result),
+    display_name: result.display_name,
+    latitude: result.latitude,
+    longitude: result.longitude,
+    timezone: result.timezone ?? null,
+    country_code: result.country_code ?? null,
+    admin1: result.admin1 ?? null,
+    country: result.country ?? null,
+  };
+}
+
+function isViewerFavoriteLocation(value: unknown): value is ViewerFavoriteLocation {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Partial<ViewerFavoriteLocation>;
+  return (
+    typeof item.id === "string" &&
+    item.id.trim().length > 0 &&
+    typeof item.display_name === "string" &&
+    item.display_name.trim().length > 0 &&
+    typeof item.latitude === "number" &&
+    Number.isFinite(item.latitude) &&
+    typeof item.longitude === "number" &&
+    Number.isFinite(item.longitude)
+  );
+}
+
+function sanitizeViewerFavorites(value: unknown): ViewerFavoriteLocation[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const favorites: ViewerFavoriteLocation[] = [];
+  for (const item of value) {
+    if (!isViewerFavoriteLocation(item) || seen.has(item.id)) continue;
+    seen.add(item.id);
+    favorites.push({
+      id: item.id,
+      display_name: item.display_name,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      timezone: item.timezone ?? null,
+      country_code: item.country_code ?? null,
+      admin1: item.admin1 ?? null,
+      country: item.country ?? null,
+    });
+    if (favorites.length >= MAX_VIEWER_LOCATION_FAVORITES) break;
+  }
+  return favorites;
+}
+
+function readViewerFavoritesFromStorage(storageKey: string): ViewerFavoriteLocation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return sanitizeViewerFavorites(JSON.parse(window.localStorage.getItem(storageKey) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function writeViewerFavoritesToStorage(storageKey: string, favorites: ViewerFavoriteLocation[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(sanitizeViewerFavorites(favorites)));
+  } catch {
+    // Storage can be unavailable in private browsing or locked-down webviews.
+  }
+}
+
+function useViewerLocationFavorites() {
+  const { user, isLoaded } = useUser();
+  const userStorageKey = user?.id ? `${VIEWER_LOCATION_FAVORITES_STORAGE_KEY}_${user.id}` : VIEWER_LOCATION_FAVORITES_STORAGE_KEY;
+  const [favorites, setFavorites] = useState<ViewerFavoriteLocation[]>(() => readViewerFavoritesFromStorage(VIEWER_LOCATION_FAVORITES_STORAGE_KEY));
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (user) {
+      const hasClerkFavorites = Object.prototype.hasOwnProperty.call(
+        user.unsafeMetadata ?? {},
+        VIEWER_LOCATION_FAVORITES_METADATA_KEY
+      );
+      const clerkFavorites = sanitizeViewerFavorites(user.unsafeMetadata?.[VIEWER_LOCATION_FAVORITES_METADATA_KEY]);
+      setFavorites(hasClerkFavorites ? clerkFavorites : readViewerFavoritesFromStorage(userStorageKey));
+      return;
+    }
+    setFavorites(readViewerFavoritesFromStorage(VIEWER_LOCATION_FAVORITES_STORAGE_KEY));
+  }, [isLoaded, user, userStorageKey]);
+
+  const persistFavorites = useCallback(async (nextFavorites: ViewerFavoriteLocation[]) => {
+    const sanitized = sanitizeViewerFavorites(nextFavorites);
+    if (user) {
+      try {
+        await user.update({
+          unsafeMetadata: {
+            ...user.unsafeMetadata,
+            [VIEWER_LOCATION_FAVORITES_METADATA_KEY]: sanitized,
+          },
+        });
+        writeViewerFavoritesToStorage(userStorageKey, sanitized);
+        return;
+      } catch {
+        writeViewerFavoritesToStorage(userStorageKey, sanitized);
+        return;
+      }
+    }
+    writeViewerFavoritesToStorage(VIEWER_LOCATION_FAVORITES_STORAGE_KEY, sanitized);
+  }, [user, userStorageKey]);
+
+  const favoriteIds = useMemo(() => new Set(favorites.map((location) => location.id)), [favorites]);
+  const isFavorite = useCallback((location: LocationSearchResult) => favoriteIds.has(viewerLocationId(location)), [favoriteIds]);
+  const toggleFavorite = useCallback((location: LocationSearchResult): boolean => {
+    const favorite = toViewerFavoriteLocation(location);
+    const exists = favoriteIds.has(favorite.id);
+    if (!exists && favorites.length >= MAX_VIEWER_LOCATION_FAVORITES) {
+      return false;
+    }
+    const nextFavorites = exists
+      ? favorites.filter((item) => item.id !== favorite.id)
+      : sanitizeViewerFavorites([favorite, ...favorites.filter((item) => item.id !== favorite.id)]);
+    setFavorites(nextFavorites);
+    void persistFavorites(nextFavorites);
+    return true;
+  }, [favoriteIds, favorites, persistFavorites]);
+
+  return { favorites, isFavorite, toggleFavorite };
 }
 
 
@@ -309,6 +455,9 @@ function RegionUtilitySelect({
   disabled,
   currentRegionLabel,
   tourTarget,
+  variant = "icon",
+  inlinePanel = false,
+  onLocationSelected,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -317,6 +466,9 @@ function RegionUtilitySelect({
   disabled?: boolean;
   currentRegionLabel: string;
   tourTarget?: string;
+  variant?: "icon" | "field";
+  inlinePanel?: boolean;
+  onLocationSelected?: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -331,8 +483,11 @@ function RegionUtilitySelect({
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [panelTop, setPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
   const [panelRight, setPanelRight] = useState<number>(16);
+  const [currentLocation, setCurrentLocation] = useState<ViewerFavoriteLocation | null>(null);
+  const { favorites, isFavorite, toggleFavorite } = useViewerLocationFavorites();
 
   const activeSearch = query.trim().length > 0;
+  const currentLocationIsFavorite = currentLocation ? isFavorite(currentLocation) : false;
 
   const updatePanelPosition = useCallback(() => {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -490,8 +645,16 @@ function RegionUtilitySelect({
   }
 
   function handleLocationResultSelect(result: LocationSearchResult) {
+    setCurrentLocation(toViewerFavoriteLocation(result));
     onLocationJump?.(result.latitude, result.longitude, 10, "search");
     closeAfterLocationJump();
+    onLocationSelected?.();
+  }
+
+  function handleFavoriteToggle(location: LocationSearchResult) {
+    if (!toggleFavorite(location)) {
+      showInlineError(`Save up to ${MAX_VIEWER_LOCATION_FAVORITES} favorite locations.`);
+    }
   }
 
   function handleUseMyLocation() {
@@ -502,9 +665,23 @@ function RegionUtilitySelect({
     clearInlineError();
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        onLocationJump?.(position.coords.latitude, position.coords.longitude, 10, "geolocation");
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        try {
+          const response = await fetch(`${API_V4_BASE}/locations/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`);
+          if (response.ok) {
+            const payload = (await response.json()) as { location?: LocationSearchResult | null };
+            if (payload.location) {
+              setCurrentLocation(toViewerFavoriteLocation(payload.location));
+            }
+          }
+        } catch {
+          // The map jump still works if nearest-city lookup is unavailable.
+        }
+        onLocationJump?.(lat, lon, 10, "geolocation");
         closeAfterLocationJump();
+        onLocationSelected?.();
       },
       () => {
         setIsLocating(false);
@@ -534,6 +711,216 @@ function RegionUtilitySelect({
     return pieces.length > 0 ? pieces.join(" • ") : null;
   }
 
+  const locationPanel = (
+    <div
+      ref={panelRef}
+      className={cn(
+        inlinePanel
+          ? "mt-2 w-full overflow-hidden rounded-xl border bg-[#04101e]/[0.92] shadow-[inset_0_1px_0_rgba(100,180,255,0.08)]"
+          : "fixed z-[90] w-[296px] overflow-hidden rounded-2xl border bg-[#04101e]/[0.92] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+        activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60"
+      )}
+      style={inlinePanel ? undefined : { top: panelTop, right: panelRight }}
+    >
+      <div className="border-b border-white/8 px-3 py-3">
+        <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
+          <Search className="h-3.5 w-3.5 flex-none text-white/45" />
+          <input
+            value={query}
+            onChange={(event) => {
+              clearInlineError();
+              setQuery(event.target.value);
+            }}
+            placeholder="Search city or zip…"
+            autoComplete="off"
+            spellCheck={false}
+            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+          />
+          {query.trim().length > 0 ? (
+            <button
+              type="button"
+              onClick={() => resetSearch()}
+              className="flex h-5 w-5 flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68"
+              aria-label="Clear location search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </label>
+      </div>
+
+      <div className={cn("overflow-y-auto px-2 py-2", inlinePanel ? "max-h-[46dvh]" : "max-h-[320px]")}>
+        {!activeSearch ? (
+          <>
+            {favorites.length > 0 ? (
+              <>
+                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+                  Favorites
+                </div>
+                <div className="mb-2 space-y-0.5">
+                  {favorites.map((location) => (
+                    <div key={location.id} className="group flex items-center gap-1 rounded-md hover:bg-cyan-300/14">
+                      <button
+                        type="button"
+                        onClick={() => handleLocationResultSelect(location)}
+                        className="min-w-0 flex-1 rounded-md py-1.5 pl-3 pr-1 text-left text-xs font-medium text-white/86 outline-none transition-colors group-hover:text-cyan-50"
+                      >
+                        <span className="block truncate">{location.display_name}</span>
+                        {secondaryLocationLabel(location) ? (
+                          <span className="mt-0.5 block truncate text-[11px] font-normal text-white/45 group-hover:text-cyan-100/70">
+                            {secondaryLocationLabel(location)}
+                          </span>
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleFavoriteToggle(location)}
+                        className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-amber-300 transition hover:bg-white/10"
+                        title="Remove favorite"
+                        aria-label={`Remove ${location.display_name} from favorites`}
+                      >
+                        <Star className="h-3.5 w-3.5 fill-current" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {currentLocation && !currentLocationIsFavorite ? (
+              <div className="mb-2 rounded-lg border border-cyan-300/12 bg-cyan-300/[0.06] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleLocationResultSelect(currentLocation)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-xs font-medium text-white/88">{currentLocation.display_name}</span>
+                    <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/55">Selected location</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFavoriteToggle(currentLocation)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/50 transition hover:bg-white/10 hover:text-amber-300"
+                    title="Save favorite"
+                    aria-label={`Save ${currentLocation.display_name} as favorite`}
+                  >
+                    <Star className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+              Region
+            </div>
+            <div className="space-y-0.5">
+              {options.map((opt) => {
+                const selected = opt.value === value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      onValueChange(opt.value);
+                      setOpen(false);
+                      clearInlineError();
+                    }}
+                    className={cn(
+                      "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50",
+                      selected && "bg-cyan-300/14 text-cyan-50"
+                    )}
+                  >
+                    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-cyan-200">
+                      {selected ? <Check className="h-4 w-4" /> : null}
+                    </span>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-0.5">
+            {isSearching ? (
+              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/58">
+                <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+                Searching…
+              </div>
+            ) : query.trim().length < 2 ? (
+              <div className="rounded-lg px-3 py-2 text-xs text-white/48">
+                Type at least 2 characters.
+              </div>
+            ) : results.length === 0 ? (
+              <div className="rounded-lg px-3 py-2 text-xs text-white/48">
+                No locations found.
+              </div>
+            ) : (
+              results.map((result) => {
+                const favorited = isFavorite(result);
+                return (
+                  <div
+                    key={`${result.display_name}-${result.latitude}-${result.longitude}`}
+                    className="group flex items-center gap-1 rounded-lg transition-colors hover:bg-cyan-300/14 hover:text-cyan-50"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleLocationResultSelect(result)}
+                      className="min-w-0 flex-1 rounded-lg px-3 py-2 text-left"
+                    >
+                      <span className="block truncate text-sm font-medium text-white/92 transition-colors group-hover:text-cyan-50">
+                        {result.display_name}
+                      </span>
+                      {secondaryLocationLabel(result) ? (
+                        <span className="mt-0.5 block truncate text-[11px] text-white/48 transition-colors group-hover:text-cyan-100/72">
+                          {secondaryLocationLabel(result)}
+                        </span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleFavoriteToggle(result)}
+                      className={cn(
+                        "mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition hover:bg-white/10",
+                        favorited ? "text-amber-300" : "text-white/40 hover:text-amber-300"
+                      )}
+                      title={favorited ? "Remove favorite" : "Save favorite"}
+                      aria-label={favorited ? `Remove ${result.display_name} from favorites` : `Save ${result.display_name} as favorite`}
+                    >
+                      <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {inlineError ? (
+          <div className="mt-2 rounded-lg border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-[11px] text-rose-100">
+            {inlineError}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="border-t border-white/8 px-2 py-2">
+        <button
+          type="button"
+          onClick={handleUseMyLocation}
+          className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-white/88">
+            <MapPin className="h-3.5 w-3.5 text-cyan-200/85" />
+            Use my location
+          </span>
+          {isLocating ? (
+            <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+          ) : null}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="shrink-0" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
       <button
@@ -551,145 +938,25 @@ function RegionUtilitySelect({
           setOpen((currentOpen) => !currentOpen);
         }}
         className={cn(
-          DESKTOP_ICON_BUTTON_CLASSNAME,
-          open ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
+          variant === "field"
+            ? "flex h-9 w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3 text-left text-sm font-medium text-white/88 transition hover:border-cyan-300/22 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50"
+            : DESKTOP_ICON_BUTTON_CLASSNAME,
+          open && (variant === "field" ? "border-cyan-300/28 bg-cyan-300/[0.08] text-cyan-50" : DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME)
         )}
       >
-        <span className="flex h-full w-full items-center justify-center">
-          <Globe className="h-3.5 w-3.5" />
-        </span>
+        {variant === "field" ? (
+          <>
+            <span className="truncate">{currentRegionLabel}</span>
+            <Globe className="h-3.5 w-3.5 shrink-0 text-cyan-100/70" />
+          </>
+        ) : (
+          <span className="flex h-full w-full items-center justify-center">
+            <Globe className="h-3.5 w-3.5" />
+          </span>
+        )}
       </button>
 
-      {open ? createPortal(
-        <div
-          ref={panelRef}
-          className={cn(
-            "fixed z-[90] w-[296px] overflow-hidden rounded-2xl border bg-[#04101e]/[0.92] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
-            activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60"
-          )}
-          style={{ top: panelTop, right: panelRight }}
-        >
-          <div className="border-b border-white/8 px-3 py-3">
-            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
-              <Search className="h-3.5 w-3.5 flex-none text-white/45" />
-              <input
-                value={query}
-                onChange={(event) => {
-                  clearInlineError();
-                  setQuery(event.target.value);
-                }}
-                placeholder="Search city or zip…"
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
-              />
-              {query.trim().length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => resetSearch()}
-                  className="flex h-5 w-5 flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68"
-                  aria-label="Clear location search"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </label>
-          </div>
-
-          <div className="max-h-[320px] overflow-y-auto px-2 py-2">
-            {!activeSearch ? (
-              <>
-                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
-                  Region
-                </div>
-                <div className="space-y-0.5">
-                  {options.map((opt) => {
-                    const selected = opt.value === value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => {
-                          onValueChange(opt.value);
-                          setOpen(false);
-                          clearInlineError();
-                        }}
-                        className={cn(
-                          "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50",
-                          selected && "bg-cyan-300/14 text-cyan-50"
-                        )}
-                      >
-                        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-cyan-200">
-                          {selected ? <Check className="h-4 w-4" /> : null}
-                        </span>
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="space-y-0.5">
-                {isSearching ? (
-                  <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/58">
-                    <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
-                    Searching…
-                  </div>
-                ) : query.trim().length < 2 ? (
-                  <div className="rounded-lg px-3 py-2 text-xs text-white/48">
-                    Type at least 2 characters.
-                  </div>
-                ) : results.length === 0 ? (
-                  <div className="rounded-lg px-3 py-2 text-xs text-white/48">
-                    No locations found.
-                  </div>
-                ) : (
-                  results.map((result) => (
-                    <button
-                      key={`${result.display_name}-${result.latitude}-${result.longitude}`}
-                      type="button"
-                      onClick={() => handleLocationResultSelect(result)}
-                      className="group flex w-full flex-col items-start rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/14 hover:text-cyan-50"
-                    >
-                      <span className="text-sm font-medium text-white/92 transition-colors group-hover:text-cyan-50">
-                        {result.display_name}
-                      </span>
-                      {secondaryLocationLabel(result) ? (
-                        <span className="mt-0.5 text-[11px] text-white/48 transition-colors group-hover:text-cyan-100/72">
-                          {secondaryLocationLabel(result)}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-
-            {inlineError ? (
-              <div className="mt-2 rounded-lg border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-[11px] text-rose-100">
-                {inlineError}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border-t border-white/8 px-2 py-2">
-            <button
-              type="button"
-              onClick={handleUseMyLocation}
-              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
-            >
-              <span className="flex items-center gap-2 text-sm font-medium text-white/88">
-                <MapPin className="h-3.5 w-3.5 text-cyan-200/85" />
-                Use my location
-              </span>
-              {isLocating ? (
-                <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
-              ) : null}
-            </button>
-          </div>
-        </div>,
-        document.body
-      ) : null}
+      {open ? (inlinePanel ? locationPanel : createPortal(locationPanel, document.body)) : null}
     </div>
   );
 }
@@ -1065,7 +1332,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
-    run, onRunChange, runs, region, onRegionChange, regions, disabled,
+    run, onRunChange, runs, region, onRegionChange, onLocationJump, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
@@ -1098,6 +1365,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const selectedVariableLabel = displayVariables.find((o) => o.value === variable)?.label ?? "Variable";
   const selectedModelLabel = models.find((o) => o.value === model)?.label ?? "Model";
+  const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
 
   useEffect(() => {
     if (!sheetOpen) {
@@ -1251,13 +1519,16 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <MapPin className="h-3 w-3" /> Region
           </span>
-          <NavbarSelect
+          <RegionUtilitySelect
             value={region}
             onValueChange={(v) => { onRegionChange(v); closeSheet(); }}
+            onLocationJump={onLocationJump}
             options={regions}
             disabled={disabled}
-            placeholder="Region"
-            minWidth="w-full"
+            currentRegionLabel={selectedRegionLabel}
+            variant="field"
+            inlinePanel={isPhoneLayout}
+            onLocationSelected={closeSheet}
           />
         </div>
       </div>

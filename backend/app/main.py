@@ -3356,6 +3356,18 @@ async def forecast_location_search_v4(
     return await forecast_location_search(q)
 
 
+@app.get("/api/v4/locations/reverse")
+async def forecast_location_reverse_v4(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+):
+    payload = await forecast_page_service.reverse_location(lat, lon)
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @app.get("/api/forecast-page")
 async def forecast_page(
     lat: float = Query(..., ge=-90.0, le=90.0),

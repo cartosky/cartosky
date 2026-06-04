@@ -892,6 +892,15 @@ async def search_locations(query: str) -> dict[str, Any]:
     }
 
 
+async def reverse_location(lat: float, lon: float) -> dict[str, Any]:
+    async with _build_client() as client:
+        result = await _reverse_open_meteo_geocode(client, lat, lon)
+
+    return {
+        "location": _location_result_payload(result, query=f"{lat:.4f},{lon:.4f}") if result else None,
+    }
+
+
 async def _resolve_location_by_query(client: httpx.AsyncClient, query: str) -> ResolvedLocation:
     results = await _search_open_meteo_geocode(client, query)
     if not results:
