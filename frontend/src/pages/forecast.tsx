@@ -466,7 +466,7 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
 function MetaItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-[0.12em] text-white/35">{label}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] text-cyan-200/70">{label}</div>
       <div className="mt-0.5 text-[13px] font-medium text-white/80">{value}</div>
     </div>
   );
@@ -593,19 +593,19 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
 
       {hasPrecip && (
         <>
+          <line x1={0} y1={PRECIP_T - 14} x2={VW} y2={PRECIP_T - 14}
+            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
           <text
             x={0}
-            y={PRECIP_T - 8}
-            fontSize={7}
+            y={PRECIP_T - 5}
+            fontSize={4.8}
             fontWeight="500"
-            fill="rgba(255,255,255,0.22)"
-            letterSpacing="0.16em"
+            fill="rgba(255,255,255,0.40)"
+            letterSpacing="0.20em"
             textAnchor="start"
           >
             PRECIP CHANCE
           </text>
-          <line x1={0} y1={PRECIP_T - 1} x2={VW} y2={PRECIP_T - 1}
-            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
           <path d={precipAreaPath} fill="url(#hPrecipGrad)" />
           <path d={precipLinePath} fill="none"
             stroke="rgba(52,211,153,0.70)" strokeWidth={1.2}
@@ -734,7 +734,7 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
               {e.low_f != null ? `${e.low_f}°` : ""}
             </text>
             <text x={x} y={VH - 3} textAnchor={anchor}
-              fontSize={8.5} fill="rgba(255,255,255,0.30)">
+              fontSize={7.4} fontWeight="500" fill="rgba(255,255,255,0.28)">
               {formatDayLabel(e.date, i)}
             </text>
           </g>
@@ -790,6 +790,142 @@ function HourlyStrip({ hourly }: { hourly: HourlyEntry[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Daily Range Rows ─────────────────────────────────────────────────
+
+function DailyDetailGrid({ entry }: { entry: DailyEntry }) {
+  const details = [
+    { label: "Forecast", value: entry.short_text ?? "--" },
+    { label: "Precip", value: entry.pop_pct != null ? `${entry.pop_pct}% chance` : "--" },
+    { label: "Rain", value: entry.qpf_in != null ? `${entry.qpf_in.toFixed(2)} in` : "--" },
+    { label: "Snow", value: entry.snow_in != null ? `${entry.snow_in.toFixed(1)} in` : "--" },
+    { label: "Wind", value: entry.wind_speed_mph != null ? `${entry.wind_speed_mph} mph${entry.wind_gust_mph != null ? `, gusts ${entry.wind_gust_mph}` : ""}` : "--" },
+  ];
+  return (
+    <div className="grid gap-3 rounded-lg border border-cyan-300/10 bg-cyan-300/[0.035] p-3 sm:grid-cols-5">
+      {details.map(detail => (
+        <div key={detail.label}>
+          <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-cyan-200/55">{detail.label}</div>
+          <div className="mt-1 text-[12px] leading-5 text-white/75">{detail.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DailyRangeRows({
+  daily,
+  limit,
+  expandable = false,
+}: {
+  daily: DailyEntry[];
+  limit?: number;
+  expandable?: boolean;
+}) {
+  const entries = typeof limit === "number" ? daily.slice(0, limit) : daily;
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  if (!entries.length) return null;
+
+  const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
+  const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
+  if (!lows.length || !highs.length) return null;
+
+  const globalMin = Math.min(...lows);
+  const globalMax = Math.max(...highs);
+  const span = globalMax - globalMin || 1;
+
+  function toggle(i: number) {
+    if (!expandable) return;
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }
+
+  return (
+    <div>
+      {entries.map((entry, i) => {
+        const low  = entry.low_f  ?? globalMin;
+        const high = entry.high_f ?? globalMax;
+        const leftPct  = ((low  - globalMin) / span) * 100;
+        const widthPct = ((high - low) / span) * 100;
+        const highPct = leftPct + widthPct;
+        const pop = entry.pop_pct ?? 0;
+        const isOpen = expanded.has(i);
+        const lowLabelStyle = leftPct < 5
+          ? { top: "0px", left: 0, transform: "none" as const }
+          : { top: "0px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
+        const highLabelStyle = highPct > 95
+          ? { top: "0px", right: 0, left: "auto", transform: "none" as const }
+          : { top: "0px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
+        const row = (
+          <div className="grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 py-3">
+            <div className="text-[13px] font-medium text-white/65">
+              {formatDayLabel(entry.date, i)}
+            </div>
+            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
+            <div className="relative" style={{ paddingTop: 24 }}>
+              <span
+                className="absolute text-[11px] font-medium text-white/55"
+                style={lowLabelStyle}
+              >
+                {entry.low_f ?? "--"}°
+              </span>
+              <span
+                className="absolute text-[12px] font-semibold text-white/90"
+                style={highLabelStyle}
+              >
+                {entry.high_f ?? "--"}°
+              </span>
+              <div className="relative h-[6px] overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.07]">
+                <div
+                  className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
+                  style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+                />
+              </div>
+            </div>
+            <div className={`w-8 flex-none text-right text-[13px] font-medium ${precipColor(entry.pop_pct)}`}>
+              {pop > 0 ? `${pop}%` : ""}
+            </div>
+          </div>
+        );
+        return (
+          <div
+            key={i}
+            className={`rounded-md transition-colors hover:bg-white/[0.035] ${i < entries.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
+          >
+            {expandable ? (
+              <button
+                type="button"
+                onClick={() => toggle(i)}
+                aria-expanded={isOpen}
+                className="w-full text-left"
+              >
+                {row}
+              </button>
+            ) : row}
+            {expandable && isOpen && (
+              <div className="pb-3 sm:pl-[74px] sm:pr-[52px]">
+                <DailyDetailGrid entry={entry} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className="mt-2 grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
+        <div />
+        <div />
+        <div className="flex items-center justify-between text-[11px] font-medium text-white/42">
+          <span>{`< ${globalMin}° week low`}</span>
+          <span>{`${globalMax}° week high >`}</span>
+        </div>
+        <div className="text-right text-[11px] font-medium text-cyan-200/55">PoP</div>
+      </div>
     </div>
   );
 }
@@ -877,92 +1013,7 @@ function AlertsBanner({ alerts }: { alerts: AlertEntry[] }) {
 // ── Day List Table (7-day tab) ────────────────────────────────────────
 
 function DayListTable({ daily }: { daily: DailyEntry[] }) {
-  const entries = daily.slice(0, 7);
-  if (!entries.length) return null;
-
-  const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
-  const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
-  if (!lows.length || !highs.length) return null;
-
-  const globalMin = Math.min(...lows);
-  const globalMax = Math.max(...highs);
-  const span = globalMax - globalMin || 1;
-
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap gap-4">
-        <div className="flex items-center gap-2">
-          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/85" />
-          <span className="text-[10px] text-white/30">High temp</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/32" />
-          <span className="text-[10px] text-white/30">Low temp</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400/75" />
-          <span className="text-[10px] text-white/30">Precip chance</span>
-        </div>
-      </div>
-      {entries.map((entry, i) => {
-        const low  = entry.low_f  ?? globalMin;
-        const high = entry.high_f ?? globalMax;
-        const leftPct  = ((low  - globalMin) / span) * 100;
-        const widthPct = ((high - low) / span) * 100;
-        const highPct = leftPct + widthPct;
-        const pop = entry.pop_pct ?? 0;
-        const lowLabelStyle = leftPct < 5
-          ? { top: "1px", left: 0, transform: "none" as const }
-          : { top: "1px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
-        const highLabelStyle = highPct > 95
-          ? { top: "1px", right: 0, left: "auto", transform: "none" as const }
-          : { top: "1px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
-        return (
-          <div
-            key={i}
-            className={`grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 rounded-md py-3 transition-colors hover:bg-white/[0.035] ${i < entries.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
-          >
-            <div className="text-[13px] font-medium text-white/60">
-              {formatDayLabel(entry.date, i)}
-            </div>
-            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
-            <div className="relative" style={{ paddingTop: 22 }}>
-              <span
-                className="absolute text-[10px] text-white/[0.38]"
-                style={lowLabelStyle}
-              >
-                {entry.low_f ?? "--"}°
-              </span>
-              <span
-                className="absolute text-[10.5px] font-medium text-white/[0.82]"
-                style={highLabelStyle}
-              >
-                {entry.high_f ?? "--"}°
-              </span>
-              <div className="relative h-[6px] overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.07]">
-                <div
-                  className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                />
-              </div>
-            </div>
-            <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
-              {pop > 0 ? `${pop}%` : ""}
-            </div>
-          </div>
-        );
-      })}
-      <div className="mt-2 grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
-        <div />
-        <div />
-        <div className="flex items-center justify-between text-[10px] text-white/22">
-              <span>{`← ${globalMin}° week low`}</span>
-              <span>{`${globalMax}° week high →`}</span>
-        </div>
-        <div className="text-right text-[10px] text-white/22">💧 PoP</div>
-      </div>
-    </div>
-  );
+  return <DailyRangeRows daily={daily} limit={7} />;
 }
 
 // ── NWS Cards Grid (7-day tab) ────────────────────────────────────────
@@ -1038,106 +1089,19 @@ function SevenDayTab({ daily, textForecast }: {
 function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution: string | null }) {
   if (!daily.length) return null;
 
-  const lows  = daily.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
-  const highs = daily.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
-  const globalMin = lows.length  ? Math.min(...lows)  : 0;
-  const globalMax = highs.length ? Math.max(...highs) : 1;
-  const span = globalMax - globalMin || 1;
-
   return (
     <div className="space-y-6">
       <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
         <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
           Temperature · 15-Day Outlook
         </p>
-        <div className="mb-3 flex flex-wrap gap-3">
-          {[
-            { bg: "bg-cyan-300/85", label: "High" },
-            { bg: "bg-cyan-300/30", label: "Low" },
-          ].map(({ bg, label }) => (
-            <div key={label} className="flex items-center gap-2 text-[10px] text-white/38">
-              <span className={`h-[5px] w-[18px] rounded-sm ${bg}`} />
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
         <DailyTempChart daily={daily} />
       </div>
       <div>
       {attribution && (
         <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
       )}
-      <div className="mb-3 flex flex-wrap gap-4">
-        <div className="flex items-center gap-2">
-          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/85" />
-          <span className="text-[10px] text-white/30">High temp</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-[4px] w-[14px] rounded-sm bg-cyan-300/32" />
-          <span className="text-[10px] text-white/30">Low temp</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400/75" />
-          <span className="text-[10px] text-white/30">Precip chance</span>
-        </div>
-      </div>
-      {daily.map((entry, i) => {
-        const low  = entry.low_f  ?? globalMin;
-        const high = entry.high_f ?? globalMax;
-        const leftPct  = ((low  - globalMin) / span) * 100;
-        const widthPct = ((high - low) / span) * 100;
-        const highPct = leftPct + widthPct;
-        const pop = entry.pop_pct ?? 0;
-        const lowLabelStyle = leftPct < 5
-          ? { top: "1px", left: 0, transform: "none" as const }
-          : { top: "1px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
-        const highLabelStyle = highPct > 95
-          ? { top: "1px", right: 0, left: "auto", transform: "none" as const }
-          : { top: "1px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
-        return (
-          <div
-            key={i}
-            className={`grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 rounded-md py-3 transition-colors hover:bg-white/[0.035] ${i < daily.length - 1 ? "border-b-[0.5px] border-white/[0.06]" : ""}`}
-          >
-            <div className="text-[13px] font-medium text-white/60">
-              {formatDayLabel(entry.date, i)}
-            </div>
-            <WeatherIcon code={entry.icon} size={16} className="flex-none" />
-            <div className="relative" style={{ paddingTop: 22 }}>
-              <span
-                className="absolute text-[10px] text-white/[0.38]"
-                style={lowLabelStyle}
-              >
-                {entry.low_f ?? "--"}°
-              </span>
-              <span
-                className="absolute text-[10.5px] font-medium text-white/[0.82]"
-                style={highLabelStyle}
-              >
-                {entry.high_f ?? "--"}°
-              </span>
-              <div className="relative h-[6px] overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.07]">
-                <div
-                  className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                />
-              </div>
-            </div>
-            <div className={`w-8 flex-none text-right text-[13px] ${precipColor(entry.pop_pct)}`}>
-              {pop > 0 ? `${pop}%` : ""}
-            </div>
-          </div>
-        );
-      })}
-      <div className="mt-2 grid grid-cols-[44px_22px_1fr_40px] items-center gap-3 border-t border-white/[0.05] pt-2">
-        <div />
-        <div />
-        <div className="flex items-center justify-between text-[10px] text-white/22">
-          <span>{`← ${globalMin}° week low`}</span>
-          <span>{`${globalMax}° week high →`}</span>
-        </div>
-        <div className="text-right text-[10px] text-white/22">💧 PoP</div>
-      </div>
+      <DailyRangeRows daily={daily} expandable />
       </div>
     </div>
   );
