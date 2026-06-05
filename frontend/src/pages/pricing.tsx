@@ -2,7 +2,19 @@ import { PricingTable } from "@clerk/react";
 import { Link } from "react-router-dom";
 
 import { billingEnabled, pricingPreviewEnabled } from "@/lib/entitlements";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+
+const pricingAppearance = {
+  variables: {
+    colorBackground: "#13161f",
+    colorInputBackground: "#161922",
+    colorInputText: "#f8fafc",
+    colorText: "#f8fafc",
+    colorTextSecondary: "#94a3b8",
+    colorPrimary: "#22d3ee",
+    colorDanger: "#fb7185",
+    borderRadius: "0.5rem",
+  },
+};
 
 export default function Pricing() {
   const pricingAvailable = billingEnabled || pricingPreviewEnabled;
@@ -28,14 +40,14 @@ export default function Pricing() {
   }
 
   return (
-    <section className="mx-auto max-w-6xl py-8">
+    <section className="mx-auto max-w-6xl overflow-y-auto py-8">
       <div className="mb-7 space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-200/70">CartoSky Pro</p>
         <h1 className="text-3xl font-semibold tracking-normal text-white md:text-4xl">CartoSky Pro</h1>
       </div>
       <PricingTable
-        appearance={clerkAppearance}
-        checkoutProps={{ appearance: clerkAppearance }}
+        appearance={pricingAppearance}
+        checkoutProps={{ appearance: pricingAppearance }}
         newSubscriptionRedirectUrl="/viewer"
       />
     </section>

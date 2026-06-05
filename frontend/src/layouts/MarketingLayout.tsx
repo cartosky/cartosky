@@ -4,7 +4,7 @@ import SiteFooter from "../components/SiteFooter";
 
 export default function MarketingLayout() {
   return (
-    <div className="relative min-h-svh overflow-hidden bg-[#07111f] text-white">
+    <div className="relative min-h-svh overflow-x-hidden bg-[#07111f] text-white">
       <div
         aria-hidden="true"
         className="absolute md:fixed inset-0 -z-10"
