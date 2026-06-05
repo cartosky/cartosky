@@ -719,6 +719,11 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
       <path d={lowPath} fill="none" stroke="rgba(103,232,249,0.30)"
         strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
 
+      {hoverIdx === null && (
+        <line x1={0} x2={VW} y1={VH - 12} y2={VH - 12}
+          stroke="rgba(255,255,255,0.07)" strokeWidth={0.5} />
+      )}
+
       {hoverIdx === null && labelIdxs.map(i => {
         const e = daily[i];
         const x = xAt(i);
@@ -735,8 +740,8 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
             </text>
             <text x={x} y={VH - 4} textAnchor={anchor}
               dominantBaseline="alphabetic"
-              fontSize={5.8} fontWeight="400" fill="rgba(255,255,255,0.24)">
-              {formatDayLabel(e.date, i).toUpperCase()}
+              fontSize={5.8} fontWeight="400" fill="rgba(168,200,216,0.55)">
+              {formatDayLabel(e.date, i)}
             </text>
           </g>
         );
