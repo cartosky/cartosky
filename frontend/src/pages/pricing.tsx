@@ -6,10 +6,11 @@ import { billingEnabled, pricingPreviewEnabled } from "@/lib/entitlements";
 const pricingAppearance = {
   variables: {
     colorBackground: "#13161f",
-    colorInputBackground: "#161922",
-    colorInputText: "#f8fafc",
-    colorText: "#f8fafc",
-    colorTextSecondary: "#94a3b8",
+    colorInput: "#161922",
+    colorInputForeground: "#f8fafc",
+    colorForeground: "#f8fafc",
+    colorMutedForeground: "#94a3b8",
+    colorNeutral: "#ffffff",
     colorPrimary: "#22d3ee",
     colorDanger: "#fb7185",
     borderRadius: "0.5rem",
