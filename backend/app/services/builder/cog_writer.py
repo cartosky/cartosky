@@ -489,6 +489,7 @@ def warp_to_target_grid(
     resampling: str = "bilinear",
     src_nodata: float | None = None,
     dst_nodata: float = float("nan"),
+    working_dtype: Any = np.float64,
 ) -> tuple[np.ndarray, rasterio.transform.Affine]:
     """Reproject a 2-D array to the target EPSG:3857 grid for a model/region.
 
@@ -509,6 +510,10 @@ def warp_to_target_grid(
         Resampling method name (e.g. "bilinear", "nearest").
     src_nodata, dst_nodata : float or None
         Nodata values for source and destination.
+    working_dtype : numpy dtype, optional
+        Floating dtype used for the in-memory reprojection source and destination.
+        Defaults to float64 for legacy callers; memory-sensitive observed products
+        can opt into float32.
 
     Returns
     -------
@@ -519,14 +524,18 @@ def warp_to_target_grid(
     dst_crs = rasterio.crs.CRS.from_epsg(3857)
 
     resamp = Resampling[resampling]
+    resolved_dtype = np.dtype(working_dtype)
+    if resolved_dtype.kind != "f":
+        raise ValueError(f"working_dtype must be a floating dtype, got {resolved_dtype}")
 
     # Expand to 3-D for reproject
     src_3d = data[np.newaxis, :, :] if data.ndim == 2 else data
     band_count = src_3d.shape[0]
-    dst_3d = np.full((band_count, dst_h, dst_w), dst_nodata, dtype=np.float64)
+    src_work = src_3d.astype(resolved_dtype, copy=False)
+    dst_3d = np.full((band_count, dst_h, dst_w), dst_nodata, dtype=resolved_dtype)
 
     reproject(
-        source=src_3d.astype(np.float64),
+        source=src_work,
         destination=dst_3d,
         src_transform=src_transform,
         src_crs=src_crs,
@@ -541,7 +550,7 @@ def warp_to_target_grid(
     if data.ndim == 2:
         dst_3d = dst_3d[0]
 
-    return dst_3d.astype(np.float32), dst_transform
+    return dst_3d.astype(np.float32, copy=False), dst_transform
 
 
 # ---------------------------------------------------------------------------

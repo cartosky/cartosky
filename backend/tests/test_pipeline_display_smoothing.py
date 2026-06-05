@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.services.builder.colorize import float_to_rgba
+from app.services.builder.colorize import colorize_metadata, float_to_rgba
 from app.services.builder.pipeline import _prepare_display_data_for_colorize, _warp_resampling_for_variable
 
 
@@ -86,3 +86,72 @@ def test_continuous_power_norm_expands_low_end() -> None:
     assert int(power_rgba[0, 0, 0]) > int(linear_rgba[0, 0, 0])
     assert power_meta["power_norm_gamma"] == 0.72
     assert "power_norm_gamma" not in linear_meta
+
+
+def test_colorize_metadata_matches_full_rgba_metadata_for_supported_kinds() -> None:
+    data = np.array(
+        [
+            [np.nan, 0.0, 1.0],
+            [2.0, 3.0, 4.0],
+        ],
+        dtype=np.float32,
+    )
+    specs = [
+        {
+            "type": "continuous",
+            "range": [0.0, 4.0],
+            "colors": ["#000000", "#ffffff"],
+            "units": "in",
+            "legend_title": "Continuous Test",
+        },
+        {
+            "type": "discrete",
+            "levels": [0.0, 1.0, 2.0, 3.0],
+            "colors": ["#000000", "#777777", "#ffffff"],
+            "units": "dBZ",
+            "legend_entries": [["low", "#000000"], ["high", "#ffffff"]],
+        },
+        {
+            "type": "indexed",
+            "colors": ["#000000", "#ff0000", "#00ff00", "#0000ff"],
+            "units": "index",
+            "transparent_zero": True,
+            "ptype_order": ["rain", "snow"],
+        },
+    ]
+
+    for spec in specs:
+        _rgba, full_meta = float_to_rgba(
+            data,
+            "metadata_test",
+            meta_var_key="metadata_test_var",
+            spec_override=spec,
+        )
+        metadata_only = colorize_metadata(
+            data,
+            "metadata_test",
+            meta_var_key="metadata_test_var",
+            spec_override=spec,
+        )
+        assert metadata_only == full_meta
+
+
+def test_float_to_rgba_still_materializes_expected_rgba() -> None:
+    data = np.array([[np.nan, 0.0, 2.0]], dtype=np.float32)
+    spec = {
+        "type": "continuous",
+        "range": [0.0, 2.0],
+        "colors": ["#000000", "#ffffff"],
+        "transparent_below_min": 0.1,
+        "units": "in",
+    }
+
+    rgba, meta = float_to_rgba(data, "rgba_test", spec_override=spec)
+
+    assert rgba.shape == (4, 1, 3)
+    assert rgba.dtype == np.uint8
+    assert tuple(int(v) for v in rgba[:, 0, 0]) == (0, 0, 0, 0)
+    assert tuple(int(v) for v in rgba[:, 0, 1]) == (0, 0, 0, 0)
+    assert tuple(int(v) for v in rgba[:, 0, 2]) == (255, 255, 255, 255)
+    assert meta["min"] == 0.0
+    assert meta["max"] == 2.0

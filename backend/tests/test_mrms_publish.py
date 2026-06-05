@@ -115,10 +115,11 @@ def test_publish_mrms_bundle_warps_native_grid_before_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_small_grid(monkeypatch)
-    captured: dict[str, tuple[int, int]] = {}
+    captured: dict[str, object] = {}
 
     def _warp(values, *args, **kwargs):
         captured["input_shape"] = np.asarray(values).shape
+        captured["working_dtype"] = np.dtype(kwargs.get("working_dtype")).name
         return np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
 
     monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
@@ -138,6 +139,7 @@ def test_publish_mrms_bundle_warps_native_grid_before_write(
 
     assert result.frame_count == 1
     assert captured["input_shape"] == (4, 5)
+    assert captured["working_dtype"] == "float32"
 
 
 def test_publish_mrms_bundle_smooths_display_only_not_value_grid(
@@ -153,16 +155,15 @@ def test_publish_mrms_bundle_smooths_display_only_not_value_grid(
         lambda values, **_: np.asarray(values, dtype=np.float32) + np.float32(1.5),
     )
 
-    def _float_to_rgba(values, *_args, **_kwargs):
-        captured["rgba_input"] = np.asarray(values, dtype=np.float32).copy()
-        rgba = np.zeros((4, values.shape[0], values.shape[1]), dtype=np.uint8)
-        return rgba, {"legend_title": "MRMS Reflectivity (dBZ)"}
+    def _colorize_metadata(values, *_args, **_kwargs):
+        captured["metadata_input"] = np.asarray(values, dtype=np.float32).copy()
+        return {"legend_title": "MRMS Reflectivity (dBZ)"}
 
     def _write_value(values, output_path, **_kwargs):
         captured["value_input"] = np.asarray(values, dtype=np.float32).copy()
         return _write_test_value_raster(Path(output_path), captured["value_input"]) or Path(output_path)
 
-    monkeypatch.setattr(mrms_publish, "float_to_rgba", _float_to_rgba)
+    monkeypatch.setattr(mrms_publish, "colorize_metadata", _colorize_metadata)
     monkeypatch.setattr(mrms_publish, "write_value_cog", _write_value)
 
     frame = mrms_publish.MRMSBundleFrame(
@@ -177,7 +178,7 @@ def test_publish_mrms_bundle_smooths_display_only_not_value_grid(
     )
 
     np.testing.assert_allclose(
-        captured["rgba_input"],
+        captured["metadata_input"],
         np.array([[11.5, 13.5, 15.5], [17.5, 19.5, 21.5]], dtype=np.float32),
     )
     np.testing.assert_allclose(
@@ -206,7 +207,7 @@ def test_failed_publish_preserves_previous_latest_pointer(
     def _fail_colorize(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(mrms_publish, "float_to_rgba", _fail_colorize)
+    monkeypatch.setattr(mrms_publish, "colorize_metadata", _fail_colorize)
 
     with pytest.raises(RuntimeError, match="boom"):
         mrms_publish.publish_mrms_bundle(

@@ -18,7 +18,7 @@ from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
 from ..config import grid_build_enabled
 from ..models.mrms import MRMS_MODEL
-from .builder.colorize import float_to_rgba
+from .builder.colorize import colorize_metadata
 from .builder.cog_writer import (
     compute_transform_and_shape,
     get_grid_params,
@@ -28,6 +28,7 @@ from .builder.cog_writer import (
 from .builder.pipeline import build_sidecar_json
 from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER
 from .observed_bundle_health import build_observed_bundle_health
+from .process_memory import current_rss_bytes, peak_rss_bytes
 from .publish_utils import (
     promote_run,
     write_json_atomic,
@@ -63,6 +64,31 @@ MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
 }
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _array_mib(value: Any) -> float:
+    if isinstance(value, np.ndarray):
+        return _bytes_to_mib(int(value.nbytes))
+    return 0.0
+
+
+def _log_mrms_publish_memory(stage: str, **details: Any) -> None:
+    detail_tokens = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(details.items())
+    )
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "MRMS memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
+        suffix,
+    )
 
 # ---------------------------------------------------------------------------
 # PrecipFlag → ptype mapping
@@ -515,6 +541,14 @@ def write_mrms_frame(
     )
 
     values = _warp_frame_to_target_grid(values, frame=frame)
+    _log_mrms_publish_memory(
+        "after_warp",
+        run_id=run_id,
+        var=MRMS_VARIABLE_ID,
+        fh=f"{int(forecast_hour):03d}",
+        source_values_mib=f"{_array_mib(frame.values):.1f}",
+        warped_values_mib=f"{_array_mib(values):.1f}",
+    )
     logger.info(
         "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
         run_id,
@@ -532,7 +566,17 @@ def write_mrms_frame(
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    _, colorize_meta = float_to_rgba(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
+    colorize_meta = colorize_metadata(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
+    _log_mrms_publish_memory(
+        "after_colorization",
+        run_id=run_id,
+        var=MRMS_VARIABLE_ID,
+        fh=f"{int(forecast_hour):03d}",
+        values_mib=f"{_array_mib(values):.1f}",
+        display_values_mib=f"{_array_mib(display_values):.1f}",
+        metadata_only="true",
+        rgba_mib="0.0",
+    )
     write_value_cog(
         values,
         value_path,
@@ -813,6 +857,7 @@ def _warp_frame_to_target_grid(values: np.ndarray, *, frame: MRMSBundleFrame) ->
             model=MRMS_MODEL_ID,
             region=MRMS_REGION_ID,
             resampling="bilinear",
+            working_dtype=np.float32,
         )
         return np.asarray(warped_values, dtype=np.float32)
 
@@ -951,6 +996,16 @@ def write_mrms_radar_ptype_frame(
         source_transform=frame.source_transform,
     )
     precip_flag = _warp_frame_to_target_grid(precip_flag, frame=pf_frame)
+    _log_mrms_publish_memory(
+        "after_warp",
+        run_id=run_id,
+        var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+        fh=f"{int(forecast_hour):03d}",
+        source_reflectivity_mib=f"{_array_mib(frame.values):.1f}",
+        source_precip_flag_mib=f"{_array_mib(frame.precip_flag_values):.1f}",
+        warped_reflectivity_mib=f"{_array_mib(reflectivity):.1f}",
+        warped_precip_flag_mib=f"{_array_mib(precip_flag):.1f}",
+    )
     logger.info(
         "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
         run_id,
@@ -960,6 +1015,15 @@ def write_mrms_radar_ptype_frame(
     )
 
     indexed = compose_mrms_radar_ptype(reflectivity, precip_flag)
+    _log_mrms_publish_memory(
+        "after_ptype_compose",
+        run_id=run_id,
+        var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+        fh=f"{int(forecast_hour):03d}",
+        indexed_mib=f"{_array_mib(indexed):.1f}",
+        reflectivity_mib=f"{_array_mib(reflectivity):.1f}",
+        precip_flag_mib=f"{_array_mib(precip_flag):.1f}",
+    )
 
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
@@ -968,7 +1032,16 @@ def write_mrms_radar_ptype_frame(
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    _, colorize_meta = float_to_rgba(indexed, MRMS_RADAR_PTYPE_COLOR_MAP_ID, meta_var_key=MRMS_RADAR_PTYPE_VARIABLE_ID)
+    colorize_meta = colorize_metadata(indexed, MRMS_RADAR_PTYPE_COLOR_MAP_ID, meta_var_key=MRMS_RADAR_PTYPE_VARIABLE_ID)
+    _log_mrms_publish_memory(
+        "after_colorization",
+        run_id=run_id,
+        var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+        fh=f"{int(forecast_hour):03d}",
+        indexed_mib=f"{_array_mib(indexed):.1f}",
+        metadata_only="true",
+        rgba_mib="0.0",
+    )
     write_value_cog(
         indexed,
         value_path,
@@ -1076,6 +1149,14 @@ def _write_mrms_supplemental_frame_to_run_root(
     )
 
     warped_values = _warp_supplemental_values(frame.values, frame=frame)
+    _log_mrms_publish_memory(
+        "after_warp",
+        run_id=run_id,
+        var=var_id,
+        fh=f"{int(forecast_hour):03d}",
+        source_values_mib=f"{_array_mib(frame.values):.1f}",
+        warped_values_mib=f"{_array_mib(warped_values):.1f}",
+    )
     logger.info(
         "MRMS publish phase=reproject run=%s var=%s fh=%03d elapsed=%.1fs",
         run_id,
@@ -1091,7 +1172,16 @@ def _write_mrms_supplemental_frame_to_run_root(
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    _, colorize_meta = float_to_rgba(warped_values, color_map_id, meta_var_key=var_id)
+    colorize_meta = colorize_metadata(warped_values, color_map_id, meta_var_key=var_id)
+    _log_mrms_publish_memory(
+        "after_colorization",
+        run_id=run_id,
+        var=var_id,
+        fh=f"{int(forecast_hour):03d}",
+        warped_values_mib=f"{_array_mib(warped_values):.1f}",
+        metadata_only="true",
+        rgba_mib="0.0",
+    )
     write_value_cog(
         warped_values,
         value_path,

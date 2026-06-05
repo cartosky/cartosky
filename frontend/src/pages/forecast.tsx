@@ -736,7 +736,7 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
             <text x={x} y={VH - 4} textAnchor={anchor}
               dominantBaseline="alphabetic"
               fontSize={5.8} fontWeight="400" fill="rgba(255,255,255,0.24)">
-              {formatDayLabel(e.date, i)}
+              {formatDayLabel(e.date, i).toUpperCase()}
             </text>
           </g>
         );

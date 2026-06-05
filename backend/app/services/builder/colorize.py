@@ -51,15 +51,12 @@ def float_to_rgba(
     meta : dict
         Sidecar metadata for the frame JSON (legend info, units, etc.).
     """
-    if data.ndim != 2:
-        raise ValueError(f"data must be 2-D, got shape {data.shape}")
-
-    var_key = meta_var_key or color_map_id
-    spec = spec_override if spec_override is not None else get_color_map_spec(color_map_id)
-    if spec is None:
-        raise KeyError(f"Unknown color_map_id: {color_map_id!r}")
-
-    kind = spec.get("type")
+    var_key, spec, kind = _resolve_colorize_context(
+        data,
+        color_map_id,
+        meta_var_key=meta_var_key,
+        spec_override=spec_override,
+    )
     if kind == "continuous":
         rgba, meta = _colorize_continuous(data, var_key, spec)
     elif kind == "discrete":
@@ -72,6 +69,58 @@ def float_to_rgba(
     return rgba, meta
 
 
+def colorize_metadata(
+    data: np.ndarray,
+    color_map_id: str,
+    *,
+    meta_var_key: str | None = None,
+    spec_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return colorization sidecar metadata without allocating an RGBA raster.
+
+    MRMS CONUS target grids are roughly 4609 x 8238. A full RGBA result for one
+    frame is about 145 MiB, and the colorization path also creates transient
+    masks/index arrays. MRMS publish only needs the metadata because it writes
+    value COG/grid artifacts, so this path keeps sidecar metadata identical
+    while avoiding the unused RGBA allocation.
+    """
+    var_key, spec, _kind = _resolve_colorize_context(
+        data,
+        color_map_id,
+        meta_var_key=meta_var_key,
+        spec_override=spec_override,
+    )
+    finite_mask = np.isfinite(data)
+    return _build_meta(var_key, spec, data, finite_mask)
+
+
+def _resolve_colorize_context(
+    data: np.ndarray,
+    color_map_id: str,
+    *,
+    meta_var_key: str | None,
+    spec_override: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any], str]:
+    if data.ndim != 2:
+        raise ValueError(f"data must be 2-D, got shape {data.shape}")
+
+    var_key = meta_var_key or color_map_id
+    spec = spec_override if spec_override is not None else get_color_map_spec(color_map_id)
+    if spec is None:
+        raise KeyError(f"Unknown color_map_id: {color_map_id!r}")
+
+    kind = spec.get("type")
+    if kind == "continuous":
+        _continuous_range_and_validate_palette(var_key, spec)
+    elif kind == "discrete":
+        _discrete_levels_colors(var_key, spec)
+    elif kind == "indexed":
+        _indexed_colors(var_key, spec)
+    else:
+        raise ValueError(f"Unsupported spec type for {var_key!r}: {kind!r}")
+    return var_key, spec, str(kind)
+
+
 # ---------------------------------------------------------------------------
 # Continuous: float → scale 0–255 → LUT → RGBA
 # ---------------------------------------------------------------------------
@@ -82,12 +131,7 @@ def _colorize_continuous(
     var_key: str,
     spec: dict[str, Any],
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    range_vals = spec.get("range")
-    if not range_vals or len(range_vals) != 2:
-        raise ValueError(f"Continuous spec for {var_key!r} must include range (min, max)")
-    range_min, range_max = float(range_vals[0]), float(range_vals[1])
-    if range_max == range_min:
-        raise ValueError(f"Continuous spec for {var_key!r} has zero-width range")
+    range_min, range_max = _continuous_range_and_validate_palette(var_key, spec)
 
     anchors = spec.get("color_anchors") or spec.get("anchors")
     if anchors:
@@ -98,12 +142,7 @@ def _colorize_continuous(
             range_vals=(range_min, range_max),
         )
     else:
-        colors: list[str] | None = spec.get("colors")
-        if not colors:
-            raise ValueError(
-                f"Continuous spec for {var_key!r} must include either "
-                f"'color_anchors'/'anchors' or 'colors'"
-            )
+        colors = list(spec.get("colors") or [])
         # Build 256-entry RGBA LUT from evenly spaced color ramp stops.
         lut = build_continuous_lut(colors, n=256)  # (256, 4) uint8
 
@@ -143,6 +182,24 @@ def _colorize_continuous(
     return rgba, meta
 
 
+def _continuous_range_and_validate_palette(var_key: str, spec: dict[str, Any]) -> tuple[float, float]:
+    range_vals = spec.get("range")
+    if not range_vals or len(range_vals) != 2:
+        raise ValueError(f"Continuous spec for {var_key!r} must include range (min, max)")
+    range_min, range_max = float(range_vals[0]), float(range_vals[1])
+    if range_max == range_min:
+        raise ValueError(f"Continuous spec for {var_key!r} has zero-width range")
+
+    anchors = spec.get("color_anchors") or spec.get("anchors")
+    colors = spec.get("colors")
+    if not anchors and not colors:
+        raise ValueError(
+            f"Continuous spec for {var_key!r} must include either "
+            f"'color_anchors'/'anchors' or 'colors'"
+        )
+    return range_min, range_max
+
+
 # ---------------------------------------------------------------------------
 # Discrete: float → bin via np.digitize → LUT → RGBA
 # ---------------------------------------------------------------------------
@@ -153,14 +210,7 @@ def _colorize_discrete(
     var_key: str,
     spec: dict[str, Any],
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    levels: list[float] | None = spec.get("levels")
-    colors: list[str] | None = spec.get("colors")
-    if not levels or not colors:
-        raise ValueError(f"Discrete spec for {var_key!r} must include levels and colors")
-    if len(levels) < 2:
-        raise ValueError(
-            f"Discrete spec for {var_key!r} must have at least 2 levels, got {len(levels)}"
-        )
+    levels, colors = _discrete_levels_colors(var_key, spec)
 
     # Build LUT: one RGBA entry per color
     lut = build_discrete_lut(colors)  # (256, 4) uint8
@@ -195,6 +245,18 @@ def _colorize_discrete(
     return rgba, meta
 
 
+def _discrete_levels_colors(var_key: str, spec: dict[str, Any]) -> tuple[list[float], list[str]]:
+    levels: list[float] | None = spec.get("levels")
+    colors: list[str] | None = spec.get("colors")
+    if not levels or not colors:
+        raise ValueError(f"Discrete spec for {var_key!r} must include levels and colors")
+    if len(levels) < 2:
+        raise ValueError(
+            f"Discrete spec for {var_key!r} must have at least 2 levels, got {len(levels)}"
+        )
+    return levels, colors
+
+
 # ---------------------------------------------------------------------------
 # Indexed: pre-computed palette index → LUT → RGBA
 # Used for composite products (radar_ptype, ptype_intensity) where the derive
@@ -207,9 +269,7 @@ def _colorize_indexed(
     var_key: str,
     spec: dict[str, Any],
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    colors: list[str] | None = spec.get("colors")
-    if not colors:
-        raise ValueError(f"Indexed spec for {var_key!r} must include colors")
+    colors = _indexed_colors(var_key, spec)
 
     # Build LUT: one RGBA entry per color (up to 256)
     lut = build_discrete_lut(colors)  # (256, 4) uint8
@@ -242,6 +302,13 @@ def _colorize_indexed(
 
     meta = _build_meta(var_key, spec, data, finite_mask)
     return rgba, meta
+
+
+def _indexed_colors(var_key: str, spec: dict[str, Any]) -> list[str]:
+    colors: list[str] | None = spec.get("colors")
+    if not colors:
+        raise ValueError(f"Indexed spec for {var_key!r} must include colors")
+    return colors
 
 
 # ---------------------------------------------------------------------------

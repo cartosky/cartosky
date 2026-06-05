@@ -44,6 +44,7 @@ from app.services.mrms_publish import (
     publish_mrms_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import (
     enforce_run_artifact_retention,
 )
@@ -238,6 +239,12 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         previous_run_id=latest_run_id,
         previous_manifest=previous_manifest,
     )
+    _log_mrms_memory_checkpoint(
+        "before_build",
+        new_frames=len(frames),
+        previous_frames=len(previous_frames),
+        supplemental_plans=len(supplemental_plans),
+    )
     with tempfile.TemporaryDirectory(prefix="cartosky-mrms-") as tmpdir:
         download_dir = Path(tmpdir)
         total_scans = len(scans_to_decode)
@@ -272,6 +279,14 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
                 logger.warning("Skipping MRMS scan %s after fetch/decode failure: %s", scan.filename, exc)
                 failed_scans.append(scan.filename)
 
+    _log_mrms_memory_checkpoint(
+        "after_decode",
+        new_frames=len(frames),
+        previous_frames=len(previous_frames),
+        decoded_array_mib=_frames_array_mib(frames),
+        failed=len(failed_scans),
+    )
+
     available_valid_times = {
         frame.valid_time.astimezone(timezone.utc)
         for frame in previous_frames
@@ -302,44 +317,61 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         len(failed_scans),
         _format_iso(newest_scan_valid_time),
     )
-    publish_result = publish_mrms_bundle(
-        data_root=config.data_root,
-        frames=frames,
-        publish_time=datetime.now(timezone.utc),
-        frame_write_workers=config.frame_write_workers,
-        previous_frames=previous_frames,
-        target_frame_count=len(frozen),
-        expected_frame_count=len(frozen),
-        build_grid_artifacts=False,
-    )
-    if supplemental_plans or grid_build_enabled():
-        _schedule_postprocess(
-            MRMSPostprocessRequest(
-                data_root=config.data_root,
-                run_id=publish_result.run_id,
-                previous_run_id=latest_run_id,
-                config=config,
-                supplemental_plans=tuple(supplemental_plans),
-            )
+    try:
+        publish_result = publish_mrms_bundle(
+            data_root=config.data_root,
+            frames=frames,
+            publish_time=datetime.now(timezone.utc),
+            frame_write_workers=config.frame_write_workers,
+            previous_frames=previous_frames,
+            target_frame_count=len(frozen),
+            expected_frame_count=len(frozen),
+            build_grid_artifacts=False,
         )
-    _enforce_retention(config)
+        _log_mrms_memory_checkpoint(
+            "after_publication",
+            run_id=publish_result.run_id,
+            new_frames=len(frames),
+            previous_frames=len(previous_frames),
+            decoded_array_mib=_frames_array_mib(frames),
+        )
+        if supplemental_plans or grid_build_enabled():
+            _schedule_postprocess(
+                MRMSPostprocessRequest(
+                    data_root=config.data_root,
+                    run_id=publish_result.run_id,
+                    previous_run_id=latest_run_id,
+                    config=config,
+                    supplemental_plans=tuple(supplemental_plans),
+                )
+            )
+        _enforce_retention(config)
 
-    message = (
-        f"Published MRMS bundle {publish_result.run_id} "
-        f"with {available_for_window}/{len(frozen)} frames"
-    )
-    if failed_scans:
-        message += f" ({len(failed_scans)} failed scans skipped)"
+        message = (
+            f"Published MRMS bundle {publish_result.run_id} "
+            f"with {available_for_window}/{len(frozen)} frames"
+        )
+        if failed_scans:
+            message += f" ({len(failed_scans)} failed scans skipped)"
 
-    return MRMSPollerCycleResult(
-        action="published",
-        latest_scan_valid_time=_format_iso(newest_scan_valid_time),
-        published_run_id=publish_result.run_id,
-        expected_frame_count=len(frozen),
-        decoded_frame_count=available_for_window,
-        failed_scan_count=len(failed_scans),
-        message=message,
-    )
+        return MRMSPollerCycleResult(
+            action="published",
+            latest_scan_valid_time=_format_iso(newest_scan_valid_time),
+            published_run_id=publish_result.run_id,
+            expected_frame_count=len(frozen),
+            decoded_frame_count=available_for_window,
+            failed_scan_count=len(failed_scans),
+            message=message,
+        )
+    finally:
+        frames = []
+        collected = gc.collect()
+        _log_mrms_memory_checkpoint(
+            "after_cleanup",
+            new_frames=len(frames),
+            previous_frames=len(previous_frames),
+            gc_collected=collected,
+        )
 
 
 def run_poller(config: MRMSPollerConfig, *, once: bool) -> int:
@@ -794,6 +826,39 @@ def _format_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _array_nbytes(value: Any) -> int:
+    if isinstance(value, np.ndarray):
+        return int(value.nbytes)
+    return 0
+
+
+def _frames_array_mib(frames: list[MRMSBundleFrame]) -> float:
+    total_bytes = 0
+    for frame in frames:
+        total_bytes += _array_nbytes(frame.values)
+        total_bytes += _array_nbytes(frame.precip_flag_values)
+    return _bytes_to_mib(total_bytes)
+
+
+def _log_mrms_memory_checkpoint(stage: str, **details: Any) -> None:
+    detail_tokens = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(details.items())
+    )
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "MRMS memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
+        suffix,
+    )
 
 
 def _plan_recent_precip_postprocess(
