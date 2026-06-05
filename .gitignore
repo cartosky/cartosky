@@ -50,6 +50,7 @@ frontend/yarn-error.log*
 frontend/.env
 frontend/.env.local
 frontend/.env.*.local
+backend/.env.local
 
 # IDE
 frontend/.vscode/

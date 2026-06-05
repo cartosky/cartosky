@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Search, Star, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ChevronDown, LockKeyhole, Search, Star, X } from "lucide-react";
 
 import type { GroupedOption } from "@/lib/app-utils";
+import { useEntitlements } from "@/lib/entitlements";
 import { useModelFavorites } from "@/lib/use-model-favorites";
 import { cn } from "@/lib/utils";
 
@@ -76,6 +78,8 @@ export function ModelPicker({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
+  const entitlements = useEntitlements();
   const { favorites, favoriteSet, toggleFavorite } = useModelFavorites();
 
   const modelOptions = useMemo(() => {
@@ -278,6 +282,13 @@ export function ModelPicker({
   }, [highlightedIndex]);
 
   const chooseModel = (modelId: string) => {
+    if (!entitlements.canAccessProduct(modelId)) {
+      if (entitlements.billingEnabled || entitlements.pricingPreviewEnabled) {
+        setOpenState(false);
+        navigate("/pricing");
+      }
+      return;
+    }
     onChange(modelId);
     setOpenState(false);
   };
@@ -355,6 +366,8 @@ export function ModelPicker({
             const highlighted = index === highlightedIndex;
             const categoryLabel = MODEL_CATEGORY_LABELS.get(normalizeModelGroup(option.group) ?? "MODELS") ?? "Models";
             const favorited = favoriteSet.has(option.value);
+            const lockedReason = entitlements.getLockedReason(option.value);
+            const locked = Boolean(lockedReason);
             return (
               <div
                 key={option.value}
@@ -386,9 +399,20 @@ export function ModelPicker({
                   type="button"
                   onClick={() => chooseModel(option.value)}
                   onMouseEnter={() => setHighlightedIndex(index)}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  aria-disabled={locked}
+                  title={lockedReason ?? undefined}
+                  className={cn(
+                    "flex min-w-0 flex-1 items-center gap-2 text-left",
+                    locked ? "cursor-pointer text-white/56" : ""
+                  )}
                 >
                   <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                  {locked ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-cyan-200/12 bg-white/[0.055] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-100/70">
+                      <LockKeyhole className="h-3 w-3" />
+                      Pro
+                    </span>
+                  ) : null}
                   {hasSearch ? (
                     <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
                       {categoryLabel}

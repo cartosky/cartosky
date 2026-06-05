@@ -23,6 +23,7 @@ import {
 
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { API_ORIGIN, API_V4_BASE } from "@/lib/config";
+import { billingEnabled, pricingPreviewEnabled } from "@/lib/entitlements";
 import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 import { cn } from "@/lib/utils";
 import { useFeedbackContext } from "@/lib/feedback-context";
@@ -1771,6 +1772,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
   const isAppVariant = variant === "app";
   const isMarketingVariant = variant === "marketing";
+  const showPricingNav = billingEnabled || pricingPreviewEnabled;
   const isViewerRoute = location.pathname === "/viewer";
   const showAppNav = isAppVariant && !isViewerRoute;
   const isViewerDesktop = isViewerRoute && (
@@ -1892,6 +1894,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
               Viewer
             </NavLink>
             <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
+            {showPricingNav ? <NavItem to="/pricing" label="Pricing" /> : null}
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <button
               type="button"
@@ -1922,6 +1925,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
         {showAppNav ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
             <NavItem to="/viewer" label="Viewer" />
+            {showPricingNav ? <NavItem to="/pricing" label="Pricing" /> : null}
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <button
               type="button"
@@ -1969,6 +1973,9 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <div className="flex flex-col gap-1">
                   <NavItem to="/viewer" label="Viewer" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   <NavItem to="/forecast" label="Forecast" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  {showPricingNav ? (
+                    <NavItem to="/pricing" label="Pricing" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  ) : null}
                   {adminEnabled ? (
                     <NavItem to="/admin" label="Admin" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   ) : null}

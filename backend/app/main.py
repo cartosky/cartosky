@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv("backend/.env.local")
 import hashlib
 import io
 import json
@@ -82,7 +84,7 @@ from .services import admin_telemetry, feedback_service, forecast_page as foreca
 from .services import nws as nws_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, maybe_clerk_user, require_clerk_admin, require_clerk_user
-from backend.app.auth import twf_oauth
+from backend.app.auth import entitlements, twf_oauth
 
 logger = logging.getLogger(__name__)
 
@@ -3099,6 +3101,12 @@ def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_tok
     )
 
 
+def _product_cache_control(model: str, public_cache_control: str) -> str:
+    if entitlements.pro_gating_enabled() and entitlements.get_required_feature_for_product(model) is not None:
+        return "private, no-store"
+    return public_cache_control
+
+
 def _grid_manifest_frame_file_is_valid(
     *,
     model: str,
@@ -3688,7 +3696,10 @@ def list_region_presets(request: Request):
 
 
 @app.get("/api/v4/models")
-def list_models_v4(request: Request):
+def list_models_v4(
+    request: Request,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
     capabilities_payload = _build_capabilities_payload()
     supported_models = capabilities_payload["supported_models"]
     model_catalog = capabilities_payload["model_catalog"]
@@ -3697,14 +3708,22 @@ def list_models_v4(request: Request):
         {
             "id": model_id,
             "name": model_catalog.get(model_id, {}).get("name", model_id.upper()),
-            "latest_run": availability.get(model_id, {}).get("latest_run"),
-            "published_runs": availability.get(model_id, {}).get("published_runs", []),
+            "latest_run": (
+                availability.get(model_id, {}).get("latest_run")
+                if entitlements.can_access_product(principal, model_id)
+                else None
+            ),
+            "published_runs": (
+                availability.get(model_id, {}).get("published_runs", [])
+                if entitlements.can_access_product(principal, model_id)
+                else []
+            ),
         }
         for model_id in supported_models
     ]
-    cache_control = "public, max-age=60"
+    cache_control = "private, no-store" if entitlements.pro_gating_enabled() else "public, max-age=60"
     etag = _make_etag(payload)
-    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    r304 = None if entitlements.pro_gating_enabled() else _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
         return r304
     return JSONResponse(
@@ -3717,23 +3736,41 @@ def list_models_v4(request: Request):
 
 
 @app.get("/api/v4/capabilities")
-def get_capabilities_v4(request: Request):
+def get_capabilities_v4(
+    request: Request,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
     started_at = time.perf_counter()
     capabilities_by_model = list_model_capabilities()
     supported_models = sorted(capabilities_by_model.keys())
     availability = _resolve_capabilities_availability(supported_models, capabilities_by_model)
-    cache_control = "public, max-age=60"
+    cache_control = "private, no-store" if entitlements.pro_gating_enabled() else "public, max-age=60"
     etag = _capabilities_state_etag(capabilities_by_model, availability)
     timing_header = _format_server_timing(
         [
             ("capabilities_total", (time.perf_counter() - started_at) * 1000.0),
         ]
     )
-    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    r304 = None if entitlements.pro_gating_enabled() else _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
         r304.headers["Server-Timing"] = timing_header
         return r304
     payload = _build_capabilities_payload_for_models(capabilities_by_model, availability=availability)
+    if entitlements.pro_gating_enabled():
+        masked_availability = dict(payload.get("availability") or {})
+        for product_id in entitlements.protected_product_ids():
+            if entitlements.can_access_product(principal, product_id):
+                continue
+            current = masked_availability.get(product_id)
+            masked_availability[product_id] = {
+                **(current if isinstance(current, dict) else {}),
+                "latest_run": None,
+                "published_runs": [],
+                "latest_run_ready": False,
+                "latest_run_ready_vars": [],
+                "latest_run_ready_frame_count": 0,
+            }
+        payload = {**payload, "availability": masked_availability}
     return JSONResponse(
         content=payload,
         headers={
@@ -3752,6 +3789,7 @@ def get_bootstrap_v4(
     var: str | None = Query(None, description="Optional preferred variable ID"),
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional preferred region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     started_at = time.perf_counter()
     capabilities_by_model = list_model_capabilities()
@@ -3780,11 +3818,12 @@ def get_bootstrap_v4(
         selected_var = str(selection_state.get("selected_var") or "")
         selected_ensemble_view = str(selection_state.get("selected_ensemble_view") or "")
         selected_region = str(selection_state.get("selected_region") or "conus")
+        entitlements.require_product_access(principal, selected_model)
         if selected_run:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": selected_run})
     manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
 
-    cache_control = "public, max-age=60"
+    cache_control = _product_cache_control(selected_model, "public, max-age=60")
     etag = _bootstrap_state_etag(
         requested_run=run,
         selection_state=selection_state,
@@ -3894,8 +3933,13 @@ def get_bootstrap_v4(
 
 
 @app.get("/api/v4/models/{model}/capabilities")
-def get_model_capabilities_v4(request: Request, model: str):
+def get_model_capabilities_v4(
+    request: Request,
+    model: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
     model_id = model.strip().lower()
+    entitlements.require_product_access(principal, model_id)
     payload = _build_capabilities_payload()
     model_catalog = payload["model_catalog"]
     if model_id not in model_catalog:
@@ -3910,7 +3954,7 @@ def get_model_capabilities_v4(request: Request, model: str):
             {"latest_run": None, "published_runs": []},
         ),
     }
-    cache_control = "public, max-age=60"
+    cache_control = _product_cache_control(model_id, "public, max-age=60")
     etag = _make_etag(model_payload)
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
@@ -3925,9 +3969,14 @@ def get_model_capabilities_v4(request: Request, model: str):
 
 
 @app.get("/api/v4/{model}/runs")
-def list_runs(request: Request, model: str):
+def list_runs(
+    request: Request,
+    model: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    entitlements.require_product_access(principal, model)
     runs = _scan_manifest_runs(model)
-    cache_control = "public, max-age=60"
+    cache_control = _product_cache_control(model, "public, max-age=60")
     etag = _make_etag(runs)
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
     if r304 is not None:
@@ -3947,7 +3996,9 @@ def get_manifest(
     model: str,
     run: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -3970,7 +4021,7 @@ def get_manifest(
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
-    cache_control = "public, max-age=60"
+    cache_control = _product_cache_control(model, "public, max-age=60")
     etag = _make_etag(manifest)
     timing_header = _format_server_timing(
         [
@@ -3994,8 +4045,14 @@ def get_manifest(
 
 
 @app.get("/api/v4/{model}/{run}/vars")
-def list_vars(model: str, run: str, region: str | None = Query(None, description="Optional region preset ID")):
+def list_vars(
+    model: str,
+    run: str,
+    region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
     model_id = model.strip().lower()
+    entitlements.require_product_access(principal, model_id)
     resolved = _resolve_run(model_id, run, region=region)
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
@@ -4028,7 +4085,9 @@ def list_frames(
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -4093,7 +4152,7 @@ def list_frames(
 
     frames.sort(key=lambda row: row["fh"])
     frames_build_ms = (time.perf_counter() - frames_build_started_at) * 1000.0
-    cache_control = _frames_cache_control(run, run_complete=run_complete)
+    cache_control = _product_cache_control(model, _frames_cache_control(run, run_complete=run_complete))
     etag = _make_etag(frames)
     timing_header = _format_server_timing(
         [
@@ -4126,7 +4185,9 @@ def get_grid_manifest(
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
@@ -4267,7 +4328,7 @@ def get_grid_manifest(
         payload["contours"] = next_contours
     build_ms = (time.perf_counter() - build_started_at) * 1000.0
 
-    cache_control = "public, max-age=60"
+    cache_control = _product_cache_control(model, "public, max-age=60")
     etag = _make_etag(payload)
     timing_header = _format_server_timing(
         [
@@ -4292,7 +4353,16 @@ def get_grid_manifest(
     )
 
 
-def _get_grid_file(model: str, run: str, var: str, filename: str, *, region: str | None = None):
+def _get_grid_file(
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    *,
+    region: str | None = None,
+    principal: ClerkPrincipal | None = None,
+):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     resolved = _resolve_run(model, run, region=region)
     if resolved is None:
@@ -4359,7 +4429,7 @@ def _get_grid_file(model: str, run: str, var: str, filename: str, *, region: str
         ]
     )
     headers = {
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": _product_cache_control(model, "public, max-age=31536000, immutable"),
         "Server-Timing": timing_header,
     }
     if GRID_ACCEL_REDIRECT_ENABLED:
@@ -4391,8 +4461,9 @@ def get_grid_file(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, region=region)
+    return _get_grid_file(model, run, var, filename, region=region, principal=principal)
 
 
 @app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
@@ -4402,8 +4473,9 @@ def get_grid_file_compat(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, region=region)
+    return _get_grid_file(model, run, var, filename, region=region, principal=principal)
 
 
 @app.get("/api/v4/sample")
@@ -4417,7 +4489,9 @@ def sample(
     fh: int = Query(..., description="Forecast hour"),
     lat: float = Query(..., ge=-90, le=90, description="Latitude (WGS84)"),
     lon: float = Query(..., ge=-180, le=180, description="Longitude (WGS84)"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     client_id = request.client.host if request.client and request.client.host else "unknown"
     otel_tracing.set_current_attributes(
         {
@@ -4568,7 +4642,12 @@ def sample(
 
 
 @app.post("/api/v4/sample/batch")
-def sample_batch(request: Request, body: SampleBatchIn):
+def sample_batch(
+    request: Request,
+    body: SampleBatchIn,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    entitlements.require_product_access(principal, body.model)
     client_id = request.client.host if request.client and request.client.host else "unknown"
     otel_tracing.set_current_attributes(
         {
@@ -4710,7 +4789,9 @@ def get_contour_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
     if var_dir is None:
@@ -4757,7 +4838,7 @@ def get_contour_geojson(
             content=payload,
             media_type="application/geo+json",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": _product_cache_control(model, "public, max-age=31536000, immutable"),
                 "Server-Timing": timing_header,
             },
         )
@@ -4782,7 +4863,9 @@ def get_vector_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    entitlements.require_product_access(principal, model)
     started_at = time.perf_counter()
     var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
     if var_dir is None:

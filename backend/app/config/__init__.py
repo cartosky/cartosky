@@ -14,6 +14,13 @@ def _env_value(name: str, default: str = "") -> str:
     return str(raw)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = _env_value(name).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
 @lru_cache(maxsize=1)
 def clerk_secret_key() -> str:
     return _env_value("CLERK_SECRET_KEY").strip()
@@ -35,6 +42,16 @@ def clerk_authorized_parties() -> list[str]:
     if not raw:
         return []
     return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+@lru_cache(maxsize=1)
+def billing_enabled() -> bool:
+    return _env_bool("CARTOSKY_BILLING_ENABLED", False)
+
+
+@lru_cache(maxsize=1)
+def pro_gating_enabled() -> bool:
+    return _env_bool("CARTOSKY_PRO_GATING_ENABLED", False)
 
 
 @lru_cache(maxsize=1)

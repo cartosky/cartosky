@@ -5,7 +5,7 @@ import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { getActiveAnchorLabels, type AnchorFeatureCollection } from "@/lib/anchor-labels";
-import type { GridManifestResponse, PressureCenter } from "@/lib/api";
+import { authorizedFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
@@ -1977,7 +1977,7 @@ export function MapCanvas({
     contourAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
 
-    void fetch(normalizedUrl, {
+    void authorizedFetch(normalizedUrl, {
       credentials: "omit",
       signal: controller.signal,
     })
@@ -2115,7 +2115,7 @@ export function MapCanvas({
         }
         contourPrefetchInFlightRef.current.add(normalizedUrl);
         try {
-          const response = await fetch(normalizedUrl, {
+          const response = await authorizedFetch(normalizedUrl, {
             credentials: "omit",
             signal: controller.signal,
           });
@@ -2261,7 +2261,7 @@ export function MapCanvas({
     vectorAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
 
-    void fetch(normalizedUrl, {
+    void authorizedFetch(normalizedUrl, {
       credentials: "omit",
       signal: controller.signal,
     })
@@ -2333,7 +2333,7 @@ export function MapCanvas({
           continue;
         }
 
-        void fetch(normalizedUrl, {
+        void authorizedFetch(normalizedUrl, {
           credentials: "omit",
           signal: controller.signal,
         })

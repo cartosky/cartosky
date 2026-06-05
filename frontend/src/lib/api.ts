@@ -10,6 +10,7 @@ import {
   type AnchorFeatureCollection,
   isAnchorFeatureCollection,
 } from "@/lib/anchor-labels";
+import { getClerkAuthToken } from "@/lib/admin-api";
 
 export type ModelOption = {
   id: string;
@@ -305,6 +306,19 @@ type FetchOptions = {
   diagnosticMeta?: Record<string, unknown> | null;
 };
 
+export async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const token = await getClerkAuthToken();
+  if (!token) {
+    return fetch(input, init);
+  }
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(input, {
+    ...init,
+    headers,
+  });
+}
+
 function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "grid") {
@@ -359,7 +373,7 @@ export function readCapabilitySupportsSampling(model: CapabilityModel | null | u
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
   const startedAtMs = startNetworkTimer();
-  const response = await fetch(url, {
+  const response = await authorizedFetch(url, {
     credentials: "omit",
     signal: options?.signal,
     cache: "no-store",
@@ -430,7 +444,7 @@ export async function fetchRegionPresets(options?: FetchOptions): Promise<Record
   }
 
   const startedAtMs = startNetworkTimer();
-  const response = await fetch(`${API_ORIGIN}/api/regions`, {
+  const response = await authorizedFetch(`${API_ORIGIN}/api/regions`, {
     credentials: "omit",
     headers,
     signal: options?.signal,
@@ -703,7 +717,7 @@ export async function fetchSampleBatch(params: {
   signal?: AbortSignal;
 }): Promise<AnchorBatchResponse | null> {
   const startedAtMs = startNetworkTimer();
-  const response = await fetch(`${API_V4_BASE}/sample/batch`, {
+  const response = await authorizedFetch(`${API_V4_BASE}/sample/batch`, {
     method: "POST",
     credentials: "omit",
     signal: params.signal,
@@ -784,7 +798,7 @@ export async function fetchSample(params: {
     qs.set("ensemble_view", params.ensembleView);
   }
   const startedAtMs = startNetworkTimer();
-  const response = await fetch(`${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
+  const response = await authorizedFetch(`${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
   trackNetworkFetchDuration({
     metric_name: "sample_request_duration",
     started_at_ms: startedAtMs,
@@ -921,7 +935,7 @@ export async function fetchNwsHazardAlertDetail(
 ): Promise<NwsHazardAlertDetail | null> {
   const url = `${API_V4_BASE}/nws-hazards/alert?id=${encodeURIComponent(alertId)}`;
   try {
-    const response = await fetch(url, { credentials: "omit", signal });
+    const response = await authorizedFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }
@@ -943,7 +957,7 @@ export async function fetchAnchorWeather(
 ): Promise<AnchorWeatherResponse | null> {
   const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/weather`;
   try {
-    const response = await fetch(url, { credentials: "omit", signal });
+    const response = await authorizedFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }
@@ -965,7 +979,7 @@ export async function fetchAnchorAfd(
 ): Promise<AnchorAfdResponse | null> {
   const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/afd`;
   try {
-    const response = await fetch(url, { credentials: "omit", signal });
+    const response = await authorizedFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }

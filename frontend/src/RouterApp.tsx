@@ -75,6 +75,7 @@ const Variables = lazyRoute(() => import("./pages/variables"));
 const Login = lazyRoute(() => import("./pages/login"));
 const Account = lazyRoute(() => import("./pages/account"));
 const Privacy = lazyRoute(() => import("./pages/privacy"));
+const Pricing = lazyRoute(() => import("./pages/pricing"));
 const AdminOverview = lazyRoute(() => import("./pages/admin/overview"));
 const AdminAnalytics = lazyRoute(() => import("./pages/admin/analytics"));
 const AdminObservability = lazyRoute(() => import("./pages/admin/observability"));
@@ -105,6 +106,7 @@ function getPageTitle(pathname: string) {
     ["/models", "Models"],
     ["/variables", "Variables"],
     ["/privacy", "Privacy Policy"],
+    ["/pricing", "Pricing"],
     ["/login", "Login"],
     ["/account", "Account"],
     ["/", "Home"],
@@ -131,6 +133,7 @@ export default function RouterApp() {
         <Route path="/variables" element={withSuspense(<Variables />)} />
         <Route path="/login" element={withSuspense(<Login />)} />
         <Route path="/account/*" element={withSuspense(<Account />)} />
+        <Route path="/pricing" element={withSuspense(<Pricing />)} />
         <Route path="/privacy" element={withSuspense(<Privacy />)} />
         <Route path="/privacy-policy" element={withSuspense(<Privacy />)} />
       </Route>
