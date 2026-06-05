@@ -2004,13 +2004,16 @@ export default function App() {
         : Number(visibleOverlayFrame?.fh);
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
     const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
+    const contourPrefetchAhead = isDesktopViewerLayout ? 12 : 6;
+    const contourPrefetchBehind = isDesktopViewerLayout ? 4 : 2;
+    const contourPrefetchFallbackEnd = isDesktopViewerLayout ? 17 : 9;
     const candidateRows = pivotIndex >= 0
       ? [
           orderedRows[pivotIndex],
-          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 13),
-          ...orderedRows.slice(Math.max(0, pivotIndex - 4), pivotIndex).reverse(),
+          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 1 + contourPrefetchAhead),
+          ...orderedRows.slice(Math.max(0, pivotIndex - contourPrefetchBehind), pivotIndex).reverse(),
         ]
-      : orderedRows.slice(1, 17);
+      : orderedRows.slice(1, contourPrefetchFallbackEnd);
     const urls: string[] = [];
     for (const row of candidateRows) {
       if (!row) {
@@ -2022,7 +2025,7 @@ export default function App() {
       }
     }
     return urls;
-  }, [contourGeoJsonUrl, contourGeoJsonUrlForHour, displayedOverlayVariable, frameRows, model, resolvedGridDisplayHour, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  }, [contourGeoJsonUrl, contourGeoJsonUrlForHour, displayedOverlayVariable, frameRows, isDesktopViewerLayout, model, resolvedGridDisplayHour, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
   const pressureCenters = useMemo(() => {
     const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
     return Array.isArray(frameMeta?.pressure_centers) ? frameMeta.pressure_centers : [];

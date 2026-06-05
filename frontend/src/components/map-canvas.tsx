@@ -103,6 +103,10 @@ const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const CONTOUR_CACHE_MAX_ENTRIES = 96;
+const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 4;
+const CONTOUR_PREFETCH_CONCURRENCY_MOBILE = 1;
+const CONTOUR_PREFETCH_MOBILE_LIMIT = 8;
+const CONTOUR_PREFETCH_MOBILE_YIELD_MS = 24;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
@@ -1122,8 +1126,12 @@ export function MapCanvas({
     activeContourPayloadRef.current = payload;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
     source.setData(buildContourLineDisplayPayload(payload, map) as any);
+    if (!isDesktopLayout && isAnimating) {
+      setContourScreenLabels([]);
+      return;
+    }
     refreshContourScreenLabels();
-  }, [refreshContourScreenLabels]);
+  }, [isAnimating, isDesktopLayout, refreshContourScreenLabels]);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const buildGridPrefetchUrls = useCallback((params: {
@@ -2035,6 +2043,10 @@ export function MapCanvas({
       }
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
+        if (!isDesktopLayout && isAnimating) {
+          setContourScreenLabels([]);
+          return;
+        }
         refreshContourScreenLabels();
       });
     };
@@ -2052,7 +2064,7 @@ export function MapCanvas({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [isLoaded, refreshContourScreenLabels]);
+  }, [isAnimating, isDesktopLayout, isLoaded, refreshContourScreenLabels]);
 
   useEffect(() => {
     if (!isLoaded || contourPrefetchUrls.length === 0) {
@@ -2060,7 +2072,11 @@ export function MapCanvas({
     }
 
     const controller = new AbortController();
-    for (const rawUrl of contourPrefetchUrls) {
+    const prefetchCandidates = isDesktopLayout
+      ? contourPrefetchUrls
+      : contourPrefetchUrls.slice(0, CONTOUR_PREFETCH_MOBILE_LIMIT);
+    const pendingUrls: string[] = [];
+    for (const rawUrl of prefetchCandidates) {
       const normalizedUrl = normalizeDataUrl(rawUrl);
       if (
         !normalizedUrl
@@ -2069,19 +2085,44 @@ export function MapCanvas({
       ) {
         continue;
       }
+      pendingUrls.push(normalizedUrl);
+    }
 
-      contourPrefetchInFlightRef.current.add(normalizedUrl);
-      void fetch(normalizedUrl, {
-        credentials: "omit",
-        signal: controller.signal,
-      })
-        .then(async (response) => {
+    if (pendingUrls.length === 0) {
+      return () => {
+        controller.abort();
+      };
+    }
+
+    let nextIndex = 0;
+    const workerCount = Math.min(
+      pendingUrls.length,
+      isDesktopLayout ? CONTOUR_PREFETCH_CONCURRENCY_DESKTOP : CONTOUR_PREFETCH_CONCURRENCY_MOBILE,
+    );
+    const mobileYield = !isDesktopLayout
+      ? () => new Promise<void>((resolve) => window.setTimeout(resolve, CONTOUR_PREFETCH_MOBILE_YIELD_MS))
+      : null;
+
+    const runPrefetchWorker = async () => {
+      while (!controller.signal.aborted) {
+        const normalizedUrl = pendingUrls[nextIndex];
+        nextIndex += 1;
+        if (!normalizedUrl) {
+          return;
+        }
+        if (contourCacheRef.current.has(normalizedUrl) || contourPrefetchInFlightRef.current.has(normalizedUrl)) {
+          continue;
+        }
+        contourPrefetchInFlightRef.current.add(normalizedUrl);
+        try {
+          const response = await fetch(normalizedUrl, {
+            credentials: "omit",
+            signal: controller.signal,
+          });
           if (!response.ok) {
             throw new Error(`Contour prefetch failed: ${response.status}`);
           }
-          return withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
-        })
-        .then((payload) => {
+          const payload = withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
           if (controller.signal.aborted) {
             return;
           }
@@ -2093,22 +2134,28 @@ export function MapCanvas({
             }
             contourCacheRef.current.delete(oldestKey);
           }
-        })
-        .catch((error) => {
+        } catch (error) {
           if (controller.signal.aborted) {
             return;
           }
           console.warn("[map] contour prefetch failed", { contourGeoJsonUrl: normalizedUrl, error });
-        })
-        .finally(() => {
+        } finally {
           contourPrefetchInFlightRef.current.delete(normalizedUrl);
-        });
+        }
+        if (mobileYield && !controller.signal.aborted) {
+          await mobileYield();
+        }
+      }
+    };
+
+    for (let index = 0; index < workerCount; index += 1) {
+      void runPrefetchWorker();
     }
 
     return () => {
       controller.abort();
     };
-  }, [contourGeoJsonUrl, contourPrefetchUrls, isLoaded]);
+  }, [contourGeoJsonUrl, contourPrefetchUrls, isDesktopLayout, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
