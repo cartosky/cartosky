@@ -1,9 +1,11 @@
-import { useAuth, Show, UserProfile } from "@clerk/react";
-import { AlertTriangle, CheckCircle2, Link2, Plug, RefreshCw, Unlink } from "lucide-react";
+import { useAuth, Show, UserProfile, useUser } from "@clerk/react";
+import { AlertTriangle, CheckCircle2, CreditCard, Link2, Plug, RefreshCw, Unlink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
+import { createPortalSession } from "@/lib/billing";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { billingEnabled, planFromPublicMetadata } from "@/lib/entitlements";
 import { API_ORIGIN } from "@/lib/config";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 
@@ -261,6 +263,75 @@ function TwfConnectionSection() {
   );
 }
 
+function SubscriptionSection() {
+  const { user } = useUser();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const plan = planFromPublicMetadata(user?.publicMetadata);
+
+  const handleManageSubscription = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = await createPortalSession("/account#/subscription");
+      window.location.assign(url);
+    } catch (err) {
+      setError((err as Error).message || "Unable to open Stripe Customer Portal.");
+      setLoading(false);
+    }
+  }, []);
+
+  return (
+    <section className="text-white">
+      <div className="border-b border-sky-200/[0.06] pb-5">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Subscription</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            Stripe manages your CartoSky subscription while Clerk continues to handle authentication.
+          </p>
+        </div>
+      </div>
+
+      <div className="border-b border-sky-200/[0.06] py-5">
+        <div className="grid gap-4 sm:grid-cols-[12rem_1fr_auto] sm:items-start">
+          <div className="text-sm font-medium text-white">Current plan</div>
+          <div>
+            <p className="text-sm text-slate-300">{plan === "pro" ? "Pro" : "Free"}</p>
+          </div>
+
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {plan === "pro" ? (
+              <button
+                type="button"
+                onClick={() => void handleManageSubscription()}
+                disabled={loading}
+                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                Manage Subscription
+              </button>
+            ) : (
+              <Link
+                to="/pricing"
+                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100"
+              >
+                Upgrade
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="mt-4 flex items-start gap-2 text-sm text-rose-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function Account() {
   return (
     <div className="relative min-h-[calc(100vh-9rem)] overflow-hidden bg-[#04101e] px-4 py-8 md:px-6 md:py-12">
@@ -274,6 +345,11 @@ export default function Account() {
           <>
             <TwfConnectedAccountReturn />
             <UserProfile appearance={clerkAppearance}>
+              {billingEnabled ? (
+                <UserProfile.Page label="Subscription" labelIcon={<CreditCard className="h-4 w-4" />} url="subscription">
+                  <SubscriptionSection />
+                </UserProfile.Page>
+              ) : null}
               <UserProfile.Page label="Integrations" labelIcon={<Plug className="h-4 w-4" />} url="integrations">
                 <TwfConnectionSection />
               </UserProfile.Page>

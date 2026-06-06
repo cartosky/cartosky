@@ -55,6 +55,36 @@ def pro_gating_enabled() -> bool:
 
 
 @lru_cache(maxsize=1)
+def stripe_secret_key() -> str:
+    return _env_value("STRIPE_SECRET_KEY").strip()
+
+
+@lru_cache(maxsize=1)
+def stripe_webhook_secret() -> str:
+    return _env_value("STRIPE_WEBHOOK_SECRET").strip()
+
+
+@lru_cache(maxsize=1)
+def stripe_pro_price_id() -> str:
+    return _env_value("STRIPE_PRO_PRICE_ID").strip()
+
+
+@lru_cache(maxsize=1)
+def stripe_checkout_success_url() -> str:
+    return _env_value("STRIPE_CHECKOUT_SUCCESS_URL").strip()
+
+
+@lru_cache(maxsize=1)
+def stripe_checkout_cancel_url() -> str:
+    return _env_value("STRIPE_CHECKOUT_CANCEL_URL").strip()
+
+
+@lru_cache(maxsize=1)
+def stripe_portal_return_url() -> str:
+    return _env_value("STRIPE_PORTAL_RETURN_URL").strip()
+
+
+@lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True
 

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useAuth } from "@clerk/react";
+import { useUser } from "@clerk/react";
 
 import { PROTECTED_PRODUCTS } from "@/config/proFeatures";
 
@@ -24,6 +24,52 @@ export function getRequiredFeatureForProduct(productId: string): string | null {
   return product?.requiredFeature ?? null;
 }
 
+function normalizePlan(plan: unknown): string {
+  const normalized = String(plan ?? "").trim().toLowerCase();
+  return normalized || "free";
+}
+
+const protectedFeatureSlugs = new Set(
+  Object.values(PROTECTED_PRODUCTS)
+    .map((product) => String(product.requiredFeature ?? "").trim().toLowerCase())
+    .filter(Boolean)
+);
+
+export function planFromPublicMetadata(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object") {
+    return "free";
+  }
+  const value = metadata as Record<string, unknown>;
+  return normalizePlan(value.plan);
+}
+
+export function hasFeature(plan: unknown, featureSlug: string): boolean {
+  const normalizedFeature = String(featureSlug ?? "").trim().toLowerCase();
+  if (!normalizedFeature) {
+    return false;
+  }
+  if (normalizePlan(plan) !== "pro") {
+    return false;
+  }
+  return protectedFeatureSlugs.has(normalizedFeature);
+}
+
+export function canAccessFeature(plan: unknown, featureSlug: string): boolean {
+  if (!proGatingEnabled) {
+    return true;
+  }
+  const normalizedFeature = String(featureSlug ?? "").trim().toLowerCase();
+  if (!normalizedFeature) {
+    return true;
+  }
+  return hasFeature(plan, normalizedFeature);
+}
+
+export function canAccessProduct(productId: string, plan: unknown = "free"): boolean {
+  const requiredFeature = getRequiredFeatureForProduct(productId);
+  return requiredFeature ? canAccessFeature(plan, requiredFeature) : true;
+}
+
 export function shouldAuthorizeProductRequest(productId: string): boolean {
   if (!proGatingEnabled) {
     return false;
@@ -41,55 +87,35 @@ export function getProtectedProductUpsellLabel(productId: string): string | null
   return product?.upsellLabel ?? null;
 }
 
+export function getLockedReason(productId: string, plan: unknown = "free"): string | null {
+  if (canAccessProduct(productId, plan)) {
+    return null;
+  }
+  return getProtectedProductUpsellLabel(productId) ?? "Requires CartoSky Pro";
+}
+
 export function useEntitlements() {
-  const auth = useAuth();
-  const isLoaded = auth.isLoaded === true;
-  const has = auth.has;
+  const { isLoaded, user } = useUser();
+  const plan = planFromPublicMetadata(user?.publicMetadata);
 
-  const hasFeature = useCallback((featureSlug: string): boolean => {
-    const normalized = String(featureSlug ?? "").trim();
-    if (!normalized || !isLoaded || typeof has !== "function") {
-      return false;
-    }
-    try {
-      return has({ feature: normalized });
-    } catch {
-      return false;
-    }
-  }, [has, isLoaded]);
+  const boundHasFeature = useCallback((featureSlug: string): boolean => hasFeature(plan, featureSlug), [plan]);
 
-  const canAccessFeature = useCallback((featureSlug: string): boolean => {
-    if (!proGatingEnabled) {
-      return true;
-    }
-    const normalized = String(featureSlug ?? "").trim();
-    if (!normalized) {
-      return true;
-    }
-    return hasFeature(normalized);
-  }, [hasFeature]);
+  const boundCanAccessFeature = useCallback((featureSlug: string): boolean => canAccessFeature(plan, featureSlug), [plan]);
 
-  const canAccessProduct = useCallback((productId: string): boolean => {
-    const requiredFeature = getRequiredFeatureForProduct(productId);
-    return requiredFeature ? canAccessFeature(requiredFeature) : true;
-  }, [canAccessFeature]);
+  const boundCanAccessProduct = useCallback((productId: string): boolean => canAccessProduct(productId, plan), [plan]);
 
-  const getLockedReason = useCallback((productId: string): string | null => {
-    if (canAccessProduct(productId)) {
-      return null;
-    }
-    return getProtectedProductUpsellLabel(productId) ?? "Requires CartoSky Pro";
-  }, [canAccessProduct]);
+  const boundGetLockedReason = useCallback((productId: string): string | null => getLockedReason(productId, plan), [plan]);
 
   return {
     billingEnabled,
     proGatingEnabled,
     pricingPreviewEnabled,
-    hasFeature,
-    canAccessFeature,
-    canAccessProduct,
+    hasFeature: boundHasFeature,
+    canAccessFeature: boundCanAccessFeature,
+    canAccessProduct: boundCanAccessProduct,
     getRequiredFeatureForProduct,
-    getLockedReason,
-    isLoaded,
+    getLockedReason: boundGetLockedReason,
+    isLoaded: isLoaded === true,
+    plan,
   };
 }

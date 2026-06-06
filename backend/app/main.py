@@ -80,7 +80,7 @@ from .services.render_resampling import (
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
-from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service
+from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
 from .services import nws as nws_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, maybe_clerk_user, require_clerk_admin, require_clerk_user
@@ -1136,6 +1136,93 @@ def _twf_frontend_redirect_url(return_to: str | None, **params: str) -> str:
     return urlunsplit((fallback.scheme, fallback.netloc, target_path, urlencode(existing_params), ""))
 
 
+def _sanitize_billing_return_url(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if trimmed.startswith("/") and not trimmed.startswith("//"):
+        return trimmed
+
+    parsed = urlsplit(trimmed)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    allowed_origins: set[str] = set()
+    for candidate in (
+        twf_oauth.FRONTEND_RETURN,
+        app_config.stripe_checkout_success_url(),
+        app_config.stripe_checkout_cancel_url(),
+        app_config.stripe_portal_return_url(),
+    ):
+        origin = _origin_from_url(candidate)
+        if origin:
+            allowed_origins.update(_cors_origin_aliases(origin))
+
+    request_origin = _origin_from_url(trimmed)
+    if request_origin and request_origin.rstrip("/") in allowed_origins:
+        return trimmed
+    return None
+
+
+def _resolve_billing_return_url(requested: str | None, configured: str | None) -> str:
+    for candidate in (requested, configured):
+        resolved = _sanitize_billing_return_url(candidate)
+        if not resolved:
+            continue
+        if resolved.startswith("/"):
+            base_origin = _origin_from_url(twf_oauth.FRONTEND_RETURN) or _origin_from_url(configured)
+            if not base_origin:
+                break
+            return f"{base_origin}{resolved}"
+        return resolved
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": {
+                "code": "BILLING_RETURN_URL_INVALID",
+                "message": "Billing return URL is missing or not allowed for this CartoSky environment.",
+            }
+        },
+    )
+
+
+def _require_billing_enabled() -> None:
+    if app_config.billing_enabled():
+        return
+    raise HTTPException(
+        status_code=404,
+        detail={"error": {"code": "BILLING_DISABLED", "message": "Billing is disabled for this environment."}},
+    )
+
+
+class BillingCheckoutSessionRequest(BaseModel):
+    success_url: str | None = Field(default=None, max_length=2048)
+    cancel_url: str | None = Field(default=None, max_length=2048)
+
+
+class BillingPortalSessionRequest(BaseModel):
+    return_url: str | None = Field(default=None, max_length=2048)
+
+
+def _billing_email_from_claims(claims: dict[str, Any]) -> str | None:
+    for key in ("email", "email_address", "primary_email_address", "primary_email"):
+        value = _clean_claim_string(claims.get(key))
+        if value:
+            return value
+
+    email_addresses = claims.get("email_addresses")
+    if isinstance(email_addresses, list):
+        for item in email_addresses:
+            if not isinstance(item, dict):
+                continue
+            value = _clean_claim_string(item.get("email_address"))
+            if value:
+                return value
+    return None
+
+
 @app.get("/auth/twf/start")
 async def twf_start(
     request: Request,
@@ -1250,6 +1337,59 @@ async def twf_status(current_user: ClerkPrincipal = Depends(require_clerk_user))
     if sess.photo_url:
         payload["photo_url"] = sess.photo_url
     return payload
+
+
+@app.post("/api/v4/billing/create-checkout-session")
+async def create_billing_checkout_session(
+    body: BillingCheckoutSessionRequest,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> dict[str, str]:
+    _require_billing_enabled()
+
+    user_email = _billing_email_from_claims(current_user.claims)
+    if not user_email:
+        profile = fetch_clerk_user_profile(current_user.user_id)
+        user_email = profile.email_address if profile else None
+    if not user_email:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "CLERK_EMAIL_MISSING",
+                    "message": "Unable to determine the Clerk user email for billing.",
+                }
+            },
+        )
+
+    checkout_url = stripe_billing.create_checkout_session(
+        current_user.user_id,
+        user_email,
+        _resolve_billing_return_url(body.success_url, app_config.stripe_checkout_success_url()),
+        _resolve_billing_return_url(body.cancel_url, app_config.stripe_checkout_cancel_url()),
+    )
+    return {"url": checkout_url}
+
+
+@app.post("/api/v4/billing/create-portal-session")
+async def create_billing_portal_session(
+    body: BillingPortalSessionRequest,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> dict[str, str]:
+    _require_billing_enabled()
+
+    portal_url = stripe_billing.create_portal_session(
+        current_user.user_id,
+        _resolve_billing_return_url(body.return_url, app_config.stripe_portal_return_url()),
+    )
+    return {"url": portal_url}
+
+
+@app.post("/api/v4/billing/webhook")
+async def stripe_billing_webhook(request: Request) -> dict[str, bool]:
+    payload = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+    stripe_billing.handle_webhook_event(payload, signature)
+    return {"ok": True}
 
 
 @app.post("/api/v4/share/screenshot")

@@ -10,6 +10,9 @@ from backend.app.auth.clerk import ClerkPrincipal
 from backend.app.config.protected_products import PROTECTED_PRODUCTS
 
 
+ACTIVE_PAID_PLANS = {"pro"}
+
+
 def billing_enabled() -> bool:
     return config.billing_enabled()
 
@@ -36,44 +39,6 @@ def _normalize_feature_slug(value: Any) -> str | None:
     return normalized or None
 
 
-def _features_from_scoped_string(raw: str) -> set[str]:
-    features: set[str] = set()
-    for part in raw.split(","):
-        item = part.strip()
-        if not item:
-            continue
-        scope, separator, value = item.partition(":")
-        if separator and scope in {"u", "o", "ou", "uo", "user", "org"}:
-            slug = _normalize_feature_slug(value)
-        elif separator:
-            slug = None
-        else:
-            slug = _normalize_feature_slug(item)
-        if slug:
-            features.add(slug)
-    return features
-
-
-def _features_from_claim_value(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return _features_from_scoped_string(value)
-    if isinstance(value, (list, tuple, set)):
-        features: set[str] = set()
-        for item in value:
-            features.update(_features_from_claim_value(item))
-        return features
-    if isinstance(value, Mapping):
-        features: set[str] = set()
-        for key in ("features", "feature", "slugs", "enabled", "user", "org"):
-            if key in value:
-                features.update(_features_from_claim_value(value.get(key)))
-        slug = _normalize_feature_slug(value.get("slug"))
-        if slug:
-            features.add(slug)
-        return features
-    return set()
-
-
 def _claims_from_user_session(user_session: ClerkPrincipal | Mapping[str, Any] | None) -> Mapping[str, Any]:
     if isinstance(user_session, ClerkPrincipal):
         return user_session.claims
@@ -82,9 +47,27 @@ def _claims_from_user_session(user_session: ClerkPrincipal | Mapping[str, Any] |
     return {}
 
 
+def _plan_from_claims(claims: Mapping[str, Any]) -> str:
+    plan = claims.get("plan")
+    normalized_plan = _normalize_feature_slug(plan)
+    if normalized_plan:
+        return normalized_plan
+
+    metadata = claims.get("metadata")
+    if isinstance(metadata, Mapping):
+        metadata_plan = _normalize_feature_slug(metadata.get("plan"))
+        if metadata_plan:
+            return metadata_plan
+
+    return "free"
+
+
 def get_user_features(user_session: ClerkPrincipal | Mapping[str, Any] | None) -> set[str]:
     claims = _claims_from_user_session(user_session)
-    return _features_from_claim_value(claims.get("fea"))
+    plan = _plan_from_claims(claims)
+    if plan not in ACTIVE_PAID_PLANS:
+        return set()
+    return {product["required_feature"] for product in PROTECTED_PRODUCTS.values() if _normalize_feature_slug(product.get("required_feature"))}
 
 
 def can_access_feature(user_session: ClerkPrincipal | Mapping[str, Any] | None, feature_slug: str) -> bool:

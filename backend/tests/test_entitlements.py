@@ -61,20 +61,27 @@ def test_gating_enabled_denies_ecmwf_without_feature(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("CARTOSKY_PRO_GATING_ENABLED", "true")
     _clear_config_cache()
 
-    assert entitlements.can_access_product({"fea": ""}, "ecmwf") is False
+    assert entitlements.can_access_product({"metadata": {"plan": "free"}}, "ecmwf") is False
 
     with pytest.raises(entitlements.HTTPException) as exc_info:
-        entitlements.require_product_access({"fea": ""}, "ecmwf")
+        entitlements.require_product_access({"metadata": {"plan": "free"}}, "ecmwf")
 
     assert exc_info.value.status_code == 403
 
 
-def test_gating_enabled_allows_ecmwf_with_scoped_fea_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gating_enabled_allows_pro_plan_from_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CARTOSKY_PRO_GATING_ENABLED", "true")
     _clear_config_cache()
 
-    assert entitlements.get_user_features({"fea": "u:ecmwf,o:comparison_tools"}) == {"ecmwf", "comparison_tools"}
-    assert entitlements.can_access_product({"fea": "u:ecmwf"}, "ecmwf") is True
+    assert entitlements.get_user_features({"metadata": {"plan": "pro"}}) == {"ecmwf"}
+    assert entitlements.can_access_product({"metadata": {"plan": "pro"}}, "ecmwf") is True
+
+
+def test_missing_plan_is_treated_as_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CARTOSKY_PRO_GATING_ENABLED", "true")
+    _clear_config_cache()
+
+    assert entitlements.can_access_product({}, "ecmwf") is False
 
 
 def test_non_protected_products_always_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,7 +104,7 @@ def test_billing_preview_mode_keeps_product_access_open(monkeypatch: pytest.Monk
     _clear_config_cache()
 
     assert entitlements.billing_enabled() is True
-    assert entitlements.can_access_product({"fea": ""}, "ecmwf") is True
+    assert entitlements.can_access_product({"metadata": {"plan": "free"}}, "ecmwf") is True
 
 
 @pytest.mark.anyio
@@ -122,7 +129,7 @@ async def test_protected_manifest_endpoint_accepts_entitlement_before_data_looku
 
     async def fake_verify_token_async(token: str, options: object) -> dict[str, object]:
         assert token == "test-token"
-        return {"sub": "user_123", "fea": "u:ecmwf"}
+        return {"sub": "user_123", "metadata": {"plan": "pro"}}
 
     monkeypatch.setattr(clerk_auth, "verify_token_async", fake_verify_token_async)
 
