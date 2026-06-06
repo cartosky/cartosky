@@ -345,9 +345,9 @@ def create_portal_session(clerk_user_id: str, return_url: str) -> str:
 
 def _metadata_clerk_user_id(value: Any) -> str | None:
     metadata = _object_get(value, "metadata")
-    if isinstance(metadata, Mapping):
-        return _normalize_string(metadata.get("clerk_user_id"))
-    return None
+    if metadata is None:
+        return None
+    return _normalize_string(_object_get(metadata, "clerk_user_id"))
 
 
 def _retrieve_subscription(subscription_id: str | None) -> Any | None:
