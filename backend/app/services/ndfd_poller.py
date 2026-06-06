@@ -8,9 +8,11 @@ import time
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 from app.services.ndfd_publish import publish_ndfd_bundle
 from app.services.ndfd_source import collect_latest_ndfd_fields
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import enforce_run_artifact_retention
 from app.services.run_ids import format_run_id
 
@@ -40,6 +42,7 @@ class NDFDPollerCycleResult:
 
 
 def run_once(config: NDFDPollerConfig) -> NDFDPollerCycleResult:
+    _log_ndfd_memory_checkpoint("before_build")
     issue_time, frames_by_var = collect_latest_ndfd_fields(timeout_seconds=config.timeout_seconds)
     run_id = format_run_id(issue_time.astimezone(timezone.utc), include_minutes=True)
     latest_run_id = _latest_published_run_id(config.data_root)
@@ -54,6 +57,7 @@ def run_once(config: NDFDPollerConfig) -> NDFDPollerCycleResult:
             )
 
     result = publish_ndfd_bundle(data_root=config.data_root, issue_time=issue_time, frames_by_var=frames_by_var)
+    _log_ndfd_memory_checkpoint("after_publish", run=result.run_id)
     _enforce_retention(config)
     return NDFDPollerCycleResult(
         action="published",
@@ -76,6 +80,7 @@ def run_poller(config: NDFDPollerConfig, *, once: bool) -> int:
     while True:
         try:
             result = run_once(config)
+            _log_ndfd_memory_checkpoint("after_cleanup", action=result.action, run=result.published_run_id or "none")
             logger.info("NDFD cycle result action=%s message=%s", result.action, result.message)
         except Exception:
             logger.exception("NDFD poller cycle failed")
@@ -120,6 +125,25 @@ def _enforce_retention(config: NDFDPollerConfig) -> None:
     enforce_run_artifact_retention(config.data_root / "staging" / "ndfd", config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "published" / "ndfd", config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "manifests" / "ndfd", config.keep_runs)
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _log_ndfd_memory_checkpoint(stage: str, **details: Any) -> None:
+    detail_tokens = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(details.items())
+    )
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "NDFD memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
+        suffix,
+    )
 
 
 def _env_value(*names: str, default: str = "") -> str:
