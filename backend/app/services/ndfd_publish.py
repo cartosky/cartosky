@@ -14,6 +14,7 @@ from app.models.ndfd import NDFD_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
 from app.services.colormaps import get_color_map_spec
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import promote_run, write_json_atomic, write_latest_pointer, write_run_manifest
 from app.services.run_ids import format_run_id
 from app.services.ndfd_source import NDFDSourceField
@@ -137,6 +138,13 @@ def _write_ndfd_frame(
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     values, dst_transform = _warp_frame_to_target_grid(frame)
+    _log_ndfd_publish_memory(
+        "after_reprojection",
+        array_mib=f"{_array_mib(values):.1f}",
+        fh=forecast_hour,
+        shape=f"{values.shape[0]}x{values.shape[1]}",
+        var=var_id,
+    )
     var_capability = NDFD_MODEL.get_var_capability(var_id)
     if var_capability is None or not var_capability.color_map_id:
         raise ValueError(f"Missing NDFD color map registration for {var_id}")
@@ -259,3 +267,28 @@ def _fallback_build_sidecar_json(
 def _require_grid_support() -> None:
     if build_grid_manifests_for_run_root is None or write_grid_frames_for_run_root is None:
         raise RuntimeError("Grid publishing requires optional brotli-backed grid dependencies")
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _array_mib(value: Any) -> float:
+    if isinstance(value, np.ndarray):
+        return _bytes_to_mib(int(value.nbytes))
+    return 0.0
+
+
+def _log_ndfd_publish_memory(stage: str, **details: Any) -> None:
+    detail_tokens = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(details.items())
+    )
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "NDFD memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
+        suffix,
+    )

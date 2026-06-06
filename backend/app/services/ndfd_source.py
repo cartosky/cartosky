@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,11 @@ import numpy as np
 import requests
 import rasterio
 
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
+
 NDFD_BASE_URL = "https://tgftp.nws.noaa.gov/SL.us008001/ST.opnl/DF.gr2/DC.ndfd/AR.conus"
+
+logger = logging.getLogger(__name__)
 
 VP_001_003 = "VP.001-003"
 VP_004_007 = "VP.004-007"
@@ -89,6 +94,11 @@ def _load_fields(*, variable: str, periods: tuple[str, ...], timeout_seconds: fl
 def _read_grib_fields(*, source_url: str, source_filename: str, timeout_seconds: float) -> list[NDFDSourceField]:
     response = requests.get(source_url, timeout=timeout_seconds)
     response.raise_for_status()
+    _log_ndfd_memory_checkpoint(
+        "after_download",
+        source_filename=source_filename,
+        downloaded_mib=f"{_bytes_to_mib(len(response.content)):.1f}",
+    )
     with tempfile.NamedTemporaryFile(prefix="cartosky-ndfd-", suffix=".grb2") as tmp:
         tmp.write(response.content)
         tmp.flush()
@@ -115,6 +125,12 @@ def _read_grib_fields(*, source_url: str, source_filename: str, timeout_seconds:
                         source_units=str(tags.get("GRIB_UNIT") or "").strip(),
                     )
                 )
+    _log_ndfd_memory_checkpoint(
+        "after_decode",
+        source_filename=source_filename,
+        field_count=len(fields),
+        field_arrays_mib=f"{_fields_array_mib(fields):.1f}",
+    )
     return fields
 
 
@@ -249,3 +265,26 @@ def _meters_to_inches(values: np.ndarray) -> np.ndarray:
 
 def _ms_to_mph(values: np.ndarray) -> np.ndarray:
     return (np.asarray(values, dtype=np.float32) * MS_TO_MPH).astype(np.float32, copy=False)
+
+
+def _bytes_to_mib(num_bytes: int) -> float:
+    return float(num_bytes) / (1024.0 * 1024.0)
+
+
+def _fields_array_mib(fields: list[NDFDSourceField]) -> float:
+    return _bytes_to_mib(sum(int(field.values.nbytes) for field in fields))
+
+
+def _log_ndfd_memory_checkpoint(stage: str, **details: Any) -> None:
+    detail_tokens = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(details.items())
+    )
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "NDFD memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        _bytes_to_mib(current_rss_bytes()),
+        _bytes_to_mib(peak_rss_bytes()),
+        suffix,
+    )
