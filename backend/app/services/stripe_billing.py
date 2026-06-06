@@ -222,6 +222,28 @@ def _customer_for_checkout(clerk_user_id: str, user_email: str) -> str:
     metadata = _clerk_private_metadata(clerk_user_id)
     existing_customer_id = _normalize_string(metadata.get("stripe_customer_id"))
     if existing_customer_id:
+        # Ensure clerk_user_id is in Stripe customer metadata for webhook resolution
+        try:
+            customer = stripe.Customer.retrieve(existing_customer_id)
+            existing_clerk_id = _normalize_string(
+                _object_get(_object_get(customer, "metadata"), "clerk_user_id")
+            )
+            if not existing_clerk_id:
+                stripe.Customer.modify(
+                    existing_customer_id,
+                    metadata={"clerk_user_id": clerk_user_id},
+                )
+                logger.info(
+                    "Backfilled clerk_user_id on Stripe customer customer_id=%s clerk_user_id=%s",
+                    existing_customer_id,
+                    clerk_user_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Could not verify/backfill Stripe customer metadata customer_id=%s error=%s",
+                existing_customer_id,
+                exc,
+            )
         return existing_customer_id
 
     customer = stripe.Customer.create(
