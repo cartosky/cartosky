@@ -263,7 +263,6 @@ def create_checkout_session(user_id: str, user_email: str, success_url: str, can
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
-        customer_email=normalized_email,
         line_items=[{"price": price_id, "quantity": 1}],
         success_url=normalized_success_url,
         cancel_url=normalized_cancel_url,
