@@ -5,7 +5,7 @@ import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { getActiveAnchorLabels, type AnchorFeatureCollection } from "@/lib/anchor-labels";
-import { authorizedFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
+import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
@@ -933,6 +933,7 @@ export function buildMapStyle(
 }
 
 type MapCanvasProps = {
+  productId?: string | null;
   selectionKey: string;
   selectionEpoch: number;
   gridManifest?: GridManifestResponse | null;
@@ -989,6 +990,7 @@ type MapCanvasProps = {
 };
 
 export function MapCanvas({
+  productId = null,
   selectionKey,
   selectionEpoch,
   gridManifest = null,
@@ -1977,7 +1979,7 @@ export function MapCanvas({
     contourAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
 
-    void authorizedFetch(normalizedUrl, {
+    void productFetch(productId, normalizedUrl, {
       credentials: "omit",
       signal: controller.signal,
     })
@@ -2028,7 +2030,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [applyContourPayload, contourGeoJsonUrl, isAnimating, isLoaded]);
+  }, [applyContourPayload, contourGeoJsonUrl, isAnimating, isLoaded, productId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2115,7 +2117,7 @@ export function MapCanvas({
         }
         contourPrefetchInFlightRef.current.add(normalizedUrl);
         try {
-          const response = await authorizedFetch(normalizedUrl, {
+          const response = await productFetch(productId, normalizedUrl, {
             credentials: "omit",
             signal: controller.signal,
           });
@@ -2155,7 +2157,7 @@ export function MapCanvas({
     return () => {
       controller.abort();
     };
-  }, [contourGeoJsonUrl, contourPrefetchUrls, isDesktopLayout, isLoaded]);
+  }, [contourGeoJsonUrl, contourPrefetchUrls, isDesktopLayout, isLoaded, productId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2261,7 +2263,7 @@ export function MapCanvas({
     vectorAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
 
-    void authorizedFetch(normalizedUrl, {
+    void productFetch(productId, normalizedUrl, {
       credentials: "omit",
       signal: controller.signal,
     })
@@ -2309,7 +2311,7 @@ export function MapCanvas({
         vectorAbortRef.current = null;
       }
     };
-  }, [basemapMode, isLoaded, vectorGeoJsonUrl]);
+  }, [basemapMode, isLoaded, productId, vectorGeoJsonUrl]);
 
   useEffect(() => {
     if (!isLoaded || vectorPrefetchUrls.length === 0) {
@@ -2333,7 +2335,7 @@ export function MapCanvas({
           continue;
         }
 
-        void authorizedFetch(normalizedUrl, {
+        void productFetch(productId, normalizedUrl, {
           credentials: "omit",
           signal: controller.signal,
         })
@@ -2369,7 +2371,7 @@ export function MapCanvas({
       window.clearTimeout(startPrefetchTimer);
       controller.abort();
     };
-  }, [isLoaded, vectorGeoJsonUrl, vectorPrefetchUrls]);
+  }, [isLoaded, productId, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
   useEffect(() => {
     const map = mapRef.current;

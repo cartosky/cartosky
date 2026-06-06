@@ -11,6 +11,7 @@ import {
   isAnchorFeatureCollection,
 } from "@/lib/anchor-labels";
 import { getClerkAuthToken } from "@/lib/admin-api";
+import { shouldAuthorizeProductRequest } from "@/lib/entitlements";
 
 export type ModelOption = {
   id: string;
@@ -304,19 +305,29 @@ type FetchOptions = {
   signal?: AbortSignal;
   diagnosticMetricName?: NetworkDiagnosticMetricName;
   diagnosticMeta?: Record<string, unknown> | null;
+  productId?: string | null;
+  authorize?: boolean;
 };
+
+export function publicFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, init);
+}
 
 export async function authorizedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const token = await getClerkAuthToken();
   if (!token) {
-    return fetch(input, init);
+    return publicFetch(input, init);
   }
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, {
+  return publicFetch(input, {
     ...init,
     headers,
   });
+}
+
+export function productFetch(productId: string | null | undefined, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return shouldAuthorizeProductRequest(productId ?? "") ? authorizedFetch(input, init) : publicFetch(input, init);
 }
 
 function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null {
@@ -373,7 +384,12 @@ export function readCapabilitySupportsSampling(model: CapabilityModel | null | u
 
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
   const startedAtMs = startNetworkTimer();
-  const response = await authorizedFetch(url, {
+  const request = options?.authorize
+    ? authorizedFetch
+    : shouldAuthorizeProductRequest(options?.productId ?? "")
+      ? authorizedFetch
+      : publicFetch;
+  const response = await request(url, {
     credentials: "omit",
     signal: options?.signal,
     cache: "no-store",
@@ -444,7 +460,7 @@ export async function fetchRegionPresets(options?: FetchOptions): Promise<Record
   }
 
   const startedAtMs = startNetworkTimer();
-  const response = await authorizedFetch(`${API_ORIGIN}/api/regions`, {
+  const response = await publicFetch(`${API_ORIGIN}/api/regions`, {
     credentials: "omit",
     headers,
     signal: options?.signal,
@@ -529,6 +545,7 @@ export async function fetchBootstrap(params?: {
   const url = suffix ? `${API_V4_BASE}/bootstrap?${suffix}` : `${API_V4_BASE}/bootstrap`;
   return fetchJson<BootstrapResponse>(url, {
     signal: params?.signal,
+    productId: params?.model ?? null,
     diagnosticMetricName: "bootstrap_fetch_duration",
     diagnosticMeta: {
       model: params?.model ?? null,
@@ -549,7 +566,7 @@ export async function fetchRegions(model: string, options?: FetchOptions): Promi
 export async function fetchRuns(model: string, options?: FetchOptions): Promise<string[]> {
   return fetchJson<string[]>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/runs`,
-    options
+    { ...options, productId: model }
   );
 }
 
@@ -557,7 +574,7 @@ export async function fetchVars(model: string, run: string, options?: FetchOptio
   const runKey = run || "latest";
   return fetchJson<VarRow[]>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/vars`,
-    options
+    { ...options, productId: model }
   );
 }
 
@@ -580,6 +597,7 @@ export async function fetchManifest(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/manifest${query.toString() ? `?${query.toString()}` : ""}`,
     {
       ...options,
+      productId: model,
       diagnosticMetricName: options?.diagnosticMetricName ?? "manifest_fetch_duration",
       diagnosticMeta: {
         ...(options?.diagnosticMeta ?? {}),
@@ -615,6 +633,7 @@ export async function fetchFrames(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/frames${query.toString() ? `?${query.toString()}` : ""}`,
     {
       ...options,
+      productId: model,
       diagnosticMetricName: options?.diagnosticMetricName ?? "frames_fetch_duration",
       diagnosticMeta: {
         ...(options?.diagnosticMeta ?? {}),
@@ -666,6 +685,7 @@ export async function fetchGridManifest(
       `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest${query.toString() ? `?${query.toString()}` : ""}`,
       {
         ...options,
+        productId: model,
         diagnosticMetricName: options?.diagnosticMetricName ?? "grid_manifest_fetch_duration",
         diagnosticMeta: {
           ...(options?.diagnosticMeta ?? {}),
@@ -693,7 +713,7 @@ export async function fetchGridManifest(
 
 
 export async function fetchAnchorFeatureCollection(options?: FetchOptions): Promise<AnchorFeatureCollection> {
-  const response = await fetch("/data/anchors_conus.geojson", {
+  const response = await publicFetch("/data/anchors_conus.geojson", {
     credentials: "omit",
     signal: options?.signal,
   });
@@ -717,7 +737,7 @@ export async function fetchSampleBatch(params: {
   signal?: AbortSignal;
 }): Promise<AnchorBatchResponse | null> {
   const startedAtMs = startNetworkTimer();
-  const response = await authorizedFetch(`${API_V4_BASE}/sample/batch`, {
+  const response = await productFetch(params.model, `${API_V4_BASE}/sample/batch`, {
     method: "POST",
     credentials: "omit",
     signal: params.signal,
@@ -798,7 +818,7 @@ export async function fetchSample(params: {
     qs.set("ensemble_view", params.ensembleView);
   }
   const startedAtMs = startNetworkTimer();
-  const response = await authorizedFetch(`${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
+  const response = await productFetch(params.model, `${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
   trackNetworkFetchDuration({
     metric_name: "sample_request_duration",
     started_at_ms: startedAtMs,
@@ -935,7 +955,7 @@ export async function fetchNwsHazardAlertDetail(
 ): Promise<NwsHazardAlertDetail | null> {
   const url = `${API_V4_BASE}/nws-hazards/alert?id=${encodeURIComponent(alertId)}`;
   try {
-    const response = await authorizedFetch(url, { credentials: "omit", signal });
+    const response = await publicFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }
@@ -957,7 +977,7 @@ export async function fetchAnchorWeather(
 ): Promise<AnchorWeatherResponse | null> {
   const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/weather`;
   try {
-    const response = await authorizedFetch(url, { credentials: "omit", signal });
+    const response = await publicFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }
@@ -979,7 +999,7 @@ export async function fetchAnchorAfd(
 ): Promise<AnchorAfdResponse | null> {
   const url = `${API_V4_BASE}/anchors/${encodeURIComponent(anchorId)}/afd`;
   try {
-    const response = await authorizedFetch(url, { credentials: "omit", signal });
+    const response = await publicFetch(url, { credentials: "omit", signal });
     if (response.status === 404) {
       return null;
     }

@@ -1,7 +1,7 @@
 import maplibregl from "maplibre-gl";
 
 import type { LegendPayload } from "@/components/map-legend";
-import { authorizedFetch, type GridManifestResponse } from "@/lib/api";
+import { productFetch, type GridManifestResponse } from "@/lib/api";
 import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
@@ -1930,7 +1930,7 @@ export class GridWebglLayerController {
     const abortController = new AbortController();
     this.frameFetchAbortControllers.set(frameUrl, abortController);
     const startedAtMs = startNetworkTimer();
-    const request = authorizedFetch(frameUrl, { credentials: "omit", signal: abortController.signal })
+    const request = productFetch(this.manifest?.model, frameUrl, { credentials: "omit", signal: abortController.signal })
       .then(async (response) => {
         const diagnosticMeta = this.buildDiagnosticMeta(frameUrl);
         const contentLengthBytes = parseContentLengthHeader(response);

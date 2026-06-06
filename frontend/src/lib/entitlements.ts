@@ -24,6 +24,13 @@ export function getRequiredFeatureForProduct(productId: string): string | null {
   return product?.requiredFeature ?? null;
 }
 
+export function shouldAuthorizeProductRequest(productId: string): boolean {
+  if (!proGatingEnabled) {
+    return false;
+  }
+  return getRequiredFeatureForProduct(productId) !== null;
+}
+
 export function getProtectedProductLabel(productId: string): string | null {
   const product = PROTECTED_PRODUCTS[String(productId ?? "").trim().toLowerCase() as keyof typeof PROTECTED_PRODUCTS];
   return product?.label ?? null;

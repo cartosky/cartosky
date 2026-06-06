@@ -4229,6 +4229,7 @@ export default function App() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden pt-14">
         <MapCanvas
+          productId={model}
           selectionKey={selectionKey}
           selectionEpoch={selectionEpoch}
           gridManifest={isGridLowMidActive ? gridManifest : null}
