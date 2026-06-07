@@ -21,6 +21,22 @@ from app.services.ndfd_source import NDFDSourceField
 from app.services.run_ids import format_run_id
 
 
+class _FakeNDFDFieldStream:
+    def __init__(self, *, issue_time: datetime, frames_by_var: dict[str, list[NDFDSourceField]]) -> None:
+        self.issue_time = issue_time
+        self.variable_ids = tuple(sorted(frames_by_var))
+        self._frames_by_var = frames_by_var
+
+    def __enter__(self) -> "_FakeNDFDFieldStream":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def iter_variable_frames(self):
+        yield from self._frames_by_var.items()
+
+
 def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
@@ -59,6 +75,7 @@ def test_publish_ndfd_bundle_warps_native_grid_before_write(
 
     def _warp(values, *args, **kwargs):
         captured["input_shape"] = np.asarray(values).shape
+        captured["working_dtype"] = kwargs.get("working_dtype")
         return np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
 
     def _write_value(values, output_path, **_kwargs):
@@ -67,6 +84,15 @@ def test_publish_ndfd_bundle_warps_native_grid_before_write(
 
     monkeypatch.setattr(ndfd_publish, "warp_to_target_grid", _warp)
     monkeypatch.setattr(ndfd_publish, "write_value_cog", _write_value)
+    monkeypatch.setattr(
+        ndfd_publish,
+        "colorize_metadata",
+        lambda values, color_map_id, meta_var_key=None: {
+            "kind": "continuous",
+            "min": float(np.nanmin(values)),
+            "max": float(np.nanmax(values)),
+        },
+    )
 
     issue_time = datetime(2026, 5, 22, 17, 0, tzinfo=timezone.utc)
     frame = NDFDSourceField(
@@ -83,11 +109,13 @@ def test_publish_ndfd_bundle_warps_native_grid_before_write(
     result = ndfd_publish.publish_ndfd_bundle(
         data_root=tmp_path,
         issue_time=issue_time,
-        frames_by_var={"mint": [frame]},
+        frame_batches=iter([("mint", [frame])]),
+        variable_ids=("mint",),
     )
 
     assert result.run_id == "20260522_1700z"
     assert captured["input_shape"] == (4, 5)
+    assert captured["working_dtype"] == np.float32
     assert captured["written_shape"] == (2, 3)
     latest_payload = json.loads((tmp_path / "published" / "ndfd" / "LATEST.json").read_text())
     assert latest_payload["run_id"] == result.run_id
@@ -117,7 +145,11 @@ def test_run_once_noops_when_latest_bundle_matches_formatter(
         source_units="[C]",
     )
 
-    monkeypatch.setattr(ndfd_poller, "collect_latest_ndfd_fields", lambda timeout_seconds: (issue_time, {"mint": [frame]}))
+    monkeypatch.setattr(
+        ndfd_poller,
+        "prepare_latest_ndfd_field_stream",
+        lambda timeout_seconds: _FakeNDFDFieldStream(issue_time=issue_time, frames_by_var={"mint": [frame]}),
+    )
     monkeypatch.setattr(
         ndfd_poller,
         "publish_ndfd_bundle",

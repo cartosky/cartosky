@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.ndfd_publish import publish_ndfd_bundle
-from app.services.ndfd_source import collect_latest_ndfd_fields
+from app.services.ndfd_source import prepare_latest_ndfd_field_stream
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import enforce_run_artifact_retention
 from app.services.run_ids import format_run_id
@@ -43,29 +43,39 @@ class NDFDPollerCycleResult:
 
 def run_once(config: NDFDPollerConfig) -> NDFDPollerCycleResult:
     _log_ndfd_memory_checkpoint("before_build")
-    issue_time, frames_by_var = collect_latest_ndfd_fields(timeout_seconds=config.timeout_seconds)
-    run_id = format_run_id(issue_time.astimezone(timezone.utc), include_minutes=True)
-    latest_run_id = _latest_published_run_id(config.data_root)
-    if latest_run_id == run_id and _bundle_exists(config.data_root, run_id):
-        if _manifest_variable_ids(config.data_root, run_id) == set(frames_by_var.keys()):
-            return NDFDPollerCycleResult(
-                action="noop",
-                published_run_id=run_id,
-                latest_issue_time=issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                variable_count=len(frames_by_var),
-                message=f"NDFD latest bundle {run_id} is already published.",
-            )
+    with prepare_latest_ndfd_field_stream(timeout_seconds=config.timeout_seconds) as field_stream:
+        issue_time = field_stream.issue_time
+        variable_ids = set(field_stream.variable_ids)
+        run_id = format_run_id(issue_time.astimezone(timezone.utc), include_minutes=True)
+        latest_run_id = _latest_published_run_id(config.data_root)
+        if latest_run_id == run_id and _bundle_exists(config.data_root, run_id):
+            if _manifest_variable_ids(config.data_root, run_id) == variable_ids:
+                return NDFDPollerCycleResult(
+                    action="noop",
+                    published_run_id=run_id,
+                    latest_issue_time=issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    variable_count=len(variable_ids),
+                    message=f"NDFD latest bundle {run_id} is already published.",
+                )
 
-    result = publish_ndfd_bundle(data_root=config.data_root, issue_time=issue_time, frames_by_var=frames_by_var)
-    _log_ndfd_memory_checkpoint("after_publish", run=result.run_id)
-    _enforce_retention(config)
-    return NDFDPollerCycleResult(
-        action="published",
-        published_run_id=result.run_id,
-        latest_issue_time=issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        variable_count=len(frames_by_var),
-        message=f"Published NDFD bundle {result.run_id} with {result.frame_count} frames across {len(frames_by_var)} variables.",
-    )
+        result = publish_ndfd_bundle(
+            data_root=config.data_root,
+            issue_time=issue_time,
+            frame_batches=field_stream.iter_variable_frames(),
+            variable_ids=field_stream.variable_ids,
+        )
+        _log_ndfd_memory_checkpoint("after_publish", run=result.run_id)
+        _enforce_retention(config)
+        return NDFDPollerCycleResult(
+            action="published",
+            published_run_id=result.run_id,
+            latest_issue_time=issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            variable_count=len(variable_ids),
+            message=(
+                f"Published NDFD bundle {result.run_id} with {result.frame_count} "
+                f"frames across {len(variable_ids)} variables."
+            ),
+        )
 
 
 def run_poller(config: NDFDPollerConfig, *, once: bool) -> int:

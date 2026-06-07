@@ -5,13 +5,13 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 
 from app.config import grid_build_enabled
 from app.models.ndfd import NDFD_MODEL
-from app.services.builder.colorize import float_to_rgba
+from app.services.builder.colorize import colorize_metadata
 from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
 from app.services.colormaps import get_color_map_spec
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
@@ -52,9 +52,11 @@ def publish_ndfd_bundle(
     *,
     data_root: Path,
     issue_time: datetime,
-    frames_by_var: dict[str, list[NDFDSourceField]],
+    frames_by_var: dict[str, list[NDFDSourceField]] | None = None,
+    frame_batches: Iterable[tuple[str, list[NDFDSourceField]]] | None = None,
+    variable_ids: Iterable[str] | None = None,
 ) -> NDFDPublishResult:
-    if not frames_by_var:
+    if frames_by_var is None and frame_batches is None:
         raise ValueError("NDFD publish requires at least one variable with frames")
 
     if grid_build_enabled():
@@ -64,8 +66,13 @@ def publish_ndfd_bundle(
     _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
 
     targets: list[tuple[str, int]] = []
+    published_vars: set[str] = set()
+    frame_count = 0
     latest_valid_time: datetime | None = None
-    for var_id, frames in sorted(frames_by_var.items(), key=lambda item: item[0]):
+    for var_id, frames in _iter_frame_batches(frames_by_var=frames_by_var, frame_batches=frame_batches):
+        if not frames:
+            continue
+        published_vars.add(var_id)
         for fh, frame in enumerate(sorted(frames, key=lambda item: item.valid_time.astimezone(timezone.utc))):
             _write_ndfd_frame(
                 data_root=data_root,
@@ -76,8 +83,12 @@ def publish_ndfd_bundle(
                 frame=frame,
             )
             targets.append((var_id, fh))
+            frame_count += 1
             frame_valid_time = frame.valid_time.astimezone(timezone.utc)
             latest_valid_time = frame_valid_time if latest_valid_time is None else max(latest_valid_time, frame_valid_time)
+
+    if not targets:
+        raise ValueError("NDFD publish requires at least one frame")
 
     if grid_build_enabled():
         _require_grid_support()
@@ -85,7 +96,13 @@ def publish_ndfd_bundle(
             run_root=data_root / "staging" / NDFD_MODEL_ID / run_id,
             model=NDFD_MODEL_ID,
             run=run_id,
-            variables=tuple(sorted(frames_by_var.keys())),
+            variables=tuple(
+                sorted({
+                    str(item).strip()
+                    for item in (variable_ids or published_vars)
+                    if str(item).strip()
+                })
+            ),
         )
 
     promote_run(data_root=data_root, model=NDFD_MODEL_ID, run_id=run_id)
@@ -111,8 +128,21 @@ def publish_ndfd_bundle(
         run_id=run_id,
         published_run_dir=published_run_dir,
         manifest_path=manifest_path,
-        frame_count=sum(len(frames) for frames in frames_by_var.values()),
+        frame_count=frame_count,
     )
+
+
+def _iter_frame_batches(
+    *,
+    frames_by_var: dict[str, list[NDFDSourceField]] | None,
+    frame_batches: Iterable[tuple[str, list[NDFDSourceField]]] | None,
+) -> Iterable[tuple[str, list[NDFDSourceField]]]:
+    if frames_by_var is not None:
+        yield from sorted(frames_by_var.items(), key=lambda item: item[0])
+        return
+    if frame_batches is None:
+        return
+    yield from frame_batches
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:
@@ -148,7 +178,7 @@ def _write_ndfd_frame(
     var_capability = NDFD_MODEL.get_var_capability(var_id)
     if var_capability is None or not var_capability.color_map_id:
         raise ValueError(f"Missing NDFD color map registration for {var_id}")
-    _, colorize_meta = float_to_rgba(values, str(var_capability.color_map_id), meta_var_key=var_id)
+    colorize_meta = colorize_metadata(values, str(var_capability.color_map_id), meta_var_key=var_id)
     write_value_cog(values, value_path, model=NDFD_MODEL_ID, region=NDFD_REGION_ID)
 
     sidecar = _build_sidecar_json(
@@ -198,6 +228,7 @@ def _warp_frame_to_target_grid(frame: NDFDSourceField) -> tuple[np.ndarray, Any]
         resampling="bilinear",
         src_nodata=None,
         dst_nodata=float("nan"),
+        working_dtype=np.float32,
     )
     return np.asarray(warped_values, dtype=np.float32), dst_transform
 
