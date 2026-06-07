@@ -11,7 +11,7 @@ import { billingEnabled, pricingPreviewEnabled } from "@/lib/entitlements";
 const FREE_PLAN_PRODUCTS = ["GFS", "HRRR", "NAM", "MRMS", "NBM"];
 
 function checkoutSuccessPath(): string {
-  return "/pricing?checkout=success";
+  return "/checkout-success";
 }
 
 function checkoutCancelPath(): string {
