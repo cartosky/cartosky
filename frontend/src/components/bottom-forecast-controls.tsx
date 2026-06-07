@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import {
+  formatIssuedTimeISO,
   formatObservedCompactTime,
   formatObservedValidTime,
   formatValidTime,
@@ -46,6 +47,7 @@ type BottomForecastControlsProps = {
 };
 
 function formatTimelineDisplay(params: {
+  modelId?: string | null;
   runDateISO: string | null;
   forecastHour: number;
   timeAxisMode: TimeAxisMode;
@@ -58,6 +60,19 @@ function formatTimelineDisplay(params: {
   shortDate: string;
   axisLabel: string;
 } | null {
+  if (params.modelId === "cpc") {
+    const issuedAt = formatIssuedTimeISO(params.runDateISO);
+    if (issuedAt) {
+      return {
+        primary: issuedAt,
+        secondary: "",
+        compactValue: issuedAt,
+        shortDate: issuedAt,
+        axisLabel: "Issued",
+      };
+    }
+  }
+
   if (params.timeAxisMode === "observed") {
     const primary = formatObservedValidTime(params.validTimeISO);
     const compactValue = formatObservedCompactTime(params.validTimeISO);
@@ -192,6 +207,7 @@ export function BottomForecastControls({
 
   const validTime = useMemo(
     () => formatTimelineDisplay({
+      modelId,
       runDateISO: runDateTimeISO,
       forecastHour: previewHour ?? forecastHour,
       timeAxisMode,
@@ -201,7 +217,7 @@ export function BottomForecastControls({
           ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
           : validTimeISO,
     }),
-    [runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, validTimeISO, frameValidTimesByHour]
+    [modelId, runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, validTimeISO, frameValidTimesByHour]
   );
 
   const hasFrames = availableFrames.length > 0;
@@ -714,9 +730,11 @@ export function BottomForecastControls({
                     <span className="text-[12px] font-semibold tracking-tight text-white transition-all duration-200">
                       {validTime.primary}
                     </span>
-                    <span className="text-[10px] font-medium text-cyan-200/80 transition-all duration-200">
-                      {validTime.secondary}
-                    </span>
+                    {validTime.secondary ? (
+                      <span className="text-[10px] font-medium text-cyan-200/80 transition-all duration-200">
+                        {validTime.secondary}
+                      </span>
+                    ) : null}
                   </>
                 ) : (
                   <div className="flex items-center gap-1.5">
