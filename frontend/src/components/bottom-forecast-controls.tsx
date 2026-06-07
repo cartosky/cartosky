@@ -8,7 +8,6 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import {
-  formatIssuedTimeISO,
   formatObservedCompactTime,
   formatObservedValidTime,
   formatValidTime,
@@ -46,6 +45,41 @@ type BottomForecastControlsProps = {
   runIsComplete?: boolean;
 };
 
+function formatCpcIssuedDisplay(iso: string | null | undefined): string | null {
+  if (!iso) {
+    return null;
+  }
+
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).formatToParts(parsed);
+
+  const lookup = (type: Intl.DateTimeFormatPartTypes): string => parts.find((part) => part.type === type)?.value ?? "";
+  const month = lookup("month");
+  const day = lookup("day");
+  const year = lookup("year");
+  const hour = lookup("hour");
+  const minute = lookup("minute");
+  const dayPeriod = lookup("dayPeriod").toUpperCase();
+  const timeZoneName = lookup("timeZoneName");
+
+  if (!month || !day || !year || !hour || !minute || !dayPeriod) {
+    return null;
+  }
+
+  return `ISSUED: ${month} ${day}, ${year}, ${hour}:${minute}${dayPeriod}${timeZoneName ? ` ${timeZoneName}` : ""}`;
+}
+
 function formatTimelineDisplay(params: {
   modelId?: string | null;
   runDateISO: string | null;
@@ -61,7 +95,7 @@ function formatTimelineDisplay(params: {
   axisLabel: string;
 } | null {
   if (params.modelId === "cpc") {
-    const issuedAt = formatIssuedTimeISO(params.runDateISO);
+    const issuedAt = formatCpcIssuedDisplay(params.runDateISO);
     if (issuedAt) {
       return {
         primary: issuedAt,
