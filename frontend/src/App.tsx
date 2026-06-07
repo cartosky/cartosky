@@ -4347,6 +4347,7 @@ export default function App() {
           transientStatus={frameStatusMessage}
           layoutMode={viewerLayoutMode}
           modelLabel={selectedModelLabel}
+          modelId={model}
           variableId={variable}
           variableLabel={selectedVariableLabel}
           totalForecastHours={runAvailability?.totalForecastHours ?? null}

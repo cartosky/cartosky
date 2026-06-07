@@ -38,6 +38,7 @@ type BottomForecastControlsProps = {
   transientStatus?: string | null;
   layoutMode?: ViewerLayoutMode;
   modelLabel?: string | null;
+  modelId?: string | null;
   variableId?: string | null;
   variableLabel?: string | null;
   totalForecastHours?: number | null;
@@ -164,6 +165,7 @@ export function BottomForecastControls({
   transientStatus,
   layoutMode = "desktop",
   modelLabel = null,
+  modelId = null,
   variableId = null,
   variableLabel = null,
   totalForecastHours = null,
@@ -176,6 +178,12 @@ export function BottomForecastControls({
   const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const staticSnapshotLabel: string | null = (() => {
+    if (modelId === "cpc") return "Latest forecast";
+    if (modelId === "nws_hazards") return "Latest hazards";
+    if (modelId === "mrms" && variableId === "mrms_recent_precip_72h") return "Latest observations";
+    return null;
+  })();
   const lastDragEmitAtRef = useRef(0);
   const lastSentHourRef = useRef<number | null>(null);
   const trailingRafRef = useRef<number | null>(null);
@@ -424,7 +432,7 @@ export function BottomForecastControls({
                   <button
                     type="button"
                     onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={disabled || !hasFrames || playDisabled}
+                    disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
                     aria-label={isPlaying ? "Pause animation" : "Play animation"}
                     className={cn(
                       "flex shrink-0 items-center justify-center border transition-all duration-150 disabled:opacity-50 disabled:hover:scale-100",
@@ -442,82 +450,101 @@ export function BottomForecastControls({
                 </TooltipContent>
               </Tooltip>
 
-              <div className="min-w-0 flex-1">
-                <div className="relative h-8">
-                  {mobileEnhancedTrack ? (
-                    <>
-                      <div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
-                      >
-                        <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
-                          style={{ width: `${freshnessProgressPercent}%` }}
-                        />
-                        {!runIsComplete ? (
-                          <div
-                            className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
-                            style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
-                          />
-                        ) : null}
-                      </div>
-                      {!runIsComplete ? (
+              {staticSnapshotLabel ? (
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 py-1">
+                    <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-cyan-400" />
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.18em] text-white/40">
+                      {staticSnapshotLabel}
+                    </span>
+                  </div>
+                  {validTime ? (
+                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                      {validTime.shortDate}
+                      {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                        <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <div className="relative h-8">
+                    {mobileEnhancedTrack ? (
+                      <>
                         <div
                           aria-hidden="true"
-                          className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
-                          style={{ left: `${freshnessProgressPercent}%` }}
-                        />
-                      ) : null}
-                    </>
-                  ) : null}
-                  <div
-                    className="absolute inset-y-0 left-0"
-                    style={{ width: mobileEnhancedTrack ? `${mobileInteractiveTrackPercent}%` : "100%" }}
-                  >
-                    <Slider
-                      value={[mobileEnhancedTrack ? publishedSliderIndex : sliderIndex]}
-                      onValueChange={([value]) => {
-                        const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
-                        const next = frames[Math.round(value ?? 0)];
-                        if (Number.isFinite(next)) {
-                          if (!isScrubbing) {
-                            setIsScrubbing(true);
-                          }
-                          setPreviewHour(next);
-                          emitForecastHour(next, false);
-                        }
-                      }}
-                      onValueCommit={([value]) => {
-                        const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
-                        const next = frames[Math.round(value ?? 0)];
-                        if (Number.isFinite(next)) {
-                          setPreviewHour(null);
-                          setIsScrubbing(false);
-                          emitForecastHour(next, true);
-                        }
-                      }}
-                      min={0}
-                      max={Math.max(0, (mobileEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
-                      step={1}
-                      disabled={disabled || isPlaying || !hasFrames || (mobileEnhancedTrack && publishedFrames.length === 0)}
-                      className={cn(
-                        "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5",
-                        mobileEnhancedTrack
-                          ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
-                          : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                      )}
-                    />
-                  </div>
-                </div>
-                {validTime ? (
-                  <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
-                    {validTime.shortDate}
-                    {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
-                      <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
+                          className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
+                        >
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
+                            style={{ width: `${freshnessProgressPercent}%` }}
+                          />
+                          {!runIsComplete ? (
+                            <div
+                              className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
+                              style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
+                            />
+                          ) : null}
+                        </div>
+                        {!runIsComplete ? (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
+                            style={{ left: `${freshnessProgressPercent}%` }}
+                          />
+                        ) : null}
+                      </>
                     ) : null}
+                    <div
+                      className="absolute inset-y-0 left-0"
+                      style={{ width: mobileEnhancedTrack ? `${mobileInteractiveTrackPercent}%` : "100%" }}
+                    >
+                      <Slider
+                        value={[mobileEnhancedTrack ? publishedSliderIndex : sliderIndex]}
+                        onValueChange={([value]) => {
+                          const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
+                          const next = frames[Math.round(value ?? 0)];
+                          if (Number.isFinite(next)) {
+                            if (!isScrubbing) {
+                              setIsScrubbing(true);
+                            }
+                            setPreviewHour(next);
+                            emitForecastHour(next, false);
+                          }
+                        }}
+                        onValueCommit={([value]) => {
+                          const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
+                          const next = frames[Math.round(value ?? 0)];
+                          if (Number.isFinite(next)) {
+                            setPreviewHour(null);
+                            setIsScrubbing(false);
+                            emitForecastHour(next, true);
+                          }
+                        }}
+                        min={0}
+                        max={Math.max(0, (mobileEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
+                        step={1}
+                        disabled={disabled || isPlaying || !hasFrames || (mobileEnhancedTrack && publishedFrames.length === 0)}
+                        className={cn(
+                          "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5",
+                          mobileEnhancedTrack
+                            ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
+                            : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+                        )}
+                      />
+                    </div>
                   </div>
-                ) : null}
-              </div>
+                  {validTime ? (
+                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                      {validTime.shortDate}
+                      {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                        <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             {showFreshnessStrip && freshnessTotal !== null ? (
@@ -557,7 +584,7 @@ export function BottomForecastControls({
                     <button
                       type="button"
                       onClick={() => setIsPlaying(!isPlaying)}
-                      disabled={disabled || !hasFrames || playDisabled}
+                      disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
                       aria-label={isPlaying ? "Pause animation" : "Play animation"}
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
@@ -579,71 +606,82 @@ export function BottomForecastControls({
                 </Tooltip>
               </div>
 
-              <div className="flex flex-1 items-center">
-                <div className="relative w-full px-0.5">
-                  <div className="relative h-10">
-                    {desktopEnhancedTrack ? (
-                      <>
-                        <div
-                          aria-hidden="true"
-                          className="pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
-                        >
-                          <div
-                            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
-                            style={{ width: `${freshnessProgressPercent}%` }}
-                          />
-                          {!runIsComplete ? (
-                            <div
-                              className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
-                              style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
-                            />
-                          ) : null}
-                        </div>
-                        {!runIsComplete ? (
+              {staticSnapshotLabel ? (
+                <div className="flex flex-1 items-center">
+                  <div className="flex items-center gap-2 px-0.5">
+                    <span aria-hidden="true" className="h-2 w-2 rounded-full bg-cyan-400 shrink-0" />
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.18em] text-white/40">
+                      {staticSnapshotLabel}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-1 items-center">
+                  <div className="relative w-full px-0.5">
+                    <div className="relative h-10">
+                      {desktopEnhancedTrack ? (
+                        <>
                           <div
                             aria-hidden="true"
-                            className="pointer-events-none absolute top-1/2 z-20 h-4 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
-                            style={{ left: `${freshnessProgressPercent}%` }}
-                          />
-                        ) : null}
-                      </>
-                    ) : null}
-                    <div
-                      className="absolute inset-y-0 left-0"
-                      style={{ width: desktopEnhancedTrack ? `${desktopInteractiveTrackPercent}%` : "100%" }}
-                    >
-                      <Slider
-                        value={[desktopEnhancedTrack ? publishedSliderIndex : sliderIndex]}
-                        onValueChange={([value]) => {
-                          const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
-                          const next = frames[Math.round(value ?? 0)];
-                          if (Number.isFinite(next)) {
-                            if (!isScrubbing) {
-                              setIsScrubbing(true);
+                            className="pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
+                          >
+                            <div
+                              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
+                              style={{ width: `${freshnessProgressPercent}%` }}
+                            />
+                            {!runIsComplete ? (
+                              <div
+                                className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
+                                style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
+                              />
+                            ) : null}
+                          </div>
+                          {!runIsComplete ? (
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute top-1/2 z-20 h-4 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
+                              style={{ left: `${freshnessProgressPercent}%` }}
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                      <div
+                        className="absolute inset-y-0 left-0"
+                        style={{ width: desktopEnhancedTrack ? `${desktopInteractiveTrackPercent}%` : "100%" }}
+                      >
+                        <Slider
+                          value={[desktopEnhancedTrack ? publishedSliderIndex : sliderIndex]}
+                          onValueChange={([value]) => {
+                            const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
+                            const next = frames[Math.round(value ?? 0)];
+                            if (Number.isFinite(next)) {
+                              if (!isScrubbing) {
+                                setIsScrubbing(true);
+                              }
+                              setPreviewHour(next);
+                              emitForecastHour(next, false);
                             }
-                            setPreviewHour(next);
-                            emitForecastHour(next, false);
-                          }
-                        }}
-                        onValueCommit={([value]) => {
-                          const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
-                          const next = frames[Math.round(value ?? 0)];
-                          if (Number.isFinite(next)) {
-                            setPreviewHour(null);
-                            setIsScrubbing(false);
-                            emitForecastHour(next, true);
-                          }
-                        }}
-                        min={0}
-                        max={Math.max(0, (desktopEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
-                        step={1}
-                        disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && publishedFrames.length === 0)}
-                        className={desktopSliderClassName}
-                      />
+                          }}
+                          onValueCommit={([value]) => {
+                            const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
+                            const next = frames[Math.round(value ?? 0)];
+                            if (Number.isFinite(next)) {
+                              setPreviewHour(null);
+                              setIsScrubbing(false);
+                              emitForecastHour(next, true);
+                            }
+                          }}
+                          min={0}
+                          max={Math.max(0, (desktopEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
+                          step={1}
+                          disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && publishedFrames.length === 0)}
+                          className={desktopSliderClassName}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {hasFreshnessTotal && freshnessTotal !== null ? (
                 <>
