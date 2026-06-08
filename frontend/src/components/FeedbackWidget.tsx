@@ -98,6 +98,21 @@ export function FeedbackWidget() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isFeedbackOpen) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeWidget();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isFeedbackOpen]);
+
   function closeWidget() {
     closeFeedback();
     setSubmitState("idle");
