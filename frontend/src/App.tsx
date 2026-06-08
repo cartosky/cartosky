@@ -423,16 +423,16 @@ export default function App() {
       isWelcome: true,
     },
     {
-      targetSelector: '[data-tour-target="feedback-button"]',
-      title: "Feedback",
-      body: "Send us a note about missing data, display issues, or feature requests",
-    },
-    {
       targetSelector: '[data-tour-target="share-button"]',
       title: "Share / Screenshot",
       body: "Share this exact map view to The Weather Forums. A CartoSky account linked to your TWF account via integrations is required",
       linkText: "Learn more",
       linkHref: "/account",
+    },
+    {
+      targetSelector: '[data-tour-target="feedback-button"]',
+      title: "Feedback",
+      body: "Send us a note about missing data, display issues, or feature requests",
     },
     {
       targetSelector: '[data-tour-target="mobile-controls-button"]',
