@@ -477,7 +477,7 @@ export default function App() {
     },
   ], []);
 
-  const tourSteps = isDesktopViewerLayout ? desktopTourSteps : mobileTourSteps;
+  const tourSteps = viewerLayoutMode === "mobile" ? mobileTourSteps : desktopTourSteps;
 
   const {
     isActive: tourActive,

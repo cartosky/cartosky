@@ -365,8 +365,40 @@ export function TourOverlay({
           boxShadow: `0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(103,232,249,0.07)`,
           color: "rgba(255,255,255,0.92)",
           fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+          position: "relative",
         }}
       >
+        {/* Close button */}
+        <button
+          type="button"
+          onClick={onSkip}
+          aria-label="Close tour"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            background: "none",
+            border: "none",
+            color: "rgba(255,255,255,0.5)",
+            fontSize: 18,
+            cursor: "pointer",
+            padding: "2px 6px",
+            lineHeight: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "color 150ms ease",
+          }}
+          onMouseEnter={(e) => {
+            (e.target as HTMLButtonElement).style.color = "rgba(255,255,255,0.75)";
+          }}
+          onMouseLeave={(e) => {
+            (e.target as HTMLButtonElement).style.color = "rgba(255,255,255,0.5)";
+          }}
+        >
+          ✕
+        </button>
+
         {/* Step counter */}
         <div
           style={{
