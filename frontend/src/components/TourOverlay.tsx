@@ -365,7 +365,6 @@ export function TourOverlay({
           boxShadow: `0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(103,232,249,0.07)`,
           color: "rgba(255,255,255,0.92)",
           fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-          position: "relative",
         }}
       >
         {/* Close button */}
