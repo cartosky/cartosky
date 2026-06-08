@@ -59,7 +59,7 @@ import {
 } from "@/lib/time-axis";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { readPermalink } from "@/lib/permalink-read";
-import { captureProductAnalyticsEvent } from "@/lib/posthog";
+import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { useSiteLoading } from "@/lib/site-loading";
@@ -1874,10 +1874,7 @@ export default function App() {
         region_id: regionRef.current || null,
         forecast_hour: Number.isFinite(forecastHourRef.current) ? forecastHourRef.current : null,
         duration_seconds: Math.floor(durationMs / 1000),
-      }, useBeaconTransport ? {
-        send_instantly: true,
-        transport: "sendBeacon",
-      } : undefined);
+      });
     };
 
     const handlePageHide = (event: PageTransitionEvent) => {
@@ -3617,6 +3614,10 @@ export default function App() {
       setVisualVariable(nextVariable);
     }
     setModel(nextModel);
+    captureProductAnalyticsEvent("model_loaded", {
+      model: nextModel,
+      variable: nextVariable || null,
+    });
     captureProductAnalyticsEvent("model_selected", {
       model_id: nextModel,
       variable_id: nextVariable || null,
@@ -3660,6 +3661,10 @@ export default function App() {
       visualState: "holding_old",
     });
     setVariable(nextVariable);
+    captureProductAnalyticsEvent("variable_changed", {
+      model: model || null,
+      variable: nextVariable,
+    });
     captureProductAnalyticsEvent("variable_selected", {
       model_id: model || null,
       variable_id: nextVariable,
@@ -3737,8 +3742,14 @@ export default function App() {
     if (forecastHour !== scrubCommitIntent.hour) {
       return;
     }
+    captureProductAnalyticsEvent("frame_scrubbed", {
+      model: model || null,
+      variable: variable || null,
+      frame: gridFrameIndexByHour.get(Number(forecastHour)) ?? null,
+      forecast_hour: Number(forecastHour),
+    });
     setScrubCommitIntent(null);
-  }, [forecastHour, scrubCommitIntent]);
+  }, [forecastHour, gridFrameIndexByHour, model, scrubCommitIntent, variable]);
 
   // When the user starts scrubbing, cancel any pending buffering-recovery auto-restart
   // so it cannot preempt the in-progress scrub and re-lock the slider.

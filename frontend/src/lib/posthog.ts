@@ -1,6 +1,7 @@
 import type { CaptureOptions, PostHog } from "posthog-js";
 
 import type { TwfStatus } from "@/lib/admin-api";
+import type { AnalyticsEventName } from "@/lib/analytics-types";
 import {
   getPostHogApiKey,
   getPostHogHost,
@@ -17,6 +18,12 @@ const ALLOWED_EVENT_NAMES = new Set([
   "viewer_opened",
   "viewer_session_ended",
   "forecast_page_viewed",
+  "share_initiated",
+  "share_completed",
+  "pro_gate_hit",
+  "model_loaded",
+  "variable_changed",
+  "frame_scrubbed",
   "model_selected",
   "variable_selected",
   "region_selected",
@@ -41,16 +48,7 @@ const ALLOWED_INTERNAL_EVENT_NAMES = new Set([
   "survey shown",
 ]);
 
-type ProductAnalyticsEventName =
-  | "viewer_opened"
-  | "viewer_session_ended"
-  | "forecast_page_viewed"
-  | "model_selected"
-  | "variable_selected"
-  | "region_selected"
-  | "animation_started"
-  | "legend_opened"
-  | "share_clicked";
+type ProductAnalyticsEventName = AnalyticsEventName;
 
 type ProductAnalyticsProperties = {
   model_id?: string | null;
@@ -265,7 +263,7 @@ export function capturePostHogPageview(pathname: string, search = ""): void {
   ph.capture("$pageview", properties);
 }
 
-export function captureProductAnalyticsEvent(
+export function capturePostHogProductEvent(
   eventName: ProductAnalyticsEventName,
   properties: ProductAnalyticsProperties = {},
   options?: CaptureOptions,

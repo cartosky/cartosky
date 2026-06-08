@@ -12,6 +12,7 @@ const POSTHOG_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_D
 const POSTHOG_DASHBOARD_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_DASHBOARD_EMBED_URL ?? "").trim();
 const POSTHOG_REPLAY_URL_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_URL ?? "").trim();
 const POSTHOG_REPLAY_SAMPLE_RATE_ENV = String(import.meta.env.VITE_CARTOSKY_POSTHOG_REPLAY_SAMPLE_RATE ?? "").trim();
+const MIXPANEL_TOKEN_ENV = String(import.meta.env.VITE_CARTOSKY_MIXPANEL_TOKEN ?? "").trim();
 const GRAFANA_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_URL ?? "").trim();
 const GRAFANA_DASHBOARD_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_DASHBOARD_URL ?? "").trim();
 const GRAFANA_EMBED_URL_ENV = String(import.meta.env.VITE_CARTOSKY_GRAFANA_EMBED_URL ?? "").trim();
@@ -140,4 +141,15 @@ export function getGrafanaEmbedUrl(): string | null {
 export function getGrafanaTracesUrl(): string | null {
   const value = GRAFANA_TRACES_URL_ENV.trim();
   return value.length > 0 ? value : null;
+}
+
+export function isMixpanelEnabled(): boolean {
+  return (
+    readBooleanEnv(import.meta.env.VITE_CARTOSKY_MIXPANEL_ENABLED, false) &&
+    MIXPANEL_TOKEN_ENV.length > 0
+  );
+}
+
+export function getMixpanelToken(): string {
+  return MIXPANEL_TOKEN_ENV;
 }

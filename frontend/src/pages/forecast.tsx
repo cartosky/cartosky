@@ -18,7 +18,7 @@ import {
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
-import { captureProductAnalyticsEvent } from "@/lib/posthog";
+import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { useSiteLoading } from "@/lib/site-loading";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -1187,7 +1187,9 @@ export default function Forecast() {
   const initialRestorePendingRef = useRef(initialRestorePending);
 
   useEffect(() => {
-    captureProductAnalyticsEvent("forecast_page_viewed");
+    captureProductAnalyticsEvent("forecast_page_viewed", {
+      location_type: "geocoded",
+    });
   }, []);
 
   useEffect(() => {

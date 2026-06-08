@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, LockKeyhole, Search, Star, X } from "lucide-react";
 
 import type { GroupedOption } from "@/lib/app-utils";
+import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { useEntitlements } from "@/lib/entitlements";
 import { useModelFavorites } from "@/lib/use-model-favorites";
 import { cn } from "@/lib/utils";
@@ -283,6 +284,9 @@ export function ModelPicker({
 
   const chooseModel = (modelId: string) => {
     if (!entitlements.canAccessProduct(modelId)) {
+      captureProductAnalyticsEvent("pro_gate_hit", {
+        product: modelId,
+      });
       if (entitlements.billingEnabled || entitlements.pricingPreviewEnabled) {
         setOpenState(false);
         navigate("/pricing");

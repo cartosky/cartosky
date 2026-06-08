@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
+import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { API_ORIGIN, SERVER_SCREENSHOT_ENABLED } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
@@ -778,6 +779,9 @@ export function TwfShareModal({
       }
       return null;
     });
+    captureProductAnalyticsEvent("share_initiated", {
+      user_type: twfStatus.linked ? "twf" : "anonymous",
+    });
   }, [open, defaultContent, defaultTopicTitle]);
 
 
@@ -1288,6 +1292,10 @@ export function TwfShareModal({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
+        captureProductAnalyticsEvent("share_completed", {
+          success: true,
+          share_mode: shareMode,
+        });
         setSubmitTopicSuccess(result);
         setSubmitTopicTitle(result.title);
       } else {
@@ -1296,6 +1304,10 @@ export function TwfShareModal({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
+        captureProductAnalyticsEvent("share_completed", {
+          success: true,
+          share_mode: shareMode,
+        });
         setSubmitSuccess(result);
         setSubmitTopicTitle(selectedTopicTitle ?? "Selected topic");
       }
