@@ -546,6 +546,7 @@ export default function App() {
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const manualLocationJumpRef = useRef(false);
   const latestMapDataUrlGetterRef = useRef<(() => string | null) | null>(null);
+  const [regionViewResetSignal, setRegionViewResetSignal] = useState(0);
   const mapViewRef = useRef({
     lat: MAP_VIEW_DEFAULTS.center[0],
     lon: MAP_VIEW_DEFAULTS.center[1],
@@ -3577,6 +3578,9 @@ export default function App() {
   }, [bumpGridReadyVersion, normalizeGridFrameUrl]);
 
   const handleRegionChange = useCallback((nextRegion: string) => {
+    if (nextRegion !== region) {
+      setRegionViewResetSignal((current) => current + 1);
+    }
     setRegion(nextRegion);
     captureProductAnalyticsEvent("region_selected", {
       model_id: model || null,
@@ -4290,6 +4294,7 @@ export default function App() {
           onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
           manualLocationJumpRef={manualLocationJumpRef}
           geolocationMarker={geolocationMarker}
+          viewResetSignal={regionViewResetSignal}
         />
 
         {/* Subtle radial vignette — darkens map edges for depth; never blocks interaction */}

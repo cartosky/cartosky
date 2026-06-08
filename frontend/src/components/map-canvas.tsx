@@ -968,6 +968,7 @@ type MapCanvasProps = {
   geolocationMarker?: { lat: number; lon: number } | null;
   region: string;
   regionViews?: Record<string, RegionView>;
+  viewResetSignal?: number;
   opacity: number;
   mode: PlaybackMode;
   variable?: string;
@@ -1018,6 +1019,7 @@ export function MapCanvas({
   geolocationMarker = null,
   region,
   regionViews,
+  viewResetSignal = 0,
   opacity,
   mode,
   variable,
@@ -1101,6 +1103,7 @@ export function MapCanvas({
   const vectorTransitionRafRef = useRef<number | null>(null);
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
   const autoplayGridStateSignatureRef = useRef("");
+  const lastAppliedViewResetSignalRef = useRef<number | null>(null);
 
   const view = useMemo(() => {
     return regionViews?.[region] ?? {
@@ -2598,6 +2601,10 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    if (lastAppliedViewResetSignalRef.current === viewResetSignal) {
+      return;
+    }
+    lastAppliedViewResetSignalRef.current = viewResetSignal;
     if (manualLocationJumpRef?.current) {
       manualLocationJumpRef.current = false;
       return;
@@ -2625,7 +2632,7 @@ export function MapCanvas({
     } else {
       map.easeTo({ center: view.center, zoom: view.zoom, duration: 600 });
     }
-  }, [isLoaded, manualLocationJumpRef, view]);
+  }, [isLoaded, manualLocationJumpRef, view, viewResetSignal]);
 
   const onMapHoverRef = useRef(onMapHover);
   onMapHoverRef.current = onMapHover;
