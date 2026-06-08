@@ -33,6 +33,7 @@ type TwfForum = {
   name: string;
   path?: string;
 };
+const EXCLUDED_FORUM_IDS = new Set([3, 49]);
 
 type TwfTopic = {
   id: number;
@@ -147,6 +148,13 @@ async function readApiError(response: Response): Promise<ApiErrorInfo | null> {
     return null;
   }
 }
+function stripForumIdSuffix(label: string): string {
+  return label.replace(/\s*\(ID\s+\d+\)\s*$/i, "").trim();
+}
+
+function formatForumLabel(forum: Pick<TwfForum, "name" | "path">): string {
+  return stripForumIdSuffix(forum.path ?? forum.name);
+}
 
 function normalizeForums(value: unknown): TwfForum[] {
   const list = Array.isArray(value)
@@ -163,11 +171,16 @@ function normalizeForums(value: unknown): TwfForum[] {
       continue;
     }
     const id = Number(entry.id);
-    const name = typeof entry.name === "string" ? entry.name.trim() : "";
+    if (!Number.isFinite(id) || id <= 0 || EXCLUDED_FORUM_IDS.has(id)) {
+      continue;
+    }
+    const name = typeof entry.name === "string" ? stripForumIdSuffix(entry.name.trim()) : "";
     if (!Number.isFinite(id) || id <= 0 || !name) {
       continue;
     }
-    const path = typeof entry.path === "string" && entry.path.trim() ? entry.path.trim() : undefined;
+    const path = typeof entry.path === "string" && entry.path.trim()
+      ? stripForumIdSuffix(entry.path.trim())
+      : undefined;
     if (path) {
       normalized.push({ id, name, path });
       continue;
@@ -175,7 +188,7 @@ function normalizeForums(value: unknown): TwfForum[] {
     normalized.push({ id, name });
   }
 
-  normalized.sort((a, b) => (a.path ?? a.name).localeCompare(b.path ?? b.name));
+  normalized.sort((a, b) => formatForumLabel(a).localeCompare(formatForumLabel(b)));
   return normalized;
 }
 
@@ -548,7 +561,7 @@ export function TwfShareModal({
       return quickForum.label;
     }
     const customForum = forums.find((forum) => forum.id === selectedForumId);
-    return customForum?.path ?? customForum?.name ?? `Forum ${selectedForumId}`;
+    return customForum ? formatForumLabel(customForum) : `Forum ${selectedForumId}`;
   }, [forums, selectedForumId, showOtherForums]);
   const showTopicsLoadingState =
     topicsLoading ||
@@ -1597,7 +1610,7 @@ export function TwfShareModal({
                         >
                           {forums.map((forum) => (
                             <option key={forum.id} value={String(forum.id)}>
-                              {(forum.path ?? forum.name) + ` (ID ${forum.id})`}
+                              {formatForumLabel(forum)}
                             </option>
                           ))}
                         </select>
