@@ -3598,6 +3598,7 @@ export default function App() {
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
     setRun("latest");
     setRuns([]);
+    runsLoadedForModelRef.current = "";
     setRunManifest(null);
     setFrameRows([]);
     setResolvedGridLatestRunId(null);
