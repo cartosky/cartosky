@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import ctypes
 import gc
 import json
 import logging
@@ -1680,6 +1681,60 @@ def _log_runtime_cache_prune(*, run_id: str, model_id: str, reason: str) -> None
     )
 
 
+def _perform_successful_run_memory_cleanup(*, run_id: str, model_id: str) -> None:
+    logger.info("Run completed successfully; performing memory cleanup.")
+    current_rss_before_gc_bytes = current_rss_bytes()
+    peak_rss_before_gc_bytes = peak_rss_bytes()
+    gc_collected = 0
+    current_rss_after_gc_bytes = current_rss_before_gc_bytes
+    peak_rss_after_gc_bytes = peak_rss_before_gc_bytes
+    current_rss_after_trim_bytes = current_rss_before_gc_bytes
+    peak_rss_after_trim_bytes = peak_rss_before_gc_bytes
+
+    try:
+        gc_collected = gc.collect()
+        current_rss_after_gc_bytes = current_rss_bytes()
+        peak_rss_after_gc_bytes = peak_rss_bytes()
+
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except Exception:
+            logger.debug(
+                "malloc_trim unavailable; skipping heap trim: run=%s model=%s",
+                run_id,
+                model_id,
+                exc_info=True,
+            )
+        else:
+            current_rss_after_trim_bytes = current_rss_bytes()
+            peak_rss_after_trim_bytes = peak_rss_bytes()
+            logger.info("malloc_trim completed.")
+    except Exception:
+        logger.exception("Memory cleanup failed after successful run: run=%s model=%s", run_id, model_id)
+        current_rss_after_gc_bytes = current_rss_bytes()
+        peak_rss_after_gc_bytes = peak_rss_bytes()
+        current_rss_after_trim_bytes = current_rss_after_gc_bytes
+        peak_rss_after_trim_bytes = peak_rss_after_gc_bytes
+
+    logger.info(
+        "scheduler rss checkpoint: stage=post_run_cleanup run=%s model=%s current_rss_before_gc_mib=%.1f current_rss_after_gc_mib=%.1f current_rss_after_trim_mib=%.1f peak_rss_before_gc_mib=%.1f peak_rss_after_gc_mib=%.1f peak_rss_after_trim_mib=%.1f gc_collected=%d",
+        run_id,
+        model_id,
+        _bytes_to_mib(current_rss_before_gc_bytes),
+        _bytes_to_mib(current_rss_after_gc_bytes),
+        _bytes_to_mib(current_rss_after_trim_bytes),
+        _bytes_to_mib(peak_rss_before_gc_bytes),
+        _bytes_to_mib(peak_rss_after_gc_bytes),
+        _bytes_to_mib(peak_rss_after_trim_bytes),
+        gc_collected,
+    )
+
+
+def _should_restart_scheduler_after_successful_run(*, model: str, once: bool, run_arg: str | None) -> bool:
+    return model == "gfs" and not once and run_arg is None
+
+
 def _process_run(
     *,
     plugin,
@@ -2492,21 +2547,6 @@ def _process_run(
     _log_fetch_context_stats(stage="run_end")
     _log_fetch_context_stats(stage="before_destroy")
     _log_runtime_cache_prune(run_id=run_id, model_id=model_id, reason="run_end")
-    current_rss_before_gc_bytes = current_rss_bytes()
-    peak_rss_before_gc_bytes = peak_rss_bytes()
-    gc_collected = gc.collect()
-    current_rss_after_gc_bytes = current_rss_bytes()
-    peak_rss_after_gc_bytes = peak_rss_bytes()
-    logger.info(
-        "scheduler rss checkpoint: stage=post_run_gc run=%s model=%s current_rss_before_gc_mib=%.1f current_rss_after_gc_mib=%.1f peak_rss_before_gc_mib=%.1f peak_rss_after_gc_mib=%.1f gc_collected=%d",
-        run_id,
-        model_id,
-        _bytes_to_mib(current_rss_before_gc_bytes),
-        _bytes_to_mib(current_rss_after_gc_bytes),
-        _bytes_to_mib(peak_rss_before_gc_bytes),
-        _bytes_to_mib(peak_rss_after_gc_bytes),
-        gc_collected,
-    )
 
     return run_id, available, total
 
@@ -2660,6 +2700,13 @@ def run_scheduler(
             last_run_available = available
             last_run_total = total
             logger.info("Run summary: %s available=%d/%d", processed_run_id, available, total)
+
+            if run_now_complete:
+                _perform_successful_run_memory_cleanup(run_id=processed_run_id, model_id=model)
+                if _should_restart_scheduler_after_successful_run(model=model, once=once, run_arg=run_arg):
+                    logger.info("Run completed successfully; restarting scheduler process to reset memory state.")
+                    logger.info("Exiting scheduler process; systemd will restart and resume polling.")
+                    return 0
 
             if once or run_arg:
                 return 0

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import tempfile
 import time
@@ -65,11 +66,45 @@ from app.services.grid import (
     write_grid_frame_for_run_root,
 )
 from app.services.pressure_centers import PressureCenterConfig, detect_pressure_centers
+from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.render_resampling import resampling_name_for_kind
 
 logger = logging.getLogger(__name__)
 
 CONTRACT_VERSION = "3.0"
+
+# Temporary memory-audit instrumentation (default OFF). When enabled, build_frame
+# emits per-frame RSS checkpoints mirroring the MRMS/NDFD audits. Off by default so
+# normal scheduler operation (and other models sharing this pipeline) is unchanged.
+# Enable for an EPS audit run via CARTOSKY_FRAME_MEMORY_AUDIT=1.
+ENV_FRAME_MEMORY_AUDIT = "CARTOSKY_FRAME_MEMORY_AUDIT"
+
+
+def _frame_memory_audit_enabled() -> bool:
+    raw = os.environ.get(ENV_FRAME_MEMORY_AUDIT, "")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _array_mib(arr: Any) -> float:
+    nbytes = getattr(arr, "nbytes", None)
+    if nbytes is None:
+        return 0.0
+    return float(nbytes) / (1024.0 * 1024.0)
+
+
+def _log_frame_memory_checkpoint(stage: str, **details: Any) -> None:
+    """Emit a single RSS checkpoint line for the frame memory audit (no-op unless enabled)."""
+    if not _frame_memory_audit_enabled():
+        return
+    detail_tokens = " ".join(f"{key}={value}" for key, value in sorted(details.items()))
+    suffix = f" {detail_tokens}" if detail_tokens else ""
+    logger.info(
+        "FRAME memory checkpoint stage=%s current_rss_mib=%.1f peak_rss_mib=%.1f%s",
+        stage,
+        float(current_rss_bytes()) / (1024.0 * 1024.0),
+        float(peak_rss_bytes()) / (1024.0 * 1024.0),
+        suffix,
+    )
 # Value COG base grid must match RGBA COG grid for render-time parity.
 VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
@@ -1314,6 +1349,9 @@ def build_frame(
     """
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
+    _log_frame_memory_checkpoint(
+        "before_build", model=model, region=region, var=var_id, fh=fh,
+    )
 
     def _result(path: Path | None, status: str) -> Path | None | tuple[Path | None, str]:
         if return_status:
@@ -1513,6 +1551,10 @@ def build_frame(
                 raise RuntimeError(
                     f"Unable to fetch non-derived var {var_key!r} for fh{fh:03d}; no usable search pattern"
                 )
+            _log_frame_memory_checkpoint(
+                "after_download", model=model, region=region, var=var_key, fh=fh,
+                array_mib=round(_array_mib(raw_data), 2), shape=tuple(raw_data.shape), dtype=str(raw_data.dtype),
+            )
 
             # --- Step 2: Unit conversion ---
             logger.info("Step 2/6: Unit conversion")
@@ -1521,6 +1563,10 @@ def build_frame(
                 var_key=var_key,
                 model_id=model,
                 var_capability=var_capability,
+            )
+            _log_frame_memory_checkpoint(
+                "after_decode", model=model, region=region, var=var_key, fh=fh,
+                array_mib=round(_array_mib(converted_data), 2), shape=tuple(converted_data.shape), dtype=str(converted_data.dtype),
             )
 
         # --- Step 3: Warp to target grid ---
@@ -1569,6 +1615,11 @@ def build_frame(
             color_map_id,
             meta_var_key=var_key,
         )
+        _log_frame_memory_checkpoint(
+            "after_processing", model=model, region=region, var=var_key, fh=fh,
+            warped_mib=round(_array_mib(warped_data), 2), shape=tuple(getattr(warped_data, "shape", ())),
+            dtype=str(getattr(warped_data, "dtype", "")),
+        )
 
         # --- Step 5: Write artifacts ---
         logger.info("Step 5/6: Writing artifacts")
@@ -1576,6 +1627,9 @@ def build_frame(
             warped_data, val_path,
             model=model, region=region,
             downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
+        )
+        _log_frame_memory_checkpoint(
+            "after_publish", model=model, region=region, var=var_key, fh=fh,
         )
 
         # --- Step 6: Validate (Gates 1 & 2) ---
@@ -1729,6 +1783,11 @@ def build_frame(
         if owns_fetch_ctx:
             destroy_fetch_context(local_fetch_ctx)
         _log_fetch_cache_stats_once()
+        _log_frame_memory_checkpoint(
+            "after_cleanup", model=model, region=region,
+            var=locals().get("var_key", var_id), fh=fh,
+            owns_fetch_ctx=owns_fetch_ctx,
+        )
 
 
 def build_frame_bundle(
