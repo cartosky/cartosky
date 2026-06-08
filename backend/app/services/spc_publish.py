@@ -43,7 +43,7 @@ class SPCProductConfig:
 SPC_CONVECTIVE_PRODUCT = SPCProductConfig(
     var_id="convective",
     display_name="SPC Convective Outlook",
-    legend_title="Legend",
+    legend_title="Categorical Chance",
     kind="categorical",
     style_key="spc_convective",
     day_layers=((1, "Day 1"), (9, "Day 2"), (17, "Day 3")),

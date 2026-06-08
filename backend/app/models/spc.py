@@ -86,7 +86,7 @@ SPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         buildable=True,
         order=0,
         group="Outlooks",
-        legend_title="Legend",
+        legend_title="Categorical Chance",
         render_substrates=["vector"],
     ),
     "tornado_prob": VariableCapability(
