@@ -41,7 +41,7 @@ from app.services.grid import (
     write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
-from app.services.colormaps import RADAR_PTYPE_BREAKS
+from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
 
 
 def _write_value_cog(path: Path, values: np.ndarray) -> None:
@@ -1125,6 +1125,8 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     assert manifest["palette"]["color_map_id"] == "radar_ptype"
     assert manifest["palette"]["kind"] == "indexed"
     assert manifest["palette"]["transparent_zero"] is True
+    assert manifest["palette"]["ptype_order"] == list(RADAR_PTYPE_ORDER)
+    assert manifest["palette"]["ptype_breaks"] == RADAR_PTYPE_BREAKS
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "dBZ"
@@ -1456,6 +1458,8 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
     assert manifest["palette"]["color_map_id"] == "radar_ptype"
     assert manifest["palette"]["kind"] == "indexed"
     assert manifest["palette"]["transparent_zero"] is True
+    assert manifest["palette"]["ptype_order"] == list(RADAR_PTYPE_ORDER)
+    assert manifest["palette"]["ptype_breaks"] == RADAR_PTYPE_BREAKS
     assert manifest["grid"]["scale"] == 1.0
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "dBZ"

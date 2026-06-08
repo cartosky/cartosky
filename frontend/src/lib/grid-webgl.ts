@@ -41,6 +41,13 @@ const LOW_END_EDGE_CLEANUP_BY_COLOR_MAP_ID = new Map<string, { maxValue: number;
   ["precip_total", { maxValue: 0.05, supportCoverageThreshold: 0.5 }],
   ["snowfall_total", { maxValue: 0.5, supportCoverageThreshold: 0.5 }],
 ]);
+const DEFAULT_RADAR_PTYPE_ORDER = ["rain", "snow", "sleet", "frzr"];
+const DEFAULT_RADAR_PTYPE_BREAKS: Record<string, { offset: number; count: number }> = {
+  rain: { offset: 0, count: 64 },
+  snow: { offset: 64, count: 66 },
+  sleet: { offset: 130, count: 66 },
+  frzr: { offset: 196, count: 66 },
+};
 
 export type GridFrameVisiblePayload = {
   frameHour: number;
@@ -470,6 +477,33 @@ function radarPtypePackedForManifest(manifest: GridManifestResponse | null): boo
   return colorMapId === "radar_ptype";
 }
 
+function radarPtypeBreaksForDisplay(
+  manifest: GridManifestResponse | null,
+  legend: LegendPayload | null,
+): { offsets: [number, number, number, number]; counts: [number, number, number, number]; totalBins: number } {
+  const order = Array.isArray(manifest?.palette?.ptype_order) && manifest.palette.ptype_order.length >= 4
+    ? manifest.palette.ptype_order
+    : (Array.isArray(legend?.ptype_order) && legend.ptype_order.length >= 4
+      ? legend.ptype_order
+      : DEFAULT_RADAR_PTYPE_ORDER);
+  const breaks = manifest?.palette?.ptype_breaks ?? legend?.ptype_breaks ?? DEFAULT_RADAR_PTYPE_BREAKS;
+  const offsets = [0, 64, 130, 196] as [number, number, number, number];
+  const counts = [64, 66, 66, 66] as [number, number, number, number];
+
+  for (let index = 0; index < 4; index += 1) {
+    const key = String(order[index] ?? DEFAULT_RADAR_PTYPE_ORDER[index]).trim().toLowerCase();
+    const fallback = DEFAULT_RADAR_PTYPE_BREAKS[DEFAULT_RADAR_PTYPE_ORDER[index]];
+    const boundary = breaks?.[key] ?? fallback;
+    const offset = Number(boundary?.offset);
+    const count = Number(boundary?.count);
+    offsets[index] = Number.isFinite(offset) && offset >= 0 ? Math.floor(offset) : offsets[index];
+    counts[index] = Number.isFinite(count) && count > 0 ? Math.floor(count) : counts[index];
+  }
+
+  const totalBins = Math.max(1, ...offsets.map((offset, index) => offset + counts[index]));
+  return { offsets, counts, totalBins };
+}
+
 function supportCoverageThresholdForManifest(manifest: GridManifestResponse | null): number {
   const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
   // Accumulated precip/snow already use transparent_below_min to fade weak edges.
@@ -739,6 +773,9 @@ type ProgramBindings = {
   categoricalLocation: WebGLUniformLocation | null;
   categoricalNearestLocation: WebGLUniformLocation | null;
   radarPtypePackedLocation: WebGLUniformLocation | null;
+  radarPtypeOffsetsLocation: WebGLUniformLocation | null;
+  radarPtypeCountsLocation: WebGLUniformLocation | null;
+  radarPtypeTotalBinsLocation: WebGLUniformLocation | null;
   supportCoverageThresholdLocation: WebGLUniformLocation | null;
   lowEndEdgeMaxLocation: WebGLUniformLocation | null;
   lowEndEdgeSupportCoverageThresholdLocation: WebGLUniformLocation | null;
@@ -1197,6 +1234,9 @@ export class GridWebglLayerController {
       uniform float u_categorical;
       uniform float u_categoricalNearest;
       uniform float u_radarPtypePacked;
+      uniform vec4 u_radarPtypeOffsets;
+      uniform vec4 u_radarPtypeCounts;
+      uniform float u_radarPtypeTotalBins;
       uniform float u_supportCoverageThreshold;
       uniform float u_lowEndEdgeMax;
       uniform float u_lowEndEdgeSupportCoverageThreshold;
@@ -1440,11 +1480,51 @@ export class GridWebglLayerController {
         if (decoded <= -1e29) {
           return -1.0;
         }
-        return clamp(floor((floor(decoded + 0.5)) / 66.0), 0.0, 3.0);
+        float rounded = floor(decoded + 0.5);
+        if (rounded >= u_radarPtypeOffsets.x && rounded < u_radarPtypeOffsets.x + u_radarPtypeCounts.x) {
+          return 0.0;
+        }
+        if (rounded >= u_radarPtypeOffsets.y && rounded < u_radarPtypeOffsets.y + u_radarPtypeCounts.y) {
+          return 1.0;
+        }
+        if (rounded >= u_radarPtypeOffsets.z && rounded < u_radarPtypeOffsets.z + u_radarPtypeCounts.z) {
+          return 2.0;
+        }
+        if (rounded >= u_radarPtypeOffsets.w && rounded < u_radarPtypeOffsets.w + u_radarPtypeCounts.w) {
+          return 3.0;
+        }
+        return -1.0;
+      }
+
+      float radarPtypeOffsetForCode(float code) {
+        if (code < 0.5) {
+          return u_radarPtypeOffsets.x;
+        }
+        if (code < 1.5) {
+          return u_radarPtypeOffsets.y;
+        }
+        if (code < 2.5) {
+          return u_radarPtypeOffsets.z;
+        }
+        return u_radarPtypeOffsets.w;
+      }
+
+      float radarPtypeCountForCode(float code) {
+        if (code < 0.5) {
+          return u_radarPtypeCounts.x;
+        }
+        if (code < 1.5) {
+          return u_radarPtypeCounts.y;
+        }
+        if (code < 2.5) {
+          return u_radarPtypeCounts.z;
+        }
+        return u_radarPtypeCounts.w;
       }
 
       float radarPtypeLocalBin(float decoded, float code) {
-        return clamp((floor(decoded + 0.5)) - (code * 66.0), 0.0, 65.0);
+        float count = max(1.0, radarPtypeCountForCode(code));
+        return clamp((floor(decoded + 0.5)) - radarPtypeOffsetForCode(code), 0.0, count - 1.0);
       }
 
       vec4 sampleRadarPtypePacked(sampler2D tex, vec2 uv) {
@@ -1497,8 +1577,9 @@ export class GridWebglLayerController {
         localSum += c01 == selectedCode ? radarPtypeLocalBin(v01, selectedCode) * bw01 : 0.0;
         localSum += c11 == selectedCode ? radarPtypeLocalBin(v11, selectedCode) * bw11 : 0.0;
         float localBin = localSum / selectedWeight;
-        float packedValue = selectedCode * 66.0 + localBin;
-        float t = clamp((packedValue + 0.5) / 264.0, 0.0, 1.0);
+        float selectedCount = max(1.0, radarPtypeCountForCode(selectedCode));
+        float packedValue = radarPtypeOffsetForCode(selectedCode) + clamp(localBin, 0.0, selectedCount - 1.0);
+        float t = clamp((packedValue + 0.5) / max(1.0, u_radarPtypeTotalBins), 0.0, 1.0);
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
         float edgeAlpha = smoothstep(0.0, 0.5, selectedWeight);
         float intensityAlpha = smoothstep(0.0, 10.0, localBin);
@@ -1578,6 +1659,9 @@ export class GridWebglLayerController {
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
       radarPtypePackedLocation: gl.getUniformLocation(this.program, "u_radarPtypePacked"),
+      radarPtypeOffsetsLocation: gl.getUniformLocation(this.program, "u_radarPtypeOffsets"),
+      radarPtypeCountsLocation: gl.getUniformLocation(this.program, "u_radarPtypeCounts"),
+      radarPtypeTotalBinsLocation: gl.getUniformLocation(this.program, "u_radarPtypeTotalBins"),
       supportCoverageThresholdLocation: gl.getUniformLocation(this.program, "u_supportCoverageThreshold"),
       lowEndEdgeMaxLocation: gl.getUniformLocation(this.program, "u_lowEndEdgeMax"),
       lowEndEdgeSupportCoverageThresholdLocation: gl.getUniformLocation(
@@ -2264,6 +2348,10 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.radarPtypePackedLocation, radarPtypePackedForManifest(this.manifest) ? 1 : 0);
+    const radarPtypeBreaks = radarPtypeBreaksForDisplay(this.manifest, this.legend);
+    gl.uniform4f(bindings.radarPtypeOffsetsLocation, ...radarPtypeBreaks.offsets);
+    gl.uniform4f(bindings.radarPtypeCountsLocation, ...radarPtypeBreaks.counts);
+    gl.uniform1f(bindings.radarPtypeTotalBinsLocation, radarPtypeBreaks.totalBins);
     gl.uniform1f(bindings.supportCoverageThresholdLocation, supportCoverageThresholdForManifest(this.manifest));
     const lowEndEdgeCleanup = lowEndEdgeCleanupForManifest(this.manifest);
     gl.uniform1f(bindings.lowEndEdgeMaxLocation, lowEndEdgeCleanup.maxValue);

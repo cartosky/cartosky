@@ -234,6 +234,8 @@ export type GridManifestPalette = {
   power_norm_gamma?: number | null;
   transparent_below_min?: number | null;
   transparent_zero?: boolean | null;
+  ptype_order?: string[] | null;
+  ptype_breaks?: Record<string, { offset: number; count: number }> | null;
 };
 
 export type GridManifestDisplayPrep = {

@@ -1783,6 +1783,18 @@ def _build_palette_block(model: str, var: str) -> dict[str, Any]:
         transparent_zero = spec.get("transparent_zero")
         if isinstance(transparent_zero, bool):
             palette["transparent_zero"] = transparent_zero
+        ptype_order = spec.get("ptype_order")
+        ptype_breaks = spec.get("ptype_breaks")
+        if color_map_id == "radar_ptype" and isinstance(ptype_order, list) and isinstance(ptype_breaks, dict):
+            palette["ptype_order"] = list(ptype_order)
+            palette["ptype_breaks"] = {
+                str(key): {
+                    "offset": int(value.get("offset", 0)),
+                    "count": int(value.get("count", 0)),
+                }
+                for key, value in ptype_breaks.items()
+                if isinstance(value, dict)
+            }
     return palette
 
 
