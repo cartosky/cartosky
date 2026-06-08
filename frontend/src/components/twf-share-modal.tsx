@@ -156,6 +156,21 @@ function formatForumLabel(forum: Pick<TwfForum, "name" | "path">): string {
   return stripForumIdSuffix(forum.path ?? forum.name);
 }
 
+const FORUM_SORT_PREFIX_ORDER = [
+  "The Weather Forums > West of the Rockies",
+  "The Weather Forums > East of the Rockies",
+  "The Weather Forums > Climate, World Weather, and Earth Sciences",
+  "The Weather Forums > The Archive",
+  "The Weather Forums > The Storm Wiki",
+  "The Weather Forums > Off Topic",
+] as const;
+
+function forumSortPriority(forum: Pick<TwfForum, "name" | "path">): number {
+  const label = formatForumLabel(forum);
+  const directIndex = FORUM_SORT_PREFIX_ORDER.findIndex((prefix) => label === prefix || label.startsWith(`${prefix} > `));
+  return directIndex === -1 ? FORUM_SORT_PREFIX_ORDER.length : directIndex;
+}
+
 function normalizeForums(value: unknown): TwfForum[] {
   const list = Array.isArray(value)
     ? value
@@ -188,7 +203,13 @@ function normalizeForums(value: unknown): TwfForum[] {
     normalized.push({ id, name });
   }
 
-  normalized.sort((a, b) => formatForumLabel(a).localeCompare(formatForumLabel(b)));
+  normalized.sort((a, b) => {
+    const priorityDiff = forumSortPriority(a) - forumSortPriority(b);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    return formatForumLabel(a).localeCompare(formatForumLabel(b));
+  });
   return normalized;
 }
 
