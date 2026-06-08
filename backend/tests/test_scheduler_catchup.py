@@ -290,6 +290,8 @@ def test_run_scheduler_skips_success_cleanup_for_incomplete_run(
 
     monkeypatch.setattr(scheduler_module, "_resolve_model", lambda model: plugin)
     monkeypatch.setattr(scheduler_module, "_resolve_run_dt", lambda run_arg, *, plugin, probe_var: datetime(2026, 6, 8, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(scheduler_module, "_scheduled_targets_for_cycle", lambda plugin, vars_to_build, cycle_hour: [("conus", "tmp2m", 0)])
+    monkeypatch.setattr(scheduler_module, "_available_target_count", lambda data_root, model, run_id, targets: 0)
     monkeypatch.setattr(scheduler_module, "_process_run", lambda **kwargs: ("20260608_00z", 3, 4))
     monkeypatch.setattr(scheduler_module, "_perform_successful_run_memory_cleanup", lambda *, run_id, model_id: cleanup_calls.append((run_id, model_id)))
     monkeypatch.setattr(scheduler_module, "record_build_duration", lambda **kwargs: pytest.fail("record_build_duration should not be called for incomplete runs"))
@@ -333,6 +335,8 @@ def test_run_scheduler_restarts_gfs_after_successful_run_completion(
 
     monkeypatch.setattr(scheduler_module, "_resolve_model", lambda model: plugin)
     monkeypatch.setattr(scheduler_module, "_resolve_run_dt", lambda run_arg, *, plugin, probe_var: datetime(2026, 6, 8, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(scheduler_module, "_scheduled_targets_for_cycle", lambda plugin, vars_to_build, cycle_hour: [("conus", "tmp2m", 0)])
+    monkeypatch.setattr(scheduler_module, "_available_target_count", lambda data_root, model, run_id, targets: 0)
     monkeypatch.setattr(scheduler_module, "_process_run", lambda **kwargs: ("20260608_00z", 4, 4))
     monkeypatch.setattr(scheduler_module, "_perform_successful_run_memory_cleanup", lambda *, run_id, model_id: cleanup_calls.append((run_id, model_id)))
     monkeypatch.setattr(scheduler_module, "record_build_duration", lambda **kwargs: duration_calls.append(kwargs))
@@ -367,6 +371,57 @@ def test_run_scheduler_restarts_gfs_after_successful_run_completion(
     assert len(duration_calls) == 1
 
 
+def test_run_scheduler_does_not_restart_gfs_for_already_complete_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plugin = _FakeRunSchedulerPlugin()
+    plugin.id = "gfs"
+    cleanup_calls: list[tuple[str, str]] = []
+    sleep_calls: list[int] = []
+
+    def fake_sleep(seconds: int) -> None:
+        sleep_calls.append(int(seconds))
+        raise RuntimeError("stop_after_first_sleep")
+
+    monkeypatch.setattr(scheduler_module, "_resolve_model", lambda model: plugin)
+    monkeypatch.setattr(scheduler_module, "_resolve_run_dt", lambda run_arg, *, plugin, probe_var: datetime(2026, 6, 8, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(scheduler_module, "_scheduled_targets_for_cycle", lambda plugin, vars_to_build, cycle_hour: [("conus", "tmp2m", 0)])
+    monkeypatch.setattr(scheduler_module, "_available_target_count", lambda data_root, model, run_id, targets: 1)
+    monkeypatch.setattr(scheduler_module, "_process_run", lambda **kwargs: ("20260608_00z", 4, 4))
+    monkeypatch.setattr(scheduler_module, "_perform_successful_run_memory_cleanup", lambda *, run_id, model_id: cleanup_calls.append((run_id, model_id)))
+    monkeypatch.setattr(scheduler_module, "record_build_duration", lambda **kwargs: None)
+    monkeypatch.setattr(scheduler_module, "_scheduler_model_lock", lambda data_root, model: contextlib.nullcontext())
+    monkeypatch.setattr(scheduler_module.time, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="stop_after_first_sleep"):
+        scheduler_module.run_scheduler(
+            model="gfs",
+            vars_to_build=["tmp2m"],
+            primary_vars=["tmp2m"],
+            data_root=tmp_path,
+            workers=1,
+            keep_runs=2,
+            poll_seconds=300,
+            run_arg=None,
+            once=False,
+            probe_var="tmp2m",
+            loop_pregenerate_enabled=False,
+            loop_cache_root=tmp_path / "loop-cache",
+            loop_workers=1,
+            loop_tier0_quality=82,
+            loop_tier0_max_dim=2300,
+            loop_tier0_fixed_w=2300,
+            loop_tier1_quality=86,
+            loop_tier1_max_dim=2400,
+            loop_tier1_fixed_w=2400,
+            rebuild_existing=False,
+        )
+
+    assert cleanup_calls == []
+    assert sleep_calls == [300]
+
+
 def test_run_scheduler_keeps_polling_for_non_gfs_after_successful_run_completion(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -381,6 +436,8 @@ def test_run_scheduler_keeps_polling_for_non_gfs_after_successful_run_completion
 
     monkeypatch.setattr(scheduler_module, "_resolve_model", lambda model: plugin)
     monkeypatch.setattr(scheduler_module, "_resolve_run_dt", lambda run_arg, *, plugin, probe_var: datetime(2026, 6, 8, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(scheduler_module, "_scheduled_targets_for_cycle", lambda plugin, vars_to_build, cycle_hour: [("conus", "tmp2m", 0)])
+    monkeypatch.setattr(scheduler_module, "_available_target_count", lambda data_root, model, run_id, targets: 0)
     monkeypatch.setattr(scheduler_module, "_process_run", lambda **kwargs: ("20260608_00z", 4, 4))
     monkeypatch.setattr(scheduler_module, "_perform_successful_run_memory_cleanup", lambda *, run_id, model_id: cleanup_calls.append((run_id, model_id)))
     monkeypatch.setattr(scheduler_module, "record_build_duration", lambda **kwargs: None)

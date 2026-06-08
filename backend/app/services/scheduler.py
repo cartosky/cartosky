@@ -2640,6 +2640,10 @@ def run_scheduler(
         while True:
             run_dt = _resolve_run_dt(run_arg, plugin=plugin, probe_var=resolved_probe_var)
             run_id = _run_id_from_dt(run_dt)
+            current_targets = _scheduled_targets_for_cycle(plugin, normalized_vars, run_dt.hour)
+            current_total = len(current_targets)
+            current_available = _available_target_count(data_root, model, run_id, current_targets)
+            run_was_complete_before_processing = current_total > 0 and current_available >= current_total
 
             run_complete = last_run_total > 0 and last_run_available >= last_run_total
             if last_run_id == run_id and not run_arg and run_complete:
@@ -2701,7 +2705,7 @@ def run_scheduler(
             last_run_total = total
             logger.info("Run summary: %s available=%d/%d", processed_run_id, available, total)
 
-            if run_now_complete:
+            if run_now_complete and not run_was_complete_before_processing:
                 _perform_successful_run_memory_cleanup(run_id=processed_run_id, model_id=model)
                 if _should_restart_scheduler_after_successful_run(model=model, once=once, run_arg=run_arg):
                     logger.info("Run completed successfully; restarting scheduler process to reset memory state.")
