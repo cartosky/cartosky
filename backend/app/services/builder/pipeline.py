@@ -871,6 +871,10 @@ def build_sidecar_json(
     if isinstance(display_name, str) and display_name.strip():
         sidecar["display_name"] = display_name.strip()
 
+    legend_title = colorize_meta.get("legend_title") or var_spec.get("legend_title")
+    if isinstance(legend_title, str) and legend_title.strip():
+        sidecar["legend_title"] = legend_title.strip()
+
     if region:
         sidecar["region"] = region
     if isinstance(ensemble_view, str) and ensemble_view.strip():
