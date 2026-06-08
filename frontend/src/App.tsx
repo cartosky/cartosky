@@ -3598,6 +3598,8 @@ export default function App() {
     setRuns([]);
     setRunManifest(null);
     setFrameRows([]);
+    setResolvedGridLatestRunId(null);
+    lastResolvedGridRunRef.current = null;
     pendingVariableSwitchRef.current = null;
     setVariableSwitchState(null);
     if (nextVariableOptions.length > 0) {
