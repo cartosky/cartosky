@@ -487,6 +487,16 @@ function compactLegendTitle(legend: LegendPayload): string {
   return `${title} (${units})`;
 }
 
+function sortLegendEntriesAscending(entries: LegendPayload["entries"]): LegendPayload["entries"] {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const byValue = left.entry.value - right.entry.value;
+      return byValue !== 0 ? byValue : left.index - right.index;
+    })
+    .map(({ entry }) => entry);
+}
+
 function radarGroupLabelForCode(code: string, index: number): string {
   const normalized = code.toLowerCase();
   if (normalized === "rain") return "Rain";
@@ -758,15 +768,17 @@ function drawBottomLegend(
     return;
   }
 
-  drawSectionGradient(ctx, contentX, barY, contentWidth, barHeight, legend.entries.map((entry) => entry.color), sectionRadius);
+  const displayedEntries = sortLegendEntriesAscending(legend.entries);
+
+  drawSectionGradient(ctx, contentX, barY, contentWidth, barHeight, displayedEntries.map((entry) => entry.color), sectionRadius);
 
   const labelIndices = [0, 0.25, 0.5, 0.75, 1].map((ratio) =>
-    Math.min(legend.entries.length - 1, Math.max(0, Math.round((legend.entries.length - 1) * ratio)))
+    Math.min(displayedEntries.length - 1, Math.max(0, Math.round((displayedEntries.length - 1) * ratio)))
   );
   const dedupedIndices = labelIndices.filter((value, index) => index === 0 || value !== labelIndices[index - 1]);
   ctx.font = `600 ${11 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
   dedupedIndices.forEach((entryIndex, index) => {
-    const entry = legend.entries[entryIndex];
+    const entry = displayedEntries[entryIndex];
     const ratio = dedupedIndices.length === 1 ? 0 : index / (dedupedIndices.length - 1);
     const labelX = contentX + ratio * contentWidth;
     const align: CanvasTextAlign = index === 0 ? "left" : index === dedupedIndices.length - 1 ? "right" : "center";

@@ -126,7 +126,7 @@ function isCategoricalLegend(legend: LegendPayload): boolean {
 }
 
 function buildDenseLegendTicks(entries: LegendEntry[], targetCount = 6): LegendEntry[] {
-  const displayed = entries.slice().reverse();
+  const displayed = entries;
   if (displayed.length === 0) return [];
 
   const lastIndex = displayed.length - 1;
@@ -136,6 +136,16 @@ function buildDenseLegendTicks(entries: LegendEntry[], targetCount = 6): LegendE
   }).filter((value, index, arr) => index === 0 || value !== arr[index - 1]);
 
   return indices.map((index) => displayed[index]);
+}
+
+function sortLegendEntriesAscending(entries: LegendEntry[]): LegendEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const byValue = left.entry.value - right.entry.value;
+      return byValue !== 0 ? byValue : left.index - right.index;
+    })
+    .map(({ entry }) => entry);
 }
 
 function formatDenseTickValue(value: number): string {
@@ -172,12 +182,8 @@ function splitLegendTitle(title: string, units?: string): { title: string; units
 }
 
 function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
-  // entries arrive high-to-low; reverse so index 0 = lowest value = left side
-  const displayed = entries.slice().reverse();
-  // buildDenseLegendTicks expects high-to-low input (it reverses internally),
-  // so pass the original entries array directly, then map each tick back to
-  // its position in the low-to-high displayed array for offset calculation.
-  const ticks = buildDenseLegendTicks(entries, 6)
+  const displayed = sortLegendEntriesAscending(entries);
+  const ticks = buildDenseLegendTicks(displayed, 6)
     .map((tick) => displayed.findIndex((e) => e === tick))
     .filter((i) => i !== -1)
     .map((i) => ({ entry: displayed[i]!, displayedIndex: i }));
