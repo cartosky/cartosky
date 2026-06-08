@@ -1041,7 +1041,7 @@ def _precip_anomaly_var_spec(
         hints["target_fh"] = str(target_fh)
     return VarSpec(
         id=var_key,
-        name=f"{days}-Day Precip Anomaly",
+        name="Precip Anomaly",
         selectors=VarSelectors(hints=hints),
         primary=True,
         derived=True,

@@ -335,7 +335,7 @@ EPS_VARS = {
             PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
             base_component="precip_total__mean",
         ),
-        name="15-Day Precip Anomaly",
+        name="Precip Anomaly",
     ),
     "precip_15d_anom__mean": replace(
         _precip_anomaly_var_spec(
@@ -345,7 +345,7 @@ EPS_VARS = {
             base_component="precip_total__mean",
         ),
         id="precip_15d_anom__mean",
-        name="15-Day Precip Anomaly",
+        name="Precip Anomaly",
     ),
 }
 

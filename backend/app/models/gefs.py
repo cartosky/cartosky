@@ -659,7 +659,7 @@ def _gefs_precip_anomaly_capability(var_key: str, *, internal: bool = False) -> 
         constraints["max_fh"] = target_fh
     return VariableCapability(
         var_key=var_key,
-        name=f"{days}-Day Precip Anomaly",
+        name="Precip Anomaly",
         selectors=GEFS_VARS[var_key].selectors,
         primary=True,
         derived=True,
