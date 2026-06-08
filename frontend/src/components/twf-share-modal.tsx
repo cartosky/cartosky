@@ -81,8 +81,8 @@ type TwfShareModalProps = {
 const TWF_PERMALINK_LABEL = "View map on CartoSky";
 
 const QUICK_FORUMS: Array<{ id: number; label: string }> = [
-  { id: 4, label: "West" },
-  { id: 9, label: "East" },
+  { id: 4, label: "West of Rockies" },
+  { id: 9, label: "East of Rockies" },
 ];
 
 const modalCardClass =
