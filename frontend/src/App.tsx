@@ -933,7 +933,9 @@ export default function App() {
   }, [gridOnlySelection, latestRunId, resolvedGridLatestRunId, run, runs]);
   const selectionRunKey = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? lastResolvedGridRunRef.current ?? "pending-grid")
-    : resolvedRunForRequests;
+    : run === "latest"
+      ? "latest"
+      : resolvedRunForRequests;
   const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}`;
   const telemetryRunId = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
