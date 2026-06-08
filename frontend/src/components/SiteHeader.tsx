@@ -6,7 +6,7 @@ import {
   Check,
   Boxes,
   CalendarClock,
-  Globe,
+  MapPinned,
   Layers,
   MapPin,
   MessageSquareText,
@@ -948,11 +948,11 @@ function RegionUtilitySelect({
         {variant === "field" ? (
           <>
             <span className="truncate">{currentRegionLabel}</span>
-            <Globe className="h-3.5 w-3.5 shrink-0 text-cyan-100/70" />
+            <MapPinned className="h-3.5 w-3.5 shrink-0 text-cyan-100/70" />
           </>
         ) : (
           <span className="flex h-full w-full items-center justify-center">
-            <Globe className="h-3.5 w-3.5" />
+            <MapPinned className="h-3.5 w-3.5" />
           </span>
         )}
       </button>
