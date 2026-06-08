@@ -196,6 +196,43 @@ async def test_sample_batch_invalid_payload_returns_422_detail(client: httpx.Asy
     assert isinstance(payload["detail"], list)
 
 
+async def test_sample_batch_rejects_products_without_sampling_support(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_capabilities = main_module.list_model_capabilities
+
+    class _Capability:
+        ui_constraints = {"supports_sampling": False}
+
+    def fake_list_model_capabilities() -> dict[str, object]:
+        capabilities = dict(original_capabilities())
+        capabilities["hrrr"] = _Capability()
+        return capabilities
+
+    def fail_resolve_val_cog(*args: object, **kwargs: object) -> Path:
+        raise AssertionError("sample batch should fast-fail before resolving raster assets")
+
+    monkeypatch.setattr(main_module, "list_model_capabilities", fake_list_model_capabilities)
+    monkeypatch.setattr(main_module, "_resolve_val_cog", fail_resolve_val_cog)
+
+    response = await client.post(
+        "/api/v4/sample/batch",
+        json={
+            "model": "hrrr",
+            "run": "latest",
+            "variable": "tmp2m",
+            "forecast_hour": 1,
+            "points": [
+                {"id": "SD_1", "lat": 45.5, "lon": -100.5},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "sampling not supported for this product"}
+
+
 async def test_sample_batch_reuses_cached_payload(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

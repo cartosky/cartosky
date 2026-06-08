@@ -2885,6 +2885,14 @@ export default function App() {
       return;
     }
 
+    if (selectedModelSupportsSampling === false) {
+      anchorBatchLastAppliedHourRef.current = null;
+      anchorBatchLastAppliedSelectionKeyRef.current = "";
+      resetAnchorBatchQueue(true);
+      setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
+      return;
+    }
+
     if (
       !hasRenderableSelection
       || !model
@@ -2965,6 +2973,7 @@ export default function App() {
     resetAnchorBatchQueue,
     resolvedRunForRequests,
     selectionKey,
+    selectedModelSupportsSampling,
     startAnchorBatchRequest,
     variable,
     visibleOverlayHour,

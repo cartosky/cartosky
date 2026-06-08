@@ -4788,6 +4788,13 @@ def sample_batch(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, body.model)
+    model_capability = list_model_capabilities().get(body.model.strip().lower())
+    ui_constraints = getattr(model_capability, "ui_constraints", {}) or {}
+    if ui_constraints.get("supports_sampling") is False:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "sampling not supported for this product"},
+        )
     client_id = request.client.host if request.client and request.client.host else "unknown"
     otel_tracing.set_current_attributes(
         {
