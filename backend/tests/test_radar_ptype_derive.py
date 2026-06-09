@@ -8,7 +8,20 @@ from rasterio.crs import CRS
 from rasterio.transform import Affine
 
 from app.services.builder import derive as derive_module
-from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_LEVELS_BY_TYPE, RADAR_PTYPE_ORDER
+from app.services.colormaps import (
+    RADAR_PTYPE_BREAKS,
+    RADAR_PTYPE_COLORS,
+    RADAR_PTYPE_LEVELS_BY_TYPE,
+    RADAR_PTYPE_ORDER,
+)
+
+
+def _is_pink_or_magenta(color: str) -> bool:
+    hex_color = color.strip().lstrip("#")
+    red = int(hex_color[0:2], 16)
+    green = int(hex_color[2:4], 16)
+    blue = int(hex_color[4:6], 16)
+    return red >= 160 and blue >= 140 and green <= 130
 
 
 def _expected_radar_ptype_index(ptype: str, reflectivity: float) -> float:
@@ -170,3 +183,17 @@ def test_radar_ptype_components_preserve_classified_reflectivity(monkeypatch) ->
     np.testing.assert_array_equal(snow_values, np.array([[0.0, 28.0, 0.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(sleet_values, np.array([[0.0, 0.0, 42.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(frzr_values, np.array([[0.0, 0.0, 0.0, 55.0, 0.0]], dtype=np.float32))
+
+
+def test_radar_ptype_rain_and_snow_palettes_do_not_use_pink_magenta() -> None:
+    by_type: dict[str, list[str]] = {}
+    for ptype in RADAR_PTYPE_ORDER:
+        boundary = RADAR_PTYPE_BREAKS[ptype]
+        offset = int(boundary["offset"])
+        count = int(boundary["count"])
+        by_type[ptype] = RADAR_PTYPE_COLORS[offset : offset + count]
+
+    assert not any(_is_pink_or_magenta(color) for color in by_type["rain"])
+    assert not any(_is_pink_or_magenta(color) for color in by_type["snow"])
+    assert any(_is_pink_or_magenta(color) for color in by_type["sleet"])
+    assert any(_is_pink_or_magenta(color) for color in by_type["frzr"])
