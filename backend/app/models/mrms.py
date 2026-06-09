@@ -89,7 +89,7 @@ MRMS_VARS: dict[str, VarSpec] = {
     ),
     "mrms_recent_precip_6h": VarSpec(
         id="mrms_recent_precip_6h",
-        name="6-h Recent Precip",
+        name="Recent Precip (6h)",
         selectors=VarSelectors(
             hints={
                 "display_kind": "recent_precip",
@@ -104,7 +104,7 @@ MRMS_VARS: dict[str, VarSpec] = {
     ),
     "mrms_recent_precip_24h": VarSpec(
         id="mrms_recent_precip_24h",
-        name="24-h Recent Precip",
+        name="Recent Precip (24h)",
         selectors=VarSelectors(
             hints={
                 "display_kind": "recent_precip",
@@ -119,7 +119,7 @@ MRMS_VARS: dict[str, VarSpec] = {
     ),
     "mrms_recent_precip_72h": VarSpec(
         id="mrms_recent_precip_72h",
-        name="72-h Recent Precip",
+        name="Recent Precip (72h)",
         selectors=VarSelectors(
             hints={
                 "display_kind": "recent_precip",

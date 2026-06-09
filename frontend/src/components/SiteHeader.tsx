@@ -13,7 +13,7 @@ import {
   Moon,
   Palette,
   Search,
-  Send,
+  Share2,
   Settings,
   Star,
   Sun,
@@ -1179,7 +1179,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
               data-tour-target="share-button"
               className={DESKTOP_ICON_BUTTON_CLASSNAME}
             >
-              <Send className="h-3.5 w-3.5" />
+              <Share2 className="h-3.5 w-3.5" />
             </button>
           ) : null}
 
@@ -1518,7 +1518,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
         <div data-tour-target="mobile-region-row" className="space-y-1.5">
           <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <MapPin className="h-3 w-3" /> Region
+            <MapPinSearch className="h-3 w-3" /> Region
           </span>
           <RegionUtilitySelect
             value={region}

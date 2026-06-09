@@ -264,7 +264,7 @@ NBM_VARS: dict[str, VarSpec] = {
     ),
     "snowfall_total": VarSpec(
         id="snowfall_total",
-        name="Total Snowfall",
+        name="Total Snowfall (10:1)",
         selectors=VarSelectors(
             hints={
                 "apcp_component": "asnow_step",

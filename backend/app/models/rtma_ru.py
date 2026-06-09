@@ -70,7 +70,7 @@ CURRENT_ANALYSIS_REGIONS: dict[str, RegionSpec] = {
 CURRENT_ANALYSIS_VARS: dict[str, VarSpec] = {
     "tmp2m": VarSpec(
         id="tmp2m",
-        name="Temperature",
+        name="Surface Temp",
         selectors=VarSelectors(
             search=[":TMP:2 m above ground:"],
             hints={
@@ -86,7 +86,7 @@ CURRENT_ANALYSIS_VARS: dict[str, VarSpec] = {
     ),
     "dp2m": VarSpec(
         id="dp2m",
-        name="Dewpoint",
+        name="Surface Dew Point",
         selectors=VarSelectors(
             search=[":DPT:2 m above ground:"],
             hints={
@@ -102,7 +102,7 @@ CURRENT_ANALYSIS_VARS: dict[str, VarSpec] = {
     ),
     "wspd10m": VarSpec(
         id="wspd10m",
-        name="Wind Speed",
+        name="10m Wind Speed",
         selectors=VarSelectors(
             hints={
                 "source_family": "rtma_ru",
@@ -120,7 +120,7 @@ CURRENT_ANALYSIS_VARS: dict[str, VarSpec] = {
     ),
     "wgst10m": VarSpec(
         id="wgst10m",
-        name="Wind Gust",
+        name="10m Wind Gusts",
         selectors=VarSelectors(
             search=[":GUST:10 m above ground:"],
             hints={

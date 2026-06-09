@@ -112,7 +112,22 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "tmp2m_anom", "precip_total", "tmp850", "tmp850_anom", "wspd850", "wspd300", "hgt500_anom", "vort500", "wspd10m"}
+    assert buildable_var_keys == {
+        "tmp2m",
+        "tmp2m_anom",
+        "precip_total",
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_16d_anom",
+        "tmp850",
+        "tmp850_anom",
+        "wspd850",
+        "wspd300",
+        "hgt500_anom",
+        "vort500",
+        "wspd10m",
+    }
 
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_run"] == "latest"
@@ -437,6 +452,20 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 6
     assert precip_total["constraints"] == {"min_fh": 6}
     assert precip_total["render_substrates"] == ["grid"]
+
+    precip_5d_anom = payload["variables"]["precip_5d_anom"]
+    assert precip_5d_anom["var_key"] == "precip_5d_anom"
+    assert precip_5d_anom["display_name"] == "Precip Anomaly"
+    assert precip_5d_anom["kind"] == "continuous"
+    assert precip_5d_anom["units"] == "in"
+    assert precip_5d_anom["buildable"] is True
+    assert precip_5d_anom["derived"] is True
+    assert precip_5d_anom["derive_strategy_id"] == "precip_accum_anomaly_departure"
+    assert precip_5d_anom["color_map_id"] == "precip_anom"
+    assert precip_5d_anom["group"] == "Anomalies"
+    assert precip_5d_anom["default_fh"] == 120
+    assert precip_5d_anom["constraints"] == {"min_fh": 120}
+    assert precip_5d_anom["render_substrates"] == ["grid"]
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["var_key"] == "tmp850"

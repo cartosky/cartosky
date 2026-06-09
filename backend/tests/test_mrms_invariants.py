@@ -86,19 +86,19 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert recent_precip_6h["derived"] is False
     assert recent_precip_6h["kind"] == "continuous"
     assert recent_precip_6h["units"] == "in"
-    assert recent_precip_6h["display_name"] == "6-h Recent Precip"
+    assert recent_precip_6h["display_name"] == "Recent Precip (6h)"
     assert recent_precip_6h["order"] == 10
     assert recent_precip_6h["group"] == "Precipitation"
     assert recent_precip_6h["color_map_id"] == "mrms_recent_precip_6h"
 
     recent_precip_24h = payload["variables"]["mrms_recent_precip_24h"]
-    assert recent_precip_24h["display_name"] == "24-h Recent Precip"
+    assert recent_precip_24h["display_name"] == "Recent Precip (24h)"
     assert recent_precip_24h["order"] == 11
     assert recent_precip_24h["group"] == "Precipitation"
     assert recent_precip_24h["color_map_id"] == "mrms_recent_precip_24h"
 
     recent_precip_72h = payload["variables"]["mrms_recent_precip_72h"]
-    assert recent_precip_72h["display_name"] == "72-h Recent Precip"
+    assert recent_precip_72h["display_name"] == "Recent Precip (72h)"
     assert recent_precip_72h["order"] == 12
     assert recent_precip_72h["group"] == "Precipitation"
     assert recent_precip_72h["color_map_id"] == "mrms_recent_precip_72h"

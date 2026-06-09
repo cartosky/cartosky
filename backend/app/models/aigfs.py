@@ -397,7 +397,7 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
         _precip_anom_constraint["max_fh"] = _precip_anom_fh
     AIGFS_VARIABLE_CATALOG[_precip_anom_key] = VariableCapability(
         var_key=_precip_anom_key,
-        name=f"{_days}-Day Precip Anomaly",
+        name="Precip Anomaly",
         selectors=AIGFS_VARS[_precip_anom_key].selectors,
         primary=True,
         derived=True,

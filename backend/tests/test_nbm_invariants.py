@@ -120,7 +120,7 @@ def test_nbm_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["units"] == "in"
     assert snowfall_total["default_fh"] == 6
     assert snowfall_total["constraints"] == {"min_fh": 6}
-    assert snowfall_total["display_name"] == "Total Snowfall"
+    assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
     assert snowfall_total["order"] == 4
     assert snowfall_total["display_resampling_override"] is None
 
