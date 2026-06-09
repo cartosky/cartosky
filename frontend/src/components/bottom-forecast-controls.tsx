@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, MessageSquareText, Pause, Play, Send, Settings } from "lucide-react";
+import { AlertCircle, MessageSquareText, Pause, Play, Share2, Settings } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
@@ -440,7 +440,7 @@ export function BottomForecastControls({
                     data-tour-target="share-button"
                     className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
-                    <Send className="h-3.5 w-3.5" />
+                    <Share2 className="h-3.5 w-3.5" />
                   </button>
                 ) : null}
                 {onFeedback ? (
