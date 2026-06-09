@@ -312,9 +312,12 @@ export default function App() {
   useEffect(() => {
     setViewerContext({
       modelContext: model || null,
+      variableContext: variable || null,
+      runContext: telemetryRunId || null,
       fhrContext: Number.isFinite(forecastHour) ? Number(forecastHour) : null,
+      animationStateContext: isPlaying ? "playing" : (isGridPreloadingForPlay ? "buffering" : "paused"),
     });
-  }, [forecastHour, model, setViewerContext]);
+  }, [forecastHour, isGridPreloadingForPlay, isPlaying, model, setViewerContext, telemetryRunId, variable]);
 
   const {
     basemapMode, setBasemapMode,

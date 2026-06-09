@@ -10,12 +10,6 @@ import { cn } from "@/lib/utils";
 
 type FeedbackCategory = "bug" | "performance" | "feature" | "data_accuracy" | "ui_ux";
 
-type CapturedContext = {
-  pageContext: string;
-  modelContext: string | null;
-  fhrContext: number | null;
-};
-
 type SubmitState = "idle" | "submitting" | "success" | "rate-limited" | "error";
 
 const MESSAGE_MAX_LENGTH = 1000;
@@ -60,7 +54,6 @@ export function FeedbackWidget() {
   const feedbackContext = useFeedbackContext();
   const { isFeedbackOpen, closeFeedback } = feedbackContext;
   const closeTimerRef = useRef<number | null>(null);
-  const [capturedContext, setCapturedContext] = useState<CapturedContext | null>(null);
   const [category, setCategory] = useState<FeedbackCategory | null>(null);
   const [reporterName, setReporterName] = useState("");
   const [message, setMessage] = useState("");
@@ -70,18 +63,12 @@ export function FeedbackWidget() {
   const remainingChars = MESSAGE_MAX_LENGTH - message.length;
   const canSubmit = Boolean(category && message.trim().length > 0 && submitState !== "submitting");
 
-  // Capture page/viewer context and reset form state when the widget opens
   useEffect(() => {
     if (!isFeedbackOpen) return;
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-    setCapturedContext({
-      pageContext: buildPageContext(location),
-      modelContext: feedbackContext.modelContext,
-      fhrContext: feedbackContext.fhrContext,
-    });
     setCategory(null);
     setReporterName("");
     setMessage("");
@@ -120,7 +107,7 @@ export function FeedbackWidget() {
   }
 
   async function submitFeedback() {
-    if (!category || !capturedContext) {
+    if (!category) {
       setSubmitMessage("Choose a category before sending.");
       return;
     }
@@ -132,6 +119,14 @@ export function FeedbackWidget() {
     setSubmitState("submitting");
     setSubmitMessage(null);
     try {
+      const submissionContext = {
+        pageContext: buildPageContext(location),
+        modelContext: feedbackContext.modelContext,
+        variableContext: feedbackContext.variableContext,
+        runContext: feedbackContext.runContext,
+        fhrContext: feedbackContext.fhrContext,
+        animationStateContext: feedbackContext.animationStateContext,
+      };
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -149,9 +144,12 @@ export function FeedbackWidget() {
           category,
           message: message.trim(),
           reporter_name: reporterName.trim() || null,
-          page_context: capturedContext.pageContext,
-          model_context: capturedContext.modelContext,
-          fhr_context: capturedContext.fhrContext,
+          page_context: submissionContext.pageContext,
+          model_context: submissionContext.modelContext,
+          variable_context: submissionContext.variableContext,
+          run_context: submissionContext.runContext,
+          fhr_context: submissionContext.fhrContext,
+          animation_state_context: submissionContext.animationStateContext,
           app_version: APP_VERSION,
         }),
       });

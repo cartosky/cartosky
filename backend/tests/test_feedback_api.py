@@ -100,7 +100,10 @@ async def test_feedback_submission_persists_and_admin_lists_record(client: httpx
             "message": "The loop controls disappeared after switching models.",
             "page_context": "/viewer",
             "model_context": "hrrr",
+            "variable_context": "reflectivity",
+            "run_context": "2026060912",
             "fhr_context": 12,
+            "animation_state_context": "paused",
             "app_version": "test-sha",
         },
     )
@@ -127,7 +130,10 @@ async def test_feedback_submission_persists_and_admin_lists_record(client: httpx
     assert item["forums_display_name"] == "Beta Tester"
     assert item["category"] == "bug"
     assert item["model_context"] == "hrrr"
+    assert item["variable_context"] == "reflectivity"
+    assert item["run_context"] == "2026060912"
     assert item["fhr_context"] == 12
+    assert item["animation_state_context"] == "paused"
     assert item["user_agent"] == "pytest-browser"
 
 
@@ -347,7 +353,10 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
         "message": "Production smoke test",
         "page_context": "/viewer",
         "model_context": "hrrr",
+        "variable_context": "reflectivity",
+        "run_context": "2026051612",
         "fhr_context": 12,
+        "animation_state_context": "playing",
         "app_version": "test-sha",
         "user_agent": "pytest-browser",
     }
@@ -374,4 +383,7 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
     assert payload["to"] == ["ops@example.com"]
     assert payload["subject"] == "[CartoSky Beta Feedback] [BUG] from Beta Tester"
     assert "Production smoke test" in payload["text"]
+    assert "Variable context: reflectivity" in payload["text"]
+    assert "Run timestamp: 2026051612z" in payload["text"]
+    assert "Animation state: playing" in payload["text"]
     assert "Admin: https://cartosky.com/admin/feedback" in payload["text"]

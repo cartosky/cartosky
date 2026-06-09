@@ -248,7 +248,10 @@ export type AdminFeedbackItem = {
   forums_display_name: string;
   page_context: string;
   model_context: string | null;
+  variable_context: string | null;
+  run_context: string | null;
   fhr_context: number | null;
+  animation_state_context: "playing" | "paused" | "buffering" | null;
   user_agent: string;
   app_version: string | null;
 };

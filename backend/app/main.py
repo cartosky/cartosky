@@ -1457,7 +1457,10 @@ class FeedbackSubmission(BaseModel):
     reporter_name: str | None = Field(default=None, max_length=80)
     page_context: str = Field(min_length=1, max_length=300)
     model_context: str | None = Field(default=None, max_length=64)
+    variable_context: str | None = Field(default=None, max_length=128)
+    run_context: str | None = Field(default=None, max_length=32)
     fhr_context: int | None = Field(default=None, ge=0, le=1000)
+    animation_state_context: Literal["playing", "paused", "buffering"] | None = None
     app_version: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
@@ -1556,7 +1559,10 @@ async def post_feedback(
             forums_display_name=display_name,
             page_context=payload.page_context.strip(),
             model_context=payload.model_context.strip() if payload.model_context and payload.model_context.strip() else None,
+            variable_context=payload.variable_context.strip() if payload.variable_context and payload.variable_context.strip() else None,
+            run_context=payload.run_context.strip() if payload.run_context and payload.run_context.strip() else None,
             fhr_context=payload.fhr_context,
+            animation_state_context=payload.animation_state_context,
             user_agent=(request.headers.get("user-agent") or "unknown")[:512],
             app_version=payload.app_version.strip() if payload.app_version and payload.app_version.strip() else None,
         )

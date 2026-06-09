@@ -103,7 +103,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
                 forums_display_name TEXT NOT NULL,
                 page_context TEXT NOT NULL,
                 model_context TEXT,
+                variable_context TEXT,
+                run_context TEXT,
                 fhr_context INTEGER,
+                animation_state_context TEXT,
                 user_agent TEXT NOT NULL,
                 app_version TEXT
             );
@@ -123,6 +126,12 @@ def _init_db(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE feedback ADD COLUMN rate_limit_key TEXT")
         if "clerk_user_id" not in cols:
             conn.execute("ALTER TABLE feedback ADD COLUMN clerk_user_id TEXT")
+        if "variable_context" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN variable_context TEXT")
+        if "run_context" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN run_context TEXT")
+        if "animation_state_context" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN animation_state_context TEXT")
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_feedback_rate_limit_key_submitted
@@ -150,7 +159,10 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "forums_display_name": row["forums_display_name"],
         "page_context": row["page_context"],
         "model_context": row["model_context"],
+        "variable_context": row["variable_context"],
+        "run_context": row["run_context"],
         "fhr_context": row["fhr_context"],
+        "animation_state_context": row["animation_state_context"],
         "user_agent": row["user_agent"],
         "app_version": row["app_version"],
     }
@@ -198,7 +210,10 @@ def insert_feedback(
     forums_display_name: str,
     page_context: str,
     model_context: str | None,
+    variable_context: str | None = None,
+    run_context: str | None = None,
     fhr_context: int | None,
+    animation_state_context: str | None = None,
     user_agent: str,
     app_version: str | None,
     rate_limit_key: str | None = None,
@@ -222,11 +237,14 @@ def insert_feedback(
                 forums_display_name,
                 page_context,
                 model_context,
+                variable_context,
+                run_context,
                 fhr_context,
+                animation_state_context,
                 user_agent,
                 app_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 submitted_at,
@@ -238,7 +256,10 @@ def insert_feedback(
                 forums_display_name,
                 page_context,
                 model_context,
+                variable_context,
+                run_context,
                 fhr_context,
+                animation_state_context,
                 user_agent,
                 app_version,
             ),
@@ -432,6 +453,8 @@ def get_admin_feedback(
 
 def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
     admin_link = f"{settings.cartosky_admin_base_url}/admin/feedback" if settings.cartosky_admin_base_url else None
+    run_context = str(submission.get("run_context") or "").strip()
+    formatted_run_context = f"{run_context}z" if len(run_context) == 10 and run_context.isdigit() else (run_context or "n/a")
     body_lines = [
         f"Category: {submission.get('category')}",
         f"Submitted at: {submission.get('submitted_at')} UTC",
@@ -443,7 +466,10 @@ def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
         "",
         f"Page context: {submission.get('page_context')}",
         f"Model context: {submission.get('model_context') or 'n/a'}",
+        f"Variable context: {submission.get('variable_context') or 'n/a'}",
+        f"Run timestamp: {formatted_run_context}",
         f"Forecast hour context: {submission.get('fhr_context') if submission.get('fhr_context') is not None else 'n/a'}",
+        f"Animation state: {submission.get('animation_state_context') or 'n/a'}",
         f"App version: {submission.get('app_version') or 'n/a'}",
         f"User agent: {submission.get('user_agent') or 'n/a'}",
     ]

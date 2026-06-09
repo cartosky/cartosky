@@ -1,8 +1,13 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
+export type FeedbackAnimationState = "playing" | "paused" | "buffering";
+
 export type FeedbackViewerContext = {
   modelContext: string | null;
+  variableContext: string | null;
+  runContext: string | null;
   fhrContext: number | null;
+  animationStateContext: FeedbackAnimationState | null;
 };
 
 type FeedbackContextValue = FeedbackViewerContext & {
@@ -17,13 +22,23 @@ const FeedbackContext = createContext<FeedbackContextValue | null>(null);
 
 const emptyViewerContext: FeedbackViewerContext = {
   modelContext: null,
+  variableContext: null,
+  runContext: null,
   fhrContext: null,
+  animationStateContext: null,
 };
 
 function normalizeViewerContext(context: FeedbackViewerContext): FeedbackViewerContext {
   const modelContext = context.modelContext?.trim() || null;
+  const variableContext = context.variableContext?.trim() || null;
+  const runContext = context.runContext?.trim() || null;
   const fhrContext = Number.isFinite(context.fhrContext) ? Number(context.fhrContext) : null;
-  return { modelContext, fhrContext };
+  const animationStateContext = context.animationStateContext === "playing"
+    || context.animationStateContext === "paused"
+    || context.animationStateContext === "buffering"
+    ? context.animationStateContext
+    : null;
+  return { modelContext, variableContext, runContext, fhrContext, animationStateContext };
 }
 
 export function FeedbackProvider({ children }: { children: ReactNode }) {
