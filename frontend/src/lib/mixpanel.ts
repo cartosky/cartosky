@@ -19,6 +19,12 @@ type PendingCapture =
       search: string;
     }
   | {
+      type: "identify";
+      clerkUserId: string;
+      isTwfLinked: boolean;
+      twfMemberId?: number;
+    }
+  | {
       type: "event";
       eventName: AnalyticsEventName;
       properties: AnalyticsEventProperties;
@@ -88,6 +94,25 @@ function sendMixpanelEvent(
   });
 }
 
+function identifyMixpanelUser(
+  clerkUserId: string,
+  status: Pick<TwfStatus, "linked" | "member_id">,
+): void {
+  if (!mixpanelClient) {
+    return;
+  }
+
+  const common = buildCommonProperties();
+  mixpanelClient.identify(clerkUserId);
+  mixpanelClient.people.set({
+    is_logged_in: true,
+    twf_linked: status.linked === true,
+    twf_member_id: status.linked === true ? status.member_id : undefined,
+    device_class: common.device_class,
+    viewport_bucket: common.viewport_bucket,
+  });
+}
+
 function flushPendingCaptures(): void {
   if (!mixpanelClient || pendingCaptures.length === 0) {
     return;
@@ -97,6 +122,13 @@ function flushPendingCaptures(): void {
   for (const capture of queuedCaptures) {
     if (capture.type === "pageview") {
       sendMixpanelPageview(capture.pathname, capture.search);
+      continue;
+    }
+    if (capture.type === "identify") {
+      identifyMixpanelUser(capture.clerkUserId, {
+        linked: capture.isTwfLinked,
+        member_id: capture.twfMemberId,
+      });
       continue;
     }
     sendMixpanelEvent(capture.eventName, capture.properties);
@@ -125,22 +157,29 @@ export function initMixpanelAnalytics(): void {
     });
 }
 
-export function syncMixpanelAuthStatus(status: TwfStatus): void {
+export function syncMixpanelAuthStatus(clerkUserId: string | null, status: TwfStatus): void {
   if (!isMixpanelEnabled()) {
     return;
   }
 
-  if (status.linked !== true || !mixpanelClient || status.member_id == null) {
+  if (clerkUserId === null) {
     return;
   }
 
-  const common = buildCommonProperties();
-  mixpanelClient.identify(`twf:${status.member_id}`);
-  mixpanelClient.people.set({
-    is_logged_in: true,
-    device_class: common.device_class,
-    viewport_bucket: common.viewport_bucket,
-  });
+  if (!mixpanelClient) {
+    enqueueCapture({
+      type: "identify",
+      clerkUserId,
+      isTwfLinked: status.linked === true,
+      twfMemberId: status.linked === true ? status.member_id : undefined,
+    });
+    if (!initStarted && !initPromise) {
+      initMixpanelAnalytics();
+    }
+    return;
+  }
+
+  identifyMixpanelUser(clerkUserId, status);
 }
 
 export function captureMixpanelPageview(pathname: string, search = ""): void {

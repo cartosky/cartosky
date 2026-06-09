@@ -1,3 +1,4 @@
+import { useUser } from "@clerk/react";
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -5,9 +6,15 @@ import { fetchTwfStatus } from "@/lib/admin-api";
 import { captureAnalyticsPageview, syncAnalyticsAuthStatus } from "@/lib/analytics";
 
 export function AnalyticsBridge() {
+  const { user } = useUser();
+  const clerkUserId = user?.id ?? null;
   const location = useLocation();
 
   useEffect(() => {
+    if (clerkUserId === null) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadAuthStatus() {
@@ -16,7 +23,7 @@ export function AnalyticsBridge() {
         if (cancelled) {
           return;
         }
-        syncAnalyticsAuthStatus(status);
+        syncAnalyticsAuthStatus(clerkUserId, status);
       } catch {
         // Ignore analytics identity failures.
       }
@@ -26,7 +33,7 @@ export function AnalyticsBridge() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [clerkUserId]);
 
   useEffect(() => {
     captureAnalyticsPageview(location.pathname, location.search);
