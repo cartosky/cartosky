@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Search, Star, X } from "lucide-react";
 
@@ -29,12 +29,11 @@ type VariablePickerProps = {
   panelOffset?: number;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "PRECIP ANOMALIES" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
 
 const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
   { id: "PRECIPITATION", label: "Precip" },
-  { id: "PRECIP ANOMALIES", label: "Precip anomalies" },
   { id: "SEVERE", label: "Severe" },
   { id: "UPPER AIR", label: "Upper air" },
   { id: "OUTLOOKS", label: "Outlooks" },
@@ -55,11 +54,16 @@ const CATEGORY_LABELS = new Map<CategoryId, string>([
   ...CATEGORY_ROWS.map((row) => [row.id, row.label] as [CategoryId, string]),
 ]);
 
+const ANOMALY_VARIABLE_ID_PATTERN = /_anom(?:__|$)/;
+
+function isAnomalyOption(option: VariableOption): boolean {
+  return ANOMALY_VARIABLE_ID_PATTERN.test(option.value) || option.label.toLowerCase().includes("anomaly");
+}
+
 function normalizeGroup(group: string | null): CategoryId | null {
   const normalized = String(group ?? "").trim().toUpperCase();
   if (normalized === "SURFACE") return "SURFACE";
-  if (normalized === "PRECIPITATION") return "PRECIPITATION";
-  if (normalized === "PRECIP ANOMALIES") return "PRECIP ANOMALIES";
+  if (normalized === "PRECIPITATION" || normalized === "PRECIP ANOMALIES") return "PRECIPITATION";
   if (normalized === "SEVERE") return "SEVERE";
   if (normalized === "UPPER AIR") return "UPPER AIR";
   if (normalized === "OUTLOOKS") return "OUTLOOKS";
@@ -190,7 +194,10 @@ export function VariablePicker({
     if (activeCategory === "FAVORITES") {
       return favoriteOptions;
     }
-    return categorizedOptions.get(activeCategory) ?? [];
+    const categoryOptions = categorizedOptions.get(activeCategory) ?? [];
+    const regularOptions = categoryOptions.filter((option) => !isAnomalyOption(option));
+    const anomalyOptions = categoryOptions.filter((option) => isAnomalyOption(option));
+    return [...regularOptions, ...anomalyOptions];
   }, [activeCategory, categorizedOptions, favoriteOptions, hasSearch, matchesQuery, options]);
 
   const selectedCategory = useMemo(() => {
@@ -393,14 +400,7 @@ export function VariablePicker({
                     : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                 )}
               >
-                {category.id === "PRECIP ANOMALIES" ? (
-                  <span className="min-w-0 leading-[1.05]">
-                    <span className="block">Precip</span>
-                    <span className="block">Anomalies</span>
-                  </span>
-                ) : (
-                  <span className="min-w-0 truncate">{category.label}</span>
-                )}
+                <span className="min-w-0 truncate">{category.label}</span>
                 <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
                   {category.count}
                 </span>
@@ -420,51 +420,62 @@ export function VariablePicker({
             const highlighted = index === highlightedIndex;
             const favorited = favoriteSet.has(option.value);
             const categoryLabel = CATEGORY_LABELS.get(normalizeGroup(option.group) ?? "SURFACE") ?? "Other";
+            const anomalyOption = isAnomalyOption(option);
+            const showAnomalyHeading = !hasSearch
+              && activeCategory !== "FAVORITES"
+              && anomalyOption
+              && (index === 0 || !isAnomalyOption(visibleOptions[index - 1]!));
             return (
-              <div
-                key={option.value}
-                data-variable-index={index}
-                className={cn(
-                  "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
-                  selected
-                    ? "bg-[#185FA5]/20 text-cyan-100"
-                    : highlighted
-                      ? "bg-white/[0.07] text-white"
-                      : supported
-                        ? "text-white/82 hover:bg-white/[0.055] hover:text-white"
-                        : "text-white/32"
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggleFavorite(option.value);
-                  }}
+              <Fragment key={option.value}>
+                {showAnomalyHeading ? (
+                  <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/62">
+                    Anomalies
+                  </div>
+                ) : null}
+                <div
+                  data-variable-index={index}
                   className={cn(
-                    "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
+                    "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
+                    selected
+                      ? "bg-[#185FA5]/20 text-cyan-100"
+                      : highlighted
+                        ? "bg-white/[0.07] text-white"
+                        : supported
+                          ? "text-white/82 hover:bg-white/[0.055] hover:text-white"
+                          : "text-white/32"
                   )}
-                  aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
                 >
-                  <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
-                </button>
-                <button
-                  type="button"
-                  disabled={!supported}
-                  onClick={() => chooseVariable(option.value)}
-                  onMouseEnter={() => setHighlightedIndex(index)}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
-                  title={supported ? option.label : `${option.label} is not available for this model`}
-                >
-                  <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
-                  {hasSearch ? (
-                    <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
-                      {categoryLabel}
-                    </span>
-                  ) : null}
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleFavorite(option.value);
+                    }}
+                    className={cn(
+                      "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                      favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
+                    )}
+                    aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
+                  >
+                    <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!supported}
+                    onClick={() => chooseVariable(option.value)}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
+                    title={supported ? option.label : `${option.label} is not available for this model`}
+                  >
+                    <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                    {hasSearch ? (
+                      <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
+                        {categoryLabel}
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              </Fragment>
             );
           })}
         </div>
