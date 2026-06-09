@@ -120,7 +120,7 @@ export function FeedbackWidget() {
     setSubmitMessage(null);
     try {
       const submissionContext = {
-        pageContext: buildPageContext(location),
+        pageContext: feedbackContext.pageContext || buildPageContext(location),
         modelContext: feedbackContext.modelContext,
         variableContext: feedbackContext.variableContext,
         runContext: feedbackContext.runContext,

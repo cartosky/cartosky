@@ -171,6 +171,18 @@ async def test_feedback_notification_receives_clerk_identity(
         user_id="user_beta",
         claims={"name": "Beta Tester", "email": "beta@example.com"},
     )
+    twf_oauth.upsert_session(
+        twf_oauth.TwfSession(
+            session_id="linked-session",
+            member_id=12345,
+            display_name="Beta Forums",
+            photo_url=None,
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=2_000_000_000,
+            clerk_user_id="user_beta",
+        )
+    )
     captured: dict[str, object] = {}
 
     def fake_send_feedback_notification(submission: dict[str, object], settings: object) -> None:
@@ -192,6 +204,8 @@ async def test_feedback_notification_receives_clerk_identity(
     assert captured["clerk_user_id"] == "user_beta"
     assert captured["clerk_display_name"] == "Beta Tester"
     assert captured["clerk_email_address"] == "beta@example.com"
+    assert captured["twf_account_display"] == "Beta Forums"
+    assert captured["twf_account_member_id"] == "12345"
 
 
 async def test_feedback_rate_limit_enforced_by_clerk_user_id(client: httpx.AsyncClient) -> None:
@@ -380,10 +394,11 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
         "category": "bug",
         "submitted_at": "2026-05-16T12:00:00Z",
         "forums_display_name": "Beta Tester",
-        "member_id": 777,
         "clerk_user_id": "user_beta",
         "clerk_display_name": "Beta Tester",
         "clerk_email_address": "beta@example.com",
+        "twf_account_display": "Beta Forums",
+        "twf_account_member_id": "12345",
         "message": "Production smoke test",
         "page_context": "/viewer",
         "model_context": "hrrr",
@@ -417,6 +432,7 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
     assert payload["to"] == ["ops@example.com"]
     assert payload["subject"] == "[CartoSky Beta Feedback] [BUG] from Beta Tester"
     assert "Production smoke test" in payload["text"]
+    assert "TWF account: Beta Forums (member id 12345)" in payload["text"]
     assert "Clerk user id: user_beta" in payload["text"]
     assert "Clerk display name: Beta Tester" in payload["text"]
     assert "Clerk email: beta@example.com" in payload["text"]

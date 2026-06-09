@@ -949,14 +949,46 @@ export default function App() {
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
 
   useEffect(() => {
+    const mapView = mapViewRef.current;
+    const feedbackPermalinkForecastHour = Number.isFinite(forecastHour)
+      ? forecastHour
+      : pendingInitialForecastHourRef.current;
+    const permalinkSearch = buildPermalinkSearch({
+      model: model || undefined,
+      run: run || undefined,
+      var: variable || undefined,
+      ensembleView: ensembleView || undefined,
+      fh: Number.isFinite(feedbackPermalinkForecastHour)
+        ? Number(feedbackPermalinkForecastHour)
+        : undefined,
+      region: region || undefined,
+      lat: mapView.lat,
+      lon: mapView.lon,
+      z: mapView.z,
+    });
+    const pathname = typeof window !== "undefined" ? window.location.pathname : "/viewer";
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
     setViewerContext({
+      pageContext: `${pathname}${permalinkSearch}${hash}` || "/",
       modelContext: model || null,
       variableContext: variable || null,
       runContext: telemetryRunId || null,
       fhrContext: Number.isFinite(forecastHour) ? Number(forecastHour) : null,
       animationStateContext: isPlaying ? "playing" : (isGridPreloadingForPlay ? "buffering" : "paused"),
     });
-  }, [forecastHour, isGridPreloadingForPlay, isPlaying, model, setViewerContext, telemetryRunId, variable]);
+  }, [
+    ensembleView,
+    forecastHour,
+    isGridPreloadingForPlay,
+    isPlaying,
+    mapViewTick,
+    model,
+    region,
+    run,
+    setViewerContext,
+    telemetryRunId,
+    variable,
+  ]);
 
   useEffect(() => {
     if (!gridOnlySelection || run !== "latest") {

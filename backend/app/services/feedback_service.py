@@ -455,11 +455,21 @@ def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
     admin_link = f"{settings.cartosky_admin_base_url}/admin/feedback" if settings.cartosky_admin_base_url else None
     run_context = str(submission.get("run_context") or "").strip()
     formatted_run_context = f"{run_context}z" if len(run_context) == 10 and run_context.isdigit() else (run_context or "n/a")
+    twf_account_display = str(submission.get("twf_account_display") or "").strip()
+    twf_account_member_id = str(submission.get("twf_account_member_id") or "").strip()
+    if twf_account_display and twf_account_member_id:
+        twf_account = f"{twf_account_display} (member id {twf_account_member_id})"
+    elif twf_account_display:
+        twf_account = twf_account_display
+    elif twf_account_member_id:
+        twf_account = f"member id {twf_account_member_id}"
+    else:
+        twf_account = "n/a"
     body_lines = [
         f"Category: {submission.get('category')}",
         f"Submitted at: {submission.get('submitted_at')} UTC",
-        f"Name or Username: {submission.get('forums_display_name')}",
-        f"Member id: {submission.get('member_id')}",
+        f"Name: {submission.get('forums_display_name')}",
+        f"TWF account: {twf_account}",
         f"Clerk user id: {submission.get('clerk_user_id') or 'n/a'}",
         f"Clerk display name: {submission.get('clerk_display_name') or 'n/a'}",
         f"Clerk email: {submission.get('clerk_email_address') or 'n/a'}",

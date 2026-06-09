@@ -1534,10 +1534,14 @@ async def _feedback_notification_identity(current_user: ClerkPrincipal) -> dict[
             clerk_display_name = clerk_display_name or profile.display_name
             clerk_email_address = clerk_email_address or profile.email_address
 
+    twf_session = await run_in_threadpool(twf_oauth.get_session_for_clerk_user, current_user.user_id)
+
     return {
         "clerk_user_id": current_user.user_id,
         "clerk_display_name": clerk_display_name,
         "clerk_email_address": clerk_email_address,
+        "twf_account_display": twf_session.display_name if twf_session else None,
+        "twf_account_member_id": str(twf_session.member_id) if twf_session else None,
     }
 
 
