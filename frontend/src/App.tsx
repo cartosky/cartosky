@@ -4078,12 +4078,19 @@ export default function App() {
     if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
       return null;
     }
-    let capturedMapDataUrl = latestMapDataUrlGetterRef.current?.() ?? undefined;
+    // During animation playback the canvas holds a transient animation frame,
+    // so the cached still-frame snapshot matches the selected forecast hour
+    // better; otherwise the live canvas is the exact view the user sees.
+    const preferCachedSnapshot = isPlaying || isScrubbing;
+    let capturedMapDataUrl = preferCachedSnapshot
+      ? latestMapDataUrlGetterRef.current?.() ?? undefined
+      : undefined;
     if (!capturedMapDataUrl) {
       try {
         capturedMapDataUrl = map.getCanvas().toDataURL("image/png");
       } catch (error) {
-        console.warn("[screenshot] Failed to snapshot live map canvas; falling back to offscreen export.", error);
+        console.warn("[screenshot] Failed to snapshot live map canvas; falling back to cached frame.", error);
+        capturedMapDataUrl = latestMapDataUrlGetterRef.current?.() ?? undefined;
       }
     }
     const anchors = getActiveAnchorLabels(anchorDisplayGeoJson, zoom)
@@ -4140,6 +4147,8 @@ export default function App() {
     displayedForecastHour,
     gridReadyVersion,
     isGridHourReady,
+    isPlaying,
+    isScrubbing,
     resolvedGridDisplayHour,
     selectedTimeAxisMode,
     displayedValidTimeISO,

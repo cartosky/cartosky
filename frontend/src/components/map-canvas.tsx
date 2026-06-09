@@ -1854,11 +1854,24 @@ export function MapCanvas({
       rafId = window.requestAnimationFrame(captureLatestFrame);
     };
 
+    // The render throttle is leading-edge only, so the last frame of a render
+    // burst (the settled view after a zoom/pan) can be dropped and never
+    // recaptured; idle fires once the map settles, so always capture there.
+    const captureSettledFrame = () => {
+      lastCaptureAt = Date.now();
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(captureLatestFrame);
+    };
+
     scheduleCapture();
     map.on("render", scheduleCapture);
+    map.on("idle", captureSettledFrame);
 
     return () => {
       map.off("render", scheduleCapture);
+      map.off("idle", captureSettledFrame);
       if (rafId !== null) {
         window.cancelAnimationFrame(rafId);
       }
