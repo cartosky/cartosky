@@ -443,7 +443,7 @@ export function VariablePicker({
                   }}
                   className={cn(
                     "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-100 hover:text-white/55"
+                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
                 >
