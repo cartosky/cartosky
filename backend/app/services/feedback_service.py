@@ -458,8 +458,11 @@ def _build_email_body(submission: dict[str, Any], settings: Settings) -> str:
     body_lines = [
         f"Category: {submission.get('category')}",
         f"Submitted at: {submission.get('submitted_at')} UTC",
-        f"Forums display name: {submission.get('forums_display_name')}",
+        f"Name or Username: {submission.get('forums_display_name')}",
         f"Member id: {submission.get('member_id')}",
+        f"Clerk user id: {submission.get('clerk_user_id') or 'n/a'}",
+        f"Clerk display name: {submission.get('clerk_display_name') or 'n/a'}",
+        f"Clerk email: {submission.get('clerk_email_address') or 'n/a'}",
         "",
         "Message:",
         str(submission.get("message") or ""),

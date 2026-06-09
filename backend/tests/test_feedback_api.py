@@ -163,6 +163,37 @@ async def test_feedback_submission_uses_clerk_profile_email_when_claims_lack_ide
     assert feedback["items"][0]["forums_display_name"] == "beta@example.com"
 
 
+async def test_feedback_notification_receives_clerk_identity(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _authenticate_clerk_user(
+        user_id="user_beta",
+        claims={"name": "Beta Tester", "email": "beta@example.com"},
+    )
+    captured: dict[str, object] = {}
+
+    def fake_send_feedback_notification(submission: dict[str, object], settings: object) -> None:
+        del settings
+        captured.update(submission)
+
+    monkeypatch.setattr(feedback_service, "send_feedback_notification", fake_send_feedback_notification)
+
+    response = await client.post(
+        "/api/v4/feedback",
+        json={
+            "category": "bug",
+            "message": "Include Clerk identity in the notification.",
+            "page_context": "/viewer",
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["clerk_user_id"] == "user_beta"
+    assert captured["clerk_display_name"] == "Beta Tester"
+    assert captured["clerk_email_address"] == "beta@example.com"
+
+
 async def test_feedback_rate_limit_enforced_by_clerk_user_id(client: httpx.AsyncClient) -> None:
     _authenticate_clerk_user(user_id="user_rate_limited", claims={"email": "beta@example.com"})
 
@@ -350,6 +381,9 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
         "submitted_at": "2026-05-16T12:00:00Z",
         "forums_display_name": "Beta Tester",
         "member_id": 777,
+        "clerk_user_id": "user_beta",
+        "clerk_display_name": "Beta Tester",
+        "clerk_email_address": "beta@example.com",
         "message": "Production smoke test",
         "page_context": "/viewer",
         "model_context": "hrrr",
@@ -383,6 +417,9 @@ def test_send_feedback_notification_posts_to_resend(monkeypatch: pytest.MonkeyPa
     assert payload["to"] == ["ops@example.com"]
     assert payload["subject"] == "[CartoSky Beta Feedback] [BUG] from Beta Tester"
     assert "Production smoke test" in payload["text"]
+    assert "Clerk user id: user_beta" in payload["text"]
+    assert "Clerk display name: Beta Tester" in payload["text"]
+    assert "Clerk email: beta@example.com" in payload["text"]
     assert "Variable context: reflectivity" in payload["text"]
     assert "Run timestamp: 2026051612z" in payload["text"]
     assert "Animation state: playing" in payload["text"]

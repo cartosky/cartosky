@@ -1520,6 +1520,27 @@ async def _feedback_display_name(current_user: ClerkPrincipal) -> str:
     return f"Clerk user {current_user.user_id[:12]}"
 
 
+async def _feedback_notification_identity(current_user: ClerkPrincipal) -> dict[str, str | None]:
+    claims = current_user.claims
+    first_name = _clean_claim_string(claims.get("first_name"))
+    last_name = _clean_claim_string(claims.get("last_name"))
+    full_name = " ".join(part for part in (first_name, last_name) if part) or None
+    clerk_display_name = _clean_claim_string(claims.get("name")) or _clean_claim_string(claims.get("username")) or full_name
+    clerk_email_address = _billing_email_from_claims(claims)
+
+    if not clerk_display_name or not clerk_email_address:
+        profile = await run_in_threadpool(fetch_clerk_user_profile, current_user.user_id)
+        if profile:
+            clerk_display_name = clerk_display_name or profile.display_name
+            clerk_email_address = clerk_email_address or profile.email_address
+
+    return {
+        "clerk_user_id": current_user.user_id,
+        "clerk_display_name": clerk_display_name,
+        "clerk_email_address": clerk_email_address,
+    }
+
+
 def _feedback_request_rate_limit_key(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for", "")
     forwarded_ip = forwarded_for.split(",", 1)[0].strip() if forwarded_for else ""
@@ -1568,9 +1589,12 @@ async def post_feedback(
         )
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_FEEDBACK", message=str(exc)) from exc
+    notification_record = dict(record)
+    if current_user:
+        notification_record.update(await _feedback_notification_identity(current_user))
     background_tasks.add_task(
         feedback_service.send_feedback_notification,
-        record,
+        notification_record,
         feedback_service.notification_settings_from_env(),
     )
     return {
