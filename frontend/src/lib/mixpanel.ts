@@ -106,15 +106,20 @@ function identifyMixpanelUser(
 
   const common = buildCommonProperties();
   mixpanelClient.identify(clerkUserId);
-  mixpanelClient.people.set({
-    $email: profile?.email ?? undefined,
-    $name: profile?.name ?? undefined,
+  const peopleProps: Record<string, string | number | boolean | null | undefined> = {
     is_logged_in: true,
     twf_linked: status.linked === true,
     twf_member_id: status.linked === true ? status.member_id : undefined,
     device_class: common.device_class,
     viewport_bucket: common.viewport_bucket,
-  });
+  };
+  if (profile?.email) {
+    peopleProps.$email = profile.email;
+  }
+  if (profile?.name) {
+    peopleProps.$name = profile.name;
+  }
+  mixpanelClient.people.set(peopleProps);
 }
 
 function flushPendingCaptures(): void {

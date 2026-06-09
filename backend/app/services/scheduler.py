@@ -173,6 +173,7 @@ DEFAULT_LOOP_SHARPEN_RADIUS = 1.2
 DEFAULT_LOOP_SHARPEN_PERCENT = 35
 DEFAULT_LOOP_SHARPEN_THRESHOLD = 3
 DEFAULT_DERIVE_BUNDLE = False
+RESTART_ON_SUCCESS_MODELS = frozenset({"gfs", "hrrr", "eps", "gefs", "ecmwf"})
 
 BuildTarget = tuple[str, str, int]
 BuildOutcome = tuple[str, str, int, bool, int | None, str]
@@ -1732,7 +1733,7 @@ def _perform_successful_run_memory_cleanup(*, run_id: str, model_id: str) -> Non
 
 
 def _should_restart_scheduler_after_successful_run(*, model: str, once: bool, run_arg: str | None) -> bool:
-    return model == "gfs" and not once and run_arg is None
+    return model in RESTART_ON_SUCCESS_MODELS and not once and run_arg is None
 
 
 def _process_run(
