@@ -70,14 +70,6 @@ function normalizeGroup(group: string | null): CategoryId | null {
   return null;
 }
 
-function selectedSwatchColor(legend: LegendPayload | null | undefined): string {
-  const entries = legend?.entries ?? [];
-  if (entries.length === 0) {
-    return "#185FA5";
-  }
-  return entries[Math.floor(entries.length / 2)]?.color || entries[0]?.color || "#185FA5";
-}
-
 function focusWeatherMap(): void {
   if (typeof document === "undefined") {
     return;
@@ -101,7 +93,6 @@ export function VariablePicker({
   disabled = false,
   placeholder = "Variable",
   selectedLabelOverride,
-  legend,
   minWidth = "min-w-[180px] max-w-[320px]",
   onOpenChange,
   inlinePanel = false,
@@ -452,7 +443,7 @@ export function VariablePicker({
                   }}
                   className={cn(
                     "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-0 group-hover:opacity-100"
+                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-100 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
                 >
@@ -479,20 +470,6 @@ export function VariablePicker({
         </div>
       </div>
 
-      <div
-        className="flex shrink-0 items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2"
-        style={inlinePanel ? { paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" } : undefined}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="h-[10px] w-[10px] shrink-0 rounded-[2px]"
-            style={{ backgroundColor: selectedSwatchColor(legend) }}
-          />
-          <span className="min-w-0 truncate text-[11px] font-semibold text-white/78">{selectedLabel}</span>
-        </div>
-        <span className="shrink-0 text-[10px] font-medium text-white/34">↑↓ navigate · ★ favorite</span>
-      </div>
     </div>
   ) : null;
 

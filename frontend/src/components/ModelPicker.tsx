@@ -393,7 +393,7 @@ export function ModelPicker({
                   }}
                   className={cn(
                     "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-0 group-hover:opacity-100"
+                    favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-100 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
                 >
@@ -429,13 +429,6 @@ export function ModelPicker({
         </div>
       </div>
 
-      <div
-        className="flex shrink-0 items-center justify-between gap-3 border-t border-[#1a3a5c]/60 bg-[#071422]/75 px-3 py-2"
-        style={inlinePanel ? { paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" } : undefined}
-      >
-        <span className="min-w-0 truncate text-[11px] font-semibold text-white/78">{selectedLabel}</span>
-        <span className="shrink-0 text-[10px] font-medium text-white/34">↑↓ navigate · ★ favorite</span>
-      </div>
     </div>
   ) : null;
 
