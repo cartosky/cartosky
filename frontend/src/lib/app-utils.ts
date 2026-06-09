@@ -417,6 +417,14 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
 };
 
+const FIXED_LEGEND_TITLE_IDS = new Set([
+  "precip_5d_anom",
+  "precip_7d_anom",
+  "precip_10d_anom",
+  "precip_15d_anom",
+  "precip_16d_anom",
+]);
+
 const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   hrrr: { label: "HRRR", group: "MODELS", order: 0 },
   nam: { label: "NAM", group: "MODELS", order: 1 },
@@ -496,6 +504,13 @@ export function makeVariableLabel(id: string, preferredLabel?: string | null): s
     return preferredLabel.trim();
   }
   return id;
+}
+
+function makeLegendTitle(id: string, preferredTitle?: string | null): string {
+  if (FIXED_LEGEND_TITLE_IDS.has(id) && preferredTitle && preferredTitle.trim()) {
+    return preferredTitle.trim();
+  }
+  return makeVariableLabel(id, preferredTitle);
 }
 
 export function buildFallbackSharePayload(params: {
@@ -998,7 +1013,7 @@ export function buildLegend(meta: LegendMeta | null | undefined, opacity: number
   const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
   const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
     ? "Legend"
-    : makeVariableLabel(legendId, rawTitle);
+    : makeLegendTitle(legendId, rawTitle);
   const title = isPtypeIntensity ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
   const units = normalizeLegendUnits(meta.units, metaWithIds);
   const legendMetadata = {
