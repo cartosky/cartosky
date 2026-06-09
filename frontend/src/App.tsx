@@ -309,16 +309,6 @@ export default function App() {
     return () => clearViewerContext();
   }, [clearViewerContext]);
 
-  useEffect(() => {
-    setViewerContext({
-      modelContext: model || null,
-      variableContext: variable || null,
-      runContext: telemetryRunId || null,
-      fhrContext: Number.isFinite(forecastHour) ? Number(forecastHour) : null,
-      animationStateContext: isPlaying ? "playing" : (isGridPreloadingForPlay ? "buffering" : "paused"),
-    });
-  }, [forecastHour, isGridPreloadingForPlay, isPlaying, model, setViewerContext, telemetryRunId, variable]);
-
   const {
     basemapMode, setBasemapMode,
     pointLabelsEnabled, setPointLabelsEnabled,
@@ -957,6 +947,16 @@ export default function App() {
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+
+  useEffect(() => {
+    setViewerContext({
+      modelContext: model || null,
+      variableContext: variable || null,
+      runContext: telemetryRunId || null,
+      fhrContext: Number.isFinite(forecastHour) ? Number(forecastHour) : null,
+      animationStateContext: isPlaying ? "playing" : (isGridPreloadingForPlay ? "buffering" : "paused"),
+    });
+  }, [forecastHour, isGridPreloadingForPlay, isPlaying, model, setViewerContext, telemetryRunId, variable]);
 
   useEffect(() => {
     if (!gridOnlySelection || run !== "latest") {
