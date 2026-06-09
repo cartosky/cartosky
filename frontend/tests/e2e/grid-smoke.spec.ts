@@ -192,87 +192,153 @@ function gridManifestPayload(varKey: string) {
   };
 }
 
-async function stubViewerGridRoutes(page: Page) {
+function gridManifestPayloadFor(model: string, varKey: string) {
+  return {
+    ...gridManifestPayload(varKey),
+    model,
+    url: undefined,
+    lods: [
+      {
+        ...gridManifestPayload(varKey).lods[0],
+        frames: [
+          {
+            fh: 0,
+            file: 'fh000.l0.u16.bin',
+            valid_time: '2026-03-30T12:00:00Z',
+            url: `/api/v4/grid/${model}/${GRID_RUN_ID}/${varKey}/fh000.l0.u16.bin?v=${GRID_RUN_ID}-${model}-${varKey}-0`,
+          },
+          {
+            fh: 1,
+            file: 'fh001.l0.u16.bin',
+            valid_time: '2026-03-30T13:00:00Z',
+            url: `/api/v4/grid/${model}/${GRID_RUN_ID}/${varKey}/fh001.l0.u16.bin?v=${GRID_RUN_ID}-${model}-${varKey}-1`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function variableFallbackCapabilityPayload() {
+  return {
+    contract_version: 'v1',
+    supported_models: ['hrrr', 'gfs'],
+    model_catalog: {
+      hrrr: capabilityPayload().model_catalog.hrrr,
+      gfs: {
+        model_id: 'gfs',
+        name: 'GFS',
+        product: 'forecast',
+        canonical_region: 'conus',
+        defaults: {
+          default_var_key: 'tmp2m',
+          default_run: 'latest',
+          default_frame_selection: 'first',
+          default_render_substrate: 'grid',
+        },
+        constraints: {
+          canonical_region: 'conus',
+          time_axis_mode: 'forecast',
+          latest_only: false,
+          supports_sampling: true,
+        },
+        run_discovery: {},
+        variables: {
+          tmp2m: {
+            var_key: 'tmp2m',
+            display_name: 'Temperature 2m',
+            kind: 'continuous',
+            units: 'F',
+            order: 0,
+            group: 'Temperature',
+            default_fh: 0,
+            buildable: true,
+            color_map_id: 'tmp2m',
+            render_substrates: ['grid'],
+            constraints: {},
+            derived: false,
+            derive_strategy_id: null,
+          },
+        },
+      },
+    },
+    availability: {
+      hrrr: capabilityPayload().availability.hrrr,
+      gfs: {
+        latest_run: GRID_RUN_ID,
+        published_runs: [GRID_RUN_ID],
+        latest_run_ready: true,
+        latest_run_ready_vars: ['tmp2m'],
+        latest_run_ready_frame_count: 2,
+        source: 'test',
+        time_axis_mode: 'forecast',
+      },
+    },
+  };
+}
+
+function spcEmptyCapabilityPayload() {
+  return {
+    contract_version: 'v1',
+    supported_models: ['spc'],
+    model_catalog: {
+      spc: {
+        model_id: 'spc',
+        name: 'SPC Outlooks',
+        product: 'forecast',
+        canonical_region: 'conus',
+        defaults: {
+          default_var_key: 'convective',
+          default_run: 'latest',
+          default_frame_selection: 'first',
+          default_render_substrate: 'vector',
+        },
+        constraints: {
+          canonical_region: 'conus',
+          time_axis_mode: 'forecast',
+          latest_only: false,
+          supports_sampling: false,
+        },
+        run_discovery: {},
+        variables: {
+          convective: {
+            var_key: 'convective',
+            display_name: 'Convective Outlook',
+            kind: 'categorical',
+            units: '',
+            order: 0,
+            group: 'Outlooks',
+            default_fh: 0,
+            buildable: true,
+            color_map_id: 'spc',
+            render_substrates: ['vector'],
+            constraints: {},
+            derived: false,
+            derive_strategy_id: null,
+          },
+        },
+      },
+    },
+    availability: {
+      spc: {
+        latest_run: GRID_RUN_ID,
+        published_runs: [GRID_RUN_ID],
+        latest_run_ready: true,
+        latest_run_ready_vars: ['convective'],
+        latest_run_ready_frame_count: 0,
+        source: 'test',
+        time_axis_mode: 'forecast',
+      },
+    },
+  };
+}
+
+async function stubSharedViewerRoutes(page: Page) {
   await page.route('https://us.i.posthog.com/**', async (route) => {
     await route.fulfill({ status: 204, body: '' });
   });
   await page.route('**/api/regions', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regionPayload()) });
-  });
-  await page.route('**/api/v4/capabilities', async (route) => {
-    await new Promise((resolve) => {
-      setTimeout(resolve, 250);
-    });
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
-  });
-  await page.route(`**/api/v4/hrrr/runs`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
-  });
-  await page.route(`**/api/v4/hrrr/latest/manifest`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        model: 'hrrr',
-        run: GRID_RUN_ID,
-        region: 'conus',
-        variables: {
-          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
-          dp2m: manifestPayload('dp2m').variables.dp2m,
-        },
-      }),
-    });
-  });
-  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/manifest`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        model: 'hrrr',
-        run: GRID_RUN_ID,
-        region: 'conus',
-        variables: {
-          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
-          dp2m: manifestPayload('dp2m').variables.dp2m,
-        },
-      }),
-    });
-  });
-  await page.route(`**/api/v4/hrrr/latest/tmp2m/frames`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/latest/dp2m/frames`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/frames`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/frames`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/grid-manifest`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/latest/tmp2m/grid-manifest`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/grid-manifest`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
-  });
-  await page.route(`**/api/v4/hrrr/latest/dp2m/grid-manifest`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
-  });
-  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
-  });
-  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
-  });
-  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_DP.buffer) });
-  });
-  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
   });
   await page.route('**/api/v4/sample/batch', async (route) => {
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
@@ -306,6 +372,232 @@ async function stubViewerGridRoutes(page: Page) {
   });
   await page.route('**/tiles/v3/**/*.png**', async (route) => {
     await route.fulfill({ status: 404, body: '' });
+  });
+}
+
+async function stubViewerGridRoutes(page: Page) {
+  await stubSharedViewerRoutes(page);
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 250);
+    });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
+  });
+  await page.route(`**/api/v4/hrrr/runs`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/manifest**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/manifest**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/hrrr/latest/tmp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/dp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/tmp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/latest/dp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh000.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/tmp2m/fh001.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh000.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_DP.buffer) });
+  });
+  await page.route(`**/api/v4/grid/hrrr/${GRID_RUN_ID}/dp2m/fh001.l0.u16.bin**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+}
+
+async function stubViewerVariableFallbackRoutes(page: Page) {
+  await stubSharedViewerRoutes(page);
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(variableFallbackCapabilityPayload()) });
+  });
+  await page.route('**/api/v4/hrrr/runs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
+  });
+  await page.route('**/api/v4/gfs/runs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
+  });
+  await page.route('**/api/v4/hrrr/latest/manifest**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/manifest**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'hrrr',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+          dp2m: manifestPayload('dp2m').variables.dp2m,
+        },
+      }),
+    });
+  });
+  await page.route('**/api/v4/gfs/latest/manifest**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'gfs',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+        },
+      }),
+    });
+  });
+  await page.route(`**/api/v4/gfs/${GRID_RUN_ID}/manifest**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'gfs',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          tmp2m: manifestPayload('tmp2m').variables.tmp2m,
+        },
+      }),
+    });
+  });
+  await page.route('**/api/v4/hrrr/latest/tmp2m/frames**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route('**/api/v4/hrrr/latest/dp2m/frames**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('dp2m')) });
+  });
+  await page.route('**/api/v4/gfs/latest/tmp2m/frames**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route(`**/api/v4/gfs/${GRID_RUN_ID}/tmp2m/frames**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload('tmp2m')) });
+  });
+  await page.route('**/api/v4/hrrr/latest/tmp2m/grid-manifest**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('hrrr', 'tmp2m')) });
+  });
+  await page.route('**/api/v4/hrrr/latest/dp2m/grid-manifest**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('hrrr', 'dp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/tmp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('hrrr', 'tmp2m')) });
+  });
+  await page.route(`**/api/v4/hrrr/${GRID_RUN_ID}/dp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('hrrr', 'dp2m')) });
+  });
+  await page.route('**/api/v4/gfs/latest/tmp2m/grid-manifest**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('gfs', 'tmp2m')) });
+  });
+  await page.route(`**/api/v4/gfs/${GRID_RUN_ID}/tmp2m/grid-manifest**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(gridManifestPayloadFor('gfs', 'tmp2m')) });
+  });
+  await page.route('**/api/v4/grid/hrrr/**', async (route) => {
+    const url = route.request().url();
+    const body = url.includes('/dp2m/') ? Buffer.from(GRID_FRAME_DP.buffer) : Buffer.from(GRID_FRAME_A.buffer);
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body });
+  });
+  await page.route('**/api/v4/grid/gfs/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+}
+
+async function stubViewerSpcEmptyStateRoutes(page: Page) {
+  await stubSharedViewerRoutes(page);
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(spcEmptyCapabilityPayload()) });
+  });
+  await page.route('**/api/v4/spc/runs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([GRID_RUN_ID]) });
+  });
+  await page.route('**/api/v4/spc/latest/manifest**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model: 'spc',
+        run: GRID_RUN_ID,
+        region: 'conus',
+        variables: {
+          convective: {
+            display_name: 'Convective Outlook',
+            kind: 'categorical',
+            units: '',
+            frames: [],
+          },
+        },
+      }),
+    });
+  });
+  await page.route('**/api/v4/spc/latest/convective/frames**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
   });
 }
 
@@ -364,7 +656,7 @@ test.describe('Grid-only smoke', () => {
 
     await page.getByLabel('Region: CONUS').click();
     await page.getByPlaceholder('Search city or zip…').fill('Denver');
-    await page.getByRole('button', { name: 'Denver, CO' }).click();
+    await page.getByRole('button', { name: /Denver, CO/ }).first().click();
 
     await expect.poll(() => {
       const url = new URL(page.url(), 'http://localhost');
@@ -387,5 +679,51 @@ test.describe('Grid-only smoke', () => {
       () => new URL(page.url(), 'http://localhost').search,
       { timeout: 15000 }
     ).toBe(selectedSearch);
+  });
+
+  test('expired run deep links show a fallback notice and recover to the latest viewer state', async ({ page }) => {
+    await stubViewerGridRoutes(page);
+
+    await page.goto('/viewer?m=hrrr&r=20200101_00z&v=tmp2m&reg=conus');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByTestId('viewer-notice')).toContainText('This link may be outdated - loading default view');
+    await expect
+      .poll(() => new URL(page.url(), 'http://localhost').searchParams.get('r'))
+      .toBe('latest');
+  });
+
+  test('unsupported variables fall back to the next model default when switching products', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only model picker flow.');
+
+    await stubViewerVariableFallbackRoutes(page);
+
+    await page.goto('/viewer?m=hrrr&r=latest&v=dp2m&reg=conus');
+    await page.waitForLoadState('networkidle');
+
+    const modelTrigger = page.getByRole('button', { name: /HRRR/i }).first();
+    await expect(modelTrigger).toBeVisible();
+    await modelTrigger.click({ force: true });
+
+    const dialog = page.getByRole('dialog', { name: /model picker/i });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: /^GFS$/i }).first().click();
+
+    await expect(dialog).not.toBeVisible();
+    await expect
+      .poll(() => ({
+        model: new URL(page.url(), 'http://localhost').searchParams.get('m'),
+        variable: new URL(page.url(), 'http://localhost').searchParams.get('v'),
+      }))
+      .toEqual({ model: 'gfs', variable: 'tmp2m' });
+  });
+
+  test('SPC selections with no active data show an explicit empty state', async ({ page }) => {
+    await stubViewerSpcEmptyStateRoutes(page);
+
+    await page.goto('/viewer?m=spc&r=latest&v=convective&reg=conus');
+
+    await expect(page.getByTestId('viewer-empty-state')).toContainText('Nothing active right now');
+    await expect(page.getByTestId('viewer-error')).toHaveCount(0);
   });
 });

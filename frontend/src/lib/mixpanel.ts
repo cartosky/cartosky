@@ -23,6 +23,7 @@ type PendingCapture =
       clerkUserId: string;
       isTwfLinked: boolean;
       twfMemberId?: number;
+      profile?: { email: string | null; name: string | null };
     }
   | {
       type: "event";
@@ -97,6 +98,7 @@ function sendMixpanelEvent(
 function identifyMixpanelUser(
   clerkUserId: string,
   status: Pick<TwfStatus, "linked" | "member_id">,
+  profile?: { email: string | null; name: string | null },
 ): void {
   if (!mixpanelClient) {
     return;
@@ -105,6 +107,8 @@ function identifyMixpanelUser(
   const common = buildCommonProperties();
   mixpanelClient.identify(clerkUserId);
   mixpanelClient.people.set({
+    $email: profile?.email ?? undefined,
+    $name: profile?.name ?? undefined,
     is_logged_in: true,
     twf_linked: status.linked === true,
     twf_member_id: status.linked === true ? status.member_id : undefined,
@@ -128,7 +132,7 @@ function flushPendingCaptures(): void {
       identifyMixpanelUser(capture.clerkUserId, {
         linked: capture.isTwfLinked,
         member_id: capture.twfMemberId,
-      });
+      }, capture.profile);
       continue;
     }
     sendMixpanelEvent(capture.eventName, capture.properties);
@@ -147,6 +151,7 @@ export function initMixpanelAnalytics(): void {
         persistence: "localStorage",
         autocapture: false,
         track_pageview: false,
+        api_host: "https://api.cartosky.com/mp",
       });
       mixpanelClient = mixpanel;
       flushPendingCaptures();
@@ -157,7 +162,11 @@ export function initMixpanelAnalytics(): void {
     });
 }
 
-export function syncMixpanelAuthStatus(clerkUserId: string | null, status: TwfStatus): void {
+export function syncMixpanelAuthStatus(
+  clerkUserId: string | null,
+  status: TwfStatus,
+  profile?: { email: string | null; name: string | null },
+): void {
   if (!isMixpanelEnabled()) {
     return;
   }
@@ -172,6 +181,7 @@ export function syncMixpanelAuthStatus(clerkUserId: string | null, status: TwfSt
       clerkUserId,
       isTwfLinked: status.linked === true,
       twfMemberId: status.linked === true ? status.member_id : undefined,
+      profile,
     });
     if (!initStarted && !initPromise) {
       initMixpanelAnalytics();
@@ -179,7 +189,7 @@ export function syncMixpanelAuthStatus(clerkUserId: string | null, status: TwfSt
     return;
   }
 
-  identifyMixpanelUser(clerkUserId, status);
+  identifyMixpanelUser(clerkUserId, status, profile);
 }
 
 export function captureMixpanelPageview(pathname: string, search = ""): void {

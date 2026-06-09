@@ -149,6 +149,8 @@ const HIGH_RES_SCRUB_LOD_HOLD_MS = 700;
 const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
+const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
+const PERMALINK_FALLBACK_MESSAGE = "This link may be outdated - loading default view";
 
 function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | null | undefined): number | null {
   const parsedRun = parseRunId(runId);
@@ -340,6 +342,7 @@ export default function App() {
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewerNotice, setViewerNotice] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [selectedAnchorCity, setSelectedAnchorCity] = useState<{
     id: string;
@@ -565,6 +568,7 @@ export default function App() {
   const viewerSessionEndedTrackedRef = useRef(false);
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
+  const initialPermalinkFallbackHandledRef = useRef(false);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
   const modelRef = useRef(model);
@@ -699,6 +703,14 @@ export default function App() {
     () => selectableFramesForVariable(frameHours, selectedVariableDefaultFh),
     [frameHours, selectedVariableDefaultFh]
   );
+
+  const showInitialPermalinkFallbackNotice = useCallback(() => {
+    if (initialPermalinkFallbackHandledRef.current) {
+      return;
+    }
+    initialPermalinkFallbackHandledRef.current = true;
+    setViewerNotice(PERMALINK_FALLBACK_MESSAGE);
+  }, []);
 
   useEffect(() => {
     const pendingForecastHour = pendingInitialForecastHourRef.current;
@@ -1672,6 +1684,19 @@ export default function App() {
     }
     return selectableFrameHours;
   }, [gridFrameHours, isGridLowMidActive, selectableFrameHours, selectedVariableDefaultFh]);
+  const noActiveSelectionMessage = useMemo(() => {
+    if (
+      loading
+      || Boolean(error)
+      || !EMPTY_STATE_MODELS.has(model)
+      || !hasRenderableSelection
+      || loadedFramesKey !== selectionKey
+      || controlAvailableFrameHours.length > 0
+    ) {
+      return null;
+    }
+    return "Nothing active right now";
+  }, [controlAvailableFrameHours.length, error, hasRenderableSelection, loadedFramesKey, loading, model, selectionKey]);
   const isGridPlayable = useMemo(() => {
     return canUseGridPlayback;
   }, [canUseGridPlayback]);
@@ -2521,7 +2546,23 @@ export default function App() {
           : pickPreferred(allowedRegionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region);
         setRegion(nextRegion);
 
-        setRun(requestedRun || "latest");
+        const publishedRuns = Array.isArray(capabilitiesData.availability?.[nextModel]?.published_runs)
+          ? capabilitiesData.availability?.[nextModel]?.published_runs ?? []
+          : [];
+        const nextRun = requestedRun && requestedRun !== "latest"
+          ? (publishedRuns.length > 0 && !publishedRuns.includes(requestedRun) ? "latest" : requestedRun)
+          : "latest";
+
+        if (
+          (requestedModel && requestedModel !== nextModel)
+          || (requestedVariable && requestedVariable !== nextVariable)
+          || (requestedRegion && requestedRegion !== nextRegion)
+          || (requestedRun && requestedRun !== nextRun)
+        ) {
+          showInitialPermalinkFallbackNotice();
+        }
+
+        setRun(nextRun);
         setRuns([]);
         setRunManifest(null);
         setFrameRows([]);
@@ -2542,7 +2583,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [initialPermalink]);
+  }, [initialPermalink, showInitialPermalinkFallbackNotice]);
 
   useEffect(() => {
     const regionIds = Object.keys(regionPresets);
@@ -2645,6 +2686,9 @@ export default function App() {
           setRuns(runData);
           setCapabilities((current) => withUpdatedLatestRun(current, model, pickLatestRunId(runData), runData));
         }
+        if (initialPermalink.run && nextRun !== initialPermalink.run.trim()) {
+          showInitialPermalinkFallbackNotice();
+        }
         setRun(nextRun);
 
         setRunManifest(manifestData);
@@ -2668,7 +2712,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView]);
+  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView, initialPermalink.run, showInitialPermalinkFallbackNotice]);
 
   useEffect(() => {
     setFrameRows([]);
@@ -4352,10 +4396,37 @@ export default function App() {
           </div>
         )}
 
-        {error && (
-          <div className="absolute left-4 top-4 z-40 flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-lg backdrop-blur-md">
-            <AlertCircle className="h-3.5 w-3.5" />
-            {error}
+        {(viewerNotice || noActiveSelectionMessage || error) && (
+          <div className="absolute left-4 top-4 z-40 flex max-w-[min(92vw,360px)] flex-col gap-2">
+            {viewerNotice && (
+              <div
+                data-testid="viewer-notice"
+                className="flex items-center gap-2 rounded-md border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-md"
+              >
+                <AlertCircle className="h-3.5 w-3.5" />
+                {viewerNotice}
+              </div>
+            )}
+
+            {noActiveSelectionMessage && (
+              <div
+                data-testid="viewer-empty-state"
+                className="flex items-center gap-2 rounded-md border border-sky-300/35 bg-slate-950/60 px-3 py-2 text-xs text-sky-50 shadow-lg backdrop-blur-md"
+              >
+                <AlertCircle className="h-3.5 w-3.5" />
+                {noActiveSelectionMessage}
+              </div>
+            )}
+
+            {error && (
+              <div
+                data-testid="viewer-error"
+                className="flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-lg backdrop-blur-md"
+              >
+                <AlertCircle className="h-3.5 w-3.5" />
+                {error}
+              </div>
+            )}
           </div>
         )}
 

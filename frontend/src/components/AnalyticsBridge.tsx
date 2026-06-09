@@ -8,6 +8,8 @@ import { captureAnalyticsPageview, syncAnalyticsAuthStatus } from "@/lib/analyti
 export function AnalyticsBridge() {
   const { user } = useUser();
   const clerkUserId = user?.id ?? null;
+  const clerkEmail = user?.primaryEmailAddress?.emailAddress ?? null;
+  const clerkName = user?.fullName ?? user?.username ?? null;
   const location = useLocation();
 
   useEffect(() => {
@@ -23,7 +25,10 @@ export function AnalyticsBridge() {
         if (cancelled) {
           return;
         }
-        syncAnalyticsAuthStatus(clerkUserId, status);
+        syncAnalyticsAuthStatus(clerkUserId, status, {
+          email: clerkEmail,
+          name: clerkName,
+        });
       } catch {
         // Ignore analytics identity failures.
       }
@@ -33,7 +38,7 @@ export function AnalyticsBridge() {
     return () => {
       cancelled = true;
     };
-  }, [clerkUserId]);
+  }, [clerkEmail, clerkName, clerkUserId]);
 
   useEffect(() => {
     captureAnalyticsPageview(location.pathname, location.search);

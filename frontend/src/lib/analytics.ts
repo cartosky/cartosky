@@ -20,9 +20,13 @@ export function initAnalytics(): void {
   initMixpanelAnalytics();
 }
 
-export function syncAnalyticsAuthStatus(clerkUserId: string | null, status: TwfStatus): void {
+export function syncAnalyticsAuthStatus(
+  clerkUserId: string | null,
+  status: TwfStatus,
+  profile?: { email: string | null; name: string | null },
+): void {
   syncPostHogAuthStatus(status);
-  syncMixpanelAuthStatus(clerkUserId, status);
+  syncMixpanelAuthStatus(clerkUserId, status, profile);
 }
 
 export function captureAnalyticsPageview(pathname: string, search = ""): void {
