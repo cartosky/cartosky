@@ -4,6 +4,7 @@ import SiteHeader from "../components/SiteHeader";
 export default function AppLayout() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
+  const isAccountRoute = location.pathname === "/account";
   // On the viewer route, App.tsx renders SiteHeader itself (inside the
   // ViewerToolbarContext.Provider) so that the header can read toolbar state.
   const isViewerRoute = location.pathname === "/viewer";
@@ -13,7 +14,7 @@ export default function AppLayout() {
       className={
         isAdminRoute
           ? "min-h-svh flex flex-col overflow-x-hidden bg-background text-foreground"
-          : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
+          : `h-svh min-h-svh flex flex-col ${isAccountRoute ? "overflow-y-auto" : "overflow-hidden"} bg-background text-foreground`
       }
     >
       {!isViewerRoute && <SiteHeader variant="app" />}

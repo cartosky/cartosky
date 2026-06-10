@@ -396,28 +396,27 @@ export function BottomForecastControls({
             <div className={cn("flex items-center justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0 flex-1">
                 {(modelLabel || variableLabel) ? (
-                  <div className="flex items-center gap-1.5">
-                    {runDateTimeISO ? (
-                      <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
-                        {`${new Date(runDateTimeISO).getUTCHours()}z`}
-                      </span>
-                    ) : null}
-                    {runDateTimeISO && modelLabel ? (
-                      <span className="text-[9px] text-cyan-300/30">·</span>
-                    ) : null}
-                    {modelLabel ? (
-                      <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
-                        {modelLabel}
-                      </span>
-                    ) : null}
-                    {(runDateTimeISO || modelLabel) && variableLabel ? (
-                      <span className="text-[9px] text-cyan-300/40">·</span>
-                    ) : null}
-                    {variableLabel ? (
-                      <span className="min-w-0 truncate text-[10px] font-medium text-cyan-200/70">
-                        {variableLabel}
-                      </span>
-                    ) : null}
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        {runDateTimeISO ? (
+                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
+                            {`${new Date(runDateTimeISO).getUTCHours()}z`}
+                          </span>
+                        ) : null}
+                        {runDateTimeISO && modelLabel ? (
+                          <span className="text-[9px] text-cyan-300/30">·</span>
+                        ) : null}
+                        {modelLabel ? (
+                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+                            {modelLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                      {variableLabel ? (
+                        <span className="block min-w-0 truncate text-[10px] font-medium text-cyan-200/70 mt-0.5">
+                          {variableLabel}
+                        </span>
+                      ) : null}
                   </div>
                 ) : null}
               </div>
