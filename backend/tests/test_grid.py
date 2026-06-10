@@ -82,6 +82,28 @@ def test_radar_ptype_lod_downsample_keeps_phase_offsets_separate() -> None:
     assert downsampled[0, 0] == snow_offset + 15.0
 
 
+def test_radar_ptype_lod_downsample_handles_unequal_bin_counts() -> None:
+    # Rain has fewer bins than the other types, so classification by a fixed
+    # per-type divisor misfiled the top snow bins as sleet and shifted sleet
+    # and freezing rain into the neighbouring type's index range.
+    snow_offset = int(RADAR_PTYPE_BREAKS["snow"]["offset"])
+    snow_count = int(RADAR_PTYPE_BREAKS["snow"]["count"])
+    snow_top = float(snow_offset + snow_count - 1)
+    values = np.full((2, 2), snow_top, dtype=np.float32)
+
+    downsampled = _values_for_lod(values, model="hrrr", var="radar_ptype", scale_factor=2)
+
+    assert downsampled.shape == (1, 1)
+    assert downsampled[0, 0] == snow_top
+
+    frzr_offset = int(RADAR_PTYPE_BREAKS["frzr"]["offset"])
+    values = np.full((2, 2), float(frzr_offset + 2), dtype=np.float32)
+
+    downsampled = _values_for_lod(values, model="hrrr", var="radar_ptype", scale_factor=2)
+
+    assert downsampled[0, 0] == float(frzr_offset + 2)
+
+
 def test_write_grid_frame_for_run_root_writes_manifest_without_value_cog(tmp_path: Path) -> None:
     run_root = tmp_path / "staging" / "hrrr" / "20260330_12z"
     var_dir = run_root / "tmp2m"

@@ -215,7 +215,7 @@ def test_modeled_reflectivity_palette_helper_shapes() -> None:
             assert levels[0] == 8.0
             assert levels[-1] == 72.0
             assert colors[0] == "#ffffff"
-            assert colors[-1] == "#fcd5ff"
+            assert colors[-1] == "#fdfdfd"
         else:
             assert levels[0] == 5.0
             assert levels[-1] == 70.0

@@ -1410,8 +1410,16 @@ def _resize_nearest_grid(values: np.ndarray, *, target_height: int, target_width
     return np.asarray(resized, dtype=np.float32)
 
 
-_RADAR_PTYPE_BIN_COUNT = int(RADAR_PTYPE_BREAKS[RADAR_PTYPE_ORDER[0]]["count"])
 _RADAR_PTYPE_CODE_COUNT = len(RADAR_PTYPE_ORDER)
+# Per-type bin counts are not uniform (rain has fewer bins than the others),
+# so type classification must use the real offsets rather than a fixed divisor.
+_RADAR_PTYPE_OFFSETS = np.array(
+    [int(RADAR_PTYPE_BREAKS[code]["offset"]) for code in RADAR_PTYPE_ORDER], dtype=np.int32
+)
+_RADAR_PTYPE_COUNTS = np.array(
+    [int(RADAR_PTYPE_BREAKS[code]["count"]) for code in RADAR_PTYPE_ORDER], dtype=np.int32
+)
+_RADAR_PTYPE_TOTAL_BINS = int(_RADAR_PTYPE_OFFSETS[-1] + _RADAR_PTYPE_COUNTS[-1])
 
 
 def _resize_radar_ptype_grid(values: np.ndarray, *, target_height: int, target_width: int) -> np.ndarray:
@@ -1437,22 +1445,19 @@ def _resize_radar_ptype_grid(values: np.ndarray, *, target_height: int, target_w
                 continue
 
             rounded = np.rint(finite).astype(np.int32, copy=False)
-            codes = np.floor_divide(rounded, _RADAR_PTYPE_BIN_COUNT)
-            valid = (codes >= 0) & (codes < _RADAR_PTYPE_CODE_COUNT)
+            valid = (rounded >= 0) & (rounded < _RADAR_PTYPE_TOTAL_BINS)
             if not np.any(valid):
                 continue
 
-            codes = codes[valid]
             rounded = rounded[valid]
+            codes = np.searchsorted(_RADAR_PTYPE_OFFSETS, rounded, side="right") - 1
             counts = np.bincount(codes, minlength=_RADAR_PTYPE_CODE_COUNT)
             selected_code = int(np.argmax(counts))
+            offset = int(_RADAR_PTYPE_OFFSETS[selected_code])
+            count = int(_RADAR_PTYPE_COUNTS[selected_code])
             selected = rounded[codes == selected_code]
-            local = np.clip(
-                selected - (selected_code * _RADAR_PTYPE_BIN_COUNT),
-                0,
-                _RADAR_PTYPE_BIN_COUNT - 1,
-            )
-            output[y, x] = float(selected_code * _RADAR_PTYPE_BIN_COUNT + int(np.rint(float(np.mean(local)))))
+            local = np.clip(selected - offset, 0, count - 1)
+            output[y, x] = float(offset + min(count - 1, int(np.rint(float(np.mean(local))))))
     return output
 
 

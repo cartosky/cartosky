@@ -44,8 +44,6 @@ from app.services.colormaps import (
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 
 logger = logging.getLogger(__name__)
-_RADAR_PTYPE_REFL_MIN = float(RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]][0])
-_RADAR_PTYPE_REFL_MAX = float(RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]][-1])
 _EARTH_RADIUS_M = np.float64(6_371_000.0)
 _EARTH_ANGULAR_VELOCITY_RAD_S = np.float64(7.2921159e-5)
 _MIN_COS_LAT = np.float64(1.0e-6)
@@ -4792,10 +4790,12 @@ def _derive_radar_ptype_family(
             logger.info("radar_ptype family cache hit: model=%s fh=%03d", model_id, fh)
             return cached
 
-    try:
-        min_visible_dbz = float(hints.get("min_visible_dbz", str(_RADAR_PTYPE_REFL_MIN)))
-    except (TypeError, ValueError):
-        min_visible_dbz = _RADAR_PTYPE_REFL_MIN
+    min_visible_dbz: float | None = None
+    if "min_visible_dbz" in hints:
+        try:
+            min_visible_dbz = float(hints["min_visible_dbz"])
+        except (TypeError, ValueError):
+            min_visible_dbz = None
     try:
         min_mask_value = float(hints.get("min_mask_value", "0.0"))
     except (TypeError, ValueError):
@@ -4841,21 +4841,29 @@ def _derive_radar_ptype_family(
         ptype[frzr_transition & ~prefer_rain] = "snow"
 
     refl_safe = np.where(np.isfinite(refl), np.maximum(refl, 0.0), np.nan)
-    bins_per_type = {k: int(v["count"]) for k, v in RADAR_PTYPE_BREAKS.items()}
-    refl_span = max(_RADAR_PTYPE_REFL_MAX - _RADAR_PTYPE_REFL_MIN, 1.0)
-    normalized = np.clip((refl_safe - _RADAR_PTYPE_REFL_MIN) / refl_span, 0.0, 1.0)
+    refl_filled = np.where(np.isfinite(refl_safe), refl_safe, -1.0).astype(np.float32, copy=False)
 
     indexed = np.full(refl.shape, np.nan, dtype=np.float32)
+    min_visible_by_type: dict[str, float] = {}
     for code in RADAR_PTYPE_ORDER:
         breaks = RADAR_PTYPE_BREAKS[code]
         offset = int(breaks["offset"])
-        count = bins_per_type[code]
-        local_bin = np.clip(np.rint(normalized * (count - 1)), 0, count - 1).astype(np.int32)
+        count = int(breaks["count"])
+        # Bin against this type's own palette levels: the per-type ramps span
+        # different dBZ ranges, so a shared linear span shifts colors off-scale.
+        type_levels = np.asarray(RADAR_PTYPE_LEVELS_BY_TYPE[code], dtype=np.float32)
+        type_min_visible = min_visible_dbz if min_visible_dbz is not None else float(type_levels[0])
+        min_visible_by_type[str(code)] = type_min_visible
+        local_bin = np.clip(
+            np.searchsorted(type_levels, refl_filled, side="right") - 1,
+            0,
+            count - 1,
+        ).astype(np.int32)
         selector = (
             (ptype == code)
             & np.isfinite(refl_safe)
             & (mask_max >= min_mask_value)
-            & (refl_safe >= min_visible_dbz)
+            & (refl_safe >= type_min_visible)
         )
         indexed[selector] = (offset + local_bin[selector]).astype(np.float32)
 
@@ -4868,7 +4876,7 @@ def _derive_radar_ptype_family(
     component_values: dict[str, np.ndarray] = {}
     finite_refl = np.isfinite(refl_safe)
     for code in RADAR_PTYPE_ORDER:
-        selector = (ptype == code) & finite_refl & (refl_safe >= min_visible_dbz) & np.isfinite(indexed)
+        selector = (ptype == code) & finite_refl & (refl_safe >= min_visible_by_type[str(code)]) & np.isfinite(indexed)
         component_values[str(code)] = np.where(selector, refl_safe, 0.0).astype(np.float32, copy=False)
 
     family: dict[str, Any] = {

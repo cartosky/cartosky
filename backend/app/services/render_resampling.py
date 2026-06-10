@@ -142,9 +142,23 @@ def display_resampling_override(model_id: str, var_key: str) -> str | None:
         return None
 
     override = str(spec.get("display_resampling_override") or "").strip().lower()
-    if override in _SUPPORTED_DISPLAY_RESAMPLING:
-        return override
-    return None
+    if override not in _SUPPORTED_DISPLAY_RESAMPLING:
+        return None
+    # Indexed palettes store packed palette-bin indices, not physical values;
+    # any interpolating resample manufactures indices from unrelated bins
+    # (e.g. rain/snow boundaries picking up high-end rain colors).
+    spec_type = str(spec.get("type") or "").strip().lower()
+    if spec_type == "indexed" and override != "nearest":
+        logger.warning(
+            "Ignoring %r display_resampling_override for indexed color map %s (model=%s var=%s); "
+            "packed index fields must use nearest resampling",
+            override,
+            color_map_id,
+            model_norm,
+            var_norm,
+        )
+        return None
+    return override
 
 
 def resampling_name_for_kind(

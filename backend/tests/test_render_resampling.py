@@ -58,15 +58,33 @@ def test_gfs_ptype_intensity_maps_to_nearest(monkeypatch):
     assert render_resampling.rasterio_resampling_for_loop(model_id="gfs", var_key="ptype_intensity").name == "nearest"
 
 
-def test_radar_ptype_uses_bilinear_display_override(monkeypatch):
+def test_radar_ptype_packed_indices_always_use_nearest(monkeypatch):
+    # The radar_ptype field stores packed palette-bin indices; interpolating
+    # them fabricates indices from unrelated bins (the magenta rain/snow rim).
     _set_capabilities(
         monkeypatch,
         {"radar_ptype": SimpleNamespace(kind="indexed", color_map_id="radar_ptype")},
     )
 
     for model_id in ("hrrr", "nam"):
-        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="radar_ptype") == "bilinear"
-        assert render_resampling.rasterio_resampling_for_loop(model_id=model_id, var_key="radar_ptype").name == "bilinear"
+        assert render_resampling.resampling_name_for_kind(model_id=model_id, var_key="radar_ptype") == "nearest"
+        assert render_resampling.rasterio_resampling_for_loop(model_id=model_id, var_key="radar_ptype").name == "nearest"
+
+
+def test_indexed_color_map_ignores_bilinear_display_override(monkeypatch):
+    _set_capabilities(
+        monkeypatch,
+        {"radar_ptype": SimpleNamespace(kind="indexed", color_map_id="radar_ptype")},
+    )
+    monkeypatch.setattr(
+        render_resampling,
+        "get_color_map_spec",
+        lambda color_map_id: {"type": "indexed", "display_resampling_override": "bilinear"},
+    )
+    render_resampling.display_resampling_override.cache_clear()
+
+    assert render_resampling.display_resampling_override("hrrr", "radar_ptype") is None
+    assert render_resampling.resampling_name_for_kind(model_id="hrrr", var_key="radar_ptype") == "nearest"
 
 
 def test_unknown_kind_falls_back_to_bilinear_and_warns(monkeypatch, caplog):

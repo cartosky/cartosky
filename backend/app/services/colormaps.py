@@ -904,7 +904,6 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "indexed",
         "units": "dBZ",
         "transparent_zero": True,
-        "display_resampling_override": "bilinear",
         "levels": RADAR_PTYPE_LEVELS,
         "colors": RADAR_PTYPE_COLORS,
         "display_name": "Composite Reflectivity + P-Type",

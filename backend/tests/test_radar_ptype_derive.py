@@ -28,11 +28,9 @@ def _expected_radar_ptype_index(ptype: str, reflectivity: float) -> float:
     breaks = RADAR_PTYPE_BREAKS[ptype]
     offset = int(breaks["offset"])
     count = int(breaks["count"])
-    levels = RADAR_PTYPE_LEVELS_BY_TYPE[RADAR_PTYPE_ORDER[0]]
-    refl_min = float(levels[0])
-    refl_max = float(levels[-1])
-    normalized = np.clip((float(reflectivity) - refl_min) / max(refl_max - refl_min, 1.0), 0.0, 1.0)
-    return float(offset + int(np.clip(np.rint(normalized * (count - 1)), 0, count - 1)))
+    levels = np.asarray(RADAR_PTYPE_LEVELS_BY_TYPE[ptype], dtype=np.float32)
+    local = int(np.clip(np.searchsorted(levels, np.float32(reflectivity), side="right") - 1, 0, count - 1))
+    return float(offset + local)
 
 
 def _radar_ptype_var_spec(component: str | None = None) -> SimpleNamespace:
@@ -183,6 +181,14 @@ def test_radar_ptype_components_preserve_classified_reflectivity(monkeypatch) ->
     np.testing.assert_array_equal(snow_values, np.array([[0.0, 28.0, 0.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(sleet_values, np.array([[0.0, 0.0, 42.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_array_equal(frzr_values, np.array([[0.0, 0.0, 0.0, 55.0, 0.0]], dtype=np.float32))
+
+
+def test_radar_ptype_bins_align_with_per_type_levels() -> None:
+    # Each type is binned against its own level table; a reflectivity value
+    # equal to a palette level must land exactly on that level's bin.
+    for ptype, reflectivity in (("rain", 35.0), ("snow", 30.0), ("sleet", 20.0), ("frzr", 40.0)):
+        local = int(_expected_radar_ptype_index(ptype, reflectivity)) - int(RADAR_PTYPE_BREAKS[ptype]["offset"])
+        assert float(RADAR_PTYPE_LEVELS_BY_TYPE[ptype][local]) == reflectivity
 
 
 def test_radar_ptype_rain_and_snow_palettes_do_not_use_pink_magenta() -> None:
