@@ -77,7 +77,7 @@ def test_goes_ir13_display_prep_converts_kelvin_to_celsius() -> None:
     assert np.isnan(prepared[1, 0])
 
 
-def test_ecmwf_snowfall_display_prep_matches_gfs_treatment() -> None:
+def test_ecmwf_snowfall_display_prep_keeps_native_grid_resolution() -> None:
     values = np.array(
         [
             [0.0, 1.5],
@@ -90,16 +90,18 @@ def test_ecmwf_snowfall_display_prep_matches_gfs_treatment() -> None:
     gfs_prepared, gfs_meta = prepare_grid_display_values(model="gfs", var="snowfall_total", values=values)
 
     assert meta is not None
-    assert meta["id"] == "ecmwf_snowfall_total_display_v1"
+    assert meta["id"] == "ecmwf_snowfall_total_display_v2"
+    assert meta["upscale_factor"] == 1
     assert meta["preserve_zero_support"] is True
-    assert gfs_meta is not None
-    assert gfs_meta["id"] == "gfs_snowfall_total_display_v1"
-    assert prepared.shape == gfs_prepared.shape
+    assert prepared.shape == values.shape
     assert prepared.dtype == np.float32
-    np.testing.assert_allclose(prepared, gfs_prepared)
+    assert float(prepared[0, 1]) == 1.5
+    assert gfs_meta is not None
+    assert gfs_meta["upscale_factor"] == 3
+    assert gfs_prepared.shape == (6, 6)
 
 
-def test_ecmwf_kuchera_snowfall_display_prep_matches_gfs_treatment() -> None:
+def test_ecmwf_kuchera_snowfall_display_prep_keeps_native_grid_resolution() -> None:
     values = np.array(
         [
             [0.0, 2.0],
@@ -120,13 +122,34 @@ def test_ecmwf_kuchera_snowfall_display_prep_matches_gfs_treatment() -> None:
     )
 
     assert meta is not None
-    assert meta["id"] == "ecmwf_snowfall_total_display_v1"
+    assert meta["id"] == "ecmwf_snowfall_total_display_v2"
+    assert meta["upscale_factor"] == 1
     assert meta["preserve_zero_support"] is True
-    assert gfs_meta is not None
-    assert gfs_meta["id"] == "gfs_snowfall_total_display_v1"
-    assert prepared.shape == gfs_prepared.shape
+    assert prepared.shape == values.shape
     assert prepared.dtype == np.float32
-    np.testing.assert_allclose(prepared, gfs_prepared)
+    assert float(prepared[0, 1]) == 2.0
+    assert gfs_meta is not None
+    assert gfs_meta["upscale_factor"] == 3
+    assert gfs_prepared.shape == (6, 6)
+
+
+def test_ecmwf_ptype_intensity_display_prep_keeps_native_grid_resolution() -> None:
+    values = np.array(
+        [
+            [0.0, 16.0],
+            [26.0, 42.0],
+        ],
+        dtype=np.float32,
+    )
+
+    prepared, meta = prepare_grid_display_values(model="ecmwf", var="ptype_intensity", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "ecmwf_ptype_intensity_display_v2"
+    assert meta["upscale_factor"] == 1
+    assert meta["categorical_nearest"] is True
+    assert prepared.shape == values.shape
+    np.testing.assert_array_equal(prepared, values)
 
 
 def test_hrrr_radar_ptype_display_prep_keeps_packed_grid_single_resolution() -> None:
