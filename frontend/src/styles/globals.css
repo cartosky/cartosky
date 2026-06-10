@@ -442,6 +442,33 @@
     background: rgba(103, 232, 249, 0.38);
   }
 
+  .picker-scroll {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(103, 232, 249, 0.3) rgba(255, 255, 255, 0.05);
+  }
+
+  .picker-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .picker-scroll::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 9999px;
+  }
+
+  .picker-scroll::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background: rgba(103, 232, 249, 0.3);
+    background-clip: content-box;
+  }
+
+  .picker-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(103, 232, 249, 0.42);
+    background-clip: content-box;
+  }
+
   .legend-scroll {
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.24) transparent;

@@ -409,7 +409,7 @@ export function VariablePicker({
           })}
         </div>
 
-        <div ref={listRef} className="min-h-0 overflow-y-auto p-1.5">
+        <div ref={listRef} className="picker-scroll min-h-0 overflow-y-scroll p-1.5">
           {visibleOptions.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-[12px] font-medium text-white/42">
               No variables found
