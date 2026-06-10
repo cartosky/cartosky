@@ -1832,6 +1832,10 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (menuRef.current?.contains(target)) return;
+      // Clerk's UserButton popover renders in a portal outside menuRef; closing
+      // the menu here unmounts the popover before iOS Safari dispatches the
+      // synthesized click, swallowing taps on its items.
+      if (target instanceof Element && target.closest('[class*="cl-userButtonPopover"]')) return;
       setMobileMenuOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
@@ -1991,7 +1995,13 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                   </Show>
                   <Show when="signed-in">
                     <div className="flex items-center justify-between rounded-md px-3 py-2">
-                      <span className="text-sm font-medium text-white/90">Account</span>
+                      <NavLink
+                        to="/account"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="text-sm font-medium text-white/90 transition hover:text-white"
+                      >
+                        Account
+                      </NavLink>
                       <UserButton {...clerkUserButtonProps} />
                     </div>
                   </Show>

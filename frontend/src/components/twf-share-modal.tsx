@@ -1548,6 +1548,11 @@ export function TwfShareModal({
                   </button>
                 )}
               </div>
+              {isSignedIn && (statusError || submitError) && (
+                <div className="mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                  {statusError ?? submitError?.message}
+                </div>
+              )}
             </div>
           )}
 
@@ -1731,6 +1736,12 @@ export function TwfShareModal({
                   </div>
                 )}
 
+                {isSignedIn && statusError && (
+                  <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                    {statusError}
+                  </div>
+                )}
+
                 {submitError && (
                   <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
                     {submitError.message}
@@ -1786,6 +1797,11 @@ export function TwfShareModal({
           {submitError && !showDestinationEditor && (
             <div className="mx-4 mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
               {submitError.message}
+            </div>
+          )}
+          {isSignedIn && statusError && !showDestinationEditor && (
+            <div className="mx-4 mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+              {statusError}
             </div>
           )}
         </div>
