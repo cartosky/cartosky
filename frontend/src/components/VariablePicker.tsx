@@ -112,6 +112,7 @@ export function VariablePicker({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const wasOpenRef = useRef(false);
   const { favorites, favoriteSet, toggleFavorite } = useVariableFavorites(modelId);
 
   const supportedSet = useMemo(() => new Set(supportedVariableIds), [supportedVariableIds]);
@@ -243,16 +244,19 @@ export function VariablePicker({
   }, [open, value, visibleOptions]);
 
   useEffect(() => {
-    if (!selectedCategory) {
-      return;
+    if (open && !wasOpenRef.current) {
+      const nextCategory = selectedCategory && categoryRows.some((category) => category.id === selectedCategory)
+        ? selectedCategory
+        : firstAvailableCategory;
+      setActiveCategory((current) => (current === "FAVORITES" && favoriteOptions.length > 0 ? current : nextCategory));
     }
-    if (!categoryRows.some((category) => category.id === selectedCategory)) {
-      return;
-    }
-    setActiveCategory((current) => (current === "FAVORITES" && favoriteOptions.length > 0 ? current : selectedCategory));
-  }, [categoryRows, favoriteOptions.length, selectedCategory]);
+    wasOpenRef.current = open;
+  }, [categoryRows, favoriteOptions.length, firstAvailableCategory, open, selectedCategory]);
 
   useEffect(() => {
+    if (open) {
+      return;
+    }
     if (activeCategory === "FAVORITES" && favoriteOptions.length > 0) {
       return;
     }
@@ -263,7 +267,7 @@ export function VariablePicker({
       ? selectedCategory
       : firstAvailableCategory;
     setActiveCategory(nextCategory);
-  }, [activeCategory, categoryRows, favoriteOptions.length, firstAvailableCategory, selectedCategory]);
+  }, [activeCategory, categoryRows, favoriteOptions.length, firstAvailableCategory, open, selectedCategory]);
 
   useEffect(() => {
     if (!open) {
