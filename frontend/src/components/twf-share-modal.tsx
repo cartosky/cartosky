@@ -1396,7 +1396,8 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="glass w-full max-w-[580px] overflow-hidden rounded-t-3xl sm:rounded-2xl"
+        className="glass w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
         onClick={(event) => event.stopPropagation()}
       >
         {/* Drag handle */}
@@ -1417,141 +1418,142 @@ export function TwfShareModal({
           </button>
         </div>
 
-        {/* Screenshot preview */}
-        <TooltipProvider delayDuration={250}>
-          <div className="px-4">
-            <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
-              {screenshotBlobUrl ? (
-                <>
-                  <img
-                    src={screenshotBlobUrl}
-                    alt="Screenshot preview"
-                    className="h-full w-full object-contain"
-                  />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Screenshot preview */}
+          <TooltipProvider delayDuration={250}>
+            <div className="px-4">
+              <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+                {screenshotBlobUrl ? (
+                  <>
+                    <img
+                      src={screenshotBlobUrl}
+                      alt="Screenshot preview"
+                      className="h-full w-full object-contain"
+                    />
 
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    Screenshot ready
-                  </div>
-                </>
-              ) : screenshotBusy ? (
-                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    aria-label="Generating screenshot"
-                    className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
-                  >
-                    <div className="relative h-11 w-11">
-                      <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
-                      <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
-                      <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
+                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      Screenshot ready
                     </div>
-                    <div className="text-center text-xs font-medium text-white/76">
-                      Generating screenshot
+                  </>
+                ) : screenshotBusy ? (
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      aria-label="Generating screenshot"
+                      className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
+                    >
+                      <div className="relative h-11 w-11">
+                        <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
+                        <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
+                        <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
+                      </div>
+                      <div className="text-center text-xs font-medium text-white/76">
+                        Generating screenshot
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
-              )}
-            </div>
+                ) : (
+                  <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
+                )}
+              </div>
 
-            <div className="mt-1.5 flex items-center justify-end px-1">
-              <div className="flex items-center gap-1.5">
-                {screenshotBlobUrl && (
+              <div className="mt-1.5 flex items-center justify-end px-1">
+                <div className="flex items-center gap-1.5">
+                  {screenshotBlobUrl && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement("a");
+                            link.href = screenshotBlobUrl;
+                            link.download = screenshotFilenameValue;
+                            link.rel = "noopener";
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove();
+                          }}
+                          className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
+                          aria-label="Download screenshot"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                        Download screenshot
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
                         onClick={() => {
-                          const link = document.createElement("a");
-                          link.href = screenshotBlobUrl;
-                          link.download = screenshotFilenameValue;
-                          link.rel = "noopener";
-                          document.body.appendChild(link);
-                          link.click();
-                          link.remove();
+                          setHasAttemptedAutoScreenshot(false);
+                          void handlePrepareScreenshot();
                         }}
-                        className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
-                        aria-label="Download screenshot"
+                        disabled={!canPrepareScreenshot || screenshotBusy}
+                        className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
+                        aria-label="Refresh screenshot"
                       >
-                        <Download className="h-3.5 w-3.5" />
+                        <RefreshCw className="h-3.5 w-3.5" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                      Download screenshot
+                      Regenerate screenshot
                     </TooltipContent>
                   </Tooltip>
-                )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHasAttemptedAutoScreenshot(false);
-                        void handlePrepareScreenshot();
-                      }}
-                      disabled={!canPrepareScreenshot || screenshotBusy}
-                      className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 disabled:opacity-50"
-                      aria-label="Refresh screenshot"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                    Regenerate screenshot
-                  </TooltipContent>
-                </Tooltip>
+                </div>
               </div>
             </div>
-          </div>
-        </TooltipProvider>
+          </TooltipProvider>
 
-        {twfStatus.linked !== true && !isPosted && (
-          <div className="px-4 mt-3">
-            <div className="flex flex-col gap-2 rounded-2xl border border-cyan-200/14 bg-[#071524]/85 px-3.5 py-3 text-sm text-white/78 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-center gap-2">
-                {checkingShareAccess ? (
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
+          {twfStatus.linked !== true && !isPosted && (
+            <div className="mt-3 px-4">
+              <div className="flex flex-col gap-2 rounded-2xl border border-cyan-200/14 bg-[#071524]/85 px-3.5 py-3 text-sm text-white/78 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-2">
+                  {checkingShareAccess ? (
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
+                  ) : (
+                    <ExternalLink className="h-4 w-4 shrink-0 text-cyan-200" />
+                  )}
+                  <span className="min-w-0 leading-snug">
+                    {!clerkLoaded
+                      ? "Checking CartoSky sign-in status..."
+                      : !isSignedIn
+                        ? "Sign in to CartoSky to connect TWF and post this screenshot."
+                        : !statusResolved
+                          ? "Checking your TWF connection..."
+                          : "Connect your TWF account to post this screenshot."}
+                  </span>
+                </div>
+                {!clerkLoaded || (isSignedIn && !statusResolved) ? null : !isSignedIn ? (
+                  <Link
+                    to={signedOutLoginUrl}
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
+                    onClick={onClose}
+                  >
+                    Sign in
+                  </Link>
                 ) : (
-                  <ExternalLink className="h-4 w-4 shrink-0 text-cyan-200" />
+                  <button
+                    type="button"
+                    onClick={handleConnectTwf}
+                    disabled={connectBusy}
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    {connectBusy ? "Connecting..." : "Connect TWF"}
+                  </button>
                 )}
-                <span className="min-w-0 leading-snug">
-                  {!clerkLoaded
-                    ? "Checking CartoSky sign-in status..."
-                    : !isSignedIn
-                      ? "Sign in to CartoSky to connect TWF and post this screenshot."
-                      : !statusResolved
-                        ? "Checking your TWF connection..."
-                        : "Connect your TWF account to post this screenshot."}
-                </span>
               </div>
-              {!clerkLoaded || (isSignedIn && !statusResolved) ? null : !isSignedIn ? (
-                <Link
-                  to={signedOutLoginUrl}
-                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
-                  onClick={onClose}
-                >
-                  Sign in
-                </Link>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleConnectTwf}
-                  disabled={connectBusy}
-                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 disabled:cursor-wait disabled:opacity-70"
-                >
-                  {connectBusy ? "Connecting..." : "Connect TWF"}
-                </button>
-              )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Composer card */}
-        <div className="px-4 mt-3">
-          <div className="glass-overlay-section overflow-hidden rounded-2xl">
+          {/* Composer card */}
+          <div className="mt-3 px-4">
+            <div className="glass-overlay-section overflow-hidden rounded-2xl">
 
             {/* Destination row */}
             <div className="flex items-start justify-between gap-2 px-4 py-3">
@@ -1772,23 +1774,27 @@ export function TwfShareModal({
           </div>
         </div>
 
-        {/* Success banner */}
-        {isPosted && (
-          <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-            {submitTopicSuccess ? "Topic created!" : "Posted!"} Closing…
-          </div>
-        )}
+          {/* Success banner */}
+          {isPosted && (
+            <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              {submitTopicSuccess ? "Topic created!" : "Posted!"} Closing…
+            </div>
+          )}
 
-        {/* Error banner (when destination editor is closed) */}
-        {submitError && !showDestinationEditor && (
-          <div className="mx-4 mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-            {submitError.message}
-          </div>
-        )}
+          {/* Error banner (when destination editor is closed) */}
+          {submitError && !showDestinationEditor && (
+            <div className="mx-4 mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+              {submitError.message}
+            </div>
+          )}
+        </div>
 
         {/* Bottom action row */}
-        <div className="flex items-center justify-between px-4 pb-6 pt-3">
+        <div
+          className="flex items-center justify-between px-4 pt-3"
+          style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+        >
           <div className="relative" ref={copyMenuRef}>
             {showCopyMenu && (
               <div

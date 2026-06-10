@@ -183,14 +183,15 @@ export function FeedbackWidget() {
           onClick={closeWidget}
         >
           <div
-            className="glass w-full max-w-[520px] overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
+            className="glass w-full max-w-[520px] flex flex-col overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
+            style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - 1.5rem)" }}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex justify-center pb-1 pt-3 sm:hidden">
               <div className="h-1 w-9 rounded-full bg-white/20" />
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-b border-white/8 px-4 pb-3 pt-3 sm:px-5 sm:pt-4">
+            <div className="shrink-0 flex items-center justify-between gap-3 border-b border-white/8 px-4 pb-3 pt-3 sm:px-5 sm:pt-4">
               <div>
                 <div className="text-base font-semibold tracking-tight text-white">Feedback</div>
               </div>
@@ -205,7 +206,8 @@ export function FeedbackWidget() {
               </button>
             </div>
 
-            <div className="space-y-4 px-4 py-4 sm:px-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                 {CATEGORY_OPTIONS.map((option) => {
                   const Icon = option.icon;
@@ -254,9 +256,9 @@ export function FeedbackWidget() {
                   id="feedback-details"
                   value={message}
                   onChange={(event) => setMessage(event.target.value.slice(0, MESSAGE_MAX_LENGTH))}
-                  rows={6}
+                  rows={4}
                   maxLength={MESSAGE_MAX_LENGTH}
-                  className="min-h-[132px] w-full resize-none rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-3 text-sm leading-6 text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
+                  className="min-h-[96px] w-full resize-none rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-3 text-sm leading-6 text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
                   placeholder="What should we know?"
                 />
                 <div className="mt-2 flex items-center justify-end text-xs text-white/45">
@@ -277,9 +279,13 @@ export function FeedbackWidget() {
                   <span>{submitMessage}</span>
                 </div>
               ) : null}
+              </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-white/8 px-4 py-3 sm:px-5">
+            <div
+              className="shrink-0 flex items-center justify-end gap-2 border-t border-white/8 px-4 pt-3 sm:px-5"
+              style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+            >
               <button
                 type="button"
                 onClick={submitFeedback}
