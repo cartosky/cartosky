@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 import { SiteLoadingOverlay } from "./components/site-loading-overlay";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
@@ -134,7 +135,9 @@ export default function RouterApp() {
         <Route path="/models" element={withSuspense(<Models />)} />
         <Route path="/variables" element={withSuspense(<Variables />)} />
         <Route path="/login" element={withSuspense(<Login />)} />
-        <Route path="/account/*" element={withSuspense(<Account />)} />
+        <Route element={<ProtectedRoute />}>
+          <Route path="/account/*" element={withSuspense(<Account />)} />
+        </Route>
         <Route path="/pricing" element={withSuspense(<Pricing />)} />
         <Route path="/checkout-success" element={withSuspense(<CheckoutSuccess />)} />
         <Route path="/privacy" element={withSuspense(<Privacy />)} />
@@ -143,7 +146,8 @@ export default function RouterApp() {
 
       <Route element={<AppLayout />}>
         <Route path="/viewer" element={withSuspense(<Viewer />)} />
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route element={<ProtectedRoute />}>
+          <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Navigate to="/admin/overview" replace />} />
           <Route path="overview" element={withSuspense(<AdminOverview />)} />
           <Route path="analytics" element={withSuspense(<AdminAnalytics />)} />
@@ -154,6 +158,7 @@ export default function RouterApp() {
           <Route path="legacy-performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="usage" element={<Navigate to="/admin/analytics" replace />} />
+          </Route>
         </Route>
       </Route>
 

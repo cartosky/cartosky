@@ -1,12 +1,12 @@
-import { useAuth, Show, useClerk, useUser } from "@clerk/react";
-import { AlertTriangle, CheckCircle2, CreditCard, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
+import { useClerk, useUser } from "@clerk/react";
+import { AlertTriangle, CheckCircle2, CreditCard, Eye, EyeOff, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { createPortalSession } from "@/lib/billing";
 import { billingEnabled, planFromPublicMetadata } from "@/lib/entitlements";
 import { API_ORIGIN } from "@/lib/config";
-import { clerkJwtTemplate } from "@/lib/admin-api";
+import { useAuthFetch } from "@/hooks/useAuthFetch";
 import { cn } from "@/lib/utils";
 
 const INTEGRATIONS_HASH = "#/integrations";
@@ -67,7 +67,7 @@ function TwfConnectedAccountReturn() {
 }
 
 function TwfConnectionSection() {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const authedFetch = useAuthFetch();
   const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<TwfConnectionStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,28 +75,7 @@ function TwfConnectionSection() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const authedFetch = useCallback(
-    async (url: string, init: RequestInit = {}) => {
-      if (!isLoaded) throw new Error("Checking CartoSky sign-in status.");
-      if (!isSignedIn) throw new Error("Sign in to CartoSky before managing TWF.");
-      const token = await getToken({ template: clerkJwtTemplate() });
-      if (!token) throw new Error("Unable to load CartoSky auth token.");
-
-      const headers = new Headers(init.headers);
-      headers.set("Authorization", `Bearer ${token}`);
-      headers.set("Accept", headers.get("Accept") || "application/json");
-
-      return fetch(url, {
-        ...init,
-        credentials: init.credentials ?? "omit",
-        headers,
-      });
-    },
-    [getToken, isLoaded, isSignedIn]
-  );
-
   const loadStatus = useCallback(async () => {
-    if (!isLoaded || !isSignedIn) return;
     setLoading(true);
     setError(null);
     try {
@@ -113,7 +92,7 @@ function TwfConnectionSection() {
     } finally {
       setLoading(false);
     }
-  }, [authedFetch, isLoaded, isSignedIn]);
+  }, [authedFetch]);
 
   useEffect(() => {
     void loadStatus();
@@ -315,37 +294,134 @@ function SubscriptionRow() {
   );
 }
 
+const INPUT_CLASS =
+  "w-full rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-cyan-300/40 focus:outline-none focus:ring-0";
+const LABEL_CLASS = "block text-xs font-medium text-slate-400 mb-1";
+const SAVE_BUTTON_CLASS =
+  "inline-flex items-center gap-2 rounded-lg bg-cyan-500/[0.15] border border-cyan-300/25 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/[0.22] disabled:opacity-50";
+const CANCEL_BUTTON_CLASS =
+  "inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium text-slate-400 transition hover:text-white";
+
+type SaveStatus = "idle" | "saving" | "success" | "error";
+
 function ProfileSection() {
   const { user } = useUser();
-  const clerk = useClerk();
+  const [editing, setEditing] = useState(false);
+  const [firstName, setFirstName] = useState(user?.firstName ?? "");
+  const [lastName, setLastName] = useState(user?.lastName ?? "");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (saveStatus !== "success") return;
+    const timer = setTimeout(() => setSaveStatus("idle"), 2500);
+    return () => clearTimeout(timer);
+  }, [saveStatus]);
 
   const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase() || "?";
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.fullName || "—";
   const primaryEmail = user?.primaryEmailAddress?.emailAddress ?? null;
   const externalAccounts = user?.externalAccounts ?? [];
 
+  const startEditing = () => {
+    setFirstName(user?.firstName ?? "");
+    setLastName(user?.lastName ?? "");
+    setSaveStatus("idle");
+    setSaveError(null);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setFirstName(user?.firstName ?? "");
+    setLastName(user?.lastName ?? "");
+    setSaveStatus("idle");
+    setSaveError(null);
+    setEditing(false);
+  };
+
+  const handleSave = async () => {
+    if (!user) return;
+    setSaveStatus("saving");
+    setSaveError(null);
+    try {
+      await user.update({ firstName: firstName.trim(), lastName: lastName.trim() });
+      setSaveStatus("success");
+      setEditing(false);
+    } catch (err) {
+      setSaveStatus("error");
+      setSaveError((err as Error).message || "Unable to update profile.");
+    }
+  };
+
   return (
     <section>
       <h2 className="text-lg font-semibold text-white mb-6">Profile details</h2>
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] divide-y divide-white/[0.06]">
-        <div className="flex items-center gap-3 p-5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-cyan-300/[0.2] bg-cyan-300/[0.15] text-sm font-semibold text-cyan-200">
-            {initials}
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-white">{fullName}</div>
-            {primaryEmail ? <div className="text-xs text-slate-400">{primaryEmail}</div> : null}
-          </div>
-          <a
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              clerk.openUserProfile();
-            }}
-            className="ml-auto text-sm text-cyan-300 hover:text-cyan-200"
-          >
-            Edit
-          </a>
+        <div className="p-5">
+          {editing ? (
+            <div className="flex flex-col gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="profile-first-name" className={LABEL_CLASS}>
+                    First name
+                  </label>
+                  <input
+                    id="profile-first-name"
+                    type="text"
+                    value={firstName}
+                    onChange={(event) => setFirstName(event.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="profile-last-name" className={LABEL_CLASS}>
+                    Last name
+                  </label>
+                  <input
+                    id="profile-last-name"
+                    type="text"
+                    value={lastName}
+                    onChange={(event) => setLastName(event.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => void handleSave()} disabled={saveStatus === "saving"} className={SAVE_BUTTON_CLASS}>
+                  {saveStatus === "saving" ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                  Save
+                </button>
+                <button type="button" onClick={cancelEditing} className={CANCEL_BUTTON_CLASS}>
+                  Cancel
+                </button>
+              </div>
+              {saveStatus === "error" && saveError ? (
+                <div className="flex items-start gap-2 text-sm text-rose-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{saveError}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-cyan-300/[0.2] bg-cyan-300/[0.15] text-sm font-semibold text-cyan-200">
+                {initials}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-white">{fullName}</div>
+                {primaryEmail ? <div className="text-xs text-slate-400">{primaryEmail}</div> : null}
+              </div>
+              <button type="button" onClick={startEditing} className="ml-auto text-sm text-cyan-300 hover:text-cyan-200">
+                Edit
+              </button>
+            </div>
+          )}
+          {saveStatus === "success" ? (
+            <div className="mt-3 flex items-center gap-2 text-sm text-emerald-100">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Profile updated</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="p-5">
@@ -384,38 +460,115 @@ function ProfileSection() {
   );
 }
 
-type SessionInfo = {
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  autoComplete,
+}: {
   id: string;
-  latestActivity?: {
-    browserName?: string | null;
-    browserVersion?: string | null;
-    deviceType?: string | null;
-    isMobile?: boolean | null;
-  } | null;
-};
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  show: boolean;
+  onToggleShow: () => void;
+  autoComplete?: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className={LABEL_CLASS}>
+        {label}
+      </label>
+      <div className="relative flex items-center">
+        <input
+          id={id}
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+          className={`${INPUT_CLASS} pr-10`}
+        />
+        <button
+          type="button"
+          onClick={onToggleShow}
+          aria-label={show ? "Hide password" : "Show password"}
+          className="absolute right-3 text-slate-500 hover:text-slate-300"
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function SecuritySection() {
   const { user } = useUser();
-  const { sessionId } = useAuth();
   const clerk = useClerk();
-  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+  const [passwordEditing, setPasswordEditing] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [passwordSaveStatus, setPasswordSaveStatus] = useState<SaveStatus>("idle");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<Awaited<ReturnType<NonNullable<typeof user>["getSessions"]>> | null>(null);
 
   useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const result = await user.getSessions();
-        if (!cancelled && result) setSessions(result);
-      } catch {
-        if (!cancelled) setSessions(null);
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
+    user
+      ?.getSessions?.()
+      .then((s) => setSessions(s))
+      .catch(() => setSessions([]));
   }, [user]);
+
+  useEffect(() => {
+    if (passwordSaveStatus !== "success") return;
+    const timer = setTimeout(() => setPasswordSaveStatus("idle"), 2500);
+    return () => clearTimeout(timer);
+  }, [passwordSaveStatus]);
+
+  const resetPasswordForm = () => {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setShowCurrent(false);
+    setShowNew(false);
+    setShowConfirm(false);
+  };
+
+  const cancelPasswordEditing = () => {
+    resetPasswordForm();
+    setPasswordEditing(false);
+    setPasswordError(null);
+    setPasswordSaveStatus("idle");
+  };
+
+  const handlePasswordSave = async () => {
+    if (!user) return;
+    setPasswordError(null);
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError("Password must be at least 8 characters");
+      return;
+    }
+    setPasswordSaveStatus("saving");
+    try {
+      await user.updatePassword({ currentPassword, newPassword });
+      resetPasswordForm();
+      setPasswordEditing(false);
+      setPasswordSaveStatus("success");
+    } catch (err) {
+      setPasswordSaveStatus("error");
+      setPasswordError((err as Error).message || "Unable to update password.");
+    }
+  };
 
   return (
     <section>
@@ -423,17 +576,76 @@ function SecuritySection() {
       <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] divide-y divide-white/[0.06]">
         <div className="p-5">
           <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Password</div>
-          <div className="flex items-center">
-            <span className="text-slate-400 text-sm tracking-widest">••••••••</span>
-            {/* Password changes require Clerk's hosted profile UI — open it rather than reimplementing the flow. */}
-            <button
-              type="button"
-              onClick={() => clerk.openUserProfile()}
-              className="text-sm text-cyan-300 hover:text-cyan-200 ml-auto"
-            >
-              Update password
-            </button>
-          </div>
+          {user?.passwordEnabled !== true ? (
+            <p className="text-sm text-slate-500">Password sign-in is not set up for your account.</p>
+          ) : passwordEditing ? (
+            <div className="flex flex-col gap-4">
+              <PasswordField
+                id="security-current-password"
+                label="Current password"
+                value={currentPassword}
+                onChange={setCurrentPassword}
+                show={showCurrent}
+                onToggleShow={() => setShowCurrent((v) => !v)}
+                autoComplete="current-password"
+              />
+              <PasswordField
+                id="security-new-password"
+                label="New password"
+                value={newPassword}
+                onChange={setNewPassword}
+                show={showNew}
+                onToggleShow={() => setShowNew((v) => !v)}
+                autoComplete="new-password"
+              />
+              <PasswordField
+                id="security-confirm-password"
+                label="Confirm new password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+                show={showConfirm}
+                onToggleShow={() => setShowConfirm((v) => !v)}
+                autoComplete="new-password"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handlePasswordSave()}
+                  disabled={passwordSaveStatus === "saving"}
+                  className={SAVE_BUTTON_CLASS}
+                >
+                  {passwordSaveStatus === "saving" ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                  Save
+                </button>
+                <button type="button" onClick={cancelPasswordEditing} className={CANCEL_BUTTON_CLASS}>
+                  Cancel
+                </button>
+              </div>
+              {passwordError ? (
+                <div className="flex items-start gap-2 text-sm text-rose-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{passwordError}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center">
+              <span className="text-slate-400 text-sm tracking-widest">••••••••</span>
+              <button
+                type="button"
+                onClick={() => setPasswordEditing(true)}
+                className="text-sm text-cyan-300 hover:text-cyan-200 ml-auto"
+              >
+                Update password
+              </button>
+            </div>
+          )}
+          {passwordSaveStatus === "success" ? (
+            <div className="mt-3 flex items-center gap-2 text-sm text-emerald-100">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Password updated</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="p-5">
@@ -448,7 +660,7 @@ function SecuritySection() {
                   <div key={session.id} className="flex items-center gap-2 text-sm text-slate-300">
                     <span className="font-medium text-white">{device}</span>
                     {browser ? <span className="text-slate-400">{browser}</span> : null}
-                    {session.id === sessionId ? (
+                    {session.id === clerk.session?.id ? (
                       <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200">
                         This device
                       </span>
@@ -458,16 +670,7 @@ function SecuritySection() {
               })}
             </div>
           ) : (
-            <div className="flex items-center text-sm text-slate-400">
-              <span>Manage active sessions in your profile</span>
-              <button
-                type="button"
-                onClick={() => clerk.openUserProfile()}
-                className="text-sm text-cyan-300 hover:text-cyan-200 ml-auto"
-              >
-                Manage
-              </button>
-            </div>
+            <p className="text-sm text-slate-400">Manage active sessions in your profile</p>
           )}
         </div>
       </div>
@@ -507,10 +710,7 @@ export default function Account() {
       </div>
 
       <div className="relative mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-12">
-        {/* TEMP-PREVIEW: signed-in gate bypassed for layout screenshots — revert before commit */}
-        {true ? (
-          <>
-            <TwfConnectedAccountReturn />
+        <TwfConnectedAccountReturn />
 
             {/* Mobile tab strip — hidden on md+ */}
             <div className="mb-5 md:hidden">
@@ -571,8 +771,6 @@ export default function Account() {
             <div className="mt-8 text-center">
               <span className="text-xs text-slate-600">Secured by Clerk</span>
             </div>
-          </>
-        ) : null}
       </div>
     </div>
   );
