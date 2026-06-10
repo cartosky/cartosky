@@ -604,6 +604,17 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
+  /* MapLibre CSS loads with the viewer chunk; keep the map slot sized until it arrives. */
+  .viewer-map-slot {
+    position: absolute;
+    inset: 0;
+  }
+
+  .viewer-map-slot .maplibregl-map {
+    width: 100%;
+    height: 100%;
+  }
+
   .maplibregl-ctrl-top-left .maplibregl-ctrl-group {
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.10);

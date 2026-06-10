@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Palette } from "lucide-react";
+import "maplibre-gl/dist/maplibre-gl.css";
 import maplibregl, { type LayerSpecification, type StyleSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
@@ -1041,6 +1042,7 @@ export function MapCanvas({
   onVectorHazardClick,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapSlotRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const latestMapDataUrlRef = useRef<string | null>(null);
   const gridWebglControllerRef = useRef<GridWebglLayerController | null>(null);
@@ -1769,11 +1771,26 @@ export function MapCanvas({
     });
 
     mapRef.current = map;
-    resizeRafId = window.requestAnimationFrame(() => {
+    const resizeMap = () => {
       map.resize();
+    };
+    resizeRafId = window.requestAnimationFrame(() => {
+      resizeMap();
+      window.requestAnimationFrame(resizeMap);
     });
 
+    const mapSlot = mapSlotRef.current;
+    const resizeObserver = mapSlot && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+        resizeMap();
+      })
+      : null;
+    if (mapSlot) {
+      resizeObserver?.observe(mapSlot);
+    }
+
     return () => {
+      resizeObserver?.disconnect();
       if (resizeRafId !== null) {
         window.cancelAnimationFrame(resizeRafId);
       }
@@ -2754,13 +2771,15 @@ export function MapCanvas({
 
   return (
     <>
-      <div
-        ref={mapContainerRef}
-        className="absolute inset-0"
-        style={{ backgroundColor: getMapBackgroundColor(basemapMode) }}
-        role="img"
-        aria-label="Weather map"
-      />
+      <div ref={mapSlotRef} className="viewer-map-slot absolute inset-0">
+        <div
+          ref={mapContainerRef}
+          className="h-full w-full"
+          style={{ backgroundColor: getMapBackgroundColor(basemapMode) }}
+          role="img"
+          aria-label="Weather map"
+        />
+      </div>
 
       {anchorTooltip && (
         <div
