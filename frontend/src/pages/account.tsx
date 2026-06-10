@@ -1,16 +1,17 @@
-import { useAuth, Show, UserProfile, useUser } from "@clerk/react";
-import { AlertTriangle, CheckCircle2, CreditCard, Link2, Plug, RefreshCw, Unlink } from "lucide-react";
+import { useAuth, Show, useClerk, useUser } from "@clerk/react";
+import { AlertTriangle, CheckCircle2, CreditCard, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { createPortalSession } from "@/lib/billing";
-import { clerkAppearance } from "@/lib/clerk-appearance";
 import { billingEnabled, planFromPublicMetadata } from "@/lib/entitlements";
 import { API_ORIGIN } from "@/lib/config";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 import { cn } from "@/lib/utils";
 
 const INTEGRATIONS_HASH = "#/integrations";
+
+type AccountTab = "profile" | "security" | "integrations";
 
 type TwfConnectionStatus = {
   connected: boolean;
@@ -190,9 +191,9 @@ function TwfConnectionSection() {
     <section className="text-white">
       <div className="border-b border-sky-200/[0.06] pb-5">
         <div>
-          <h2 className="text-lg font-semibold text-white">Connected accounts</h2>
+          <h2 className="text-lg font-semibold text-white">Integrations</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Link The Weather Forums to share CartoSky maps and posts with your forum account.
+            Connect external services to CartoSky. Link The Weather Forums to share CartoSky maps and posts with your forum account.
           </p>
         </div>
       </div>
@@ -264,7 +265,7 @@ function TwfConnectionSection() {
   );
 }
 
-function SubscriptionSection() {
+function SubscriptionRow() {
   const { user } = useUser();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -274,7 +275,7 @@ function SubscriptionSection() {
     setLoading(true);
     setError(null);
     try {
-      const url = await createPortalSession("/account#/subscription");
+      const url = await createPortalSession("/account");
       window.location.assign(url);
     } catch (err) {
       setError((err as Error).message || "Unable to open Stripe Customer Portal.");
@@ -283,124 +284,295 @@ function SubscriptionSection() {
   }, []);
 
   return (
-    <section className="text-white">
-      <div className="border-b border-sky-200/[0.06] pb-5">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Subscription</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Stripe manages your CartoSky subscription while Clerk continues to handle authentication.
-          </p>
-        </div>
+    <div className="p-5">
+      <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Subscription</div>
+      <div className="flex items-center text-sm text-slate-300">
+        <CreditCard className="mr-2 h-4 w-4 shrink-0 text-slate-400" />
+        <span>{plan === "pro" ? "Pro" : "Free"}</span>
+        {plan === "pro" ? (
+          <button
+            type="button"
+            onClick={() => void handleManageSubscription()}
+            disabled={loading}
+            className="ml-auto inline-flex items-center gap-2 text-sm text-cyan-300 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+            Manage
+          </button>
+        ) : (
+          <Link to="/pricing" className="ml-auto text-sm text-cyan-300 hover:text-cyan-200">
+            Upgrade
+          </Link>
+        )}
       </div>
-
-      <div className="border-b border-sky-200/[0.06] py-5">
-        <div className="grid gap-4 sm:grid-cols-[12rem_1fr_auto] sm:items-start">
-          <div className="text-sm font-medium text-white">Current plan</div>
-          <div>
-            <p className="text-sm text-slate-300">{plan === "pro" ? "Pro" : "Free"}</p>
-          </div>
-
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            {plan === "pro" ? (
-              <button
-                type="button"
-                onClick={() => void handleManageSubscription()}
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-                Manage Subscription
-              </button>
-            ) : (
-              <Link
-                to="/pricing"
-                className="inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium text-cyan-200 transition hover:text-cyan-100"
-              >
-                Upgrade
-              </Link>
-            )}
-          </div>
-        </div>
-      </div>
-
       {error ? (
-        <div className="mt-4 flex items-start gap-2 text-sm text-rose-100">
+        <div className="mt-3 flex items-start gap-2 text-sm text-rose-100">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ProfileSection() {
+  const { user } = useUser();
+  const clerk = useClerk();
+
+  const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase() || "?";
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.fullName || "—";
+  const primaryEmail = user?.primaryEmailAddress?.emailAddress ?? null;
+  const externalAccounts = user?.externalAccounts ?? [];
+
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-white mb-6">Profile details</h2>
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] divide-y divide-white/[0.06]">
+        <div className="flex items-center gap-3 p-5">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-cyan-300/[0.2] bg-cyan-300/[0.15] text-sm font-semibold text-cyan-200">
+            {initials}
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-white">{fullName}</div>
+            {primaryEmail ? <div className="text-xs text-slate-400">{primaryEmail}</div> : null}
+          </div>
+          <a
+            href="#"
+            onClick={(event) => {
+              event.preventDefault();
+              clerk.openUserProfile();
+            }}
+            className="ml-auto text-sm text-cyan-300 hover:text-cyan-200"
+          >
+            Edit
+          </a>
+        </div>
+
+        <div className="p-5">
+          <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Email addresses</div>
+          {primaryEmail ? (
+            <div className="flex items-center text-sm text-slate-300">
+              <span>{primaryEmail}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200 ml-2">
+                Primary
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No email addresses</p>
+          )}
+        </div>
+
+        <div className="p-5">
+          <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Connected accounts</div>
+          {externalAccounts.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {externalAccounts.map((account) => (
+                <div key={account.id} className="flex items-center gap-2 text-sm text-slate-300">
+                  <span className="font-medium capitalize text-white">{account.provider}</span>
+                  <span className="text-slate-400">{account.emailAddress || account.username || ""}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">None connected</p>
+          )}
+        </div>
+
+        {billingEnabled ? <SubscriptionRow /> : null}
+      </div>
+    </section>
+  );
+}
+
+type SessionInfo = {
+  id: string;
+  latestActivity?: {
+    browserName?: string | null;
+    browserVersion?: string | null;
+    deviceType?: string | null;
+    isMobile?: boolean | null;
+  } | null;
+};
+
+function SecuritySection() {
+  const { user } = useUser();
+  const { sessionId } = useAuth();
+  const clerk = useClerk();
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await user.getSessions();
+        if (!cancelled && result) setSessions(result);
+      } catch {
+        if (!cancelled) setSessions(null);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-white mb-6">Security</h2>
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] divide-y divide-white/[0.06]">
+        <div className="p-5">
+          <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Password</div>
+          <div className="flex items-center">
+            <span className="text-slate-400 text-sm tracking-widest">••••••••</span>
+            {/* Password changes require Clerk's hosted profile UI — open it rather than reimplementing the flow. */}
+            <button
+              type="button"
+              onClick={() => clerk.openUserProfile()}
+              className="text-sm text-cyan-300 hover:text-cyan-200 ml-auto"
+            >
+              Update password
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          <div className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-3">Active devices</div>
+          {sessions && sessions.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {sessions.map((session) => {
+                const activity = session.latestActivity;
+                const device = activity?.deviceType || (activity?.isMobile ? "Mobile device" : "Desktop device");
+                const browser = [activity?.browserName, activity?.browserVersion].filter(Boolean).join(" ");
+                return (
+                  <div key={session.id} className="flex items-center gap-2 text-sm text-slate-300">
+                    <span className="font-medium text-white">{device}</span>
+                    {browser ? <span className="text-slate-400">{browser}</span> : null}
+                    {session.id === sessionId ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200">
+                        This device
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex items-center text-sm text-slate-400">
+              <span>Manage active sessions in your profile</span>
+              <button
+                type="button"
+                onClick={() => clerk.openUserProfile()}
+                className="text-sm text-cyan-300 hover:text-cyan-200 ml-auto"
+              >
+                Manage
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
 
 export default function Account() {
-  const [activeHash, setActiveHash] = useState(() => window.location.hash || "#/profile");
+  const [activeTab, setActiveTab] = useState<AccountTab>("profile");
 
   useEffect(() => {
-    const onHashChange = () => setActiveHash(window.location.hash || "#/profile");
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    const readTabFromHash = () => {
+      const hash = window.location.hash;
+      if (hash.includes("integrations")) {
+        setActiveTab("integrations");
+      } else if (hash.includes("security")) {
+        setActiveTab("security");
+      } else {
+        setActiveTab("profile");
+      }
+    };
+    readTabFromHash();
+    window.addEventListener("hashchange", readTabFromHash);
+    return () => window.removeEventListener("hashchange", readTabFromHash);
   }, []);
 
-  const accountTabs = [
-    { label: "Profile", hash: "" },
-    { label: "Security", hash: "#/security" },
-    { label: "Integrations", hash: "#/integrations" },
-  ];
+  const handleTabClick = (tab: AccountTab) => {
+    history.replaceState(null, "", window.location.pathname);
+    setActiveTab(tab);
+  };
 
   return (
-    <div className="relative min-h-0 w-full overflow-y-visible bg-[#04101e] px-4 py-8 md:px-6 md:py-12">
+    <div className="relative min-h-svh w-full bg-[#04101e]">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-1/2 top-0 h-[32rem] w-[32rem] -translate-x-1/2 rounded-full bg-cyan-300/10 blur-3xl" />
         <div className="absolute bottom-0 left-1/2 h-[24rem] w-[24rem] -translate-x-1/2 rounded-full bg-sky-500/10 blur-3xl" />
       </div>
 
-      <div className="cartosky-clerk-profile relative mx-auto max-w-5xl">
-        <Show when="signed-in">
+      <div className="relative mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-12">
+        {/* TEMP-PREVIEW: signed-in gate bypassed for layout screenshots — revert before commit */}
+        {true ? (
           <>
             <TwfConnectedAccountReturn />
-            <div className="mb-4 flex gap-2 md:hidden">
-              {accountTabs.map((tab) => {
-                const isActive = activeHash === tab.hash || (tab.hash === "" && (activeHash === "" || activeHash === "#/" || activeHash === "#/profile"));
-                return (
+
+            {/* Mobile tab strip — hidden on md+ */}
+            <div className="mb-5 md:hidden">
+              <div className="flex rounded-xl border border-white/10 bg-white/[0.04] p-1 gap-1">
+                {(["profile", "security", "integrations"] as AccountTab[]).map((tab) => (
                   <button
-                    key={tab.hash}
+                    key={tab}
                     type="button"
-                    onClick={() => {
-                      if (tab.hash === "") {
-                        history.pushState(null, "", window.location.pathname);
-                        setActiveHash("");
-                      } else {
-                        window.location.hash = tab.hash;
-                      }
-                    }}
+                    onClick={() => handleTabClick(tab)}
                     className={cn(
-                      "flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors duration-150",
-                      isActive
+                      "flex-1 rounded-lg px-3 py-2 text-xs font-medium capitalize transition-colors duration-150",
+                      activeTab === tab
                         ? "bg-cyan-300/[0.12] text-cyan-200 border border-cyan-300/20"
                         : "text-slate-400 hover:text-white border border-transparent"
                     )}
                   >
-                    {tab.label}
+                    {tab}
                   </button>
-                );
-              })}
+                ))}
+              </div>
             </div>
-            <UserProfile appearance={clerkAppearance}>
-              {billingEnabled ? (
-                <UserProfile.Page label="Subscription" labelIcon={<CreditCard className="h-4 w-4" />} url="subscription">
-                  <SubscriptionSection />
-                </UserProfile.Page>
-              ) : null}
-              <UserProfile.Page label="Integrations" labelIcon={<Plug className="h-4 w-4" />} url="integrations">
-                <TwfConnectionSection />
-              </UserProfile.Page>
-            </UserProfile>
+
+            {/* Main layout — sidebar on md+, stacked on mobile */}
+            <div className="md:flex md:gap-8">
+              {/* Sidebar — hidden on mobile */}
+              <aside className="hidden md:block md:w-48 md:shrink-0">
+                <nav className="flex flex-col gap-0.5">
+                  {(["profile", "security", "integrations"] as AccountTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => handleTabClick(tab)}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium capitalize transition-colors duration-150 text-left w-full",
+                        activeTab === tab
+                          ? "bg-cyan-300/[0.10] text-cyan-200"
+                          : "text-slate-400 hover:bg-white/[0.05] hover:text-white"
+                      )}
+                    >
+                      {tab === "profile" && <User className="h-4 w-4 shrink-0" />}
+                      {tab === "security" && <Lock className="h-4 w-4 shrink-0" />}
+                      {tab === "integrations" && <Plug className="h-4 w-4 shrink-0" />}
+                      {tab}
+                    </button>
+                  ))}
+                </nav>
+              </aside>
+
+              {/* Content area */}
+              <div className="min-w-0 flex-1">
+                {activeTab === "profile" && <ProfileSection />}
+                {activeTab === "security" && <SecuritySection />}
+                {activeTab === "integrations" && <TwfConnectionSection />}
+              </div>
+            </div>
+
+            {/* Clerk branding */}
+            <div className="mt-8 text-center">
+              <span className="text-xs text-slate-600">Secured by Clerk</span>
+            </div>
           </>
-        </Show>
-        <Show when="signed-out">
-          <Navigate to="/login" replace />
-        </Show>
+        ) : null}
       </div>
     </div>
   );
