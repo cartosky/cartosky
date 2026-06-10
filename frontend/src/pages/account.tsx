@@ -1,4 +1,5 @@
-import { useClerk, useUser } from "@clerk/react";
+import { useClerk, useReverification, useUser } from "@clerk/react";
+import { isReverificationCancelledError } from "@clerk/react/errors";
 import { AlertTriangle, CheckCircle2, CreditCard, Eye, EyeOff, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -339,15 +340,26 @@ function ProfileSection() {
     setEditing(false);
   };
 
+  // Wrapped so Clerk can pop its step-up verification modal and retry when the
+  // session needs reverification, instead of surfacing a raw 403.
+  const updateProfile = useReverification((params: { firstName: string; lastName: string }) => {
+    if (!user) throw new Error("Not signed in.");
+    return user.update(params);
+  });
+
   const handleSave = async () => {
     if (!user) return;
     setSaveStatus("saving");
     setSaveError(null);
     try {
-      await user.update({ firstName: firstName.trim(), lastName: lastName.trim() });
+      await updateProfile({ firstName: firstName.trim(), lastName: lastName.trim() });
       setSaveStatus("success");
       setEditing(false);
     } catch (err) {
+      if (isReverificationCancelledError(err)) {
+        setSaveStatus("idle");
+        return;
+      }
       setSaveStatus("error");
       setSaveError((err as Error).message || "Unable to update profile.");
     }
@@ -547,6 +559,14 @@ function SecuritySection() {
     setPasswordSaveStatus("idle");
   };
 
+  // Password changes are a Clerk "sensitive action": when the session's last
+  // verification is too old, the API returns session_reverification_required.
+  // useReverification pops Clerk's verification modal and retries on success.
+  const updatePassword = useReverification((params: { currentPassword: string; newPassword: string }) => {
+    if (!user) throw new Error("Not signed in.");
+    return user.updatePassword(params);
+  });
+
   const handlePasswordSave = async () => {
     if (!user) return;
     setPasswordError(null);
@@ -560,11 +580,15 @@ function SecuritySection() {
     }
     setPasswordSaveStatus("saving");
     try {
-      await user.updatePassword({ currentPassword, newPassword });
+      await updatePassword({ currentPassword, newPassword });
       resetPasswordForm();
       setPasswordEditing(false);
       setPasswordSaveStatus("success");
     } catch (err) {
+      if (isReverificationCancelledError(err)) {
+        setPasswordSaveStatus("idle");
+        return;
+      }
       setPasswordSaveStatus("error");
       setPasswordError((err as Error).message || "Unable to update password.");
     }
