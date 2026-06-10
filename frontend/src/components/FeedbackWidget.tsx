@@ -183,7 +183,7 @@ export function FeedbackWidget() {
           onClick={closeWidget}
         >
           <div
-            className="glass-navy w-full max-w-[520px] flex flex-col overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
+            className="viewer-mobile-surface w-full max-w-[520px] flex flex-col overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
             style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - 1.5rem)" }}
             onClick={(event) => event.stopPropagation()}
           >
@@ -221,7 +221,7 @@ export function FeedbackWidget() {
                         "flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-center text-[11px] font-semibold leading-tight transition",
                         selected
                           ? "border-cyan-200/50 bg-cyan-300/14 text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-                          : "border-white/10 bg-white/[0.04] text-white/72 hover:border-white/18 hover:bg-white/[0.07]"
+                          : "viewer-mobile-inset text-white/72 hover:border-white/18 hover:bg-white/[0.07]"
                       )}
                       aria-pressed={selected}
                     >
@@ -242,7 +242,7 @@ export function FeedbackWidget() {
                   value={reporterName}
                   onChange={(event) => setReporterName(event.target.value.slice(0, REPORTER_NAME_MAX_LENGTH))}
                   maxLength={REPORTER_NAME_MAX_LENGTH}
-                  className="w-full rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
+                  className="viewer-mobile-field w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-white/34"
                   placeholder="Enter a name with your report, or submit anonymously"
                   autoComplete="nickname"
                 />
@@ -258,7 +258,7 @@ export function FeedbackWidget() {
                   onChange={(event) => setMessage(event.target.value.slice(0, MESSAGE_MAX_LENGTH))}
                   rows={4}
                   maxLength={MESSAGE_MAX_LENGTH}
-                  className="min-h-[96px] w-full resize-none rounded-lg border border-cyan-200/10 bg-[#091322]/75 px-3 py-3 text-sm leading-6 text-white outline-none transition-colors placeholder:text-white/34 focus:border-cyan-300/34 focus:bg-[#0c182a]"
+                  className="viewer-mobile-field min-h-[96px] w-full resize-none rounded-lg px-3 py-3 text-sm leading-6 text-white placeholder:text-white/34"
                   placeholder="What should we know?"
                 />
                 <div className="mt-2 flex items-center justify-end text-xs text-white/45">

@@ -11,7 +11,10 @@
    */
   .glass,
   .glass-strong,
-  .glass-overlay {
+  .glass-overlay,
+  .viewer-mobile-surface,
+  .viewer-mobile-inset,
+  .viewer-mobile-field {
     /* Shared token overrides — Tailwind utilities inside inherit these */
     --foreground: 0 0% 95%;
     --muted-foreground: 0 0% 62%;
@@ -50,6 +53,43 @@
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(100, 180, 255, 0.07);
     backdrop-filter: blur(22px) saturate(1.9);
     -webkit-backdrop-filter: blur(22px) saturate(1.9);
+  }
+
+  /* Reusable viewer mobile surface shared by the controls sheet and modals. */
+  .viewer-mobile-surface {
+    background-color: rgba(4, 16, 30, 0.82);
+    border: 1px solid rgba(26, 58, 92, 0.6);
+    box-shadow:
+      0 8px 40px rgba(0, 0, 0, 0.55),
+      0 2px 12px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(100, 180, 255, 0.08);
+    backdrop-filter: blur(12px) saturate(1.6);
+    -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  }
+
+  .viewer-mobile-inset {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .viewer-mobile-field {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .viewer-mobile-field:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+  }
+
+  .viewer-mobile-field:focus,
+  .viewer-mobile-field:focus-visible,
+  .viewer-mobile-field:focus-within {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(103, 232, 249, 0.3);
+    outline: none;
   }
 
   /* Elevated overlay glass: share modal + mobile layers shell */

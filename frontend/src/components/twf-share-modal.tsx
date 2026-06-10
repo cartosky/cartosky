@@ -93,7 +93,7 @@ const sectionCardClass =
   "glass-overlay-section rounded-2xl";
 
 const insetCardClass =
-  "rounded-xl border border-cyan-200/8 bg-[#0b182b]/60";
+  "viewer-mobile-inset rounded-xl";
 
 const secondaryButtonClass =
   "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12]";
@@ -102,10 +102,10 @@ const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/30 bg-[linear-gradient(135deg,#102438_0%,#1a4f68_52%,#6ab7d4_100%)] px-4 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(17,68,92,0.34)] transition-all hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100";
 
 const fieldClass =
-  "h-8 w-full rounded-md border border-cyan-200/10 bg-[#091322]/75 px-2 text-xs text-white outline-none transition-colors focus:border-cyan-300/34 focus:bg-[#0c182a]";
+  "viewer-mobile-field h-8 w-full rounded-md px-2 text-xs text-white";
 
 const textareaClass =
-  "w-full rounded-md border border-cyan-200/10 bg-[#091322]/75 px-2 py-2 text-xs text-white outline-none transition-colors focus:border-cyan-300/34 focus:bg-[#0c182a]";
+  "viewer-mobile-field w-full rounded-md px-2 py-2 text-xs text-white";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -1396,7 +1396,7 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="glass-navy w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        className="viewer-mobile-surface w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
         style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -1512,7 +1512,7 @@ export function TwfShareModal({
 
           {twfStatus.linked !== true && !isPosted && (
             <div className="mt-3 px-4">
-              <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3 text-sm text-white/78 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:flex-row sm:items-center sm:justify-between">
+              <div className="viewer-mobile-inset flex flex-col gap-2 rounded-2xl px-3.5 py-3 text-sm text-white/78 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center gap-2">
                   {checkingShareAccess ? (
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
@@ -1553,7 +1553,7 @@ export function TwfShareModal({
 
           {/* Composer card */}
           <div className="mt-3 px-4">
-            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="viewer-mobile-inset overflow-hidden rounded-2xl">
 
             {/* Destination row */}
             <div className="flex items-start justify-between gap-2 px-4 py-3">

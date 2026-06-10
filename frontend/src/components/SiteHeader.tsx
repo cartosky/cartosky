@@ -1631,7 +1631,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
-              "glass-navy fixed z-[66] flex flex-col overflow-hidden",
+              "viewer-mobile-surface fixed z-[66] flex flex-col overflow-hidden",
               isTabletTouchLayout
                 ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"

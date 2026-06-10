@@ -385,7 +385,7 @@ export function BottomForecastControls({
           <div
             aria-hidden="true"
             className={cn(
-              "pointer-events-none absolute inset-0 border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_40px_rgba(0,0,0,0.55),0_2px_12px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+              "viewer-mobile-surface pointer-events-none absolute inset-0",
               isDesktopLayout ? "rounded-2xl" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
             )}
             style={{ willChange: "transform" }}
