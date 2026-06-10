@@ -8,6 +8,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { billingEnabled, planFromPublicMetadata } from "@/lib/entitlements";
 import { API_ORIGIN } from "@/lib/config";
 import { clerkJwtTemplate } from "@/lib/admin-api";
+import { cn } from "@/lib/utils";
 
 const INTEGRATIONS_HASH = "#/integrations";
 
@@ -333,6 +334,20 @@ function SubscriptionSection() {
 }
 
 export default function Account() {
+  const [activeHash, setActiveHash] = useState(() => window.location.hash || "#/profile");
+
+  useEffect(() => {
+    const onHashChange = () => setActiveHash(window.location.hash || "#/profile");
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const accountTabs = [
+    { label: "Profile", hash: "#/profile" },
+    { label: "Security", hash: "#/security" },
+    { label: "Integrations", hash: "#/integrations" },
+  ];
+
   return (
     <div className="relative min-h-0 w-full overflow-y-visible bg-[#04101e] px-4 py-8 md:px-6 md:py-12">
       <div className="pointer-events-none absolute inset-0">
@@ -344,6 +359,28 @@ export default function Account() {
         <Show when="signed-in">
           <>
             <TwfConnectedAccountReturn />
+            <div className="mb-4 flex gap-2 md:hidden">
+              {accountTabs.map((tab) => {
+                const isActive = activeHash === tab.hash || (tab.hash === "#/profile" && (activeHash === "" || activeHash === "#/"));
+                return (
+                  <button
+                    key={tab.hash}
+                    type="button"
+                    onClick={() => {
+                      window.location.hash = tab.hash;
+                    }}
+                    className={cn(
+                      "flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors duration-150",
+                      isActive
+                        ? "bg-cyan-300/[0.12] text-cyan-200 border border-cyan-300/20"
+                        : "text-slate-400 hover:text-white border border-transparent"
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
             <UserProfile appearance={clerkAppearance}>
               {billingEnabled ? (
                 <UserProfile.Page label="Subscription" labelIcon={<CreditCard className="h-4 w-4" />} url="subscription">
