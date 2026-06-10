@@ -445,7 +445,7 @@
   .picker-scroll {
     scrollbar-gutter: stable;
     scrollbar-width: thin;
-    scrollbar-color: rgba(103, 232, 249, 0.3) rgba(255, 255, 255, 0.05);
+    scrollbar-color: rgba(57, 227, 250, 0.379) rgba(255, 255, 255, 0.05);
   }
 
   .picker-scroll::-webkit-scrollbar {
@@ -460,12 +460,12 @@
   .picker-scroll::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
     border-radius: 9999px;
-    background: rgba(103, 232, 249, 0.3);
+    background: rgba(57, 227, 250, 0.379);
     background-clip: content-box;
   }
 
   .picker-scroll::-webkit-scrollbar-thumb:hover {
-    background: rgba(103, 232, 249, 0.42);
+    background: rgba(57, 227, 250, 0.379);
     background-clip: content-box;
   }
 
