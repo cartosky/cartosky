@@ -1,7 +1,7 @@
 import { useClerk, useReverification, useUser } from "@clerk/react";
 import { isReverificationCancelledError } from "@clerk/react/errors";
 import { AlertTriangle, CheckCircle2, CreditCard, Eye, EyeOff, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { createPortalSession } from "@/lib/billing";
@@ -472,6 +472,16 @@ function ProfileSection() {
   );
 }
 
+// Swapping an input's type between password/text corrupts caret and selection
+// behavior in both Chromium and WebKit. Keeping a stable type="text" and
+// masking via CSS avoids the swap entirely; browsers without support for
+// -webkit-text-security (only very old Firefox) fall back to type swapping.
+const SUPPORTS_TEXT_SECURITY =
+  typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-text-security", "disc");
+
+// Not yet in csstype's known properties, hence the cast.
+const MASKED_INPUT_STYLE = { WebkitTextSecurity: "disc" } as CSSProperties;
+
 function PasswordField({
   id,
   label,
@@ -489,28 +499,7 @@ function PasswordField({
   onToggleShow: () => void;
   autoComplete?: string;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Chromium breaks click-to-place-caret after an input's type is swapped
-  // between password/text; re-focusing and restoring the caret resets it.
-  // Only do this when the field was already focused: imposing focus/selection
-  // on an inactive field makes iOS WebKit select the entire value on the next
-  // tap. Restore a collapsed caret (not a range) for the same reason.
-  const handleToggle = () => {
-    const input = inputRef.current;
-    const wasFocused = !!input && document.activeElement === input;
-    const caret = input?.selectionEnd ?? null;
-    onToggleShow();
-    if (!wasFocused) return;
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (!el) return;
-      el.focus({ preventScroll: true });
-      if (caret !== null) {
-        el.setSelectionRange(caret, caret);
-      }
-    });
-  };
+  const masked = !show;
 
   return (
     <div>
@@ -519,22 +508,31 @@ function PasswordField({
       </label>
       <div className="relative flex items-center">
         <input
-          ref={inputRef}
           id={id}
-          type={show ? "text" : "password"}
+          type={SUPPORTS_TEXT_SECURITY || show ? "text" : "password"}
+          style={SUPPORTS_TEXT_SECURITY && masked ? MASKED_INPUT_STYLE : undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          onCopy={(event) => {
+            if (masked) event.preventDefault();
+          }}
+          onCut={(event) => {
+            if (masked) event.preventDefault();
+          }}
           autoComplete={autoComplete}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
           className={`${INPUT_CLASS} pr-10`}
         />
         <button
           type="button"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={handleToggle}
+          onClick={onToggleShow}
           aria-label={show ? "Hide password" : "Show password"}
           className="absolute right-3 text-slate-500 hover:text-slate-300"
         >
-          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          {show ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
         </button>
       </div>
     </div>
@@ -800,8 +798,7 @@ export default function Account() {
 
             {/* Page header */}
             <div className="mb-8">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/70">CartoSky</p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white md:text-3xl">Account</h1>
+              <h1 className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/70">CartoSky Account</h1>
               <p className="mt-2 text-sm text-slate-400">Manage your profile, security, and connected services.</p>
             </div>
 
