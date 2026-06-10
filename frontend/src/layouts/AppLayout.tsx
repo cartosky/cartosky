@@ -18,7 +18,7 @@ export default function AppLayout() {
       }
     >
       {!isViewerRoute && <SiteHeader variant="app" />}
-      <div className={isAdminRoute ? "flex-1 min-h-0" : "flex flex-1 min-h-0 overflow-hidden"}>
+      <div className={isAdminRoute ? "flex-1 min-h-0" : isAccountRoute ? "flex flex-1 min-h-0 overflow-y-auto" : "flex flex-1 min-h-0 overflow-hidden"}>
         <Outlet />
       </div>
     </div>
