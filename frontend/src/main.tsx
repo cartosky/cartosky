@@ -8,9 +8,9 @@ import { ClerkAuthTokenBridge } from "./components/ClerkAuthTokenBridge";
 import { initAnalytics } from "./lib/analytics";
 import { FeedbackProvider } from "./lib/feedback-context";
 import { initRumTelemetry } from "./lib/rum";
+import { BootstrapProvider } from "./lib/bootstrap-loading";
 import { SiteLoadingProvider } from "./lib/site-loading";
 import { clerkAppearance } from "./lib/clerk-appearance";
-import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles/globals.css";
 
 initRumTelemetry();
@@ -27,15 +27,17 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <EnvClerkProvider afterSignOutUrl="/" appearance={clerkAppearance}>
       <ClerkAuthTokenBridge />
       <BrowserRouter>
-        <SiteLoadingProvider>
-          <FeedbackProvider>
-            <AnalyticsBridge />
-            <RouterApp />
-            <Suspense fallback={null}>
-              <FeedbackWidget />
-            </Suspense>
-          </FeedbackProvider>
-        </SiteLoadingProvider>
+        <BootstrapProvider>
+          <SiteLoadingProvider>
+            <FeedbackProvider>
+              <AnalyticsBridge />
+              <RouterApp />
+              <Suspense fallback={null}>
+                <FeedbackWidget />
+              </Suspense>
+            </FeedbackProvider>
+          </SiteLoadingProvider>
+        </BootstrapProvider>
       </BrowserRouter>
     </EnvClerkProvider>
   </React.StrictMode>

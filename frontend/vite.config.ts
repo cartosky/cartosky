@@ -23,8 +23,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          if (id.includes("/src/lib/utils.")) {
+            return "utils";
+          }
           if (!id.includes("node_modules")) {
             return undefined;
+          }
+          if (id.includes("clsx") || id.includes("tailwind-merge")) {
+            return "utils";
           }
           if (id.includes("maplibre-gl")) {
             return "maplibre";

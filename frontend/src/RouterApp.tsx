@@ -5,6 +5,7 @@ import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { SiteLoadingOverlay } from "./components/site-loading-overlay";
+import { BootstrapCompleteMarker } from "./lib/bootstrap-loading";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
 
@@ -90,6 +91,7 @@ function withSuspense(node: React.ReactNode) {
   return (
     <Suspense fallback={<SiteLoadingOverlay visible label="Loading page" />}>
       {node}
+      <BootstrapCompleteMarker />
     </Suspense>
   );
 }

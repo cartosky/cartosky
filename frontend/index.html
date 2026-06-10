@@ -14,10 +14,131 @@
     <link rel="dns-prefetch" href="https://b.basemaps.cartocdn.com" />
     <link rel="dns-prefetch" href="https://c.basemaps.cartocdn.com" />
     <link rel="dns-prefetch" href="https://d.basemaps.cartocdn.com" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #07111f;
+        color: #fff;
+      }
+
+      #root {
+        min-height: 100svh;
+      }
+
+      .cartosky-boot-shell {
+        display: grid;
+        min-height: 100svh;
+        place-items: center;
+        background: rgba(4, 13, 24, 0.58);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+      }
+
+      .cartosky-boot-card {
+        display: flex;
+        min-width: 9rem;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        border-radius: 1rem;
+        border: 1px solid rgba(26, 58, 92, 0.6);
+        background: rgba(4, 16, 30, 0.82);
+        padding: 1rem 1.25rem;
+        box-shadow: 0 22px 64px rgba(0, 0, 0, 0.36);
+      }
+
+      .cartosky-boot-spinner {
+        position: relative;
+        width: 2.75rem;
+        height: 2.75rem;
+      }
+
+      .cartosky-boot-spinner-ring,
+      .cartosky-boot-spinner-orbit {
+        position: absolute;
+        inset: 0;
+        border-radius: 9999px;
+      }
+
+      .cartosky-boot-spinner-ring {
+        border: 1px solid rgba(165, 243, 252, 0.18);
+      }
+
+      .cartosky-boot-spinner-orbit {
+        inset: 0.25rem;
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-top-color: rgba(165, 243, 252, 1);
+        animation: cartosky-boot-spin 0.8s linear infinite;
+      }
+
+      .cartosky-boot-spinner-core {
+        position: absolute;
+        inset: 0.95rem;
+        border-radius: 9999px;
+        background: rgba(165, 243, 252, 0.8);
+        box-shadow: 0 0 22px rgba(103, 232, 249, 0.42);
+      }
+
+      .cartosky-boot-label {
+        max-width: 13rem;
+        text-align: center;
+        font:
+          500 0.75rem/1.4 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        color: rgba(255, 255, 255, 0.76);
+      }
+
+      .cartosky-seo-fallback {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @keyframes cartosky-boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root">
-      <main>
+      <div class="cartosky-boot-shell" role="status" aria-live="polite" aria-label="Loading">
+        <div class="cartosky-boot-card">
+          <div class="cartosky-boot-spinner" aria-hidden="true">
+            <div class="cartosky-boot-spinner-ring"></div>
+            <div class="cartosky-boot-spinner-orbit"></div>
+            <div class="cartosky-boot-spinner-core"></div>
+          </div>
+          <div class="cartosky-boot-label">Loading</div>
+        </div>
+      </div>
+      <div class="cartosky-seo-fallback">
+        <main>
+          <h1>CartoSky</h1>
+          <p>
+            CartoSky is an interactive weather mapping application for viewing forecast models,
+            radar, SPC outlooks, and location-based weather data in one map-first workflow.
+          </p>
+          <p>
+            <a href="https://cartosky.com/privacy-policy">Privacy Policy</a>
+          </p>
+        </main>
+      </div>
+    </div>
+    <noscript>
+      <main style="max-width: 42rem; margin: 2rem auto; padding: 0 1.25rem; font-family: system-ui, sans-serif; line-height: 1.6">
         <h1>CartoSky</h1>
         <p>
           CartoSky is an interactive weather mapping application for viewing forecast models,
@@ -27,7 +148,7 @@
           <a href="https://cartosky.com/privacy-policy">Privacy Policy</a>
         </p>
       </main>
-    </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
