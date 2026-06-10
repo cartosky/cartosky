@@ -1389,7 +1389,7 @@ export function TwfShareModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm backdrop-brightness-[0.62] backdrop-saturate-75 sm:items-center sm:p-4"
+      className="viewer-mobile-backdrop fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Share"
