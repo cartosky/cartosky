@@ -3,6 +3,8 @@ import { useUser } from "@clerk/react";
 import { AlertTriangle, ArrowRight, Check, CreditCard, Minus } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import { PrefetchLink } from "@/components/PrefetchLink";
+
 import { PROTECTED_PRODUCTS } from "@/config/proFeatures";
 import { createCheckoutSession, createPortalSession } from "@/lib/billing";
 import { planFromPublicMetadata } from "@/lib/entitlements";
@@ -85,12 +87,12 @@ export default function Pricing() {
             Pro billing is disabled for this environment. The map viewer remains fully accessible.
           </p>
         </div>
-        <Link
+        <PrefetchLink
           to="/viewer"
           className="inline-flex rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-4 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-105"
         >
           Open viewer
-        </Link>
+        </PrefetchLink>
       </section>
     );
   }

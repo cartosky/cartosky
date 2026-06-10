@@ -4,10 +4,15 @@ import type { ReactNode } from "react";
 import { SiteLoadingOverlay } from "@/components/site-loading-overlay";
 
 type BootstrapContextValue = {
+  complete: boolean;
   markBootstrapComplete: () => void;
 };
 
 const BootstrapContext = createContext<BootstrapContextValue | null>(null);
+
+export function useBootstrapComplete(): boolean {
+  return useContext(BootstrapContext)?.complete ?? false;
+}
 
 export function BootstrapProvider({ children }: { children: ReactNode }) {
   const [complete, setComplete] = useState(false);
@@ -16,7 +21,10 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
     setComplete(true);
   }, []);
 
-  const value = useMemo(() => ({ markBootstrapComplete }), [markBootstrapComplete]);
+  const value = useMemo(
+    () => ({ complete, markBootstrapComplete }),
+    [complete, markBootstrapComplete],
+  );
 
   return (
     <BootstrapContext.Provider value={value}>

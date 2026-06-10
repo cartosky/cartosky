@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
+import Home from "./pages/home";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { SiteLoadingOverlay } from "./components/site-loading-overlay";
 import { BootstrapCompleteMarker } from "./lib/bootstrap-loading";
@@ -70,7 +71,6 @@ function lazyRoute<T extends React.ComponentType<any>>(
   });
 }
 
-const Home = lazyRoute(() => import("./pages/home"));
 const Forecast = lazyRoute(() => import("./pages/forecast"));
 const Models = lazyRoute(() => import("./pages/models"));
 const Variables = lazyRoute(() => import("./pages/variables"));

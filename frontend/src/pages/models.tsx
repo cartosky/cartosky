@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+
+import { PrefetchLink } from "@/components/PrefetchLink";
 import { ArrowRight, Layers3, Map, Radar, ShieldAlert } from "lucide-react";
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
@@ -354,19 +356,19 @@ export default function Models() {
                 official operational layers, cadence context, and the kinds of reads each source is best at.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <Link
+                <PrefetchLink
                   to="/viewer"
                   className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
                 >
                   Open Viewer
                   <ArrowRight className="h-4 w-4" />
-                </Link>
-                <Link
+                </PrefetchLink>
+                <PrefetchLink
                   to="/forecast"
                   className="inline-flex items-center gap-2 rounded-xl border border-white/14 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-white/86 transition duration-200 hover:border-white/22 hover:bg-white/[0.07]"
                 >
                   Open Forecast
-                </Link>
+                </PrefetchLink>
               </div>
             </div>
 

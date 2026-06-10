@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { PrefetchLink } from "@/components/PrefetchLink";
 import {
   Activity,
   ArrowRight,
@@ -265,19 +265,19 @@ export default function Home() {
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
-              <Link
+              <PrefetchLink
                 to="/viewer"
                 className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.22)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
               >
                 Open Viewer
                 <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
+              </PrefetchLink>
+              <PrefetchLink
                 to="/forecast"
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/25 px-5 py-3 text-sm font-semibold text-white/88 backdrop-blur-sm transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
               >
                 Open Forecast
-              </Link>
+              </PrefetchLink>
             </div>
           </div>
 
@@ -447,20 +447,20 @@ export default function Home() {
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Link
+              <PrefetchLink
                 to="/forecast"
                 className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
               >
                 Open Forecast
                 <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
+              </PrefetchLink>
+              <PrefetchLink
                 to="/viewer"
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-transparent px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.05]"
               >
                 Go to Viewer
                 <ArrowRight className="h-4 w-4" />
-              </Link>
+              </PrefetchLink>
             </div>
           </div>
 
@@ -578,19 +578,19 @@ export default function Home() {
             Work the forecast directly with models, radar, SPC outlooks, and more in a single interactive view.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-            <Link
+            <PrefetchLink
               to="/viewer"
               className="inline-flex items-center gap-2 rounded-xl border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_40px_rgba(35,196,255,0.18)] transition duration-200 hover:translate-y-[-1px] hover:brightness-105"
             >
               Open Viewer
               <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
+            </PrefetchLink>
+            <PrefetchLink
               to="/forecast"
               className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-slate-950/30 px-5 py-3 text-sm font-semibold text-white/85 transition duration-200 hover:border-white/25 hover:bg-white/[0.06]"
             >
               Open Forecast
-            </Link>
+            </PrefetchLink>
           </div>
         </div>
       </section>

@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 
+import { PrefetchLink } from "@/components/PrefetchLink";
+
 export default function SiteFooter() {
   return (
     <footer className="border-t border-white/8 bg-[#07101d]">
@@ -14,12 +16,12 @@ export default function SiteFooter() {
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Explore</div>
           <div className="mt-4 flex flex-col gap-3 text-sm text-white/68">
-            <Link to="/viewer" className="transition duration-150 hover:text-white">
+            <PrefetchLink to="/viewer" className="transition duration-150 hover:text-white">
               Viewer
-            </Link>
-            <Link to="/forecast" className="transition duration-150 hover:text-white">
+            </PrefetchLink>
+            <PrefetchLink to="/forecast" className="transition duration-150 hover:text-white">
               Forecast
-            </Link>
+            </PrefetchLink>
             <Link to="/login" className="transition duration-150 hover:text-white">
               Login
             </Link>
