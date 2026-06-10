@@ -14,7 +14,9 @@ export default function AppLayout() {
       className={
         isAdminRoute
           ? "min-h-svh flex flex-col overflow-x-hidden bg-background text-foreground"
-          : `h-svh min-h-svh flex flex-col ${isAccountRoute ? "overflow-y-auto" : "overflow-hidden"} bg-background text-foreground`
+          : isAccountRoute
+            ? "min-h-svh flex flex-col overflow-y-auto bg-background text-foreground"
+            : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
       }
     >
       {!isViewerRoute && <SiteHeader variant="app" />}
