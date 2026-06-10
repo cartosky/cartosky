@@ -1396,7 +1396,7 @@ export function TwfShareModal({
       onClick={onClose}
     >
       <div
-        className="glass w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        className="glass-navy w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
         style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -1512,7 +1512,7 @@ export function TwfShareModal({
 
           {twfStatus.linked !== true && !isPosted && (
             <div className="mt-3 px-4">
-              <div className="flex flex-col gap-2 rounded-2xl border border-cyan-200/14 bg-[#071524]/85 px-3.5 py-3 text-sm text-white/78 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3 text-sm text-white/78 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center gap-2">
                   {checkingShareAccess ? (
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
@@ -1553,7 +1553,7 @@ export function TwfShareModal({
 
           {/* Composer card */}
           <div className="mt-3 px-4">
-            <div className="glass-overlay-section overflow-hidden rounded-2xl">
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
 
             {/* Destination row */}
             <div className="flex items-start justify-between gap-2 px-4 py-3">

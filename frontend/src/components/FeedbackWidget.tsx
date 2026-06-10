@@ -183,7 +183,7 @@ export function FeedbackWidget() {
           onClick={closeWidget}
         >
           <div
-            className="glass w-full max-w-[520px] flex flex-col overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
+            className="glass-navy w-full max-w-[520px] flex flex-col overflow-hidden rounded-t-3xl text-white sm:rounded-2xl"
             style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - 1.5rem)" }}
             onClick={(event) => event.stopPropagation()}
           >
