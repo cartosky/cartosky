@@ -343,7 +343,7 @@ export default function Account() {
   }, []);
 
   const accountTabs = [
-    { label: "Profile", hash: "#/profile" },
+    { label: "Profile", hash: "" },
     { label: "Security", hash: "#/security" },
     { label: "Integrations", hash: "#/integrations" },
   ];
@@ -361,13 +361,18 @@ export default function Account() {
             <TwfConnectedAccountReturn />
             <div className="mb-4 flex gap-2 md:hidden">
               {accountTabs.map((tab) => {
-                const isActive = activeHash === tab.hash || (tab.hash === "#/profile" && (activeHash === "" || activeHash === "#/"));
+                const isActive = activeHash === tab.hash || (tab.hash === "" && (activeHash === "" || activeHash === "#/" || activeHash === "#/profile"));
                 return (
                   <button
                     key={tab.hash}
                     type="button"
                     onClick={() => {
-                      window.location.hash = tab.hash;
+                      if (tab.hash === "") {
+                        history.pushState(null, "", window.location.pathname);
+                        setActiveHash("");
+                      } else {
+                        window.location.hash = tab.hash;
+                      }
                     }}
                     className={cn(
                       "flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors duration-150",

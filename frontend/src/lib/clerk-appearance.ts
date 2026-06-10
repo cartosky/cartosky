@@ -17,7 +17,7 @@ export const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
     borderRadius: "0.5rem",
   },
   elements: {
-    card: "border border-white/10 bg-transparent shadow-xl backdrop-blur-xl",
+    card: "border border-white/10 bg-transparent shadow-xl backdrop-blur-xl !w-full !max-w-full !min-w-0",
     logoBox: {  height: '96px', marginBottom: '1.5rem', justifyContent: 'center', display: 'flex' },
     logoImage: { height: '80px', maxHeight: '80px', width: 'auto', maxWidth: '224px' },
     headerTitle: "text-white",
@@ -50,7 +50,7 @@ export const clerkAppearance: NonNullable<ClerkProviderProps["appearance"]> = {
     modalContent: "border border-sky-200/10 bg-[#08182a] text-white shadow-[0_24px_100px_rgba(0,0,0,0.72)]",
     modalCloseButton: "text-slate-500 hover:text-white",
     userProfileRoot: "bg-[#08182a] text-white w-full",
-    userProfileCard: "bg-[#08182a] text-white shadow-none w-full !h-auto",
+    userProfileCard: "bg-[#08182a] text-white shadow-none w-full",
     userProfilePage: "bg-[#08182a] text-white w-full",
     pageScrollBox: "bg-[#08182a] text-white !overflow-visible !height-auto",
     navbar: "border-r border-sky-200/10 bg-[#061323] text-white",
