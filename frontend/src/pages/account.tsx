@@ -1,7 +1,7 @@
 import { useClerk, useReverification, useUser } from "@clerk/react";
 import { isReverificationCancelledError } from "@clerk/react/errors";
 import { AlertTriangle, CheckCircle2, CreditCard, Eye, EyeOff, Link2, Lock, Plug, RefreshCw, Unlink, User } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { createPortalSession } from "@/lib/billing";
@@ -489,6 +489,25 @@ function PasswordField({
   onToggleShow: () => void;
   autoComplete?: string;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Chromium breaks click-to-place-caret after an input's type is swapped
+  // between password/text; re-focusing and restoring the selection resets it.
+  const handleToggle = () => {
+    const input = inputRef.current;
+    const start = input?.selectionStart ?? null;
+    const end = input?.selectionEnd ?? null;
+    onToggleShow();
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      if (start !== null && end !== null) {
+        el.setSelectionRange(start, end);
+      }
+    });
+  };
+
   return (
     <div>
       <label htmlFor={id} className={LABEL_CLASS}>
@@ -496,6 +515,7 @@ function PasswordField({
       </label>
       <div className="relative flex items-center">
         <input
+          ref={inputRef}
           id={id}
           type={show ? "text" : "password"}
           value={value}
@@ -505,7 +525,8 @@ function PasswordField({
         />
         <button
           type="button"
-          onClick={onToggleShow}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={handleToggle}
           aria-label={show ? "Hide password" : "Show password"}
           className="absolute right-3 text-slate-500 hover:text-slate-300"
         >
@@ -559,13 +580,50 @@ function SecuritySection() {
     setPasswordSaveStatus("idle");
   };
 
+  // Latest current-password value for the reverification handler below, which
+  // may run from a closure created on an earlier render.
+  const currentPasswordRef = useRef("");
+  currentPasswordRef.current = currentPassword;
+
   // Password changes are a Clerk "sensitive action": when the session's last
   // verification is too old, the API returns session_reverification_required.
-  // useReverification pops Clerk's verification modal and retries on success.
-  const updatePassword = useReverification((params: { currentPassword: string; newPassword: string }) => {
-    if (!user) throw new Error("Not signed in.");
-    return user.updatePassword(params);
-  });
+  // Instead of letting useReverification pop its modal (which would ask for the
+  // current password the user just typed), satisfy the step-up check silently
+  // by verifying the session with that same password.
+  const updatePassword = useReverification(
+    (params: { currentPassword: string; newPassword: string }) => {
+      if (!user) throw new Error("Not signed in.");
+      return user.updatePassword(params);
+    },
+    {
+      onNeedsReverification: async ({ complete, cancel, level }) => {
+        const session = clerk.session;
+        const password = currentPasswordRef.current;
+        if (!session || !password) {
+          setPasswordError("Additional verification is required. Please sign out and back in, then try again.");
+          cancel();
+          return;
+        }
+        try {
+          await session.startVerification({ level: level ?? "first_factor" });
+          const verification = await session.attemptFirstFactorVerification({ strategy: "password", password });
+          if (verification.status === "complete") {
+            complete();
+            return;
+          }
+          setPasswordError(
+            verification.status === "needs_second_factor"
+              ? "This change requires two-factor verification. Please sign out and back in, then try again."
+              : "Additional verification is required. Please sign out and back in, then try again."
+          );
+          cancel();
+        } catch (err) {
+          setPasswordError((err as Error).message || "Current password is incorrect.");
+          cancel();
+        }
+      },
+    }
+  );
 
   const handlePasswordSave = async () => {
     if (!user) return;
