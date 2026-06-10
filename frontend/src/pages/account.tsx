@@ -492,18 +492,22 @@ function PasswordField({
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Chromium breaks click-to-place-caret after an input's type is swapped
-  // between password/text; re-focusing and restoring the selection resets it.
+  // between password/text; re-focusing and restoring the caret resets it.
+  // Only do this when the field was already focused: imposing focus/selection
+  // on an inactive field makes iOS WebKit select the entire value on the next
+  // tap. Restore a collapsed caret (not a range) for the same reason.
   const handleToggle = () => {
     const input = inputRef.current;
-    const start = input?.selectionStart ?? null;
-    const end = input?.selectionEnd ?? null;
+    const wasFocused = !!input && document.activeElement === input;
+    const caret = input?.selectionEnd ?? null;
     onToggleShow();
+    if (!wasFocused) return;
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (!el) return;
       el.focus({ preventScroll: true });
-      if (start !== null && end !== null) {
-        el.setSelectionRange(start, end);
+      if (caret !== null) {
+        el.setSelectionRange(caret, caret);
       }
     });
   };
@@ -793,6 +797,13 @@ export default function Account() {
 
       <div className="relative mx-auto max-w-4xl px-4 py-8 md:px-6 md:py-12">
         <TwfConnectedAccountReturn />
+
+            {/* Page header */}
+            <div className="mb-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/70">CartoSky</p>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white md:text-3xl">Account</h1>
+              <p className="mt-2 text-sm text-slate-400">Manage your profile, security, and connected services.</p>
+            </div>
 
             {/* Mobile tab strip — hidden on md+ */}
             <div className="mb-5 md:hidden">
