@@ -1422,7 +1422,7 @@ export function TwfShareModal({
           {/* Screenshot preview */}
           <TooltipProvider delayDuration={250}>
             <div className="px-4">
-              <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+              <div className="relative aspect-[16/9] max-h-[160px] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] sm:max-h-none">
                 {screenshotBlobUrl ? (
                   <>
                     <img

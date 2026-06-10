@@ -208,7 +208,7 @@ export function FeedbackWidget() {
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
               <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {CATEGORY_OPTIONS.map((option) => {
                   const Icon = option.icon;
                   const selected = category === option.value;
