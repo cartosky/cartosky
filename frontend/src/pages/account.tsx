@@ -798,7 +798,7 @@ export default function Account() {
 
             {/* Page header */}
             <div className="mb-8">
-              <h1 className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/70">CartoSky Account</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-white md:text-3xl">CartoSky Account</h1>
               <p className="mt-2 text-sm text-slate-400">Manage your profile, security, and connected services.</p>
             </div>
 

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { ClerkProvider, type ClerkProviderProps } from "@clerk/react";
 import { BrowserRouter } from "react-router-dom";
 import RouterApp from "./RouterApp";
+import { AccountRoutePrefetch } from "./components/AccountRoutePrefetch";
 import { AnalyticsBridge } from "./components/AnalyticsBridge";
 import { ClerkAuthTokenBridge } from "./components/ClerkAuthTokenBridge";
 import { initAnalytics } from "./lib/analytics";
@@ -26,6 +27,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <EnvClerkProvider afterSignOutUrl="/" appearance={clerkAppearance}>
       <ClerkAuthTokenBridge />
+      <AccountRoutePrefetch />
       <BrowserRouter>
         <BootstrapProvider>
           <SiteLoadingProvider>

@@ -6,7 +6,9 @@ import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, buildMapStyle, type BasemapMode, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
-import SiteHeader from "@/components/SiteHeader";
+import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
+
+const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
 import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
 import { useTour } from "@/hooks/useTour";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
@@ -4342,7 +4344,9 @@ export default function App() {
   return (
     <ViewerToolbarContext.Provider value={toolbarContextValue}>
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <SiteHeader variant="app" />
+      <Suspense fallback={<ViewerSiteHeaderFallback />}>
+        <ViewerSiteHeader />
+      </Suspense>
 
       <div className="relative flex-1 min-h-0 overflow-hidden pt-14">
         <MapCanvas
