@@ -1,9 +1,11 @@
-import { type ComponentType } from "react";
+import { type ComponentType, Suspense } from "react";
 import { useAuth } from "@clerk/react";
 import { Activity, BarChart3, ClipboardCheck, Gauge, MessageSquareText, Waypoints } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { AdminRouteSuspenseFallback } from "@/components/route-suspense-fallbacks";
 import { SiteLoadingOverlay } from "@/components/site-loading-overlay";
+import { BootstrapCompleteMarker } from "@/lib/bootstrap-loading";
 
 function AdminNavItem(props: { to: string; label: string; icon: ComponentType<{ className?: string }> }) {
   const { to, label, icon: Icon } = props;
@@ -60,7 +62,10 @@ export default function AdminLayout() {
 
         <main className="min-w-0">
           {isLoaded ? (
-            <Outlet />
+            <Suspense fallback={<AdminRouteSuspenseFallback />}>
+              <Outlet />
+              <BootstrapCompleteMarker />
+            </Suspense>
           ) : (
             <SiteLoadingOverlay visible label="Loading admin session" />
           )}

@@ -1,12 +1,15 @@
+import { Suspense } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+
+import { AdminRouteSuspenseFallback } from "@/components/route-suspense-fallbacks";
+import { ViewerMapSkeleton } from "@/components/ViewerMapSkeleton";
+import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
+import { BootstrapCompleteMarker } from "@/lib/bootstrap-loading";
 import SiteHeader from "../components/SiteHeader";
 
 export default function AppLayout() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
-  const isAccountRoute = location.pathname === "/account";
-  // On the viewer route, App.tsx renders SiteHeader itself (inside the
-  // ViewerToolbarContext.Provider) so that the header can read toolbar state.
   const isViewerRoute = location.pathname === "/viewer";
 
   return (
@@ -14,14 +17,16 @@ export default function AppLayout() {
       className={
         isAdminRoute
           ? "min-h-svh flex flex-col overflow-x-hidden bg-background text-foreground"
-          : isAccountRoute
-            ? "min-h-svh flex flex-col overflow-y-auto bg-background text-foreground"
-            : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
+          : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
       }
     >
-      {!isViewerRoute && <SiteHeader variant="app" />}
-      <div className={isAdminRoute ? "flex-1 min-h-0" : isAccountRoute ? "flex flex-1 min-h-0 overflow-y-auto" : "flex flex-1 min-h-0 overflow-hidden"}>
-        <Outlet />
+      {isViewerRoute ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
+
+      <div className={isAdminRoute ? "flex flex-1 min-h-0" : "flex flex-1 min-h-0 overflow-hidden"}>
+        <Suspense fallback={isViewerRoute ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
+          <Outlet />
+          <BootstrapCompleteMarker />
+        </Suspense>
       </div>
     </div>
   );

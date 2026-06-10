@@ -1,6 +1,10 @@
+import { Suspense } from "react";
 import { Outlet } from "react-router-dom";
-import SiteHeader from "../components/SiteHeader";
+
+import { BootstrapCompleteMarker } from "@/lib/bootstrap-loading";
+import { MarketingRouteSuspenseFallback } from "@/components/route-suspense-fallbacks";
 import SiteFooter from "../components/SiteFooter";
+import SiteHeader from "../components/SiteHeader";
 
 export default function MarketingLayout() {
   return (
@@ -26,7 +30,10 @@ export default function MarketingLayout() {
       <SiteHeader variant="marketing" />
 
       <main className="mx-auto max-w-6xl px-5 md:px-8 py-12 md:py-16">
-        <Outlet />
+        <Suspense fallback={<MarketingRouteSuspenseFallback />}>
+          <Outlet />
+          <BootstrapCompleteMarker />
+        </Suspense>
       </main>
 
       <SiteFooter />

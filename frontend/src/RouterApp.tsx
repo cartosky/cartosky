@@ -1,12 +1,10 @@
-import { Suspense, lazy, useEffect } from "react";
+import { lazy, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import Home from "./pages/home";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { SiteLoadingOverlay } from "./components/site-loading-overlay";
-import { BootstrapCompleteMarker } from "./lib/bootstrap-loading";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
 
@@ -87,15 +85,6 @@ const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
 const AdminFeedback = lazyRoute(() => import("./pages/admin/feedback"));
 const Viewer = lazyRoute(() => import("./pages/viewer"));
 
-function withSuspense(node: React.ReactNode) {
-  return (
-    <Suspense fallback={<SiteLoadingOverlay visible label="Loading page" />}>
-      {node}
-      <BootstrapCompleteMarker />
-    </Suspense>
-  );
-}
-
 function getPageTitle(pathname: string) {
   const pageTitles: Array<[prefix: string, title: string]> = [
     ["/admin/overview", "Admin Overview"],
@@ -132,31 +121,31 @@ export default function RouterApp() {
   return (
     <Routes>
       <Route element={<MarketingLayout />}>
-        <Route path="/" element={withSuspense(<Home />)} />
-        <Route path="/forecast" element={withSuspense(<Forecast />)} />
-        <Route path="/models" element={withSuspense(<Models />)} />
-        <Route path="/variables" element={withSuspense(<Variables />)} />
-        <Route path="/login" element={withSuspense(<Login />)} />
+        <Route path="/" element={<Home />} />
+        <Route path="/forecast" element={<Forecast />} />
+        <Route path="/models" element={<Models />} />
+        <Route path="/variables" element={<Variables />} />
+        <Route path="/login" element={<Login />} />
         <Route element={<ProtectedRoute />}>
-          <Route path="/account/*" element={withSuspense(<Account />)} />
+          <Route path="/account/*" element={<Account />} />
         </Route>
-        <Route path="/pricing" element={withSuspense(<Pricing />)} />
-        <Route path="/checkout-success" element={withSuspense(<CheckoutSuccess />)} />
-        <Route path="/privacy" element={withSuspense(<Privacy />)} />
-        <Route path="/privacy-policy" element={withSuspense(<Privacy />)} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/checkout-success" element={<CheckoutSuccess />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/privacy-policy" element={<Privacy />} />
       </Route>
 
       <Route element={<AppLayout />}>
-        <Route path="/viewer" element={withSuspense(<Viewer />)} />
+        <Route path="/viewer" element={<Viewer />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Navigate to="/admin/overview" replace />} />
-          <Route path="overview" element={withSuspense(<AdminOverview />)} />
-          <Route path="analytics" element={withSuspense(<AdminAnalytics />)} />
-          <Route path="observability" element={withSuspense(<AdminObservability />)} />
-          <Route path="traces" element={withSuspense(<AdminTraces />)} />
-          <Route path="status" element={withSuspense(<AdminStatus />)} />
-          <Route path="feedback" element={withSuspense(<AdminFeedback />)} />
+          <Route path="overview" element={<AdminOverview />} />
+          <Route path="analytics" element={<AdminAnalytics />} />
+          <Route path="observability" element={<AdminObservability />} />
+          <Route path="traces" element={<AdminTraces />} />
+          <Route path="status" element={<AdminStatus />} />
+          <Route path="feedback" element={<AdminFeedback />} />
           <Route path="legacy-performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="performance" element={<Navigate to="/admin/overview" replace />} />
           <Route path="usage" element={<Navigate to="/admin/analytics" replace />} />
