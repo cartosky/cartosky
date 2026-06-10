@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Show, UserButton, useAuth } from "@clerk/react";
 import { NavLink, useLocation } from "react-router-dom";
 
+import { PrefetchNavLink, routePrefetchIntentHandlers } from "@/components/PrefetchLink";
+
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { API_ORIGIN } from "@/lib/config";
 import { clerkUserButtonProps } from "@/lib/clerk-appearance";
@@ -21,6 +23,7 @@ function NavItem({ to, label, onClick, className }: NavItemProps) {
     <NavLink
       to={to}
       onClick={onClick}
+      {...routePrefetchIntentHandlers(to)}
       className={({ isActive }) =>
         [
           "text-sm font-medium transition px-3 py-1.5 rounded-md",
@@ -137,12 +140,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <nav className="ml-auto hidden items-center gap-1 md:flex">
-            <NavLink
+            <PrefetchNavLink
               to="/viewer"
               className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3.5 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)] transition duration-150 hover:brightness-105"
             >
               Viewer
-            </NavLink>
+            </PrefetchNavLink>
             <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
             {showPricingNav ? <NavItem to="/pricing" label="Pricing" /> : null}
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
@@ -190,12 +193,12 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <div className="ml-auto flex items-center gap-2 md:hidden" ref={menuRef}>
-            <NavLink
+            <PrefetchNavLink
               to="/viewer"
               className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)]"
             >
               Viewer
-            </NavLink>
+            </PrefetchNavLink>
             <button
               type="button"
               className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white hover:bg-white/10"
@@ -239,13 +242,13 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                   </Show>
                   <Show when="signed-in">
                     <div className="flex items-center justify-between rounded-md px-3 py-2">
-                      <NavLink
+                      <PrefetchNavLink
                         to="/account"
                         onClick={() => setMobileMenuOpen(false)}
                         className="text-sm font-medium text-white/90 transition hover:text-white"
                       >
                         Account
-                      </NavLink>
+                      </PrefetchNavLink>
                       <UserButton {...clerkUserButtonProps} />
                     </div>
                   </Show>
