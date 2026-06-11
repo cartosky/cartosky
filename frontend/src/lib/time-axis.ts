@@ -3,7 +3,7 @@ export type ObservedSourceStatusTone = "live" | "delayed" | "stale" | "unavailab
 
 const OBSERVED_SOURCE_THRESHOLDS: Record<string, { delayed: number; stale: number }> = {
   mrms: { delayed: 8, stale: 15 },
-  current_analysis: { delayed: 25, stale: 45 },
+  current_analysis: { delayed: 45, stale: 60 },
   "goes-east": { delayed: 30, stale: 45 },
 };
 
@@ -243,7 +243,7 @@ export function deriveObservedSourceStatus(params: {
   const defaults = OBSERVED_SOURCE_THRESHOLDS[sourceId];
   const delayedThresholdMinutes = Math.max(1, params.delayedThresholdMinutes ?? defaults?.delayed ?? 10);
   const staleThresholdMinutes = Math.max(
-    delayedThresholdMinutes,
+    delayedThresholdMinutes + 1,
     params.staleThresholdMinutes ?? defaults?.stale ?? 15,
   );
 

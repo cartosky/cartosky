@@ -29,7 +29,7 @@ from app.services.rtma_ru_publish import (
     publish_current_analysis_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
-from app.services.publish_utils import enforce_run_artifact_retention
+from app.services.publish_utils import enforce_herbie_cache_retention, enforce_run_artifact_retention
 
 logger = logging.getLogger(__name__)
 
@@ -457,6 +457,7 @@ def _enforce_retention(config: CurrentAnalysisPollerConfig) -> None:
     enforce_run_artifact_retention(config.data_root / "staging" / CURRENT_ANALYSIS_MODEL_ID, config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "published" / CURRENT_ANALYSIS_MODEL_ID, config.keep_runs)
     enforce_run_artifact_retention(config.data_root / "manifests" / CURRENT_ANALYSIS_MODEL_ID, config.keep_runs)
+    enforce_herbie_cache_retention(config.cache_dir, CURRENT_ANALYSIS_HERBIE_MODEL, config.keep_runs)
 
 
 def _floor_to_cadence(value: datetime, cadence_minutes: int) -> datetime:

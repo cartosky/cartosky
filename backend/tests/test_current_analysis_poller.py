@@ -49,6 +49,45 @@ def test_compute_target_frame_count_uses_inclusive_window() -> None:
     assert rtma_ru_poller.compute_target_frame_count(window_minutes=120, frame_cadence_minutes=15) == 9
 
 
+def test_enforce_retention_prunes_current_analysis_herbie_cache(tmp_path: Path) -> None:
+    config = rtma_ru_poller.CurrentAnalysisPollerConfig(
+        data_root=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        product="anl",
+        poll_seconds=300,
+        keep_runs=6,
+        window_minutes=120,
+        frame_cadence_minutes=15,
+        lookback_minutes=240,
+        allow_grib_without_idx=False,
+        source_priority=("aws", "nomads"),
+    )
+    model_root = config.cache_dir / "rtma_ru"
+    run_ids = [
+        "20260611_1200z",
+        "20260611_1215z",
+        "20260611_1230z",
+        "20260611_1245z",
+        "20260611_1300z",
+        "20260611_1315z",
+        "20260611_1330z",
+    ]
+    files: dict[str, Path] = {}
+    for run_id in run_ids:
+        day, hour_token = run_id.split("_")
+        filename = f"rtma_ru.t{hour_token.removesuffix('z')}z.anl.grib2"
+        path = model_root / day / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(run_id)
+        files[run_id] = path
+
+    rtma_ru_poller._enforce_retention(config)
+
+    assert not files["20260611_1200z"].exists()
+    for run_id in run_ids[1:]:
+        assert files[run_id].exists()
+
+
 def test_run_once_publishes_when_new_cycle_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config(tmp_path)
     run_times = [

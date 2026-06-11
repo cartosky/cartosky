@@ -32,6 +32,7 @@ from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
+from app.services.publish_utils import enforce_herbie_cache_retention
 from app.services.render_resampling import (
     compute_loop_output_shape,
     high_quality_loop_resampling,
@@ -1608,50 +1609,7 @@ def _prune_empty_dirs(root: Path) -> None:
 
 
 def _enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -> None:
-    if keep_runs < 1:
-        return
-
-    normalized_model_id = str(model_id).strip().lower()
-    model_roots = (
-        [
-            child
-            for child in root.iterdir()
-            if child.is_dir() and child.name.strip().lower() == normalized_model_id
-        ]
-        if root.is_dir() and normalized_model_id
-        else []
-    )
-    if not model_roots:
-        return
-
-    for model_root in model_roots:
-        run_files: dict[str, list[Path]] = {}
-        for path in model_root.rglob("*"):
-            if not path.is_file():
-                continue
-            run_id = _extract_herbie_run_id(path, model_root=model_root)
-            if run_id is None:
-                continue
-            run_files.setdefault(run_id, []).append(path)
-
-        if len(run_files) <= keep_runs:
-            continue
-
-        sorted_runs = sorted(
-            run_files,
-            key=lambda run_id: _parse_run_id_datetime(run_id) or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=True,
-        )
-        for run_id in sorted_runs[keep_runs:]:
-            for path in run_files.get(run_id, []):
-                logger.info("Removing old Herbie cache file: %s", path)
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    continue
-                except OSError:
-                    logger.warning("Failed removing old Herbie cache file: %s", path)
-        _prune_empty_dirs(model_root)
+    enforce_herbie_cache_retention(root, model_id, keep_runs)
 
 
 def _log_runtime_cache_prune(*, run_id: str, model_id: str, reason: str) -> None:

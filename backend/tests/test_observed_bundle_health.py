@@ -142,18 +142,18 @@ def test_observed_bundle_health_marks_goes_east_delayed_after_satellite_window()
     assert payload["latest_scan_age_minutes"] == 32
 
 
-def test_observed_bundle_health_uses_current_analysis_thresholds() -> None:
-    now_utc = datetime(2026, 3, 27, 12, 28, tzinfo=timezone.utc)
+def test_observed_bundle_health_keeps_current_analysis_live_before_45_minutes() -> None:
+    now_utc = datetime(2026, 3, 27, 12, 44, tzinfo=timezone.utc)
     payload = build_observed_bundle_health(
-        latest_run="20260327_1228z",
+        latest_run="20260327_1244z",
         manifest={
-            "last_updated": "2026-03-27T12:27:00Z",
+            "last_updated": "2026-03-27T12:43:00Z",
             "variables": {
                 "tmp2m": {
                     "expected_frames": 4,
                     "available_frames": 4,
                     "frames": [
-                        {"fh": 0, "valid_time": "2026-03-27T12:05:00Z"},
+                        {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
                     ],
                 }
             },
@@ -165,4 +165,30 @@ def test_observed_bundle_health_uses_current_analysis_thresholds() -> None:
     assert payload["freshness_state"] == "live"
     assert payload["usable"] is True
     assert payload["degraded_reason"] is None
-    assert payload["latest_scan_age_minutes"] == 23
+    assert payload["latest_scan_age_minutes"] == 44
+
+
+def test_observed_bundle_health_delays_current_analysis_at_45_minutes() -> None:
+    now_utc = datetime(2026, 3, 27, 12, 45, tzinfo=timezone.utc)
+    payload = build_observed_bundle_health(
+        latest_run="20260327_1245z",
+        manifest={
+            "last_updated": "2026-03-27T12:44:00Z",
+            "variables": {
+                "tmp2m": {
+                    "expected_frames": 4,
+                    "available_frames": 4,
+                    "frames": [
+                        {"fh": 0, "valid_time": "2026-03-27T12:00:00Z"},
+                    ],
+                }
+            },
+        },
+        source="current_analysis",
+        now_utc=now_utc,
+    )
+
+    assert payload["freshness_state"] == "delayed"
+    assert payload["usable"] is True
+    assert payload["degraded_reason"] == "delayed_source"
+    assert payload["latest_scan_age_minutes"] == 45

@@ -38,7 +38,6 @@ import type { GroupedOption } from "@/lib/app-utils";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { API_V4_BASE } from "@/lib/config";
 import { useFeedbackContext } from "@/lib/feedback-context";
-import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 
@@ -71,47 +70,6 @@ const DESKTOP_ICON_CLUSTER_CLASSNAME = "flex items-center gap-px rounded-[7px] b
 const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
 const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-cyan-300/[0.12] text-cyan-200 hover:bg-cyan-300/[0.12] hover:text-cyan-200";
 const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-[2px] shrink-0 rounded-full bg-cyan-300/35";
-
-function AvailabilityReadout({
-  label,
-  description,
-  tone,
-}: {
-  label: string;
-  description?: string | null;
-  tone?: ObservedSourceStatusTone | null;
-}) {
-  return (
-    <div
-      title={description ?? label}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium tracking-[0.06em] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
-        tone === "unavailable"
-          ? "border-rose-300/24 bg-rose-300/[0.08] text-rose-50/94"
-          : tone === "stale"
-            ? "border-orange-300/24 bg-orange-300/[0.08] text-orange-50/94"
-            : tone === "delayed"
-              ? "border-cyan-300/20 bg-cyan-300/[0.10] text-cyan-50/96"
-              : "border-emerald-300/24 bg-emerald-300/[0.12] text-emerald-50/96"
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "h-1.5 w-1.5 rounded-full",
-          tone === "unavailable"
-            ? "bg-rose-300/90"
-            : tone === "stale"
-              ? "bg-orange-300/90"
-              : tone === "delayed"
-                ? "bg-cyan-300/90"
-                : "bg-emerald-300/90"
-        )}
-      />
-      {label}
-    </div>
-  );
-}
 
 function viewerLocationId(result: Pick<LocationSearchResult, "display_name" | "latitude" | "longitude">): string {
   const label = result.display_name
@@ -1040,8 +998,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
-    onViewLatestRun, runSelectionLocked, sourceStatusLabel, sourceStatusDescription,
-    sourceStatusTone,
+    onViewLatestRun, runSelectionLocked,
     onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
@@ -1109,16 +1066,6 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
           />
         </HeaderSelectField>
-
-        <div data-tour-target="freshness-indicator" className="flex items-center">
-          {sourceStatusLabel ? (
-            <AvailabilityReadout
-              label={sourceStatusLabel}
-              description={sourceStatusDescription}
-              tone={sourceStatusTone}
-            />
-          ) : null}
-        </div>
 
         <div className={DESKTOP_ICON_CLUSTER_CLASSNAME}>
           <RegionUtilitySelect
