@@ -4,6 +4,7 @@ import { useLocation } from "react-router-dom";
 
 import { fetchTwfStatus } from "@/lib/admin-api";
 import { captureAnalyticsPageview, syncAnalyticsAuthStatus } from "@/lib/analytics";
+import { isPostHogEnabled } from "@/lib/config";
 
 export function AnalyticsBridge() {
   const { user } = useUser();
@@ -35,6 +36,15 @@ export function AnalyticsBridge() {
           role: clerkRole,
           plan: clerkPlan,
         });
+
+        if (isPostHogEnabled()) {
+          const { default: posthog } = await import("posthog-js");
+          if (user?.publicMetadata?.role === "admin") {
+            posthog.opt_out_capturing();
+          } else {
+            posthog.opt_in_capturing();
+          }
+        }
       } catch {
         // Ignore analytics identity failures.
       }
