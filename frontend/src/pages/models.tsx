@@ -28,14 +28,14 @@ const MODEL_CATEGORY_SECTIONS: Array<{
     id: "MODELS",
     eyebrow: "Core Models",
     title: "The guidance that anchors the viewer.",
-    description: "Deterministic and AI-global model families for short-range through medium-range forecasting.",
+    description: "Deterministic and AI-global model families for short-range through long-range forecasting.",
     layout: "rows",
   },
   {
     id: "ENSEMBLES",
     eyebrow: "Ensemble Suites",
     title: "Spread-aware context without leaving the map.",
-    description: "Ensemble-mean fields for comparing consensus structure against deterministic guidance.",
+    description: "Ensemble-mean fields for comparing consensus against deterministic guidance.",
     layout: "rows",
   },
   {
