@@ -23,7 +23,12 @@ export function initAnalytics(): void {
 export function syncAnalyticsAuthStatus(
   clerkUserId: string | null,
   status: TwfStatus,
-  profile?: { email: string | null; name: string | null },
+  profile?: {
+    email: string | null;
+    name: string | null;
+    role?: string | null;
+    plan?: string | null;
+  },
 ): void {
   syncPostHogAuthStatus(status);
   syncMixpanelAuthStatus(clerkUserId, status, profile);

@@ -10,6 +10,10 @@ export function AnalyticsBridge() {
   const clerkUserId = user?.id ?? null;
   const clerkEmail = user?.primaryEmailAddress?.emailAddress ?? null;
   const clerkName = user?.fullName ?? user?.username ?? null;
+  const clerkRole =
+    user?.publicMetadata?.role != null ? String(user.publicMetadata.role) : null;
+  const clerkPlan =
+    user?.publicMetadata?.plan != null ? String(user.publicMetadata.plan) : null;
   const location = useLocation();
 
   useEffect(() => {
@@ -28,6 +32,8 @@ export function AnalyticsBridge() {
         syncAnalyticsAuthStatus(clerkUserId, status, {
           email: clerkEmail,
           name: clerkName,
+          role: clerkRole,
+          plan: clerkPlan,
         });
       } catch {
         // Ignore analytics identity failures.
@@ -38,7 +44,7 @@ export function AnalyticsBridge() {
     return () => {
       cancelled = true;
     };
-  }, [clerkEmail, clerkName, clerkUserId]);
+  }, [clerkEmail, clerkName, clerkPlan, clerkRole, clerkUserId]);
 
   useEffect(() => {
     captureAnalyticsPageview(location.pathname, location.search);

@@ -23,7 +23,12 @@ type PendingCapture =
       clerkUserId: string;
       isTwfLinked: boolean;
       twfMemberId?: number;
-      profile?: { email: string | null; name: string | null };
+      profile?: {
+        email: string | null;
+        name: string | null;
+        role?: string | null;
+        plan?: string | null;
+      };
     }
   | {
       type: "event";
@@ -98,7 +103,12 @@ function sendMixpanelEvent(
 function identifyMixpanelUser(
   clerkUserId: string,
   status: Pick<TwfStatus, "linked" | "member_id">,
-  profile?: { email: string | null; name: string | null },
+  profile?: {
+    email: string | null;
+    name: string | null;
+    role?: string | null;
+    plan?: string | null;
+  },
 ): void {
   if (!mixpanelClient) {
     return;
@@ -118,6 +128,12 @@ function identifyMixpanelUser(
   }
   if (profile?.name) {
     peopleProps.$name = profile.name;
+  }
+  if (profile?.role) {
+    peopleProps.role = profile.role;
+  }
+  if (profile?.plan) {
+    peopleProps.plan = profile.plan;
   }
   mixpanelClient.people.set(peopleProps);
 }
@@ -170,7 +186,12 @@ export function initMixpanelAnalytics(): void {
 export function syncMixpanelAuthStatus(
   clerkUserId: string | null,
   status: TwfStatus,
-  profile?: { email: string | null; name: string | null },
+  profile?: {
+    email: string | null;
+    name: string | null;
+    role?: string | null;
+    plan?: string | null;
+  },
 ): void {
   if (!isMixpanelEnabled()) {
     return;
