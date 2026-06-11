@@ -107,6 +107,7 @@ import {
   nearestFrame,
   mostRecentFrameHourByValidTime,
   isGridPlaybackStartReadyForHour,
+  resolveLoopPlaybackNextHour,
   resolveLoopPlaybackStartHour,
   selectableFramesForVariable,
   resolveForecastHour,
@@ -1779,13 +1780,10 @@ export default function App() {
       return false;
     }
 
-    const nextIndex = currentIndex + 1;
-    if (nextIndex >= gridFrameHours.length) {
-      stopGridPlaybackAtCurrentFrame(currentHour);
+    const nextHour = resolveLoopPlaybackNextHour(gridFrameHours, currentHour);
+    if (nextHour === null) {
       return false;
     }
-
-    const nextHour = gridFrameHours[nextIndex];
     if (!gridReadyHourSet.has(nextHour)) {
       gridPlaybackWaitStateRef.current.lookAheadWaitStartedAtMs = 0;
       return false;
@@ -1798,6 +1796,7 @@ export default function App() {
     }
 
     let aheadReady = true;
+    const nextIndex = gridFrameHours.indexOf(nextHour);
     const lookAheadEnd = Math.min(nextIndex + autoplayReadyAheadFrames, gridFrameHours.length - 1);
     for (let index = nextIndex + 1; index <= lookAheadEnd; index += 1) {
       const aheadHour = gridFrameHours[index];
@@ -1833,7 +1832,6 @@ export default function App() {
     isGridPlayable,
     isPlaying,
     resetGridPlaybackWaitState,
-    stopGridPlaybackAtCurrentFrame,
   ]);
 
   useLayoutEffect(() => {
@@ -3260,13 +3258,12 @@ export default function App() {
         const currentHour = Number(currentHourCandidate);
         const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
         if (currentIndex >= 0) {
-          const nextIndex = currentIndex + 1;
-          if (nextIndex >= gridFrameHours.length) {
-            stopGridPlaybackAtCurrentFrame(currentHour);
+          const nextHour = resolveLoopPlaybackNextHour(gridFrameHours, currentHour);
+          if (nextHour === null) {
+            rafId = window.requestAnimationFrame(monitorPlayback);
             return;
           }
 
-          const nextHour = gridFrameHours[nextIndex];
           const waitState = gridPlaybackWaitStateRef.current;
           if (gridReadyHourSet.has(nextHour)) {
             void attemptGridPlaybackAdvance();
@@ -3310,7 +3307,6 @@ export default function App() {
     isGridPlayable,
     isPlaying,
     resetGridPlaybackWaitState,
-    stopGridPlaybackAtCurrentFrame,
   ]);
 
   useEffect(() => {
@@ -3390,12 +3386,11 @@ export default function App() {
         setTargetForecastHour(selectableFrameHours[0]);
         return;
       }
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= selectableFrameHours.length) {
-        setIsPlaying(false);
+      const nextHour = resolveLoopPlaybackNextHour(selectableFrameHours, currentHour);
+      if (nextHour === null) {
         return;
       }
-      setTargetForecastHour(selectableFrameHours[nextIndex]);
+      setTargetForecastHour(nextHour);
     }, AUTOPLAY_TICK_MS);
 
     return () => {

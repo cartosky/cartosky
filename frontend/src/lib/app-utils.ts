@@ -1093,6 +1093,22 @@ export function resolveLoopPlaybackStartHour(
   return resolvedHour;
 }
 
+export function resolveLoopPlaybackNextHour(
+  frameHours: number[],
+  currentHour: number,
+): number | null {
+  if (frameHours.length === 0) {
+    return null;
+  }
+  const resolvedHour = nearestFrame(frameHours, currentHour);
+  const currentIndex = frameHours.indexOf(resolvedHour);
+  if (currentIndex < 0) {
+    return frameHours[0] ?? null;
+  }
+  const nextIndex = currentIndex + 1;
+  return nextIndex >= frameHours.length ? (frameHours[0] ?? null) : frameHours[nextIndex];
+}
+
 export function countGridAheadReadyFramesForHour(
   gridFrameHours: number[],
   gridReadyHourSet: ReadonlySet<number>,
