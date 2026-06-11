@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -10,7 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.services.publish_utils import enforce_run_artifact_retention
-from app.services.spc_publish import SPC_LAYER_BASE_URL, collect_latest_spc_products, publish_latest_spc_outlooks
+from app.services.spc_publish import (
+    SPC_LAYER_BASE_URL,
+    build_spc_products_fingerprint,
+    collect_latest_spc_products,
+    publish_spc_products_bundle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +49,24 @@ def run_once(config: SPCPollerConfig) -> SPCPollerCycleResult:
         base_url=config.base_url,
     )
     run_id = issue_time.astimezone(timezone.utc).strftime("%Y%m%d_%H%Mz").lower()
-    if _latest_published_run_id(config.data_root) == run_id and _bundle_exists(config.data_root, run_id):
-        if _manifest_variable_ids(config.data_root, run_id) == set(products.keys()):
-            return SPCPollerCycleResult(
-                action="noop",
-                published_run_id=run_id,
-                latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                message=f"SPC latest bundle {run_id} is already published.",
-            )
+    fingerprint = build_spc_products_fingerprint(products)
+    if (
+        _latest_published_run_id(config.data_root) == run_id
+        and _bundle_exists(config.data_root, run_id)
+        and _manifest_variable_ids(config.data_root, run_id) == set(products.keys())
+        and _published_products_fingerprint(config.data_root, run_id) == fingerprint
+    ):
+        return SPCPollerCycleResult(
+            action="noop",
+            published_run_id=run_id,
+            latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            message=f"SPC latest bundle {run_id} is already published.",
+        )
 
-    result = publish_latest_spc_outlooks(
+    result = publish_spc_products_bundle(
         data_root=config.data_root,
-        timeout_seconds=config.timeout_seconds,
-        base_url=config.base_url,
+        products=products,
+        issue_time=issue_time,
     )
     _enforce_retention(config)
     return SPCPollerCycleResult(
@@ -111,6 +122,59 @@ def _manifest_variable_ids(data_root: Path, run_id: str) -> set[str]:
     if not isinstance(variables, dict):
         return set()
     return {str(key).strip() for key in variables.keys() if str(key).strip()}
+
+
+def _manifest_source_fingerprint(data_root: Path, run_id: str) -> str | None:
+    manifest_path = data_root / "manifests" / "spc" / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    fingerprint = metadata.get("source_fingerprint")
+    return str(fingerprint).strip() if isinstance(fingerprint, str) and fingerprint.strip() else None
+
+
+def _fingerprint_from_published_sidecars(data_root: Path, run_id: str) -> str | None:
+    run_dir = data_root / "published" / "spc" / run_id
+    if not run_dir.is_dir():
+        return None
+
+    parts: list[str] = []
+    for var_dir in sorted(path for path in run_dir.iterdir() if path.is_dir()):
+        var_id = var_dir.name
+        for sidecar_path in sorted(var_dir.glob("fh*.json")):
+            try:
+                sidecar = json.loads(sidecar_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+            fh = sidecar.get("fh")
+            issue_time = sidecar.get("issue_time")
+            if not isinstance(fh, int) or not isinstance(issue_time, str) or not issue_time.strip():
+                return None
+            vector_path = var_dir / "vectors" / f"fh{int(fh):03d}.geojson"
+            feature_count = 0
+            if vector_path.is_file():
+                try:
+                    vector_payload = json.loads(vector_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    return None
+                features = vector_payload.get("features")
+                if isinstance(features, list):
+                    feature_count = len(features)
+            parts.append(f"{var_id}:{int(fh)}:{issue_time.strip()}:{feature_count}")
+
+    if not parts:
+        return None
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _published_products_fingerprint(data_root: Path, run_id: str) -> str | None:
+    return _manifest_source_fingerprint(data_root, run_id) or _fingerprint_from_published_sidecars(data_root, run_id)
 
 
 def _bundle_exists(data_root: Path, run_id: str) -> bool:

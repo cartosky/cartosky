@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -408,10 +409,23 @@ def _build_product_frame_sidecar(*, run_id: str, product: SPCProductConfig, fram
 
 
 def publish_spc_bundle(*, data_root: Path, frames: list[SPCFramePayload], issue_time: datetime) -> SPCPublishResult:
-    return _publish_spc_products_bundle(data_root=data_root, products={SPC_CONVECTIVE_PRODUCT.var_id: frames}, issue_time=issue_time)
+    return publish_spc_products_bundle(
+        data_root=data_root,
+        products={SPC_CONVECTIVE_PRODUCT.var_id: frames},
+        issue_time=issue_time,
+    )
 
 
-def _publish_spc_products_bundle(
+def build_spc_products_fingerprint(products: dict[str, list[SPCFramePayload]]) -> str:
+    parts: list[str] = []
+    for var_id in sorted(products.keys()):
+        for frame in sorted(products[var_id], key=lambda item: int(item.fh)):
+            issue_stamp = frame.issue_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            parts.append(f"{var_id}:{frame.fh}:{issue_stamp}:{len(frame.features)}")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def publish_spc_products_bundle(
     *,
     data_root: Path,
     products: dict[str, list[SPCFramePayload]],
@@ -441,6 +455,7 @@ def _publish_spc_products_bundle(
             write_json_atomic(var_root / f"fh{frame.fh:03d}.json", _build_product_frame_sidecar(run_id=run_id, product=product, frame=frame))
             targets.append((var_id, frame.fh))
 
+    source_fingerprint = build_spc_products_fingerprint(products)
     promote_run(data_root=data_root, model=SPC_MODEL_ID, run_id=run_id)
     write_run_manifest(
         data_root=data_root,
@@ -450,6 +465,7 @@ def _publish_spc_products_bundle(
         plugin=SPC_MODEL,
         metadata={
             "source": "spc",
+            "source_fingerprint": source_fingerprint,
             "time_axis_mode": "valid",
             "target_frame_count": total_frames,
             "available_frame_count": total_frames,
@@ -498,4 +514,4 @@ def publish_latest_spc_outlooks(
     base_url: str = SPC_LAYER_BASE_URL,
 ) -> SPCPublishResult:
     products, issue_time = collect_latest_spc_products(timeout_seconds=timeout_seconds, base_url=base_url)
-    return _publish_spc_products_bundle(data_root=data_root, products=products, issue_time=issue_time)
+    return publish_spc_products_bundle(data_root=data_root, products=products, issue_time=issue_time)
