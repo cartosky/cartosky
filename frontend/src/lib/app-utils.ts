@@ -1073,6 +1073,75 @@ export function nearestFrame(frames: number[], current: number): number {
   }, frames[0]);
 }
 
+export function resolveLoopPlaybackStartHour(
+  frameHours: number[],
+  currentHour: number | null | undefined,
+): number | null {
+  if (frameHours.length === 0) {
+    return Number.isFinite(currentHour) ? Number(currentHour) : null;
+  }
+  if (frameHours.length === 1) {
+    return frameHours[0];
+  }
+  const resolvedHour = Number.isFinite(currentHour)
+    ? nearestFrame(frameHours, Number(currentHour))
+    : frameHours[0];
+  const currentIndex = frameHours.indexOf(resolvedHour);
+  if (currentIndex >= frameHours.length - 1) {
+    return frameHours[0] ?? null;
+  }
+  return resolvedHour;
+}
+
+export function countGridAheadReadyFramesForHour(
+  gridFrameHours: number[],
+  gridReadyHourSet: ReadonlySet<number>,
+  currentHour: number,
+  maxAhead: number,
+): number {
+  if (gridFrameHours.length === 0 || maxAhead <= 0) {
+    return 0;
+  }
+  const currentIndex = gridFrameHours.indexOf(currentHour);
+  if (currentIndex < 0) {
+    return 0;
+  }
+
+  let ready = 0;
+  const endIndex = Math.min(gridFrameHours.length - 1, currentIndex + maxAhead);
+  for (let index = currentIndex + 1; index <= endIndex; index += 1) {
+    if (!gridReadyHourSet.has(gridFrameHours[index])) {
+      break;
+    }
+    ready += 1;
+  }
+  return ready;
+}
+
+export function isGridPlaybackStartReadyForHour(
+  gridFrameHours: number[],
+  gridReadyHourSet: ReadonlySet<number>,
+  startHour: number,
+  startAheadFrames: number,
+): boolean {
+  if (!Number.isFinite(startHour) || !gridReadyHourSet.has(startHour)) {
+    return false;
+  }
+  const currentIndex = gridFrameHours.indexOf(startHour);
+  if (currentIndex < 0) {
+    return false;
+  }
+  const remainingAhead = Math.max(0, gridFrameHours.length - currentIndex - 1);
+  const requiredAhead = Math.min(startAheadFrames, remainingAhead);
+  const aheadReadyCount = countGridAheadReadyFramesForHour(
+    gridFrameHours,
+    gridReadyHourSet,
+    startHour,
+    startAheadFrames,
+  );
+  return aheadReadyCount >= requiredAhead;
+}
+
 export function selectableFramesForVariable(frames: number[], preferredFh: number | null | undefined): number[] {
   if (frames.length === 0) {
     return frames;

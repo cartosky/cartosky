@@ -106,6 +106,8 @@ import {
   extractLegendMeta,
   nearestFrame,
   mostRecentFrameHourByValidTime,
+  isGridPlaybackStartReadyForHour,
+  resolveLoopPlaybackStartHour,
   selectableFramesForVariable,
   resolveForecastHour,
   resolveForecastHourFromRows,
@@ -1571,25 +1573,6 @@ export default function App() {
   const compositeGridLayers = useMemo(() => {
     return buildCompositeGridLayersForHour(presentedGridDisplayHour);
   }, [buildCompositeGridLayersForHour, presentedGridDisplayHour]);
-  const countGridAheadReadyFrames = useCallback((currentHour: number, maxAhead: number): number => {
-    if (gridFrameHours.length === 0 || maxAhead <= 0) {
-      return 0;
-    }
-    const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
-    if (currentIndex < 0) {
-      return 0;
-    }
-
-    let ready = 0;
-    const endIndex = Math.min(gridFrameHours.length - 1, currentIndex + maxAhead);
-    for (let index = currentIndex + 1; index <= endIndex; index += 1) {
-      if (!gridReadyHourSet.has(gridFrameHours[index])) {
-        break;
-      }
-      ready += 1;
-    }
-    return ready;
-  }, [gridFrameHours, gridFrameIndexByHour, gridReadyHourSet]);
   const gridReadyCount = useMemo(() => {
     return gridReadyHours.length;
   }, [gridReadyHours]);
@@ -1617,35 +1600,6 @@ export default function App() {
           )));
     return nearestFrame(gridFrameHours, requested);
   }, [forecastHour, gridFrameByHour, gridFrameHours, selectedModelDefaultFrameSelection, selectedTimeAxisMode, selectedVariableDefaultFh, targetForecastHour]);
-  const gridPlaybackAheadReadyCount = useMemo(() => {
-    if (!Number.isFinite(gridPlaybackStartHour)) {
-      return 0;
-    }
-    return countGridAheadReadyFrames(Number(gridPlaybackStartHour), gridPlayStartAheadFrames);
-  }, [countGridAheadReadyFrames, gridPlaybackStartHour, gridPlayStartAheadFrames, gridReadyVersion]);
-  const isGridPlaybackStartReady = useMemo(() => {
-    if (!Number.isFinite(gridPlaybackStartHour)) {
-      return false;
-    }
-    const currentHour = Number(gridPlaybackStartHour);
-    if (!gridReadyHourSet.has(currentHour)) {
-      return false;
-    }
-    const currentIndex = gridFrameIndexByHour.get(currentHour) ?? -1;
-    if (currentIndex < 0) {
-      return false;
-    }
-    const remainingAhead = Math.max(0, gridFrameHours.length - currentIndex - 1);
-    const requiredAhead = Math.min(gridPlayStartAheadFrames, remainingAhead);
-    return gridPlaybackAheadReadyCount >= requiredAhead;
-  }, [
-    gridFrameHours,
-    gridFrameIndexByHour,
-    gridPlaybackAheadReadyCount,
-    gridPlaybackStartHour,
-    gridPlayStartAheadFrames,
-    gridReadyHourSet,
-  ]);
   const isGridLowMidActive = useMemo(() => {
     return Boolean(
       gridManifest
@@ -3370,19 +3324,33 @@ export default function App() {
     if (!isGridPreloadingForPlay) {
       return;
     }
-    if (!isGridPlayable || gridFrameHours.length === 0 || !Number.isFinite(gridPlaybackStartHour)) {
+    if (!isGridPlayable || gridFrameHours.length === 0) {
       setIsGridPreloadingForPlay(false);
       return;
     }
 
-    const currentHour = Number(gridPlaybackStartHour);
+    const currentHourCandidate = Number.isFinite(gridPlaybackHourRef.current)
+      ? Number(gridPlaybackHourRef.current)
+      : gridPlaybackStartHour;
+    if (!Number.isFinite(currentHourCandidate)) {
+      setIsGridPreloadingForPlay(false);
+      return;
+    }
+
+    const currentHour = Number(currentHourCandidate);
     const currentReady = isGridHourReady(currentHour);
+    const startReady = isGridPlaybackStartReadyForHour(
+      gridFrameHours,
+      gridReadyHourSet,
+      currentHour,
+      gridPlayStartAheadFrames,
+    );
     const stalledMs = pendingLoopStartMetricRef.current
       ? Math.max(0, performance.now() - pendingLoopStartMetricRef.current.startedAt)
       : 0;
     const allowStallStart = currentReady && stalledMs >= gridPlayStallMs;
 
-    if (!isGridPlaybackStartReady && !allowStallStart) {
+    if (!startReady && !allowStallStart) {
       return;
     }
 
@@ -3390,16 +3358,17 @@ export default function App() {
     gridPlaybackHourRef.current = currentHour;
     gridPlaybackLastAdvanceAtMsRef.current = performance.now();
     resetGridPlaybackWaitState();
-    if (allowStallStart && !isGridPlaybackStartReady) {
+    if (allowStallStart && !startReady) {
       showTransientFrameStatus("Starting grid playback");
     }
     setIsPlaying(true);
   }, [
     gridFrameHours,
     gridPlaybackStartHour,
+    gridPlayStartAheadFrames,
+    gridReadyHourSet,
     gridReadyVersion,
     isGridPlayable,
-    isGridPlaybackStartReady,
     isGridPreloadingForPlay,
     gridPlayStallMs,
     isGridHourReady,
@@ -3472,16 +3441,29 @@ export default function App() {
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
 
+    const playbackFrameHours = canUseGridPlayback ? gridFrameHours : selectableFrameHours;
+    const rawStartHour = Number.isFinite(gridPlaybackStartHour)
+      ? Number(gridPlaybackStartHour)
+      : (Number.isFinite(targetForecastHour)
+        ? Number(targetForecastHour)
+        : (Number.isFinite(forecastHour) ? forecastHour : null));
+    const startHour = resolveLoopPlaybackStartHour(playbackFrameHours, rawStartHour);
+
+    if (Number.isFinite(startHour) && startHour !== rawStartHour) {
+      commitAutoplayUiHourNow(Number(startHour));
+    }
+
     if (canUseGridPlayback) {
-      const startHour = Number.isFinite(gridPlaybackStartHour)
-        ? Number(gridPlaybackStartHour)
-        : (Number.isFinite(targetForecastHour)
-          ? targetForecastHour
-          : (Number.isFinite(forecastHour) ? forecastHour : null));
       gridPlaybackHourRef.current = startHour;
       gridPlaybackLastAdvanceAtMsRef.current = performance.now();
       resetGridPlaybackWaitState();
-      if (Number.isFinite(startHour) && isGridPlaybackStartReady) {
+      const startReady = Number.isFinite(startHour) && isGridPlaybackStartReadyForHour(
+        gridFrameHours,
+        gridReadyHourSet,
+        Number(startHour),
+        gridPlayStartAheadFrames,
+      );
+      if (startReady) {
         setIsGridPreloadingForPlay(false);
         setIsPlaying(true);
         showTransientFrameStatus("Starting grid playback");
@@ -3493,6 +3475,9 @@ export default function App() {
       return;
     }
     setIsGridPreloadingForPlay(false);
+    if (Number.isFinite(startHour)) {
+      setTargetForecastHour(Number(startHour));
+    }
     setIsPlaying(true);
     showTransientFrameStatus("Starting playback");
   }, [
@@ -3500,8 +3485,13 @@ export default function App() {
     selectableFrameHours.length,
     canAnimateTimeline,
     canUseGridPlayback,
+    commitAutoplayUiHourNow,
+    forecastHour,
+    gridFrameHours,
     gridPlaybackStartHour,
-    isGridPlaybackStartReady,
+    gridPlayStartAheadFrames,
+    gridReadyHourSet,
+    selectableFrameHours,
     showTransientFrameStatus,
     startPendingLoopStartMetric,
     model,
@@ -3509,7 +3499,6 @@ export default function App() {
     telemetryRunId,
     region,
     targetForecastHour,
-    forecastHour,
     resetGridPlaybackWaitState,
     stopGridPlaybackAtCurrentFrame,
   ]);
