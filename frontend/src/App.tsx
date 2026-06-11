@@ -101,6 +101,8 @@ import {
   makeVariableLabel,
   resolveManifestFrames,
   mergeManifestRowsWithPrevious,
+  inferRunTargetMaxForecastHour,
+  resolveHistoricalRunIncompleteStatus,
   extractLegendMeta,
   nearestFrame,
   mostRecentFrameHourByValidTime,
@@ -154,31 +156,6 @@ const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
 const PERMALINK_FALLBACK_MESSAGE = "This link may be outdated - loading default view";
-
-function inferLatestRunTargetMaxForecastHour(modelId: string, runId: string | null | undefined): number | null {
-  const parsedRun = parseRunId(runId);
-  const cycleHour = parsedRun?.getUTCHours() ?? null;
-
-  switch (modelId) {
-    case "aigfs":
-      return 384;
-    case "gefs":
-    case "eps":
-    case "aifs":
-    case "ecmwf":
-      return 360;
-    case "gfs":
-      return 384;
-    case "nam":
-      return 60;
-    case "hrrr":
-      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 48 : 18;
-    case "nbm":
-      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 264 : 261;
-    default:
-      return null;
-  }
-}
 
 function nearestSortedNumber(values: number[], target: number): number | null {
   if (values.length === 0 || !Number.isFinite(target)) {
@@ -3998,7 +3975,7 @@ export default function App() {
       ? Math.max(...selectableFrameHours.filter(Number.isFinite))
       : null;
     const declaredVariableMaxForecastHour = toNumberOrNull(selectedVariableConstraints.max_fh);
-    const inferredTargetMaxForecastHour = inferLatestRunTargetMaxForecastHour(model, latestRun);
+    const inferredTargetMaxForecastHour = inferRunTargetMaxForecastHour(model, latestRun);
 
     const targetMaxForecastHour = Number.isFinite(selectedModelAvailability?.latest_run_target_max_fh)
       ? Math.max(0, Number(selectedModelAvailability?.latest_run_target_max_fh))
@@ -4063,6 +4040,48 @@ export default function App() {
     selectedVariableLabel,
     selectableFrameHours,
     variable,
+  ]);
+  const historicalRunIncomplete = useMemo(() => {
+    if (RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS.has(model)) {
+      return null;
+    }
+    if (selectedTimeAxisMode === "observed") {
+      return null;
+    }
+    if (run === "latest" || run === latestRunId) {
+      return null;
+    }
+    if (!runManifest || runManifest.model !== model) {
+      return null;
+    }
+
+    const viewedRun = resolvedRunForRequests ?? run;
+    const runLabel = formatRunLabel(viewedRun, selectedTimeAxisMode);
+    const selectableMaxForecastHour = selectableFrameHours.length > 0
+      ? Math.max(...selectableFrameHours.filter(Number.isFinite))
+      : null;
+
+    return resolveHistoricalRunIncompleteStatus({
+      manifest: runManifest,
+      modelId: model,
+      runId: viewedRun,
+      variableId: variable,
+      variableLabel: selectedVariableLabel,
+      variableMaxFh: toNumberOrNull(selectedVariableConstraints.max_fh),
+      selectableMaxForecastHour,
+      runLabel,
+    });
+  }, [
+    model,
+    run,
+    latestRunId,
+    runManifest,
+    selectedTimeAxisMode,
+    resolvedRunForRequests,
+    variable,
+    selectedVariableLabel,
+    selectedVariableConstraints,
+    selectableFrameHours,
   ]);
   const selectedRegionLabel = useMemo(() => {
     const fromOptions = regions.find((entry) => entry.value === region)?.label;
@@ -4503,6 +4522,9 @@ export default function App() {
           variableLabel={selectedVariableLabel}
           totalForecastHours={runAvailability?.totalForecastHours ?? null}
           runIsComplete={runAvailability?.isComplete ?? false}
+          runIncompleteLabel={historicalRunIncomplete?.label ?? null}
+          runIncompleteDescription={historicalRunIncomplete?.description ?? null}
+          runIncompleteTone={historicalRunIncomplete?.tone ?? null}
         />
       </div>
 

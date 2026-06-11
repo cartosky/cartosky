@@ -26,6 +26,7 @@ import type { WeatherSubstrate } from "@/lib/config";
 import {
   formatObservedCompactTime,
   formatValidTime,
+  parseRunId,
   validAxisLabel,
   type TimeAxisMode,
 } from "@/lib/time-axis";
@@ -835,6 +836,156 @@ export function resolveManifestFrames(
   }
   rows.sort((a, b) => Number(a.fh) - Number(b.fh));
   return { rows, hasFrameList: true };
+}
+
+export function inferRunTargetMaxForecastHour(
+  modelId: string,
+  runId: string | null | undefined
+): number | null {
+  const parsedRun = parseRunId(runId);
+  const cycleHour = parsedRun?.getUTCHours() ?? null;
+
+  switch (modelId) {
+    case "aigfs":
+      return 384;
+    case "gefs":
+    case "eps":
+    case "aifs":
+    case "ecmwf":
+      return 360;
+    case "gfs":
+      return 384;
+    case "nam":
+      return 60;
+    case "hrrr":
+      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 48 : 18;
+    case "nbm":
+      return cycleHour !== null && [0, 6, 12, 18].includes(cycleHour) ? 264 : 261;
+    default:
+      return null;
+  }
+}
+
+function manifestVariableFrameCounts(varEntry: RunManifestResponse["variables"][string] | undefined): {
+  expected: number;
+  available: number;
+} | null {
+  if (!varEntry || typeof varEntry !== "object") {
+    return null;
+  }
+
+  const expectedRaw = varEntry.expected_frames;
+  const availableRaw = varEntry.available_frames;
+  let expected: number | null = typeof expectedRaw === "number" && Number.isInteger(expectedRaw) ? expectedRaw : null;
+  let available: number | null = typeof availableRaw === "number" && Number.isInteger(availableRaw) ? availableRaw : null;
+
+  if (expected === null) {
+    const frames = varEntry.frames;
+    if (Array.isArray(frames)) {
+      expected = frames.length;
+      available = frames.length;
+    } else {
+      return null;
+    }
+  }
+
+  if (available === null) {
+    const frames = varEntry.frames;
+    if (Array.isArray(frames)) {
+      available = frames.length;
+    } else {
+      return null;
+    }
+  }
+
+  return { expected, available };
+}
+
+export function isManifestRunComplete(manifest: RunManifestResponse | null | undefined): boolean {
+  const variables = manifest?.variables;
+  if (!variables || typeof variables !== "object") {
+    return false;
+  }
+
+  let sawExpected = false;
+  for (const varEntry of Object.values(variables)) {
+    const counts = manifestVariableFrameCounts(varEntry);
+    if (!counts) {
+      return false;
+    }
+    sawExpected = sawExpected || counts.expected > 0;
+    if (counts.available < counts.expected) {
+      return false;
+    }
+  }
+
+  return sawExpected;
+}
+
+export type HistoricalRunIncompleteStatus = {
+  label: string;
+  description: string;
+  tone: "delayed";
+};
+
+export function resolveHistoricalRunIncompleteStatus(params: {
+  manifest: RunManifestResponse | null | undefined;
+  modelId: string;
+  runId: string;
+  variableId: string;
+  variableLabel: string;
+  variableMaxFh: number | null;
+  selectableMaxForecastHour: number | null;
+  runLabel: string;
+}): HistoricalRunIncompleteStatus | null {
+  const {
+    manifest,
+    modelId,
+    runId,
+    variableId,
+    variableLabel,
+    variableMaxFh,
+    selectableMaxForecastHour,
+    runLabel,
+  } = params;
+
+  if (!manifest || isManifestRunComplete(manifest)) {
+    return null;
+  }
+
+  const varEntry = manifest.variables?.[variableId];
+  const manifestFrames = Array.isArray(varEntry?.frames) ? varEntry.frames : [];
+  const manifestMaxForecastHour = manifestFrames.length > 0
+    ? Math.max(...manifestFrames.map((frame) => Number(frame?.fh)).filter(Number.isFinite))
+    : null;
+  const targetMaxForecastHour =
+    inferRunTargetMaxForecastHour(modelId, runId)
+    ?? variableMaxFh
+    ?? manifestMaxForecastHour;
+  const availableMaxForecastHour = selectableMaxForecastHour ?? manifestMaxForecastHour;
+
+  if (
+    targetMaxForecastHour !== null
+    && Number.isFinite(targetMaxForecastHour)
+    && availableMaxForecastHour !== null
+    && Number.isFinite(availableMaxForecastHour)
+  ) {
+    const cappedAvailable = Math.max(
+      0,
+      Math.min(availableMaxForecastHour, targetMaxForecastHour)
+    );
+    return {
+      label: "Not complete",
+      description: `${variableLabel} · ${runLabel} · ${cappedAvailable}/${targetMaxForecastHour} forecast hours published`,
+      tone: "delayed",
+    };
+  }
+
+  return {
+    label: "Not complete",
+    description: `${variableLabel} · ${runLabel} · run build did not finish`,
+    tone: "delayed",
+  };
 }
 
 export function mergeManifestRowsWithPrevious(

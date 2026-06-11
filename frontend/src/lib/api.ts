@@ -282,6 +282,8 @@ export type RunManifestVariable = {
   display_name?: string;
   name?: string;
   label?: string;
+  expected_frames?: number;
+  available_frames?: number;
   frames?: RunManifestFrame[];
 };
 

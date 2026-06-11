@@ -44,6 +44,9 @@ type BottomForecastControlsProps = {
   variableLabel?: string | null;
   totalForecastHours?: number | null;
   runIsComplete?: boolean;
+  runIncompleteLabel?: string | null;
+  runIncompleteDescription?: string | null;
+  runIncompleteTone?: ObservedSourceStatusTone | null;
 };
 
 function formatCpcIssuedDisplay(iso: string | null | undefined): string | null {
@@ -221,6 +224,9 @@ export function BottomForecastControls({
   variableLabel = null,
   totalForecastHours = null,
   runIsComplete = false,
+  runIncompleteLabel = null,
+  runIncompleteDescription = null,
+  runIncompleteTone = null,
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
   const onShare = toolbar?.onShare;
@@ -433,6 +439,17 @@ export function BottomForecastControls({
                     )}
                   >
                     {sourceStatusLabel}
+                  </div>
+                ) : runIncompleteLabel ? (
+                  <div
+                    data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
+                    title={runIncompleteDescription ?? runIncompleteLabel}
+                    className={cn(
+                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
+                      statusBadgeClass(runIncompleteTone)
+                    )}
+                  >
+                    {runIncompleteLabel}
                   </div>
                 ) : null}
                 {onShare ? (
@@ -763,6 +780,20 @@ export function BottomForecastControls({
                     )}
                   >
                     {sourceStatusLabel}
+                  </div>
+                </>
+              ) : runIncompleteLabel ? (
+                <>
+                  <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
+                  <div
+                    data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
+                    title={runIncompleteDescription ?? runIncompleteLabel}
+                    className={cn(
+                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.16em]",
+                      statusBadgeClass(runIncompleteTone)
+                    )}
+                  >
+                    {runIncompleteLabel}
                   </div>
                 </>
               ) : null}
