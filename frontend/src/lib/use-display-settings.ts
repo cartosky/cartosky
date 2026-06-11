@@ -58,12 +58,12 @@ export function useDisplaySettings(
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
 
   // Resolve null → layout default. Explicit true/false is always honoured.
-  const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? false : false);
+  const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? true : false);
   const legendVisible = legendPreference ?? (isDesktopViewerLayout ? true : false);
 
   const setZoomControlsVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
     setZoomPreference((current) => {
-      const effective = current ?? (isDesktopViewerLayout ? false : false);
+      const effective = current ?? (isDesktopViewerLayout ? true : false);
       return typeof value === "function" ? value(effective) : value;
     });
   };
