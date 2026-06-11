@@ -15,8 +15,16 @@ import {
 } from "lucide-react";
 
 import { fetchCapabilities, type CapabilitiesResponse } from "@/lib/api";
+import { viewerModelGroup } from "@/lib/app-utils";
 
-const CORE_MODEL_IDS = ["hrrr", "gfs", "nam", "nbm", "ecmwf", "aifs", "aigfs", "gefs", "eps"] as const;
+const PTYPE_INTENSITY_COMPONENT_PATTERN = /^ptype_intensity_(rain|snow|ice)$/i;
+
+function isBuildableCatalogVariable(varKey: string, buildable?: boolean): boolean {
+  if (buildable === false) {
+    return false;
+  }
+  return !PTYPE_INTENSITY_COMPONENT_PATTERN.test(varKey);
+}
 
 function formatRunLabel(runId?: string | null): string {
   if (!runId) {
@@ -206,12 +214,50 @@ export default function Home() {
 
   const homepageStats = useMemo(() => {
     const modelCatalog = capabilities?.model_catalog ?? {};
-    const coreModels = CORE_MODEL_IDS.filter((modelId) => Boolean(modelCatalog[modelId]));
+    const supportedModels = (capabilities?.supported_models ?? []).filter((modelId) => Boolean(modelCatalog[modelId]));
+    const modelsByCategory = {
+      MODELS: 0,
+      ENSEMBLES: 0,
+      FORECASTS: 0,
+      OBSERVATIONS: 0,
+    };
+
+    for (const modelId of supportedModels) {
+      const category = viewerModelGroup(modelId);
+      if (category in modelsByCategory) {
+        modelsByCategory[category as keyof typeof modelsByCategory] += 1;
+      }
+    }
+
+    const uniqueProducts = new Set<string>();
+    let totalProductEntries = 0;
+    for (const model of Object.values(modelCatalog)) {
+      for (const [varKey, variable] of Object.entries(model.variables ?? {})) {
+        if (!variable || !isBuildableCatalogVariable(varKey, variable.buildable)) {
+          continue;
+        }
+        uniqueProducts.add(varKey);
+        totalProductEntries += 1;
+      }
+    }
+
     const hrrrRunLabel = formatRunLabel(capabilities?.availability?.hrrr?.latest_run);
     const gfsRunLabel = formatRunLabel(capabilities?.availability?.gfs?.latest_run);
+    const totalModelCount = supportedModels.length;
+    const coreModelCount = modelsByCategory.MODELS;
+    const uniqueProductCount = uniqueProducts.size;
+    const averageProductsPerModel = totalModelCount > 0
+      ? Math.round(totalProductEntries / totalModelCount)
+      : 0;
 
     return {
-      coreModelCount: coreModels.length || CORE_MODEL_IDS.length,
+      totalModelCount: totalModelCount || 17,
+      coreModelCount: coreModelCount || 7,
+      ensembleCount: modelsByCategory.ENSEMBLES || 2,
+      forecastCount: modelsByCategory.FORECASTS || 4,
+      observationCount: modelsByCategory.OBSERVATIONS || 4,
+      uniqueProductCount: uniqueProductCount || 55,
+      averageProductsPerModel: averageProductsPerModel || 11,
       hrrrRunLabel,
       gfsRunLabel,
       freshnessDetail: `HRRR ${hrrrRunLabel} · GFS ${gfsRunLabel}`,
@@ -388,18 +434,18 @@ export default function Home() {
         <div className="mx-auto grid max-w-6xl py-4 sm:grid-cols-2 md:grid-cols-4 md:py-5">
           <ProofItem
             label="Models"
-            value={`${homepageStats.coreModelCount} core models`}
-            detail="HRRR, NAM, GFS, NBM, ECMWF, AIFS, and AIGFS in one workflow."
+            value={`${homepageStats.totalModelCount} supported sources`}
+            detail={`${homepageStats.coreModelCount} core models, ${homepageStats.ensembleCount} ensemble suites, ${homepageStats.forecastCount} official forecast layers, and ${homepageStats.observationCount} observation layers.`}
           />
           <ProofItem
             label="Products"
-            value="~15 per model"
-            detail="Surface, precip, severe, and upper-air products, with more on the way."
+            value={`${homepageStats.uniqueProductCount} live products`}
+            detail={`Surface, precip, severe, upper air, outlooks, radar, and satellite across ~${homepageStats.averageProductsPerModel} products per source.`}
           />
           <ProofItem
             label="Coverage"
-            value="CONUS and expanding"
-            detail="Optimized for U.S. weather analysis, with broader regions coming soon."
+            value="CONUS-first, broader too"
+            detail="Storm-scale CONUS guidance plus North America and global model families in the same workflow."
           />
           <ProofItem
             label="Use Cases"
