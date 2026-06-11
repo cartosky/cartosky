@@ -1342,6 +1342,21 @@ export function MapCanvas({
         }
       }
     }
+
+    // Prefetch only schedules pivot±N; frameUrl alone loads the pivot hour.
+    // When those diverge (scrub jump or play before the target frame renders),
+    // queue the pivot frame explicitly so playback buffering can proceed.
+    if (
+      Number.isFinite(effectivePivotHour)
+      && effectivePivotHour !== Number(frameHour)
+    ) {
+      const pivotFrame = frameByHour.get(effectivePivotHour);
+      const pivotUrl = normalizeGridUrl(String(pivotFrame?.url ?? "").trim());
+      if (pivotUrl && pivotUrl !== frameUrl && !urls.includes(pivotUrl)) {
+        urls.unshift(pivotUrl);
+      }
+    }
+
     return urls;
   }, [apiRoot, gridLodLevel, gridManifest, mode]);
   const gridPrefetchUrls = useMemo(() => {

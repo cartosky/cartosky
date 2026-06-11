@@ -4400,7 +4400,7 @@ export default function App() {
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
           getAnimatedGridPlaybackState={getAnimatedGridPlaybackState}
-          isAnimating={isPlaying || isScrubbing}
+          isAnimating={isPlaying || isScrubbing || isGridPreloadingForPlay}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}
