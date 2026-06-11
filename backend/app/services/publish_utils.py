@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .run_ids import parse_run_id_datetime
+from .run_ids import format_run_id, parse_run_id_datetime
 logger = logging.getLogger(__name__)
 
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -175,3 +176,111 @@ def enforce_run_artifact_retention(root: Path, keep_runs: int) -> None:
             shutil.rmtree(old_path, ignore_errors=True)
         else:
             old_path.unlink(missing_ok=True)
+
+
+def extract_herbie_cache_run_id(path: Path, *, model_root: Path) -> str | None:
+    try:
+        relative = path.relative_to(model_root)
+    except ValueError:
+        return None
+    if len(relative.parts) < 2:
+        return None
+
+    day_token = next((part for part in relative.parts[:-1] if re.fullmatch(r"\d{8}", part)), None)
+    if day_token is None:
+        return None
+
+    name = path.name.lower()
+    if name.endswith(".lock"):
+        name = name[:-5]
+
+    timestamp_match = re.search(r"(?P<stamp>\d{14})-\d+h-", name)
+    if timestamp_match is not None:
+        stamp = timestamp_match.group("stamp")
+        try:
+            return format_run_id(
+                datetime(
+                    int(stamp[0:4]),
+                    int(stamp[4:6]),
+                    int(stamp[6:8]),
+                    int(stamp[8:10]),
+                    int(stamp[10:12]),
+                    tzinfo=timezone.utc,
+                )
+            )
+        except ValueError:
+            return None
+
+    match = re.search(r"t(?P<hour>\d{2})(?P<minute>\d{2})?z", name)
+    if match is None:
+        return None
+    try:
+        return format_run_id(
+            datetime(
+                int(day_token[0:4]),
+                int(day_token[4:6]),
+                int(day_token[6:8]),
+                int(match.group("hour")),
+                int(match.group("minute") or 0),
+                tzinfo=timezone.utc,
+            )
+        )
+    except ValueError:
+        return None
+
+
+def prune_empty_dirs(root: Path) -> None:
+    if not root.is_dir():
+        return
+    for child in sorted((path for path in root.rglob("*") if path.is_dir()), reverse=True):
+        try:
+            child.rmdir()
+        except OSError:
+            continue
+
+
+def enforce_herbie_cache_retention(root: Path, model_id: str, keep_runs: int) -> None:
+    if keep_runs < 1:
+        return
+
+    normalized_model_id = str(model_id).strip().lower()
+    model_roots = (
+        [
+            child
+            for child in root.iterdir()
+            if child.is_dir() and child.name.strip().lower() == normalized_model_id
+        ]
+        if root.is_dir() and normalized_model_id
+        else []
+    )
+    if not model_roots:
+        return
+
+    for model_root in model_roots:
+        run_files: dict[str, list[Path]] = {}
+        for path in model_root.rglob("*"):
+            if not path.is_file():
+                continue
+            run_id = extract_herbie_cache_run_id(path, model_root=model_root)
+            if run_id is None:
+                continue
+            run_files.setdefault(run_id, []).append(path)
+
+        if len(run_files) <= keep_runs:
+            continue
+
+        sorted_runs = sorted(
+            run_files,
+            key=lambda run_id: parse_run_id_datetime(run_id) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        for run_id in sorted_runs[keep_runs:]:
+            for path in run_files.get(run_id, []):
+                logger.info("Removing old Herbie cache file: %s", path)
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    logger.warning("Failed removing old Herbie cache file: %s", path)
+        prune_empty_dirs(model_root)

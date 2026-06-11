@@ -4490,6 +4490,7 @@ export default function App() {
           validTimeISO={displayedValidTimeISO}
           frameValidTimesByHour={frameValidTimesByHour}
           sourceStatusLabel={observedSourceStatus?.label ?? null}
+          sourceStatusDescription={observedSourceStatus?.description ?? null}
           sourceStatusTone={observedSourceStatus?.tone ?? null}
           disabled={loading}
           playDisabled={loading || controlAvailableFrameHours.length === 0}

@@ -32,6 +32,7 @@ type BottomForecastControlsProps = {
   validTimeISO?: string | null;
   frameValidTimesByHour?: Record<number, string>;
   sourceStatusLabel?: string | null;
+  sourceStatusDescription?: string | null;
   sourceStatusTone?: ObservedSourceStatusTone | null;
   disabled: boolean;
   playDisabled?: boolean;
@@ -208,6 +209,7 @@ export function BottomForecastControls({
   validTimeISO = null,
   frameValidTimesByHour,
   sourceStatusLabel = null,
+  sourceStatusDescription = null,
   sourceStatusTone = null,
   disabled,
   playDisabled = false,
@@ -423,6 +425,8 @@ export function BottomForecastControls({
               <div className="flex shrink-0 items-center gap-1.5">
                 {sourceStatusLabel ? (
                   <div
+                    data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
+                    title={sourceStatusDescription ?? sourceStatusLabel}
                     className={cn(
                       "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
                       statusBadgeClass(sourceStatusTone)
@@ -743,6 +747,22 @@ export function BottomForecastControls({
                     <div className="text-[8px] font-medium uppercase leading-none tracking-[0.18em] text-white/45">
                       {runIsComplete ? "HRS COMPLETE" : "HRS READY"}
                     </div>
+                  </div>
+                </>
+              ) : null}
+
+              {sourceStatusLabel ? (
+                <>
+                  <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
+                  <div
+                    data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
+                    title={sourceStatusDescription ?? sourceStatusLabel}
+                    className={cn(
+                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.16em]",
+                      statusBadgeClass(sourceStatusTone)
+                    )}
+                  >
+                    {sourceStatusLabel}
                   </div>
                 </>
               ) : null}
