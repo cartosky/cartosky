@@ -1009,6 +1009,9 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     if (!hasNewerRunAvailable) return runs;
     return runs.filter((o) => o.value !== "latest");
   }, [hasNewerRunAvailable, runs]);
+  const displayVariableCatalog = model === "spc"
+    ? variables.map((option) => ({ ...option, label: spcVariableLabel(option) }))
+    : variables;
   const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
 
   return (
@@ -1036,7 +1039,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             modelId={model}
             value={variable}
             onChange={onVariableChange}
-            variableCatalog={model === "spc" ? variableCatalog.map((o) => ({ ...o, label: spcVariableLabel(o) })) : variableCatalog}
+            variableCatalog={displayVariableCatalog}
             supportedVariableIds={supportedVariableIds}
             disabled={disabled}
             placeholder="Variable"
@@ -1407,7 +1410,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             modelId={model}
             value={variable}
             onChange={(v) => { onVariableChange(v); closeSheet(); }}
-            variableCatalog={model === "spc" ? variableCatalog.map((o) => ({ ...o, label: spcVariableLabel(o) })) : variableCatalog}
+            variableCatalog={displayVariables}
             supportedVariableIds={supportedVariableIds}
             disabled={disabled}
             placeholder="Variable"

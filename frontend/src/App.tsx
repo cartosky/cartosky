@@ -98,6 +98,7 @@ import {
   normalizeCapabilityVarRows,
   capabilityVarsForManifest,
   makeVariableOptions,
+  makeVariableLabel,
   resolveManifestFrames,
   mergeManifestRowsWithPrevious,
   extractLegendMeta,
@@ -1452,7 +1453,7 @@ export default function App() {
         manifest,
         frameUrl,
         frameHour: Number.isFinite(resolvedHour) ? Number(resolvedHour) : null,
-        legend: buildLegend(legendMeta, opacity),
+        legend: buildLegend(legendMeta, opacity, model),
       };
     }).filter((layer) => layer.manifest && layer.frameUrl);
   }, [apiRoot, compositeGridManifests, compositeLayerSpecs, mapZoom, opacity, selectedGridLod]);
@@ -2137,8 +2138,8 @@ export default function App() {
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
-    return buildLegend(normalizedMeta, opacity);
-  }, [currentFrame, frameRows, opacity]);
+    return buildLegend(normalizedMeta, opacity, model);
+  }, [currentFrame, frameRows, opacity, model]);
   const legendHoldKey = useMemo(
     () => `${selectedTimeAxisMode}:${model}:${variable}`,
     [selectedTimeAxisMode, model, variable]
@@ -2550,7 +2551,7 @@ export default function App() {
 
         const modelCapability = nextModel ? capabilitiesData.model_catalog[nextModel] : null;
         const capabilityVars = normalizeCapabilityVarRows(modelCapability);
-        const variableOptions = makeVariableOptions(capabilityVars);
+        const variableOptions = makeVariableOptions(capabilityVars, nextModel);
         const variableIds = variableOptions.map((opt) => opt.value);
         const defaultVarKey = String(modelCapability?.defaults?.default_var_key ?? "").trim();
         const preferredDefaultVariable = nextModel === DEFAULT_VIEWER_MODEL_ID && variableIds.includes(DEFAULT_VIEWER_VARIABLE_ID)
@@ -2733,7 +2734,7 @@ export default function App() {
         const resolvedVars = manifestData
           ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars)
           : baseCapabilityVars;
-        const variableOptions = makeVariableOptions(resolvedVars);
+        const variableOptions = makeVariableOptions(resolvedVars, model);
         const variableIds = variableOptions.map((opt) => opt.value);
         const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
         setVariables(variableOptions);
@@ -3127,7 +3128,7 @@ export default function App() {
             });
             const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars);
             if (capabilityVars.length > 0) {
-              const variableOptions = makeVariableOptions(capabilityVars);
+              const variableOptions = makeVariableOptions(capabilityVars, model);
               const variableIds = variableOptions.map((opt) => opt.value);
               const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
               setVariables(variableOptions);
@@ -3671,7 +3672,7 @@ export default function App() {
 
   const handleModelChange = useCallback((nextModel: string) => {
     const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;
-    const nextVariableOptions = makeVariableOptions(normalizeCapabilityVarRows(nextModelCapability));
+    const nextVariableOptions = makeVariableOptions(normalizeCapabilityVarRows(nextModelCapability), nextModel);
     const nextVariableIds = nextVariableOptions.map((option) => option.value);
     const nextSupportedVariableIds = new Set(nextVariableIds);
     const nextVariable = variable && nextSupportedVariableIds.has(variable)
@@ -3965,11 +3966,11 @@ export default function App() {
     }
     const fromCapabilities = selectedCapabilityVarMap.get(variable)?.displayName;
     if (fromCapabilities) {
-      return fromCapabilities;
+      return makeVariableLabel(variable, fromCapabilities, model);
     }
     const manifestVariable = runManifest?.variables?.[variable];
     return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
-  }, [variables, variable, selectedCapabilityVarMap, runManifest]);
+  }, [variables, variable, selectedCapabilityVarMap, runManifest, model]);
   const runAvailability = useMemo(() => {
     if (RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS.has(model)) {
       return null;

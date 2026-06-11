@@ -426,6 +426,24 @@ const FIXED_LEGEND_TITLE_IDS = new Set([
   "precip_16d_anom",
 ]);
 
+const ENSEMBLE_MODEL_IDS = new Set(["gefs", "eps"]);
+
+function isEnsembleModel(modelId?: string | null): boolean {
+  return ENSEMBLE_MODEL_IDS.has(String(modelId ?? "").trim().toLowerCase());
+}
+
+function hasMeanSuffix(label: string): boolean {
+  return /\(\s*mean\s*\)/i.test(label);
+}
+
+function withMeanSuffix(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed || hasMeanSuffix(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed} (Mean)`;
+}
+
 const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   hrrr: { label: "HRRR", group: "MODELS", order: 0 },
   nam: { label: "NAM", group: "MODELS", order: 1 },
@@ -496,22 +514,44 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
   }
 }
 
-export function makeVariableLabel(id: string, preferredLabel?: string | null): string {
+export function makeVariableLabel(
+  id: string,
+  preferredLabel?: string | null,
+  modelId?: string | null,
+): string {
   const override = variableUiOverride(id);
+  const apiLabel = preferredLabel?.trim() ?? "";
+
+  if (isEnsembleModel(modelId)) {
+    if (apiLabel && hasMeanSuffix(apiLabel)) {
+      return apiLabel;
+    }
+    if (override?.label) {
+      return withMeanSuffix(override.label);
+    }
+    if (apiLabel) {
+      return withMeanSuffix(apiLabel);
+    }
+    return id;
+  }
+
   if (override?.label) {
     return override.label;
   }
-  if (preferredLabel && preferredLabel.trim()) {
-    return preferredLabel.trim();
+  if (apiLabel) {
+    return apiLabel;
   }
   return id;
 }
 
-function makeLegendTitle(id: string, preferredTitle?: string | null): string {
+function makeLegendTitle(id: string, preferredTitle?: string | null, modelId?: string | null): string {
   if (FIXED_LEGEND_TITLE_IDS.has(id) && preferredTitle && preferredTitle.trim()) {
+    if (isEnsembleModel(modelId)) {
+      return makeVariableLabel(id, preferredTitle, modelId);
+    }
     return preferredTitle.trim();
   }
-  return makeVariableLabel(id, preferredTitle);
+  return makeVariableLabel(id, preferredTitle, modelId);
 }
 
 export function buildFallbackSharePayload(params: {
@@ -742,13 +782,13 @@ export function normalizeManifestVarRows(
   return normalized;
 }
 
-export function makeVariableOptions(entries: VariableEntry[]): VariableOption[] {
+export function makeVariableOptions(entries: VariableEntry[], modelId?: string | null): VariableOption[] {
   return entries
     .map((entry, index) => {
       const override = variableUiOverride(entry.id);
       return {
         value: entry.id,
-        label: makeVariableLabel(entry.id, entry.displayName),
+        label: makeVariableLabel(entry.id, entry.displayName, modelId),
         group: canonicalVariableGroup(entry.id, entry.group),
         sortOrder: typeof override?.order === "number" ? override.order : (1000 + index),
       };
@@ -1004,7 +1044,11 @@ export function normalizeLegendUnits(
   return units;
 }
 
-export function buildLegend(meta: LegendMeta | null | undefined, opacity: number): LegendPayload | null {
+export function buildLegend(
+  meta: LegendMeta | null | undefined,
+  opacity: number,
+  modelId?: string | null,
+): LegendPayload | null {
   if (!meta) {
     return null;
   }
@@ -1014,7 +1058,7 @@ export function buildLegend(meta: LegendMeta | null | undefined, opacity: number
   const rawTitle = meta.legend_title ?? meta.display_name ?? "Legend";
   const baseTitle = meta.vector_layers && rawTitle.trim().toLowerCase() === "severe storm outlook"
     ? "Legend"
-    : makeLegendTitle(legendId, rawTitle);
+    : makeLegendTitle(legendId, rawTitle, modelId);
   const title = isPtypeIntensity ? withPrecipRateUnits(baseTitle, meta.units) : baseTitle;
   const units = normalizeLegendUnits(meta.units, metaWithIds);
   const legendMetadata = {

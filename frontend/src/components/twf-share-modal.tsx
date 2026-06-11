@@ -1430,11 +1430,6 @@ export function TwfShareModal({
                       alt="Screenshot preview"
                       className="h-full w-full object-contain"
                     />
-
-                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      Screenshot ready
-                    </div>
                   </>
                 ) : screenshotBusy ? (
                   <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
@@ -1459,7 +1454,15 @@ export function TwfShareModal({
                 )}
               </div>
 
-              <div className="mt-1.5 flex items-center justify-end px-1">
+              <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
+                {screenshotBlobUrl ? (
+                  <div className="flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    Screenshot ready
+                  </div>
+                ) : (
+                  <div />
+                )}
                 <div className="flex items-center gap-1.5">
                   {screenshotBlobUrl && (
                     <Tooltip>
