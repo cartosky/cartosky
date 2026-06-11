@@ -417,6 +417,22 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   hgt500_anom: { label: "500mb Height Anomaly", group: "UPPER AIR", order: 33.5 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
+  rh2m: { label: "Surface Relative Humidity", group: "PRECIPITATION", order: 8 },
+  rh700: { label: "700mb Relative Humidity", group: "PRECIPITATION", order: 9 },
+  tornado_prob: { label: "SPC Tornado Probability", group: "OUTLOOKS", order: 0 },
+  wind_prob: { label: "SPC Wind Probability", group: "OUTLOOKS", order: 1 },
+  hail_prob: { label: "SPC Hail Probability", group: "OUTLOOKS", order: 2 },
+  convective: { label: "SPC Convective Outlook", group: "OUTLOOKS", order: 3 },
+  cpc_610_temp: { label: "6-10 Day Temp Outlook", group: "FORECASTS", order: 0 },
+  cpc_610_precip: { label: "6-10 Day Precip Outlook", group: "FORECASTS", order: 1 },
+  cpc_814_temp: { label: "8-14 Day Temp Outlook", group: "FORECASTS", order: 2 },
+  cpc_814_precip: { label: "8-14 Day Precip Outlook", group: "FORECASTS", order: 3 },
+  mrms_recent_precip_6h: { label: "Recent Precip (6h)", group: "PRECIPITATION", order: 17 },
+  mrms_recent_precip_24h: { label: "Recent Precip (24h)", group: "PRECIPITATION", order: 18 },
+  mrms_recent_precip_72h: { label: "Recent Precip (72h)", group: "PRECIPITATION", order: 19 },
+  reflectivity: { label: "Base Reflectivity", group: "RADAR", order: 0 },
+  mrms_radar_ptype: { label: "Reflectivity + Ptype", group: "RADAR", order: 1 },
+  active: { label: "Active Hazards", group: "OBSERVATIONS", order: 0 },
 };
 
 const FIXED_LEGEND_TITLE_IDS = new Set([
@@ -507,12 +523,33 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
       return "FORECASTS";
     case "satellite":
       return "SATELLITE";
+    case "hazards":
+      return "OBSERVATIONS";
     case "ensemble":
     case "ensembles":
       return "ENSEMBLE";
     default:
       return null;
   }
+}
+
+export function viewerVariableGroup(id: string, backendGroup?: string | null): string {
+  return canonicalVariableGroup(id, backendGroup) ?? "OBSERVATIONS";
+}
+
+export function viewerModelGroup(modelId: string): string {
+  return modelUiOverride(modelId)?.group ?? "MODELS";
+}
+
+export function variableCatalogOrder(id: string, backendOrder?: number | null): number {
+  const override = variableUiOverride(id);
+  if (typeof override?.order === "number") {
+    return override.order;
+  }
+  if (Number.isFinite(backendOrder)) {
+    return Number(backendOrder);
+  }
+  return 999;
 }
 
 export function makeVariableLabel(

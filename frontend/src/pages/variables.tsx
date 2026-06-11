@@ -5,6 +5,7 @@ import { PrefetchLink } from "@/components/PrefetchLink";
 import { ArrowRight, Droplets, Flame, Layers3, Snowflake, Wind } from "lucide-react";
 
 import { fetchCapabilities, type CapabilityVariable, type CapabilitiesResponse } from "@/lib/api";
+import { variableCatalogOrder, viewerVariableGroup } from "@/lib/app-utils";
 
 type VariableReference = {
   definition: string;
@@ -373,6 +374,95 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
       "Use it as a situational field, then verify marginal zones with thermal profiles and accumulation products.",
     ],
   },
+  tmp2m_anom: {
+    definition: "Surface temperature departure from the model climatological baseline, used to spot anomalous warmth or cold relative to normal.",
+    bestFor: [
+      "Pattern-level warm and cold anomaly corridors",
+      "Comparing thermal departures across model runs",
+      "Medium-range temperature signal checks",
+    ],
+    interpretation: [
+      "Anomaly fields show departure from normal, not absolute temperature.",
+      "Pair with absolute temperature and wind fields for impact-level reads.",
+    ],
+  },
+  tmp850_anom: {
+    definition: "850 mb temperature departure from climatology for low-level thermal anomaly and advection context.",
+    bestFor: [
+      "Low-level warm and cold advection anomaly patterns",
+      "Winter-weather thermal profile anomaly checks",
+      "Synoptic-scale thermal departure screening",
+    ],
+    interpretation: [
+      "Use with absolute 850mb temperature and surface fields for a fuller winter or severe setup read.",
+    ],
+  },
+  hgt500_anom: {
+    definition: "500 mb height departure from climatology for mid-level pattern anomaly and trough/ridge strength context.",
+    bestFor: [
+      "Mid-level pattern anomaly screening",
+      "Trough and ridge strength relative to normal",
+      "Medium-range pattern comparison across guidance",
+    ],
+    interpretation: [
+      "Height anomalies help compare pattern strength, but still need moisture and instability for practical impacts.",
+    ],
+  },
+  precip_5d_anom: {
+    definition: "Five-day accumulated precipitation anomaly relative to climatology.",
+    bestFor: [
+      "Medium-range wet versus dry anomaly corridors",
+      "Pattern-level precipitation signal checks",
+      "Comparing anomaly placement across model runs",
+    ],
+    interpretation: [
+      "Anomaly totals show departure from normal, not absolute rainfall amounts.",
+    ],
+  },
+  precip_7d_anom: {
+    definition: "Seven-day accumulated precipitation anomaly relative to climatology.",
+    bestFor: [
+      "Week-scale wet versus dry anomaly screening",
+      "Extended precipitation pattern comparison",
+      "Medium-range event potential context",
+    ],
+    interpretation: [
+      "Use alongside absolute QPF and forcing fields before committing to an impact forecast.",
+    ],
+  },
+  precip_10d_anom: {
+    definition: "Ten-day accumulated precipitation anomaly relative to climatology.",
+    bestFor: [
+      "Extended wet versus dry anomaly corridors",
+      "Longer-lead precipitation pattern checks",
+      "Cross-model anomaly comparison",
+    ],
+    interpretation: [
+      "Longer windows smooth timing detail; pair with shorter-lead QPF for event timing.",
+    ],
+  },
+  precip_15d_anom: {
+    definition: "Fifteen-day accumulated precipitation anomaly relative to climatology.",
+    bestFor: [
+      "Extended-range precipitation anomaly screening",
+      "Pattern persistence checks in ensemble guidance",
+      "Broad medium-range wet/dry signal comparison",
+    ],
+    interpretation: [
+      "Best for pattern framing rather than day-specific rainfall timing.",
+    ],
+  },
+  precip_16d_anom: {
+    definition: "Sixteen-day accumulated precipitation anomaly relative to climatology.",
+    bestFor: [
+      "Extended GFS/GEFS/AIGFS anomaly comparison",
+      "Longer-lead wet versus dry corridor screening",
+      "Medium-range pattern trend checks",
+    ],
+    interpretation: [
+      "Use as a broad anomaly signal, then tighten the read with shorter-lead deterministic guidance.",
+    ],
+  },
   convective: {
     definition: "Official SPC categorical convective outlook polygons.",
     bestFor: [
@@ -381,20 +471,92 @@ const VARIABLE_REFERENCE: Record<string, VariableReference> = {
     ],
     interpretation: ["Official outlook layer, not a model-derived forecast field."],
   },
-  tornado: {
+  tornado_prob: {
     definition: "Official SPC tornado probability outlook layer.",
     bestFor: ["Official tornado-risk context in severe-weather setups"],
     interpretation: ["Use as official situational context alongside deterministic and mesoscale model guidance."],
   },
-  wind: {
+  wind_prob: {
     definition: "Official SPC wind probability outlook layer.",
     bestFor: ["Official damaging-wind risk context in severe-weather setups"],
     interpretation: ["Best used as official context before drilling into model kinematics and instability."],
   },
-  hail: {
+  hail_prob: {
     definition: "Official SPC hail probability outlook layer.",
     bestFor: ["Official hail-risk context in severe-weather setups"],
     interpretation: ["Best used as official context before drilling into instability, lapse rates, and storm mode."],
+  },
+  cpc_610_temp: {
+    definition: "Official CPC 6-10 day temperature outlook for extended-range thermal planning.",
+    bestFor: [
+      "Extended temperature pattern screening",
+      "Week-two warm and cold signal awareness",
+      "Medium-range planning beyond deterministic model windows",
+    ],
+    interpretation: ["Official outlook product, not deterministic model output."],
+  },
+  cpc_610_precip: {
+    definition: "Official CPC 6-10 day precipitation outlook for extended-range wet/dry planning.",
+    bestFor: [
+      "Extended precipitation pattern screening",
+      "Week-two wet versus dry corridor awareness",
+      "Medium-range event potential framing",
+    ],
+    interpretation: ["Official outlook product, not deterministic model output."],
+  },
+  cpc_814_temp: {
+    definition: "Official CPC 8-14 day temperature outlook for longer-lead thermal planning.",
+    bestFor: [
+      "Longer-lead temperature pattern screening",
+      "Extended warm and cold signal awareness",
+      "Pattern persistence checks beyond week one",
+    ],
+    interpretation: ["Official outlook product with lower timing precision than short-range guidance."],
+  },
+  cpc_814_precip: {
+    definition: "Official CPC 8-14 day precipitation outlook for longer-lead wet/dry planning.",
+    bestFor: [
+      "Longer-lead precipitation pattern screening",
+      "Extended wet versus dry corridor awareness",
+      "Broad event-potential framing",
+    ],
+    interpretation: ["Official outlook product with lower timing precision than short-range guidance."],
+  },
+  mrms_recent_precip_6h: {
+    definition: "Observed MRMS six-hour recent precipitation accumulation.",
+    bestFor: [
+      "Very short-term observed rainfall totals",
+      "Comparing recent observed totals against near-term guidance",
+      "Fast situational awareness in active systems",
+    ],
+    interpretation: ["Observed recent precipitation, not a forecast field."],
+  },
+  mrms_recent_precip_24h: {
+    definition: "Observed MRMS 24-hour recent precipitation accumulation.",
+    bestFor: [
+      "Day-scale observed rainfall totals",
+      "Flood-sensitive recent-total screening",
+      "Observed-versus-forecast comparison",
+    ],
+    interpretation: ["Observed recent precipitation, not a forecast field."],
+  },
+  mrms_recent_precip_72h: {
+    definition: "Observed MRMS 72-hour recent precipitation accumulation.",
+    bestFor: [
+      "Multi-day observed rainfall totals",
+      "Broader recent wet-corridor screening",
+      "Event-total context before reading forecast guidance",
+    ],
+    interpretation: ["Observed recent precipitation, not a forecast field."],
+  },
+  ir13: {
+    definition: "GOES-East Band 13 clean infrared imagery for cloud-top temperature and system organization.",
+    bestFor: [
+      "Cloud-top structure and convective cluster organization",
+      "Large-scale system evolution context",
+      "Satellite comparison against model cloud and precip fields",
+    ],
+    interpretation: ["Satellite observation rather than model-derived output."],
   },
   active: {
     definition: "Current active NWS hazards layer, including watches, warnings, advisories, and statements.",
@@ -460,57 +622,17 @@ type VariableSummary = {
   limitations: string[];
 };
 
-const GROUP_ORDER = ["SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "OBSERVATIONS"] as const;
-const VIEWER_GROUP_BY_VARIABLE: Record<string, string> = {
-  tmp2m: "SURFACE",
-  dp2m: "SURFACE",
-  rh2m: "SURFACE",
-  td2m: "SURFACE",
-  wspd10m: "SURFACE",
-  wgst10m: "SURFACE",
-  mint: "SURFACE",
-  maxt: "SURFACE",
-  wgust_6h_max: "SURFACE",
-  wgust_24h_max: "SURFACE",
-  tmp850: "UPPER AIR",
-  rh700: "UPPER AIR",
-  wspd850: "UPPER AIR",
-  wspd300: "UPPER AIR",
-  vort500: "UPPER AIR",
-  sbcape: "SEVERE",
-  mlcape: "SEVERE",
-  mucape: "SEVERE",
-  pwat: "PRECIPITATION",
-  precip_total: "PRECIPITATION",
-  qpf: "PRECIPITATION",
-  qpf_6h: "PRECIPITATION",
-  qpf_24h: "PRECIPITATION",
-  qpf_48h: "PRECIPITATION",
-  snowfall_total: "PRECIPITATION",
-  snow10to1: "PRECIPITATION",
-  snow_6h: "PRECIPITATION",
-  snow_24h: "PRECIPITATION",
-  snow_48h: "PRECIPITATION",
-  snowfall_kuchera_total: "PRECIPITATION",
-  snowkuchera: "PRECIPITATION",
-  ice_total: "PRECIPITATION",
-  ice_6h: "PRECIPITATION",
-  ice_24h: "PRECIPITATION",
-  ptype_intensity: "PRECIPITATION",
-  radar_ptype: "PRECIPITATION",
-  precip_5d_anom: "PRECIP ANOMALIES",
-  precip_7d_anom: "PRECIP ANOMALIES",
-  precip_10d_anom: "PRECIP ANOMALIES",
-  precip_15d_anom: "PRECIP ANOMALIES",
-  precip_16d_anom: "PRECIP ANOMALIES",
-  convective: "OBSERVATIONS",
-  tornado: "OBSERVATIONS",
-  wind: "OBSERVATIONS",
-  hail: "OBSERVATIONS",
-  active: "OBSERVATIONS",
-  reflectivity: "OBSERVATIONS",
-  mrms_radar_ptype: "OBSERVATIONS",
-};
+const GROUP_ORDER = [
+  "SURFACE",
+  "PRECIPITATION",
+  "SEVERE",
+  "UPPER AIR",
+  "OUTLOOKS",
+  "FORECASTS",
+  "RADAR",
+  "SATELLITE",
+  "OBSERVATIONS",
+] as const;
 
 function groupSortKey(group: string): number {
   const index = GROUP_ORDER.indexOf(group as (typeof GROUP_ORDER)[number]);
@@ -520,40 +642,10 @@ function groupSortKey(group: string): number {
 function groupIcon(group: string) {
   if (group === "SURFACE" || group === "SEVERE") return <Flame className="h-5 w-5" />;
   if (group === "UPPER AIR") return <Wind className="h-5 w-5" />;
-  if (group === "PRECIPITATION" || group === "PRECIP ANOMALIES") return <Droplets className="h-5 w-5" />;
-  if (group === "OBSERVATIONS") return <Snowflake className="h-5 w-5" />;
+  if (group === "PRECIPITATION") return <Droplets className="h-5 w-5" />;
+  if (group === "OUTLOOKS" || group === "FORECASTS") return <Layers3 className="h-5 w-5" />;
+  if (group === "RADAR" || group === "SATELLITE" || group === "OBSERVATIONS") return <Snowflake className="h-5 w-5" />;
   return <Layers3 className="h-5 w-5" />;
-}
-
-function canonicalViewerGroup(varKey: string, backendGroup?: string | null): string {
-  const mapped = VIEWER_GROUP_BY_VARIABLE[varKey];
-  if (mapped) return mapped;
-
-  const normalized = backendGroup?.trim().toLowerCase();
-  switch (normalized) {
-    case "surface":
-    case "temperature":
-    case "wind":
-      return "SURFACE";
-    case "precipitation":
-    case "moisture":
-    case "radar & precipitation type":
-    case "radar":
-      return "PRECIPITATION";
-    case "anomalies":
-    case "precip anomalies":
-      return "PRECIP ANOMALIES";
-    case "severe":
-    case "instability":
-      return "SEVERE";
-    case "upper air":
-    case "dynamics":
-      return "UPPER AIR";
-    case "observations":
-      return "OBSERVATIONS";
-    default:
-      return "OBSERVATIONS";
-  }
 }
 
 export default function Variables() {
@@ -597,7 +689,7 @@ export default function Variables() {
       .map(([varKey, variable]) => {
         const reference = VARIABLE_REFERENCE[varKey];
         const displayName = variable.display_name?.trim() || varKey;
-        const group = canonicalViewerGroup(varKey, variable.group);
+        const group = viewerVariableGroup(varKey, variable.group);
 
         return {
           id: varKey,
@@ -605,7 +697,7 @@ export default function Variables() {
           units: variable.units?.trim() || "Contextual units",
           group,
           models: Array.from(modelsByVariable.get(varKey) ?? []),
-          order: variable.order ?? 999,
+          order: variableCatalogOrder(varKey, variable.order),
           definition: reference?.definition ?? "Supported in the current CartoSky catalog.",
           bestFor: reference?.bestFor ?? ["Reference support is live in the current viewer catalog."],
           interpretation: reference?.interpretation ?? ["Use alongside related fields for a fuller forecasting read."],
