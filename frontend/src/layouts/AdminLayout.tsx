@@ -31,7 +31,7 @@ export default function AdminLayout() {
   const { isLoaded } = useAuth();
 
   return (
-    <div className="relative min-h-[calc(100vh-3.5rem)] overflow-x-hidden bg-[#07111f] text-white">
+    <div className="relative min-h-[calc(100vh-3.5rem)] w-full overflow-x-hidden bg-[#07111f] text-white">
       <div
         aria-hidden="true"
         className="absolute inset-0"

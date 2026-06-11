@@ -22,7 +22,7 @@ export default function AppLayout() {
     >
       {isViewerRoute ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
 
-      <div className={isAdminRoute ? "flex flex-1 min-h-0" : "flex flex-1 min-h-0 overflow-hidden"}>
+      <div className={isAdminRoute ? "flex-1 min-h-0 w-full" : "flex flex-1 min-h-0 overflow-hidden"}>
         <Suspense fallback={isViewerRoute ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
           <Outlet />
           <BootstrapCompleteMarker />
