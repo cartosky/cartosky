@@ -14,7 +14,7 @@ import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
-const CARTO_TILE_SIZE = IS_HIDPI ? 512 : 256;
+const CARTO_TILE_SIZE = 256;
 
 const CARTO_LIGHT_BASE_TILES = [
   `https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
@@ -730,12 +730,6 @@ type AnchorMarkerRecord = {
   element: HTMLDivElement;
   chip: HTMLDivElement;
 };
-
-function snapAnchorMarkerToPixels(map: maplibregl.Map, record: AnchorMarkerRecord) {
-  const { lng, lat } = record.marker.getLngLat();
-  const projected = map.project([lng, lat]);
-  record.element.style.transform = `translate(-50%, -50%) translate(${Math.round(projected.x)}px, ${Math.round(projected.y)}px)`;
-}
 
 type AnchorTooltipState = {
   cityName: string;
@@ -1603,7 +1597,6 @@ export function MapCanvas({
             existing.chip.setAttribute("aria-label", activeMarker.cityName);
           }
           existing.marker.setLngLat(activeMarker.lngLat);
-          snapAnchorMarkerToPixels(map, existing);
           continue;
         }
 
@@ -1678,9 +1671,7 @@ export function MapCanvas({
           .setLngLat(activeMarker.lngLat)
           .addTo(map);
 
-        const record = { marker, element, chip };
-        anchorMarkersRef.current.set(activeMarker.id, record);
-        snapAnchorMarkerToPixels(map, record);
+        anchorMarkersRef.current.set(activeMarker.id, { marker, element, chip });
       }
     },
     [clearAnchorMarkers, hideAnchorTooltip, onAnchorClick, onMapHoverEnd, showAnchorTooltip]
@@ -1755,9 +1746,16 @@ export function MapCanvas({
       zoom: view.zoom,
       minZoom: view.minZoom ?? 3,
       maxZoom: view.maxZoom ?? 11,
+      minPitch: 0,
+      maxPitch: 0,
+      pitchWithRotate: false,
+      dragRotate: false,
+      touchPitch: false,
       attributionControl: false,
       preserveDrawingBuffer: true,
     });
+
+    map.touchZoomRotate.disableRotation();
 
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;

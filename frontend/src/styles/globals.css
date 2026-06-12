@@ -120,6 +120,10 @@
   }
 
   .map-anchor-marker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
     pointer-events: none;
     user-select: none;
     white-space: nowrap;

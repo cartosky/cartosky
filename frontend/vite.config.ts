@@ -17,6 +17,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     proxy: DEV_SERVER_PROXY,
   },
   build: {
