@@ -23,8 +23,7 @@ export function SpeedButton({ animationDelayMs, onSpeedChange }: SpeedButtonProp
       type="button"
       onClick={handleClick}
       aria-label={`Animation speed ${current.label}`}
-      className="flex h-9 w-9 shrink-0 items-center justify-center bg-white/[0.05] font-['IBM_Plex_Mono',monospace] text-[11px] font-semibold text-cyan-300 transition-colors hover:bg-white/[0.09]"
-      style={{ border: "1px solid rgba(255,255,255,0.09)", borderRadius: 8 }}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/12 bg-white/[0.05] font-['IBM_Plex_Mono',monospace] text-[11px] font-semibold text-cyan-300 transition-colors hover:bg-white/[0.09]"
     >
       {current.label}
     </button>
