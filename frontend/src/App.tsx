@@ -74,7 +74,6 @@ import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 import { useViewerLayoutMode } from "@/lib/viewer-layout";
 import {
   // Constants
-  AUTOPLAY_TICK_MS,
   AUTOPLAY_UI_SYNC_MS,
   AUTOPLAY_READY_AHEAD,
   AUTOPLAY_SKIP_WINDOW,
@@ -115,6 +114,8 @@ import {
   buildLegend,
   buildVectorLayerUrl,
   emptyScrubPhase0aSnapshot,
+  readAnimationDelayPreference,
+  writeAnimationDelayPreference,
   // Types
   type NewRunNoticeState,
   type GroupedOption,
@@ -282,6 +283,7 @@ export default function App() {
   const [mapZoom, setMapZoom] = useState(MAP_VIEW_DEFAULTS.zoom);
   const [zoomGestureActive, setZoomGestureActive] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [animationDelayMs, setAnimationDelayMs] = useState(() => readAnimationDelayPreference());
   const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [isScrubLodHoldActive, setIsScrubLodHoldActive] = useState(false);
@@ -1791,7 +1793,7 @@ export default function App() {
 
     const now = performance.now();
     const lastAdvanceAtMs = gridPlaybackLastAdvanceAtMsRef.current;
-    if (lastAdvanceAtMs > 0 && now - lastAdvanceAtMs < AUTOPLAY_TICK_MS) {
+    if (lastAdvanceAtMs > 0 && now - lastAdvanceAtMs < animationDelayMs) {
       return false;
     }
 
@@ -1824,6 +1826,7 @@ export default function App() {
     resetGridPlaybackWaitState();
     return true;
   }, [
+    animationDelayMs,
     autoplayLookAheadGraceMs,
     autoplayReadyAheadFrames,
     gridFrameHours,
@@ -3390,13 +3393,19 @@ export default function App() {
       if (nextHour === null) {
         return;
       }
+      // Hold at the current frame when the next hour's grid frame exists but
+      // hasn't loaded yet — mirrors the gridReadyHourSet gate in
+      // attemptGridPlaybackAdvance so fast tick speeds can't outrun the loader.
+      if (gridFrameByHour.has(nextHour) && !isGridHourReady(nextHour)) {
+        return;
+      }
       setTargetForecastHour(nextHour);
-    }, AUTOPLAY_TICK_MS);
+    }, animationDelayMs);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [canUseGridPlayback, isPlaying, selectableFrameHours]);
+  }, [animationDelayMs, canUseGridPlayback, gridFrameByHour, isGridHourReady, isPlaying, selectableFrameHours]);
 
   useEffect(() => {
     if (selectableFrameHours.length === 0 && isPlaying) {
@@ -3409,6 +3418,11 @@ export default function App() {
       clearFrameStatusTimer();
     }
   }, [isPlaying, clearFrameStatusTimer]);
+
+  const handleAnimationSpeedChange = useCallback((delayMs: number) => {
+    setAnimationDelayMs(delayMs);
+    writeAnimationDelayPreference(delayMs);
+  }, []);
 
   const handleSetIsPlaying = useCallback((value: boolean) => {
     if (!value) {
@@ -4489,6 +4503,8 @@ export default function App() {
           onScrubStateChange={setIsScrubbing}
           isPlaying={controlsIsPlaying}
           setIsPlaying={handleSetIsPlaying}
+          animationDelayMs={animationDelayMs}
+          onSpeedChange={handleAnimationSpeedChange}
           runDateTimeISO={runDateTimeISO}
           timeAxisMode={selectedTimeAxisMode}
           validTimeISO={displayedValidTimeISO}

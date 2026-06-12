@@ -33,7 +33,16 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-export const AUTOPLAY_TICK_MS = 120;
+export const ANIMATION_SPEEDS = [
+  { label: "1×",   delayMs: 200 },
+  { label: "2×",   delayMs: 100 },
+  { label: "4×",   delayMs:  50 },
+  { label: "0.5×", delayMs: 400 },
+] as const;
+
+export type AnimationSpeed = typeof ANIMATION_SPEEDS[number];
+export const DEFAULT_ANIMATION_DELAY_MS = 200;
+
 export const AUTOPLAY_UI_SYNC_MS = 120;
 export const AUTOPLAY_READY_AHEAD = 3;
 export const AUTOPLAY_SKIP_WINDOW = 8;
@@ -58,6 +67,7 @@ export const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
 export const LEGEND_VISIBILITY_STORAGE_KEY = "twf.map.legend_visible";
 export const POINT_LABELS_STORAGE_KEY = "twf.map.point_labels_enabled";
 export const ZOOM_CONTROLS_STORAGE_KEY = "twf.map.zoom_controls_visible";
+export const ANIMATION_DELAY_STORAGE_KEY = "cartosky_animation_delay_ms";
 export const MODEL_ORDER_BY_ID: Record<string, number> = {
   hrrr: 0,
   nam: 1,
@@ -331,6 +341,31 @@ export function readZoomControlsPreference(): boolean | null {
 
 export function writeZoomControlsPreference(visible: boolean): void {
   writeBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, visible);
+}
+
+export function readAnimationDelayPreference(): number {
+  if (typeof window === "undefined") {
+    return DEFAULT_ANIMATION_DELAY_MS;
+  }
+  try {
+    const stored = Number(window.localStorage.getItem(ANIMATION_DELAY_STORAGE_KEY));
+    return ANIMATION_SPEEDS.some((speed) => speed.delayMs === stored)
+      ? stored
+      : DEFAULT_ANIMATION_DELAY_MS;
+  } catch {
+    return DEFAULT_ANIMATION_DELAY_MS;
+  }
+}
+
+export function writeAnimationDelayPreference(delayMs: number): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(ANIMATION_DELAY_STORAGE_KEY, String(delayMs));
+  } catch {
+    // Ignore storage errors.
+  }
 }
 
 function regionPriority(regionId: string): number {

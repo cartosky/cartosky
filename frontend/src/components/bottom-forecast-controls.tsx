@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
+import { SpeedButton } from "@/components/SpeedButton";
 import {
   formatObservedCompactTime,
   formatObservedValidTime,
@@ -27,6 +28,8 @@ type BottomForecastControlsProps = {
   onScrubStateChange?: (isScrubbing: boolean) => void;
   isPlaying: boolean;
   setIsPlaying: (value: boolean) => void;
+  animationDelayMs: number;
+  onSpeedChange: (delayMs: number) => void;
   runDateTimeISO: string | null;
   timeAxisMode?: TimeAxisMode;
   validTimeISO?: string | null;
@@ -207,6 +210,8 @@ export function BottomForecastControls({
   onScrubStateChange,
   isPlaying,
   setIsPlaying,
+  animationDelayMs,
+  onSpeedChange,
   runDateTimeISO,
   timeAxisMode = "forecast",
   validTimeISO = null,
@@ -520,6 +525,8 @@ export function BottomForecastControls({
                 </TooltipContent>
               </Tooltip>
 
+              <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
+
               {staticSnapshotLabel ? (
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 py-1">
@@ -674,6 +681,7 @@ export function BottomForecastControls({
                     {isPlaying ? "Pause" : "Play"} animation
                   </TooltipContent>
                 </Tooltip>
+                <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
               </div>
 
               {staticSnapshotLabel ? (
