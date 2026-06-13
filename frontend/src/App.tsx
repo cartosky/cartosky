@@ -80,6 +80,8 @@ import {
   AUTOPLAY_STALL_SKIP_MS,
   GRID_PLAY_START_AHEAD_FRAMES,
   GRID_PLAY_STALL_MS,
+  PRELOAD_START_RATIO,
+  PRELOAD_STALL_MS,
   SCRUB_COMMIT_NEIGHBOR_WINDOW,
   VARIABLE_SWITCH_TIMEOUT_MS,
   // Pure helpers
@@ -521,6 +523,9 @@ export default function App() {
   const previousIsScrubbingRef = useRef(false);
   const pendingScrubHourRef = useRef<number | null>(null);
   const scrubPhase0aRef = useRef<ScrubPhase0aSnapshot>(emptyScrubPhase0aSnapshot());
+  const idleWarmupLastReadyCountRef = useRef(0);
+  const idleWarmupLastProgressAtRef = useRef(0);
+  const [idleWarmupStalled, setIdleWarmupStalled] = useState(false);
   const forecastHourRef = useRef(forecastHour);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const runsLoadedForModelRef = useRef<string>("");
@@ -1612,6 +1617,37 @@ export default function App() {
       && (presentedGridFrameUrl || compositeGridLayers.length > 0)
     );
   }, [compositeGridLayers.length, gridManifest, presentedGridFrameUrl, selectedGridLod]);
+  const idleWarmupReadyRatio = useMemo(() => {
+    if (gridFrameHours.length === 0) {
+      return 1;
+    }
+    return gridReadyCount / gridFrameHours.length;
+  }, [gridFrameHours.length, gridReadyCount]);
+  const canIdleGridWarmup = useMemo(() => {
+    return firstWeatherFramePainted
+      && isGridLowMidActive
+      && gridFrameHours.length > 1
+      && !isScrubbing
+      && !isPlaying
+      && !isGridPreloadingForPlay
+      && !isVariableSwitching
+      && isPageVisible;
+  }, [
+    firstWeatherFramePainted,
+    gridFrameHours.length,
+    isGridLowMidActive,
+    isGridPreloadingForPlay,
+    isPageVisible,
+    isPlaying,
+    isScrubbing,
+    isVariableSwitching,
+  ]);
+  const isIdleGridWarmupActive = useMemo(() => {
+    if (!canIdleGridWarmup || idleWarmupStalled) {
+      return false;
+    }
+    return idleWarmupReadyRatio < PRELOAD_START_RATIO;
+  }, [canIdleGridWarmup, idleWarmupReadyRatio, idleWarmupStalled]);
   const gridPrefetchPivotHour = useMemo(() => {
     if (!isGridLowMidActive) {
       return null;
@@ -1650,6 +1686,36 @@ export default function App() {
     resolvedGridDisplayHour,
     scrubCommitIntent,
   ]);
+
+  useEffect(() => {
+    idleWarmupLastReadyCountRef.current = 0;
+    idleWarmupLastProgressAtRef.current = performance.now();
+    setIdleWarmupStalled(false);
+  }, [selectionKey]);
+
+  useEffect(() => {
+    if (gridReadyCount === idleWarmupLastReadyCountRef.current) {
+      return;
+    }
+    idleWarmupLastReadyCountRef.current = gridReadyCount;
+    idleWarmupLastProgressAtRef.current = performance.now();
+    setIdleWarmupStalled(false);
+  }, [gridReadyCount]);
+
+  useEffect(() => {
+    if (!canIdleGridWarmup) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      if (performance.now() - idleWarmupLastProgressAtRef.current >= PRELOAD_STALL_MS) {
+        setIdleWarmupStalled(true);
+      }
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [canIdleGridWarmup]);
+
   const controlAvailableFrameHours = useMemo(() => {
     if (isGridLowMidActive && gridFrameHours.length > 0) {
       return selectableFramesForVariable(gridFrameHours, selectedVariableDefaultFh);
@@ -2167,7 +2233,33 @@ export default function App() {
     });
   }, [activeGridFrameUrl, loadedFramesKey, variable]);
 
-  const isScrubLoading = false;
+  const isScrubLoading = useMemo(() => {
+    if (!isScrubbing || !isGridLowMidActive || gridFrameHours.length === 0) {
+      return false;
+    }
+    const requestedCandidate = Number.isFinite(scrubRequestedHour)
+      ? Number(scrubRequestedHour)
+      : Number.isFinite(targetForecastHour)
+        ? Number(targetForecastHour)
+        : null;
+    if (!Number.isFinite(requestedCandidate)) {
+      return false;
+    }
+    const requestedHour = nearestFrame(gridFrameHours, Number(requestedCandidate));
+    if (isGridHourReady(requestedHour)) {
+      return false;
+    }
+    const presentedHour = Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null;
+    return presentedHour !== requestedHour;
+  }, [
+    gridFrameHours,
+    isGridHourReady,
+    isGridLowMidActive,
+    isScrubbing,
+    presentedGridDisplayHour,
+    scrubRequestedHour,
+    targetForecastHour,
+  ]);
 
   const cancelPendingVariableSwitch = useCallback((
     reason: "selection-mismatch" | "timeout",
@@ -3869,8 +3961,15 @@ export default function App() {
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;
-  const showBufferStatus = isGridPreloadingForPlay && gridFrameHours.length > 0;
-  const bufferStatusText = `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
+  const showBufferStatus = (isGridPreloadingForPlay || isScrubLoading) && gridFrameHours.length > 0;
+  const bufferStatusText = isScrubLoading
+    ? "Loading forecast frame"
+    : `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
+  const mapPlaybackMode = (isPlaying || isGridPreloadingForPlay)
+    ? "autoplay"
+    : (isVariableSwitching
+      ? "variable-switch"
+      : (isIdleGridWarmupActive ? "idle-warmup" : "scrub"));
 
   const resolvedForecastHourPermalink = Number.isFinite(forecastHour)
     ? forecastHour
@@ -4390,7 +4489,9 @@ export default function App() {
           region={region}
           regionViews={regionViews}
           opacity={opacity}
-          mode={(isPlaying || isGridPreloadingForPlay) ? "autoplay" : (isVariableSwitching ? "variable-switch" : "scrub")}
+          mode={mapPlaybackMode}
+          isScrubbing={isScrubbing}
+          isGridPlaybackAnimating={controlsIsPlaying}
           variable={displayedOverlayVariable}
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}

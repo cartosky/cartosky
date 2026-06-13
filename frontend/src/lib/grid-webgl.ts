@@ -11,6 +11,8 @@ const GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES = 384 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES = 512 * 1024 * 1024;
 const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 256 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 12;
+/** Expanded warm queue for scrub/idle prefetch (forecast models only). */
+const GRID_TEXTURE_WARM_LIMIT_SCRUB = 14;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 3;
 const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP = 2;
 const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE = 1;
@@ -87,8 +89,10 @@ export type GridWebglLayerConfig = {
   contour?: GridContourLayerConfig | null;
   rasterPaint?: GridRasterPaint | null;
   /** When true, the controller deprioritizes background texture warming to
-   *  avoid competing with the animation/scrub for main-thread and GPU time. */
+   *  avoid competing with animation playback for main-thread and GPU time. */
   isAnimating?: boolean;
+  /** When true, use full warm throughput and an expanded queue for scrub/idle prefetch. */
+  isScrubPrefetch?: boolean;
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
   /** Fired when a frame has a live GPU texture and can be shown without a foreground upload. */
   onFrameReady?: ((frameUrl: string) => void) | null;
@@ -817,6 +821,7 @@ export class GridWebglLayerController {
   private prefetchUrls: string[] = [];
   private contour: GridContourLayerConfig | null = null;
   private animating = false;
+  private isScrubPrefetch = false;
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private onFrameEvicted: ((frameUrl: string) => void) | null = null;
@@ -1085,6 +1090,7 @@ export class GridWebglLayerController {
     this.prefetchUrls = Array.isArray(config.prefetchUrls) ? config.prefetchUrls.filter(Boolean) : [];
     this.contour = config.contour?.frameUrl && config.contour.grid ? config.contour : null;
     this.animating = config.isAnimating ?? false;
+    this.isScrubPrefetch = config.isScrubPrefetch ?? false;
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
     this.onFrameEvicted = config.onFrameEvicted ?? null;
@@ -1151,6 +1157,9 @@ export class GridWebglLayerController {
       }
       return baseLimit;
     }
+    if (this.isScrubPrefetch) {
+      return GRID_TEXTURE_WARM_LIMIT_SCRUB;
+    }
     return GRID_TEXTURE_WARM_LIMIT;
   }
 
@@ -1166,7 +1175,7 @@ export class GridWebglLayerController {
       }
       return baseBatchSize;
     }
-    return resolveForecastTextureWarmBatchSize(this.animating);
+    return resolveForecastTextureWarmBatchSize(this.animating && !this.isScrubPrefetch);
   }
 
   private textureWarmHighPriorityCount(): number {
@@ -2234,7 +2243,7 @@ export class GridWebglLayerController {
     // Keep warming adaptive so high-resolution observed LODs don't saturate
     // frame time while the user is actively scrubbing or animating.
     const effectiveBatchSize = this.textureWarmBatchSize();
-    let frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating);
+    let frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating && !this.isScrubPrefetch);
     if (isObservedGridManifest(this.manifest)) {
       const lodPixelCount = this.resolveSelectedLodPixelCount();
       if (lodPixelCount !== null && lodPixelCount >= OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD) {

@@ -58,7 +58,7 @@ type RegionView = {
 
 export type BasemapMode = "light" | "dark";
 
-type PlaybackMode = "autoplay" | "scrub" | "variable-switch";
+type PlaybackMode = "autoplay" | "scrub" | "variable-switch" | "idle-warmup";
 
 type AnimatedGridPlaybackState = {
   frameUrl: string | null;
@@ -88,7 +88,7 @@ export type VectorHazardSelection = {
 };
 
 /** Total prefetch budget for forecast scrub (ahead + behind). */
-const FORECAST_SCRUB_PREFETCH_BUDGET = 10;
+const FORECAST_SCRUB_PREFETCH_BUDGET = 14;
 /** Minimum behind-direction slots during forecast scrub. */
 const FORECAST_SCRUB_MIN_BEHIND = 1;
 /** Minimum ahead-direction slots during forecast scrub. */
@@ -977,6 +977,9 @@ type MapCanvasProps = {
   onGridFrameEvicted?: (frameUrl: string) => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   isAnimating?: boolean;
+  /** True while grid playback is buffering or running; drives animation-only warm throttling. */
+  isGridPlaybackAnimating?: boolean;
+  isScrubbing?: boolean;
   onMapReady?: (map: maplibregl.Map) => void;
   onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
@@ -1028,6 +1031,8 @@ export function MapCanvas({
   onGridFrameEvicted,
   getAnimatedGridPlaybackState = null,
   isAnimating = false,
+  isGridPlaybackAnimating = false,
+  isScrubbing = false,
   onMapReady,
   onLatestMapDataUrl,
   onMapHover,
@@ -1239,6 +1244,10 @@ export function MapCanvas({
           }
         }
       }
+    } else if (mode === "idle-warmup") {
+      // Idle: progressively warm the full timeline outward from the current frame.
+      aheadTarget = remainingAhead;
+      behindTarget = remainingBehind;
     } else if (mode === "autoplay") {
       aheadTarget = Math.min(remainingAhead, 8);
       behindTarget = Math.min(remainingBehind, 2);
@@ -1284,13 +1293,11 @@ export function MapCanvas({
       }
     };
 
-    // Push direction-of-travel frames first so they receive higher priority
-    // in the downstream texture warm queue.  During backward scrub the
-    // behind-frames are the ones the user will need next.
-    if (isObservedGrid && mode !== "autoplay") {
-      // MRMS scrub/idle: interleave ahead and behind, nearest-first, so both
-      // directions stay warm in the limited texture queue.  Direction bias
-      // determines which side goes first at each interleave step.
+    // Interleave ahead/behind nearest-first for scrub and idle warmup so both
+    // directions stay warm in the texture queue.  Autoplay keeps sequential
+    // ordering for its forward-biased prefetch window.
+    const useInterleavedPrefetch = (isObservedGrid && mode !== "autoplay") || mode === "scrub" || mode === "idle-warmup";
+    if (useInterleavedPrefetch) {
       const maxStep = Math.max(aheadTarget, behindTarget);
       for (let step = 1; step <= maxStep; step += 1) {
         if (direction < 0) {
@@ -1378,6 +1385,7 @@ export function MapCanvas({
     }
 
     const { frameUrl, frameHour, prefetchPivotHour, compositeLayers } = params;
+    const gridScrubPrefetch = isScrubbing || mode === "idle-warmup";
     const activePrefetchUrls = buildGridPrefetchUrls({
       frameUrl,
       frameHour,
@@ -1422,7 +1430,8 @@ export function MapCanvas({
       onFrameReady: onGridFrameReady,
       onFrameEvicted: onGridFrameEvicted,
       requestRepaint: requestGridRepaint,
-      isAnimating,
+      isAnimating: isGridPlaybackAnimating,
+      isScrubPrefetch: gridScrubPrefetch,
     });
 
     const activeCompositeLayerIds = new Set<string>();
@@ -1458,7 +1467,8 @@ export function MapCanvas({
         onFrameReady: onGridFrameReady,
         onFrameEvicted: onGridFrameEvicted,
         requestRepaint: requestGridRepaint,
-        isAnimating,
+        isAnimating: isGridPlaybackAnimating,
+        isScrubPrefetch: gridScrubPrefetch,
       });
     }
 
@@ -1479,8 +1489,10 @@ export function MapCanvas({
     gridLegend,
     gridLodLevel,
     gridManifest,
-    isAnimating,
+    isGridPlaybackAnimating,
     isLoaded,
+    isScrubbing,
+    mode,
     onGridFrameEvicted,
     onGridFrameReady,
     onGridFrameVisible,
