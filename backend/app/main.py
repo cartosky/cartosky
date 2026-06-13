@@ -1896,6 +1896,42 @@ async def admin_status_qa_summary(
     return admin_telemetry.get_status_qa_summary()
 
 
+ROADMAP_PATH = Path("/var/lib/cartosky/roadmap.json")
+
+
+@app.get("/api/v4/internal/roadmap")
+async def get_internal_roadmap(
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> Any:
+    if not ROADMAP_PATH.is_file():
+        return {}
+    try:
+        raw = ROADMAP_PATH.read_text(encoding="utf-8").strip()
+        if not raw:
+            return {}
+        return json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.post("/api/v4/internal/roadmap")
+async def post_internal_roadmap(
+    request: Request,
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, bool]:
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise TwfApiError(status_code=400, code="INVALID_ROADMAP_JSON", message="Invalid JSON body") from exc
+
+    try:
+        ROADMAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ROADMAP_PATH.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError as exc:
+        raise TwfApiError(status_code=500, code="ROADMAP_WRITE_FAILED", message=str(exc)) from exc
+    return {"ok": True}
+
+
 @app.get("/metrics")
 async def metrics() -> Response:
     if not prometheus_metrics.prometheus_enabled():

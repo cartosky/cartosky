@@ -361,6 +361,18 @@ export async function fetchAdminTracesSummary(): Promise<AdminTracesSummaryRespo
   return fetchAdminJson<AdminTracesSummaryResponse>(`${API_ORIGIN}/api/v4/admin/traces/summary`);
 }
 
+export async function fetchInternalRoadmap(): Promise<unknown> {
+  return fetchAdminJson<unknown>(`${API_ORIGIN}/api/v4/internal/roadmap`);
+}
+
+export async function saveInternalRoadmap(payload: unknown): Promise<{ ok: boolean }> {
+  return fetchAdminJson<{ ok: boolean }>(`${API_ORIGIN}/api/v4/internal/roadmap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchAdminFeedback(params: {
   page: number;
   pageSize: number;

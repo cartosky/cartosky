@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CartoSky Roadmap</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #101319;
+    --card: #161A22;
+    --card2: #1C2130;
+    --border: #2A3040;
+    --border-light: #333D50;
+    --primary: #2C443D;
+    --primary-hover: #3a5a51;
+    --cyan: #67E8F9;
+    --cyan-dim: rgba(103, 232, 249, 0.15);
+    --cyan-border: rgba(103, 232, 249, 0.25);
+    --text: #E8ECF2;
+    --text-muted: #7A8599;
+    --text-dim: #4A5568;
+    --done-green: #22c55e;
+    --done-green-dim: rgba(34, 197, 94, 0.12);
+    --in-progress-amber: #f59e0b;
+    --in-progress-dim: rgba(245, 158, 11, 0.12);
+    --in-review-blue: #3b82f6;
+    --in-review-dim: rgba(59, 130, 246, 0.12);
+    --todo-color: #7A8599;
+    --todo-dim: rgba(122, 133, 153, 0.1);
+    --high: #ef4444;
+    --high-dim: rgba(239, 68, 68, 0.12);
+    --medium: #f59e0b;
+    --medium-dim: rgba(245, 158, 11, 0.1);
+    --low: #6b7280;
+    --low-dim: rgba(107, 114, 128, 0.1);
+    --radius: 8px;
+    --radius-sm: 5px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    padding: 24px 32px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--card);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-mark {
+    width: 32px;
+    height: 32px;
+    background: var(--primary);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logo-mark svg { width: 18px; height: 18px; fill: var(--cyan); }
+
+  .header h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  .header-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 1px;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: var(--cyan);
+    border: 1px solid var(--primary-hover);
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--border-light); background: var(--card2); }
+
+  /* Progress bar */
+  .progress-bar-wrap {
+    padding: 12px 32px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .progress-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--cyan);
+    border-radius: 99px;
+    transition: width 0.4s ease;
+  }
+
+  .progress-count {
+    font-size: 12px;
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+  }
+
+  /* Main content */
+  .main {
+    padding: 28px 32px;
+    max-width: 1100px;
+  }
+
+  /* Phase block */
+  .phase {
+    margin-bottom: 36px;
+  }
+
+  .phase-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .phase-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .phase-period {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .phase-divider {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .phase-stats {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Items */
+  .items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 20px 1fr auto;
+    gap: 10px;
+    align-items: start;
+    transition: border-color 0.15s;
+    cursor: default;
+  }
+
+  .item:hover { border-color: var(--border-light); }
+  .item.done { opacity: 0.5; }
+  .item.done .item-title { text-decoration: line-through; color: var(--text-muted); }
+
+  /* Checkbox */
+  .item-check {
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--border-light);
+    border-radius: 4px;
+    margin-top: 2px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  .item-check:hover { border-color: var(--cyan); }
+  .item-check.checked { background: var(--primary); border-color: var(--primary-hover); }
+  .item-check.checked::after { content: '✓'; font-size: 10px; color: var(--cyan); line-height: 1; }
+
+  /* Item body */
+  .item-body { min-width: 0; }
+
+  .item-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+
+  .item-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 1px 2px;
+    margin: -1px -2px;
+    outline: none;
+    transition: background 0.1s;
+  }
+
+  .item-title:hover { background: var(--card2); }
+  .item-title:focus { background: var(--card2); box-shadow: 0 0 0 2px var(--cyan-border); }
+
+  .item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* Status badge */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: all 0.15s;
+  }
+
+  .badge-status-todo { background: var(--todo-dim); color: var(--todo-color); border: 1px solid rgba(122,133,153,0.2); }
+  .badge-status-inprogress { background: var(--in-progress-dim); color: var(--in-progress-amber); border: 1px solid rgba(245,158,11,0.2); }
+  .badge-status-inreview { background: var(--in-review-dim); color: var(--in-review-blue); border: 1px solid rgba(59,130,246,0.2); }
+  .badge-status-done { background: var(--done-green-dim); color: var(--done-green); border: 1px solid rgba(34,197,94,0.2); }
+
+  .badge-priority-high { background: var(--high-dim); color: var(--high); border: 1px solid rgba(239,68,68,0.2); }
+  .badge-priority-medium { background: var(--medium-dim); color: var(--medium); border: 1px solid rgba(245,158,11,0.2); }
+  .badge-priority-low { background: var(--low-dim); color: var(--low); border: 1px solid rgba(107,114,128,0.2); }
+
+  .badge-effort {
+    background: rgba(103,232,249,0.07);
+    color: var(--text-muted);
+    border: 1px solid var(--cyan-border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+  }
+
+  /* Notes */
+  .item-notes {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 3px 4px;
+    margin-left: -4px;
+    outline: none;
+    min-height: 18px;
+    transition: background 0.1s;
+  }
+
+  .item-notes:hover { background: var(--card2); }
+  .item-notes:focus { background: var(--card2); box-shadow: 0 0 0 2px var(--cyan-border); }
+  .item-notes.empty { color: var(--text-dim); font-style: italic; }
+
+  /* Item actions */
+  .item-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .icon-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0.15s;
+  }
+
+  .icon-btn:hover { background: var(--card2); color: var(--text-muted); }
+  .icon-btn.delete:hover { background: rgba(239,68,68,0.1); color: var(--high); }
+
+  /* Dropdown */
+  .dropdown-wrap { position: relative; }
+
+  .dropdown-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: var(--card2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 4px;
+    min-width: 140px;
+    z-index: 200;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-muted);
+    transition: all 0.1s;
+  }
+
+  .dropdown-item:hover { background: var(--border); color: var(--text); }
+  .dropdown-item.active { color: var(--cyan); }
+
+  .dropdown-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* Add item row */
+  .add-item-row {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .add-input {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .add-input::placeholder { color: var(--text-dim); }
+  .add-input:focus { border-color: var(--cyan-border); }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .modal {
+    background: var(--card);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  .modal h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  .modal-field { margin-bottom: 14px; }
+
+  .modal-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .modal-input, .modal-select, .modal-textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .modal-input:focus, .modal-select:focus, .modal-textarea:focus {
+    border-color: var(--cyan-border);
+  }
+
+  .modal-textarea { resize: vertical; min-height: 80px; }
+
+  .modal-select option { background: var(--card2); }
+
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 20px;
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    padding: 10px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: var(--bg);
+  }
+
+  .filter-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  .filter-chip {
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .filter-chip:hover { border-color: var(--border-light); color: var(--text); }
+  .filter-chip.active { background: var(--cyan-dim); border-color: var(--cyan-border); color: var(--cyan); }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--card2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text);
+    z-index: 500;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.2s;
+    pointer-events: none;
+  }
+
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    .header, .filter-bar, .progress-bar-wrap { padding-left: 16px; padding-right: 16px; }
+    .main { padding: 20px 16px; }
+    .item { grid-template-columns: 20px 1fr; }
+    .item-actions { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <h1>CartoSky Roadmap</h1>
+      </div>
+      <div class="header-sub" id="last-saved">Last saved: never</div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-ghost" onclick="exportJSON()">↓ Export JSON</button>
+    <button class="btn btn-ghost" onclick="document.getElementById('importFile').click()">↑ Import JSON</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)" />
+    <button class="btn btn-primary" onclick="openAddModal()">+ Add Item</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <span class="filter-label">Filter</span>
+  <button class="filter-chip active" data-filter="all" onclick="setFilter('all', this)">All</button>
+  <button class="filter-chip" data-filter="todo" onclick="setFilter('todo', this)">To Do</button>
+  <button class="filter-chip" data-filter="inprogress" onclick="setFilter('inprogress', this)">In Progress</button>
+  <button class="filter-chip" data-filter="inreview" onclick="setFilter('inreview', this)">In Review</button>
+  <button class="filter-chip" data-filter="done" onclick="setFilter('done', this)">Done</button>
+  <button class="filter-chip" data-filter="high" onclick="setFilter('high', this)">High Priority</button>
+</div>
+
+<div class="progress-bar-wrap">
+  <span class="progress-label">Overall progress</span>
+  <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  <span class="progress-count" id="progress-count">0 / 0 done</span>
+</div>
+
+<div class="main" id="main-content"></div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modal" style="display:none" onclick="closeModalOnOverlay(event)">
+  <div class="modal">
+    <h3 id="modal-title">Add Item</h3>
+    <div class="modal-field">
+      <label class="modal-label">Title</label>
+      <input class="modal-input" id="modal-item-title" placeholder="What needs to be done?" />
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">Phase</label>
+      <select class="modal-select" id="modal-phase"></select>
+    </div>
+    <div class="modal-field" style="display:flex;gap:10px;">
+      <div style="flex:1">
+        <label class="modal-label">Status</label>
+        <select class="modal-select" id="modal-status">
+          <option value="todo">To Do</option>
+          <option value="inprogress">In Progress</option>
+          <option value="inreview">In Review</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label class="modal-label">Priority</label>
+        <select class="modal-select" id="modal-priority">
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label class="modal-label">Effort</label>
+        <select class="modal-select" id="modal-effort">
+          <option value="S">Small</option>
+          <option value="M">Medium</option>
+          <option value="L">Large</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">Notes</label>
+      <textarea class="modal-textarea" id="modal-notes" placeholder="Optional notes, links, context..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
+const DEFAULT_PHASES = [
+  {
+    id: 'phase1',
+    title: 'Phase 1 — Beta Launch',
+    period: 'May–June 2026',
+    items: [
+      { id: 'p1-1', title: 'Public beta launch on TWF', status: 'done', priority: 'high', effort: 'L', notes: 'Main post + two cross-posts in active threads. Live.' },
+      { id: 'p1-2', title: 'Satellite animation stall bug fix', status: 'done', priority: 'high', effort: 'S', notes: 'Caught via session replay on day one. Fixed and deployed.' },
+      { id: 'p1-3', title: 'Animation play button loops back from last frame', status: 'done', priority: 'medium', effort: 'S', notes: 'Previously hitting play at end of scrubber did nothing. Now loops to start.' },
+      { id: 'p1-4', title: 'Animation loops until explicit stop', status: 'done', priority: 'medium', effort: 'S', notes: 'Changed from stop-at-end to continuous loop on user stop.' },
+      { id: 'p1-5', title: 'Fix scrubber lag before cache warm', status: 'todo', priority: 'high', effort: 'M', notes: 'Increase prefetch aggressiveness so more frames are cached before user starts scrubbing. GitHub issue filed.' },
+      { id: 'p1-6', title: 'Fix value tooltip desync with map coloring', status: 'todo', priority: 'high', effort: 'M', notes: 'Tooltip shows value for different forecast hour than currently rendered. GitHub issue filed.' },
+      { id: 'p1-7', title: 'Fix frame freeze on early scrub', status: 'todo', priority: 'high', effort: 'M', notes: 'Map freezes on old frame if user scrubs too early. Does not update until scrubbed again. GitHub issue filed. Race condition suspected.' },
+      { id: 'p1-8', title: 'Fix city label alignment on mobile', status: 'todo', priority: 'medium', effort: 'S', notes: 'Labels not aligning to map dots on mobile when zoomed in. Likely pixel density / anchor offset issue on high-DPI screens. Reported by TWF beta user.' },
+      { id: 'p1-9', title: 'Preserve forecast hour when switching models/products', status: 'todo', priority: 'medium', effort: 'M', notes: 'Snap to same or nearest available hour when switching. Clamp to max if out of range. Handle models with different variable/hour availability gracefully. GitHub issue filed.' },
+    ]
+  },
+  {
+    id: 'phase2',
+    title: 'Phase 2 — Core Expansion',
+    period: 'June–July 2026',
+    items: [
+      { id: 'p2-1', title: 'NWS warnings overlay on radar', status: 'todo', priority: 'high', effort: 'S', notes: 'Half to one day lift on existing infrastructure. Highest impact Phase 2 item for TWF audience — radar feels incomplete without warnings.' },
+      { id: 'p2-2', title: 'Animation speed control', status: 'todo', priority: 'high', effort: 'S', notes: 'Slow/Normal/Fast toggle. AUTOPLAY_TICK_MS already exists as config value. Requested by multiple beta users and noted from session replay.' },
+      { id: 'p2-3', title: 'Expand satellite to additional bands', status: 'todo', priority: 'medium', effort: 'M', notes: 'Band 13 live for v1. Expand to additional bands. Low-risk addition.' },
+      { id: 'p2-4', title: 'Expand SPC outlooks to long range', status: 'todo', priority: 'medium', effort: 'M', notes: '' },
+      { id: 'p2-5', title: 'Expand CPC outlooks to long range', status: 'todo', priority: 'medium', effort: 'M', notes: '' },
+      { id: 'p2-6', title: 'Add new secondary models', status: 'todo', priority: 'medium', effort: 'M', notes: 'Let beta feedback inform which models matter most to TWF audience before committing.' },
+      { id: 'p2-7', title: 'Climate indices page (SSTs, MJO, PNA, NAO, AO)', status: 'todo', priority: 'medium', effort: 'S', notes: 'Start with embed approach using official NOAA/CPC charts. One to two days. Opportunistic — slot in between bigger features.' },
+      { id: 'p2-8', title: 'Improve share modal hierarchy', status: 'todo', priority: 'medium', effort: 'S', notes: 'Copy link should be prominent for all users. TWF sharing is secondary for linked accounts. Screenshot download equally visible. Currently buried behind TWF sign-in CTA.' },
+    ]
+  },
+  {
+    id: 'phase3',
+    title: 'Phase 3 — Power Features',
+    period: 'July–September 2026',
+    items: [
+      { id: 'p3-1', title: 'Meteograms', status: 'todo', priority: 'high', effort: 'L', notes: 'Highest demand Phase 3 feature. Backend data largely in place. Model similar to WB meteograms. Explicit user demand from TWF thread. Give it real time — half-baked meteograms will disappoint.' },
+      { id: 'p3-2', title: 'GIF export in share modal', status: 'todo', priority: 'high', effort: 'L', notes: 'Three-tab share modal: Image / GIF / Link. GIF is lighter lift than comparison tools.' },
+      { id: 'p3-3', title: 'Side-by-side model comparison tool', status: 'todo', priority: 'high', effort: 'L', notes: 'Synchronized dual MapLibre instances. GPU shader difference mode. Most architecturally complex Phase 3 item — needs real runway.' },
+      { id: 'p3-4', title: 'Run-to-run deltas', status: 'todo', priority: 'high', effort: 'L', notes: 'Shares infrastructure with comparison tool. Requested by TWF beta user.' },
+      { id: 'p3-5', title: 'Model consensus and probabilities', status: 'todo', priority: 'medium', effort: 'L', notes: '' },
+      { id: 'p3-6', title: 'Integrate climatology baseline into forecast page', status: 'todo', priority: 'medium', effort: 'M', notes: 'ERA5 infrastructure already built and powering anomaly maps. Primarily a UI integration task.' },
+      { id: 'p3-7', title: 'Skew-T diagrams', status: 'todo', priority: 'medium', effort: 'L', notes: 'Mentioned in TWF beta feedback. High value for technical TWF crowd. Do correctly — high-stakes for credibility.' },
+      { id: 'p3-8', title: 'Add meteograms to forecast page', status: 'todo', priority: 'medium', effort: 'M', notes: '' },
+      { id: 'p3-9', title: 'Spaghetti plots and ensemble spread charts', status: 'todo', priority: 'low', effort: 'L', notes: 'Requested by TWF beta user referencing existing community content. Good longer-term addition.' },
+    ]
+  },
+  {
+    id: 'phase4',
+    title: 'Phase 4 — Pre-Busy Season Polish',
+    period: 'September–October 2026',
+    items: [
+      { id: 'p4-1', title: 'Feature freeze and stability pass', status: 'todo', priority: 'high', effort: 'M', notes: 'No new features after late September. Focus on performance and reliability before traffic spike.' },
+      { id: 'p4-2', title: 'Performance audit and optimization', status: 'todo', priority: 'high', effort: 'M', notes: 'Ensure viewer handles concurrent users well. Review API worker / scheduler memory profile under load.' },
+      { id: 'p4-3', title: 'Additional models (post-beta feedback informed)', status: 'todo', priority: 'medium', effort: 'M', notes: 'Save new model additions for last so data pipeline management does not overlap complex UI feature work.' },
+      { id: 'p4-4', title: 'Mobile responsive improvements', status: 'todo', priority: 'medium', effort: 'M', notes: 'PWA explicitly decided against. Responsive design fixes are the correct investment given mobile-majority TWF audience.' },
+    ]
+  },
+  {
+    id: 'phase5',
+    title: 'Phase 5 — Busy Season & Beyond',
+    period: 'October 2026+',
+    items: [
+      { id: 'p5-1', title: 'Rollout monetization (Pro tier)', status: 'todo', priority: 'high', effort: 'L', notes: 'Groundwork already laid — Stripe billing lifecycle validated, Clerk publicMetadata plan gating in place. Execute post-busy-season ramp.' },
+      { id: 'p5-2', title: 'Expand social sharing targets (Discord, X, Facebook)', status: 'todo', priority: 'medium', effort: 'M', notes: 'Discord requested by TWF beta user (PDX weather group). X and Facebook identified as initial targets. YouTube content creator use case also noted.' },
+      { id: 'p5-3', title: 'Storm/event mode', status: 'todo', priority: 'medium', effort: 'L', notes: '' },
+      { id: 'p5-4', title: 'NWS warning polygons', status: 'todo', priority: 'medium', effort: 'S', notes: 'Half-day lift on existing infrastructure.' },
+      { id: 'p5-5', title: 'Lightning strike data (GOES GLM)', status: 'todo', priority: 'medium', effort: 'M', notes: 'GOES GLM recommended. 2–3 days estimated.' },
+      { id: 'p5-6', title: 'Pressure center H/L labels', status: 'todo', priority: 'low', effort: 'S', notes: '' },
+      { id: 'p5-7', title: 'Location favorites on forecast page', status: 'todo', priority: 'low', effort: 'S', notes: '' },
+      { id: 'p5-8', title: 'Client-side screenshot revisit', status: 'todo', priority: 'low', effort: 'M', notes: 'Originally client-side but viewport consistency caused screenshot to differ from displayed view — trust issue. Revisit if viewport normalization can be solved without mismatching output.' },
+      { id: 'p5-9', title: 'Remove val.cog and sample off grid binaries', status: 'todo', priority: 'low', effort: 'L', notes: 'Possibly replace val.cog with point sampling directly off grid binaries.' },
+      { id: 'p5-10', title: 'Server upgrade evaluation', status: 'todo', priority: 'low', effort: 'S', notes: 'Netcup RS 8000 G12 at 82€/mo vs Hetzner AX42 at ~49€/mo. Pending ECMWF memory investigation outcome.' },
+    ]
+  }
+];
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+
+let phases = JSON.parse(JSON.stringify(DEFAULT_PHASES));
+let activeFilter = 'all';
+let editingId = null;
+let openDropdown = null;
+
+// ─── PERSISTENCE ─────────────────────────────────────────────────────────────
+
+function save() {
+  localStorage.setItem('csky_roadmap', JSON.stringify(phases));
+  const now = new Date();
+  document.getElementById('last-saved').textContent =
+    'Last saved: ' + now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  showToast('Saved');
+}
+
+function load() {
+  const stored = localStorage.getItem('csky_roadmap');
+  if (stored) {
+    try { phases = JSON.parse(stored); } catch(e) {}
+  }
+}
+
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(phases, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'cartosky-roadmap.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Exported');
+}
+
+function importJSON(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      phases = JSON.parse(ev.target.result);
+      save();
+      render();
+      showToast('Imported successfully');
+    } catch { showToast('Invalid JSON file'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function statusLabel(s) {
+  return {todo:'To Do', inprogress:'In Progress', inreview:'In Review', done:'Done'}[s] || s;
+}
+
+function priorityLabel(p) { return p.charAt(0).toUpperCase() + p.slice(1); }
+function effortLabel(e) { return {S:'Small', M:'Medium', L:'Large'}[e] || e; }
+
+function itemMatchesFilter(item) {
+  if (activeFilter === 'all') return true;
+  if (activeFilter === 'high') return item.priority === 'high';
+  return item.status === activeFilter;
+}
+
+function setFilter(f, el) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+
+function updateProgress() {
+  let total = 0, done = 0;
+  phases.forEach(ph => ph.items.forEach(it => { total++; if (it.status === 'done') done++; }));
+  const pct = total ? Math.round(done / total * 100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-count').textContent = done + ' / ' + total + ' done';
+}
+
+function render() {
+  updateProgress();
+  const container = document.getElementById('main-content');
+  container.innerHTML = '';
+
+  phases.forEach(phase => {
+    const visibleItems = phase.items.filter(itemMatchesFilter);
+    if (activeFilter !== 'all' && visibleItems.length === 0) return;
+
+    const doneCount = phase.items.filter(i => i.status === 'done').length;
+    const totalCount = phase.items.length;
+
+    const phaseEl = document.createElement('div');
+    phaseEl.className = 'phase';
+    phaseEl.innerHTML = `
+      <div class="phase-header">
+        <span class="phase-title">${phase.title}</span>
+        <span class="phase-period">${phase.period}</span>
+        <div class="phase-divider"></div>
+        <span class="phase-stats">${doneCount}/${totalCount}</span>
+      </div>
+      <div class="items-list" id="list-${phase.id}"></div>
+      <div class="add-item-row">
+        <input class="add-input" placeholder="+ Quick add item to ${phase.title.split('—')[0].trim()}…"
+          onkeydown="quickAdd(event, '${phase.id}')" />
+      </div>
+    `;
+    container.appendChild(phaseEl);
+
+    const list = phaseEl.querySelector(`#list-${phase.id}`);
+    const itemsToShow = activeFilter === 'all' ? phase.items : visibleItems;
+    itemsToShow.forEach(item => list.appendChild(renderItem(item, phase.id)));
+  });
+}
+
+function renderItem(item, phaseId) {
+  const el = document.createElement('div');
+  el.className = 'item' + (item.status === 'done' ? ' done' : '');
+  el.dataset.id = item.id;
+
+  const notesHtml = item.notes
+    ? `<div class="item-notes" contenteditable="true" spellcheck="false"
+         onblur="saveNotes('${item.id}', this)"
+         onkeydown="if(event.key==='Escape')this.blur()"
+       >${escHtml(item.notes)}</div>`
+    : `<div class="item-notes empty" contenteditable="true" spellcheck="false"
+         onblur="saveNotes('${item.id}', this)"
+         onfocus="if(this.classList.contains('empty')){this.textContent='';this.classList.remove('empty')}"
+         onkeydown="if(event.key==='Escape')this.blur()"
+       >Add notes…</div>`;
+
+  el.innerHTML = `
+    <div class="item-check ${item.status === 'done' ? 'checked' : ''}"
+         onclick="toggleDone('${item.id}')"></div>
+    <div class="item-body">
+      <div class="item-title-row">
+        <span class="item-title" contenteditable="true" spellcheck="false"
+          onblur="saveTitle('${item.id}', this)"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+        >${escHtml(item.title)}</span>
+      </div>
+      <div class="item-meta">
+        <span class="badge badge-status-${item.status}" onclick="cycleStatus('${item.id}', this)">${statusLabel(item.status)}</span>
+        <span class="badge badge-priority-${item.priority}" onclick="cyclePriority('${item.id}', this)">${priorityLabel(item.priority)}</span>
+        <span class="badge badge-effort" onclick="cycleEffort('${item.id}', this)">${effortLabel(item.effort)}</span>
+      </div>
+      ${notesHtml}
+    </div>
+    <div class="item-actions">
+      <button class="icon-btn" title="Edit" onclick="openEditModal('${item.id}')">✏️</button>
+      <button class="icon-btn delete" title="Delete" onclick="deleteItem('${item.id}', '${phaseId}')">✕</button>
+    </div>
+  `;
+  return el;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── INLINE EDITS ────────────────────────────────────────────────────────────
+
+function findItem(id) {
+  for (const ph of phases) {
+    const it = ph.items.find(i => i.id === id);
+    if (it) return it;
+  }
+  return null;
+}
+
+function saveTitle(id, el) {
+  const item = findItem(id);
+  if (!item) return;
+  const val = el.textContent.trim();
+  if (!val) { el.textContent = item.title; return; }
+  item.title = val;
+  save();
+}
+
+function saveNotes(id, el) {
+  const item = findItem(id);
+  if (!item) return;
+  const val = el.textContent.trim();
+  if (!val) { el.classList.add('empty'); el.textContent = 'Add notes…'; item.notes = ''; }
+  else { item.notes = val; el.classList.remove('empty'); }
+  save();
+}
+
+function toggleDone(id) {
+  const item = findItem(id);
+  if (!item) return;
+  item.status = item.status === 'done' ? 'todo' : 'done';
+  save(); render();
+}
+
+function cycleStatus(id, el) {
+  const order = ['todo','inprogress','inreview','done'];
+  const item = findItem(id);
+  if (!item) return;
+  item.status = order[(order.indexOf(item.status) + 1) % order.length];
+  save(); render();
+}
+
+function cyclePriority(id, el) {
+  const order = ['high','medium','low'];
+  const item = findItem(id);
+  if (!item) return;
+  item.priority = order[(order.indexOf(item.priority) + 1) % order.length];
+  save(); render();
+}
+
+function cycleEffort(id, el) {
+  const order = ['S','M','L'];
+  const item = findItem(id);
+  if (!item) return;
+  item.effort = order[(order.indexOf(item.effort) + 1) % order.length];
+  save(); render();
+}
+
+function deleteItem(id, phaseId) {
+  const ph = phases.find(p => p.id === phaseId);
+  if (!ph) return;
+  ph.items = ph.items.filter(i => i.id !== id);
+  save(); render();
+}
+
+function quickAdd(e, phaseId) {
+  if (e.key !== 'Enter') return;
+  const val = e.target.value.trim();
+  if (!val) return;
+  const ph = phases.find(p => p.id === phaseId);
+  if (!ph) return;
+  ph.items.push({ id: uid(), title: val, status: 'todo', priority: 'medium', effort: 'M', notes: '' });
+  e.target.value = '';
+  save(); render();
+}
+
+// ─── MODAL ───────────────────────────────────────────────────────────────────
+
+function openAddModal() {
+  editingId = null;
+  document.getElementById('modal-title').textContent = 'Add Item';
+  document.getElementById('modal-item-title').value = '';
+  document.getElementById('modal-status').value = 'todo';
+  document.getElementById('modal-priority').value = 'medium';
+  document.getElementById('modal-effort').value = 'M';
+  document.getElementById('modal-notes').value = '';
+  populatePhaseSelect(phases[0].id);
+  document.getElementById('modal').style.display = 'flex';
+  document.getElementById('modal-item-title').focus();
+}
+
+function openEditModal(id) {
+  const item = findItem(id);
+  if (!item) return;
+  editingId = id;
+  document.getElementById('modal-title').textContent = 'Edit Item';
+  document.getElementById('modal-item-title').value = item.title;
+  document.getElementById('modal-status').value = item.status;
+  document.getElementById('modal-priority').value = item.priority;
+  document.getElementById('modal-effort').value = item.effort;
+  document.getElementById('modal-notes').value = item.notes || '';
+  const ph = phases.find(p => p.items.some(i => i.id === id));
+  populatePhaseSelect(ph ? ph.id : phases[0].id);
+  document.getElementById('modal').style.display = 'flex';
+  document.getElementById('modal-item-title').focus();
+}
+
+function populatePhaseSelect(selectedId) {
+  const sel = document.getElementById('modal-phase');
+  sel.innerHTML = phases.map(ph =>
+    `<option value="${ph.id}" ${ph.id === selectedId ? 'selected' : ''}>${ph.title.split('—')[0].trim()}</option>`
+  ).join('');
+}
+
+function saveModal() {
+  const title = document.getElementById('modal-item-title').value.trim();
+  if (!title) { showToast('Title required'); return; }
+  const phaseId = document.getElementById('modal-phase').value;
+  const status = document.getElementById('modal-status').value;
+  const priority = document.getElementById('modal-priority').value;
+  const effort = document.getElementById('modal-effort').value;
+  const notes = document.getElementById('modal-notes').value.trim();
+
+  if (editingId) {
+    // Move between phases if changed
+    let fromPhase = phases.find(p => p.items.some(i => i.id === editingId));
+    let toPhase = phases.find(p => p.id === phaseId);
+    if (fromPhase && toPhase && fromPhase.id !== toPhase.id) {
+      const item = fromPhase.items.find(i => i.id === editingId);
+      fromPhase.items = fromPhase.items.filter(i => i.id !== editingId);
+      Object.assign(item, {title, status, priority, effort, notes});
+      toPhase.items.push(item);
+    } else if (fromPhase) {
+      const item = fromPhase.items.find(i => i.id === editingId);
+      Object.assign(item, {title, status, priority, effort, notes});
+    }
+  } else {
+    const ph = phases.find(p => p.id === phaseId);
+    if (ph) ph.items.push({ id: uid(), title, status, priority, effort, notes });
+  }
+
+  closeModal();
+  save();
+  render();
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  editingId = null;
+}
+
+function closeModalOnOverlay(e) {
+  if (e.target === document.getElementById('modal')) closeModal();
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+load();
+render();
+</script>
+</body>
+</html>

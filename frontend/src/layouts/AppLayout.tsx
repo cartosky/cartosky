@@ -10,19 +10,21 @@ import SiteHeader from "../components/SiteHeader";
 export default function AppLayout() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
+  const isRoadmapRoute = location.pathname === "/roadmap";
+  const isScrollableAppRoute = isAdminRoute || isRoadmapRoute;
   const isViewerRoute = location.pathname === "/viewer";
 
   return (
     <div
       className={
-        isAdminRoute
+        isScrollableAppRoute
           ? "min-h-svh flex flex-col overflow-x-hidden bg-background text-foreground"
           : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
       }
     >
       {isViewerRoute ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
 
-      <div className={isAdminRoute ? "flex-1 min-h-0 w-full" : "flex flex-1 min-h-0 overflow-hidden"}>
+      <div className={isScrollableAppRoute ? "flex-1 min-h-0 w-full" : "flex flex-1 min-h-0 overflow-hidden"}>
         <Suspense fallback={isViewerRoute ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
           <Outlet />
           <BootstrapCompleteMarker />

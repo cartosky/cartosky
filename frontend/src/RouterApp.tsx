@@ -4,6 +4,7 @@ import MarketingLayout from "./layouts/MarketingLayout";
 import AppLayout from "./layouts/AppLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import Home from "./pages/home";
+import { AdminProtectedRoute } from "./components/AdminProtectedRoute";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
@@ -83,6 +84,7 @@ const AdminObservability = lazyRoute(() => import("./pages/admin/observability")
 const AdminStatus = lazyRoute(() => import("./pages/admin/status"));
 const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
 const AdminFeedback = lazyRoute(() => import("./pages/admin/feedback"));
+const AdminRoadmap = lazyRoute(() => import("./pages/admin/roadmap"));
 const Viewer = lazyRoute(() => import("./pages/viewer"));
 
 function getPageTitle(pathname: string) {
@@ -93,6 +95,7 @@ function getPageTitle(pathname: string) {
     ["/admin/traces", "Admin Traces"],
     ["/admin/status", "Admin Status"],
     ["/admin/feedback", "Admin Feedback"],
+    ["/roadmap", "Roadmap"],
     ["/admin", "Admin"],
     ["/viewer", "Viewer"],
     ["/forecast", "Forecast"],
@@ -138,6 +141,9 @@ export default function RouterApp() {
       <Route element={<AppLayout />}>
         <Route path="/viewer" element={<Viewer />} />
         <Route element={<ProtectedRoute />}>
+          <Route element={<AdminProtectedRoute />}>
+            <Route path="/roadmap" element={<AdminRoadmap />} />
+          </Route>
           <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Navigate to="/admin/overview" replace />} />
           <Route path="overview" element={<AdminOverview />} />

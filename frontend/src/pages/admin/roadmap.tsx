@@ -1,0 +1,701 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+
+import { fetchInternalRoadmap, saveInternalRoadmap } from "@/lib/admin-api";
+
+import "./roadmap.css";
+
+type ItemStatus = "todo" | "inprogress" | "inreview" | "done";
+type ItemPriority = "high" | "medium" | "low";
+type ItemEffort = "S" | "M" | "L";
+type ActiveFilter = "all" | ItemStatus | "high";
+
+type RoadmapItem = {
+  id: string;
+  title: string;
+  status: ItemStatus;
+  priority: ItemPriority;
+  effort: ItemEffort;
+  notes: string;
+};
+
+type RoadmapPhase = {
+  id: string;
+  title: string;
+  period: string;
+  items: RoadmapItem[];
+};
+
+const DEFAULT_PHASES: RoadmapPhase[] = [
+  {
+    id: "phase1",
+    title: "Phase 1 — Beta Launch",
+    period: "May–June 2026",
+    items: [
+      { id: "p1-1", title: "Public beta launch on TWF", status: "done", priority: "high", effort: "L", notes: "Main post + two cross-posts in active threads. Live." },
+      { id: "p1-2", title: "Satellite animation stall bug fix", status: "done", priority: "high", effort: "S", notes: "Caught via session replay on day one. Fixed and deployed." },
+      { id: "p1-3", title: "Animation play button loops back from last frame", status: "done", priority: "medium", effort: "S", notes: "Previously hitting play at end of scrubber did nothing. Now loops to start." },
+      { id: "p1-4", title: "Animation loops until explicit stop", status: "done", priority: "medium", effort: "S", notes: "Changed from stop-at-end to continuous loop on user stop." },
+      { id: "p1-5", title: "Fix scrubber lag before cache warm", status: "todo", priority: "high", effort: "M", notes: "Increase prefetch aggressiveness so more frames are cached before user starts scrubbing. GitHub issue filed." },
+      { id: "p1-6", title: "Fix value tooltip desync with map coloring", status: "todo", priority: "high", effort: "M", notes: "Tooltip shows value for different forecast hour than currently rendered. GitHub issue filed." },
+      { id: "p1-7", title: "Fix frame freeze on early scrub", status: "todo", priority: "high", effort: "M", notes: "Map freezes on old frame if user scrubs too early. Does not update until scrubbed again. GitHub issue filed. Race condition suspected." },
+      { id: "p1-8", title: "Fix city label alignment on mobile", status: "todo", priority: "medium", effort: "S", notes: "Labels not aligning to map dots on mobile when zoomed in. Likely pixel density / anchor offset issue on high-DPI screens. Reported by TWF beta user." },
+      { id: "p1-9", title: "Preserve forecast hour when switching models/products", status: "todo", priority: "medium", effort: "M", notes: "Snap to same or nearest available hour when switching. Clamp to max if out of range. Handle models with different variable/hour availability gracefully. GitHub issue filed." },
+    ],
+  },
+  {
+    id: "phase2",
+    title: "Phase 2 — Core Expansion",
+    period: "June–July 2026",
+    items: [
+      { id: "p2-1", title: "NWS warnings overlay on radar", status: "todo", priority: "high", effort: "S", notes: "Half to one day lift on existing infrastructure. Highest impact Phase 2 item for TWF audience — radar feels incomplete without warnings." },
+      { id: "p2-2", title: "Animation speed control", status: "todo", priority: "high", effort: "S", notes: "Slow/Normal/Fast toggle. AUTOPLAY_TICK_MS already exists as config value. Requested by multiple beta users and noted from session replay." },
+      { id: "p2-3", title: "Expand satellite to additional bands", status: "todo", priority: "medium", effort: "M", notes: "Band 13 live for v1. Expand to additional bands. Low-risk addition." },
+      { id: "p2-4", title: "Expand SPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p2-5", title: "Expand CPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p2-6", title: "Add new secondary models", status: "todo", priority: "medium", effort: "M", notes: "Let beta feedback inform which models matter most to TWF audience before committing." },
+      { id: "p2-7", title: "Climate indices page (SSTs, MJO, PNA, NAO, AO)", status: "todo", priority: "medium", effort: "S", notes: "Start with embed approach using official NOAA/CPC charts. One to two days. Opportunistic — slot in between bigger features." },
+      { id: "p2-8", title: "Improve share modal hierarchy", status: "todo", priority: "medium", effort: "S", notes: "Copy link should be prominent for all users. TWF sharing is secondary for linked accounts. Screenshot download equally visible. Currently buried behind TWF sign-in CTA." },
+    ],
+  },
+  {
+    id: "phase3",
+    title: "Phase 3 — Power Features",
+    period: "July–September 2026",
+    items: [
+      { id: "p3-1", title: "Meteograms", status: "todo", priority: "high", effort: "L", notes: "Highest demand Phase 3 feature. Backend data largely in place. Model similar to WB meteograms. Explicit user demand from TWF thread. Give it real time — half-baked meteograms will disappoint." },
+      { id: "p3-2", title: "GIF export in share modal", status: "todo", priority: "high", effort: "L", notes: "Three-tab share modal: Image / GIF / Link. GIF is lighter lift than comparison tools." },
+      { id: "p3-3", title: "Side-by-side model comparison tool", status: "todo", priority: "high", effort: "L", notes: "Synchronized dual MapLibre instances. GPU shader difference mode. Most architecturally complex Phase 3 item — needs real runway." },
+      { id: "p3-4", title: "Run-to-run deltas", status: "todo", priority: "high", effort: "L", notes: "Shares infrastructure with comparison tool. Requested by TWF beta user." },
+      { id: "p3-5", title: "Model consensus and probabilities", status: "todo", priority: "medium", effort: "L", notes: "" },
+      { id: "p3-6", title: "Integrate climatology baseline into forecast page", status: "todo", priority: "medium", effort: "M", notes: "ERA5 infrastructure already built and powering anomaly maps. Primarily a UI integration task." },
+      { id: "p3-7", title: "Skew-T diagrams", status: "todo", priority: "medium", effort: "L", notes: "Mentioned in TWF beta feedback. High value for technical TWF crowd. Do correctly — high-stakes for credibility." },
+      { id: "p3-8", title: "Add meteograms to forecast page", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p3-9", title: "Spaghetti plots and ensemble spread charts", status: "todo", priority: "low", effort: "L", notes: "Requested by TWF beta user referencing existing community content. Good longer-term addition." },
+    ],
+  },
+  {
+    id: "phase4",
+    title: "Phase 4 — Pre-Busy Season Polish",
+    period: "September–October 2026",
+    items: [
+      { id: "p4-1", title: "Feature freeze and stability pass", status: "todo", priority: "high", effort: "M", notes: "No new features after late September. Focus on performance and reliability before traffic spike." },
+      { id: "p4-2", title: "Performance audit and optimization", status: "todo", priority: "high", effort: "M", notes: "Ensure viewer handles concurrent users well. Review API worker / scheduler memory profile under load." },
+      { id: "p4-3", title: "Additional models (post-beta feedback informed)", status: "todo", priority: "medium", effort: "M", notes: "Save new model additions for last so data pipeline management does not overlap complex UI feature work." },
+      { id: "p4-4", title: "Mobile responsive improvements", status: "todo", priority: "medium", effort: "M", notes: "PWA explicitly decided against. Responsive design fixes are the correct investment given mobile-majority TWF audience." },
+    ],
+  },
+  {
+    id: "phase5",
+    title: "Phase 5 — Busy Season & Beyond",
+    period: "October 2026+",
+    items: [
+      { id: "p5-1", title: "Rollout monetization (Pro tier)", status: "todo", priority: "high", effort: "L", notes: "Groundwork already laid — Stripe billing lifecycle validated, Clerk publicMetadata plan gating in place. Execute post-busy-season ramp." },
+      { id: "p5-2", title: "Expand social sharing targets (Discord, X, Facebook)", status: "todo", priority: "medium", effort: "M", notes: "Discord requested by TWF beta user (PDX weather group). X and Facebook identified as initial targets. YouTube content creator use case also noted." },
+      { id: "p5-3", title: "Storm/event mode", status: "todo", priority: "medium", effort: "L", notes: "" },
+      { id: "p5-4", title: "NWS warning polygons", status: "todo", priority: "medium", effort: "S", notes: "Half-day lift on existing infrastructure." },
+      { id: "p5-5", title: "Lightning strike data (GOES GLM)", status: "todo", priority: "medium", effort: "M", notes: "GOES GLM recommended. 2–3 days estimated." },
+      { id: "p5-6", title: "Pressure center H/L labels", status: "todo", priority: "low", effort: "S", notes: "" },
+      { id: "p5-7", title: "Location favorites on forecast page", status: "todo", priority: "low", effort: "S", notes: "" },
+      { id: "p5-8", title: "Client-side screenshot revisit", status: "todo", priority: "low", effort: "M", notes: "Originally client-side but viewport consistency caused screenshot to differ from displayed view — trust issue. Revisit if viewport normalization can be solved without mismatching output." },
+      { id: "p5-9", title: "Remove val.cog and sample off grid binaries", status: "todo", priority: "low", effort: "L", notes: "Possibly replace val.cog with point sampling directly off grid binaries." },
+      { id: "p5-10", title: "Server upgrade evaluation", status: "todo", priority: "low", effort: "S", notes: "Netcup RS 8000 G12 at 82€/mo vs Hetzner AX42 at ~49€/mo. Pending ECMWF memory investigation outcome." },
+    ],
+  },
+];
+
+const STATUS_ORDER: ItemStatus[] = ["todo", "inprogress", "inreview", "done"];
+const PRIORITY_ORDER: ItemPriority[] = ["high", "medium", "low"];
+const EFFORT_ORDER: ItemEffort[] = ["S", "M", "L"];
+
+const FILTER_OPTIONS: Array<{ value: ActiveFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "todo", label: "To Do" },
+  { value: "inprogress", label: "In Progress" },
+  { value: "inreview", label: "In Review" },
+  { value: "done", label: "Done" },
+  { value: "high", label: "High Priority" },
+];
+
+function clonePhases(phases: RoadmapPhase[]): RoadmapPhase[] {
+  return structuredClone(phases);
+}
+
+function uid(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function statusLabel(status: ItemStatus): string {
+  return { todo: "To Do", inprogress: "In Progress", inreview: "In Review", done: "Done" }[status];
+}
+
+function priorityLabel(priority: ItemPriority): string {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+
+function effortLabel(effort: ItemEffort): string {
+  return { S: "Small", M: "Medium", L: "Large" }[effort];
+}
+
+function itemMatchesFilter(item: RoadmapItem, filter: ActiveFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "high") return item.priority === "high";
+  return item.status === filter;
+}
+
+function isRoadmapPhases(value: unknown): value is RoadmapPhase[] {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function phaseShortTitle(title: string): string {
+  return title.split("—")[0].trim();
+}
+
+export default function AdminRoadmapPage() {
+  const [phases, setPhases] = useState<RoadmapPhase[]>(() => clonePhases(DEFAULT_PHASES));
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [lastSavedLabel, setLastSavedLabel] = useState("Last saved: never");
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastVisible, setToastVisible] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalTitle, setModalTitle] = useState("");
+  const [modalPhaseId, setModalPhaseId] = useState(DEFAULT_PHASES[0].id);
+  const [modalStatus, setModalStatus] = useState<ItemStatus>("todo");
+  const [modalPriority, setModalPriority] = useState<ItemPriority>("medium");
+  const [modalEffort, setModalEffort] = useState<ItemEffort>("M");
+  const [modalNotes, setModalNotes] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modalTitleInputRef = useRef<HTMLInputElement>(null);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    setToastVisible(true);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => setToastVisible(false), 2000);
+  }, []);
+
+  const save = useCallback(async (nextPhases: RoadmapPhase[]) => {
+    try {
+      await saveInternalRoadmap(nextPhases);
+      const now = new Date();
+      setLastSavedLabel(
+        `Last saved: ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      );
+      showToast("Saved");
+    } catch {
+      showToast("Save failed");
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const data = await fetchInternalRoadmap();
+        if (!cancelled && isRoadmapPhases(data)) {
+          setPhases(clonePhases(data));
+        }
+      } catch {
+        if (!cancelled) {
+          setPhases(clonePhases(DEFAULT_PHASES));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setModalOpen(false);
+        setEditingId(null);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [modalOpen]);
+
+  useEffect(() => {
+    if (modalOpen) {
+      modalTitleInputRef.current?.focus();
+    }
+  }, [modalOpen]);
+
+  const progress = useMemo(() => {
+    let total = 0;
+    let done = 0;
+    phases.forEach((phase) => {
+      phase.items.forEach((item) => {
+        total += 1;
+        if (item.status === "done") done += 1;
+      });
+    });
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return { total, done, pct };
+  }, [phases]);
+
+  function updatePhases(updater: (current: RoadmapPhase[]) => RoadmapPhase[]) {
+    setPhases((current) => {
+      const next = updater(current);
+      void save(next);
+      return next;
+    });
+  }
+
+  function findItem(id: string): RoadmapItem | null {
+    for (const phase of phases) {
+      const item = phase.items.find((entry) => entry.id === id);
+      if (item) return item;
+    }
+    return null;
+  }
+
+  function openAddModal() {
+    setEditingId(null);
+    setModalTitle("");
+    setModalStatus("todo");
+    setModalPriority("medium");
+    setModalEffort("M");
+    setModalNotes("");
+    setModalPhaseId(phases[0]?.id ?? DEFAULT_PHASES[0].id);
+    setModalOpen(true);
+  }
+
+  function openEditModal(id: string) {
+    const item = findItem(id);
+    if (!item) return;
+    const phase = phases.find((entry) => entry.items.some((candidate) => candidate.id === id));
+    setEditingId(id);
+    setModalTitle(item.title);
+    setModalStatus(item.status);
+    setModalPriority(item.priority);
+    setModalEffort(item.effort);
+    setModalNotes(item.notes || "");
+    setModalPhaseId(phase?.id ?? phases[0]?.id ?? DEFAULT_PHASES[0].id);
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    setEditingId(null);
+  }
+
+  function saveModal() {
+    const title = modalTitle.trim();
+    if (!title) {
+      showToast("Title required");
+      return;
+    }
+
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      if (editingId) {
+        const fromPhase = next.find((phase) => phase.items.some((item) => item.id === editingId));
+        const toPhase = next.find((phase) => phase.id === modalPhaseId);
+        if (!fromPhase || !toPhase) return current;
+
+        const item = fromPhase.items.find((entry) => entry.id === editingId);
+        if (!item) return current;
+
+        if (fromPhase.id !== toPhase.id) {
+          fromPhase.items = fromPhase.items.filter((entry) => entry.id !== editingId);
+          Object.assign(item, {
+            title,
+            status: modalStatus,
+            priority: modalPriority,
+            effort: modalEffort,
+            notes: modalNotes.trim(),
+          });
+          toPhase.items.push(item);
+        } else {
+          Object.assign(item, {
+            title,
+            status: modalStatus,
+            priority: modalPriority,
+            effort: modalEffort,
+            notes: modalNotes.trim(),
+          });
+        }
+      } else {
+        const phase = next.find((entry) => entry.id === modalPhaseId);
+        if (!phase) return current;
+        phase.items.push({
+          id: uid(),
+          title,
+          status: modalStatus,
+          priority: modalPriority,
+          effort: modalEffort,
+          notes: modalNotes.trim(),
+        });
+      }
+      return next;
+    });
+
+    closeModal();
+  }
+
+  function saveTitle(id: string, value: string) {
+    const trimmed = value.trim();
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item || !trimmed) return current;
+      item.title = trimmed;
+      return next;
+    });
+  }
+
+  function saveNotes(id: string, value: string) {
+    const trimmed = value.trim();
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item) return current;
+      item.notes = trimmed;
+      return next;
+    });
+  }
+
+  function toggleDone(id: string) {
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item) return current;
+      item.status = item.status === "done" ? "todo" : "done";
+      return next;
+    });
+  }
+
+  function cycleStatus(id: string) {
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item) return current;
+      const index = STATUS_ORDER.indexOf(item.status);
+      item.status = STATUS_ORDER[(index + 1) % STATUS_ORDER.length];
+      return next;
+    });
+  }
+
+  function cyclePriority(id: string) {
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item) return current;
+      const index = PRIORITY_ORDER.indexOf(item.priority);
+      item.priority = PRIORITY_ORDER[(index + 1) % PRIORITY_ORDER.length];
+      return next;
+    });
+  }
+
+  function cycleEffort(id: string) {
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const item = next.flatMap((phase) => phase.items).find((entry) => entry.id === id);
+      if (!item) return current;
+      const index = EFFORT_ORDER.indexOf(item.effort);
+      item.effort = EFFORT_ORDER[(index + 1) % EFFORT_ORDER.length];
+      return next;
+    });
+  }
+
+  function deleteItem(id: string, phaseId: string) {
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const phase = next.find((entry) => entry.id === phaseId);
+      if (!phase) return current;
+      phase.items = phase.items.filter((item) => item.id !== id);
+      return next;
+    });
+  }
+
+  function quickAdd(phaseId: string, value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    updatePhases((current) => {
+      const next = clonePhases(current);
+      const phase = next.find((entry) => entry.id === phaseId);
+      if (!phase) return current;
+      phase.items.push({
+        id: uid(),
+        title: trimmed,
+        status: "todo",
+        priority: "medium",
+        effort: "M",
+        notes: "",
+      });
+      return next;
+    });
+  }
+
+  if (loading) {
+    return (
+      <div className="roadmap-page" style={{ padding: "2rem", color: "var(--text-muted)" }}>
+        Loading roadmap…
+      </div>
+    );
+  }
+
+  return (
+    <div className="roadmap-page">
+      <div className="header">
+        <div className="header-left">
+          <div className="logo-mark">
+            <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" /></svg>
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <h1>CartoSky Roadmap</h1>
+            </div>
+            <div className="header-sub">{lastSavedLabel}</div>
+          </div>
+        </div>
+        <div className="header-actions">
+          <button type="button" className="btn btn-primary" onClick={openAddModal}>+ Add Item</button>
+        </div>
+      </div>
+
+      <div className="filter-bar">
+        <span className="filter-label">Filter</span>
+        {FILTER_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`filter-chip${activeFilter === option.value ? " active" : ""}`}
+            onClick={() => setActiveFilter(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="progress-bar-wrap">
+        <span className="progress-label">Overall progress</span>
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
+        </div>
+        <span className="progress-count">{progress.done} / {progress.total} done</span>
+      </div>
+
+      <div className="main">
+        {phases.map((phase) => {
+          const visibleItems = phase.items.filter((item) => itemMatchesFilter(item, activeFilter));
+          if (activeFilter !== "all" && visibleItems.length === 0) return null;
+
+          const doneCount = phase.items.filter((item) => item.status === "done").length;
+          const itemsToShow = activeFilter === "all" ? phase.items : visibleItems;
+
+          return (
+            <div key={phase.id} className="phase">
+              <div className="phase-header">
+                <span className="phase-title">{phase.title}</span>
+                <span className="phase-period">{phase.period}</span>
+                <div className="phase-divider" />
+                <span className="phase-stats">{doneCount}/{phase.items.length}</span>
+              </div>
+              <div className="items-list">
+                {itemsToShow.map((item) => (
+                  <div key={item.id} className={`item${item.status === "done" ? " done" : ""}`}>
+                    <div
+                      className={`item-check${item.status === "done" ? " checked" : ""}`}
+                      onClick={() => toggleDone(item.id)}
+                    />
+                    <div className="item-body">
+                      <div className="item-title-row">
+                        <span
+                          className="item-title"
+                          contentEditable
+                          suppressContentEditableWarning
+                          spellCheck={false}
+                          onBlur={(event) => saveTitle(item.id, event.currentTarget.textContent ?? "")}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        >
+                          {item.title}
+                        </span>
+                      </div>
+                      <div className="item-meta">
+                        <span
+                          className={`badge badge-status-${item.status}`}
+                          onClick={() => cycleStatus(item.id)}
+                        >
+                          {statusLabel(item.status)}
+                        </span>
+                        <span
+                          className={`badge badge-priority-${item.priority}`}
+                          onClick={() => cyclePriority(item.id)}
+                        >
+                          {priorityLabel(item.priority)}
+                        </span>
+                        <span className="badge badge-effort" onClick={() => cycleEffort(item.id)}>
+                          {effortLabel(item.effort)}
+                        </span>
+                      </div>
+                      <div
+                        className={`item-notes${item.notes ? "" : " empty"}`}
+                        contentEditable
+                        suppressContentEditableWarning
+                        spellCheck={false}
+                        onBlur={(event) => saveNotes(item.id, event.currentTarget.textContent ?? "")}
+                        onFocus={(event) => {
+                          if (event.currentTarget.classList.contains("empty")) {
+                            event.currentTarget.textContent = "";
+                            event.currentTarget.classList.remove("empty");
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") event.currentTarget.blur();
+                        }}
+                      >
+                        {item.notes || "Add notes…"}
+                      </div>
+                    </div>
+                    <div className="item-actions">
+                      <button type="button" className="icon-btn" title="Edit" onClick={() => openEditModal(item.id)}>✏️</button>
+                      <button type="button" className="icon-btn delete" title="Delete" onClick={() => deleteItem(item.id, phase.id)}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <QuickAddRow
+                phaseTitle={phaseShortTitle(phase.title)}
+                onAdd={(value) => quickAdd(phase.id, value)}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {modalOpen && (
+        <div
+          className="modal-overlay"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeModal();
+          }}
+        >
+          <div className="modal">
+            <h3>{editingId ? "Edit Item" : "Add Item"}</h3>
+            <div className="modal-field">
+              <label className="modal-label">Title</label>
+              <input
+                ref={modalTitleInputRef}
+                className="modal-input"
+                value={modalTitle}
+                onChange={(event) => setModalTitle(event.target.value)}
+                placeholder="What needs to be done?"
+              />
+            </div>
+            <div className="modal-field">
+              <label className="modal-label">Phase</label>
+              <select
+                className="modal-select"
+                value={modalPhaseId}
+                onChange={(event) => setModalPhaseId(event.target.value)}
+              >
+                {phases.map((phase) => (
+                  <option key={phase.id} value={phase.id}>{phaseShortTitle(phase.title)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="modal-field" style={{ display: "flex", gap: "10px" }}>
+              <div style={{ flex: 1 }}>
+                <label className="modal-label">Status</label>
+                <select
+                  className="modal-select"
+                  value={modalStatus}
+                  onChange={(event) => setModalStatus(event.target.value as ItemStatus)}
+                >
+                  <option value="todo">To Do</option>
+                  <option value="inprogress">In Progress</option>
+                  <option value="inreview">In Review</option>
+                  <option value="done">Done</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="modal-label">Priority</label>
+                <select
+                  className="modal-select"
+                  value={modalPriority}
+                  onChange={(event) => setModalPriority(event.target.value as ItemPriority)}
+                >
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="modal-label">Effort</label>
+                <select
+                  className="modal-select"
+                  value={modalEffort}
+                  onChange={(event) => setModalEffort(event.target.value as ItemEffort)}
+                >
+                  <option value="S">Small</option>
+                  <option value="M">Medium</option>
+                  <option value="L">Large</option>
+                </select>
+              </div>
+            </div>
+            <div className="modal-field">
+              <label className="modal-label">Notes</label>
+              <textarea
+                className="modal-textarea"
+                value={modalNotes}
+                onChange={(event) => setModalNotes(event.target.value)}
+                placeholder="Optional notes, links, context..."
+              />
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={closeModal}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={saveModal}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`toast${toastVisible ? " show" : ""}`}>{toastMessage}</div>
+    </div>
+  );
+}
+
+function QuickAddRow(props: { phaseTitle: string; onAdd: (value: string) => void }) {
+  const [value, setValue] = useState("");
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") return;
+    props.onAdd(value);
+    setValue("");
+  }
+
+  return (
+    <div className="add-item-row">
+      <input
+        className="add-input"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={`+ Quick add item to ${props.phaseTitle}…`}
+      />
+    </div>
+  );
+}
