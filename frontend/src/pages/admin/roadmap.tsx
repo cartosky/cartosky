@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Plus } from "lucide-react";
 
+import { AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import { fetchInternalRoadmap, saveInternalRoadmap } from "@/lib/admin-api";
 
 import "./roadmap.css";
@@ -8,7 +10,20 @@ type ItemStatus = "todo" | "inprogress" | "inreview" | "done";
 type ItemPriority = "high" | "medium" | "low";
 type ItemEffort = "S" | "M" | "L";
 type ItemLabel = "bug" | "enhancement" | "performance" | "ux" | "data" | "infrastructure";
-type ActiveFilter = "all" | ItemStatus | "high" | ItemLabel;
+
+type RoadmapFilters = {
+  status: "all" | ItemStatus;
+  priority: "all" | ItemPriority;
+  effort: "all" | ItemEffort;
+  label: "all" | ItemLabel;
+};
+
+const DEFAULT_FILTERS: RoadmapFilters = {
+  status: "all",
+  priority: "all",
+  effort: "all",
+  label: "all",
+};
 
 type RoadmapItem = {
   id: string;
@@ -122,15 +137,14 @@ const LABEL_STYLES: Record<ItemLabel, { color: string; bg: string; border: strin
   infrastructure: { color: "#8b949e", bg: "rgba(139, 148, 158, 0.15)", border: "rgba(139, 148, 158, 0.35)" },
 };
 
-const FILTER_OPTIONS: Array<{ value: ActiveFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "todo", label: "To Do" },
-  { value: "inprogress", label: "In Progress" },
-  { value: "inreview", label: "In Review" },
-  { value: "done", label: "Done" },
-  { value: "high", label: "High Priority" },
-  ...ITEM_LABELS.map((label) => ({ value: label as ActiveFilter, label })),
-];
+function hasActiveFilters(filters: RoadmapFilters): boolean {
+  return (
+    filters.status !== "all"
+    || filters.priority !== "all"
+    || filters.effort !== "all"
+    || filters.label !== "all"
+  );
+}
 
 function clonePhases(phases: RoadmapPhase[]): RoadmapPhase[] {
   return normalizePhases(structuredClone(phases));
@@ -175,11 +189,12 @@ function effortLabel(effort: ItemEffort): string {
   return { S: "Small", M: "Medium", L: "Large" }[effort];
 }
 
-function itemMatchesFilter(item: RoadmapItem, filter: ActiveFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "high") return item.priority === "high";
-  if (isItemLabel(filter)) return itemLabels(item).includes(filter);
-  return item.status === filter;
+function itemMatchesFilters(item: RoadmapItem, filters: RoadmapFilters): boolean {
+  if (filters.status !== "all" && item.status !== filters.status) return false;
+  if (filters.priority !== "all" && item.priority !== filters.priority) return false;
+  if (filters.effort !== "all" && item.effort !== filters.effort) return false;
+  if (filters.label !== "all" && !itemLabels(item).includes(filters.label)) return false;
+  return true;
 }
 
 function isRoadmapPhases(value: unknown): value is RoadmapPhase[] {
@@ -192,7 +207,7 @@ function phaseShortTitle(title: string): string {
 
 export default function AdminRoadmapPage() {
   const [phases, setPhases] = useState<RoadmapPhase[]>(() => clonePhases(DEFAULT_PHASES));
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [filters, setFilters] = useState<RoadmapFilters>(DEFAULT_FILTERS);
   const [lastSavedLabel, setLastSavedLabel] = useState("Last saved: never");
   const [toastMessage, setToastMessage] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
@@ -310,8 +325,8 @@ export default function AdminRoadmapPage() {
   );
 
   const visibleBugsItems = useMemo(
-    () => bugsImprovementsItems.filter(({ item }) => itemMatchesFilter(item, activeFilter)),
-    [bugsImprovementsItems, activeFilter],
+    () => bugsImprovementsItems.filter(({ item }) => itemMatchesFilters(item, filters)),
+    [bugsImprovementsItems, filters],
   );
 
   function updatePhases(updater: (current: RoadmapPhase[]) => RoadmapPhase[]) {
@@ -516,72 +531,127 @@ export default function AdminRoadmapPage() {
 
   if (loading) {
     return (
-      <div className="roadmap-page" style={{ padding: "2rem", color: "var(--text-muted)" }}>
-        Loading roadmap…
+      <div className="relative min-h-[calc(100vh-3.5rem)] w-full bg-[#07111f] text-white">
+        <div className="mx-auto max-w-[1100px] px-4 py-24 pt-[4.5rem] text-sm text-white/60 md:px-5">
+          Loading roadmap…
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="roadmap-page">
-      <div className="header">
-        <div className="header-left">
-          <div className="logo-mark">
-            <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" /></svg>
-          </div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <h1>CartoSky Roadmap</h1>
-            </div>
-            <div className="header-sub">{lastSavedLabel}</div>
-          </div>
-        </div>
-        <div className="header-actions">
-          <button type="button" className="btn btn-primary" onClick={openAddModal}>+ Add Item</button>
-        </div>
-      </div>
+    <div className="roadmap-page relative min-h-[calc(100vh-3.5rem)] w-full overflow-x-hidden text-white">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: `
+            radial-gradient(1200px 720px at 15% 10%, rgba(72,160,220,0.14), transparent 56%),
+            radial-gradient(900px 620px at 82% 18%, rgba(52,211,203,0.08), transparent 58%),
+            linear-gradient(to bottom, rgba(6,12,24,0.82), rgba(6,12,24,0.96))
+          `,
+        }}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(7,17,31,0.2),rgba(7,17,31,0.62))]" />
 
-      <div className="filter-bar">
-        <span className="filter-label">Filter</span>
-        {FILTER_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={`filter-chip${activeFilter === option.value ? " active" : ""}`}
-            onClick={() => setActiveFilter(option.value)}
+      <div className="relative mx-auto max-w-[1100px] px-4 pb-28 pt-[4.5rem] md:px-5 md:pb-32">
+        <AdminPage>
+          <AdminHero
+            eyebrow="Internal"
+            title="Roadmap"
+            description={
+              <span className="font-mono text-xs text-white/45">{lastSavedLabel}</span>
+            }
+          />
+
+          <AdminSurface
+            title="Filters & progress"
+            headerRight={
+              hasActiveFilters(filters) ? (
+                <button
+                  type="button"
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
+                  className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200/72 transition hover:text-cyan-100"
+                >
+                  Clear filters
+                </button>
+              ) : null
+            }
           >
-            {option.label}
-          </button>
-        ))}
-      </div>
+            <div className="flex flex-wrap items-end gap-3 md:gap-4">
+              <FilterDropdown
+                label="Status"
+                value={filters.status}
+                options={[
+                  { value: "all", label: "All statuses" },
+                  { value: "todo", label: "To Do" },
+                  { value: "inprogress", label: "In Progress" },
+                  { value: "inreview", label: "In Review" },
+                  { value: "done", label: "Done" },
+                ]}
+                onChange={(value) => setFilters((current) => ({ ...current, status: value as RoadmapFilters["status"] }))}
+              />
+              <FilterDropdown
+                label="Priority"
+                value={filters.priority}
+                options={[
+                  { value: "all", label: "All priorities" },
+                  { value: "high", label: "High" },
+                  { value: "medium", label: "Medium" },
+                  { value: "low", label: "Low" },
+                ]}
+                onChange={(value) => setFilters((current) => ({ ...current, priority: value as RoadmapFilters["priority"] }))}
+              />
+              <FilterDropdown
+                label="Effort"
+                value={filters.effort}
+                options={[
+                  { value: "all", label: "All effort" },
+                  { value: "S", label: "Small" },
+                  { value: "M", label: "Medium" },
+                  { value: "L", label: "Large" },
+                ]}
+                onChange={(value) => setFilters((current) => ({ ...current, effort: value as RoadmapFilters["effort"] }))}
+              />
+              <FilterDropdown
+                label="Labels"
+                value={filters.label}
+                options={[
+                  { value: "all", label: "All labels" },
+                  ...ITEM_LABELS.map((label) => ({ value: label, label })),
+                ]}
+                onChange={(value) => setFilters((current) => ({ ...current, label: value as RoadmapFilters["label"] }))}
+              />
+            </div>
 
-      <div className="progress-bar-wrap">
-        <span className="progress-label">Overall progress</span>
-        <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
-        </div>
-        <span className="progress-count">{progress.done} / {progress.total} done</span>
-      </div>
+            <div className="mt-5 flex items-center gap-4 border-t border-white/8 pt-5">
+              <span className="text-xs font-mono uppercase tracking-[0.12em] text-white/45">Overall progress</span>
+              <div className="progress-track flex-1">
+                <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
+              </div>
+              <span className="text-xs font-mono text-cyan-200/80">{progress.done} / {progress.total} done</span>
+            </div>
+          </AdminSurface>
 
-      <div className="main">
         {bugsImprovementsItems.length > 0 && (
-          <div className={`phase bugs-section${bugsSectionOpen ? "" : " collapsed"}`}>
-            <button
-              type="button"
-              className="bugs-section-header"
-              onClick={() => setBugsSectionOpen((open) => !open)}
-            >
-              <span className="bugs-section-title">Bugs & Improvements</span>
-              <span className="bugs-section-count">{bugsOpenCount} open</span>
-              <div className="phase-divider" />
-              <span className="bugs-section-toggle" aria-hidden="true">
-                {bugsSectionOpen ? "▾" : "▸"}
-              </span>
-            </button>
-            {bugsSectionOpen && (
+          <AdminSurface
+            className="bugs-section-surface"
+            title="Bugs & Improvements"
+            headerRight={
+              <button
+                type="button"
+                onClick={() => setBugsSectionOpen((open) => !open)}
+                className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-orange-300/80 transition hover:text-orange-200"
+              >
+                {bugsOpenCount} open
+                <span aria-hidden="true">{bugsSectionOpen ? "▾" : "▸"}</span>
+              </button>
+            }
+          >
+            {bugsSectionOpen ? (
               <div className="items-list">
                 {visibleBugsItems.length === 0 ? (
-                  <div className="bugs-section-empty">No items match the current filter.</div>
+                  <div className="bugs-section-empty">No items match the current filters.</div>
                 ) : (
                   visibleBugsItems.map(({ item, phaseId }) => (
                     <RoadmapItemRow
@@ -600,26 +670,31 @@ export default function AdminRoadmapPage() {
                   ))
                 )}
               </div>
+            ) : (
+              <div className="text-sm text-white/45">Section collapsed.</div>
             )}
-          </div>
+          </AdminSurface>
         )}
 
         {phases.map((phase) => {
           const phaseItems = phase.items.filter((item) => !isBugsImprovementsItem(item));
-          const visibleItems = phaseItems.filter((item) => itemMatchesFilter(item, activeFilter));
-          if (activeFilter !== "all" && visibleItems.length === 0) return null;
+          const visibleItems = phaseItems.filter((item) => itemMatchesFilters(item, filters));
+          if (hasActiveFilters(filters) && visibleItems.length === 0) return null;
 
           const doneCount = phaseItems.filter((item) => item.status === "done").length;
-          const itemsToShow = activeFilter === "all" ? phaseItems : visibleItems;
+          const itemsToShow = hasActiveFilters(filters) ? visibleItems : phaseItems;
 
           return (
-            <div key={phase.id} className="phase">
-              <div className="phase-header">
-                <span className="phase-title">{phase.title}</span>
-                <span className="phase-period">{phase.period}</span>
-                <div className="phase-divider" />
-                <span className="phase-stats">{doneCount}/{phaseItems.length}</span>
-              </div>
+            <AdminSurface
+              key={phase.id}
+              title={phase.title}
+              description={
+                <span className="font-mono text-xs text-white/40">{phase.period}</span>
+              }
+              headerRight={
+                <span className="font-mono text-xs text-white/35">{doneCount}/{phaseItems.length}</span>
+              }
+            >
               <div className="items-list">
                 {itemsToShow.map((item) => (
                   <RoadmapItemRow
@@ -641,10 +716,20 @@ export default function AdminRoadmapPage() {
                 phaseTitle={phaseShortTitle(phase.title)}
                 onAdd={(value) => quickAdd(phase.id, value)}
               />
-            </div>
+            </AdminSurface>
           );
         })}
+        </AdminPage>
       </div>
+
+      <button
+        type="button"
+        onClick={openAddModal}
+        className="fixed bottom-6 right-6 z-40 flex h-12 items-center gap-2 rounded-full border border-cyan-300/28 bg-[linear-gradient(180deg,#2f4f47_0%,#1f3832_100%)] px-5 text-sm font-semibold text-cyan-50 shadow-[0_14px_44px_rgba(0,0,0,0.45)] transition hover:brightness-110 md:bottom-8 md:right-8"
+      >
+        <Plus className="h-4 w-4" />
+        Add Item
+      </button>
 
       {modalOpen && (
         <div
@@ -768,6 +853,28 @@ export default function AdminRoadmapPage() {
   );
 }
 
+function FilterDropdown(props: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="filter-dropdown">
+      <label className="filter-dropdown-label">{props.label}</label>
+      <select
+        className="filter-dropdown-select"
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      >
+        {props.options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function QuickAddRow(props: { phaseTitle: string; onAdd: (value: string) => void }) {
   const [value, setValue] = useState("");
 
@@ -797,12 +904,12 @@ function MetaBadgeGroup(props: {
   onClick: () => void;
 }) {
   return (
-    <div className="meta-badge-group">
+    <span className="meta-inline-group">
+      <span className="meta-inline-label">{props.label}:</span>
       <span className={props.badgeClassName} onClick={props.onClick}>
         {props.badgeText}
       </span>
-      <span className="meta-badge-label">{props.label}</span>
-    </div>
+    </span>
   );
 }
 
@@ -868,18 +975,21 @@ function RoadmapItemRow(props: {
             badgeText={statusLabel(item.status)}
             onClick={() => props.onCycleStatus(item.id)}
           />
+          <span className="meta-inline-sep" aria-hidden="true">·</span>
           <MetaBadgeGroup
             label="Priority"
             badgeClassName={`badge badge-priority-${item.priority}`}
             badgeText={priorityLabel(item.priority)}
             onClick={() => props.onCyclePriority(item.id)}
           />
+          <span className="meta-inline-sep" aria-hidden="true">·</span>
           <MetaBadgeGroup
             label="Effort"
             badgeClassName="badge badge-effort"
             badgeText={effortLabel(item.effort)}
             onClick={() => props.onCycleEffort(item.id)}
           />
+          {labels.length > 0 && <span className="meta-inline-sep" aria-hidden="true">·</span>}
           {labels.map((label) => (
             <LabelPill key={label} label={label} />
           ))}
