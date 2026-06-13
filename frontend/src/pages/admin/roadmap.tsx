@@ -945,7 +945,7 @@ function RoadmapItemRow(props: {
   const labels = itemLabels(item).filter(isItemLabel);
 
   return (
-    <div className={`item${item.status === "done" ? " done" : ""}`}>
+    <div className={`item${item.status === "done" ? " done" : ""}${labels.length > 0 ? " item--has-labels" : ""}`}>
       <div
         className={`item-check${item.status === "done" ? " checked" : ""}`}
         onClick={() => props.onToggleDone(item.id)}
@@ -1008,13 +1008,6 @@ function RoadmapItemRow(props: {
         >
           {item.notes || "Add notes…"}
         </div>
-        {labels.length > 0 && (
-          <div className="item-labels">
-            {labels.map((label) => (
-              <LabelPill key={label} label={label} />
-            ))}
-          </div>
-        )}
       </div>
       <div className="item-actions">
         <button type="button" className="btn-text-edit" onClick={() => props.onEdit(item.id)}>
@@ -1029,6 +1022,13 @@ function RoadmapItemRow(props: {
           ✕
         </button>
       </div>
+      {labels.length > 0 && (
+        <div className="item-labels">
+          {labels.map((label) => (
+            <LabelPill key={label} label={label} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
