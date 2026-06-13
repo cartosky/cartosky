@@ -61,6 +61,47 @@ export const FRAME_HARD_DEADLINE_MS = 30_000;
 export const FRAME_RETRY_BASE_MS = 1200;
 export const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
 export const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
+
+export type GridFrameCoverageIssue =
+  | { kind: "slider_missing_grid"; hours: number[] }
+  | { kind: "grid_missing_url"; hours: number[] };
+
+export type GridFrameCoverageReport = {
+  issues: GridFrameCoverageIssue[];
+  sliderHours: number[];
+  gridHours: number[];
+};
+
+/** Compare slider-visible hours against grid-manifest hours for coverage gaps. */
+export function auditGridFrameCoverage(params: {
+  selectableFrameHours: number[];
+  gridFrameHours: number[];
+  gridFrameByHour: ReadonlyMap<number, { url?: string | null | undefined }>;
+}): GridFrameCoverageReport {
+  const sliderHours = Array.from(new Set(
+    params.selectableFrameHours.filter(Number.isFinite).map((hour) => Number(hour)),
+  )).sort((a, b) => a - b);
+  const gridHours = Array.from(new Set(
+    params.gridFrameHours.filter(Number.isFinite).map((hour) => Number(hour)),
+  )).sort((a, b) => a - b);
+  const gridHourSet = new Set(gridHours);
+
+  const sliderMissingGrid = sliderHours.filter((hour) => !gridHourSet.has(hour));
+  const gridMissingUrl = gridHours.filter((hour) => {
+    const url = String(params.gridFrameByHour.get(hour)?.url ?? "").trim();
+    return !url;
+  });
+
+  const issues: GridFrameCoverageIssue[] = [];
+  if (sliderMissingGrid.length > 0) {
+    issues.push({ kind: "slider_missing_grid", hours: sliderMissingGrid });
+  }
+  if (gridMissingUrl.length > 0) {
+    issues.push({ kind: "grid_missing_url", hours: gridMissingUrl });
+  }
+
+  return { issues, sliderHours, gridHours };
+}
 export const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 
 export const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";

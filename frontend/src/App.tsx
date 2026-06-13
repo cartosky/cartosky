@@ -113,6 +113,7 @@ import {
   selectableFramesForVariable,
   resolveForecastHour,
   resolveForecastHourFromRows,
+  auditGridFrameCoverage,
   buildLegend,
   buildVectorLayerUrl,
   emptyScrubPhase0aSnapshot,
@@ -3955,6 +3956,92 @@ export default function App() {
     };
   }, [buildCompositeGridLayersForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
 
+  const directGridPlaybackActive = useMemo(() => {
+    if (!isGridLowMidActive || isPlaying || isGridPreloadingForPlay) {
+      return false;
+    }
+    if (isScrubbing) {
+      return true;
+    }
+    if (!Number.isFinite(resolvedGridDisplayHour) || gridFrameHours.length === 0) {
+      return false;
+    }
+    const requestedHour = nearestFrame(gridFrameHours, Number(resolvedGridDisplayHour));
+    return !isGridHourReady(requestedHour);
+  }, [
+    gridFrameHours,
+    isGridHourReady,
+    isGridLowMidActive,
+    isGridPreloadingForPlay,
+    isPlaying,
+    isScrubbing,
+    resolvedGridDisplayHour,
+  ]);
+
+  const getDirectGridPlaybackState = useCallback(() => {
+    if (!directGridPlaybackActive) {
+      return null;
+    }
+    const targetCandidate = isScrubbing && Number.isFinite(targetForecastHourRef.current)
+      ? Number(targetForecastHourRef.current)
+      : (Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null);
+    if (!Number.isFinite(targetCandidate)) {
+      return null;
+    }
+    const targetHour = nearestFrame(gridFrameHours, Number(targetCandidate));
+    const directCompositeLayers = buildCompositeGridLayersForHour(targetHour);
+    return {
+      frameUrl: directCompositeLayers.length === 0 ? gridFrameUrlForHour(targetHour) : null,
+      frameHour: targetHour,
+      prefetchPivotHour: targetHour,
+      compositeGridLayers: directCompositeLayers,
+    };
+  }, [
+    buildCompositeGridLayersForHour,
+    directGridPlaybackActive,
+    gridFrameHours,
+    gridFrameUrlForHour,
+    isScrubbing,
+    resolvedGridDisplayHour,
+  ]);
+
+  const gridFrameAuditKeyRef = useRef("");
+  useEffect(() => {
+    if (!isGridLowMidActive || gridFrameHours.length === 0) {
+      return;
+    }
+    const auditKey = `${selectionKey}:${gridFrameHours.join(",")}:${controlAvailableFrameHours.join(",")}`;
+    if (gridFrameAuditKeyRef.current === auditKey) {
+      return;
+    }
+    gridFrameAuditKeyRef.current = auditKey;
+    const report = auditGridFrameCoverage({
+      selectableFrameHours: controlAvailableFrameHours,
+      gridFrameHours,
+      gridFrameByHour,
+    });
+    if (report.issues.length > 0) {
+      console.warn("[grid-frame-audit] coverage gaps detected", {
+        selectionKey,
+        model,
+        variable,
+        run: resolvedRunForRequests,
+        issues: report.issues,
+        sliderHours: report.sliderHours,
+        gridHours: report.gridHours,
+      });
+    }
+  }, [
+    controlAvailableFrameHours,
+    gridFrameByHour,
+    gridFrameHours,
+    isGridLowMidActive,
+    model,
+    resolvedRunForRequests,
+    selectionKey,
+    variable,
+  ]);
+
   const controlsIsPlaying = isPlaying || isGridPreloadingForPlay;
   const preloadBufferedCount = Math.max(0, Math.min(gridReadyCount, gridFrameHours.length));
   const preloadTotal = gridFrameHours.length;
@@ -4499,6 +4586,8 @@ export default function App() {
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
           getAnimatedGridPlaybackState={getAnimatedGridPlaybackState}
+          getDirectGridPlaybackState={getDirectGridPlaybackState}
+          directGridPlaybackActive={directGridPlaybackActive}
           isAnimating={isPlaying || isScrubbing || isGridPreloadingForPlay}
           onZoomBucketChange={setZoomBucket}
           onZoomRoutingSignal={handleZoomRoutingSignal}

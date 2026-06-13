@@ -976,6 +976,9 @@ type MapCanvasProps = {
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
+  /** Foreground grid frame path for scrub / post-scrub load (mirrors animation rAF delivery). */
+  getDirectGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
+  directGridPlaybackActive?: boolean;
   isAnimating?: boolean;
   /** True while grid playback is buffering or running; drives animation-only warm throttling. */
   isGridPlaybackAnimating?: boolean;
@@ -1030,6 +1033,8 @@ export function MapCanvas({
   onGridFrameReady,
   onGridFrameEvicted,
   getAnimatedGridPlaybackState = null,
+  getDirectGridPlaybackState = null,
+  directGridPlaybackActive = false,
   isAnimating = false,
   isGridPlaybackAnimating = false,
   isScrubbing = false,
@@ -1104,6 +1109,7 @@ export function MapCanvas({
   const vectorTransitionRafRef = useRef<number | null>(null);
   const lastAppliedBasemapModeRef = useRef<BasemapMode>(basemapMode);
   const autoplayGridStateSignatureRef = useRef("");
+  const directGridStateSignatureRef = useRef("");
   const lastAppliedViewResetSignalRef = useRef<number | null>(null);
 
   const view = useMemo(() => {
@@ -2487,6 +2493,9 @@ export function MapCanvas({
     if (getAnimatedGridPlaybackState && isAnimating && mode === "autoplay") {
       return;
     }
+    if (directGridPlaybackActive && getDirectGridPlaybackState) {
+      return;
+    }
     syncGridControllers({
       frameUrl: gridFrameUrl,
       frameHour: gridFrameHour,
@@ -2495,14 +2504,61 @@ export function MapCanvas({
     });
   }, [
     compositeGridLayers,
+    directGridPlaybackActive,
     gridFrameHour,
     gridFrameUrl,
     gridPrefetchPivotHour,
     getAnimatedGridPlaybackState,
+    getDirectGridPlaybackState,
     isAnimating,
     mode,
     syncGridControllers,
   ]);
+
+  useEffect(() => {
+    if (!getDirectGridPlaybackState || !directGridPlaybackActive) {
+      directGridStateSignatureRef.current = "";
+      return;
+    }
+
+    let rafId: number | null = null;
+    const syncDirectState = () => {
+      const nextState = getDirectGridPlaybackState();
+      if (!nextState) {
+        directGridStateSignatureRef.current = "";
+        rafId = window.requestAnimationFrame(syncDirectState);
+        return;
+      }
+      const nextSignature = JSON.stringify({
+        frameUrl: nextState.frameUrl,
+        frameHour: nextState.frameHour,
+        prefetchPivotHour: nextState.prefetchPivotHour,
+        compositeGridLayers: nextState.compositeGridLayers.map((layer) => ({
+          id: layer.id,
+          frameUrl: layer.frameUrl,
+          frameHour: layer.frameHour,
+        })),
+      });
+      if (nextSignature !== directGridStateSignatureRef.current) {
+        directGridStateSignatureRef.current = nextSignature;
+        syncGridControllers({
+          frameUrl: nextState.frameUrl,
+          frameHour: nextState.frameHour,
+          prefetchPivotHour: nextState.prefetchPivotHour,
+          compositeLayers: nextState.compositeGridLayers,
+        });
+      }
+      rafId = window.requestAnimationFrame(syncDirectState);
+    };
+
+    syncDirectState();
+    return () => {
+      directGridStateSignatureRef.current = "";
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [directGridPlaybackActive, getDirectGridPlaybackState, syncGridControllers]);
 
   useEffect(() => {
     if (!getAnimatedGridPlaybackState || !isAnimating || mode !== "autoplay") {

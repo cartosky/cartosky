@@ -1924,12 +1924,6 @@ export class GridWebglLayerController {
         this.contour.grid,
         { width: this.contour.width, height: this.contour.height },
       );
-      if (!contourTexture) {
-        this.pendingFrameBytes = bytes;
-        this.pendingFrameSignature = signature;
-        this.pendingFrameUrl = frameUrl;
-        return;
-      }
     }
 
     this.pendingFrameBytes = bytes ?? this.frameCache.get(frameUrl)?.bytes ?? null;
@@ -1967,7 +1961,7 @@ export class GridWebglLayerController {
       let contourBytes: Uint8Array<ArrayBufferLike> | null = null;
       if (contourUrl && contourGrid) {
         contourBytes = await this.fetchFrameBytes(contourUrl);
-        if (!contourBytes || signature !== this.currentFrameSignature) {
+        if (signature !== this.currentFrameSignature) {
           return;
         }
       }
@@ -1979,7 +1973,7 @@ export class GridWebglLayerController {
       let contourBytes: Uint8Array<ArrayBufferLike> | null = null;
       if (contourUrl && contourGrid) {
         contourBytes = await this.fetchFrameBytes(contourUrl);
-        if (!contourBytes || signature !== this.currentFrameSignature) {
+        if (signature !== this.currentFrameSignature) {
           return;
         }
       }
@@ -1988,18 +1982,16 @@ export class GridWebglLayerController {
     }
 
     try {
-      const [bytes, contourBytes] = await Promise.all([
-        this.fetchFrameBytes(frameUrl),
-        contourUrl && contourGrid ? this.fetchFrameBytes(contourUrl) : Promise.resolve(null),
-      ]);
-      if (!bytes) {
+      const bytes = await this.fetchFrameBytes(frameUrl);
+      if (!bytes || signature !== this.currentFrameSignature) {
         return;
       }
-      if (contourUrl && contourGrid && !contourBytes) {
-        return;
-      }
-      if (signature !== this.currentFrameSignature) {
-        return;
+      let contourBytes: Uint8Array<ArrayBufferLike> | null = null;
+      if (contourUrl && contourGrid) {
+        contourBytes = await this.fetchFrameBytes(contourUrl);
+        if (signature !== this.currentFrameSignature) {
+          return;
+        }
       }
       this.activateFrameTexture(frameUrl, bytes, signature, contourBytes);
     } catch {
@@ -2167,8 +2159,12 @@ export class GridWebglLayerController {
   }
 
   private pruneTextureWarmQueue(desiredUrls: Set<string>) {
+    const protectedForegroundUrl = String(this.frameUrl ?? "").trim();
     // Abort in-flight fetches for URLs that are no longer in the desired set.
     for (const [fetchUrl, controller] of this.frameFetchAbortControllers) {
+      if (protectedForegroundUrl && fetchUrl === protectedForegroundUrl) {
+        continue;
+      }
       if (!desiredUrls.has(fetchUrl) && !this.textureCache.has(fetchUrl) && !this.frameCache.has(fetchUrl)) {
         controller.abort();
       }
