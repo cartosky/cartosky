@@ -124,7 +124,7 @@ const STATUS_ORDER: ItemStatus[] = ["todo", "inprogress", "inreview", "done"];
 const PRIORITY_ORDER: ItemPriority[] = ["high", "medium", "low"];
 const EFFORT_ORDER: ItemEffort[] = ["S", "M", "L"];
 
-const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "performance", "ux"];
+const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux"];
 
 const ITEM_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux", "data", "infrastructure"];
 
@@ -221,6 +221,7 @@ export default function AdminRoadmapPage() {
   const [modalNotes, setModalNotes] = useState("");
   const [modalLabels, setModalLabels] = useState<ItemLabel[]>([]);
   const [bugsSectionOpen, setBugsSectionOpen] = useState(true);
+  const [expandedDoneSections, setExpandedDoneSections] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -328,6 +329,18 @@ export default function AdminRoadmapPage() {
     () => bugsImprovementsItems.filter(({ item }) => itemMatchesFilters(item, filters)),
     [bugsImprovementsItems, filters],
   );
+
+  function toggleDoneSection(sectionKey: string) {
+    setExpandedDoneSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionKey)) {
+        next.delete(sectionKey);
+      } else {
+        next.add(sectionKey);
+      }
+      return next;
+    });
+  }
 
   function updatePhases(updater: (current: RoadmapPhase[]) => RoadmapPhase[]) {
     setPhases((current) => {
@@ -649,27 +662,24 @@ export default function AdminRoadmapPage() {
             }
           >
             {bugsSectionOpen ? (
-              <div className="items-list">
-                {visibleBugsItems.length === 0 ? (
-                  <div className="bugs-section-empty">No items match the current filters.</div>
-                ) : (
-                  visibleBugsItems.map(({ item, phaseId }) => (
-                    <RoadmapItemRow
-                      key={item.id}
-                      item={item}
-                      phaseId={phaseId}
-                      onToggleDone={toggleDone}
-                      onSaveTitle={saveTitle}
-                      onSaveNotes={saveNotes}
-                      onCycleStatus={cycleStatus}
-                      onCyclePriority={cyclePriority}
-                      onCycleEffort={cycleEffort}
-                      onEdit={openEditModal}
-                      onDelete={deleteItem}
-                    />
-                  ))
-                )}
-              </div>
+              visibleBugsItems.length === 0 ? (
+                <div className="bugs-section-empty">No items match the current filters.</div>
+              ) : (
+                <RoadmapSectionItems
+                  sectionKey="bugs"
+                  entries={visibleBugsItems}
+                  expandedDoneSections={expandedDoneSections}
+                  onToggleDoneSection={toggleDoneSection}
+                  onToggleDone={toggleDone}
+                  onSaveTitle={saveTitle}
+                  onSaveNotes={saveNotes}
+                  onCycleStatus={cycleStatus}
+                  onCyclePriority={cyclePriority}
+                  onCycleEffort={cycleEffort}
+                  onEdit={openEditModal}
+                  onDelete={deleteItem}
+                />
+              )
             ) : (
               <div className="text-sm text-white/45">Section collapsed.</div>
             )}
@@ -695,23 +705,20 @@ export default function AdminRoadmapPage() {
                 <span className="font-mono text-xs text-white/35">{doneCount}/{phaseItems.length}</span>
               }
             >
-              <div className="items-list">
-                {itemsToShow.map((item) => (
-                  <RoadmapItemRow
-                    key={item.id}
-                    item={item}
-                    phaseId={phase.id}
-                    onToggleDone={toggleDone}
-                    onSaveTitle={saveTitle}
-                    onSaveNotes={saveNotes}
-                    onCycleStatus={cycleStatus}
-                    onCyclePriority={cyclePriority}
-                    onCycleEffort={cycleEffort}
-                    onEdit={openEditModal}
-                    onDelete={deleteItem}
-                  />
-                ))}
-              </div>
+              <RoadmapSectionItems
+                sectionKey={phase.id}
+                entries={itemsToShow.map((item) => ({ item, phaseId: phase.id }))}
+                expandedDoneSections={expandedDoneSections}
+                onToggleDoneSection={toggleDoneSection}
+                onToggleDone={toggleDone}
+                onSaveTitle={saveTitle}
+                onSaveNotes={saveNotes}
+                onCycleStatus={cycleStatus}
+                onCyclePriority={cyclePriority}
+                onCycleEffort={cycleEffort}
+                onEdit={openEditModal}
+                onDelete={deleteItem}
+              />
               <QuickAddRow
                 phaseTitle={phaseShortTitle(phase.title)}
                 onAdd={(value) => quickAdd(phase.id, value)}
@@ -926,6 +933,81 @@ function LabelPill(props: { label: ItemLabel }) {
     >
       {props.label}
     </span>
+  );
+}
+
+type RoadmapItemEntry = { item: RoadmapItem; phaseId: string };
+
+function RoadmapSectionItems(props: {
+  sectionKey: string;
+  entries: RoadmapItemEntry[];
+  expandedDoneSections: Set<string>;
+  onToggleDoneSection: (sectionKey: string) => void;
+  onToggleDone: (id: string) => void;
+  onSaveTitle: (id: string, value: string) => void;
+  onSaveNotes: (id: string, value: string) => void;
+  onCycleStatus: (id: string) => void;
+  onCyclePriority: (id: string) => void;
+  onCycleEffort: (id: string) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string, phaseId: string) => void;
+}) {
+  const doneEntries = props.entries.filter((entry) => entry.item.status === "done");
+  const openEntries = props.entries.filter((entry) => entry.item.status !== "done");
+  const doneExpanded = props.expandedDoneSections.has(props.sectionKey);
+
+  const rowProps = {
+    onToggleDone: props.onToggleDone,
+    onSaveTitle: props.onSaveTitle,
+    onSaveNotes: props.onSaveNotes,
+    onCycleStatus: props.onCycleStatus,
+    onCyclePriority: props.onCyclePriority,
+    onCycleEffort: props.onCycleEffort,
+    onEdit: props.onEdit,
+    onDelete: props.onDelete,
+  };
+
+  return (
+    <>
+      {doneEntries.length > 0 && (
+        <div className="done-items-group">
+          <button
+            type="button"
+            className="done-items-toggle"
+            onClick={() => props.onToggleDoneSection(props.sectionKey)}
+            aria-expanded={doneExpanded}
+          >
+            <span className="done-items-toggle-label">Closed</span>
+            <span className="done-items-count">{doneEntries.length}</span>
+            <span className="done-items-chevron" aria-hidden="true">{doneExpanded ? "▾" : "▸"}</span>
+          </button>
+          {doneExpanded && (
+            <div className="items-list done-items-list">
+              {doneEntries.map((entry) => (
+                <RoadmapItemRow
+                  key={entry.item.id}
+                  item={entry.item}
+                  phaseId={entry.phaseId}
+                  {...rowProps}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {openEntries.length > 0 && (
+        <div className={`items-list${doneEntries.length > 0 ? " open-items-list" : ""}`}>
+          {openEntries.map((entry) => (
+            <RoadmapItemRow
+              key={entry.item.id}
+              item={entry.item}
+              phaseId={entry.phaseId}
+              {...rowProps}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
