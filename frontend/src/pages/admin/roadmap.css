@@ -148,7 +148,10 @@
 }
 
 .item-body {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 100%;
 }
 
 .item-title-row {
@@ -245,6 +248,16 @@
   font-weight: 500;
   border: 1px solid;
   white-space: nowrap;
+}
+
+.item-labels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+  align-self: flex-end;
+  max-width: 100%;
 }
 
 .item-notes {

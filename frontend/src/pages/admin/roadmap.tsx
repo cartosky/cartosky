@@ -989,10 +989,6 @@ function RoadmapItemRow(props: {
             badgeText={effortLabel(item.effort)}
             onClick={() => props.onCycleEffort(item.id)}
           />
-          {labels.length > 0 && <span className="meta-inline-sep" aria-hidden="true">·</span>}
-          {labels.map((label) => (
-            <LabelPill key={label} label={label} />
-          ))}
         </div>
         <div
           className={`item-notes${item.notes ? "" : " empty"}`}
@@ -1012,6 +1008,13 @@ function RoadmapItemRow(props: {
         >
           {item.notes || "Add notes…"}
         </div>
+        {labels.length > 0 && (
+          <div className="item-labels">
+            {labels.map((label) => (
+              <LabelPill key={label} label={label} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="item-actions">
         <button type="button" className="btn-text-edit" onClick={() => props.onEdit(item.id)}>
