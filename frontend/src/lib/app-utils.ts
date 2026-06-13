@@ -60,7 +60,38 @@ export const FRAME_MAX_RETRIES = 3;
 export const FRAME_HARD_DEADLINE_MS = 30_000;
 export const FRAME_RETRY_BASE_MS = 1200;
 export const SCRUB_COMMIT_NEIGHBOR_WINDOW = 2;
+/** Minimum lag (forecast hours) between scrub target and displayed ready frame to enter burst prefetch. */
+export const SCRUB_LAG_BURST_LAG_HOURS = 36;
+/** Mobile/tablet: enter burst prefetch sooner when display trails the thumb. */
+export const SCRUB_LAG_BURST_LAG_HOURS_MOBILE = 24;
+/** Texture warm queue size during lag burst (forecast grid, desktop/high tier). */
+export const SCRUB_LAG_BURST_WARM_LIMIT = 28;
+/** Texture warm queue size during lag burst on mobile/low tier. */
+export const SCRUB_LAG_BURST_WARM_LIMIT_MOBILE = 20;
+/** Prefetch URL budget during lag burst / far-end forward scrub (desktop). */
+export const SCRUB_LAG_BURST_PREFETCH_BUDGET = 28;
+/** Prefetch URL budget during lag burst on mobile/tablet. */
+export const SCRUB_LAG_BURST_PREFETCH_BUDGET_MOBILE = 20;
+/** Forward-scrub ahead-only bias on long timelines past this forecast hour (desktop). */
+export const SCRUB_FAR_END_FORWARD_FH = 168;
+/** Forward-scrub ahead-only bias on mobile/tablet long timelines. */
+export const SCRUB_FAR_END_FORWARD_FH_MOBILE = 120;
+/** Minimum manifest frame count treated as a long timeline for far-end prefetch tuning. */
+export const SCRUB_LONG_TIMELINE_FRAMES = 72;
+/** Lower bar on mobile so burst prefetch can engage on medium-length runs (e.g. HRRR). */
+export const SCRUB_LONG_TIMELINE_FRAMES_MOBILE = 48;
 export const VARIABLE_SWITCH_TIMEOUT_MS = 2500;
+
+/** Forecast-hour distance between scrub target and the displayed ready frame. */
+export function resolveScrubDisplayLagHours(
+  targetHour: number | null | undefined,
+  displayedHour: number | null | undefined,
+): number {
+  if (!Number.isFinite(targetHour) || !Number.isFinite(displayedHour)) {
+    return 0;
+  }
+  return Math.abs(Number(targetHour) - Number(displayedHour));
+}
 
 export type GridFrameCoverageIssue =
   | { kind: "slider_missing_grid"; hours: number[] }

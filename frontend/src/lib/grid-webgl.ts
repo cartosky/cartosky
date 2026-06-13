@@ -2,6 +2,7 @@ import maplibregl from "maplibre-gl";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { productFetch, type GridManifestResponse } from "@/lib/api";
+import { SCRUB_LAG_BURST_WARM_LIMIT, SCRUB_LAG_BURST_WARM_LIMIT_MOBILE } from "@/lib/app-utils";
 import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
@@ -13,6 +14,7 @@ const GRID_TEXTURE_CACHE_BUDGET_MOBILE_BYTES = 256 * 1024 * 1024;
 const GRID_TEXTURE_WARM_LIMIT = 12;
 /** Expanded warm queue for scrub/idle prefetch (forecast models only). */
 const GRID_TEXTURE_WARM_LIMIT_SCRUB = 14;
+const GRID_TEXTURE_WARM_LIMIT_SCRUB_MOBILE = 12;
 const GRID_TEXTURE_WARM_BATCH_SIZE = 3;
 const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP = 2;
 const GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE = 1;
@@ -93,6 +95,10 @@ export type GridWebglLayerConfig = {
   isAnimating?: boolean;
   /** When true, use full warm throughput and an expanded queue for scrub/idle prefetch. */
   isScrubPrefetch?: boolean;
+  /** Expand warm queue/batch when scrub target is far ahead of the displayed ready frame. */
+  scrubLagBurst?: boolean;
+  /** Frame URLs that must not be aborted during fast scrub (recent scrub targets). */
+  protectedFetchUrls?: string[];
   onFrameVisible?: ((payload: GridFrameVisiblePayload) => void) | null;
   /** Fired when a frame has a live GPU texture and can be shown without a foreground upload. */
   onFrameReady?: ((frameUrl: string) => void) | null;
@@ -358,6 +364,33 @@ function resolveForecastTextureWarmBatchSize(animating: boolean): number {
   return DEVICE_TIER === "low"
     ? GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_MOBILE
     : GRID_TEXTURE_WARM_BATCH_SIZE_ANIMATING_DESKTOP;
+}
+
+function resolveForecastScrubTextureWarmLimit(scrubLagBurst: boolean): number {
+  if (scrubLagBurst) {
+    return DEVICE_TIER === "low" ? SCRUB_LAG_BURST_WARM_LIMIT_MOBILE : SCRUB_LAG_BURST_WARM_LIMIT;
+  }
+  return DEVICE_TIER === "low" ? GRID_TEXTURE_WARM_LIMIT_SCRUB_MOBILE : GRID_TEXTURE_WARM_LIMIT_SCRUB;
+}
+
+function resolveScrubTextureWarmBatchSize(scrubLagBurst: boolean): number {
+  if (scrubLagBurst) {
+    if (DEVICE_TIER === "low") {
+      return 3;
+    }
+    return GRID_TEXTURE_WARM_BATCH_SIZE + 1;
+  }
+  return DEVICE_TIER === "low" ? 2 : GRID_TEXTURE_WARM_BATCH_SIZE;
+}
+
+function resolveScrubTextureWarmFrameBudgetMs(scrubLagBurst: boolean): number {
+  if (DEVICE_TIER === "high") {
+    return scrubLagBurst ? 10 : 8;
+  }
+  if (DEVICE_TIER === "mid") {
+    return scrubLagBurst ? 9 : 7;
+  }
+  return scrubLagBurst ? 8 : 6;
 }
 
 function resolveTextureWarmFrameBudgetMs(animating: boolean): number {
@@ -822,6 +855,8 @@ export class GridWebglLayerController {
   private contour: GridContourLayerConfig | null = null;
   private animating = false;
   private isScrubPrefetch = false;
+  private scrubLagBurst = false;
+  private protectedFetchUrls: string[] = [];
   private onFrameVisible: ((payload: GridFrameVisiblePayload) => void) | null = null;
   private onFrameReady: ((frameUrl: string) => void) | null = null;
   private onFrameEvicted: ((frameUrl: string) => void) | null = null;
@@ -903,6 +938,20 @@ export class GridWebglLayerController {
     return `${width}x${height}:${dtype}:${maxTextureSize}`;
   }
 
+  private recentFrameRetentionLimit(): number {
+    const baseLimit = this.recentFrameRetentionCount;
+    if (this.isScrubPrefetch && this.scrubLagBurst) {
+      const burstLimit = DEVICE_TIER === "low"
+        ? SCRUB_LAG_BURST_WARM_LIMIT_MOBILE
+        : SCRUB_LAG_BURST_WARM_LIMIT;
+      return Math.max(baseLimit * 2, burstLimit);
+    }
+    if (this.isScrubPrefetch) {
+      return Math.max(baseLimit * 2, DEVICE_TIER === "low" ? 10 : baseLimit * 2);
+    }
+    return baseLimit;
+  }
+
   private markFrameRetained(frameUrl: string | null | undefined) {
     const normalized = String(frameUrl ?? "").trim();
     if (!normalized) {
@@ -917,7 +966,8 @@ export class GridWebglLayerController {
       this.recentFrameUrlSet.add(normalized);
     }
     this.recentFrameUrls.push(normalized);
-    while (this.recentFrameUrls.length > this.recentFrameRetentionCount) {
+    const retentionLimit = this.recentFrameRetentionLimit();
+    while (this.recentFrameUrls.length > retentionLimit) {
       const removed = this.recentFrameUrls.shift();
       if (removed) {
         this.recentFrameUrlSet.delete(removed);
@@ -1091,6 +1141,10 @@ export class GridWebglLayerController {
     this.contour = config.contour?.frameUrl && config.contour.grid ? config.contour : null;
     this.animating = config.isAnimating ?? false;
     this.isScrubPrefetch = config.isScrubPrefetch ?? false;
+    this.scrubLagBurst = config.scrubLagBurst ?? false;
+    this.protectedFetchUrls = Array.isArray(config.protectedFetchUrls)
+      ? config.protectedFetchUrls.filter(Boolean)
+      : [];
     this.onFrameVisible = config.onFrameVisible ?? null;
     this.onFrameReady = config.onFrameReady ?? null;
     this.onFrameEvicted = config.onFrameEvicted ?? null;
@@ -1108,15 +1162,30 @@ export class GridWebglLayerController {
     }
 
     const prioritizedPrefetchUrls = this.prefetchUrls.slice(0, this.textureWarmLimit());
+    const protectedFetchUrlSet = new Set(this.protectedFetchUrls);
     this.markFrameRetained(this.frameUrl);
     for (const prefetchUrl of prioritizedPrefetchUrls.slice(0, this.textureWarmHighPriorityCount())) {
       this.markFrameRetained(prefetchUrl);
     }
-    this.pruneTextureWarmQueue(new Set([this.frameUrl, ...prioritizedPrefetchUrls]));
+    for (const protectedUrl of protectedFetchUrlSet) {
+      this.markFrameRetained(protectedUrl);
+    }
+    this.pruneTextureWarmQueue(new Set([
+      this.frameUrl,
+      ...prioritizedPrefetchUrls,
+      ...protectedFetchUrlSet,
+    ]));
 
     if (nextSignature !== this.currentFrameSignature) {
       this.currentFrameSignature = nextSignature;
       this.visibleNotifiedSignature = null;
+      void this.ensureFrameLoaded(this.frameUrl, nextSignature);
+    } else if (
+      this.frameUrl
+      && !this.invalidFrameUrls.has(this.frameUrl)
+      && !this.textureCache.has(this.frameUrl)
+      && !this.frameFetches.has(this.frameUrl)
+    ) {
       void this.ensureFrameLoaded(this.frameUrl, nextSignature);
     }
 
@@ -1158,7 +1227,7 @@ export class GridWebglLayerController {
       return baseLimit;
     }
     if (this.isScrubPrefetch) {
-      return GRID_TEXTURE_WARM_LIMIT_SCRUB;
+      return resolveForecastScrubTextureWarmLimit(this.scrubLagBurst);
     }
     return GRID_TEXTURE_WARM_LIMIT;
   }
@@ -1175,11 +1244,23 @@ export class GridWebglLayerController {
       }
       return baseBatchSize;
     }
+    if (this.isScrubPrefetch) {
+      return resolveScrubTextureWarmBatchSize(this.scrubLagBurst);
+    }
     return resolveForecastTextureWarmBatchSize(this.animating && !this.isScrubPrefetch);
   }
 
   private textureWarmHighPriorityCount(): number {
-    return isObservedGridManifest(this.manifest) ? resolveObservedTextureHighPriorityCount() : 4;
+    if (isObservedGridManifest(this.manifest)) {
+      return resolveObservedTextureHighPriorityCount();
+    }
+    if (this.isScrubPrefetch && this.scrubLagBurst) {
+      return DEVICE_TIER === "low" ? 6 : 8;
+    }
+    if (this.isScrubPrefetch) {
+      return DEVICE_TIER === "low" ? 5 : 4;
+    }
+    return 4;
   }
 
   private resolveSelectedLodPixelCount(): number | null {
@@ -2160,9 +2241,16 @@ export class GridWebglLayerController {
 
   private pruneTextureWarmQueue(desiredUrls: Set<string>) {
     const protectedForegroundUrl = String(this.frameUrl ?? "").trim();
+    const protectedFetchUrlSet = new Set(this.protectedFetchUrls);
     // Abort in-flight fetches for URLs that are no longer in the desired set.
     for (const [fetchUrl, controller] of this.frameFetchAbortControllers) {
       if (protectedForegroundUrl && fetchUrl === protectedForegroundUrl) {
+        continue;
+      }
+      if (protectedFetchUrlSet.has(fetchUrl)) {
+        continue;
+      }
+      if (this.recentFrameUrlSet.has(fetchUrl)) {
         continue;
       }
       if (!desiredUrls.has(fetchUrl) && !this.textureCache.has(fetchUrl) && !this.frameCache.has(fetchUrl)) {
@@ -2239,7 +2327,9 @@ export class GridWebglLayerController {
     // Keep warming adaptive so high-resolution observed LODs don't saturate
     // frame time while the user is actively scrubbing or animating.
     const effectiveBatchSize = this.textureWarmBatchSize();
-    let frameBudgetMs = resolveTextureWarmFrameBudgetMs(this.animating && !this.isScrubPrefetch);
+    let frameBudgetMs = this.isScrubPrefetch
+      ? resolveScrubTextureWarmFrameBudgetMs(this.scrubLagBurst)
+      : resolveTextureWarmFrameBudgetMs(this.animating);
     if (isObservedGridManifest(this.manifest)) {
       const lodPixelCount = this.resolveSelectedLodPixelCount();
       if (lodPixelCount !== null && lodPixelCount >= OBSERVED_VERY_HIGH_RES_LOD_PIXEL_THRESHOLD) {

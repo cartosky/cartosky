@@ -8,6 +8,14 @@ import type { LegendPayload } from "@/components/map-legend";
 import { getActiveAnchorLabels, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
+import {
+  SCRUB_FAR_END_FORWARD_FH,
+  SCRUB_FAR_END_FORWARD_FH_MOBILE,
+  SCRUB_LAG_BURST_PREFETCH_BUDGET,
+  SCRUB_LAG_BURST_PREFETCH_BUDGET_MOBILE,
+  SCRUB_LONG_TIMELINE_FRAMES,
+  SCRUB_LONG_TIMELINE_FRAMES_MOBILE,
+} from "@/lib/app-utils";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
@@ -983,6 +991,9 @@ type MapCanvasProps = {
   /** True while grid playback is buffering or running; drives animation-only warm throttling. */
   isGridPlaybackAnimating?: boolean;
   isScrubbing?: boolean;
+  /** True when scrub target is far ahead/behind the displayed ready frame on long timelines. */
+  scrubLagBurstActive?: boolean;
+  scrubProtectedFetchUrlsRef?: { current: string[] };
   onMapReady?: (map: maplibregl.Map) => void;
   onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
@@ -1038,6 +1049,8 @@ export function MapCanvas({
   isAnimating = false,
   isGridPlaybackAnimating = false,
   isScrubbing = false,
+  scrubLagBurstActive = false,
+  scrubProtectedFetchUrlsRef = undefined,
   onMapReady,
   onLatestMapDataUrl,
   onMapHover,
@@ -1200,6 +1213,24 @@ export function MapCanvas({
     const remainingBehind = Math.max(0, pivot);
     const direction = scrubDirectionRef.current;
 
+    const longTimelineFrames = isDesktopLayout
+      ? SCRUB_LONG_TIMELINE_FRAMES
+      : SCRUB_LONG_TIMELINE_FRAMES_MOBILE;
+    const farEndForwardFh = isDesktopLayout
+      ? SCRUB_FAR_END_FORWARD_FH
+      : SCRUB_FAR_END_FORWARD_FH_MOBILE;
+    const burstPrefetchBudget = isDesktopLayout
+      ? SCRUB_LAG_BURST_PREFETCH_BUDGET
+      : SCRUB_LAG_BURST_PREFETCH_BUDGET_MOBILE;
+    const isLongTimeline = frameHours.length >= longTimelineFrames;
+    const isFarEndForwardScrub = isScrubbing
+      && isLongTimeline
+      && direction > 0
+      && effectivePivotHour >= farEndForwardFh;
+    const preferAheadOnly = (scrubLagBurstActive && direction > 0) || isFarEndForwardScrub;
+    const preferBehindOnly = scrubLagBurstActive && direction < 0;
+    const expandedPrefetchBudget = scrubLagBurstActive || isFarEndForwardScrub;
+
     let aheadTarget: number;
     let behindTarget: number;
 
@@ -1254,6 +1285,11 @@ export function MapCanvas({
       // Idle: progressively warm the full timeline outward from the current frame.
       aheadTarget = remainingAhead;
       behindTarget = remainingBehind;
+      if (preferAheadOnly) {
+        behindTarget = 0;
+      } else if (preferBehindOnly) {
+        aheadTarget = Math.min(remainingAhead, 1);
+      }
     } else if (mode === "autoplay") {
       aheadTarget = Math.min(remainingAhead, 8);
       behindTarget = Math.min(remainingBehind, 2);
@@ -1264,8 +1300,16 @@ export function MapCanvas({
       // Adaptive forecast scrub prefetch: direction-aware window within a
       // fixed total budget.  When the user is scrubbing forward, bias ahead;
       // when scrubbing backward, bias behind; when idle/unknown, split evenly.
-      const budget = FORECAST_SCRUB_PREFETCH_BUDGET;
-      if (direction > 0) {
+      const budget = expandedPrefetchBudget
+        ? burstPrefetchBudget
+        : FORECAST_SCRUB_PREFETCH_BUDGET;
+      if (preferAheadOnly) {
+        behindTarget = 0;
+        aheadTarget = Math.min(remainingAhead, budget);
+      } else if (preferBehindOnly) {
+        aheadTarget = Math.min(remainingAhead, 1);
+        behindTarget = Math.min(remainingBehind, budget - aheadTarget);
+      } else if (direction > 0) {
         // Forward: most of the budget goes ahead.
         behindTarget = Math.min(remainingBehind, FORECAST_SCRUB_MIN_BEHIND);
         aheadTarget = Math.min(remainingAhead, budget - behindTarget);
@@ -1299,11 +1343,27 @@ export function MapCanvas({
       }
     };
 
+    // Warm the scrub/playback pivot itself first when it differs from the
+    // currently displayed frame (nearest-ready during fast cold scrub).
+    pushFrameUrl(effectivePivotHour);
+
     // Interleave ahead/behind nearest-first for scrub and idle warmup so both
     // directions stay warm in the texture queue.  Autoplay keeps sequential
     // ordering for its forward-biased prefetch window.
     const useInterleavedPrefetch = (isObservedGrid && mode !== "autoplay") || mode === "scrub" || mode === "idle-warmup";
-    if (useInterleavedPrefetch) {
+    if (preferAheadOnly) {
+      for (let step = 1; step <= aheadTarget; step += 1) {
+        if (pivot + step < frameHours.length) {
+          pushFrameUrl(frameHours[pivot + step]);
+        }
+      }
+    } else if (preferBehindOnly) {
+      for (let step = 1; step <= behindTarget; step += 1) {
+        if (pivot - step >= 0) {
+          pushFrameUrl(frameHours[pivot - step]);
+        }
+      }
+    } else if (useInterleavedPrefetch) {
       const maxStep = Math.max(aheadTarget, behindTarget);
       for (let step = 1; step <= maxStep; step += 1) {
         if (direction < 0) {
@@ -1365,7 +1425,7 @@ export function MapCanvas({
     }
 
     return urls;
-  }, [apiRoot, gridLodLevel, gridManifest, mode]);
+  }, [apiRoot, gridLodLevel, gridManifest, isDesktopLayout, isScrubbing, mode, scrubLagBurstActive]);
   const gridPrefetchUrls = useMemo(() => {
     return buildGridPrefetchUrls({
       frameUrl: gridFrameUrl,
@@ -1392,6 +1452,7 @@ export function MapCanvas({
 
     const { frameUrl, frameHour, prefetchPivotHour, compositeLayers } = params;
     const gridScrubPrefetch = isScrubbing || mode === "idle-warmup";
+    const protectedFetchUrls = scrubProtectedFetchUrlsRef?.current ?? [];
     const activePrefetchUrls = buildGridPrefetchUrls({
       frameUrl,
       frameHour,
@@ -1438,6 +1499,8 @@ export function MapCanvas({
       requestRepaint: requestGridRepaint,
       isAnimating: isGridPlaybackAnimating,
       isScrubPrefetch: gridScrubPrefetch,
+      scrubLagBurst: scrubLagBurstActive,
+      protectedFetchUrls,
     });
 
     const activeCompositeLayerIds = new Set<string>();
@@ -1475,6 +1538,8 @@ export function MapCanvas({
         requestRepaint: requestGridRepaint,
         isAnimating: isGridPlaybackAnimating,
         isScrubPrefetch: gridScrubPrefetch,
+        scrubLagBurst: scrubLagBurstActive,
+        protectedFetchUrls,
       });
     }
 
@@ -1500,6 +1565,8 @@ export function MapCanvas({
     isScrubbing,
     mode,
     onGridFrameEvicted,
+    scrubLagBurstActive,
+    scrubProtectedFetchUrlsRef,
     onGridFrameReady,
     onGridFrameVisible,
     opacity,

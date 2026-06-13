@@ -83,6 +83,10 @@ import {
   PRELOAD_START_RATIO,
   PRELOAD_STALL_MS,
   SCRUB_COMMIT_NEIGHBOR_WINDOW,
+  SCRUB_LAG_BURST_LAG_HOURS,
+  SCRUB_LAG_BURST_LAG_HOURS_MOBILE,
+  SCRUB_LONG_TIMELINE_FRAMES,
+  SCRUB_LONG_TIMELINE_FRAMES_MOBILE,
   VARIABLE_SWITCH_TIMEOUT_MS,
   // Pure helpers
   viewportSignatureFromState,
@@ -118,6 +122,7 @@ import {
   buildVectorLayerUrl,
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
+  resolveScrubDisplayLagHours,
   writeAnimationDelayPreference,
   // Types
   type NewRunNoticeState,
@@ -195,6 +200,38 @@ function nearestSortedNumber(values: number[], target: number): number | null {
   return Math.abs(Number(left) - target) <= Math.abs(Number(right) - target)
     ? Number(left)
     : Number(right);
+}
+
+function resolveDirectionalReadyHour(
+  readyHours: number[],
+  targetHour: number,
+  direction: 1 | -1 | 0,
+): number | null {
+  if (readyHours.length === 0 || !Number.isFinite(targetHour)) {
+    return null;
+  }
+  if (direction > 0) {
+    let best: number | null = null;
+    for (const hour of readyHours) {
+      if (hour <= targetHour && (best === null || hour > best)) {
+        best = hour;
+      }
+    }
+    if (best !== null) {
+      return best;
+    }
+  } else if (direction < 0) {
+    let best: number | null = null;
+    for (const hour of readyHours) {
+      if (hour >= targetHour && (best === null || hour < best)) {
+        best = hour;
+      }
+    }
+    if (best !== null) {
+      return best;
+    }
+  }
+  return nearestSortedNumber(readyHours, targetHour);
 }
 
 function defaultEnsembleViewForVariable(
@@ -523,6 +560,9 @@ export default function App() {
   const scrubLodHoldTimerRef = useRef<number | null>(null);
   const previousIsScrubbingRef = useRef(false);
   const pendingScrubHourRef = useRef<number | null>(null);
+  const scrubRequestedHourRef = useRef<number | null>(null);
+  const scrubDirectionRef = useRef<1 | -1 | 0>(0);
+  const scrubProtectedFrameUrlsRef = useRef<string[]>([]);
   const scrubPhase0aRef = useRef<ScrubPhase0aSnapshot>(emptyScrubPhase0aSnapshot());
   const idleWarmupLastReadyCountRef = useRef(0);
   const idleWarmupLastProgressAtRef = useRef(0);
@@ -708,6 +748,7 @@ export default function App() {
       selectedModelDefaultFrameSelection
     );
     setForecastHour(resolved);
+    targetForecastHourRef.current = resolved;
     setTargetForecastHour(resolved);
     pendingInitialForecastHourRef.current = null;
   }, [frameHours, selectedVariableDefaultFh, selectedModelDefaultFrameSelection]);
@@ -1562,7 +1603,17 @@ export default function App() {
     if (gridReadyHourSet.has(requestedHour)) {
       return requestedHour;
     }
-    if (Number.isFinite(visibleGridFrameHour) && gridFrameByHour.has(Number(visibleGridFrameHour))) {
+    if (isScrubbing && gridReadyHours.length > 0) {
+      const directionalReadyHour = resolveDirectionalReadyHour(
+        gridReadyHours,
+        requestedHour,
+        scrubDirectionRef.current,
+      );
+      if (directionalReadyHour !== null) {
+        return directionalReadyHour;
+      }
+    }
+    if (!isScrubbing && Number.isFinite(visibleGridFrameHour) && gridFrameByHour.has(Number(visibleGridFrameHour))) {
       return Number(visibleGridFrameHour);
     }
 
@@ -1573,6 +1624,7 @@ export default function App() {
     gridFrameHours,
     gridReadyHourSet,
     gridReadyHours,
+    isScrubbing,
     resolvedGridDisplayHour,
     visibleGridFrameHour,
   ]);
@@ -1748,6 +1800,14 @@ export default function App() {
     targetForecastHourRef.current = targetForecastHour;
   }, [targetForecastHour]);
 
+  const applyTargetForecastHour = useCallback((nextHour: number) => {
+    if (!Number.isFinite(nextHour)) {
+      return;
+    }
+    targetForecastHourRef.current = nextHour;
+    setTargetForecastHour((prev) => (prev === nextHour ? prev : nextHour));
+  }, []);
+
   const resetGridPlaybackWaitState = useCallback(() => {
     gridPlaybackWaitStateRef.current = {
       stalledOnHour: null,
@@ -1766,6 +1826,7 @@ export default function App() {
       window.clearTimeout(autoplayUiSyncTimerRef.current);
       autoplayUiSyncTimerRef.current = null;
     }
+    targetForecastHourRef.current = nextHour;
     setTargetForecastHour((prev) => (prev === nextHour ? prev : nextHour));
     setForecastHour((prev) => (prev === nextHour ? prev : nextHour));
   }, []);
@@ -2234,34 +2295,6 @@ export default function App() {
     });
   }, [activeGridFrameUrl, loadedFramesKey, variable]);
 
-  const isScrubLoading = useMemo(() => {
-    if (!isScrubbing || !isGridLowMidActive || gridFrameHours.length === 0) {
-      return false;
-    }
-    const requestedCandidate = Number.isFinite(scrubRequestedHour)
-      ? Number(scrubRequestedHour)
-      : Number.isFinite(targetForecastHour)
-        ? Number(targetForecastHour)
-        : null;
-    if (!Number.isFinite(requestedCandidate)) {
-      return false;
-    }
-    const requestedHour = nearestFrame(gridFrameHours, Number(requestedCandidate));
-    if (isGridHourReady(requestedHour)) {
-      return false;
-    }
-    const presentedHour = Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null;
-    return presentedHour !== requestedHour;
-  }, [
-    gridFrameHours,
-    isGridHourReady,
-    isGridLowMidActive,
-    isScrubbing,
-    presentedGridDisplayHour,
-    scrubRequestedHour,
-    targetForecastHour,
-  ]);
-
   const cancelPendingVariableSwitch = useCallback((
     reason: "selection-mismatch" | "timeout",
     options?: { forceTiles?: boolean }
@@ -2428,6 +2461,26 @@ export default function App() {
     trackFirstViewerFrame(pendingFirstViewerFrameHourRef.current);
   }, [hasRenderableSelection, loadedFramesKey, trackFirstViewerFrame]);
 
+  const recordScrubProtectedHour = useCallback((hour: number) => {
+    const frameUrl = gridFrameUrlForHour(hour);
+    const normalized = normalizeGridFrameUrl(frameUrl);
+    if (!normalized) {
+      return;
+    }
+    const next = [normalized, ...scrubProtectedFrameUrlsRef.current.filter((url) => url !== normalized)].slice(0, 16);
+    scrubProtectedFrameUrlsRef.current = next;
+  }, [gridFrameUrlForHour, normalizeGridFrameUrl]);
+
+  const applyScrubGridTarget = useCallback((nextGridHour: number) => {
+    const previousHour = pendingScrubHourRef.current ?? targetForecastHourRef.current;
+    if (Number.isFinite(previousHour) && previousHour !== nextGridHour) {
+      scrubDirectionRef.current = nextGridHour > Number(previousHour) ? 1 : -1;
+    }
+    pendingScrubHourRef.current = nextGridHour;
+    applyTargetForecastHour(nextGridHour);
+    recordScrubProtectedHour(nextGridHour);
+  }, [applyTargetForecastHour, recordScrubProtectedHour]);
+
   const requestForecastHour = useCallback(
     (requestedHour: number, reason: ForecastHourChangeReason = "standard") => {
       const inferDirection = (nextHour: number): 1 | -1 | 0 => {
@@ -2468,11 +2521,12 @@ export default function App() {
 
       if (reason === "standard") {
         setScrubRequestedHour(null);
+        scrubRequestedHourRef.current = null;
         setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
         const nextGridHour = snapHour(requestedHour);
-        setTargetForecastHour(nextGridHour);
+        applyTargetForecastHour(nextGridHour);
         return;
       }
 
@@ -2491,6 +2545,7 @@ export default function App() {
         };
 
         setScrubRequestedHour(null);
+        scrubRequestedHourRef.current = null;
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
 
@@ -2502,7 +2557,7 @@ export default function App() {
         });
         void scrubTraceMeta;
         void treatCommitAsFrameChange;
-        setTargetForecastHour(snappedGridHour);
+        applyScrubGridTarget(snappedGridHour);
         return;
       }
 
@@ -2519,15 +2574,13 @@ export default function App() {
       }
       scrubTrace.lastRequestedHour = requestedHour;
 
+      scrubRequestedHourRef.current = requestedHour;
       setScrubRequestedHour(requestedHour);
-      pendingScrubHourRef.current = requestedHour;
 
-      // Apply the scrub immediately — the slider already throttles at ~48ms,
-      // so an additional rAF coalesce just adds latency.
       const nextGridHour = snapHour(requestedHour);
-      setTargetForecastHour(nextGridHour);
+      applyScrubGridTarget(nextGridHour);
     },
-    [gridFrameHours, selectableFrameHours]
+    [applyScrubGridTarget, gridFrameHours, selectableFrameHours]
   );
 
   useEffect(() => {
@@ -3867,6 +3920,9 @@ export default function App() {
       return;
     }
 
+    scrubRequestedHourRef.current = null;
+    scrubProtectedFrameUrlsRef.current = [];
+
     setIsScrubLodHoldActive(true);
     if (scrubLodHoldTimerRef.current !== null) {
       window.clearTimeout(scrubLodHoldTimerRef.current);
@@ -3906,6 +3962,7 @@ export default function App() {
   useEffect(() => {
     if (!isScrubbing) {
       setScrubRequestedHour(null);
+      scrubRequestedHourRef.current = null;
     }
   }, [isScrubbing]);
 
@@ -3957,11 +4014,8 @@ export default function App() {
   }, [buildCompositeGridLayersForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
 
   const directGridPlaybackActive = useMemo(() => {
-    if (!isGridLowMidActive || isPlaying || isGridPreloadingForPlay) {
+    if (!isGridLowMidActive || isPlaying || isGridPreloadingForPlay || isScrubbing) {
       return false;
-    }
-    if (isScrubbing) {
-      return true;
     }
     if (!Number.isFinite(resolvedGridDisplayHour) || gridFrameHours.length === 0) {
       return false;
@@ -3982,9 +4036,15 @@ export default function App() {
     if (!directGridPlaybackActive) {
       return null;
     }
-    const targetCandidate = isScrubbing && Number.isFinite(targetForecastHourRef.current)
-      ? Number(targetForecastHourRef.current)
-      : (Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null);
+    const pendingHour = pendingScrubHourRef.current;
+    const liveScrubHour = scrubRequestedHourRef.current;
+    const targetCandidate = Number.isFinite(pendingHour)
+      ? Number(pendingHour)
+      : (Number.isFinite(liveScrubHour)
+        ? Number(liveScrubHour)
+        : (Number.isFinite(targetForecastHourRef.current)
+          ? Number(targetForecastHourRef.current)
+          : (Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null)));
     if (!Number.isFinite(targetCandidate)) {
       return null;
     }
@@ -4001,7 +4061,6 @@ export default function App() {
     directGridPlaybackActive,
     gridFrameHours,
     gridFrameUrlForHour,
-    isScrubbing,
     resolvedGridDisplayHour,
   ]);
 
@@ -4048,15 +4107,34 @@ export default function App() {
   const preloadPercent = preloadTotal > 0
     ? Math.round((preloadBufferedCount / preloadTotal) * 100)
     : 0;
-  const showBufferStatus = (isGridPreloadingForPlay || isScrubLoading) && gridFrameHours.length > 0;
-  const bufferStatusText = isScrubLoading
-    ? "Loading forecast frame"
-    : `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
+  const showBufferStatus = isGridPreloadingForPlay && gridFrameHours.length > 0;
+  const bufferStatusText = `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
+  const scrubColdPrefetchBoost = isScrubbing && idleWarmupReadyRatio < PRELOAD_START_RATIO;
+  const scrubLagBurstActive = useMemo(() => {
+    const longTimelineFrames = isDesktopViewerLayout
+      ? SCRUB_LONG_TIMELINE_FRAMES
+      : SCRUB_LONG_TIMELINE_FRAMES_MOBILE;
+    if (!isScrubbing || !isGridLowMidActive || gridFrameHours.length < longTimelineFrames) {
+      return false;
+    }
+    const lagHours = resolveScrubDisplayLagHours(requestedGridDisplayHour, presentedGridDisplayHour);
+    const lagThreshold = isDesktopViewerLayout
+      ? SCRUB_LAG_BURST_LAG_HOURS
+      : SCRUB_LAG_BURST_LAG_HOURS_MOBILE;
+    return lagHours >= lagThreshold;
+  }, [
+    gridFrameHours.length,
+    isDesktopViewerLayout,
+    isGridLowMidActive,
+    isScrubbing,
+    presentedGridDisplayHour,
+    requestedGridDisplayHour,
+  ]);
   const mapPlaybackMode = (isPlaying || isGridPreloadingForPlay)
     ? "autoplay"
     : (isVariableSwitching
       ? "variable-switch"
-      : (isIdleGridWarmupActive ? "idle-warmup" : "scrub"));
+      : ((isIdleGridWarmupActive || scrubColdPrefetchBoost) ? "idle-warmup" : "scrub"));
 
   const resolvedForecastHourPermalink = Number.isFinite(forecastHour)
     ? forecastHour
@@ -4578,6 +4656,8 @@ export default function App() {
           opacity={opacity}
           mode={mapPlaybackMode}
           isScrubbing={isScrubbing}
+          scrubLagBurstActive={scrubLagBurstActive}
+          scrubProtectedFetchUrlsRef={scrubProtectedFrameUrlsRef}
           isGridPlaybackAnimating={controlsIsPlaying}
           variable={displayedOverlayVariable}
           overlayFadeOutZoom={overlayFadeOutZoom}
@@ -4625,16 +4705,14 @@ export default function App() {
                 <AlertCircle className="h-3.5 w-3.5" />
                 {bufferStatusText}
               </span>
-              {!isScrubLoading ? <span className="font-mono tabular-nums">{preloadPercent}%</span> : null}
+              <span className="font-mono tabular-nums">{preloadPercent}%</span>
             </div>
-            {!isScrubLoading ? (
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted/70">
-                <div
-                  className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
-                  style={{ width: `${preloadPercent}%` }}
-                />
-              </div>
-            ) : null}
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted/70">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+                style={{ width: `${preloadPercent}%` }}
+              />
+            </div>
           </div>
         )}
 
