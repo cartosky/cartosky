@@ -210,6 +210,61 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
+  .bugs-section {
+    margin-bottom: 40px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .bugs-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    width: 100%;
+    margin-bottom: 14px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+  }
+
+  .bugs-section-header:hover .bugs-section-title {
+    color: #fb923c;
+  }
+
+  .bugs-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f97316;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: 'JetBrains Mono', monospace;
+    transition: color 0.15s;
+  }
+
+  .bugs-section-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .bugs-section-toggle {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .bugs-section-empty {
+    padding: 12px 14px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 13px;
+    background: var(--card);
+  }
+
   /* Items */
   .items-list {
     display: flex;
@@ -281,9 +336,37 @@
 
   .item-meta {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    align-items: flex-start;
+    gap: 10px;
     flex-wrap: wrap;
+    margin-top: 2px;
+  }
+
+  .meta-badge-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 52px;
+  }
+
+  .meta-badge-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+
+  .label-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 500;
+    border: 1px solid;
+    white-space: nowrap;
+    align-self: center;
+    margin-top: 2px;
   }
 
   /* Status badge */
@@ -340,9 +423,29 @@
   /* Item actions */
   .item-actions {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     align-items: center;
     flex-shrink: 0;
+  }
+
+  .btn-text-edit {
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1.2;
+  }
+
+  .btn-text-edit:hover {
+    color: var(--text);
+    border-color: var(--border-light);
+    background: var(--card2);
   }
 
   .icon-btn {
@@ -479,6 +582,32 @@
   }
 
   .modal-textarea { resize: vertical; min-height: 80px; }
+
+  .modal-label-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .label-pill-toggle {
+    padding: 5px 10px;
+    border-radius: 99px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.15s;
+    background: transparent;
+  }
+
+  .label-pill-toggle:hover {
+    filter: brightness(1.08);
+  }
+
+  .label-pill-toggle.selected {
+    font-weight: 600;
+  }
 
   .modal-select option { background: var(--card2); }
 

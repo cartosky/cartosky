@@ -7,7 +7,8 @@ import "./roadmap.css";
 type ItemStatus = "todo" | "inprogress" | "inreview" | "done";
 type ItemPriority = "high" | "medium" | "low";
 type ItemEffort = "S" | "M" | "L";
-type ActiveFilter = "all" | ItemStatus | "high";
+type ItemLabel = "bug" | "enhancement" | "performance" | "ux" | "data" | "infrastructure";
+type ActiveFilter = "all" | ItemStatus | "high" | ItemLabel;
 
 type RoadmapItem = {
   id: string;
@@ -16,6 +17,7 @@ type RoadmapItem = {
   priority: ItemPriority;
   effort: ItemEffort;
   notes: string;
+  labels?: string[];
 };
 
 type RoadmapPhase = {
@@ -31,15 +33,15 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
     title: "Phase 1 — Beta Launch",
     period: "May–June 2026",
     items: [
-      { id: "p1-1", title: "Public beta launch on TWF", status: "done", priority: "high", effort: "L", notes: "Main post + two cross-posts in active threads. Live." },
-      { id: "p1-2", title: "Satellite animation stall bug fix", status: "done", priority: "high", effort: "S", notes: "Caught via session replay on day one. Fixed and deployed." },
-      { id: "p1-3", title: "Animation play button loops back from last frame", status: "done", priority: "medium", effort: "S", notes: "Previously hitting play at end of scrubber did nothing. Now loops to start." },
-      { id: "p1-4", title: "Animation loops until explicit stop", status: "done", priority: "medium", effort: "S", notes: "Changed from stop-at-end to continuous loop on user stop." },
-      { id: "p1-5", title: "Fix scrubber lag before cache warm", status: "todo", priority: "high", effort: "M", notes: "Increase prefetch aggressiveness so more frames are cached before user starts scrubbing. GitHub issue filed." },
-      { id: "p1-6", title: "Fix value tooltip desync with map coloring", status: "todo", priority: "high", effort: "M", notes: "Tooltip shows value for different forecast hour than currently rendered. GitHub issue filed." },
-      { id: "p1-7", title: "Fix frame freeze on early scrub", status: "todo", priority: "high", effort: "M", notes: "Map freezes on old frame if user scrubs too early. Does not update until scrubbed again. GitHub issue filed. Race condition suspected." },
-      { id: "p1-8", title: "Fix city label alignment on mobile", status: "todo", priority: "medium", effort: "S", notes: "Labels not aligning to map dots on mobile when zoomed in. Likely pixel density / anchor offset issue on high-DPI screens. Reported by TWF beta user." },
-      { id: "p1-9", title: "Preserve forecast hour when switching models/products", status: "todo", priority: "medium", effort: "M", notes: "Snap to same or nearest available hour when switching. Clamp to max if out of range. Handle models with different variable/hour availability gracefully. GitHub issue filed." },
+      { id: "p1-1", labels: [], title: "Public beta launch on TWF", status: "done", priority: "high", effort: "L", notes: "Main post + two cross-posts in active threads. Live." },
+      { id: "p1-2", labels: ["bug"], title: "Satellite animation stall bug fix", status: "done", priority: "high", effort: "S", notes: "Caught via session replay on day one. Fixed and deployed." },
+      { id: "p1-3", labels: ["enhancement"], title: "Animation play button loops back from last frame", status: "done", priority: "medium", effort: "S", notes: "Previously hitting play at end of scrubber did nothing. Now loops to start." },
+      { id: "p1-4", labels: ["enhancement"], title: "Animation loops until explicit stop", status: "done", priority: "medium", effort: "S", notes: "Changed from stop-at-end to continuous loop on user stop." },
+      { id: "p1-5", labels: ["bug","performance"], title: "Fix scrubber lag before cache warm", status: "todo", priority: "high", effort: "M", notes: "Increase prefetch aggressiveness so more frames are cached before user starts scrubbing. GitHub issue filed." },
+      { id: "p1-6", labels: ["bug"], title: "Fix value tooltip desync with map coloring", status: "todo", priority: "high", effort: "M", notes: "Tooltip shows value for different forecast hour than currently rendered. GitHub issue filed." },
+      { id: "p1-7", labels: ["bug"], title: "Fix frame freeze on early scrub", status: "todo", priority: "high", effort: "M", notes: "Map freezes on old frame if user scrubs too early. Does not update until scrubbed again. GitHub issue filed. Race condition suspected." },
+      { id: "p1-8", labels: ["bug","ux"], title: "Fix city label alignment on mobile", status: "todo", priority: "medium", effort: "S", notes: "Labels not aligning to map dots on mobile when zoomed in. Likely pixel density / anchor offset issue on high-DPI screens. Reported by TWF beta user." },
+      { id: "p1-9", labels: ["enhancement"], title: "Preserve forecast hour when switching models/products", status: "todo", priority: "medium", effort: "M", notes: "Snap to same or nearest available hour when switching. Clamp to max if out of range. Handle models with different variable/hour availability gracefully. GitHub issue filed." },
     ],
   },
   {
@@ -47,14 +49,14 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
     title: "Phase 2 — Core Expansion",
     period: "June–July 2026",
     items: [
-      { id: "p2-1", title: "NWS warnings overlay on radar", status: "todo", priority: "high", effort: "S", notes: "Half to one day lift on existing infrastructure. Highest impact Phase 2 item for TWF audience — radar feels incomplete without warnings." },
-      { id: "p2-2", title: "Animation speed control", status: "todo", priority: "high", effort: "S", notes: "Slow/Normal/Fast toggle. AUTOPLAY_TICK_MS already exists as config value. Requested by multiple beta users and noted from session replay." },
-      { id: "p2-3", title: "Expand satellite to additional bands", status: "todo", priority: "medium", effort: "M", notes: "Band 13 live for v1. Expand to additional bands. Low-risk addition." },
-      { id: "p2-4", title: "Expand SPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
-      { id: "p2-5", title: "Expand CPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
-      { id: "p2-6", title: "Add new secondary models", status: "todo", priority: "medium", effort: "M", notes: "Let beta feedback inform which models matter most to TWF audience before committing." },
-      { id: "p2-7", title: "Climate indices page (SSTs, MJO, PNA, NAO, AO)", status: "todo", priority: "medium", effort: "S", notes: "Start with embed approach using official NOAA/CPC charts. One to two days. Opportunistic — slot in between bigger features." },
-      { id: "p2-8", title: "Improve share modal hierarchy", status: "todo", priority: "medium", effort: "S", notes: "Copy link should be prominent for all users. TWF sharing is secondary for linked accounts. Screenshot download equally visible. Currently buried behind TWF sign-in CTA." },
+      { id: "p2-1", labels: ["enhancement"], title: "NWS warnings overlay on radar", status: "todo", priority: "high", effort: "S", notes: "Half to one day lift on existing infrastructure. Highest impact Phase 2 item for TWF audience — radar feels incomplete without warnings." },
+      { id: "p2-2", labels: ["ux","enhancement"], title: "Animation speed control", status: "todo", priority: "high", effort: "S", notes: "Slow/Normal/Fast toggle. AUTOPLAY_TICK_MS already exists as config value. Requested by multiple beta users and noted from session replay." },
+      { id: "p2-3", labels: ["enhancement"], title: "Expand satellite to additional bands", status: "todo", priority: "medium", effort: "M", notes: "Band 13 live for v1. Expand to additional bands. Low-risk addition." },
+      { id: "p2-4", labels: ["data"], title: "Expand SPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p2-5", labels: ["data"], title: "Expand CPC outlooks to long range", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p2-6", labels: ["data"], title: "Add new secondary models", status: "todo", priority: "medium", effort: "M", notes: "Let beta feedback inform which models matter most to TWF audience before committing." },
+      { id: "p2-7", labels: ["data"], title: "Climate indices page (SSTs, MJO, PNA, NAO, AO)", status: "todo", priority: "medium", effort: "S", notes: "Start with embed approach using official NOAA/CPC charts. One to two days. Opportunistic — slot in between bigger features." },
+      { id: "p2-8", labels: ["ux"], title: "Improve share modal hierarchy", status: "todo", priority: "medium", effort: "S", notes: "Copy link should be prominent for all users. TWF sharing is secondary for linked accounts. Screenshot download equally visible. Currently buried behind TWF sign-in CTA." },
     ],
   },
   {
@@ -62,15 +64,15 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
     title: "Phase 3 — Power Features",
     period: "July–September 2026",
     items: [
-      { id: "p3-1", title: "Meteograms", status: "todo", priority: "high", effort: "L", notes: "Highest demand Phase 3 feature. Backend data largely in place. Model similar to WB meteograms. Explicit user demand from TWF thread. Give it real time — half-baked meteograms will disappoint." },
-      { id: "p3-2", title: "GIF export in share modal", status: "todo", priority: "high", effort: "L", notes: "Three-tab share modal: Image / GIF / Link. GIF is lighter lift than comparison tools." },
-      { id: "p3-3", title: "Side-by-side model comparison tool", status: "todo", priority: "high", effort: "L", notes: "Synchronized dual MapLibre instances. GPU shader difference mode. Most architecturally complex Phase 3 item — needs real runway." },
-      { id: "p3-4", title: "Run-to-run deltas", status: "todo", priority: "high", effort: "L", notes: "Shares infrastructure with comparison tool. Requested by TWF beta user." },
-      { id: "p3-5", title: "Model consensus and probabilities", status: "todo", priority: "medium", effort: "L", notes: "" },
-      { id: "p3-6", title: "Integrate climatology baseline into forecast page", status: "todo", priority: "medium", effort: "M", notes: "ERA5 infrastructure already built and powering anomaly maps. Primarily a UI integration task." },
-      { id: "p3-7", title: "Skew-T diagrams", status: "todo", priority: "medium", effort: "L", notes: "Mentioned in TWF beta feedback. High value for technical TWF crowd. Do correctly — high-stakes for credibility." },
-      { id: "p3-8", title: "Add meteograms to forecast page", status: "todo", priority: "medium", effort: "M", notes: "" },
-      { id: "p3-9", title: "Spaghetti plots and ensemble spread charts", status: "todo", priority: "low", effort: "L", notes: "Requested by TWF beta user referencing existing community content. Good longer-term addition." },
+      { id: "p3-1", labels: ["enhancement"], title: "Meteograms", status: "todo", priority: "high", effort: "L", notes: "Highest demand Phase 3 feature. Backend data largely in place. Model similar to WB meteograms. Explicit user demand from TWF thread. Give it real time — half-baked meteograms will disappoint." },
+      { id: "p3-2", labels: ["enhancement"], title: "GIF export in share modal", status: "todo", priority: "high", effort: "L", notes: "Three-tab share modal: Image / GIF / Link. GIF is lighter lift than comparison tools." },
+      { id: "p3-3", labels: ["enhancement"], title: "Side-by-side model comparison tool", status: "todo", priority: "high", effort: "L", notes: "Synchronized dual MapLibre instances. GPU shader difference mode. Most architecturally complex Phase 3 item — needs real runway." },
+      { id: "p3-4", labels: ["enhancement"], title: "Run-to-run deltas", status: "todo", priority: "high", effort: "L", notes: "Shares infrastructure with comparison tool. Requested by TWF beta user." },
+      { id: "p3-5", labels: ["data"], title: "Model consensus and probabilities", status: "todo", priority: "medium", effort: "L", notes: "" },
+      { id: "p3-6", labels: ["data","enhancement"], title: "Integrate climatology baseline into forecast page", status: "todo", priority: "medium", effort: "M", notes: "ERA5 infrastructure already built and powering anomaly maps. Primarily a UI integration task." },
+      { id: "p3-7", labels: ["enhancement"], title: "Skew-T diagrams", status: "todo", priority: "medium", effort: "L", notes: "Mentioned in TWF beta feedback. High value for technical TWF crowd. Do correctly — high-stakes for credibility." },
+      { id: "p3-8", labels: ["enhancement"], title: "Add meteograms to forecast page", status: "todo", priority: "medium", effort: "M", notes: "" },
+      { id: "p3-9", labels: ["data"], title: "Spaghetti plots and ensemble spread charts", status: "todo", priority: "low", effort: "L", notes: "Requested by TWF beta user referencing existing community content. Good longer-term addition." },
     ],
   },
   {
@@ -78,10 +80,10 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
     title: "Phase 4 — Pre-Busy Season Polish",
     period: "September–October 2026",
     items: [
-      { id: "p4-1", title: "Feature freeze and stability pass", status: "todo", priority: "high", effort: "M", notes: "No new features after late September. Focus on performance and reliability before traffic spike." },
-      { id: "p4-2", title: "Performance audit and optimization", status: "todo", priority: "high", effort: "M", notes: "Ensure viewer handles concurrent users well. Review API worker / scheduler memory profile under load." },
-      { id: "p4-3", title: "Additional models (post-beta feedback informed)", status: "todo", priority: "medium", effort: "M", notes: "Save new model additions for last so data pipeline management does not overlap complex UI feature work." },
-      { id: "p4-4", title: "Mobile responsive improvements", status: "todo", priority: "medium", effort: "M", notes: "PWA explicitly decided against. Responsive design fixes are the correct investment given mobile-majority TWF audience." },
+      { id: "p4-1", labels: ["infrastructure"], title: "Feature freeze and stability pass", status: "todo", priority: "high", effort: "M", notes: "No new features after late September. Focus on performance and reliability before traffic spike." },
+      { id: "p4-2", labels: ["performance","infrastructure"], title: "Performance audit and optimization", status: "todo", priority: "high", effort: "M", notes: "Ensure viewer handles concurrent users well. Review API worker / scheduler memory profile under load." },
+      { id: "p4-3", labels: ["data"], title: "Additional models (post-beta feedback informed)", status: "todo", priority: "medium", effort: "M", notes: "Save new model additions for last so data pipeline management does not overlap complex UI feature work." },
+      { id: "p4-4", labels: ["ux"], title: "Mobile responsive improvements", status: "todo", priority: "medium", effort: "M", notes: "PWA explicitly decided against. Responsive design fixes are the correct investment given mobile-majority TWF audience." },
     ],
   },
   {
@@ -89,16 +91,16 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
     title: "Phase 5 — Busy Season & Beyond",
     period: "October 2026+",
     items: [
-      { id: "p5-1", title: "Rollout monetization (Pro tier)", status: "todo", priority: "high", effort: "L", notes: "Groundwork already laid — Stripe billing lifecycle validated, Clerk publicMetadata plan gating in place. Execute post-busy-season ramp." },
-      { id: "p5-2", title: "Expand social sharing targets (Discord, X, Facebook)", status: "todo", priority: "medium", effort: "M", notes: "Discord requested by TWF beta user (PDX weather group). X and Facebook identified as initial targets. YouTube content creator use case also noted." },
-      { id: "p5-3", title: "Storm/event mode", status: "todo", priority: "medium", effort: "L", notes: "" },
-      { id: "p5-4", title: "NWS warning polygons", status: "todo", priority: "medium", effort: "S", notes: "Half-day lift on existing infrastructure." },
-      { id: "p5-5", title: "Lightning strike data (GOES GLM)", status: "todo", priority: "medium", effort: "M", notes: "GOES GLM recommended. 2–3 days estimated." },
-      { id: "p5-6", title: "Pressure center H/L labels", status: "todo", priority: "low", effort: "S", notes: "" },
-      { id: "p5-7", title: "Location favorites on forecast page", status: "todo", priority: "low", effort: "S", notes: "" },
-      { id: "p5-8", title: "Client-side screenshot revisit", status: "todo", priority: "low", effort: "M", notes: "Originally client-side but viewport consistency caused screenshot to differ from displayed view — trust issue. Revisit if viewport normalization can be solved without mismatching output." },
-      { id: "p5-9", title: "Remove val.cog and sample off grid binaries", status: "todo", priority: "low", effort: "L", notes: "Possibly replace val.cog with point sampling directly off grid binaries." },
-      { id: "p5-10", title: "Server upgrade evaluation", status: "todo", priority: "low", effort: "S", notes: "Netcup RS 8000 G12 at 82€/mo vs Hetzner AX42 at ~49€/mo. Pending ECMWF memory investigation outcome." },
+      { id: "p5-1", labels: ["enhancement"], title: "Rollout monetization (Pro tier)", status: "todo", priority: "high", effort: "L", notes: "Groundwork already laid — Stripe billing lifecycle validated, Clerk publicMetadata plan gating in place. Execute post-busy-season ramp." },
+      { id: "p5-2", labels: ["enhancement"], title: "Expand social sharing targets (Discord, X, Facebook)", status: "todo", priority: "medium", effort: "M", notes: "Discord requested by TWF beta user (PDX weather group). X and Facebook identified as initial targets. YouTube content creator use case also noted." },
+      { id: "p5-3", labels: ["enhancement"], title: "Storm/event mode", status: "todo", priority: "medium", effort: "L", notes: "" },
+      { id: "p5-4", labels: ["enhancement"], title: "NWS warning polygons", status: "todo", priority: "medium", effort: "S", notes: "Half-day lift on existing infrastructure." },
+      { id: "p5-5", labels: ["data"], title: "Lightning strike data (GOES GLM)", status: "todo", priority: "medium", effort: "M", notes: "GOES GLM recommended. 2–3 days estimated." },
+      { id: "p5-6", labels: ["enhancement"], title: "Pressure center H/L labels", status: "todo", priority: "low", effort: "S", notes: "" },
+      { id: "p5-7", labels: ["ux"], title: "Location favorites on forecast page", status: "todo", priority: "low", effort: "S", notes: "" },
+      { id: "p5-8", labels: ["ux"], title: "Client-side screenshot revisit", status: "todo", priority: "low", effort: "M", notes: "Originally client-side but viewport consistency caused screenshot to differ from displayed view — trust issue. Revisit if viewport normalization can be solved without mismatching output." },
+      { id: "p5-9", labels: ["infrastructure","performance"], title: "Remove val.cog and sample off grid binaries", status: "todo", priority: "low", effort: "L", notes: "Possibly replace val.cog with point sampling directly off grid binaries." },
+      { id: "p5-10", labels: ["infrastructure"], title: "Server upgrade evaluation", status: "todo", priority: "low", effort: "S", notes: "Netcup RS 8000 G12 at 82€/mo vs Hetzner AX42 at ~49€/mo. Pending ECMWF memory investigation outcome." },
     ],
   },
 ];
@@ -107,6 +109,19 @@ const STATUS_ORDER: ItemStatus[] = ["todo", "inprogress", "inreview", "done"];
 const PRIORITY_ORDER: ItemPriority[] = ["high", "medium", "low"];
 const EFFORT_ORDER: ItemEffort[] = ["S", "M", "L"];
 
+const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "performance", "ux"];
+
+const ITEM_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux", "data", "infrastructure"];
+
+const LABEL_STYLES: Record<ItemLabel, { color: string; bg: string; border: string }> = {
+  bug: { color: "#f85149", bg: "rgba(248, 81, 73, 0.15)", border: "rgba(248, 81, 73, 0.35)" },
+  enhancement: { color: "#58a6ff", bg: "rgba(88, 166, 255, 0.15)", border: "rgba(88, 166, 255, 0.35)" },
+  performance: { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)", border: "rgba(245, 158, 11, 0.35)" },
+  ux: { color: "#a371f7", bg: "rgba(163, 113, 247, 0.15)", border: "rgba(163, 113, 247, 0.35)" },
+  data: { color: "#2dd4bf", bg: "rgba(45, 212, 191, 0.15)", border: "rgba(45, 212, 191, 0.35)" },
+  infrastructure: { color: "#8b949e", bg: "rgba(139, 148, 158, 0.15)", border: "rgba(139, 148, 158, 0.35)" },
+};
+
 const FILTER_OPTIONS: Array<{ value: ActiveFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "todo", label: "To Do" },
@@ -114,10 +129,34 @@ const FILTER_OPTIONS: Array<{ value: ActiveFilter; label: string }> = [
   { value: "inreview", label: "In Review" },
   { value: "done", label: "Done" },
   { value: "high", label: "High Priority" },
+  ...ITEM_LABELS.map((label) => ({ value: label as ActiveFilter, label })),
 ];
 
 function clonePhases(phases: RoadmapPhase[]): RoadmapPhase[] {
-  return structuredClone(phases);
+  return normalizePhases(structuredClone(phases));
+}
+
+function normalizePhases(phases: RoadmapPhase[]): RoadmapPhase[] {
+  return phases.map((phase) => ({
+    ...phase,
+    items: phase.items.map((item) => ({
+      ...item,
+      labels: item.labels ?? [],
+    })),
+  }));
+}
+
+function itemLabels(item: RoadmapItem): string[] {
+  return item.labels ?? [];
+}
+
+function isItemLabel(value: string): value is ItemLabel {
+  return ITEM_LABELS.includes(value as ItemLabel);
+}
+
+function isBugsImprovementsItem(item: RoadmapItem): boolean {
+  const labels = itemLabels(item);
+  return labels.some((label) => BUGS_IMPROVEMENTS_LABELS.includes(label as ItemLabel));
 }
 
 function uid(): string {
@@ -139,6 +178,7 @@ function effortLabel(effort: ItemEffort): string {
 function itemMatchesFilter(item: RoadmapItem, filter: ActiveFilter): boolean {
   if (filter === "all") return true;
   if (filter === "high") return item.priority === "high";
+  if (isItemLabel(filter)) return itemLabels(item).includes(filter);
   return item.status === filter;
 }
 
@@ -164,6 +204,8 @@ export default function AdminRoadmapPage() {
   const [modalPriority, setModalPriority] = useState<ItemPriority>("medium");
   const [modalEffort, setModalEffort] = useState<ItemEffort>("M");
   const [modalNotes, setModalNotes] = useState("");
+  const [modalLabels, setModalLabels] = useState<ItemLabel[]>([]);
+  const [bugsSectionOpen, setBugsSectionOpen] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -198,7 +240,7 @@ export default function AdminRoadmapPage() {
       try {
         const data = await fetchInternalRoadmap();
         if (!cancelled && isRoadmapPhases(data)) {
-          setPhases(clonePhases(data));
+          setPhases(normalizePhases(data));
         }
       } catch {
         if (!cancelled) {
@@ -250,6 +292,28 @@ export default function AdminRoadmapPage() {
     return { total, done, pct };
   }, [phases]);
 
+  const bugsImprovementsItems = useMemo(() => {
+    const entries: Array<{ item: RoadmapItem; phaseId: string }> = [];
+    phases.forEach((phase) => {
+      phase.items.forEach((item) => {
+        if (isBugsImprovementsItem(item)) {
+          entries.push({ item, phaseId: phase.id });
+        }
+      });
+    });
+    return entries;
+  }, [phases]);
+
+  const bugsOpenCount = useMemo(
+    () => bugsImprovementsItems.filter(({ item }) => item.status !== "done").length,
+    [bugsImprovementsItems],
+  );
+
+  const visibleBugsItems = useMemo(
+    () => bugsImprovementsItems.filter(({ item }) => itemMatchesFilter(item, activeFilter)),
+    [bugsImprovementsItems, activeFilter],
+  );
+
   function updatePhases(updater: (current: RoadmapPhase[]) => RoadmapPhase[]) {
     setPhases((current) => {
       const next = updater(current);
@@ -273,6 +337,7 @@ export default function AdminRoadmapPage() {
     setModalPriority("medium");
     setModalEffort("M");
     setModalNotes("");
+    setModalLabels([]);
     setModalPhaseId(phases[0]?.id ?? DEFAULT_PHASES[0].id);
     setModalOpen(true);
   }
@@ -287,6 +352,7 @@ export default function AdminRoadmapPage() {
     setModalPriority(item.priority);
     setModalEffort(item.effort);
     setModalNotes(item.notes || "");
+    setModalLabels(itemLabels(item).filter(isItemLabel));
     setModalPhaseId(phase?.id ?? phases[0]?.id ?? DEFAULT_PHASES[0].id);
     setModalOpen(true);
   }
@@ -321,6 +387,7 @@ export default function AdminRoadmapPage() {
             priority: modalPriority,
             effort: modalEffort,
             notes: modalNotes.trim(),
+            labels: [...modalLabels],
           });
           toPhase.items.push(item);
         } else {
@@ -330,6 +397,7 @@ export default function AdminRoadmapPage() {
             priority: modalPriority,
             effort: modalEffort,
             notes: modalNotes.trim(),
+            labels: [...modalLabels],
           });
         }
       } else {
@@ -342,6 +410,7 @@ export default function AdminRoadmapPage() {
           priority: modalPriority,
           effort: modalEffort,
           notes: modalNotes.trim(),
+          labels: [...modalLabels],
         });
       }
       return next;
@@ -439,6 +508,7 @@ export default function AdminRoadmapPage() {
         priority: "medium",
         effort: "M",
         notes: "",
+        labels: [],
       });
       return next;
     });
@@ -494,12 +564,53 @@ export default function AdminRoadmapPage() {
       </div>
 
       <div className="main">
+        {bugsImprovementsItems.length > 0 && (
+          <div className={`phase bugs-section${bugsSectionOpen ? "" : " collapsed"}`}>
+            <button
+              type="button"
+              className="bugs-section-header"
+              onClick={() => setBugsSectionOpen((open) => !open)}
+            >
+              <span className="bugs-section-title">Bugs & Improvements</span>
+              <span className="bugs-section-count">{bugsOpenCount} open</span>
+              <div className="phase-divider" />
+              <span className="bugs-section-toggle" aria-hidden="true">
+                {bugsSectionOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {bugsSectionOpen && (
+              <div className="items-list">
+                {visibleBugsItems.length === 0 ? (
+                  <div className="bugs-section-empty">No items match the current filter.</div>
+                ) : (
+                  visibleBugsItems.map(({ item, phaseId }) => (
+                    <RoadmapItemRow
+                      key={item.id}
+                      item={item}
+                      phaseId={phaseId}
+                      onToggleDone={toggleDone}
+                      onSaveTitle={saveTitle}
+                      onSaveNotes={saveNotes}
+                      onCycleStatus={cycleStatus}
+                      onCyclePriority={cyclePriority}
+                      onCycleEffort={cycleEffort}
+                      onEdit={openEditModal}
+                      onDelete={deleteItem}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {phases.map((phase) => {
-          const visibleItems = phase.items.filter((item) => itemMatchesFilter(item, activeFilter));
+          const phaseItems = phase.items.filter((item) => !isBugsImprovementsItem(item));
+          const visibleItems = phaseItems.filter((item) => itemMatchesFilter(item, activeFilter));
           if (activeFilter !== "all" && visibleItems.length === 0) return null;
 
-          const doneCount = phase.items.filter((item) => item.status === "done").length;
-          const itemsToShow = activeFilter === "all" ? phase.items : visibleItems;
+          const doneCount = phaseItems.filter((item) => item.status === "done").length;
+          const itemsToShow = activeFilter === "all" ? phaseItems : visibleItems;
 
           return (
             <div key={phase.id} className="phase">
@@ -507,74 +618,23 @@ export default function AdminRoadmapPage() {
                 <span className="phase-title">{phase.title}</span>
                 <span className="phase-period">{phase.period}</span>
                 <div className="phase-divider" />
-                <span className="phase-stats">{doneCount}/{phase.items.length}</span>
+                <span className="phase-stats">{doneCount}/{phaseItems.length}</span>
               </div>
               <div className="items-list">
                 {itemsToShow.map((item) => (
-                  <div key={item.id} className={`item${item.status === "done" ? " done" : ""}`}>
-                    <div
-                      className={`item-check${item.status === "done" ? " checked" : ""}`}
-                      onClick={() => toggleDone(item.id)}
-                    />
-                    <div className="item-body">
-                      <div className="item-title-row">
-                        <span
-                          className="item-title"
-                          contentEditable
-                          suppressContentEditableWarning
-                          spellCheck={false}
-                          onBlur={(event) => saveTitle(item.id, event.currentTarget.textContent ?? "")}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              event.currentTarget.blur();
-                            }
-                          }}
-                        >
-                          {item.title}
-                        </span>
-                      </div>
-                      <div className="item-meta">
-                        <span
-                          className={`badge badge-status-${item.status}`}
-                          onClick={() => cycleStatus(item.id)}
-                        >
-                          {statusLabel(item.status)}
-                        </span>
-                        <span
-                          className={`badge badge-priority-${item.priority}`}
-                          onClick={() => cyclePriority(item.id)}
-                        >
-                          {priorityLabel(item.priority)}
-                        </span>
-                        <span className="badge badge-effort" onClick={() => cycleEffort(item.id)}>
-                          {effortLabel(item.effort)}
-                        </span>
-                      </div>
-                      <div
-                        className={`item-notes${item.notes ? "" : " empty"}`}
-                        contentEditable
-                        suppressContentEditableWarning
-                        spellCheck={false}
-                        onBlur={(event) => saveNotes(item.id, event.currentTarget.textContent ?? "")}
-                        onFocus={(event) => {
-                          if (event.currentTarget.classList.contains("empty")) {
-                            event.currentTarget.textContent = "";
-                            event.currentTarget.classList.remove("empty");
-                          }
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") event.currentTarget.blur();
-                        }}
-                      >
-                        {item.notes || "Add notes…"}
-                      </div>
-                    </div>
-                    <div className="item-actions">
-                      <button type="button" className="icon-btn" title="Edit" onClick={() => openEditModal(item.id)}>✏️</button>
-                      <button type="button" className="icon-btn delete" title="Delete" onClick={() => deleteItem(item.id, phase.id)}>✕</button>
-                    </div>
-                  </div>
+                  <RoadmapItemRow
+                    key={item.id}
+                    item={item}
+                    phaseId={phase.id}
+                    onToggleDone={toggleDone}
+                    onSaveTitle={saveTitle}
+                    onSaveNotes={saveNotes}
+                    onCycleStatus={cycleStatus}
+                    onCyclePriority={cyclePriority}
+                    onCycleEffort={cycleEffort}
+                    onEdit={openEditModal}
+                    onDelete={deleteItem}
+                  />
                 ))}
               </div>
               <QuickAddRow
@@ -657,6 +717,36 @@ export default function AdminRoadmapPage() {
               </div>
             </div>
             <div className="modal-field">
+              <label className="modal-label">Labels</label>
+              <div className="modal-label-pills">
+                {ITEM_LABELS.map((label) => {
+                  const selected = modalLabels.includes(label);
+                  const style = LABEL_STYLES[label];
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      className={`label-pill-toggle${selected ? " selected" : ""}`}
+                      style={{
+                        color: style.color,
+                        background: selected ? style.bg : "transparent",
+                        borderColor: style.border,
+                      }}
+                      onClick={() => {
+                        setModalLabels((current) =>
+                          current.includes(label)
+                            ? current.filter((entry) => entry !== label)
+                            : [...current, label],
+                        );
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-field">
               <label className="modal-label">Notes</label>
               <textarea
                 className="modal-textarea"
@@ -696,6 +786,136 @@ function QuickAddRow(props: { phaseTitle: string; onAdd: (value: string) => void
         onKeyDown={handleKeyDown}
         placeholder={`+ Quick add item to ${props.phaseTitle}…`}
       />
+    </div>
+  );
+}
+
+function MetaBadgeGroup(props: {
+  label: string;
+  badgeClassName: string;
+  badgeText: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className="meta-badge-group">
+      <span className={props.badgeClassName} onClick={props.onClick}>
+        {props.badgeText}
+      </span>
+      <span className="meta-badge-label">{props.label}</span>
+    </div>
+  );
+}
+
+function LabelPill(props: { label: ItemLabel }) {
+  const style = LABEL_STYLES[props.label];
+  return (
+    <span
+      className="label-pill"
+      style={{
+        color: style.color,
+        background: style.bg,
+        borderColor: style.border,
+      }}
+    >
+      {props.label}
+    </span>
+  );
+}
+
+function RoadmapItemRow(props: {
+  item: RoadmapItem;
+  phaseId: string;
+  onToggleDone: (id: string) => void;
+  onSaveTitle: (id: string, value: string) => void;
+  onSaveNotes: (id: string, value: string) => void;
+  onCycleStatus: (id: string) => void;
+  onCyclePriority: (id: string) => void;
+  onCycleEffort: (id: string) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string, phaseId: string) => void;
+}) {
+  const { item, phaseId } = props;
+  const labels = itemLabels(item).filter(isItemLabel);
+
+  return (
+    <div className={`item${item.status === "done" ? " done" : ""}`}>
+      <div
+        className={`item-check${item.status === "done" ? " checked" : ""}`}
+        onClick={() => props.onToggleDone(item.id)}
+      />
+      <div className="item-body">
+        <div className="item-title-row">
+          <span
+            className="item-title"
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={false}
+            onBlur={(event) => props.onSaveTitle(item.id, event.currentTarget.textContent ?? "")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+            }}
+          >
+            {item.title}
+          </span>
+        </div>
+        <div className="item-meta">
+          <MetaBadgeGroup
+            label="Status"
+            badgeClassName={`badge badge-status-${item.status}`}
+            badgeText={statusLabel(item.status)}
+            onClick={() => props.onCycleStatus(item.id)}
+          />
+          <MetaBadgeGroup
+            label="Priority"
+            badgeClassName={`badge badge-priority-${item.priority}`}
+            badgeText={priorityLabel(item.priority)}
+            onClick={() => props.onCyclePriority(item.id)}
+          />
+          <MetaBadgeGroup
+            label="Effort"
+            badgeClassName="badge badge-effort"
+            badgeText={effortLabel(item.effort)}
+            onClick={() => props.onCycleEffort(item.id)}
+          />
+          {labels.map((label) => (
+            <LabelPill key={label} label={label} />
+          ))}
+        </div>
+        <div
+          className={`item-notes${item.notes ? "" : " empty"}`}
+          contentEditable
+          suppressContentEditableWarning
+          spellCheck={false}
+          onBlur={(event) => props.onSaveNotes(item.id, event.currentTarget.textContent ?? "")}
+          onFocus={(event) => {
+            if (event.currentTarget.classList.contains("empty")) {
+              event.currentTarget.textContent = "";
+              event.currentTarget.classList.remove("empty");
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") event.currentTarget.blur();
+          }}
+        >
+          {item.notes || "Add notes…"}
+        </div>
+      </div>
+      <div className="item-actions">
+        <button type="button" className="btn-text-edit" onClick={() => props.onEdit(item.id)}>
+          Edit
+        </button>
+        <button
+          type="button"
+          className="icon-btn delete"
+          title="Delete"
+          onClick={() => props.onDelete(item.id, phaseId)}
+        >
+          ✕
+        </button>
+      </div>
     </div>
   );
 }
