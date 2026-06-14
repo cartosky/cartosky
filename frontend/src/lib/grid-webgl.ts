@@ -2,7 +2,9 @@ import maplibregl from "maplibre-gl";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { productFetch, type GridManifestResponse } from "@/lib/api";
+import type { AnchorBatchPoint } from "@/lib/anchor-labels";
 import { SCRUB_LAG_BURST_WARM_LIMIT, SCRUB_LAG_BURST_WARM_LIMIT_MOBILE } from "@/lib/app-utils";
+import { sampleGridPoints } from "@/lib/grid-sample";
 import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
@@ -2530,6 +2532,62 @@ export class GridWebglLayerController {
         selectionKey: this.selectionKey,
       });
     }
+  }
+
+  /** Sample anchor-city values from the currently displayed grid frame bytes. */
+  sampleAnchorPoints(
+    points: AnchorBatchPoint[],
+  ): { values: Record<string, number | null>; units: string } | null {
+    if (
+      points.length === 0
+      || categoricalPaletteForManifest(this.manifest)
+      || radarPtypePackedForManifest(this.manifest)
+    ) {
+      return null;
+    }
+
+    const frameUrl = this.currentTextureUrl;
+    const grid = this.manifest?.grid;
+    if (!frameUrl || !grid) {
+      return null;
+    }
+
+    const cachedFrame = this.frameCache.get(frameUrl);
+    if (!cachedFrame?.bytes) {
+      return null;
+    }
+
+    const selectedLod = this.resolveSelectedLod();
+    const sourceWidth = selectedLod?.width ?? Math.max(1, Math.floor(Number(grid.width) || 1));
+    const sourceHeight = selectedLod?.height ?? Math.max(1, Math.floor(Number(grid.height) || 1));
+    const gridDtype = resolveGridDtype(grid.dtype);
+    const { preparedUpload } = this.resolvePreparedUpload(
+      frameUrl,
+      cachedFrame.bytes,
+      sourceWidth,
+      sourceHeight,
+      gridDtype,
+    );
+
+    const values = sampleGridPoints({
+      bytes: preparedUpload.bytes,
+      grid: {
+        width: preparedUpload.width,
+        height: preparedUpload.height,
+        dtype: grid.dtype,
+        scale: Number(grid.scale) || 1,
+        offset: Number(grid.offset) || 0,
+        nodata: Number(grid.nodata) || 65535,
+        units: grid.units,
+      },
+      bbox: this.resolveBbox(),
+      points,
+    });
+
+    return {
+      values,
+      units: typeof grid.units === "string" ? grid.units : "",
+    };
   }
 
   private disposeGlResources() {

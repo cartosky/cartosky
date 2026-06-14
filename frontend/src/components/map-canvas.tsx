@@ -5,7 +5,7 @@ import maplibregl, { type LayerSpecification, type StyleSpecification } from "ma
 import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
-import { getActiveAnchorLabels, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import { getActiveAnchorLabels, type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import {
@@ -1000,6 +1000,13 @@ type MapCanvasProps = {
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
   onVectorHazardClick?: (selection: VectorHazardSelection) => void;
+  anchorBatchPoints?: AnchorBatchPoint[];
+  onAnchorFrameSampled?: (payload: {
+    frameHour: number;
+    gridSampled: boolean;
+    values: Record<string, number | null>;
+    units: string;
+  }) => void;
 };
 
 export function MapCanvas({
@@ -1057,6 +1064,8 @@ export function MapCanvas({
   onMapHoverEnd,
   onAnchorClick,
   onVectorHazardClick,
+  anchorBatchPoints = [],
+  onAnchorFrameSampled,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapSlotRef = useRef<HTMLDivElement | null>(null);
@@ -1438,6 +1447,23 @@ export function MapCanvas({
     gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0 || compositeGridLayers.length > 0
   );
 
+  const emitGridFrameVisible = useCallback((
+    payload: GridFrameVisiblePayload,
+    sampler: GridWebglLayerController | null,
+  ) => {
+    onGridFrameVisible?.(payload);
+    if (!onAnchorFrameSampled || anchorBatchPoints.length === 0 || !sampler) {
+      return;
+    }
+    const sampled = sampler.sampleAnchorPoints(anchorBatchPoints);
+    onAnchorFrameSampled({
+      frameHour: payload.frameHour,
+      gridSampled: Boolean(sampled),
+      values: sampled?.values ?? {},
+      units: sampled?.units ?? "",
+    });
+  }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible]);
+
   const syncGridControllers = useCallback((params: {
     frameUrl: string | null;
     frameHour: number | null;
@@ -1452,6 +1478,7 @@ export function MapCanvas({
 
     const { frameUrl, frameHour, prefetchPivotHour, compositeLayers } = params;
     const gridScrubPrefetch = isScrubbing || mode === "idle-warmup";
+    const primaryCompositeLayerId = compositeLayers[0]?.id ?? null;
     const protectedFetchUrls = scrubProtectedFetchUrlsRef?.current ?? [];
     const activePrefetchUrls = buildGridPrefetchUrls({
       frameUrl,
@@ -1493,7 +1520,9 @@ export function MapCanvas({
       prefetchUrls: activePrefetchUrls,
       contour: gridContour,
       rasterPaint: getGridPaintSettings(variable, basemapMode),
-      onFrameVisible: onGridFrameVisible,
+      onFrameVisible: (payload) => {
+        emitGridFrameVisible(payload, compositeLayers.length === 0 ? controller : null);
+      },
       onFrameReady: onGridFrameReady,
       onFrameEvicted: onGridFrameEvicted,
       requestRepaint: requestGridRepaint,
@@ -1532,7 +1561,12 @@ export function MapCanvas({
         }),
         contour: layer.id === compositeLayers[compositeLayers.length - 1]?.id ? gridContour : null,
         rasterPaint: getGridPaintSettings(variable, basemapMode),
-        onFrameVisible: onGridFrameVisible,
+        onFrameVisible: (payload) => {
+          emitGridFrameVisible(
+            payload,
+            layer.id === primaryCompositeLayerId ? compositeController : null,
+          );
+        },
         onFrameReady: onGridFrameReady,
         onFrameEvicted: onGridFrameEvicted,
         requestRepaint: requestGridRepaint,
@@ -1555,6 +1589,7 @@ export function MapCanvas({
     basemapMode,
     buildGridPrefetchUrls,
     contourGeoJsonUrl,
+    emitGridFrameVisible,
     gridActive,
     gridContour,
     gridLegend,
@@ -1568,7 +1603,6 @@ export function MapCanvas({
     scrubLagBurstActive,
     scrubProtectedFetchUrlsRef,
     onGridFrameReady,
-    onGridFrameVisible,
     opacity,
     overlayFadeOutZoom,
     requestGridRepaint,

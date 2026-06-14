@@ -829,10 +829,10 @@ export default function App() {
           anchorBatchLastAppliedSelectionKeyRef.current = context.selectionKey;
           setAnchorDisplayGeoJson(
             buildAnchorDisplayGeoJson({
-      baseCollection: context.baseCollection,
-      varKey: context.variable,
-      values: payload?.values ?? {},
-      units: payload?.units ?? "",
+              baseCollection: context.baseCollection,
+              varKey: context.variable,
+              values: payload?.values ?? {},
+              units: payload?.units ?? "",
             })
           );
         })
@@ -3078,6 +3078,10 @@ export default function App() {
 
     anchorBatchContextRef.current = context;
 
+    if ((isScrubbing || isPlaying || isGridPreloadingForPlay) && isGridLowMidActive) {
+      return;
+    }
+
     if (!context.deferToLatest) {
       anchorBatchPendingHourRef.current = null;
       if (
@@ -3125,6 +3129,7 @@ export default function App() {
     anchorBaseGeoJson,
     anchorBatchPoints,
     hasRenderableSelection,
+    isGridLowMidActive,
     isGridPreloadingForPlay,
     isPlaying,
     isScrubbing,
@@ -3751,6 +3756,43 @@ export default function App() {
     finalizePendingVariableSwitch(performance.now());
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
   }, [canUseGridPlayback, finalizePendingVariableSwitch, forecastHour, isPlaying, scheduleAutoplayUiHour, selectionKey, trackFirstViewerFrame]);
+  const handleAnchorFrameSampled = useCallback((payload: {
+    frameHour: number;
+    gridSampled: boolean;
+    values: Record<string, number | null>;
+    units: string;
+  }) => {
+    if (!anchorBaseGeoJson || !variable || !Number.isFinite(payload.frameHour)) {
+      return;
+    }
+
+    if (payload.gridSampled) {
+      anchorBatchLastAppliedHourRef.current = payload.frameHour;
+      anchorBatchLastAppliedSelectionKeyRef.current = selectionKey;
+      setAnchorDisplayGeoJson(
+        buildAnchorDisplayGeoJson({
+          baseCollection: anchorBaseGeoJson,
+          varKey: variable,
+          values: payload.values,
+          units: payload.units,
+        }),
+      );
+      return;
+    }
+
+    const context = anchorBatchContextRef.current;
+    if (!context || context.selectionKey !== selectionKey) {
+      return;
+    }
+    if (anchorBatchInFlightHourRef.current === payload.frameHour) {
+      return;
+    }
+    if (anchorBatchAbortRef.current) {
+      resetAnchorBatchQueue(true);
+      anchorBatchContextRef.current = context;
+    }
+    startAnchorBatchRequest(payload.frameHour, context);
+  }, [anchorBaseGeoJson, resetAnchorBatchQueue, selectionKey, startAnchorBatchRequest, variable]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4650,6 +4692,12 @@ export default function App() {
             vectorGeoJsonUrl={vectorGeoJsonUrl}
           vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}
+          anchorBatchPoints={
+            selectedModelSupportsSampling && pointLabelsEnabled ? anchorBatchPoints : []
+          }
+          onAnchorFrameSampled={
+            selectedModelSupportsSampling && pointLabelsEnabled ? handleAnchorFrameSampled : undefined
+          }
           pointLabelsEnabled={pointLabelsEnabled}
           region={region}
           regionViews={regionViews}
