@@ -288,27 +288,23 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
       ? `${baseVariableLabel} • ${run}`
       : `${model} • ${baseVariableLabel} • ${run}`;
 
-    let line2: string | null = null;
-    if (state.validTimeISO) {
+    // Only SPC-style day-indexed products get a line 2 with day number + date
+    if (isSpcCategoricalLegend(legend) && state.validTimeISO) {
       const parsed = new Date(state.validTimeISO);
-      const compactDate = Number.isNaN(parsed.getTime())
-        ? null
-        : new Intl.DateTimeFormat("en-US", {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-          }).format(parsed);
-      if (compactDate) {
+      if (!Number.isNaN(parsed.getTime())) {
+        const compactDate = new Intl.DateTimeFormat("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }).format(parsed);
         const dayNumber = Number.isFinite(state.fh) && state.fh >= 0 && state.fh <= 6
           ? state.fh + 1
           : null;
-        const isSpcLike = isSpcCategoricalLegend(legend);
-        line2 = isSpcLike && dayNumber !== null
-          ? `Day ${dayNumber} • ${compactDate}`
-          : compactDate;
+        const line2 = dayNumber !== null ? `Day ${dayNumber} • ${compactDate}` : compactDate;
+        return [line1, line2];
       }
     }
-    return line2 ? [line1, line2] : [line1];
+    return [line1];
   }
 
   if (state.timeAxisMode === "observed") {
