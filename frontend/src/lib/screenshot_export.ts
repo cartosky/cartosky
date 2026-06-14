@@ -658,6 +658,162 @@ function drawSectionGradient(
   strokeRoundedRect(ctx, x + 0.5, y + 0.5, width - 1, height - 1, radius);
 }
 
+function isCpcProbabilityLegend(legend: LegendPayload): boolean {
+  if (legend.kind?.toLowerCase() !== "categorical") return false;
+  return legend.entries.some(
+    (e) => typeof e.label === "string" && /normal/i.test(e.label)
+  );
+}
+
+function drawCpcProbabilityLegend(
+  ctx: CanvasRenderingContext2D,
+  legend: LegendPayload,
+  width: number,
+  height: number,
+  bottomPadding: number,
+  isMobileLayout: boolean,
+  scaleFactor: number
+): void {
+  const belowEntries = legend.entries.filter(
+    (e) => typeof e.label === "string" && /below/i.test(e.label)
+  );
+  const aboveEntries = legend.entries.filter(
+    (e) => typeof e.label === "string" && /above/i.test(e.label)
+  );
+  const nearEntry = legend.entries.find(
+    (e) => typeof e.label === "string" && /near/i.test(e.label)
+  );
+
+  if (belowEntries.length === 0 && aboveEntries.length === 0) return;
+
+  const outerPadding = 18 * scaleFactor;
+  const bandWidth = width - outerPadding * 2;
+  const bandX = outerPadding;
+  const PAD_X = 14 * scaleFactor;
+  const PAD_TOP = 9 * scaleFactor;
+  const PAD_BOT = 10 * scaleFactor;
+  const WING_LABEL_H = 13 * scaleFactor;
+  const BAR_H = 13 * scaleFactor;
+  const TICK_H = 12 * scaleFactor;
+  const NOTE_H = legend.note ? 12 * scaleFactor : 0;
+  const NOTE_GAP = legend.note ? 5 * scaleFactor : 0;
+  const bandHeight = PAD_TOP + WING_LABEL_H + 4 * scaleFactor + BAR_H + TICK_H + NOTE_GAP + NOTE_H + PAD_BOT;
+  const bandY = height - bottomPadding - bandHeight;
+  const contentX = bandX + PAD_X;
+  const contentWidth = bandWidth - PAD_X * 2;
+
+  const NEAR_W = nearEntry ? (isMobileLayout ? 18 : 36) * scaleFactor : 0;
+  const WING_GAP = 10 * scaleFactor;
+  const wingsWidth = contentWidth - NEAR_W - (nearEntry ? WING_GAP * 2 : 0);
+  const wingW = wingsWidth / 2;
+
+  const belowX = contentX;
+  const nearX = contentX + wingW + (nearEntry ? WING_GAP : 0);
+  const aboveX = nearX + NEAR_W + (nearEntry ? WING_GAP : 0);
+
+  const barY = bandY + PAD_TOP + WING_LABEL_H + 4 * scaleFactor;
+  const tickY = barY + BAR_H + 3 * scaleFactor;
+
+  ctx.save();
+  drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
+
+  const wingLabelFontSize = isMobileLayout ? 8 : 9;
+  const wingLabelFont = `700 ${wingLabelFontSize * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  const tickFont = `600 ${8 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  const noteFont = `500 ${8 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  const sectionRadius = 4 * scaleFactor;
+  const blockGap = 2 * scaleFactor;
+
+  function drawBlockRow(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    colors: string[]
+  ): void {
+    if (colors.length === 0) return;
+    const totalGap = blockGap * (colors.length - 1);
+    const blockW = (w - totalGap) / colors.length;
+    colors.forEach((color, i) => {
+      const bx = x + i * (blockW + blockGap);
+      const isFirst = i === 0;
+      const isLast = i === colors.length - 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      const r = sectionRadius;
+      const rx = isFirst ? r : 0;
+      const ry = isLast ? r : 0;
+      ctx.moveTo(bx + rx, y);
+      ctx.lineTo(bx + blockW - ry, y);
+      ctx.quadraticCurveTo(bx + blockW, y, bx + blockW, y + (ry ? r : 0));
+      ctx.lineTo(bx + blockW, y + h - (ry ? r : 0));
+      ctx.quadraticCurveTo(bx + blockW, y + h, bx + blockW - ry, y + h);
+      ctx.lineTo(bx + rx, y + h);
+      ctx.quadraticCurveTo(bx, y + h, bx, y + h - (rx ? r : 0));
+      ctx.lineTo(bx, y + (rx ? r : 0));
+      ctx.quadraticCurveTo(bx, y, bx + rx, y);
+      ctx.closePath();
+      ctx.fill();
+    });
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    drawRoundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, sectionRadius);
+    ctx.stroke();
+  }
+
+  const belowColors = belowEntries.map((e) => e.color);
+  ctx.font = wingLabelFont;
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(255,255,255,0.72)";
+  ctx.fillText("Below Normal", belowX, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor);
+  drawBlockRow(belowX, barY, wingW, BAR_H, belowColors);
+  ctx.font = tickFont;
+  ctx.fillStyle = "rgba(255,255,255,0.52)";
+  ctx.textAlign = "left";
+  ctx.fillText("33%", belowX, tickY + TICK_H - 3 * scaleFactor);
+  ctx.textAlign = "right";
+  ctx.fillText("90–100%", belowX + wingW, tickY + TICK_H - 3 * scaleFactor);
+
+  if (nearEntry) {
+    ctx.font = wingLabelFont;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    ctx.fillText("Near", nearX + NEAR_W / 2, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor - 6 * scaleFactor);
+    ctx.fillText("Normal", nearX + NEAR_W / 2, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor + 6 * scaleFactor);
+    ctx.fillStyle = nearEntry.color;
+    drawRoundedRect(ctx, nearX, barY, NEAR_W, BAR_H, sectionRadius);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    drawRoundedRect(ctx, nearX + 0.5, barY + 0.5, NEAR_W - 1, BAR_H - 1, sectionRadius);
+    ctx.stroke();
+  }
+
+  const aboveColors = aboveEntries.map((e) => e.color);
+  ctx.font = wingLabelFont;
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.72)";
+  ctx.fillText("Above Normal", aboveX + wingW, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor);
+  drawBlockRow(aboveX, barY, wingW, BAR_H, aboveColors);
+  ctx.font = tickFont;
+  ctx.fillStyle = "rgba(255,255,255,0.52)";
+  ctx.textAlign = "left";
+  ctx.fillText("33%", aboveX, tickY + TICK_H - 3 * scaleFactor);
+  ctx.textAlign = "right";
+  ctx.fillText("90–100%", aboveX + wingW, tickY + TICK_H - 3 * scaleFactor);
+
+  if (legend.note) {
+    const noteY = tickY + TICK_H + NOTE_GAP + 8 * scaleFactor;
+    ctx.font = noteFont;
+    ctx.textAlign = "left";
+    ctx.fillStyle = "rgba(255,255,255,0.38)";
+    ctx.fillText(legend.note, contentX, noteY, contentWidth);
+  }
+
+  ctx.restore();
+}
+
 function drawBottomLegend(
   ctx: CanvasRenderingContext2D,
   legend: LegendPayload,
@@ -761,6 +917,12 @@ function drawBottomLegend(
       ctx.restore();
       return;
     }
+  }
+
+  if (isCpcProbabilityLegend(legend)) {
+    ctx.restore();
+    drawCpcProbabilityLegend(ctx, legend, width, height, bottomPadding, isMobileLayout, scaleFactor);
+    return;
   }
 
   if (legend.entries.length === 0) {
