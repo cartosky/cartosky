@@ -9,7 +9,7 @@ import "./roadmap.css";
 type ItemStatus = "todo" | "inprogress" | "inreview" | "done";
 type ItemPriority = "high" | "medium" | "low";
 type ItemEffort = "S" | "M" | "L";
-type ItemLabel = "bug" | "enhancement" | "feature" | "performance" | "ux" | "data" | "infrastructure";
+type ItemLabel = "bug" | "improvement" | "enhancement" | "feature" | "performance" | "ux" | "data" | "infrastructure";
 
 type RoadmapFilters = {
   status: "all" | ItemStatus;
@@ -124,12 +124,13 @@ const STATUS_ORDER: ItemStatus[] = ["todo", "inprogress", "inreview", "done"];
 const PRIORITY_ORDER: ItemPriority[] = ["high", "medium", "low"];
 const EFFORT_ORDER: ItemEffort[] = ["S", "M", "L"];
 
-const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux"];
+const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "improvement"];
 
-const ITEM_LABELS: ItemLabel[] = ["bug", "enhancement", "feature", "performance", "ux", "data", "infrastructure"];
+const ITEM_LABELS: ItemLabel[] = ["bug", "improvement", "enhancement", "feature", "performance", "ux", "data", "infrastructure"];
 
 const LABEL_STYLES: Record<ItemLabel, { color: string; bg: string; border: string }> = {
   bug: { color: "#f85149", bg: "rgba(248, 81, 73, 0.15)", border: "rgba(248, 81, 73, 0.35)" },
+  improvement: { color: "#e3b341", bg: "rgba(227, 179, 65, 0.15)", border: "rgba(227, 179, 65, 0.35)" },
   enhancement: { color: "#58a6ff", bg: "rgba(88, 166, 255, 0.15)", border: "rgba(88, 166, 255, 0.35)" },
   feature: { color: "#3fb950", bg: "rgba(63, 185, 80, 0.15)", border: "rgba(63, 185, 80, 0.35)" },
   performance: { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)", border: "rgba(245, 158, 11, 0.35)" },
