@@ -702,7 +702,7 @@ function drawCpcProbabilityLegend(
   const contentX = bandX + PAD_X;
   const contentWidth = bandWidth - PAD_X * 2;
 
-  const NEAR_W = nearEntry ? (isMobileLayout ? 18 : 36) * scaleFactor : 0;
+  const NEAR_W = nearEntry ? (isMobileLayout ? 28 : 56) * scaleFactor : 0;
   const WING_GAP = 10 * scaleFactor;
   const wingsWidth = contentWidth - NEAR_W - (nearEntry ? WING_GAP * 2 : 0);
   const wingW = wingsWidth / 2;
@@ -779,8 +779,8 @@ function drawCpcProbabilityLegend(
     ctx.font = wingLabelFont;
     ctx.textAlign = "center";
     ctx.fillStyle = "rgba(255,255,255,0.72)";
-    ctx.fillText("Near", nearX + NEAR_W / 2, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor - 6 * scaleFactor);
-    ctx.fillText("Normal", nearX + NEAR_W / 2, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor + 6 * scaleFactor);
+    ctx.font = `700 ${7.5 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillText("Near Normal", nearX + NEAR_W / 2, bandY + PAD_TOP + WING_LABEL_H - 2 * scaleFactor);
     ctx.fillStyle = nearEntry.color;
     drawRoundedRect(ctx, nearX, barY, NEAR_W, BAR_H, sectionRadius);
     ctx.fill();
@@ -809,6 +809,78 @@ function drawCpcProbabilityLegend(
     ctx.textAlign = "left";
     ctx.fillStyle = "rgba(255,255,255,0.38)";
     ctx.fillText(legend.note, contentX, noteY, contentWidth);
+  }
+
+  ctx.restore();
+}
+
+function isSpcCategoricalLegend(legend: LegendPayload): boolean {
+  if (legend.kind?.toLowerCase() !== "categorical") return false;
+  if (isCpcProbabilityLegend(legend)) return false;
+  return legend.entries.some(
+    (e) => typeof e.label === "string" && e.label.trim().length > 0
+  );
+}
+
+function drawSpcCategoricalLegend(
+  ctx: CanvasRenderingContext2D,
+  legend: LegendPayload,
+  width: number,
+  height: number,
+  bottomPadding: number,
+  scaleFactor: number
+): void {
+  const entries = legend.entries.filter(
+    (e) => e.color && typeof e.label === "string" && e.label.trim().length > 0
+  );
+  if (entries.length === 0) return;
+
+  const outerPadding = 18 * scaleFactor;
+  const PAD_X = 14 * scaleFactor;
+  const PAD_TOP = 9 * scaleFactor;
+  const PAD_BOT = 10 * scaleFactor;
+  const SWATCH = 13 * scaleFactor;
+  const LABEL_H = 13 * scaleFactor;
+  const GAP_INNER = 5 * scaleFactor;
+  const GAP_ENTRY = 16 * scaleFactor;
+  const bandWidth = width - outerPadding * 2;
+  const bandHeight = PAD_TOP + SWATCH + 4 * scaleFactor + LABEL_H + PAD_BOT;
+  const bandX = outerPadding;
+  const bandY = height - bottomPadding - bandHeight;
+  const swatchY = bandY + PAD_TOP;
+  const labelY = swatchY + SWATCH + 4 * scaleFactor;
+
+  ctx.save();
+  drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
+
+  ctx.font = `600 ${9 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  const totalWidth = entries.reduce((sum, entry, i) => {
+    const labelW = ctx.measureText(entry.label!.trim()).width;
+    return sum + SWATCH + GAP_INNER + labelW + (i < entries.length - 1 ? GAP_ENTRY : 0);
+  }, 0);
+
+  const contentWidth = bandWidth - PAD_X * 2;
+  let x = bandX + PAD_X + Math.max(0, (contentWidth - totalWidth) / 2);
+
+  for (const entry of entries) {
+    const label = entry.label!.trim();
+
+    ctx.fillStyle = entry.color;
+    drawRoundedRect(ctx, x, swatchY, SWATCH, SWATCH, 3 * scaleFactor);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.20)";
+    ctx.lineWidth = 1;
+    drawRoundedRect(ctx, x + 0.5, swatchY + 0.5, SWATCH - 1, SWATCH - 1, 3 * scaleFactor);
+    ctx.stroke();
+
+    ctx.font = `600 ${9 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillStyle = "rgba(255,255,255,0.88)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(label, x, labelY + LABEL_H - 3 * scaleFactor);
+
+    const labelW = ctx.measureText(label).width;
+    x += SWATCH + GAP_INNER + labelW + GAP_ENTRY;
   }
 
   ctx.restore();
@@ -922,6 +994,12 @@ function drawBottomLegend(
   if (isCpcProbabilityLegend(legend)) {
     ctx.restore();
     drawCpcProbabilityLegend(ctx, legend, width, height, bottomPadding, isMobileLayout, scaleFactor);
+    return;
+  }
+
+  if (isSpcCategoricalLegend(legend)) {
+    ctx.restore();
+    drawSpcCategoricalLegend(ctx, legend, width, height, bottomPadding, scaleFactor);
     return;
   }
 
