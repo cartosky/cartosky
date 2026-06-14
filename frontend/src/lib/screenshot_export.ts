@@ -278,6 +278,39 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     : units
       ? `${baseVariableLabel} (${units})`
       : baseVariableLabel;
+
+  if (legend?.kind === "categorical") {
+    const modelNameNormalized = model.toLowerCase();
+    const variableLabelNormalized = baseVariableLabel.toLowerCase();
+    const modelPrefix = modelNameNormalized.split(" ")[0] ?? "";
+    const labelStartsWithModel = modelPrefix.length > 2 && variableLabelNormalized.startsWith(modelPrefix);
+    const line1 = labelStartsWithModel
+      ? `${baseVariableLabel} • ${run}`
+      : `${model} • ${baseVariableLabel} • ${run}`;
+
+    let line2: string | null = null;
+    if (state.validTimeISO) {
+      const parsed = new Date(state.validTimeISO);
+      const compactDate = Number.isNaN(parsed.getTime())
+        ? null
+        : new Intl.DateTimeFormat("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }).format(parsed);
+      if (compactDate) {
+        const dayNumber = Number.isFinite(state.fh) && state.fh >= 0 && state.fh <= 6
+          ? state.fh + 1
+          : null;
+        const isSpcLike = isSpcCategoricalLegend(legend);
+        line2 = isSpcLike && dayNumber !== null
+          ? `Day ${dayNumber} • ${compactDate}`
+          : compactDate;
+      }
+    }
+    return line2 ? [line1, line2] : [line1];
+  }
+
   if (state.timeAxisMode === "observed") {
     const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
     const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
