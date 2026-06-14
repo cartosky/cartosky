@@ -1119,6 +1119,8 @@ export function MapCanvas({
   onViewportChangeRef.current = onViewportChange;
   const contourRequestTokenRef = useRef(0);
   const contourAbortRef = useRef<AbortController | null>(null);
+  const isAnimatingRef = useRef(isAnimating);
+  isAnimatingRef.current = isAnimating;
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
   const contourPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const activeContourPayloadRef = useRef<GeoJSON.FeatureCollection | null>(null);
@@ -2111,11 +2113,10 @@ export function MapCanvas({
     }
 
     const normalizedUrl = normalizeDataUrl(contourGeoJsonUrl);
-    const requestToken = ++contourRequestTokenRef.current;
-    contourAbortRef.current?.abort();
-    contourAbortRef.current = null;
 
     if (!normalizedUrl) {
+      contourAbortRef.current?.abort();
+      contourAbortRef.current = null;
       activeContourUrlRef.current = "";
       activeContourPayloadRef.current = null;
       setContourScreenLabels([]);
@@ -2130,7 +2131,11 @@ export function MapCanvas({
       return;
     }
 
-    if (!isAnimating || !activeContourPayloadRef.current) {
+    const requestToken = ++contourRequestTokenRef.current;
+    contourAbortRef.current?.abort();
+    contourAbortRef.current = null;
+
+    if (!isAnimatingRef.current || !activeContourPayloadRef.current) {
       activeContourUrlRef.current = "";
       activeContourPayloadRef.current = null;
       setContourScreenLabels([]);
@@ -2195,7 +2200,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [applyContourPayload, contourGeoJsonUrl, isAnimating, isLoaded, productId]);
+  }, [applyContourPayload, contourGeoJsonUrl, isLoaded, productId]);
 
   useEffect(() => {
     const map = mapRef.current;
