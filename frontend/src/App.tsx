@@ -616,6 +616,7 @@ export default function App() {
   const targetForecastHourRef = useRef(targetForecastHour);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
+  const gridPlaybackLoopWrapTargetRef = useRef<number | null>(null);
   const gridPlaybackWaitStateRef = useRef({
     stalledOnHour: null as number | null,
     stalledAtMs: 0,
@@ -1186,6 +1187,7 @@ export default function App() {
   useEffect(() => {
     gridReadyFrameUrlsRef.current = new Set();
     gridPlaybackHourRef.current = null;
+    gridPlaybackLoopWrapTargetRef.current = null;
     gridPlaybackWaitStateRef.current = {
       stalledOnHour: null,
       stalledAtMs: 0,
@@ -1961,15 +1963,49 @@ export default function App() {
       flushAutoplayUiHour();
     }
     gridPlaybackHourRef.current = null;
+    gridPlaybackLoopWrapTargetRef.current = null;
     gridPlaybackLastAdvanceAtMsRef.current = 0;
     resetGridPlaybackWaitState();
     setIsPlaying(false);
     setIsGridPreloadingForPlay(false);
   }, [commitAutoplayUiHourNow, flushAutoplayUiHour, resetGridPlaybackWaitState, visibleGridFrameHour]);
 
+  const completeGridPlaybackLoopWrapIfReady = useCallback((): boolean => {
+    const wrapTarget = gridPlaybackLoopWrapTargetRef.current;
+    if (!Number.isFinite(wrapTarget) || !isPlaying || !isGridPlayable) {
+      return false;
+    }
+    const loopStartHour = Number(wrapTarget);
+    if (!gridReadyHourSet.has(loopStartHour)) {
+      return false;
+    }
+    const now = performance.now();
+    const lastAdvanceAtMs = gridPlaybackLastAdvanceAtMsRef.current;
+    if (lastAdvanceAtMs > 0 && now - lastAdvanceAtMs < animationDelayMs) {
+      return false;
+    }
+    gridPlaybackHourRef.current = loopStartHour;
+    gridPlaybackLoopWrapTargetRef.current = null;
+    gridPlaybackLastAdvanceAtMsRef.current = now;
+    resetGridPlaybackWaitState();
+    scheduleAutoplayUiHour(loopStartHour, true);
+    return true;
+  }, [
+    animationDelayMs,
+    gridReadyHourSet,
+    isGridPlayable,
+    isPlaying,
+    resetGridPlaybackWaitState,
+    scheduleAutoplayUiHour,
+  ]);
+
   const attemptGridPlaybackAdvance = useCallback((): boolean => {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
       return false;
+    }
+
+    if (completeGridPlaybackLoopWrapIfReady()) {
+      return true;
     }
 
     const currentHourCandidate = Number.isFinite(gridPlaybackHourRef.current)
@@ -1996,7 +2032,11 @@ export default function App() {
     if (nextHour === null) {
       return false;
     }
+    const isLoopWrapAdvance = currentIndex === gridFrameHours.length - 1;
     if (!gridReadyHourSet.has(nextHour)) {
+      if (isLoopWrapAdvance) {
+        gridPlaybackLoopWrapTargetRef.current = nextHour;
+      }
       gridPlaybackWaitStateRef.current.lookAheadWaitStartedAtMs = 0;
       return false;
     }
@@ -2008,13 +2048,15 @@ export default function App() {
     }
 
     let aheadReady = true;
-    const nextIndex = gridFrameHours.indexOf(nextHour);
-    const lookAheadEnd = Math.min(nextIndex + autoplayReadyAheadFrames, gridFrameHours.length - 1);
-    for (let index = nextIndex + 1; index <= lookAheadEnd; index += 1) {
-      const aheadHour = gridFrameHours[index];
-      if (!gridReadyHourSet.has(aheadHour)) {
-        aheadReady = false;
-        break;
+    if (!isLoopWrapAdvance) {
+      const nextIndex = gridFrameHours.indexOf(nextHour);
+      const lookAheadEnd = Math.min(nextIndex + autoplayReadyAheadFrames, gridFrameHours.length - 1);
+      for (let index = nextIndex + 1; index <= lookAheadEnd; index += 1) {
+        const aheadHour = gridFrameHours[index];
+        if (!gridReadyHourSet.has(aheadHour)) {
+          aheadReady = false;
+          break;
+        }
       }
     }
 
@@ -2032,6 +2074,7 @@ export default function App() {
     }
 
     gridPlaybackHourRef.current = nextHour;
+    gridPlaybackLoopWrapTargetRef.current = null;
     gridPlaybackLastAdvanceAtMsRef.current = now;
     resetGridPlaybackWaitState();
     return true;
@@ -2039,6 +2082,7 @@ export default function App() {
     animationDelayMs,
     autoplayLookAheadGraceMs,
     autoplayReadyAheadFrames,
+    completeGridPlaybackLoopWrapIfReady,
     gridFrameHours,
     gridFrameIndexByHour,
     gridReadyHourSet,
@@ -3436,6 +3480,7 @@ export default function App() {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
       if (!isPlaying) {
         gridPlaybackHourRef.current = null;
+        gridPlaybackLoopWrapTargetRef.current = null;
         gridPlaybackLastAdvanceAtMsRef.current = 0;
       }
       resetGridPlaybackWaitState();
@@ -3444,6 +3489,11 @@ export default function App() {
 
     let rafId: number | null = null;
     const monitorPlayback = () => {
+      if (completeGridPlaybackLoopWrapIfReady()) {
+        rafId = window.requestAnimationFrame(monitorPlayback);
+        return;
+      }
+
       const currentHourCandidate = Number.isFinite(gridPlaybackHourRef.current)
         ? Number(gridPlaybackHourRef.current)
         : (Number.isFinite(targetForecastHourRef.current)
@@ -3463,6 +3513,9 @@ export default function App() {
           if (gridReadyHourSet.has(nextHour)) {
             void attemptGridPlaybackAdvance();
           } else {
+            if (currentIndex === gridFrameHours.length - 1) {
+              gridPlaybackLoopWrapTargetRef.current = nextHour;
+            }
             waitState.lookAheadWaitStartedAtMs = 0;
             if (waitState.stalledOnHour !== nextHour) {
               waitState.stalledOnHour = nextHour;
@@ -3496,6 +3549,7 @@ export default function App() {
   }, [
     attemptGridPlaybackAdvance,
     autoplayStallSkipMs,
+    completeGridPlaybackLoopWrapIfReady,
     gridFrameHours,
     gridFrameIndexByHour,
     gridReadyHourSet,
@@ -3656,6 +3710,7 @@ export default function App() {
 
     if (canUseGridPlayback) {
       gridPlaybackHourRef.current = startHour;
+      gridPlaybackLoopWrapTargetRef.current = null;
       gridPlaybackLastAdvanceAtMsRef.current = performance.now();
       resetGridPlaybackWaitState();
       const startReady = Number.isFinite(startHour) && isGridPlaybackStartReadyForHour(
@@ -4101,11 +4156,15 @@ export default function App() {
     const targetHour = Number.isFinite(gridPlaybackHourRef.current)
       ? Number(gridPlaybackHourRef.current)
       : (Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null);
+    const loopWrapPrefetchHour = gridPlaybackLoopWrapTargetRef.current;
+    const prefetchPivotHour = Number.isFinite(loopWrapPrefetchHour)
+      ? Number(loopWrapPrefetchHour)
+      : targetHour;
     const animatedCompositeLayers = buildCompositeGridLayersForHour(targetHour);
     return {
       frameUrl: animatedCompositeLayers.length === 0 ? gridFrameUrlForHour(targetHour) : null,
       frameHour: targetHour,
-      prefetchPivotHour: targetHour,
+      prefetchPivotHour,
       compositeGridLayers: animatedCompositeLayers,
     };
   }, [buildCompositeGridLayersForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
