@@ -175,6 +175,10 @@ function isBugsImprovementsItem(item: RoadmapItem): boolean {
   return labels.some((label) => BUGS_IMPROVEMENTS_LABELS.includes(label as ItemLabel));
 }
 
+function sectionAllTasksDone(items: RoadmapItem[]): boolean {
+  return items.length > 0 && items.every((item) => item.status === "done");
+}
+
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
@@ -612,7 +616,8 @@ export default function AdminRoadmapPage() {
             </div>
           </AdminSurface>
 
-        {bugsImprovementsItems.length > 0 && (
+        {bugsImprovementsItems.length > 0
+          && !sectionAllTasksDone(bugsImprovementsItems.map(({ item }) => item)) && (
           <AdminSurface
             className="bugs-section-surface"
             title="Bugs & Improvements"
@@ -654,6 +659,8 @@ export default function AdminRoadmapPage() {
 
         {phases.map((phase) => {
           const phaseItems = phase.items.filter((item) => !isBugsImprovementsItem(item));
+          if (sectionAllTasksDone(phaseItems)) return null;
+
           const visibleItems = phaseItems.filter((item) => itemMatchesFilters(item, filters));
           if (hasActiveFilters(filters) && visibleItems.length === 0) return null;
 
