@@ -852,7 +852,7 @@ function drawSpcCategoricalLegend(
 
   const bandWidth = totalContentWidth + PAD_X * 2;
   const bandHeight = PAD_Y + ROW_H + PAD_Y;
-  const bandX = outerPadding;
+  const bandX = (width - bandWidth) / 2;
   const bandY = height - bottomPadding - bandHeight;
   const rowY = bandY + PAD_Y;
 
@@ -892,6 +892,17 @@ function drawBottomLegend(
   isMobileLayout: boolean,
   scaleFactor = 1
 ): void {
+  // Delegate to specialised renderers before any shared layout or card drawing
+  if (isCpcProbabilityLegend(legend)) {
+    drawCpcProbabilityLegend(ctx, legend, width, height, bottomPadding, isMobileLayout, scaleFactor);
+    return;
+  }
+
+  if (isSpcCategoricalLegend(legend)) {
+    drawSpcCategoricalLegend(ctx, legend, width, height, bottomPadding, scaleFactor);
+    return;
+  }
+
   const outerPadding = 18 * scaleFactor;
   const isPrecip = isPtypeIntensityLegend(legend);
   const isRadar = isRadarPtypeLegend(legend);
@@ -986,18 +997,6 @@ function drawBottomLegend(
       ctx.restore();
       return;
     }
-  }
-
-  if (isCpcProbabilityLegend(legend)) {
-    ctx.restore();
-    drawCpcProbabilityLegend(ctx, legend, width, height, bottomPadding, isMobileLayout, scaleFactor);
-    return;
-  }
-
-  if (isSpcCategoricalLegend(legend)) {
-    ctx.restore();
-    drawSpcCategoricalLegend(ctx, legend, width, height, bottomPadding, scaleFactor);
-    return;
   }
 
   if (legend.entries.length === 0) {
