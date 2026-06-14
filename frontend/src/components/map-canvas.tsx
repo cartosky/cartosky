@@ -112,7 +112,7 @@ const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
 const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const CONTOUR_CACHE_MAX_ENTRIES = 96;
-const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 4;
+const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 8;
 const CONTOUR_PREFETCH_CONCURRENCY_MOBILE = 1;
 const CONTOUR_PREFETCH_MOBILE_LIMIT = 8;
 const CONTOUR_PREFETCH_MOBILE_YIELD_MS = 24;
@@ -1161,7 +1161,10 @@ export function MapCanvas({
     activeContourUrlRef.current = normalizedUrl;
     activeContourPayloadRef.current = payload;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
-    source.setData(buildContourLineDisplayPayload(payload, map) as any);
+    const displayPayload = !isDesktopLayout && isAnimating
+      ? payload
+      : buildContourLineDisplayPayload(payload, map);
+    source.setData(displayPayload as any);
     if (!isDesktopLayout && isAnimating) {
       setContourScreenLabels([]);
       return;
