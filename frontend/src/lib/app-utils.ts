@@ -1176,8 +1176,20 @@ export function nearestFrame(frames: number[], current: number): number {
   return frames.reduce((nearest, value) => {
     const nearestDelta = Math.abs(nearest - current);
     const valueDelta = Math.abs(value - current);
-    return valueDelta < nearestDelta ? value : nearest;
+    return valueDelta < nearestDelta || (valueDelta === nearestDelta && value > nearest) ? value : nearest;
   }, frames[0]);
+}
+
+/** First frame >= current; clamps to max when current is beyond the schedule. */
+export function ceilingFrame(frames: number[], current: number): number {
+  if (frames.length === 0) return 0;
+  if (frames.includes(current)) return current;
+  for (const value of frames) {
+    if (value >= current) {
+      return value;
+    }
+  }
+  return frames[frames.length - 1];
 }
 
 export function resolveLoopPlaybackStartHour(
@@ -1378,6 +1390,79 @@ export function resolveForecastHour(
     return nearestFrame(selectableFrames, current);
   }
   return preferredInitialFrame(selectableFrames, preferredFh, defaultFrameSelection);
+}
+
+export type ForecastHourTransitionResult = {
+  resolvedHour: number;
+  requestedHour: number | null;
+  didFallback: boolean;
+};
+
+export function shouldNotifyForecastHourFallback(
+  intentHour: number,
+  resolvedHour: number,
+  rows: ValidTimeFrame[],
+  preferredFh: number | null | undefined,
+): boolean {
+  if (!Number.isFinite(intentHour) || resolvedHour === Number(intentHour)) {
+    return false;
+  }
+  const frames = rows
+    .map((row) => Number(row.fh))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const selectableFrames = selectableFramesForVariable(Array.from(new Set(frames)), preferredFh);
+  return !selectableFrames.includes(Number(intentHour));
+}
+
+export function resolveForecastHourTransition(
+  rows: ValidTimeFrame[],
+  requestedHour: number,
+  preferredFh: number | null | undefined,
+  defaultFrameSelection: ModelDefaultFrameSelection = "first",
+  timeAxisMode: ModelTimeAxisMode = "forecast",
+): ForecastHourTransitionResult {
+  const frames = rows
+    .map((row) => Number(row.fh))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const selectableFrames = selectableFramesForVariable(Array.from(new Set(frames)), preferredFh);
+  const resolvedHour = selectableFrames.length === 0
+    ? 0
+    : Number.isFinite(requestedHour)
+      ? ceilingFrame(selectableFrames, requestedHour)
+      : resolveForecastHourFromRows(
+        rows,
+        requestedHour,
+        preferredFh,
+        defaultFrameSelection,
+        timeAxisMode,
+      );
+  return {
+    resolvedHour,
+    requestedHour: Number.isFinite(requestedHour) ? requestedHour : null,
+    didFallback: shouldNotifyForecastHourFallback(requestedHour, resolvedHour, rows, preferredFh),
+  };
+}
+
+export function resolveForecastHourTransitionFromFrames(
+  frames: number[],
+  requestedHour: number,
+  preferredFh: number | null | undefined,
+  defaultFrameSelection: ModelDefaultFrameSelection = "first",
+): ForecastHourTransitionResult {
+  const resolvedHour = resolveForecastHour(
+    frames,
+    requestedHour,
+    preferredFh,
+    defaultFrameSelection,
+  );
+  const rows = frames.map((fh) => ({ fh }));
+  return {
+    resolvedHour,
+    requestedHour: Number.isFinite(requestedHour) ? requestedHour : null,
+    didFallback: shouldNotifyForecastHourFallback(requestedHour, resolvedHour, rows, preferredFh),
+  };
 }
 
 export function getEffectiveZoom(zoom: number): number {

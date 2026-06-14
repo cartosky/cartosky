@@ -40,6 +40,7 @@ type BottomForecastControlsProps = {
   disabled: boolean;
   playDisabled?: boolean;
   transientStatus?: string | null;
+  forecastHourFallbackNotice?: string | null;
   layoutMode?: ViewerLayoutMode;
   modelLabel?: string | null;
   modelId?: string | null;
@@ -222,6 +223,7 @@ export function BottomForecastControls({
   disabled,
   playDisabled = false,
   transientStatus,
+  forecastHourFallbackNotice = null,
   layoutMode = "desktop",
   modelLabel = null,
   modelId = null,
@@ -383,10 +385,19 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex items-end justify-center px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
+      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex flex-col items-center justify-end px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
+        {forecastHourFallbackNotice ? (
+          <div
+            data-testid="forecast-hour-fallback-notice"
+            className="pointer-events-none mb-2 flex max-w-[min(92vw,36rem)] items-center gap-2 rounded-md border border-amber-300/40 bg-slate-950/85 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-md"
+          >
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span>{forecastHourFallbackNotice}</span>
+          </div>
+        ) : null}
         <div
           className={cn(
-            "pointer-events-auto relative flex flex-col",
+            "pointer-events-auto relative flex w-full flex-col",
             isDesktopLayout
               ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]"
               : isTabletTouchLayout

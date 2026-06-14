@@ -116,7 +116,7 @@ import {
   resolveLoopPlaybackStartHour,
   selectableFramesForVariable,
   resolveForecastHour,
-  resolveForecastHourFromRows,
+  resolveForecastHourTransition,
   auditGridFrameCoverage,
   buildLegend,
   buildVectorLayerUrl,
@@ -168,6 +168,16 @@ const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
 const PERMALINK_FALLBACK_MESSAGE = "This link may be outdated - loading default view";
+
+function readRequestedForecastHour(targetHour: number, currentHour: number): number {
+  if (Number.isFinite(targetHour)) {
+    return Number(targetHour);
+  }
+  if (Number.isFinite(currentHour)) {
+    return Number(currentHour);
+  }
+  return Number.POSITIVE_INFINITY;
+}
 
 function nearestSortedNumber(values: number[], target: number): number | null {
   if (values.length === 0 || !Number.isFinite(target)) {
@@ -361,6 +371,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewerNotice, setViewerNotice] = useState<string | null>(null);
+  const [forecastHourFallbackNotice, setForecastHourFallbackNotice] = useState<string | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [selectedAnchorCity, setSelectedAnchorCity] = useState<{
     id: string;
@@ -559,6 +570,7 @@ export default function App() {
   const scrubRafRef = useRef<number | null>(null);
   const scrubLodHoldTimerRef = useRef<number | null>(null);
   const previousIsScrubbingRef = useRef(false);
+  const isScrubbingRef = useRef(false);
   const pendingScrubHourRef = useRef<number | null>(null);
   const scrubRequestedHourRef = useRef<number | null>(null);
   const scrubDirectionRef = useRef<1 | -1 | 0>(0);
@@ -593,6 +605,8 @@ export default function App() {
   const pendingFirstViewerFrameRef = useRef(false);
   const pendingFirstViewerFrameHourRef = useRef<number | null>(null);
   const initialPermalinkFallbackHandledRef = useRef(false);
+  const forecastHourFallbackNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingProductSwitchHourRef = useRef<number | null>(null);
   const pendingLoopStartMetricRef = useRef<PendingLoopStartMetric | null>(null);
   const pendingVariableSwitchRef = useRef<PendingVariableSwitchMetric | null>(null);
   const modelRef = useRef(model);
@@ -1808,6 +1822,69 @@ export default function App() {
     setTargetForecastHour((prev) => (prev === nextHour ? prev : nextHour));
   }, []);
 
+  const showForecastHourFallbackNotice = useCallback((
+    requestedHour: number,
+    resolvedHour: number,
+    modelLabel: string,
+  ) => {
+    if (forecastHourFallbackNoticeTimerRef.current !== null) {
+      window.clearTimeout(forecastHourFallbackNoticeTimerRef.current);
+      forecastHourFallbackNoticeTimerRef.current = null;
+    }
+    const message = `FH ${requestedHour} not available on ${modelLabel} — showing FH ${resolvedHour}`;
+    setForecastHourFallbackNotice(message);
+    forecastHourFallbackNoticeTimerRef.current = window.setTimeout(() => {
+      setForecastHourFallbackNotice((current) => (current === message ? null : current));
+      forecastHourFallbackNoticeTimerRef.current = null;
+    }, 3000);
+  }, []);
+
+  const commitForecastHourTransition = useCallback((
+    rows: FrameRow[],
+    requestedHour: number,
+    notifyOnFallback = true,
+  ) => {
+    if (isScrubbingRef.current) {
+      return;
+    }
+    const intentHour = pendingProductSwitchHourRef.current ?? requestedHour;
+    const transition = resolveForecastHourTransition(
+      rows,
+      intentHour,
+      selectedVariableDefaultFh,
+      selectedModelDefaultFrameSelection,
+      selectedTimeAxisMode,
+    );
+    targetForecastHourRef.current = transition.resolvedHour;
+    forecastHourRef.current = transition.resolvedHour;
+    setForecastHour(transition.resolvedHour);
+    setTargetForecastHour(transition.resolvedHour);
+    pendingProductSwitchHourRef.current = null;
+    if (notifyOnFallback && transition.didFallback && Number.isFinite(intentHour)) {
+      const modelLabel = models.find((entry) => entry.value === model)?.label ?? model;
+      showForecastHourFallbackNotice(Number(intentHour), transition.resolvedHour, modelLabel);
+    }
+  }, [
+    model,
+    models,
+    selectedModelDefaultFrameSelection,
+    selectedTimeAxisMode,
+    selectedVariableDefaultFh,
+    showForecastHourFallbackNotice,
+  ]);
+
+  const readActiveRequestedForecastHour = useCallback((): number => {
+    const liveScrubHour = scrubRequestedHourRef.current;
+    if (Number.isFinite(liveScrubHour)) {
+      return Number(liveScrubHour);
+    }
+    const pendingScrubHour = pendingScrubHourRef.current;
+    if (Number.isFinite(pendingScrubHour)) {
+      return Number(pendingScrubHour);
+    }
+    return readRequestedForecastHour(targetForecastHourRef.current, forecastHourRef.current);
+  }, []);
+
   const resetGridPlaybackWaitState = useCallback(() => {
     gridPlaybackWaitStateRef.current = {
       stalledOnHour: null,
@@ -2526,6 +2603,8 @@ export default function App() {
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
         const nextGridHour = snapHour(requestedHour);
+        forecastHourRef.current = nextGridHour;
+        setForecastHour(nextGridHour);
         applyTargetForecastHour(nextGridHour);
         return;
       }
@@ -2558,6 +2637,8 @@ export default function App() {
         void scrubTraceMeta;
         void treatCommitAsFrameChange;
         applyScrubGridTarget(snappedGridHour);
+        forecastHourRef.current = snappedGridHour;
+        setForecastHour(snappedGridHour);
         return;
       }
 
@@ -2832,8 +2913,6 @@ export default function App() {
 
   useEffect(() => {
     setFrameRows([]);
-    setForecastHour(Number.POSITIVE_INFINITY);
-    setTargetForecastHour(Number.POSITIVE_INFINITY);
     setLoadedFramesKey("");
     setVariableSwitchState(null);
     setVisualVariable(variable);
@@ -2860,6 +2939,28 @@ export default function App() {
     }
     const controller = new AbortController();
     const generation = requestGenerationRef.current;
+    const shouldCommitForecastHour = loadedFramesKey !== selectionKey;
+    let forecastHourCommitted = false;
+    const commitLoadedForecastHour = (
+      rows: FrameRow[],
+      notifyOnFallback = true,
+      fromManifest = false,
+    ) => {
+      if (
+        (!shouldCommitForecastHour && pendingProductSwitchHourRef.current === null)
+        || forecastHourCommitted
+        || isScrubbingRef.current
+      ) {
+        return;
+      }
+      if (pendingProductSwitchHourRef.current !== null && !fromManifest) {
+        return;
+      }
+      const requestedHour = pendingProductSwitchHourRef.current
+        ?? readActiveRequestedForecastHour();
+      commitForecastHourTransition(rows, requestedHour, notifyOnFallback);
+      forecastHourCommitted = true;
+    };
 
     async function loadFrames() {
       setError(null);
@@ -2868,9 +2969,12 @@ export default function App() {
         Boolean(runManifest) &&
         runManifest?.model === model &&
         (run === "latest" || runManifest?.run === run || runManifest?.run === resolvedRunForRequests);
-      if (manifestMatchesSelection) {
-        const { rows, hasFrameList } = resolveManifestFrames(runManifest, variable);
-        if (hasFrameList) {
+      const manifestFrameList = manifestMatchesSelection
+        ? resolveManifestFrames(runManifest, variable)
+        : { rows: [] as FrameRow[], hasFrameList: false };
+      const canHydrateFromManifest = manifestFrameList.hasFrameList;
+      if (manifestMatchesSelection && canHydrateFromManifest) {
+        const { rows } = manifestFrameList;
           setVariableSwitchState((current) => {
             if (!current || current.toVariable !== variable) {
               return current;
@@ -2882,26 +2986,8 @@ export default function App() {
           });
           setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, loadedFramesKey === selectionKey));
           setLoadedFramesKey(selectionKey);
-          setForecastHour((prev) =>
-            resolveForecastHourFromRows(
-              rows,
-              prev,
-              selectedVariableDefaultFh,
-              selectedModelDefaultFrameSelection,
-              selectedTimeAxisMode,
-            )
-          );
-          setTargetForecastHour((prev) =>
-            resolveForecastHourFromRows(
-              rows,
-              prev,
-              selectedVariableDefaultFh,
-              selectedModelDefaultFrameSelection,
-              selectedTimeAxisMode,
-            )
-          );
+          commitLoadedForecastHour(rows, true, true);
           hydratedFromManifest = true;
-        }
       }
 
       try {
@@ -2968,24 +3054,20 @@ export default function App() {
         // hours (including manifest-only rows), not just COG-ready ones.
         // Note: React processes functional updaters synchronously within the
         // same synchronous block, so `mergedRows` is populated by this point.
-        setForecastHour((prev) =>
-          resolveForecastHourFromRows(
-            mergedRows,
-            prev,
-            selectedVariableDefaultFh,
-            selectedModelDefaultFrameSelection,
-            selectedTimeAxisMode,
-          )
-        );
-        setTargetForecastHour((prev) =>
-          resolveForecastHourFromRows(
-            mergedRows,
-            prev,
-            selectedVariableDefaultFh,
-            selectedModelDefaultFrameSelection,
-            selectedTimeAxisMode,
-          )
-        );
+        const awaitingManifestForProductSwitch =
+          pendingProductSwitchHourRef.current !== null
+          && !hydratedFromManifest
+          && (
+            runManifest === null
+            || (
+              runManifest?.model === model
+              && resolveManifestFrames(runManifest, variable).hasFrameList
+            )
+          );
+        if (!forecastHourCommitted && !awaitingManifestForProductSwitch) {
+          const fromManifest = hydratedFromManifest || pendingProductSwitchHourRef.current !== null;
+          commitLoadedForecastHour(mergedRows, true, fromManifest);
+        }
       } catch (err) {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         if (!hydratedFromManifest) {
@@ -3007,12 +3089,10 @@ export default function App() {
     variable,
     resolvedRunForRequests,
     runManifest,
-    selectedVariableDefaultFh,
-    selectedModelDefaultFrameSelection,
-    selectedTimeAxisMode,
+    commitForecastHourTransition,
     hasRenderableSelection,
     gridOnlySelection,
-    loadedFramesKey,
+    readActiveRequestedForecastHour,
     resolvedGridLatestRunId,
     selectionKey,
   ]);
@@ -3250,24 +3330,6 @@ export default function App() {
                   ? prevRows
                   : merged;
               });
-              setForecastHour((prev) =>
-                resolveForecastHourFromRows(
-                  rows,
-                  prev,
-                  selectedVariableDefaultFh,
-                  selectedModelDefaultFrameSelection,
-                  selectedTimeAxisMode,
-                )
-              );
-              setTargetForecastHour((prev) =>
-                resolveForecastHourFromRows(
-                  rows,
-                  prev,
-                  selectedVariableDefaultFh,
-                  selectedModelDefaultFrameSelection,
-                  selectedTimeAxisMode,
-                )
-              );
             }
             return;
           }
@@ -3309,24 +3371,6 @@ export default function App() {
             }
             return rows;
           });
-          setForecastHour((prev) =>
-            resolveForecastHourFromRows(
-              rows,
-              prev,
-              selectedVariableDefaultFh,
-              selectedModelDefaultFrameSelection,
-              selectedTimeAxisMode,
-            )
-          );
-          setTargetForecastHour((prev) =>
-            resolveForecastHourFromRows(
-              rows,
-              prev,
-              selectedVariableDefaultFh,
-              selectedModelDefaultFrameSelection,
-              selectedTimeAxisMode,
-            )
-          );
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
             return;
@@ -3341,7 +3385,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, selectedVariableDefaultFh, selectedModelDefaultFrameSelection, selectedTimeAxisMode, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId]);
+  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, region]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -3841,12 +3885,15 @@ export default function App() {
     const nextVariable = variable && nextSupportedVariableIds.has(variable)
       ? variable
       : pickDefaultVariableForModel(nextModel, nextModelCapability, nextVariableIds);
+    const preservedHour = readRequestedForecastHour(targetForecastHourRef.current, forecastHourRef.current);
     setNewRunNotice((current) => (current?.model === nextModel ? current : null));
     setRun("latest");
     setRuns([]);
     runsLoadedForModelRef.current = "";
     setRunManifest(null);
     setFrameRows([]);
+    setLoadedFramesKey("");
+    pendingProductSwitchHourRef.current = Number.isFinite(preservedHour) ? Number(preservedHour) : null;
     setResolvedGridLatestRunId(null);
     lastResolvedGridRunRef.current = null;
     pendingVariableSwitchRef.current = null;
@@ -3854,11 +3901,15 @@ export default function App() {
     if (nextVariableOptions.length > 0) {
       setVariables(nextVariableOptions);
     }
-    if (nextVariable !== variable) {
-      setVariable(nextVariable);
-      setVisualVariable(nextVariable);
-    }
+    setVariable(nextVariable);
+    setVisualVariable(nextVariable);
     setModel(nextModel);
+    if (Number.isFinite(preservedHour)) {
+      targetForecastHourRef.current = preservedHour;
+      forecastHourRef.current = preservedHour;
+      setForecastHour(preservedHour);
+      setTargetForecastHour(preservedHour);
+    }
     captureProductAnalyticsEvent("model_loaded", {
       model: nextModel,
       variable: nextVariable || null,
@@ -3868,9 +3919,9 @@ export default function App() {
       variable_id: nextVariable || null,
       run_id: telemetryRunId,
       region_id: region || null,
-      forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      forecast_hour: Number.isFinite(preservedHour) ? preservedHour : null,
     });
-  }, [capabilities, variable, telemetryRunId, region, forecastHour]);
+  }, [capabilities, variable, telemetryRunId, region]);
 
   const handleRunChange = useCallback((nextRun: string) => {
     setRun(nextRun);
@@ -3948,6 +3999,7 @@ export default function App() {
   useEffect(() => {
     const wasScrubbing = previousIsScrubbingRef.current;
     previousIsScrubbingRef.current = isScrubbing;
+    isScrubbingRef.current = isScrubbing;
 
     if (isScrubbing) {
       if (scrubLodHoldTimerRef.current !== null) {
@@ -4011,6 +4063,9 @@ export default function App() {
   useEffect(() => {
     return () => {
       clearFrameStatusTimer();
+      if (forecastHourFallbackNoticeTimerRef.current !== null) {
+        window.clearTimeout(forecastHourFallbackNoticeTimerRef.current);
+      }
       mapInstanceRef.current = null;
       if (scrubRafRef.current !== null) {
         window.cancelAnimationFrame(scrubRafRef.current);
@@ -4024,6 +4079,9 @@ export default function App() {
       return;
     }
     if (selectableFrameHours.length === 0) {
+      return;
+    }
+    if (Number.isFinite(targetForecastHour)) {
       return;
     }
 
@@ -4831,6 +4889,7 @@ export default function App() {
           disabled={loading}
           playDisabled={loading || controlAvailableFrameHours.length === 0}
           transientStatus={frameStatusMessage}
+          forecastHourFallbackNotice={forecastHourFallbackNotice}
           layoutMode={viewerLayoutMode}
           modelLabel={selectedModelLabel}
           modelId={model}
