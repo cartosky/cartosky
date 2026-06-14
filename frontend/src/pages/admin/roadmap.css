@@ -586,6 +586,17 @@
     grid-template-columns: 20px 1fr;
   }
 
+  .item--mobile-tap {
+    cursor: pointer;
+  }
+
+  .item--mobile-tap .item-title,
+  .item--mobile-tap .item-notes {
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   .item-actions {
     display: none;
   }

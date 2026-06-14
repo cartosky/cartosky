@@ -950,6 +950,22 @@ function RoadmapSectionItems(props: {
   );
 }
 
+function useMobileViewport(maxWidth = 600): boolean {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(`(max-width: ${maxWidth}px)`).matches;
+  });
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(`(max-width: ${maxWidth}px)`);
+    const onChange = () => setIsMobile(mediaQuery.matches);
+    mediaQuery.addEventListener("change", onChange);
+    return () => mediaQuery.removeEventListener("change", onChange);
+  }, [maxWidth]);
+
+  return isMobile;
+}
+
 function RoadmapItemRow(props: {
   item: RoadmapItem;
   phaseId: string;
@@ -964,9 +980,22 @@ function RoadmapItemRow(props: {
 }) {
   const { item, phaseId } = props;
   const labels = itemLabels(item).filter(isItemLabel);
+  const isMobile = useMobileViewport();
+
+  function handleItemClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (!isMobile) return;
+    const target = event.target as HTMLElement;
+    if (target.closest(".item-check, .badge, .item-actions, .label-pill, button")) {
+      return;
+    }
+    props.onEdit(item.id);
+  }
 
   return (
-    <div className={`item${item.status === "done" ? " done" : ""}${labels.length > 0 ? " item--has-labels" : ""}`}>
+    <div
+      className={`item${item.status === "done" ? " done" : ""}${labels.length > 0 ? " item--has-labels" : ""}${isMobile ? " item--mobile-tap" : ""}`}
+      onClick={handleItemClick}
+    >
       <div
         className={`item-check${item.status === "done" ? " checked" : ""}`}
         onClick={() => props.onToggleDone(item.id)}
@@ -975,7 +1004,7 @@ function RoadmapItemRow(props: {
         <div className="item-title-row">
           <span
             className="item-title"
-            contentEditable
+            contentEditable={!isMobile}
             suppressContentEditableWarning
             spellCheck={false}
             onBlur={(event) => props.onSaveTitle(item.id, event.currentTarget.textContent ?? "")}
@@ -1013,7 +1042,7 @@ function RoadmapItemRow(props: {
         </div>
         <div
           className={`item-notes${item.notes ? "" : " empty"}`}
-          contentEditable
+          contentEditable={!isMobile}
           suppressContentEditableWarning
           spellCheck={false}
           onBlur={(event) => props.onSaveNotes(item.id, event.currentTarget.textContent ?? "")}
