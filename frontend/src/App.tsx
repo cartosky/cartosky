@@ -39,7 +39,7 @@ import {
   buildAnchorDisplayGeoJson,
   buildInactiveAnchorFeatureCollection,
   getActiveAnchorLabels,
-  resolveAnchorDisplayRule,
+  shouldEnableAnchorValueDisplay,
   type AnchorFeatureCollection,
 } from "@/lib/anchor-labels";
 import {
@@ -692,6 +692,11 @@ export default function App() {
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelSupportsSampling = readCapabilitySupportsSampling(selectedModelCapability);
+  const anchorValueDisplayEnabled = shouldEnableAnchorValueDisplay({
+    model,
+    variable,
+    supportsSampling: selectedModelSupportsSampling,
+  });
   const selectedVariableConstraints = (selectedVariableCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
@@ -3117,15 +3122,7 @@ export default function App() {
       setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
     }
 
-    if (model === "mrms" || model === "goes-east" || (variable && resolveAnchorDisplayRule(variable).mode === "hidden")) {
-      anchorBatchLastAppliedHourRef.current = null;
-      anchorBatchLastAppliedSelectionKeyRef.current = "";
-      resetAnchorBatchQueue(true);
-      setAnchorDisplayGeoJson(buildInactiveAnchorFeatureCollection(anchorBaseGeoJson));
-      return;
-    }
-
-    if (selectedModelSupportsSampling === false) {
+    if (!anchorValueDisplayEnabled) {
       anchorBatchLastAppliedHourRef.current = null;
       anchorBatchLastAppliedSelectionKeyRef.current = "";
       resetAnchorBatchQueue(true);
@@ -3208,6 +3205,7 @@ export default function App() {
   }, [
     anchorBaseGeoJson,
     anchorBatchPoints,
+    anchorValueDisplayEnabled,
     hasRenderableSelection,
     isGridLowMidActive,
     isGridPreloadingForPlay,
@@ -3218,7 +3216,6 @@ export default function App() {
     resetAnchorBatchQueue,
     resolvedRunForRequests,
     selectionKey,
-    selectedModelSupportsSampling,
     startAnchorBatchRequest,
     variable,
     visibleOverlayHour,
@@ -3806,7 +3803,7 @@ export default function App() {
     values: Record<string, number | null>;
     units: string;
   }) => {
-    if (!anchorBaseGeoJson || !variable || !Number.isFinite(payload.frameHour)) {
+    if (!anchorBaseGeoJson || !variable || !Number.isFinite(payload.frameHour) || !anchorValueDisplayEnabled) {
       return;
     }
 
@@ -3836,7 +3833,7 @@ export default function App() {
       anchorBatchContextRef.current = context;
     }
     startAnchorBatchRequest(payload.frameHour, context);
-  }, [anchorBaseGeoJson, resetAnchorBatchQueue, selectionKey, startAnchorBatchRequest, variable]);
+  }, [anchorBaseGeoJson, anchorValueDisplayEnabled, resetAnchorBatchQueue, selectionKey, startAnchorBatchRequest, variable]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4751,10 +4748,10 @@ export default function App() {
           vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}
           anchorBatchPoints={
-            selectedModelSupportsSampling && pointLabelsEnabled ? anchorBatchPoints : []
+            anchorValueDisplayEnabled && pointLabelsEnabled ? anchorBatchPoints : []
           }
           onAnchorFrameSampled={
-            selectedModelSupportsSampling && pointLabelsEnabled ? handleAnchorFrameSampled : undefined
+            anchorValueDisplayEnabled && pointLabelsEnabled ? handleAnchorFrameSampled : undefined
           }
           pointLabelsEnabled={pointLabelsEnabled}
           region={region}

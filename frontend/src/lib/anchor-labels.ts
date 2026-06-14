@@ -95,6 +95,25 @@ export function resolveAnchorDisplayRule(varKey: string): AnchorDisplayRule {
   return ANCHOR_DISPLAY_RULES[normalized] ?? DEFAULT_ANCHOR_DISPLAY_RULE;
 }
 
+export function shouldEnableAnchorValueDisplay(params: {
+  model: string | null | undefined;
+  variable: string | null | undefined;
+  supportsSampling?: boolean | null;
+}): boolean {
+  const normalizedModel = String(params.model ?? "").trim().toLowerCase();
+  if (normalizedModel === "mrms" || normalizedModel === "goes-east") {
+    return false;
+  }
+  const variable = String(params.variable ?? "").trim();
+  if (variable && resolveAnchorDisplayRule(variable).mode === "hidden") {
+    return false;
+  }
+  if (params.supportsSampling === false) {
+    return false;
+  }
+  return true;
+}
+
 export function formatAnchorValueLabel(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(Math.round(rounded)) : rounded.toFixed(1);
