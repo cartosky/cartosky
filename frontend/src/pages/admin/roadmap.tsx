@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 
 import { AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
@@ -9,7 +9,7 @@ import "./roadmap.css";
 type ItemStatus = "todo" | "inprogress" | "inreview" | "done";
 type ItemPriority = "high" | "medium" | "low";
 type ItemEffort = "S" | "M" | "L";
-type ItemLabel = "bug" | "enhancement" | "performance" | "ux" | "data" | "infrastructure";
+type ItemLabel = "bug" | "enhancement" | "feature" | "performance" | "ux" | "data" | "infrastructure";
 
 type RoadmapFilters = {
   status: "all" | ItemStatus;
@@ -126,11 +126,12 @@ const EFFORT_ORDER: ItemEffort[] = ["S", "M", "L"];
 
 const BUGS_IMPROVEMENTS_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux"];
 
-const ITEM_LABELS: ItemLabel[] = ["bug", "enhancement", "performance", "ux", "data", "infrastructure"];
+const ITEM_LABELS: ItemLabel[] = ["bug", "enhancement", "feature", "performance", "ux", "data", "infrastructure"];
 
 const LABEL_STYLES: Record<ItemLabel, { color: string; bg: string; border: string }> = {
   bug: { color: "#f85149", bg: "rgba(248, 81, 73, 0.15)", border: "rgba(248, 81, 73, 0.35)" },
   enhancement: { color: "#58a6ff", bg: "rgba(88, 166, 255, 0.15)", border: "rgba(88, 166, 255, 0.35)" },
+  feature: { color: "#3fb950", bg: "rgba(63, 185, 80, 0.15)", border: "rgba(63, 185, 80, 0.35)" },
   performance: { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)", border: "rgba(245, 158, 11, 0.35)" },
   ux: { color: "#a371f7", bg: "rgba(163, 113, 247, 0.15)", border: "rgba(163, 113, 247, 0.35)" },
   data: { color: "#2dd4bf", bg: "rgba(45, 212, 191, 0.15)", border: "rgba(45, 212, 191, 0.35)" },
@@ -208,7 +209,6 @@ function phaseShortTitle(title: string): string {
 export default function AdminRoadmapPage() {
   const [phases, setPhases] = useState<RoadmapPhase[]>(() => clonePhases(DEFAULT_PHASES));
   const [filters, setFilters] = useState<RoadmapFilters>(DEFAULT_FILTERS);
-  const [lastSavedLabel, setLastSavedLabel] = useState("Last saved: never");
   const [toastMessage, setToastMessage] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -225,7 +225,6 @@ export default function AdminRoadmapPage() {
   const [loading, setLoading] = useState(true);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modalTitleInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -239,10 +238,6 @@ export default function AdminRoadmapPage() {
   const save = useCallback(async (nextPhases: RoadmapPhase[]) => {
     try {
       await saveInternalRoadmap(nextPhases);
-      const now = new Date();
-      setLastSavedLabel(
-        `Last saved: ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
-      );
       showToast("Saved");
     } catch {
       showToast("Save failed");
@@ -287,12 +282,6 @@ export default function AdminRoadmapPage() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen]);
-
-  useEffect(() => {
-    if (modalOpen) {
-      modalTitleInputRef.current?.focus();
-    }
   }, [modalOpen]);
 
   const progress = useMemo(() => {
@@ -522,26 +511,6 @@ export default function AdminRoadmapPage() {
     });
   }
 
-  function quickAdd(phaseId: string, value: string) {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    updatePhases((current) => {
-      const next = clonePhases(current);
-      const phase = next.find((entry) => entry.id === phaseId);
-      if (!phase) return current;
-      phase.items.push({
-        id: uid(),
-        title: trimmed,
-        status: "todo",
-        priority: "medium",
-        effort: "M",
-        notes: "",
-        labels: [],
-      });
-      return next;
-    });
-  }
-
   if (loading) {
     return (
       <div className="relative min-h-[calc(100vh-3.5rem)] w-full bg-[#07111f] text-white">
@@ -569,13 +538,7 @@ export default function AdminRoadmapPage() {
 
       <div className="relative mx-auto max-w-[1100px] px-4 pb-28 pt-[4.5rem] md:px-5 md:pb-32">
         <AdminPage>
-          <AdminHero
-            eyebrow="Internal"
-            title="Roadmap"
-            description={
-              <span className="font-mono text-xs text-white/45">{lastSavedLabel}</span>
-            }
-          />
+          <AdminHero eyebrow="Internal" title="Roadmap" />
 
           <AdminSurface
             title="Filters & progress"
@@ -642,7 +605,9 @@ export default function AdminRoadmapPage() {
               <div className="progress-track flex-1">
                 <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
               </div>
-              <span className="text-xs font-mono text-cyan-200/80">{progress.done} / {progress.total} done</span>
+              <span className="text-xs font-mono text-cyan-200/80">
+                {progress.pct}% · {progress.done} / {progress.total} done
+              </span>
             </div>
           </AdminSurface>
 
@@ -719,10 +684,6 @@ export default function AdminRoadmapPage() {
                 onEdit={openEditModal}
                 onDelete={deleteItem}
               />
-              <QuickAddRow
-                phaseTitle={phaseShortTitle(phase.title)}
-                onAdd={(value) => quickAdd(phase.id, value)}
-              />
             </AdminSurface>
           );
         })}
@@ -732,7 +693,7 @@ export default function AdminRoadmapPage() {
       <button
         type="button"
         onClick={openAddModal}
-        className="fixed bottom-6 right-6 z-40 flex h-12 items-center gap-2 rounded-full border border-cyan-300/28 bg-[linear-gradient(180deg,#2f4f47_0%,#1f3832_100%)] px-5 text-sm font-semibold text-cyan-50 shadow-[0_14px_44px_rgba(0,0,0,0.45)] transition hover:brightness-110 md:bottom-8 md:right-8"
+        className="fixed bottom-6 right-6 z-40 flex h-12 items-center gap-2 rounded-full border border-cyan-200/40 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-5 text-sm font-semibold text-slate-950 shadow-[0_14px_40px_rgba(35,196,255,0.28)] transition hover:brightness-105 md:bottom-8 md:right-8"
       >
         <Plus className="h-4 w-4" />
         Add Item
@@ -750,7 +711,6 @@ export default function AdminRoadmapPage() {
             <div className="modal-field">
               <label className="modal-label">Title</label>
               <input
-                ref={modalTitleInputRef}
                 className="modal-input"
                 value={modalTitle}
                 onChange={(event) => setModalTitle(event.target.value)}
@@ -878,28 +838,6 @@ function FilterDropdown(props: {
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
-    </div>
-  );
-}
-
-function QuickAddRow(props: { phaseTitle: string; onAdd: (value: string) => void }) {
-  const [value, setValue] = useState("");
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter") return;
-    props.onAdd(value);
-    setValue("");
-  }
-
-  return (
-    <div className="add-item-row">
-      <input
-        className="add-input"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={`+ Quick add item to ${props.phaseTitle}…`}
-      />
     </div>
   );
 }
