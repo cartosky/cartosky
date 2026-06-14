@@ -715,7 +715,7 @@ function drawCpcProbabilityLegend(
   const tickY = barY + BAR_H + 3 * scaleFactor;
 
   ctx.save();
-  drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
+  drawDarkCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
 
   const wingLabelFontSize = isMobileLayout ? 8 : 9;
   const wingLabelFont = `700 ${wingLabelFontSize * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
@@ -837,50 +837,47 @@ function drawSpcCategoricalLegend(
 
   const outerPadding = 18 * scaleFactor;
   const PAD_X = 14 * scaleFactor;
-  const PAD_TOP = 9 * scaleFactor;
-  const PAD_BOT = 10 * scaleFactor;
+  const PAD_Y = 10 * scaleFactor;
   const SWATCH = 13 * scaleFactor;
-  const LABEL_H = 13 * scaleFactor;
-  const GAP_INNER = 5 * scaleFactor;
-  const GAP_ENTRY = 16 * scaleFactor;
-  const bandWidth = width - outerPadding * 2;
-  const bandHeight = PAD_TOP + SWATCH + 4 * scaleFactor + LABEL_H + PAD_BOT;
-  const bandX = outerPadding;
-  const bandY = height - bottomPadding - bandHeight;
-  const swatchY = bandY + PAD_TOP;
-  const labelY = swatchY + SWATCH + 4 * scaleFactor;
+  const GAP_INNER = 6 * scaleFactor;
+  const GAP_ENTRY = 18 * scaleFactor;
+  const ROW_H = SWATCH;
 
   ctx.save();
-  drawGlassCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
-
-  ctx.font = `600 ${9 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
-  const totalWidth = entries.reduce((sum, entry, i) => {
+  ctx.font = `600 ${10 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  const totalContentWidth = entries.reduce((sum, entry, i) => {
     const labelW = ctx.measureText(entry.label!.trim()).width;
     return sum + SWATCH + GAP_INNER + labelW + (i < entries.length - 1 ? GAP_ENTRY : 0);
   }, 0);
 
-  const contentWidth = bandWidth - PAD_X * 2;
-  let x = bandX + PAD_X + Math.max(0, (contentWidth - totalWidth) / 2);
+  const bandWidth = totalContentWidth + PAD_X * 2;
+  const bandHeight = PAD_Y + ROW_H + PAD_Y;
+  const bandX = outerPadding;
+  const bandY = height - bottomPadding - bandHeight;
+  const rowY = bandY + PAD_Y;
+
+  drawDarkCard(ctx, bandX, bandY, bandWidth, bandHeight, 12 * scaleFactor);
+
+  let x = bandX + PAD_X;
 
   for (const entry of entries) {
     const label = entry.label!.trim();
 
     ctx.fillStyle = entry.color;
-    drawRoundedRect(ctx, x, swatchY, SWATCH, SWATCH, 3 * scaleFactor);
+    drawRoundedRect(ctx, x, rowY, SWATCH, SWATCH, 3 * scaleFactor);
     ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.20)";
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
     ctx.lineWidth = 1;
-    drawRoundedRect(ctx, x + 0.5, swatchY + 0.5, SWATCH - 1, SWATCH - 1, 3 * scaleFactor);
+    drawRoundedRect(ctx, x + 0.5, rowY + 0.5, SWATCH - 1, SWATCH - 1, 3 * scaleFactor);
     ctx.stroke();
 
-    ctx.font = `600 ${9 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
-    ctx.fillStyle = "rgba(255,255,255,0.88)";
+    ctx.font = `600 ${10 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillStyle = "rgba(255,255,255,0.90)";
     ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(label, x, labelY + LABEL_H - 3 * scaleFactor);
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x + SWATCH + GAP_INNER, rowY + SWATCH / 2);
 
-    const labelW = ctx.measureText(label).width;
-    x += SWATCH + GAP_INNER + labelW + GAP_ENTRY;
+    x += SWATCH + GAP_INNER + ctx.measureText(label).width + GAP_ENTRY;
   }
 
   ctx.restore();
@@ -910,7 +907,7 @@ function drawBottomLegend(
   const sectionRadius = 8 * scaleFactor;
 
   ctx.save();
-  drawGlassCard(ctx, bandX, bandY, bandWidth, scaledBandHeight, 12 * scaleFactor);
+  drawDarkCard(ctx, bandX, bandY, bandWidth, scaledBandHeight, 12 * scaleFactor);
 
   if (isPrecip) {
     const rows = groupPtypeIntensityRows(legend);
