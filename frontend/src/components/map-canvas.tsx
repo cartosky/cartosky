@@ -919,7 +919,7 @@ export function buildMapStyle(
         paint: {
           "line-color": CONTOUR_LINE_COLOR,
           "line-opacity": 0.9,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 8, 2, 12, 3],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 2.5, 12, 3.5],
         },
       },
       ...(screenshotMode
@@ -1161,16 +1161,9 @@ export function MapCanvas({
     activeContourUrlRef.current = normalizedUrl;
     activeContourPayloadRef.current = payload;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
-    const displayPayload = !isDesktopLayout && isAnimating
-      ? payload
-      : buildContourLineDisplayPayload(payload, map);
-    source.setData(displayPayload as any);
-    if (!isDesktopLayout && isAnimating) {
-      setContourScreenLabels([]);
-      return;
-    }
+    source.setData(buildContourLineDisplayPayload(payload, map) as any);
     refreshContourScreenLabels();
-  }, [isAnimating, isDesktopLayout, refreshContourScreenLabels]);
+  }, [refreshContourScreenLabels]);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const buildGridPrefetchUrls = useCallback((params: {
@@ -2218,10 +2211,6 @@ export function MapCanvas({
       }
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
-        if (!isDesktopLayout && isAnimating) {
-          setContourScreenLabels([]);
-          return;
-        }
         refreshContourScreenLabels();
       });
     };
@@ -2239,7 +2228,7 @@ export function MapCanvas({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [isAnimating, isDesktopLayout, isLoaded, refreshContourScreenLabels]);
+  }, [isLoaded, refreshContourScreenLabels]);
 
   useEffect(() => {
     if (!isLoaded || contourPrefetchUrls.length === 0) {
