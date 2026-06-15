@@ -1109,6 +1109,12 @@ def build_mrms_warnings_overlay_geojson(
 
     county_path = default_county_reference_path(data_root)
     zone_path = default_zone_reference_path(data_root)
+    sync_active_zone_reference(
+        payload=overlay_source_payload,
+        zone_reference_path=zone_path,
+        timeout_seconds=timeout_seconds,
+        api_base=api_base,
+    )
     try:
         frame = build_active_hazards_frame(
             overlay_source_payload,
