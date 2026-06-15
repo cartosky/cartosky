@@ -413,6 +413,8 @@ function RegionUtilitySelect({
   tourTarget,
   variant = "icon",
   inlinePanel = false,
+  inlinePanelClassName,
+  onOpenChange,
   onLocationSelected,
 }: {
   value: string;
@@ -424,6 +426,8 @@ function RegionUtilitySelect({
   tourTarget?: string;
   variant?: "icon" | "field";
   inlinePanel?: boolean;
+  inlinePanelClassName?: string;
+  onOpenChange?: (open: boolean) => void;
   onLocationSelected?: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -444,6 +448,11 @@ function RegionUtilitySelect({
 
   const activeSearch = query.trim().length > 0;
   const currentLocationIsFavorite = currentLocation ? isFavorite(currentLocation) : false;
+
+  const setOpenState = useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  }, [onOpenChange]);
 
   const updatePanelPosition = useCallback(() => {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -501,11 +510,11 @@ function RegionUtilitySelect({
       if (panelRef.current?.contains(event.target)) {
         return;
       }
-      setOpen(false);
+      setOpenState(false);
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setOpen(false);
+        setOpenState(false);
       }
     }
     window.addEventListener("resize", updatePanelPosition);
@@ -520,7 +529,14 @@ function RegionUtilitySelect({
       document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, updatePanelPosition]);
+  }, [open, setOpenState, updatePanelPosition]);
+
+  useEffect(() => {
+    if (!open || !inlinePanel) {
+      return;
+    }
+    triggerRef.current?.scrollIntoView({ block: "nearest" });
+  }, [inlinePanel, open]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -595,7 +611,7 @@ function RegionUtilitySelect({
   }, []);
 
   function closeAfterLocationJump() {
-    setOpen(false);
+    setOpenState(false);
     resetSearch();
     setIsLocating(false);
   }
@@ -672,13 +688,16 @@ function RegionUtilitySelect({
       ref={panelRef}
       className={cn(
         inlinePanel
-          ? "mt-2 w-full overflow-hidden rounded-xl border bg-[#04101e]/[0.92] shadow-[inset_0_1px_0_rgba(100,180,255,0.08)]"
+          ? "mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border bg-[#04101e]/[0.92] shadow-[inset_0_1px_0_rgba(100,180,255,0.08)]"
           : "fixed z-[90] w-[296px] overflow-hidden rounded-2xl border bg-[#04101e]/[0.92] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
-        activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60"
+        activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60",
+        inlinePanel ? inlinePanelClassName : null
       )}
       style={inlinePanel ? undefined : { top: panelTop, right: panelRight }}
+      role={inlinePanel ? "dialog" : undefined}
+      aria-label={inlinePanel ? "Region picker" : undefined}
     >
-      <div className="border-b border-white/8 px-3 py-3">
+      <div className="shrink-0 border-b border-white/8 px-3 py-3">
         <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
           <Search className="h-3.5 w-3.5 flex-none text-white/45" />
           <input
@@ -705,7 +724,10 @@ function RegionUtilitySelect({
         </label>
       </div>
 
-      <div className={cn("overflow-y-auto px-2 py-2", inlinePanel ? "max-h-[46dvh]" : "max-h-[320px]")}>
+      <div className={cn(
+        "px-2 py-2",
+        inlinePanel ? "picker-scroll min-h-0 flex-1 overflow-y-auto" : "max-h-[320px] overflow-y-auto"
+      )}>
         {!activeSearch ? (
           <>
             {favorites.length > 0 ? (
@@ -779,7 +801,7 @@ function RegionUtilitySelect({
                     type="button"
                     onClick={() => {
                       onValueChange(opt.value);
-                      setOpen(false);
+                      setOpenState(false);
                       clearInlineError();
                     }}
                     className={cn(
@@ -859,7 +881,7 @@ function RegionUtilitySelect({
         ) : null}
       </div>
 
-      <div className="border-t border-white/8 px-2 py-2">
+      <div className="shrink-0 border-t border-white/8 px-2 py-2">
         <button
           type="button"
           onClick={handleUseMyLocation}
@@ -877,21 +899,27 @@ function RegionUtilitySelect({
     </div>
   );
 
+  const panel = open ? (inlinePanel ? locationPanel : createPortal(locationPanel, document.body)) : null;
+
   return (
-    <div className="shrink-0" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
+    <div
+      className={cn(inlinePanel ? "flex min-h-0 flex-col" : "shrink-0")}
+      {...(tourTarget ? { "data-tour-target": tourTarget } : {})}
+    >
       <button
         ref={triggerRef}
         type="button"
         title={`Region: ${currentRegionLabel}`}
         aria-label={`Region: ${currentRegionLabel}`}
         aria-expanded={open}
+        aria-haspopup={inlinePanel ? "dialog" : undefined}
         disabled={disabled || options.length === 0}
         onClick={() => {
           if (disabled || options.length === 0) {
             return;
           }
           updatePanelPosition();
-          setOpen((currentOpen) => !currentOpen);
+          setOpenState(!open);
         }}
         className={cn(
           variant === "field"
@@ -912,7 +940,7 @@ function RegionUtilitySelect({
         )}
       </button>
 
-      {open ? (inlinePanel ? locationPanel : createPortal(locationPanel, document.body)) : null}
+      {panel}
     </div>
   );
 }
@@ -1275,6 +1303,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const [activeTab, setActiveTab] = useState<"selection" | "display">("selection");
   const [mobileModelPickerOpen, setMobileModelPickerOpen] = useState(false);
   const [mobileVariablePickerOpen, setMobileVariablePickerOpen] = useState(false);
+  const [mobileRegionPickerOpen, setMobileRegionPickerOpen] = useState(false);
   const dragStartY = useRef<number | null>(null);
   const pickerReturnSnap = useRef<"peek" | "full" | null>(null);
 
@@ -1293,7 +1322,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isPhoneLayout = !isTabletTouchLayout;
   const sheetOpen = sheetSnap !== "closed";
-  const mobilePickerOpen = mobileModelPickerOpen || mobileVariablePickerOpen;
+  const mobilePickerOpen = mobileModelPickerOpen || mobileVariablePickerOpen || mobileRegionPickerOpen;
 
   // Sync external open requests (e.g. from the bottom bar) into local sheetSnap
   useEffect(() => {
@@ -1334,6 +1363,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
     pickerReturnSnap.current = null;
     setMobileModelPickerOpen(false);
     setMobileVariablePickerOpen(false);
+    setMobileRegionPickerOpen(false);
     onMobileControlsOpenChange?.(false);
   };
 
@@ -1374,7 +1404,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const selectionContent = (
     <>
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <div data-tour-target="mobile-product-variable-run" className="flex flex-col gap-3">
+        <div data-tour-target="mobile-product-variable-run" className={cn("flex flex-col gap-3", mobileRegionPickerOpen ? "hidden" : "")}>
           <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
             <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
               <Boxes className="h-3 w-3" /> Product
@@ -1397,8 +1427,9 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
                 if (nextOpen) {
                   rememberPickerReturnSnap();
                   setMobileVariablePickerOpen(false);
+                  setMobileRegionPickerOpen(false);
                   setSheetSnap("full");
-                } else if (!mobileVariablePickerOpen) {
+                } else if (!mobileVariablePickerOpen && !mobileRegionPickerOpen) {
                   restorePickerReturnSnap();
                 }
               }}
@@ -1431,8 +1462,9 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
                 if (open) {
                   rememberPickerReturnSnap();
                   setMobileModelPickerOpen(false);
+                  setMobileRegionPickerOpen(false);
                   setSheetSnap("full");
-                } else if (!mobileModelPickerOpen) {
+                } else if (!mobileModelPickerOpen && !mobileRegionPickerOpen) {
                   restorePickerReturnSnap();
                 }
               }}
@@ -1467,8 +1499,15 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           </div>
         </div>
 
-        <div data-tour-target="mobile-region-row" className="space-y-1.5">
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+        <div
+          data-tour-target="mobile-region-row"
+          className={cn(
+            "space-y-1.5",
+            mobileRegionPickerOpen ? "flex min-h-0 flex-1 flex-col" : "",
+            mobilePickerOpen && !mobileRegionPickerOpen ? "hidden" : ""
+          )}
+        >
+          <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
             <MapPinSearch className="h-3 w-3" /> Region
           </span>
           <RegionUtilitySelect
@@ -1480,6 +1519,22 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             currentRegionLabel={selectedRegionLabel}
             variant="field"
             inlinePanel={isPhoneLayout}
+            inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
+            onOpenChange={(nextOpen) => {
+              if (!isPhoneLayout) {
+                setMobileRegionPickerOpen(false);
+                return;
+              }
+              setMobileRegionPickerOpen(nextOpen);
+              if (nextOpen) {
+                rememberPickerReturnSnap();
+                setMobileModelPickerOpen(false);
+                setMobileVariablePickerOpen(false);
+                setSheetSnap("full");
+              } else if (!mobileModelPickerOpen && !mobileVariablePickerOpen) {
+                restorePickerReturnSnap();
+              }
+            }}
             onLocationSelected={closeSheet}
           />
         </div>
