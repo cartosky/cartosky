@@ -9,6 +9,41 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.models.nws_hazards import NWS_HAZARDS_MODEL
 from app.models.serialization import serialize_model_capability
+from app.services import nws_hazards
+
+
+def test_mrms_warnings_overlay_filter_keeps_only_convective_and_precipitation_products() -> None:
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "risk_label": "Flood Advisory",
+                    "active_hazards": ["Flood Advisory"],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "risk_label": "Flood Watch",
+                    "active_hazards": ["Flood Watch", "Severe Thunderstorm Watch"],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "risk_label": "Special Marine Warning",
+                    "active_hazards": ["Special Marine Warning"],
+                },
+            },
+        ],
+    }
+
+    filtered = nws_hazards.filter_geojson_for_mrms_warnings_overlay(payload)
+
+    labels = [feature["properties"]["risk_label"] for feature in filtered["features"]]
+    assert labels == ["Flood Watch", "Special Marine Warning"]
 
 
 def test_nws_hazards_buildable_var_set_and_defaults_invariants() -> None:

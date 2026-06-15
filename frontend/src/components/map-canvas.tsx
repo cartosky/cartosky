@@ -1099,6 +1099,14 @@ export function MapCanvas({
     };
   }, []);
 
+  const vectorFetchProductId = useMemo(() => {
+    const url = String(vectorGeoJsonUrl ?? "").trim();
+    if (url.includes("/nws_hazards/") || url.includes("/nws-hazards/")) {
+      return "nws_hazards";
+    }
+    return productId;
+  }, [productId, vectorGeoJsonUrl]);
+
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
@@ -1803,20 +1811,20 @@ export function MapCanvas({
     if (map.getLayer(LAKE_MASK_LAYER_ID) && firstVectorFillLayerId) {
       map.moveLayer(LAKE_MASK_LAYER_ID, firstVectorFillLayerId);
     }
+    if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
+      map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
+    }
+    for (const layerId of compositeGridControllersRef.current.keys()) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
     for (const layerId of VECTOR_FILL_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
     }
     for (const layerId of VECTOR_LINE_LAYER_IDS) {
-      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
-        map.moveLayer(layerId, COASTLINE_LAYER_ID);
-      }
-    }
-    if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
-      map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
-    }
-    for (const layerId of compositeGridControllersRef.current.keys()) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
@@ -2425,7 +2433,7 @@ export function MapCanvas({
     vectorAbortRef.current = controller;
     const startedAtMs = startNetworkTimer();
 
-    void productFetch(productId, normalizedUrl, {
+    void productFetch(vectorFetchProductId, normalizedUrl, {
       credentials: "omit",
       signal: controller.signal,
     })
@@ -2473,7 +2481,7 @@ export function MapCanvas({
         vectorAbortRef.current = null;
       }
     };
-  }, [basemapMode, isLoaded, productId, vectorGeoJsonUrl]);
+  }, [basemapMode, isLoaded, vectorFetchProductId, vectorGeoJsonUrl]);
 
   useEffect(() => {
     if (!isLoaded || vectorPrefetchUrls.length === 0) {
@@ -2497,7 +2505,7 @@ export function MapCanvas({
           continue;
         }
 
-        void productFetch(productId, normalizedUrl, {
+        void productFetch(vectorFetchProductId, normalizedUrl, {
           credentials: "omit",
           signal: controller.signal,
         })
@@ -2533,7 +2541,7 @@ export function MapCanvas({
       window.clearTimeout(startPrefetchTimer);
       controller.abort();
     };
-  }, [isLoaded, productId, vectorGeoJsonUrl, vectorPrefetchUrls]);
+  }, [isLoaded, vectorFetchProductId, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2710,7 +2718,7 @@ export function MapCanvas({
       return;
     }
     enforceLayerOrder(map);
-  }, [enforceLayerOrder, gridActive, isLoaded, selectionKey]);
+  }, [enforceLayerOrder, gridActive, isLoaded, selectionKey, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;

@@ -3819,19 +3819,30 @@ NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS = 60
 def nws_hazards_active_warnings(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    from .services.nws_hazards import NWS_HAZARDS_MODEL_ID
+    from .services import nws_hazards as nws_hazards_service
 
     entitlements.require_product_access(principal, "mrms")
-    run_id = _resolve_latest_run(NWS_HAZARDS_MODEL_ID)
+    run_id = _resolve_latest_run(nws_hazards_service.NWS_HAZARDS_MODEL_ID)
     if not run_id:
         raise HTTPException(status_code=404, detail="No published NWS hazards bundle available")
 
-    vector_path = PUBLISHED_ROOT / NWS_HAZARDS_MODEL_ID / run_id / "active" / "vectors" / "fh000.geojson"
+    vector_path = (
+        PUBLISHED_ROOT
+        / nws_hazards_service.NWS_HAZARDS_MODEL_ID
+        / run_id
+        / "active"
+        / "vectors"
+        / "fh000.geojson"
+    )
     if not vector_path.is_file():
         raise HTTPException(status_code=404, detail="Active NWS warnings GeoJSON not found")
 
     try:
-        payload = vector_path.read_bytes()
+        raw_payload = json.loads(vector_path.read_text())
+        filtered_payload = nws_hazards_service.filter_geojson_for_mrms_warnings_overlay(raw_payload)
+        payload = json.dumps(filtered_payload, separators=(",", ":")).encode("utf-8")
+    except nws_hazards_service.NWSHazardsError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to read active NWS warnings GeoJSON at %s", vector_path)
         raise HTTPException(status_code=500, detail="Failed to read active NWS warnings GeoJSON") from exc

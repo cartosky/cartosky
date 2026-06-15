@@ -32,6 +32,18 @@ NWS_HAZARDS_MAX_RETRIES = 1
 NWS_HAZARDS_RETRY_BACKOFF_SECONDS = 1.0
 NWS_HAZARDS_RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
 
+MRMS_WARNINGS_OVERLAY_EVENT_LABELS: frozenset[str] = frozenset({
+    "tornado warning",
+    "severe thunderstorm warning",
+    "flash flood warning",
+    "flash flood statement",
+    "snow squall warning",
+    "special marine warning",
+    "tornado watch",
+    "severe thunderstorm watch",
+    "flash flood watch",
+})
+
 STATE_ABBR_TO_FIPS: dict[str, str] = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09", "DE": "10",
     "DC": "11", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18", "IA": "19",
@@ -962,6 +974,44 @@ def _build_hover_label(name: str, alerts: list[NormalizedHazardAlert]) -> str:
 
 def _unique_hazard_labels(alerts: list[NormalizedHazardAlert]) -> list[str]:
     return list(dict.fromkeys(alert.style.label for alert in alerts if alert.style.label))
+
+
+def hazard_labels_for_feature_properties(properties: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    risk_label = str(properties.get("risk_label") or "").strip()
+    if risk_label:
+        labels.append(risk_label)
+    active_hazards = properties.get("active_hazards")
+    if isinstance(active_hazards, list):
+        for entry in active_hazards:
+            text = str(entry).strip()
+            if text and text not in labels:
+                labels.append(text)
+    return labels
+
+
+def feature_matches_mrms_warnings_overlay(properties: dict[str, Any]) -> bool:
+    for label in hazard_labels_for_feature_properties(properties):
+        if label.strip().lower() in MRMS_WARNINGS_OVERLAY_EVENT_LABELS:
+            return True
+    return False
+
+
+def filter_geojson_for_mrms_warnings_overlay(payload: dict[str, Any]) -> dict[str, Any]:
+    features_raw = payload.get("features")
+    if not isinstance(features_raw, list):
+        raise NWSHazardsError("Active warnings GeoJSON payload is missing features")
+    filtered_features = [
+        feature
+        for feature in features_raw
+        if isinstance(feature, dict)
+        and isinstance(feature.get("properties"), dict)
+        and feature_matches_mrms_warnings_overlay(feature["properties"])
+    ]
+    return {
+        "type": "FeatureCollection",
+        "features": filtered_features,
+    }
 
 
 def _legend_entries_for_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:

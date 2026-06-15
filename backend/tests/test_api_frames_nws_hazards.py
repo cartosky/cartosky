@@ -122,12 +122,52 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
                             "stroke": "#7f1d1d",
                             "stroke_width": 1.0,
                             "sort_rank": 390,
+                            "alert_ids": ["urn:oid:tornado-1"],
+                            "active_hazards": ["Tornado Warning"],
                         },
                         "geometry": {
                             "type": "Polygon",
                             "coordinates": [[[-112.8, 32.9], [-111.2, 32.9], [-111.2, 34.0], [-112.8, 34.0], [-112.8, 32.9]]],
                         },
-                    }
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "risk_code": "flood_advisory",
+                            "risk_label": "Flood Advisory",
+                            "hover_label": "Harris: Flood Advisory",
+                            "fill": "#00FF7F",
+                            "fill_opacity": 0.58,
+                            "stroke": "#009955",
+                            "stroke_width": 1.0,
+                            "sort_rank": 120,
+                            "alert_ids": ["urn:oid:flood-advisory-1"],
+                            "active_hazards": ["Flood Advisory"],
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-95.8, 29.5], [-95.0, 29.5], [-95.0, 30.2], [-95.8, 30.2], [-95.8, 29.5]]],
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "risk_code": "flash_flood_watch",
+                            "risk_label": "Flash Flood Watch",
+                            "hover_label": "Galveston: Flash Flood Watch",
+                            "fill": "#2E8B57",
+                            "fill_opacity": 0.58,
+                            "stroke": "#1B5234",
+                            "stroke_width": 1.0,
+                            "sort_rank": 265,
+                            "alert_ids": ["urn:oid:ff-watch-1"],
+                            "active_hazards": ["Flash Flood Watch"],
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-95.2, 28.8], [-94.4, 28.8], [-94.4, 29.4], [-95.2, 29.4], [-95.2, 28.8]]],
+                        },
+                    },
                 ],
             }
         )
@@ -172,10 +212,11 @@ async def test_nws_hazards_latest_manifest_frames_and_vector_endpoint_resolve(cl
     assert vector_response.status_code == 200
     assert vector_response.headers["content-type"].startswith("application/geo+json")
     vector_payload = vector_response.json()
+    assert len(vector_payload["features"]) == 3
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
 
 
-async def test_nws_hazards_active_warnings_overlay_serves_latest_published_geojson(
+async def test_nws_hazards_active_warnings_overlay_filters_to_convective_products(
     client: httpx.AsyncClient,
 ) -> None:
     response = await client.get("/api/v4/nws-hazards/active/warnings")
@@ -186,7 +227,8 @@ async def test_nws_hazards_active_warnings_overlay_serves_latest_published_geojs
     assert response.headers.get("x-nws-hazards-run") == "20260406_1730z"
     payload = response.json()
     assert payload["type"] == "FeatureCollection"
-    assert payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
+    labels = {feature["properties"]["risk_label"] for feature in payload["features"]}
+    assert labels == {"Tornado Warning", "Flash Flood Watch"}
 
 
 async def test_nws_hazards_alert_detail_endpoint_returns_normalized_nws_alert(
