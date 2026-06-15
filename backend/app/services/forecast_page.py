@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 OPEN_METEO_GEOCODING_BASE = "https://geocoding-api.open-meteo.com/v1"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 NWS_API_BASE = nws_service.NWS_API_BASE
+GEOCODE_COUNTRY_FILTER = "US,CA"
 
 REQUEST_TIMEOUT_SECONDS = 12.0
 MAX_RETRIES = 1
@@ -773,9 +774,10 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
         "count": 10,
         "language": "en",
         "format": "json",
+        "countryCode": GEOCODE_COUNTRY_FILTER,
     }]
     if re.fullmatch(r"\d{5}", normalized_query):
-        search_attempts[0]["countryCode"] = "US"
+        search_attempts[0]["countryCode"] = GEOCODE_COUNTRY_FILTER
 
     city_token = _city_token_from_query(normalized_query)
     state_token = _state_token_from_query(normalized_query)
@@ -785,7 +787,7 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
             "count": 10,
             "language": "en",
             "format": "json",
-            "countryCode": "US",
+            "countryCode": GEOCODE_COUNTRY_FILTER,
         })
 
     results: list[dict[str, Any]] = []
