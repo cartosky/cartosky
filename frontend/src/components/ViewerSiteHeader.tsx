@@ -434,7 +434,7 @@ function RegionUtilitySelect({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchGenerationRef = useRef(0);
   const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
   const openRef = useRef(open);
@@ -489,8 +489,7 @@ function RegionUtilitySelect({
       window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    searchAbortRef.current?.abort();
-    searchAbortRef.current = null;
+    searchGenerationRef.current += 1;
     setQuery("");
     setResults([]);
     setIsSearching(false);
@@ -558,8 +557,6 @@ function RegionUtilitySelect({
       window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    searchAbortRef.current?.abort();
-    searchAbortRef.current = null;
 
     if (!trimmed) {
       setResults([]);
@@ -573,28 +570,30 @@ function RegionUtilitySelect({
       return;
     }
 
-    const controller = new AbortController();
-    searchAbortRef.current = controller;
+    const generation = searchGenerationRef.current + 1;
+    searchGenerationRef.current = generation;
     setIsSearching(true);
     debounceRef.current = window.setTimeout(async () => {
       try {
         const response = await fetch(`${API_V4_BASE}/locations/search?q=${encodeURIComponent(trimmed)}`, {
-          signal: controller.signal,
+          cache: "no-store",
         });
+        if (searchGenerationRef.current !== generation) {
+          return;
+        }
         if (!response.ok) {
           throw new Error("Location search is temporarily unavailable.");
         }
         const payload = (await response.json()) as { results?: LocationSearchResult[] };
         setResults(Array.isArray(payload.results) ? payload.results.slice(0, 5) : []);
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (searchGenerationRef.current !== generation) {
           return;
         }
         setResults([]);
         showInlineError("Location search is temporarily unavailable.");
       } finally {
-        if (searchAbortRef.current === controller) {
-          searchAbortRef.current = null;
+        if (searchGenerationRef.current === generation) {
           setIsSearching(false);
         }
       }
@@ -605,7 +604,6 @@ function RegionUtilitySelect({
         window.clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
-      controller.abort();
     };
   }, [query, showInlineError]);
 
@@ -614,7 +612,7 @@ function RegionUtilitySelect({
       if (debounceRef.current) {
         window.clearTimeout(debounceRef.current);
       }
-      searchAbortRef.current?.abort();
+      searchGenerationRef.current += 1;
       if (errorTimerRef.current) {
         window.clearTimeout(errorTimerRef.current);
       }

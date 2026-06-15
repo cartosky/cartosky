@@ -32,6 +32,7 @@ OPEN_METEO_GEOCODING_BASE = "https://geocoding-api.open-meteo.com/v1"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 NWS_API_BASE = nws_service.NWS_API_BASE
 GEOCODE_COUNTRY_CODES = ["US", "CA"]
+GEOCODE_SEARCH_CACHE_NAMESPACE = "geocode-search-v2"
 
 REQUEST_TIMEOUT_SECONDS = 12.0
 MAX_RETRIES = 1
@@ -305,6 +306,14 @@ def _cache_set(namespace: str, key: str, value: Any, ttl: float) -> None:
     temp_path = path.with_suffix(".tmp")
     temp_path.write_text(json.dumps(payload))
     temp_path.replace(path)
+
+
+def _purge_cache_entry(namespace: str, key: str) -> None:
+    _memory_cache(namespace)._store.pop(key, None)
+    try:
+        _cache_file_path(namespace, key).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _build_client() -> httpx.AsyncClient:
@@ -765,9 +774,11 @@ def _score_geocode_result(result: dict[str, Any], query: str) -> float:
 async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
     normalized_query = query.strip()
     cache_key = normalized_query.lower()
-    cached = _cache_get("geocode-search", cache_key)
+    cached = _cache_get(GEOCODE_SEARCH_CACHE_NAMESPACE, cache_key)
     if cached:
         return cached
+    if cached is not None:
+        _purge_cache_entry(GEOCODE_SEARCH_CACHE_NAMESPACE, cache_key)
 
     search_attempts: list[dict[str, Any]] = [{
         "name": normalized_query,
@@ -822,7 +833,7 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
             break
 
     if results:
-        _cache_set("geocode-search", cache_key, results, GEOCODE_CACHE_TTL)
+        _cache_set(GEOCODE_SEARCH_CACHE_NAMESPACE, cache_key, results, GEOCODE_CACHE_TTL)
     return results
 
 

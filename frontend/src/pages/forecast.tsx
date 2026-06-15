@@ -1182,6 +1182,7 @@ export default function Forecast() {
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchGenerationRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
   const favoriteLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRestorePendingRef = useRef(initialRestorePending);
@@ -1261,19 +1262,40 @@ export default function Forecast() {
       return;
     }
 
+    const generation = searchGenerationRef.current + 1;
+    searchGenerationRef.current = generation;
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_V4_BASE}/locations/search?q=${encodeURIComponent(trimmed)}`);
+        const res = await fetch(`${API_V4_BASE}/locations/search?q=${encodeURIComponent(trimmed)}`, {
+          cache: "no-store",
+        });
+        if (searchGenerationRef.current !== generation) {
+          return;
+        }
         if (!res.ok) throw new Error();
         const data = (await res.json()) as { results?: LocationResult[] };
         const results = data.results ?? [];
         setSearchResults(results);
         setShowDropdown(results.length > 0);
-      } catch { setSearchResults([]); setShowDropdown(false); }
-      finally { setIsSearching(false); }
+      } catch {
+        if (searchGenerationRef.current !== generation) {
+          return;
+        }
+        setSearchResults([]);
+        setShowDropdown(false);
+      } finally {
+        if (searchGenerationRef.current === generation) {
+          setIsSearching(false);
+        }
+      }
     }, 300);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
   }, [query, pendingName]);
 
   async function loadByCoords(lat: number, lon: number, preferredName?: string, locationHint?: Partial<LocationResult>) {

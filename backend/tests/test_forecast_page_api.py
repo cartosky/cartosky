@@ -620,7 +620,12 @@ async def test_search_locations_city_state_query_falls_back_to_city_search(
 async def test_search_locations_ignores_stale_empty_geocode_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    forecast_page_service._cache_set("geocode-search", "renton", [], forecast_page_service.GEOCODE_CACHE_TTL)
+    forecast_page_service._cache_set(
+        forecast_page_service.GEOCODE_SEARCH_CACHE_NAMESPACE,
+        "renton",
+        [],
+        forecast_page_service.GEOCODE_CACHE_TTL,
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
