@@ -1146,6 +1146,7 @@ export function MapCanvas({
   vectorLineHaloEnabledRef.current = vectorLineHaloEnabled;
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
@@ -1175,7 +1176,7 @@ export function MapCanvas({
   const vectorAbortRef = useRef<AbortController | null>(null);
   const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
   const pendingVectorPayloadRef = useRef<{ url: string; payload: GeoJSON.FeatureCollection } | null>(null);
-  const activeVectorFetchUrlRef = useRef("");
+  const activeVectorFetchKeyRef = useRef("");
   const activeVectorBufferRef = useRef<0 | 1 | null>(null);
   const activeVectorUrlRef = useRef("");
   const vectorTransitionRafRef = useRef<number | null>(null);
@@ -2376,14 +2377,82 @@ export function MapCanvas({
 
   useEffect(() => {
     const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
-    const urlChanged = activeVectorFetchUrlRef.current !== normalizedUrl;
-    if (urlChanged) {
-      activeVectorFetchUrlRef.current = normalizedUrl;
+    const fetchKey = `${vectorFetchProductId}|${normalizedUrl}`;
+    const keyChanged = activeVectorFetchKeyRef.current !== fetchKey;
+
+    if (!normalizedUrl) {
+      activeVectorFetchKeyRef.current = "";
+      vectorRequestTokenRef.current += 1;
+      vectorAbortRef.current?.abort();
+      vectorAbortRef.current = null;
+      return;
+    }
+
+    if (keyChanged) {
+      activeVectorFetchKeyRef.current = fetchKey;
       vectorRequestTokenRef.current += 1;
       vectorAbortRef.current?.abort();
       vectorAbortRef.current = null;
     }
+
+    if (vectorCacheRef.current.has(normalizedUrl)) {
+      return;
+    }
+
+    if (vectorAbortRef.current !== null) {
+      return;
+    }
+
     const requestToken = vectorRequestTokenRef.current;
+    const controller = new AbortController();
+    vectorAbortRef.current = controller;
+
+    void productFetch(vectorFetchProductId, normalizedUrl, {
+      credentials: "omit",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Vector request failed: ${response.status}`);
+        }
+        return (await response.json()) as GeoJSON.FeatureCollection;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted || vectorRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        vectorCacheRef.current.set(normalizedUrl, payload);
+        while (vectorCacheRef.current.size > 16) {
+          const oldestKey = vectorCacheRef.current.keys().next().value;
+          if (!oldestKey) {
+            break;
+          }
+          vectorCacheRef.current.delete(oldestKey);
+        }
+        setVectorCacheRevision((revision) => revision + 1);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.warn("[map] vector fetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
+      })
+      .finally(() => {
+        if (vectorAbortRef.current === controller) {
+          vectorAbortRef.current = null;
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (vectorAbortRef.current === controller) {
+        vectorAbortRef.current = null;
+      }
+    };
+  }, [vectorFetchProductId, vectorGeoJsonUrl]);
+
+  useEffect(() => {
+    const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
 
     const map = mapRef.current;
     const mapReady = Boolean(
@@ -2494,7 +2563,6 @@ export function MapCanvas({
     };
 
     if (!normalizedUrl) {
-      activeVectorFetchUrlRef.current = "";
       pendingVectorPayloadRef.current = null;
       if (mapReady) {
         applyVectorData(0, EMPTY_FEATURE_COLLECTION);
@@ -2514,63 +2582,12 @@ export function MapCanvas({
     }
 
     const cached = vectorCacheRef.current.get(normalizedUrl);
-    if (cached) {
-      deliverVectorPayload(cached, normalizedUrl);
+    if (!cached) {
       return;
     }
 
-    if (!urlChanged) {
-      return;
-    }
-
-    const controller = new AbortController();
-    vectorAbortRef.current = controller;
-    const startedAtMs = startNetworkTimer();
-
-    void productFetch(vectorFetchProductId, normalizedUrl, {
-      credentials: "omit",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Vector request failed: ${response.status}`);
-        }
-        const payload = (await response.json()) as GeoJSON.FeatureCollection;
-        return payload;
-      })
-      .then((payload) => {
-        if (controller.signal.aborted || vectorRequestTokenRef.current !== requestToken) {
-          return;
-        }
-        vectorCacheRef.current.set(normalizedUrl, payload);
-        while (vectorCacheRef.current.size > 16) {
-          const oldestKey = vectorCacheRef.current.keys().next().value;
-          if (!oldestKey) {
-            break;
-          }
-          vectorCacheRef.current.delete(oldestKey);
-        }
-        deliverVectorPayload(payload, normalizedUrl);
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        console.warn("[map] vector fetch failed", { vectorGeoJsonUrl: normalizedUrl, error });
-      })
-      .finally(() => {
-        if (vectorAbortRef.current === controller) {
-          vectorAbortRef.current = null;
-        }
-      });
-
-    return () => {
-      controller.abort();
-      if (vectorAbortRef.current === controller) {
-        vectorAbortRef.current = null;
-      }
-    };
-  }, [basemapMode, isLoaded, vectorFetchProductId, vectorGeoJsonUrl]);
+    deliverVectorPayload(cached, normalizedUrl);
+  }, [basemapMode, isLoaded, vectorCacheRevision, vectorGeoJsonUrl]);
 
   useEffect(() => {
     const map = mapRef.current;
