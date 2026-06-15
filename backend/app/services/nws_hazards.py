@@ -1080,6 +1080,16 @@ def filter_geojson_for_mrms_warnings_overlay(payload: dict[str, Any]) -> dict[st
     }
 
 
+def _normalize_mrms_overlay_hover_label(label: str) -> str:
+    trimmed = str(label or "").strip()
+    if ": " not in trimmed:
+        return trimmed
+    left, right = trimmed.split(": ", 1)
+    if left.strip() == right.strip():
+        return left.strip()
+    return trimmed
+
+
 def build_mrms_warnings_overlay_geojson(
     data_root: Path,
     *,
@@ -1135,6 +1145,9 @@ def build_mrms_warnings_overlay_geojson(
             properties["stroke"] = fill_color
         properties["fill_opacity"] = mrms_radar_overlay_fill_opacity
         properties["stroke_width"] = mrms_radar_overlay_stroke_width
+        hover_label = properties.get("hover_label")
+        if isinstance(hover_label, str):
+            properties["hover_label"] = _normalize_mrms_overlay_hover_label(hover_label)
     overlay = filter_geojson_for_mrms_warnings_overlay(
         {
             "type": "FeatureCollection",

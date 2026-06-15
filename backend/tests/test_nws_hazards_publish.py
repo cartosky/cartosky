@@ -411,6 +411,54 @@ def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
         assert props["stroke_width"] == 3.5
 
 
+def test_mrms_overlay_dedupes_repeated_native_geometry_hover_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "svr-1",
+                    "status": "Actual",
+                    "event": "Severe Thunderstorm Warning",
+                    "headline": "Severe Thunderstorm Warning issued for Test County",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Test County",
+                    "geocode": {"UGC": ["TXC201"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-97.0, 32.0], [-96.8, 32.0], [-96.8, 32.2], [-97.0, 32.2], [-97.0, 32.0]]],
+                },
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        nws_hazards,
+        "sync_active_zone_reference",
+        lambda **_: nws_hazards.ZoneReferenceSyncResult(
+            path=zone_reference,
+            needed_zone_codes=(),
+            resolved_zone_codes=(),
+            signature="test",
+            updated=False,
+        ),
+    )
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    assert overlay["features"][0]["properties"]["hover_label"] == "Severe Thunderstorm Warning"
+
+
 def test_mrms_overlay_filters_alerts_before_zone_sync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
