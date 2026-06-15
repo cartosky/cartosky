@@ -1023,52 +1023,54 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
       {/* Controls group: selectors + divider + icons — all right-aligned */}
       <div className="flex shrink-0 items-end gap-1.5">
         {/* Primary selectors */}
-        <HeaderSelectField label="Product" icon={Boxes} tourTarget="product-selector">
-          <ModelPicker
-            value={model}
-            onChange={onModelChange}
-            options={models}
-            disabled={disabled}
-            placeholder="Model"
-            minWidth="min-w-[180px] max-w-[220px]"
-            panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-          />
-        </HeaderSelectField>
-        <HeaderSelectField label="Variable" icon={Layers} tourTarget="variable-picker">
-          <VariablePicker
-            modelId={model}
-            value={variable}
-            onChange={onVariableChange}
-            variableCatalog={displayVariableCatalog}
-            supportedVariableIds={supportedVariableIds}
-            disabled={disabled}
-            placeholder="Variable"
-            legend={legend}
-            minWidth="min-w-[180px] max-w-[320px]"
-            panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-          />
-        </HeaderSelectField>
-        <HeaderSelectField label="Run Time" icon={CalendarClock} tourTarget="run-selector">
-          <NavbarSelect
-            value={run}
-            onValueChange={onRunChange}
-            options={runMenuOptions}
-            disabled={disabled || runSelectionLocked}
-            placeholder="Run"
-            selectedLabelOverride={runDisplayLabel}
-            highlightState={!runSelectionLocked && hasNewerRunAvailable}
-            menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-            menuActionDescription={
-              !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                ? `${latestAvailableRunLabel} available`
-                : null
-            }
-            onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-            minWidth="min-w-[148px] max-w-[220px]"
-            contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-            contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
-          />
-        </HeaderSelectField>
+        <div data-tour-target="product-variable-run" className="flex items-end gap-1.5">
+          <HeaderSelectField label="Product" icon={Boxes}>
+            <ModelPicker
+              value={model}
+              onChange={onModelChange}
+              options={models}
+              disabled={disabled}
+              placeholder="Model"
+              minWidth="min-w-[180px] max-w-[220px]"
+              panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
+            />
+          </HeaderSelectField>
+          <HeaderSelectField label="Variable" icon={Layers}>
+            <VariablePicker
+              modelId={model}
+              value={variable}
+              onChange={onVariableChange}
+              variableCatalog={displayVariableCatalog}
+              supportedVariableIds={supportedVariableIds}
+              disabled={disabled}
+              placeholder="Variable"
+              legend={legend}
+              minWidth="min-w-[180px] max-w-[320px]"
+              panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
+            />
+          </HeaderSelectField>
+          <HeaderSelectField label="Run Time" icon={CalendarClock}>
+            <NavbarSelect
+              value={run}
+              onValueChange={onRunChange}
+              options={runMenuOptions}
+              disabled={disabled || runSelectionLocked}
+              placeholder="Run"
+              selectedLabelOverride={runDisplayLabel}
+              highlightState={!runSelectionLocked && hasNewerRunAvailable}
+              menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
+              menuActionDescription={
+                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
+                  ? `${latestAvailableRunLabel} available`
+                  : null
+              }
+              onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
+              minWidth="min-w-[148px] max-w-[220px]"
+              contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
+              contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
+            />
+          </HeaderSelectField>
+        </div>
 
         <div className={DESKTOP_ICON_CLUSTER_CLASSNAME}>
           <RegionUtilitySelect
@@ -1372,95 +1374,97 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   const selectionContent = (
     <>
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <div data-tour-target="mobile-product-row" className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <Boxes className="h-3 w-3" /> Product
-          </span>
-          <ModelPicker
-            value={model}
-            onChange={(nextModel) => { onModelChange(nextModel); closeSheet(); }}
-            options={models}
-            disabled={disabled}
-            placeholder="Product"
-            minWidth="w-full"
-            inlinePanel={isPhoneLayout}
-            inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
-            onOpenChange={(nextOpen) => {
-              if (!isPhoneLayout) {
-                setMobileModelPickerOpen(false);
-                return;
-              }
-              setMobileModelPickerOpen(nextOpen);
-              if (nextOpen) {
-                rememberPickerReturnSnap();
-                setMobileVariablePickerOpen(false);
-                setSheetSnap("full");
-              } else if (!mobileVariablePickerOpen) {
-                restorePickerReturnSnap();
-              }
-            }}
-          />
-        </div>
+        <div data-tour-target="mobile-product-variable-run" className="flex flex-col gap-3">
+          <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
+            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+              <Boxes className="h-3 w-3" /> Product
+            </span>
+            <ModelPicker
+              value={model}
+              onChange={(nextModel) => { onModelChange(nextModel); closeSheet(); }}
+              options={models}
+              disabled={disabled}
+              placeholder="Product"
+              minWidth="w-full"
+              inlinePanel={isPhoneLayout}
+              inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
+              onOpenChange={(nextOpen) => {
+                if (!isPhoneLayout) {
+                  setMobileModelPickerOpen(false);
+                  return;
+                }
+                setMobileModelPickerOpen(nextOpen);
+                if (nextOpen) {
+                  rememberPickerReturnSnap();
+                  setMobileVariablePickerOpen(false);
+                  setSheetSnap("full");
+                } else if (!mobileVariablePickerOpen) {
+                  restorePickerReturnSnap();
+                }
+              }}
+            />
+          </div>
 
-        <div data-tour-target="mobile-variable-row" className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <Layers className="h-3 w-3" /> Variable
-          </span>
-          <VariablePicker
-            modelId={model}
-            value={variable}
-            onChange={(v) => { onVariableChange(v); closeSheet(); }}
-            variableCatalog={displayVariables}
-            supportedVariableIds={supportedVariableIds}
-            disabled={disabled}
-            placeholder="Variable"
-            selectedLabelOverride={selectedVariableLabel}
-            legend={legend}
-            minWidth="w-full"
-            inlinePanel={isPhoneLayout}
-            inlinePanelClassName="max-h-[calc(90dvh-17rem)]"
-            onOpenChange={(open) => {
-              if (!isPhoneLayout) {
-                setMobileVariablePickerOpen(false);
-                return;
-              }
-              setMobileVariablePickerOpen(open);
-              if (open) {
-                rememberPickerReturnSnap();
-                setMobileModelPickerOpen(false);
-                setSheetSnap("full");
-              } else if (!mobileModelPickerOpen) {
-                restorePickerReturnSnap();
-              }
-            }}
-          />
-        </div>
+          <div className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
+            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+              <Layers className="h-3 w-3" /> Variable
+            </span>
+            <VariablePicker
+              modelId={model}
+              value={variable}
+              onChange={(v) => { onVariableChange(v); closeSheet(); }}
+              variableCatalog={displayVariables}
+              supportedVariableIds={supportedVariableIds}
+              disabled={disabled}
+              placeholder="Variable"
+              selectedLabelOverride={selectedVariableLabel}
+              legend={legend}
+              minWidth="w-full"
+              inlinePanel={isPhoneLayout}
+              inlinePanelClassName="max-h-[calc(90dvh-17rem)]"
+              onOpenChange={(open) => {
+                if (!isPhoneLayout) {
+                  setMobileVariablePickerOpen(false);
+                  return;
+                }
+                setMobileVariablePickerOpen(open);
+                if (open) {
+                  rememberPickerReturnSnap();
+                  setMobileModelPickerOpen(false);
+                  setSheetSnap("full");
+                } else if (!mobileModelPickerOpen) {
+                  restorePickerReturnSnap();
+                }
+              }}
+            />
+          </div>
 
-        <div data-tour-target="mobile-run-row" className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <CalendarClock className="h-3 w-3" /> Run Time
-          </span>
-          <NavbarSelect
-            value={run}
-            onValueChange={(v) => { onRunChange(v); closeSheet(); }}
-            options={runMenuOptions}
-            disabled={disabled || runSelectionLocked}
-            placeholder="Run Time"
-            selectedLabelOverride={runDisplayLabel}
-            highlightState={!runSelectionLocked && hasNewerRunAvailable}
-            menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-            menuActionDescription={
-              !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                ? `${latestAvailableRunLabel} available`
-                : null
-            }
-            onMenuAction={
-              !runSelectionLocked && hasNewerRunAvailable
-                ? () => { onViewLatestRun?.(); closeSheet(); }
-                : undefined
-            }
-            minWidth="w-full"
-          />
+          <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
+            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+              <CalendarClock className="h-3 w-3" /> Run Time
+            </span>
+            <NavbarSelect
+              value={run}
+              onValueChange={(v) => { onRunChange(v); closeSheet(); }}
+              options={runMenuOptions}
+              disabled={disabled || runSelectionLocked}
+              placeholder="Run Time"
+              selectedLabelOverride={runDisplayLabel}
+              highlightState={!runSelectionLocked && hasNewerRunAvailable}
+              menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
+              menuActionDescription={
+                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
+                  ? `${latestAvailableRunLabel} available`
+                  : null
+              }
+              onMenuAction={
+                !runSelectionLocked && hasNewerRunAvailable
+                  ? () => { onViewLatestRun?.(); closeSheet(); }
+                  : undefined
+              }
+              minWidth="w-full"
+            />
+          </div>
         </div>
 
         <div data-tour-target="mobile-region-row" className="space-y-1.5">

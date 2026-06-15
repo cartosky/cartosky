@@ -399,19 +399,9 @@ export default function App() {
       isWelcome: true,
     },
     {
-      targetSelector: '[data-tour-target="product-selector"]',
-      title: "Product",
-      body: "Switch between models, ensembles, forecasts, and observations",
-    },
-    {
-      targetSelector: '[data-tour-target="variable-picker"]',
-      title: "Variable",
-      body: "Choose your weather variable — precip, temperature, wind, snow, and derived products",
-    },
-    {
-      targetSelector: '[data-tour-target="run-selector"]',
-      title: "Run Time",
-      body: "Select a model run or stay pinned to the latest available",
+      targetSelector: '[data-tour-target="product-variable-run"]',
+      title: "Product, Variable & Run Time",
+      body: "Switch between models, ensembles, forecasts, and observations. Choose your weather variable — precip, temperature, wind, snow, and derived products. Select a model run or stay pinned to the latest available",
     },
     {
       targetSelector: '[data-tour-target="region-selector"]',
@@ -478,21 +468,9 @@ export default function App() {
       openMobileSheet: true,
     },
     {
-      targetSelector: '[data-tour-target="mobile-product-row"]',
-      title: "Product",
-      body: "Switch between models, ensembles, forecasts, and observations",
-      openMobileSheet: true,
-    },
-    {
-      targetSelector: '[data-tour-target="mobile-variable-row"]',
-      title: "Variable",
-      body: "Choose your weather variable — precip, temperature, wind, snow, and derived products",
-      openMobileSheet: true,
-    },
-    {
-      targetSelector: '[data-tour-target="mobile-run-row"]',
-      title: "Run Time",
-      body: "Select a model run or stay pinned to the latest available",
+      targetSelector: '[data-tour-target="mobile-product-variable-run"]',
+      title: "Product, Variable & Run Time",
+      body: "Switch between models, ensembles, forecasts, and observations. Choose your weather variable — precip, temperature, wind, snow, and derived products. Select a model run or stay pinned to the latest available",
       openMobileSheet: true,
     },
     {
