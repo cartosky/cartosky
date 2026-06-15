@@ -411,6 +411,125 @@ def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
         assert props["stroke_width"] == 3.5
 
 
+def test_mrms_overlay_filters_alerts_before_zone_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Denver County",
+                    "geocode": {"SAME": ["008031"], "UGC": ["COC031"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-105.0, 39.7], [-104.8, 39.7], [-104.8, 39.85], [-105.0, 39.85], [-105.0, 39.7]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "heat-1",
+                    "status": "Actual",
+                    "event": "Heat Advisory",
+                    "headline": "Heat Advisory",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Somewhere hot",
+                    "geocode": {"UGC": ["TXZ123"]},
+                },
+                "geometry": None,
+            },
+        ],
+    }
+    seen_payloads: list[dict] = []
+
+    def fake_sync_active_zone_reference(**kwargs) -> nws_hazards.ZoneReferenceSyncResult:
+        seen_payloads.append(kwargs["payload"])
+        return nws_hazards.ZoneReferenceSyncResult(
+            path=zone_reference,
+            needed_zone_codes=(),
+            resolved_zone_codes=(),
+            signature="test",
+            updated=False,
+        )
+
+    monkeypatch.setattr(nws_hazards, "sync_active_zone_reference", fake_sync_active_zone_reference)
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    assert len(overlay["features"]) == 1
+    assert len(seen_payloads) == 1
+    assert len(seen_payloads[0]["features"]) == 1
+    assert seen_payloads[0]["features"][0]["properties"]["id"] == "ffw-1"
+
+
+def test_mrms_overlay_build_uses_in_memory_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Denver County",
+                    "geocode": {"SAME": ["008031"], "UGC": ["COC031"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-105.0, 39.7], [-104.8, 39.7], [-104.8, 39.85], [-105.0, 39.85], [-105.0, 39.7]]],
+                },
+            },
+        ],
+    }
+    sync_calls = 0
+
+    def fake_sync_active_zone_reference(**kwargs) -> nws_hazards.ZoneReferenceSyncResult:
+        nonlocal sync_calls
+        sync_calls += 1
+        return nws_hazards.ZoneReferenceSyncResult(
+            path=zone_reference,
+            needed_zone_codes=(),
+            resolved_zone_codes=(),
+            signature="test",
+            updated=False,
+        )
+
+    monkeypatch.setattr(nws_hazards, "sync_active_zone_reference", fake_sync_active_zone_reference)
+
+    first = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    second = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    assert first == second
+    assert sync_calls == 1
+
+
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
     tmp_path: Path,
 ) -> None:

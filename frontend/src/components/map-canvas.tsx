@@ -1171,6 +1171,8 @@ export function MapCanvas({
   const vectorRequestTokenRef = useRef(0);
   const vectorAbortRef = useRef<AbortController | null>(null);
   const vectorCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
+  const pendingVectorPayloadRef = useRef<{ url: string; payload: GeoJSON.FeatureCollection } | null>(null);
+  const activeVectorFetchUrlRef = useRef("");
   const activeVectorBufferRef = useRef<0 | 1 | null>(null);
   const activeVectorUrlRef = useRef("");
   const vectorTransitionRafRef = useRef<number | null>(null);
@@ -2370,11 +2372,28 @@ export function MapCanvas({
   }, [contourGeoJsonUrl, contourPrefetchUrls, isDesktopLayout, isLoaded, productId]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
+    const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
+    const urlChanged = activeVectorFetchUrlRef.current !== normalizedUrl;
+    if (urlChanged) {
+      activeVectorFetchUrlRef.current = normalizedUrl;
+      vectorRequestTokenRef.current += 1;
+      vectorAbortRef.current?.abort();
+      vectorAbortRef.current = null;
     }
+    const requestToken = vectorRequestTokenRef.current;
+
+    const map = mapRef.current;
+    const mapReady = Boolean(
+      map
+      && isLoaded
+      && map.getSource(VECTOR_SOURCE_IDS[0])
+      && map.getSource(VECTOR_SOURCE_IDS[1]),
+    );
+
     const resolveVectorSource = (bufferIndex: 0 | 1) => {
+      if (!map) {
+        return null;
+      }
       const source = map.getSource(VECTOR_SOURCE_IDS[bufferIndex]) as maplibregl.GeoJSONSource | undefined;
       return source && typeof source.setData === "function" ? source : null;
     };
@@ -2387,12 +2406,18 @@ export function MapCanvas({
       return true;
     };
     const hideVectorBuffer = (bufferIndex: 0 | 1) => {
+      if (!map) {
+        return;
+      }
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], false);
       setLayerVisibility(map, VECTOR_HALO_LINE_LAYER_IDS[bufferIndex], false);
       setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], false);
       setVectorLayerFade(map, bufferIndex, 0, vectorLineHaloEnabledRef.current);
     };
     const showVectorBuffer = (bufferIndex: 0 | 1, fade: number) => {
+      if (!map) {
+        return;
+      }
       const haloEnabled = vectorLineHaloEnabledRef.current;
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], true);
       setLayerVisibility(map, VECTOR_HALO_LINE_LAYER_IDS[bufferIndex], haloEnabled);
@@ -2401,8 +2426,10 @@ export function MapCanvas({
     };
     const finishOnBuffer = (bufferIndex: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
       if (!applyVectorData(bufferIndex, payload)) {
+        pendingVectorPayloadRef.current = { url, payload };
         return;
       }
+      pendingVectorPayloadRef.current = null;
       showVectorBuffer(bufferIndex, 1);
       hideVectorBuffer((bufferIndex === 0 ? 1 : 0));
       activeVectorBufferRef.current = bufferIndex;
@@ -2410,6 +2437,11 @@ export function MapCanvas({
     };
     const startCrossfade = (fromBuffer: 0 | 1, toBuffer: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
       if (!applyVectorData(toBuffer, payload)) {
+        pendingVectorPayloadRef.current = { url, payload };
+        return;
+      }
+      pendingVectorPayloadRef.current = null;
+      if (!map) {
         return;
       }
       if (vectorTransitionRafRef.current !== null) {
@@ -2420,6 +2452,9 @@ export function MapCanvas({
       showVectorBuffer(fromBuffer, 1);
       const startedAt = performance.now();
       const tick = (now: number) => {
+        if (!map) {
+          return;
+        }
         const progress = Math.min(1, (now - startedAt) / VECTOR_TRANSITION_MS);
         setVectorLayerFade(map, fromBuffer, 1 - progress);
         setVectorLayerFade(map, toBuffer, progress);
@@ -2434,41 +2469,53 @@ export function MapCanvas({
       };
       vectorTransitionRafRef.current = window.requestAnimationFrame(tick);
     };
-
-    if (!resolveVectorSource(0) || !resolveVectorSource(1)) {
-      return;
-    }
-
-    const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
-    const requestToken = ++vectorRequestTokenRef.current;
-    vectorAbortRef.current?.abort();
-    vectorAbortRef.current = null;
+    const deliverVectorPayload = (payload: GeoJSON.FeatureCollection, url: string) => {
+      if (!mapReady) {
+        pendingVectorPayloadRef.current = { url, payload };
+        return;
+      }
+      if (activeVectorUrlRef.current === url && activeVectorBufferRef.current !== null) {
+        const activeBuffer = activeVectorBufferRef.current;
+        showVectorBuffer(activeBuffer, 1);
+        hideVectorBuffer(activeBuffer === 0 ? 1 : 0);
+        pendingVectorPayloadRef.current = null;
+        return;
+      }
+      const activeBuffer = activeVectorBufferRef.current;
+      if (activeBuffer === null) {
+        finishOnBuffer(0, payload, url);
+        return;
+      }
+      startCrossfade(activeBuffer, activeBuffer === 0 ? 1 : 0, payload, url);
+    };
 
     if (!normalizedUrl) {
-      applyVectorData(0, EMPTY_FEATURE_COLLECTION);
-      applyVectorData(1, EMPTY_FEATURE_COLLECTION);
-      hideVectorBuffer(0);
-      hideVectorBuffer(1);
-      activeVectorBufferRef.current = null;
-      activeVectorUrlRef.current = "";
+      activeVectorFetchUrlRef.current = "";
+      pendingVectorPayloadRef.current = null;
+      if (mapReady) {
+        applyVectorData(0, EMPTY_FEATURE_COLLECTION);
+        applyVectorData(1, EMPTY_FEATURE_COLLECTION);
+        hideVectorBuffer(0);
+        hideVectorBuffer(1);
+        activeVectorBufferRef.current = null;
+        activeVectorUrlRef.current = "";
+      }
       return;
     }
 
-    if (activeVectorUrlRef.current === normalizedUrl && activeVectorBufferRef.current !== null) {
-      const activeBuffer = activeVectorBufferRef.current;
-      showVectorBuffer(activeBuffer, 1);
-      hideVectorBuffer(activeBuffer === 0 ? 1 : 0);
+    const pending = pendingVectorPayloadRef.current;
+    if (pending?.url === normalizedUrl) {
+      deliverVectorPayload(pending.payload, normalizedUrl);
       return;
     }
 
     const cached = vectorCacheRef.current.get(normalizedUrl);
     if (cached) {
-      const activeBuffer = activeVectorBufferRef.current;
-      if (activeBuffer === null) {
-        finishOnBuffer(0, cached, normalizedUrl);
-      } else {
-        startCrossfade(activeBuffer, activeBuffer === 0 ? 1 : 0, cached, normalizedUrl);
-      }
+      deliverVectorPayload(cached, normalizedUrl);
+      return;
+    }
+
+    if (!urlChanged) {
       return;
     }
 
@@ -2499,12 +2546,7 @@ export function MapCanvas({
           }
           vectorCacheRef.current.delete(oldestKey);
         }
-        const activeBuffer = activeVectorBufferRef.current;
-        if (activeBuffer === null) {
-          finishOnBuffer(0, payload, normalizedUrl);
-          return;
-        }
-        startCrossfade(activeBuffer, activeBuffer === 0 ? 1 : 0, payload, normalizedUrl);
+        deliverVectorPayload(payload, normalizedUrl);
       })
       .catch((error) => {
         if (controller.signal.aborted) {

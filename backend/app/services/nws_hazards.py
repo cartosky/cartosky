@@ -43,6 +43,18 @@ MRMS_WARNINGS_OVERLAY_EVENT_LABELS: frozenset[str] = frozenset({
     "severe thunderstorm watch",
     "flash flood watch",
 })
+MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS = 45.0
+EMPTY_FEATURE_COLLECTION: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+
+
+@dataclass(frozen=True)
+class _MrmsWarningsOverlayCacheEntry:
+    fingerprint: str
+    cached_at: float
+    payload: dict[str, Any]
+
+
+_mrms_warnings_overlay_cache: _MrmsWarningsOverlayCacheEntry | None = None
 
 STATE_ABBR_TO_FIPS: dict[str, str] = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09", "DE": "10",
@@ -1009,6 +1021,48 @@ def feature_matches_mrms_warnings_overlay(properties: dict[str, Any]) -> bool:
     return False
 
 
+def _alert_matches_mrms_warnings_overlay_event(alert: NormalizedHazardAlert) -> bool:
+    return alert.event.strip().lower() in MRMS_WARNINGS_OVERLAY_EVENT_LABELS
+
+
+def filter_nws_alerts_payload_for_mrms_overlay(payload: dict[str, Any]) -> dict[str, Any]:
+    features_raw = payload.get("features")
+    if not isinstance(features_raw, list):
+        return dict(EMPTY_FEATURE_COLLECTION)
+    filtered_features = [
+        feature
+        for feature in features_raw
+        if isinstance(feature, dict)
+        and (alert := _normalize_alert(feature)) is not None
+        and _alert_matches_mrms_warnings_overlay_event(alert)
+    ]
+    return {
+        "type": "FeatureCollection",
+        "features": filtered_features,
+        **({"updated": payload["updated"]} if isinstance(payload.get("updated"), str) else {}),
+    }
+
+
+def _mrms_warnings_overlay_cache_get(fingerprint: str) -> dict[str, Any] | None:
+    entry = _mrms_warnings_overlay_cache
+    if entry is None:
+        return None
+    if entry.fingerprint != fingerprint:
+        return None
+    if time.monotonic() - entry.cached_at > MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS:
+        return None
+    return entry.payload
+
+
+def _mrms_warnings_overlay_cache_set(fingerprint: str, payload: dict[str, Any]) -> None:
+    global _mrms_warnings_overlay_cache
+    _mrms_warnings_overlay_cache = _MrmsWarningsOverlayCacheEntry(
+        fingerprint=fingerprint,
+        cached_at=time.monotonic(),
+        payload=payload,
+    )
+
+
 def filter_geojson_for_mrms_warnings_overlay(payload: dict[str, Any]) -> dict[str, Any]:
     features_raw = payload.get("features")
     if not isinstance(features_raw, list):
@@ -1043,17 +1097,27 @@ def build_mrms_warnings_overlay_geojson(
         timeout_seconds=timeout_seconds,
         api_base=api_base,
     )
+    fingerprint = _build_alert_fingerprint(resolved_payload)
+    cached_overlay = _mrms_warnings_overlay_cache_get(fingerprint)
+    if cached_overlay is not None:
+        return cached_overlay
+
+    overlay_source_payload = filter_nws_alerts_payload_for_mrms_overlay(resolved_payload)
+    if not overlay_source_payload.get("features"):
+        _mrms_warnings_overlay_cache_set(fingerprint, dict(EMPTY_FEATURE_COLLECTION))
+        return dict(EMPTY_FEATURE_COLLECTION)
+
     county_path = default_county_reference_path(data_root)
     zone_path = default_zone_reference_path(data_root)
     sync_active_zone_reference(
-        payload=resolved_payload,
+        payload=overlay_source_payload,
         zone_reference_path=zone_path,
         timeout_seconds=timeout_seconds,
         api_base=api_base,
     )
     try:
         frame = build_active_hazards_frame(
-            resolved_payload,
+            overlay_source_payload,
             county_reference_path=county_path,
             zone_reference_path=zone_path,
             prefer_native_polygon_geometry=True,
@@ -1077,12 +1141,30 @@ def build_mrms_warnings_overlay_geojson(
             properties["stroke"] = fill_color
         properties["fill_opacity"] = mrms_radar_overlay_fill_opacity
         properties["stroke_width"] = mrms_radar_overlay_stroke_width
-    return filter_geojson_for_mrms_warnings_overlay(
+    overlay = filter_geojson_for_mrms_warnings_overlay(
         {
             "type": "FeatureCollection",
             "features": features,
         }
     )
+    _mrms_warnings_overlay_cache_set(fingerprint, overlay)
+    return overlay
+
+
+def warm_mrms_warnings_overlay_cache(
+    data_root: Path,
+    *,
+    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
+    api_base: str = NWS_API_BASE,
+) -> None:
+    try:
+        build_mrms_warnings_overlay_geojson(
+            data_root,
+            timeout_seconds=timeout_seconds,
+            api_base=api_base,
+        )
+    except NWSHazardsError as exc:
+        logger.warning("MRMS warnings overlay cache warm skipped: %s", exc)
 
 
 def _legend_entries_for_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:

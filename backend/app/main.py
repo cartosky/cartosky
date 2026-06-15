@@ -5,6 +5,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv("backend/.env.local")
 import hashlib
+import asyncio
 import io
 import json
 import logging
@@ -517,6 +518,19 @@ async def startup() -> None:
         await screenshot_service._ensure_browser()
     except Exception as exc:
         logger.warning("Screenshot service failed to warm browser: %s", exc)
+    asyncio.create_task(_warm_mrms_warnings_overlay_cache())
+
+
+async def _warm_mrms_warnings_overlay_cache() -> None:
+    from .services import nws_hazards as nws_hazards_service
+
+    try:
+        await run_in_threadpool(
+            nws_hazards_service.warm_mrms_warnings_overlay_cache,
+            DATA_ROOT,
+        )
+    except Exception as exc:
+        logger.warning("MRMS warnings overlay cache warm failed: %s", exc)
 
 
 @app.on_event("shutdown")
