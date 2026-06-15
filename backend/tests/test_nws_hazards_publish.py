@@ -411,13 +411,14 @@ def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
         assert props["stroke_width"] == 3.5
 
 
-def test_mrms_overlay_filters_alerts_before_zone_sync(
+def test_mrms_overlay_skips_zone_sync_and_filters_non_convective_products(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     nws_hazards._mrms_warnings_overlay_cache = None
     county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
     zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    del county_reference, zone_reference
     payload = {
         "type": "FeatureCollection",
         "updated": "2026-04-06T17:30:00Z",
@@ -457,25 +458,19 @@ def test_mrms_overlay_filters_alerts_before_zone_sync(
             },
         ],
     }
-    seen_payloads: list[dict] = []
+    sync_calls = 0
 
-    def fake_sync_active_zone_reference(**kwargs) -> nws_hazards.ZoneReferenceSyncResult:
-        seen_payloads.append(kwargs["payload"])
-        return nws_hazards.ZoneReferenceSyncResult(
-            path=zone_reference,
-            needed_zone_codes=(),
-            resolved_zone_codes=(),
-            signature="test",
-            updated=False,
-        )
+    def fake_sync_active_zone_reference(**_kwargs) -> nws_hazards.ZoneReferenceSyncResult:
+        nonlocal sync_calls
+        sync_calls += 1
+        raise AssertionError("MRMS overlay live path should not sync zone references")
 
     monkeypatch.setattr(nws_hazards, "sync_active_zone_reference", fake_sync_active_zone_reference)
 
     overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
     assert len(overlay["features"]) == 1
-    assert len(seen_payloads) == 1
-    assert len(seen_payloads[0]["features"]) == 1
-    assert seen_payloads[0]["features"][0]["properties"]["id"] == "ffw-1"
+    assert overlay["features"][0]["properties"]["risk_label"] == "Flash Flood Warning"
+    assert sync_calls == 0
 
 
 def test_mrms_overlay_build_uses_in_memory_cache(
@@ -527,7 +522,7 @@ def test_mrms_overlay_build_uses_in_memory_cache(
     first = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
     second = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
     assert first == second
-    assert sync_calls == 1
+    assert sync_calls == 0
 
 
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
