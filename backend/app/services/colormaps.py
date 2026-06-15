@@ -211,24 +211,32 @@ GOES_IR13_COLORS = [color for _, color in GOES_IR13_LEGEND_STOPS]
 GOES_IR13_RANGE = (GOES_IR13_LEVELS[0], GOES_IR13_LEVELS[-1])
 
 GOES_WV9_LEGEND_STOPS = [
-    (-79.0, "#ffffff"),  # p01 cold cloud tops - white
-    (-72.0, "#e0e0e0"),
-    (-65.0, "#c0c0ff"),  # cold dry - pale blue
-    (-59.0, "#8080ff"),  # p01 - blue
-    (-54.0, "#4040e0"),
-    (-49.0, "#2020c0"),  # p05 - dark blue
-    (-44.0, "#1060c0"),  # p10 - medium blue
-    (-39.0, "#1090d0"),  # p20
-    (-36.0, "#10b0b0"),  # p30 - teal
-    (-32.0, "#10c060"),  # p40 - teal-green
-    (-29.0, "#60c010"),  # p50 - yellow-green
-    (-27.0, "#a0b000"),
-    (-26.0, "#d0a000"),  # p60 - gold
-    (-24.0, "#f09000"),  # p70 - orange-gold
-    (-21.0, "#f0c000"),  # p80 - yellow
-    (-19.0, "#f8e000"),  # p90
-    (-15.0, "#ffff40"),  # p99 - bright yellow
-    (-11.0, "#ffff00"),  # max - pure yellow
+    (-79.0, "#54fdfc"),  # coldest - cyan (COD -109C anchor, data floor)
+    (-74.0, "#3fd4a0"),  # → interpolated toward -75C green
+    (-69.0, "#2aab54"),  #
+    (-65.0, "#1d6e02"),  # COD -75C anchor - dark green
+    (-62.0, "#3d8a28"),  # → interpolating toward white
+    (-59.0, "#6aaa60"),  # COD in-between ~-75 to -47
+    (-56.0, "#9ac898"),
+    (-53.0, "#c8e4c8"),
+    (-50.0, "#f0f4f0"),
+    (-47.0, "#fdfdfe"),  # COD -47C anchor - white
+    (-44.0, "#c8c8e8"),  # → interpolating toward blue
+    (-41.0, "#9898d8"),
+    (-38.0, "#6868c0"),  # COD in-between ~-47 to -30
+    (-35.0, "#3838b0"),
+    (-32.0, "#1818a8"),
+    (-30.0, "#1000a6"),  # COD -30C anchor - dark blue
+    (-28.0, "#2c2c80"),  # → interpolating toward yellow
+    (-26.0, "#585840"),  # COD in-between ~-30 to -15.5
+    (-24.0, "#888820"),  #
+    (-22.0, "#b8b010"),
+    (-20.0, "#d8d008"),
+    (-18.0, "#f8f001"),
+    (-15.5, "#fdfd01"),  # COD -15.5C anchor - yellow
+    (-13.0, "#f9c001"),  # → interpolating toward orange-red
+    (-11.5, "#f67d01"),  # COD in-between
+    (-11.2, "#b90000"),  # COD 0C anchor mapped to data max
 ]
 GOES_WV9_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_WV9_LEGEND_STOPS]
 GOES_WV9_COLORS = [color for _, color in GOES_WV9_LEGEND_STOPS]
