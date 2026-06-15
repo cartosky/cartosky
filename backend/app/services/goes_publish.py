@@ -218,7 +218,7 @@ def publish_goes_bundle(
         run_id=run_id,
         exclude_var_id=var_id,
     )
-    _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
+    _prepare_stage_run_dir(data_root=data_root, run_id=run_id, replace_var_id=var_id)
 
     merged_by_slot_time: dict[datetime, GOESPublishedFrame | GOESBundleFrame] = {}
     for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
@@ -501,11 +501,29 @@ def _forecast_hour_from_artifact_name(path: Path) -> int | None:
         return None
 
 
-def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:
+def _prepare_stage_run_dir(
+    *, data_root: Path, run_id: str, replace_var_id: str | None = None
+) -> None:
     stage_run = data_root / "staging" / GOES_EAST_MODEL_ID / run_id
     if stage_run.exists():
         shutil.rmtree(stage_run, ignore_errors=True)
     stage_run.mkdir(parents=True, exist_ok=True)
+
+    published_run = data_root / "published" / GOES_EAST_MODEL_ID / run_id
+    if published_run.is_dir():
+        for var_dir in published_run.iterdir():
+            if not var_dir.is_dir():
+                continue
+            if replace_var_id and var_dir.name == replace_var_id:
+                continue
+            target_var_dir = stage_run / var_dir.name
+            target_var_dir.mkdir(parents=True, exist_ok=True)
+            for src_file in var_dir.rglob("*"):
+                if src_file.is_file():
+                    rel = src_file.relative_to(var_dir)
+                    dst_file = target_var_dir / rel
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    _link_or_copy(src_file, dst_file)
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
