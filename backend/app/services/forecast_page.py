@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 OPEN_METEO_GEOCODING_BASE = "https://geocoding-api.open-meteo.com/v1"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 NWS_API_BASE = nws_service.NWS_API_BASE
-GEOCODE_COUNTRY_FILTER = "US,CA"
+GEOCODE_COUNTRY_CODES = ["US", "CA"]
 
 REQUEST_TIMEOUT_SECONDS = 12.0
 MAX_RETRIES = 1
@@ -774,10 +774,7 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
         "count": 10,
         "language": "en",
         "format": "json",
-        "countryCode": GEOCODE_COUNTRY_FILTER,
     }]
-    if re.fullmatch(r"\d{5}", normalized_query):
-        search_attempts[0]["countryCode"] = GEOCODE_COUNTRY_FILTER
 
     city_token = _city_token_from_query(normalized_query)
     state_token = _state_token_from_query(normalized_query)
@@ -787,16 +784,35 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
             "count": 10,
             "language": "en",
             "format": "json",
-            "countryCode": GEOCODE_COUNTRY_FILTER,
         })
 
     results: list[dict[str, Any]] = []
     for params in search_attempts:
-        payload = await _request_json(client, f"{OPEN_METEO_GEOCODING_BASE}/search", params=params)
-        candidate_results = payload.get("results") or []
-        if not isinstance(candidate_results, list):
-            candidate_results = []
-        candidate_results = [item for item in candidate_results if isinstance(item, dict)]
+        payloads = await asyncio.gather(
+            *[
+                _request_json(
+                    client,
+                    f"{OPEN_METEO_GEOCODING_BASE}/search",
+                    params={**params, "countryCode": country_code},
+                )
+                for country_code in GEOCODE_COUNTRY_CODES
+            ]
+        )
+        candidate_results: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
+        for payload in payloads:
+            attempt_results = payload.get("results") or []
+            if not isinstance(attempt_results, list):
+                attempt_results = []
+            for item in attempt_results:
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("id")
+                if item_id is not None:
+                    if item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+                candidate_results.append(item)
         if candidate_results:
             results = sorted(
                 candidate_results,
@@ -805,7 +821,8 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
             )
             break
 
-    _cache_set("geocode-search", cache_key, results, GEOCODE_CACHE_TTL)
+    if results:
+        _cache_set("geocode-search", cache_key, results, GEOCODE_CACHE_TTL)
     return results
 
 
