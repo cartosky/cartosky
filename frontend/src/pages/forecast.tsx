@@ -1743,12 +1743,6 @@ export default function Forecast() {
                       Open-Meteo carries the longer-range daily outlook so the page stays useful beyond the official forecast window.
                     </div>
                   </div>
-                  <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/16 p-5 backdrop-blur-sm">
-                    <div className="text-sm font-medium text-white">Fast Entry</div>
-                    <div className="mt-2 max-w-sm text-sm leading-7 text-white/56">
-                      Search by city, zip code, or jump straight in with saved, recent, or featured U.S. locations on the left.
-                    </div>
-                  </div>
                 </div>
               </div>
             )}

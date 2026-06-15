@@ -435,6 +435,7 @@ function RegionUtilitySelect({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const openRef = useRef(open);
   const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -497,6 +498,10 @@ function RegionUtilitySelect({
   }, [clearInlineError]);
 
   useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
     if (!open) {
       return;
     }
@@ -546,7 +551,7 @@ function RegionUtilitySelect({
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (!open) {
+    if (!openRef.current) {
       return;
     }
     if (debounceRef.current) {
@@ -590,8 +595,8 @@ function RegionUtilitySelect({
       } finally {
         if (searchAbortRef.current === controller) {
           searchAbortRef.current = null;
+          setIsSearching(false);
         }
-        setIsSearching(false);
       }
     }, 300);
 
@@ -602,7 +607,7 @@ function RegionUtilitySelect({
       }
       controller.abort();
     };
-  }, [open, query, showInlineError]);
+  }, [query, showInlineError]);
 
   useEffect(() => {
     return () => {
