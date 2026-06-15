@@ -121,7 +121,11 @@ const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
 const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
+const VECTOR_HALO_LINE_LAYER_IDS = ["twf-vectors-halo-a", "twf-vectors-halo-b"] as const;
 const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
+const VECTOR_HALO_LINE_COLOR = "#000000";
+const VECTOR_HALO_LINE_BASE_OPACITY = 0.6;
+const VECTOR_HALO_LINE_WIDTH_OFFSET = 2;
 const VECTOR_TRANSITION_MS = 180;
 const STATE_BOUNDARY_SOURCE_ID = "twf-boundaries";
 const COASTLINE_LAYER_ID = "twf-coastline";
@@ -683,7 +687,9 @@ function buildVectorBufferLayers(): LayerSpecification[] {
   return [0, 1].flatMap((bufferIndex) => {
     const sourceId = VECTOR_SOURCE_IDS[bufferIndex as 0 | 1];
     const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex as 0 | 1];
+    const haloLineLayerId = VECTOR_HALO_LINE_LAYER_IDS[bufferIndex as 0 | 1];
     const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex as 0 | 1];
+    const strokeWidthExpression = ["coalesce", ["get", "stroke_width"], 1.25] as any;
     return [
       {
         id: fillLayerId,
@@ -699,6 +705,22 @@ function buildVectorBufferLayers(): LayerSpecification[] {
         },
       } as LayerSpecification,
       {
+        id: haloLineLayerId,
+        type: "line",
+        source: sourceId,
+        layout: {
+          visibility: "none",
+          "line-join": "round",
+          "line-cap": "round",
+          "line-sort-key": ["coalesce", ["get", "sort_rank"], 0] as any,
+        },
+        paint: {
+          "line-color": VECTOR_HALO_LINE_COLOR,
+          "line-opacity": 0,
+          "line-width": ["+", strokeWidthExpression, VECTOR_HALO_LINE_WIDTH_OFFSET] as any,
+        },
+      } as LayerSpecification,
+      {
         id: lineLayerId,
         type: "line",
         source: sourceId,
@@ -711,7 +733,7 @@ function buildVectorBufferLayers(): LayerSpecification[] {
         paint: {
           "line-color": ["coalesce", ["get", "stroke"], "#000000"] as any,
           "line-opacity": 0,
-          "line-width": ["coalesce", ["get", "stroke_width"], 1.25] as any,
+          "line-width": strokeWidthExpression,
         },
       } as LayerSpecification,
     ];
@@ -722,14 +744,23 @@ function vectorFillOpacityExpression(fade: number) {
   return ["*", Math.max(0, Math.min(1, fade)), ["coalesce", ["get", "fill_opacity"], 0.65]] as const;
 }
 
-function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: number) {
+function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: number, haloEnabled = false) {
+  const clampedFade = Math.max(0, Math.min(1, fade));
   const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex];
+  const haloLineLayerId = VECTOR_HALO_LINE_LAYER_IDS[bufferIndex];
   const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex];
   if (map.getLayer(fillLayerId)) {
-    map.setPaintProperty(fillLayerId, "fill-opacity", vectorFillOpacityExpression(fade));
+    map.setPaintProperty(fillLayerId, "fill-opacity", vectorFillOpacityExpression(clampedFade));
+  }
+  if (map.getLayer(haloLineLayerId)) {
+    map.setPaintProperty(
+      haloLineLayerId,
+      "line-opacity",
+      haloEnabled ? VECTOR_HALO_LINE_BASE_OPACITY * clampedFade : 0,
+    );
   }
   if (map.getLayer(lineLayerId)) {
-    map.setPaintProperty(lineLayerId, "line-opacity", Math.max(0, Math.min(1, fade)));
+    map.setPaintProperty(lineLayerId, "line-opacity", clampedFade);
   }
 }
 
@@ -960,6 +991,7 @@ type MapCanvasProps = {
   pressureCenters?: PressureCenter[];
   vectorGeoJsonUrl?: string | null;
   vectorPrefetchUrls?: string[];
+  vectorLineHaloEnabled?: boolean;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
   showZoomControls?: boolean;
@@ -1027,6 +1059,7 @@ export function MapCanvas({
   pressureCenters = [],
   vectorGeoJsonUrl,
   vectorPrefetchUrls = [],
+  vectorLineHaloEnabled = false,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
   showZoomControls = false,
@@ -1106,6 +1139,8 @@ export function MapCanvas({
     }
     return productId;
   }, [productId, vectorGeoJsonUrl]);
+  const vectorLineHaloEnabledRef = useRef(vectorLineHaloEnabled);
+  vectorLineHaloEnabledRef.current = vectorLineHaloEnabled;
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
@@ -1824,6 +1859,11 @@ export function MapCanvas({
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
       }
     }
+    for (const layerId of VECTOR_HALO_LINE_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
     for (const layerId of VECTOR_LINE_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
@@ -2348,13 +2388,16 @@ export function MapCanvas({
     };
     const hideVectorBuffer = (bufferIndex: 0 | 1) => {
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], false);
+      setLayerVisibility(map, VECTOR_HALO_LINE_LAYER_IDS[bufferIndex], false);
       setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], false);
-      setVectorLayerFade(map, bufferIndex, 0);
+      setVectorLayerFade(map, bufferIndex, 0, vectorLineHaloEnabledRef.current);
     };
     const showVectorBuffer = (bufferIndex: 0 | 1, fade: number) => {
+      const haloEnabled = vectorLineHaloEnabledRef.current;
       setLayerVisibility(map, VECTOR_FILL_LAYER_IDS[bufferIndex], true);
+      setLayerVisibility(map, VECTOR_HALO_LINE_LAYER_IDS[bufferIndex], haloEnabled);
       setLayerVisibility(map, VECTOR_LINE_LAYER_IDS[bufferIndex], true);
-      setVectorLayerFade(map, bufferIndex, fade);
+      setVectorLayerFade(map, bufferIndex, fade, haloEnabled);
     };
     const finishOnBuffer = (bufferIndex: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
       if (!applyVectorData(bufferIndex, payload)) {
@@ -2482,6 +2525,34 @@ export function MapCanvas({
       }
     };
   }, [basemapMode, isLoaded, vectorFetchProductId, vectorGeoJsonUrl]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    for (const bufferIndex of [0, 1] as const) {
+      const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex];
+      const haloLayerId = VECTOR_HALO_LINE_LAYER_IDS[bufferIndex];
+      if (!map.getLayer(fillLayerId) || !map.getLayer(haloLayerId)) {
+        continue;
+      }
+      const fillVisible = map.getLayoutProperty(fillLayerId, "visibility") === "visible";
+      if (!fillVisible) {
+        setLayerVisibility(map, haloLayerId, false);
+        map.setPaintProperty(haloLayerId, "line-opacity", 0);
+        continue;
+      }
+      const lineOpacity = Number(map.getPaintProperty(VECTOR_LINE_LAYER_IDS[bufferIndex], "line-opacity") ?? 0);
+      const fade = Math.max(0, Math.min(1, lineOpacity));
+      setLayerVisibility(map, haloLayerId, vectorLineHaloEnabled);
+      map.setPaintProperty(
+        haloLayerId,
+        "line-opacity",
+        vectorLineHaloEnabled ? VECTOR_HALO_LINE_BASE_OPACITY * fade : 0,
+      );
+    }
+  }, [isLoaded, vectorLineHaloEnabled, vectorGeoJsonUrl]);
 
   useEffect(() => {
     if (!isLoaded || vectorPrefetchUrls.length === 0) {

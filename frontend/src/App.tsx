@@ -121,6 +121,7 @@ import {
   buildLegend,
   buildNwsActiveWarningsUrl,
   buildVectorLayerUrl,
+  defaultBasemapModeForSelection,
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
   resolveScrubDisplayLagHours,
@@ -357,6 +358,13 @@ export default function App() {
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
   const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  const skipBasemapAutoDefaultRef = useRef(
+    typeof window !== "undefined"
+      && (() => {
+        const basemap = new URLSearchParams(window.location.search).get("basemap");
+        return basemap === "dark" || basemap === "light";
+      })(),
+  );
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -370,6 +378,16 @@ export default function App() {
       setBasemapMode(basemap);
     }
   }, [setBasemapMode, setLegendVisible]);
+  useEffect(() => {
+    if (!model || !variable) {
+      return;
+    }
+    if (skipBasemapAutoDefaultRef.current) {
+      skipBasemapAutoDefaultRef.current = false;
+      return;
+    }
+    setBasemapMode(defaultBasemapModeForSelection(model, variable));
+  }, [model, setBasemapMode, variable]);
   const isPageVisible = usePageVisibility();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4807,6 +4825,7 @@ export default function App() {
             pressureCenters={pressureCenters}
             vectorGeoJsonUrl={effectiveVectorGeoJsonUrl}
           vectorPrefetchUrls={vectorPrefetchUrls}
+          vectorLineHaloEnabled={mrmsNwsWarningsEnabled}
           anchorGeoJson={anchorDisplayGeoJson}
           anchorBatchPoints={
             anchorValueDisplayEnabled && pointLabelsEnabled ? anchorBatchPoints : []

@@ -334,6 +334,15 @@ export function writeBasemapModePreference(mode: BasemapMode): void {
   }
 }
 
+export const MRMS_DARK_BASEMAP_VARIABLES = new Set(["reflectivity", "mrms_radar_ptype"]);
+
+export function defaultBasemapModeForSelection(model: string, variable: string): BasemapMode {
+  if (model === "mrms" && MRMS_DARK_BASEMAP_VARIABLES.has(variable)) {
+    return "dark";
+  }
+  return "light";
+}
+
 export function readLegendVisibilityPreference(): boolean | null {
   if (typeof window === "undefined") {
     return null;
