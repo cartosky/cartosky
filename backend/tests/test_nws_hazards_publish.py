@@ -399,15 +399,16 @@ def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
     )
 
     overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
-    colors = {
-        feature["properties"]["risk_label"]: (
-            feature["properties"]["fill"],
-            feature["properties"]["stroke"],
-        )
+    by_label = {
+        feature["properties"]["risk_label"]: feature["properties"]
         for feature in overlay["features"]
     }
-    assert colors["Flash Flood Warning"] == ("#00FF00", nws_hazards._darken_hex_color("#00FF00"))
-    assert colors["Flash Flood Watch"] == ("#00FF00", nws_hazards._darken_hex_color("#00FF00"))
+    for label in ("Flash Flood Warning", "Flash Flood Watch"):
+        props = by_label[label]
+        assert props["fill"] == "#00FF00"
+        assert props["stroke"] == "#00FF00"
+        assert props["fill_opacity"] == 0.1
+        assert props["stroke_width"] == 3.5
 
 
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(

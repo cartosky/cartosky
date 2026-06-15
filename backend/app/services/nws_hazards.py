@@ -1033,16 +1033,12 @@ def build_mrms_warnings_overlay_geojson(
     api_base: str = NWS_API_BASE,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    mrms_color_overrides: dict[str, dict[str, str]] = {
-        "Flash Flood Warning": {
-            "fill": "#00FF00",
-            "stroke": _darken_hex_color("#00FF00"),
-        },
-        "Flash Flood Watch": {
-            "fill": "#00FF00",
-            "stroke": _darken_hex_color("#00FF00"),
-        },
+    mrms_color_overrides: dict[str, str] = {
+        "Flash Flood Warning": "#00FF00",
+        "Flash Flood Watch": "#00FF00",
     }
+    mrms_radar_overlay_fill_opacity = 0.1
+    mrms_radar_overlay_stroke_width = 3.5
     resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(
         timeout_seconds=timeout_seconds,
         api_base=api_base,
@@ -1070,10 +1066,17 @@ def build_mrms_warnings_overlay_geojson(
         if not isinstance(properties, dict):
             continue
         override = mrms_color_overrides.get(str(properties.get("risk_label") or "").strip())
-        if override is None:
+        if override is not None:
+            properties["fill"] = override
+    for feature in features:
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
             continue
-        properties["fill"] = override["fill"]
-        properties["stroke"] = override["stroke"]
+        fill_color = str(properties.get("fill") or "").strip()
+        if fill_color:
+            properties["stroke"] = fill_color
+        properties["fill_opacity"] = mrms_radar_overlay_fill_opacity
+        properties["stroke_width"] = mrms_radar_overlay_stroke_width
     return filter_geojson_for_mrms_warnings_overlay(
         {
             "type": "FeatureCollection",
