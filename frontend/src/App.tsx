@@ -2297,16 +2297,43 @@ export default function App() {
 
   const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(() => String(Date.now()));
   const mrmsNwsWarningsEnabled = model === "mrms" && nwsWarningsEnabled;
+  const prevMrmsNwsWarningsEnabledRef = useRef(false);
+  const mrmsNwsWarningsIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
   useEffect(() => {
+    const prevEnabled = prevMrmsNwsWarningsEnabledRef.current;
+    prevMrmsNwsWarningsEnabledRef.current = mrmsNwsWarningsEnabled;
+
     if (!mrmsNwsWarningsEnabled) {
+      if (mrmsNwsWarningsIntervalRef.current !== null) {
+        window.clearInterval(mrmsNwsWarningsIntervalRef.current);
+        mrmsNwsWarningsIntervalRef.current = null;
+      }
       return;
     }
-    const intervalId = window.setInterval(() => {
+
+    if (prevEnabled && mrmsNwsWarningsIntervalRef.current !== null) {
+      return;
+    }
+
+    if (mrmsNwsWarningsIntervalRef.current !== null) {
+      window.clearInterval(mrmsNwsWarningsIntervalRef.current);
+      mrmsNwsWarningsIntervalRef.current = null;
+    }
+
+    mrmsNwsWarningsIntervalRef.current = window.setInterval(() => {
       setNwsWarningsRefreshToken(String(Date.now()));
     }, NWS_WARNINGS_REFRESH_MS);
-    return () => window.clearInterval(intervalId);
   }, [mrmsNwsWarningsEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (mrmsNwsWarningsIntervalRef.current !== null) {
+        window.clearInterval(mrmsNwsWarningsIntervalRef.current);
+        mrmsNwsWarningsIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const mrmsNwsWarningsGeoJsonUrl = useMemo(() => {
     if (!mrmsNwsWarningsEnabled) {
