@@ -28,16 +28,17 @@ def test_goes_wv9_palette_matches_reference_legend_breaks() -> None:
 
     assert spec["type"] == "discrete"
     assert spec["units"] == "C"
-    assert spec["range"] == (183.15, 303.15)
-    assert spec["legend_stops"][0] == (-90.0, "#000000")
-    assert spec["legend_stops"][9] == (-50.0, "#ffffff")
-    assert spec["legend_stops"][14] == (-30.0, "#1478ff")
-    assert spec["legend_stops"][23] == (6.0, "#e82000")
-    assert spec["legend_stops"][-1] == (30.0, "#ffffff")
+    assert spec["range"] == (191.15, 262.15)
+    assert len(spec["legend_stops"]) == 72
+    assert spec["legend_stops"][0] == (-82, "#288b35")
+    assert spec["legend_stops"][7] == (-75, "#1d6e02")
+    assert spec["legend_stops"][35] == (-47, "#fdfdfe")
+    assert spec["legend_stops"][52] == (-30, "#1000a6")
+    assert spec["legend_stops"][-1] == (-11, "#e9b401")
 
     color_by_level = dict(zip(spec["levels"], spec["colors"]))
-    assert color_by_level[183.15] == "#000000"
-    assert color_by_level[223.15] == "#ffffff"
-    assert color_by_level[243.15] == "#1478ff"
-    assert color_by_level[279.15] == "#e82000"
-    assert color_by_level[303.15] == "#ffffff"
+    assert color_by_level[191.15] == "#288b35"
+    assert color_by_level[198.15] == "#1d6e02"
+    assert color_by_level[226.15] == "#fdfdfe"
+    assert color_by_level[243.15] == "#1000a6"
+    assert color_by_level[262.15] == "#e9b401"

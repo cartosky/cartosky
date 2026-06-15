@@ -210,37 +210,24 @@ GOES_IR13_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_IR13_LEGEND_ST
 GOES_IR13_COLORS = [color for _, color in GOES_IR13_LEGEND_STOPS]
 GOES_IR13_RANGE = (GOES_IR13_LEVELS[0], GOES_IR13_LEVELS[-1])
 
-GOES_WV9_LEGEND_STOPS = [
-    (-79.0, "#54fdfc"),  # coldest - cyan (COD -109C anchor, data floor)
-    (-74.0, "#3fd4a0"),  # → interpolated toward -75C green
-    (-69.0, "#2aab54"),  #
-    (-65.0, "#1d6e02"),  # COD -75C anchor - dark green
-    (-62.0, "#3d8a28"),  # → interpolating toward white
-    (-59.0, "#6aaa60"),  # COD in-between ~-75 to -47
-    (-56.0, "#9ac898"),
-    (-53.0, "#c8e4c8"),
-    (-50.0, "#f0f4f0"),
-    (-47.0, "#fdfdfe"),  # COD -47C anchor - white
-    (-44.0, "#c8c8e8"),  # → interpolating toward blue
-    (-41.0, "#9898d8"),
-    (-38.0, "#6868c0"),  # COD in-between ~-47 to -30
-    (-35.0, "#3838b0"),
-    (-32.0, "#1818a8"),
-    (-30.0, "#1000a6"),  # COD -30C anchor - dark blue
-    (-28.0, "#2c2c80"),  # → interpolating toward yellow
-    (-26.0, "#585840"),  # COD in-between ~-30 to -15.5
-    (-24.0, "#888820"),  #
-    (-22.0, "#b8b010"),
-    (-20.0, "#d8d008"),
-    (-18.0, "#f8f001"),
-    (-15.5, "#fdfd01"),  # COD -15.5C anchor - yellow
-    (-13.0, "#f9c001"),  # → interpolating toward orange-red
-    (-11.5, "#f67d01"),  # COD in-between
-    (-11.2, "#b90000"),  # COD 0C anchor mapped to data max
+GOES_WV9_COLOR_ANCHORS = [
+    (-109.0, "#54fdfc"),  # coldest - cyan
+    (-75.0,  "#1d6e02"),  # dark green
+    (-47.0,  "#fdfdfe"),  # white
+    (-30.0,  "#1000a6"),  # dark blue
+    (-15.5,  "#fdfd01"),  # yellow
+    (0.0,    "#b90000"),  # dark red
 ]
-GOES_WV9_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_WV9_LEGEND_STOPS]
-GOES_WV9_COLORS = [color for _, color in GOES_WV9_LEGEND_STOPS]
+
+# Dense 1°C levels across the data range for smooth rendering
+_WV9_CELSIUS_LEVELS = list(range(-82, -10))
+GOES_WV9_LEVELS = [round(v + 273.15, 2) for v in _WV9_CELSIUS_LEVELS]
+GOES_WV9_COLORS = _expand_color_anchors(
+    _WV9_CELSIUS_LEVELS,
+    GOES_WV9_COLOR_ANCHORS,
+)
 GOES_WV9_RANGE = (GOES_WV9_LEVELS[0], GOES_WV9_LEVELS[-1])
+GOES_WV9_LEGEND_STOPS = list(zip(_WV9_CELSIUS_LEVELS, GOES_WV9_COLORS))
 
 
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
