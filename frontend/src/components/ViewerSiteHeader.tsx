@@ -435,9 +435,9 @@ function RegionUtilitySelect({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
-  const openRef = useRef(open);
   const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
+  const openRef = useRef(open);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<LocationSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
