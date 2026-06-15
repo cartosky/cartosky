@@ -3569,8 +3569,10 @@ async def forecast_location_search(
 
 @app.get("/api/v4/locations/search")
 async def forecast_location_search_v4(
+    response: Response,
     q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
 ):
+    response.headers["Cache-Control"] = "no-store"
     return await forecast_location_search(q)
 
 
