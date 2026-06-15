@@ -23,7 +23,10 @@ from app.services.goes_fetch import (
 )
 from app.services.goes_processing import decode_goes_scan
 from app.services.goes_publish import (
+    BAND_CONFIG_IR13,
+    BAND_CONFIG_WV9,
     GOESBundleFrame,
+    GOESBandConfig,
     GOESPublishResult,
     load_latest_published_goes_frames,
     publish_goes_bundle,
@@ -48,6 +51,11 @@ DEFAULT_FRAME_CADENCE_MINUTES = 15
 DEFAULT_LISTING_LOOKBACK_HOURS = 5
 DEFAULT_OBJECT_MIN_AGE_SECONDS = 120
 DEFAULT_MIN_OBJECT_BYTES = 1_000_000
+
+BAND_CONFIG_BY_BAND: dict[int, GOESBandConfig] = {
+    13: BAND_CONFIG_IR13,
+    9: BAND_CONFIG_WV9,
+}
 
 
 @dataclass(frozen=True)
@@ -85,17 +93,81 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
         window_minutes=config.window_minutes,
         frame_cadence_minutes=config.frame_cadence_minutes,
     )
-    if not config.bands or int(config.bands[0]) != 13:
-        raise ValueError("GOES-East v1 supports Band 13 only")
-
     now = datetime.now(timezone.utc)
     s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+
+    band_results: list[GOESPollerCycleResult] = []
+    skipped_bands: list[int] = []
+    for raw_band in config.bands:
+        band = int(raw_band)
+        band_config = BAND_CONFIG_BY_BAND.get(band)
+        if band_config is None:
+            logger.warning("Skipping unsupported GOES-East band: %s", band)
+            skipped_bands.append(band)
+            continue
+        band_results.append(
+            _run_once_for_band(
+                config=config,
+                band=band,
+                band_config=band_config,
+                target_frame_count=target_frame_count,
+                now=now,
+                s3_client=s3_client,
+            )
+        )
+
+    if not band_results:
+        message = "No supported GOES-East bands configured."
+        if skipped_bands:
+            message += f" Skipped unsupported bands: {', '.join(str(item) for item in skipped_bands)}."
+        return GOESPollerCycleResult(
+            action="noop",
+            latest_scan_valid_time=None,
+            published_run_id=None,
+            expected_frame_count=0,
+            decoded_frame_count=0,
+            failed_scan_count=0,
+            message=message,
+        )
+
+    published_results = [result for result in band_results if result.action == "published"]
+    latest_scan_valid_time = max(
+        (item for item in (result.latest_scan_valid_time for result in band_results) if item),
+        default=None,
+    )
+    messages = [result.message for result in band_results if result.message]
+    if skipped_bands:
+        messages.append(f"Skipped unsupported bands: {', '.join(str(item) for item in skipped_bands)}.")
+    if published_results:
+        _enforce_retention(config)
+        _cleanup_cache_dir(config.cache_dir)
+
+    return GOESPollerCycleResult(
+        action="published" if published_results else "noop",
+        latest_scan_valid_time=latest_scan_valid_time,
+        published_run_id=published_results[-1].published_run_id if published_results else None,
+        expected_frame_count=sum(result.expected_frame_count for result in band_results),
+        decoded_frame_count=sum(result.decoded_frame_count for result in band_results),
+        failed_scan_count=sum(result.failed_scan_count for result in band_results),
+        message=" ".join(messages),
+    )
+
+
+def _run_once_for_band(
+    *,
+    config: GOESPollerConfig,
+    band: int,
+    band_config: GOESBandConfig,
+    target_frame_count: int,
+    now: datetime,
+    s3_client: object,
+) -> GOESPollerCycleResult:
     discovered = discover_recent_scans_s3(
         s3_client=s3_client,
         bucket=config.bucket,
         product=config.product,
         sector=config.sector,
-        band=13,
+        band=band,
         satellite=config.satellite,
         now_utc=now,
         lookback_hours=config.listing_lookback_hours,
@@ -110,7 +182,8 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
         frame_cadence_minutes=config.frame_cadence_minutes,
     )
     logger.info(
-        "GOES bundle candidate discovered=%d frozen=%d target=%d min_age=%ss",
+        "GOES band=%d bundle candidate discovered=%d frozen=%d target=%d min_age=%ss",
+        band,
         len(discovered),
         len(frozen),
         target_frame_count,
@@ -124,12 +197,12 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
             expected_frame_count=target_frame_count,
             decoded_frame_count=0,
             failed_scan_count=0,
-            message="No eligible GOES-East scans discovered from S3.",
+            message=f"No eligible GOES-East Band {band} scans discovered from S3.",
         )
 
     newest_scan_valid_time = frozen[-1].slot_time.astimezone(timezone.utc)
-    latest_published_valid_time, latest_bundle_complete = _latest_published_bundle_state(config.data_root)
-    latest_run_id, previous_frames = load_latest_published_goes_frames(config.data_root)
+    latest_published_valid_time, latest_bundle_complete = _latest_published_bundle_state(config.data_root, band_config.variable_id)
+    latest_run_id, previous_frames = load_latest_published_goes_frames(config.data_root, band_config=band_config)
     previously_published_valid_times = {
         frame.slot_time.astimezone(timezone.utc)
         for frame in previous_frames
@@ -146,7 +219,7 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
             expected_frame_count=len(frozen),
             decoded_frame_count=0,
             failed_scan_count=0,
-            message="No new GOES-East scan beyond the current published latest bundle.",
+            message=f"No new GOES-East Band {band} scan beyond the current published latest bundle.",
         )
 
     frames: list[GOESBundleFrame] = []
@@ -159,7 +232,8 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
             if scan.slot_time.astimezone(timezone.utc) not in previously_published_valid_times
         ]
         logger.info(
-            "GOES incremental window previous_run=%s reused=%d decode=%d",
+            "GOES band=%d incremental window previous_run=%s reused=%d decode=%d",
+            band,
             latest_run_id or "<none>",
             max(0, len(frozen) - len(scans_to_decode)),
             len(scans_to_decode),
@@ -204,7 +278,7 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
                     )
                 )
             except Exception as exc:
-                logger.warning("Skipping GOES scan %s after fetch/decode failure: %s", scan.filename, exc)
+                logger.warning("Skipping GOES Band %d scan %s after fetch/decode failure: %s", band, scan.filename, exc)
                 failed_scans.append(scan.filename)
 
     available_slots = {frame.slot_time.astimezone(timezone.utc) for frame in previous_frames}
@@ -219,21 +293,20 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
             expected_frame_count=len(frozen),
             decoded_frame_count=0,
             failed_scan_count=len(failed_scans),
-            message="No publishable GOES-East bundle could be built from the frozen scan window.",
+            message=f"No publishable GOES-East Band {band} bundle could be built from the frozen scan window.",
         )
 
     publish_result = publish_goes_bundle(
         data_root=config.data_root,
         frames=frames,
-        publish_time=datetime.now(timezone.utc),
+        publish_time=now,
         previous_frames=previous_frames,
         target_frame_count=len(frozen),
         expected_frame_count=len(frozen),
+        band_config=band_config,
     )
-    _enforce_retention(config)
-    _cleanup_cache_dir(config.cache_dir)
 
-    message = f"Published GOES-East bundle {publish_result.run_id} with {available_for_window}/{len(frozen)} frames"
+    message = f"Published GOES-East Band {band} bundle {publish_result.run_id} with {available_for_window}/{len(frozen)} frames"
     if failed_scans:
         message += f" ({len(failed_scans)} failed scans skipped)"
     return GOESPollerCycleResult(
@@ -280,7 +353,8 @@ def compute_target_frame_count(*, window_minutes: int, frame_cadence_minutes: in
     return max(1, (safe_window // safe_cadence) + 1)
 
 
-def _latest_published_bundle_state(data_root: Path) -> tuple[datetime | None, bool]:
+def _latest_published_bundle_state(data_root: Path, var_id: str = "ir13") -> tuple[datetime | None, bool]:
+    var_id = str(var_id or "ir13").strip().lower() or "ir13"
     latest_path = data_root / "published" / "goes-east" / "LATEST.json"
     if not latest_path.is_file():
         return None, False
@@ -297,15 +371,29 @@ def _latest_published_bundle_state(data_root: Path) -> tuple[datetime | None, bo
     except Exception:
         return None, False
     metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
-    latest_scan = parse_iso_datetime(metadata.get("latest_scan_valid_time")) if isinstance(metadata, dict) else None
     variables = manifest.get("variables") if isinstance(manifest, dict) else None
+    var_entry = variables.get(var_id) if isinstance(variables, dict) else None
+    latest_scan = _latest_variable_scan_valid_time(var_entry)
+    if latest_scan is None and isinstance(metadata, dict):
+        latest_scan = parse_iso_datetime(metadata.get("latest_scan_valid_time"))
     complete = False
-    if isinstance(variables, dict):
-        complete = all(
-            isinstance(entry, dict) and int(entry.get("available_frames") or 0) >= int(entry.get("expected_frames") or 0)
-            for entry in variables.values()
-        )
+    if isinstance(var_entry, dict):
+        complete = int(var_entry.get("available_frames") or 0) >= int(var_entry.get("expected_frames") or 0)
     return latest_scan, complete
+
+
+def _latest_variable_scan_valid_time(var_entry: object) -> datetime | None:
+    frames = var_entry.get("frames") if isinstance(var_entry, dict) else None
+    if not isinstance(frames, list):
+        return None
+    newest: datetime | None = None
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        parsed = parse_iso_datetime(frame.get("valid_time"))
+        if parsed is not None and (newest is None or parsed > newest):
+            newest = parsed
+    return newest
 
 
 def _enforce_retention(config: GOESPollerConfig) -> None:

@@ -21,3 +21,23 @@ def test_goes_ir13_palette_matches_reference_legend_breaks() -> None:
     assert color_by_level[223.15] == "#fdff04"
     assert color_by_level[253.15] == "#55ffff"
     assert color_by_level[313.15] == "#000000"
+
+
+def test_goes_wv9_palette_matches_reference_legend_breaks() -> None:
+    spec = get_color_map_spec("goes_wv9_enhanced")
+
+    assert spec["type"] == "discrete"
+    assert spec["units"] == "C"
+    assert spec["range"] == (183.15, 303.15)
+    assert spec["legend_stops"][0] == (-90.0, "#000000")
+    assert spec["legend_stops"][9] == (-50.0, "#ffffff")
+    assert spec["legend_stops"][14] == (-30.0, "#1478ff")
+    assert spec["legend_stops"][23] == (6.0, "#e82000")
+    assert spec["legend_stops"][-1] == (30.0, "#ffffff")
+
+    color_by_level = dict(zip(spec["levels"], spec["colors"]))
+    assert color_by_level[183.15] == "#000000"
+    assert color_by_level[223.15] == "#ffffff"
+    assert color_by_level[243.15] == "#1478ff"
+    assert color_by_level[279.15] == "#e82000"
+    assert color_by_level[303.15] == "#ffffff"

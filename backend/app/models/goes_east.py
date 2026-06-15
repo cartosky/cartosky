@@ -26,6 +26,11 @@ class GOESEastPlugin(BaseModelPlugin):
             "cleanir": "ir13",
             "band13": "ir13",
             "c13": "ir13",
+            "wv9": "wv9",
+            "wv": "wv9",
+            "water_vapor": "wv9",
+            "band9": "wv9",
+            "c09": "wv9",
         }
         return aliases.get(normalized, normalized)
 
@@ -42,6 +47,8 @@ GOES_EAST_MODEL_ID = "goes-east"
 GOES_EAST_REGION_ID = "conus"
 GOES_EAST_IR13_VARIABLE_ID = "ir13"
 GOES_EAST_IR13_COLOR_MAP_ID = "goes_ir13_enhanced"
+GOES_EAST_WV9_VARIABLE_ID = "wv9"
+GOES_EAST_WV9_COLOR_MAP_ID = "goes_wv9_enhanced"
 
 
 GOES_EAST_REGIONS: dict[str, RegionSpec] = {
@@ -74,6 +81,25 @@ GOES_EAST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    GOES_EAST_WV9_VARIABLE_ID: VarSpec(
+        id=GOES_EAST_WV9_VARIABLE_ID,
+        name="Mid-Level Water Vapor",
+        selectors=VarSelectors(
+            hints={
+                "upstream_provider": "noaa_aws_s3",
+                "upstream_satellite": "goes19",
+                "upstream_bucket": "noaa-goes19",
+                "upstream_product": "ABI-L2-CMIPC",
+                "upstream_sector": "C",
+                "upstream_band": "9",
+                "upstream_variable": "CMI",
+                "quality_variable": "DQF",
+            }
+        ),
+        primary=False,
+        kind="continuous",
+        units="C",
+    ),
 }
 
 
@@ -88,6 +114,20 @@ GOES_EAST_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         color_map_id=GOES_EAST_IR13_COLOR_MAP_ID,
         buildable=True,
         order=0,
+        group="Satellite",
+        legend_title="Brightness Temperature",
+        render_substrates=["grid"],
+    ),
+    GOES_EAST_WV9_VARIABLE_ID: VariableCapability(
+        var_key=GOES_EAST_WV9_VARIABLE_ID,
+        name="Mid-Level Water Vapor",
+        selectors=GOES_EAST_VARS[GOES_EAST_WV9_VARIABLE_ID].selectors,
+        primary=False,
+        kind="continuous",
+        units="C",
+        color_map_id=GOES_EAST_WV9_COLOR_MAP_ID,
+        buildable=True,
+        order=1,
         group="Satellite",
         legend_title="Brightness Temperature",
         render_substrates=["grid"],

@@ -59,8 +59,8 @@ def test_run_once_publishes_new_goes_scan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(goes_poller.boto3, "client", lambda *_, **__: object())
     monkeypatch.setattr(goes_poller, "discover_recent_scans_s3", lambda **_: [scan])
     monkeypatch.setattr(goes_poller, "freeze_bundle_scans", lambda items, **_: items)
-    monkeypatch.setattr(goes_poller, "_latest_published_bundle_state", lambda _: (None, False))
-    monkeypatch.setattr(goes_poller, "load_latest_published_goes_frames", lambda _: (None, []))
+    monkeypatch.setattr(goes_poller, "_latest_published_bundle_state", lambda *_args, **_kwargs: (None, False))
+    monkeypatch.setattr(goes_poller, "load_latest_published_goes_frames", lambda *_args, **_kwargs: (None, []))
     monkeypatch.setattr(goes_poller, "download_scan", lambda scan, **_: tmp_path / scan.filename)
 
     class Decoded:

@@ -247,8 +247,8 @@ def prepare_grid_display_values(
     model_norm = str(model).strip().lower()
     var_norm = str(var).strip().lower()
     values_f32 = np.asarray(values, dtype=np.float32)
-    if model_norm == "goes-east" and var_norm == "ir13":
-        return values_f32 - np.float32(273.15), {"id": "goes_ir13_display_celsius_v1", "unit_conversion": "K_to_C"}
+    if model_norm == "goes-east" and var_norm in {"ir13", "wv9"}:
+        return values_f32 - np.float32(273.15), {"id": f"goes_{var_norm}_display_celsius_v1", "unit_conversion": "K_to_C"}
 
     config = grid_display_prep_config(model_norm, var_norm)
     if config is None:

@@ -71,3 +71,4 @@ extract_colorbar.py
 /.opencode/
 /.claude/
 env_vars.sh
+mnt/

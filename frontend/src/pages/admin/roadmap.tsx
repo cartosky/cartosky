@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus } from "lucide-react";
 
 import { AdminHero, AdminPage, AdminSurface } from "@/components/admin-shell";
 import { fetchInternalRoadmap, saveInternalRoadmap } from "@/lib/admin-api";
@@ -516,6 +516,37 @@ export default function AdminRoadmapPage() {
     });
   }
 
+  function moveItemAmongEntries(
+    entries: RoadmapItemEntry[],
+    itemId: string,
+    direction: "up" | "down",
+  ) {
+    const index = entries.findIndex((entry) => entry.item.id === itemId);
+    if (index === -1) return;
+
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= entries.length) return;
+
+    const currentEntry = entries[index];
+    const targetEntry = entries[targetIndex];
+    if (currentEntry.phaseId !== targetEntry.phaseId) return;
+
+    updatePhases((phasesCurrent) => {
+      const next = clonePhases(phasesCurrent);
+      const phase = next.find((entry) => entry.id === currentEntry.phaseId);
+      if (!phase) return phasesCurrent;
+
+      const indexA = phase.items.findIndex((item) => item.id === currentEntry.item.id);
+      const indexB = phase.items.findIndex((item) => item.id === targetEntry.item.id);
+      if (indexA === -1 || indexB === -1) return phasesCurrent;
+
+      const items = [...phase.items];
+      [items[indexA], items[indexB]] = [items[indexB], items[indexA]];
+      phase.items = items;
+      return next;
+    });
+  }
+
   if (loading) {
     return (
       <div className="relative min-h-[calc(100vh-3.5rem)] w-full bg-[#07111f] text-white">
@@ -649,6 +680,7 @@ export default function AdminRoadmapPage() {
                   onCycleEffort={cycleEffort}
                   onEdit={openEditModal}
                   onDelete={deleteItem}
+                  onMoveItem={moveItemAmongEntries}
                 />
               )
             ) : (
@@ -691,6 +723,7 @@ export default function AdminRoadmapPage() {
                 onCycleEffort={cycleEffort}
                 onEdit={openEditModal}
                 onDelete={deleteItem}
+                onMoveItem={moveItemAmongEntries}
               />
             </AdminSurface>
           );
@@ -897,6 +930,7 @@ function RoadmapSectionItems(props: {
   onCycleEffort: (id: string) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string, phaseId: string) => void;
+  onMoveItem: (entries: RoadmapItemEntry[], itemId: string, direction: "up" | "down") => void;
 }) {
   const doneEntries = props.entries.filter((entry) => entry.item.status === "done");
   const openEntries = props.entries.filter((entry) => entry.item.status !== "done");
@@ -911,6 +945,7 @@ function RoadmapSectionItems(props: {
     onCycleEffort: props.onCycleEffort,
     onEdit: props.onEdit,
     onDelete: props.onDelete,
+    onMoveItem: props.onMoveItem,
   };
 
   return (
@@ -929,11 +964,17 @@ function RoadmapSectionItems(props: {
           </button>
           {doneExpanded && (
             <div className="items-list done-items-list">
-              {doneEntries.map((entry) => (
+              {doneEntries.map((entry, index) => (
                 <RoadmapItemRow
                   key={entry.item.id}
                   item={entry.item}
                   phaseId={entry.phaseId}
+                  canMoveUp={index > 0 && doneEntries[index - 1].phaseId === entry.phaseId}
+                  canMoveDown={
+                    index < doneEntries.length - 1
+                    && doneEntries[index + 1].phaseId === entry.phaseId
+                  }
+                  moveEntries={doneEntries}
                   {...rowProps}
                 />
               ))}
@@ -943,11 +984,17 @@ function RoadmapSectionItems(props: {
       )}
       {openEntries.length > 0 && (
         <div className={`items-list${doneEntries.length > 0 ? " open-items-list" : ""}`}>
-          {openEntries.map((entry) => (
+          {openEntries.map((entry, index) => (
             <RoadmapItemRow
               key={entry.item.id}
               item={entry.item}
               phaseId={entry.phaseId}
+              canMoveUp={index > 0 && openEntries[index - 1].phaseId === entry.phaseId}
+              canMoveDown={
+                index < openEntries.length - 1
+                && openEntries[index + 1].phaseId === entry.phaseId
+              }
+              moveEntries={openEntries}
               {...rowProps}
             />
           ))}
@@ -984,6 +1031,10 @@ function RoadmapItemRow(props: {
   onCycleEffort: (id: string) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string, phaseId: string) => void;
+  onMoveItem: (entries: RoadmapItemEntry[], itemId: string, direction: "up" | "down") => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  moveEntries?: RoadmapItemEntry[];
 }) {
   const { item, phaseId } = props;
   const labels = itemLabels(item).filter(isItemLabel);
@@ -992,7 +1043,7 @@ function RoadmapItemRow(props: {
   function handleItemClick(event: React.MouseEvent<HTMLDivElement>) {
     if (!isMobile) return;
     const target = event.target as HTMLElement;
-    if (target.closest(".item-check, .badge, .item-actions, .label-pill, button")) {
+    if (target.closest(".item-check, .badge, .item-actions, .item-reorder, .label-pill, button")) {
       return;
     }
     props.onEdit(item.id);
@@ -1067,6 +1118,36 @@ function RoadmapItemRow(props: {
         </div>
       </div>
       <div className="item-actions">
+        <div className="item-reorder">
+          <button
+            type="button"
+            className="icon-btn reorder"
+            title="Move up"
+            aria-label="Move up"
+            disabled={!props.canMoveUp}
+            onClick={() => {
+              if (props.moveEntries) {
+                props.onMoveItem(props.moveEntries, item.id, "up");
+              }
+            }}
+          >
+            <ChevronUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn reorder"
+            title="Move down"
+            aria-label="Move down"
+            disabled={!props.canMoveDown}
+            onClick={() => {
+              if (props.moveEntries) {
+                props.onMoveItem(props.moveEntries, item.id, "down");
+              }
+            }}
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+        </div>
         <button type="button" className="btn-text-edit" onClick={() => props.onEdit(item.id)}>
           Edit
         </button>

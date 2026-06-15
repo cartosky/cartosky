@@ -19,6 +19,19 @@ def test_goes_east_capabilities_disable_sampling() -> None:
     assert capabilities.ui_constraints["supports_sampling"] is False
 
 
+def test_goes_east_includes_wv9_catalog_entry_and_aliases() -> None:
+    capabilities = GOES_EAST_MODEL.capabilities
+    assert capabilities is not None
+
+    wv9 = capabilities.variable_catalog["wv9"]
+    assert wv9.name == "Mid-Level Water Vapor"
+    assert wv9.color_map_id == "goes_wv9_enhanced"
+    assert wv9.order == 1
+    assert GOES_EAST_MODEL.normalize_var_id("water_vapor") == "wv9"
+    assert GOES_EAST_MODEL.normalize_var_id("band9") == "wv9"
+    assert GOES_EAST_MODEL.normalize_var_id("c09") == "wv9"
+
+
 def test_goes_east_serialized_capabilities_disable_sampling() -> None:
     capabilities = GOES_EAST_MODEL.capabilities
     assert capabilities is not None

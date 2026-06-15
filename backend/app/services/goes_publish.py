@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,8 +37,25 @@ logger = logging.getLogger(__name__)
 
 GOES_EAST_MODEL_ID = "goes-east"
 GOES_EAST_REGION_ID = "conus"
-GOES_EAST_VARIABLE_ID = "ir13"
-GOES_EAST_COLOR_MAP_ID = "goes_ir13_enhanced"
+
+
+@dataclass(frozen=True)
+class GOESBandConfig:
+    variable_id: str
+    color_map_id: str
+
+
+BAND_CONFIG_IR13 = GOESBandConfig(
+    variable_id="ir13",
+    color_map_id="goes_ir13_enhanced",
+)
+BAND_CONFIG_WV9 = GOESBandConfig(
+    variable_id="wv9",
+    color_map_id="goes_wv9_enhanced",
+)
+
+GOES_EAST_VARIABLE_ID = BAND_CONFIG_IR13.variable_id
+GOES_EAST_COLOR_MAP_ID = BAND_CONFIG_IR13.color_map_id
 
 
 @dataclass(frozen=True)
@@ -73,7 +91,59 @@ class GOESPublishResult:
     frame_count: int
 
 
-def load_latest_published_goes_frames(data_root: Path) -> tuple[str | None, list[GOESPublishedFrame]]:
+def _resolve_band_config(band_config: GOESBandConfig | None) -> GOESBandConfig:
+    return band_config or BAND_CONFIG_IR13
+
+
+def _preserved_manifest_variables(
+    *,
+    data_root: Path,
+    run_id: str,
+    exclude_var_id: str,
+) -> dict[str, dict[str, Any]]:
+    manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    variables = manifest.get("variables") if isinstance(manifest, dict) else None
+    if not isinstance(variables, dict):
+        return {}
+    return {
+        str(var_id): deepcopy(entry)
+        for var_id, entry in variables.items()
+        if str(var_id) != exclude_var_id and isinstance(entry, dict)
+    }
+
+
+def _merge_preserved_manifest_variables(
+    *,
+    data_root: Path,
+    run_id: str,
+    preserved_variables: dict[str, dict[str, Any]],
+) -> None:
+    if not preserved_variables:
+        return
+    manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    variables = manifest.get("variables")
+    if not isinstance(variables, dict):
+        variables = {}
+        manifest["variables"] = variables
+    for var_id, entry in preserved_variables.items():
+        variables.setdefault(var_id, deepcopy(entry))
+    write_json_atomic(manifest_path, manifest)
+
+
+def load_latest_published_goes_frames(
+    data_root: Path,
+    band_config: GOESBandConfig | None = None,
+) -> tuple[str | None, list[GOESPublishedFrame]]:
+    band_config = _resolve_band_config(band_config)
+    var_id = band_config.variable_id
     latest_path = data_root / "published" / GOES_EAST_MODEL_ID / "LATEST.json"
     if not latest_path.is_file():
         return None, []
@@ -91,12 +161,12 @@ def load_latest_published_goes_frames(data_root: Path) -> tuple[str | None, list
         manifest = json.loads(manifest_path.read_text())
     except (OSError, json.JSONDecodeError):
         return run_id, []
-    var_entry = manifest.get("variables", {}).get(GOES_EAST_VARIABLE_ID)
+    var_entry = manifest.get("variables", {}).get(var_id)
     frames_payload = var_entry.get("frames") if isinstance(var_entry, dict) else None
     if not isinstance(frames_payload, list):
         return run_id, []
     published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
-    var_dir = published_run_dir / GOES_EAST_VARIABLE_ID
+    var_dir = published_run_dir / var_id
     frames: list[GOESPublishedFrame] = []
     for frame in frames_payload:
         if not isinstance(frame, dict):
@@ -134,12 +204,20 @@ def publish_goes_bundle(
     previous_frames: list[GOESPublishedFrame] | None = None,
     target_frame_count: int | None = None,
     expected_frame_count: int | None = None,
+    band_config: GOESBandConfig | None = None,
 ) -> GOESPublishResult:
     if not frames and not previous_frames:
         raise ValueError("GOES bundle publish requires at least one frame")
 
+    band_config = _resolve_band_config(band_config)
+    var_id = band_config.variable_id
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
+    preserved_manifest_variables = _preserved_manifest_variables(
+        data_root=data_root,
+        run_id=run_id,
+        exclude_var_id=var_id,
+    )
     _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
 
     merged_by_slot_time: dict[datetime, GOESPublishedFrame | GOESBundleFrame] = {}
@@ -157,17 +235,29 @@ def publish_goes_bundle(
     targets: list[tuple[str, int]] = []
     for fh, frame in enumerate(ordered_inputs):
         if isinstance(frame, GOESPublishedFrame):
-            reuse_goes_frame(data_root=data_root, run_id=run_id, forecast_hour=fh, frame=frame)
+            reuse_goes_frame(
+                data_root=data_root,
+                run_id=run_id,
+                forecast_hour=fh,
+                frame=frame,
+                band_config=band_config,
+            )
         else:
-            write_goes_frame(data_root=data_root, run_id=run_id, forecast_hour=fh, frame=frame)
-        targets.append((GOES_EAST_VARIABLE_ID, fh))
+            write_goes_frame(
+                data_root=data_root,
+                run_id=run_id,
+                forecast_hour=fh,
+                frame=frame,
+                band_config=band_config,
+            )
+        targets.append((var_id, fh))
 
     if grid_build_enabled():
         manifest_count = build_grid_manifests_for_run_root(
             run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
             model=GOES_EAST_MODEL_ID,
             run=run_id,
-            variables=(GOES_EAST_VARIABLE_ID,),
+            variables=(var_id,),
         )
         logger.info("GOES grid manifest build: run=%s manifests=%d", run_id, manifest_count)
 
@@ -180,7 +270,8 @@ def publish_goes_bundle(
         else len(ordered_valid_times)
     )
     manifest_variables = {
-        GOES_EAST_VARIABLE_ID: {
+        **preserved_manifest_variables,
+        var_id: {
             "expected_frames": manifest_target_frame_count,
             "available_frames": len(ordered_valid_times),
             "frames": [
@@ -223,6 +314,12 @@ def publish_goes_bundle(
         run_id=run_id,
         expected_frames=manifest_target_frame_count,
         available_frames=len(ordered_valid_times),
+        var_id=var_id,
+    )
+    _merge_preserved_manifest_variables(
+        data_root=data_root,
+        run_id=run_id,
+        preserved_variables=preserved_manifest_variables,
     )
     write_latest_pointer(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id, source="goes_publish_v1")
 
@@ -236,15 +333,25 @@ def publish_goes_bundle(
     )
 
 
-def write_goes_frame(*, data_root: Path, run_id: str, forecast_hour: int, frame: GOESBundleFrame) -> None:
+def write_goes_frame(
+    *,
+    data_root: Path,
+    run_id: str,
+    forecast_hour: int,
+    frame: GOESBundleFrame,
+    band_config: GOESBandConfig | None = None,
+) -> None:
+    band_config = _resolve_band_config(band_config)
+    var_id = band_config.variable_id
+    color_map_id = band_config.color_map_id
     fh_str = f"fh{int(forecast_hour):03d}"
-    staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / GOES_EAST_VARIABLE_ID
+    staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     values = np.asarray(frame.values, dtype=np.float32)
-    _, colorize_meta = float_to_rgba(values, GOES_EAST_COLOR_MAP_ID, meta_var_key=GOES_EAST_VARIABLE_ID)
+    _, colorize_meta = float_to_rgba(values, color_map_id, meta_var_key=var_id)
     write_value_cog(values, value_path, model=GOES_EAST_MODEL_ID, region=GOES_EAST_REGION_ID)
 
     source_metadata = dict(frame.source_metadata or {})
@@ -261,12 +368,12 @@ def write_goes_frame(*, data_root: Path, run_id: str, forecast_hour: int, frame:
         model=GOES_EAST_MODEL_ID,
         region=GOES_EAST_REGION_ID,
         run_id=run_id,
-        var_id=GOES_EAST_VARIABLE_ID,
+        var_id=var_id,
         fh=int(forecast_hour),
         run_date=datetime.now(timezone.utc),
         colorize_meta=colorize_meta,
-        var_spec=get_color_map_spec(GOES_EAST_COLOR_MAP_ID),
-        var_spec_model=GOES_EAST_MODEL.get_var(GOES_EAST_VARIABLE_ID),
+        var_spec=get_color_map_spec(color_map_id),
+        var_spec_model=GOES_EAST_MODEL.get_var(var_id),
         value_downsample_factor=1,
         quality=frame.quality,
         quality_flags=frame.quality_flags,
@@ -281,7 +388,7 @@ def write_goes_frame(*, data_root: Path, run_id: str, forecast_hour: int, frame:
         write_grid_frames_for_run_root(
             run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
             model=GOES_EAST_MODEL_ID,
-            var=GOES_EAST_VARIABLE_ID,
+            var=var_id,
             fh=int(forecast_hour),
             values=values,
             transform=frame.transform,
@@ -295,9 +402,12 @@ def reuse_goes_frame(
     run_id: str,
     forecast_hour: int,
     frame: GOESPublishedFrame,
+    band_config: GOESBandConfig | None = None,
 ) -> None:
+    band_config = _resolve_band_config(band_config)
+    var_id = band_config.variable_id
     fh_str = f"fh{int(forecast_hour):03d}"
-    staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / GOES_EAST_VARIABLE_ID
+    staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
@@ -315,12 +425,13 @@ def reuse_goes_frame(
             run_id=run_id,
             forecast_hour=int(forecast_hour),
             source_value_path=frame.value_path,
+            source_var_id=var_id,
         ):
             with rasterio.open(value_path) as ds:
                 write_grid_frames_for_run_root(
                     run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
                     model=GOES_EAST_MODEL_ID,
-                    var=GOES_EAST_VARIABLE_ID,
+                    var=var_id,
                     fh=int(forecast_hour),
                     values=ds.read(1).astype(np.float32, copy=False),
                     transform=ds.transform,
@@ -334,17 +445,19 @@ def _reuse_goes_grid_artifacts(
     run_id: str,
     forecast_hour: int,
     source_value_path: Path,
+    source_var_id: str | None = None,
 ) -> bool:
+    source_var_id = str(source_var_id or GOES_EAST_VARIABLE_ID).strip() or GOES_EAST_VARIABLE_ID
     source_fh = _forecast_hour_from_artifact_name(source_value_path)
     if source_fh is None:
         return False
     source_run_root = source_value_path.parent.parent
-    source_grid_dir = resolved_grid_dir_for_run_root(source_run_root, GOES_EAST_VARIABLE_ID)
+    source_grid_dir = resolved_grid_dir_for_run_root(source_run_root, source_var_id)
     if not source_grid_dir.is_dir():
         return False
 
     target_run_root = data_root / "staging" / GOES_EAST_MODEL_ID / run_id
-    target_grid_dir = grid_dir_for_run_root(target_run_root, GOES_EAST_VARIABLE_ID)
+    target_grid_dir = grid_dir_for_run_root(target_run_root, source_var_id)
     target_grid_dir.mkdir(parents=True, exist_ok=True)
     source_token = f"fh{source_fh:03d}"
     target_token = f"fh{int(forecast_hour):03d}"
@@ -420,14 +533,16 @@ def _patch_run_manifest_frame_counts(
     run_id: str,
     expected_frames: int,
     available_frames: int,
+    var_id: str | None = None,
 ) -> None:
+    var_id = str(var_id or GOES_EAST_VARIABLE_ID).strip() or GOES_EAST_VARIABLE_ID
     manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
     try:
         manifest = json.loads(manifest_path.read_text())
     except (OSError, json.JSONDecodeError):
         return
     variables = manifest.get("variables")
-    var_entry = variables.get(GOES_EAST_VARIABLE_ID) if isinstance(variables, dict) else None
+    var_entry = variables.get(var_id) if isinstance(variables, dict) else None
     if not isinstance(var_entry, dict):
         return
     var_entry["expected_frames"] = max(1, int(expected_frames))

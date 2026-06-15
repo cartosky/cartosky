@@ -211,6 +211,43 @@ GOES_IR13_COLORS = [color for _, color in GOES_IR13_LEGEND_STOPS]
 GOES_IR13_RANGE = (GOES_IR13_LEVELS[0], GOES_IR13_LEVELS[-1])
 
 
+GOES_WV9_LEGEND_STOPS = [
+    (-90.0, "#000000"),
+    (-85.0, "#1a1a1a"),
+    (-80.0, "#383838"),
+    (-75.0, "#525252"),
+    (-70.0, "#6e6e6e"),
+    (-65.0, "#8a8a8a"),
+    (-60.0, "#a8a8a8"),
+    (-57.0, "#c8c8c8"),
+    (-54.0, "#e8e8e8"),
+    (-50.0, "#ffffff"),
+    (-46.0, "#d4e8ff"),
+    (-42.0, "#a8d0ff"),
+    (-38.0, "#78b4ff"),
+    (-34.0, "#4896ff"),
+    (-30.0, "#1478ff"),
+    (-26.0, "#0050e8"),
+    (-22.0, "#0028c8"),
+    (-18.0, "#0000a0"),
+    (-14.0, "#280080"),
+    (-10.0, "#500060"),
+    (-6.0, "#780040"),
+    (-2.0, "#a00020"),
+    (2.0, "#c80000"),
+    (6.0, "#e82000"),
+    (10.0, "#ff5000"),
+    (14.0, "#ff8000"),
+    (18.0, "#ffb000"),
+    (22.0, "#ffe000"),
+    (26.0, "#ffff00"),
+    (30.0, "#ffffff"),
+]
+GOES_WV9_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_WV9_LEGEND_STOPS]
+GOES_WV9_COLORS = [color for _, color in GOES_WV9_LEGEND_STOPS]
+GOES_WV9_RANGE = (GOES_WV9_LEVELS[0], GOES_WV9_LEVELS[-1])
+
+
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
     "rain": [0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0],
@@ -1326,6 +1363,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Clean IR",
         "legend_title": "Brightness Temperature",
         "legend_stops": GOES_IR13_LEGEND_STOPS,
+        "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
+    },
+    "goes_wv9_enhanced": {
+        "type": "discrete",
+        "display_palette_kind": "discrete",
+        "units": "C",
+        "levels": GOES_WV9_LEVELS,
+        "colors": GOES_WV9_COLORS,
+        "range": GOES_WV9_RANGE,
+        "display_name": "Mid-Level Water Vapor",
+        "legend_title": "Brightness Temperature",
+        "legend_stops": GOES_WV9_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
