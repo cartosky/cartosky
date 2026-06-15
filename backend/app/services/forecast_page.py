@@ -766,7 +766,7 @@ async def _search_open_meteo_geocode(client: httpx.AsyncClient, query: str) -> l
     normalized_query = query.strip()
     cache_key = normalized_query.lower()
     cached = _cache_get("geocode-search", cache_key)
-    if cached is not None:
+    if cached:
         return cached
 
     search_attempts: list[dict[str, Any]] = [{

@@ -842,8 +842,8 @@ function RegionUtilitySelect({
             </div>
           </>
         ) : (
-          <div className="space-y-0.5">
-            {isSearching ? (
+            <div className="space-y-0.5">
+            {isSearching && results.length === 0 ? (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/58">
                 <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
                 Searching…

@@ -16,13 +16,6 @@ const RECENTS_STORAGE_KEY = "cartosky_forecast_recents_v1";
 const MAX_FAVORITES = 5;
 const MAX_RECENTS = 4;
 
-export const defaultCities: ForecastLocation[] = [
-  { id: "denver-co", label: "Denver, CO", lat: 39.7392, lon: -104.9903, country_code: "US", admin1: "Colorado" },
-  { id: "chicago-il", label: "Chicago, IL", lat: 41.8781, lon: -87.6298, country_code: "US", admin1: "Illinois" },
-  { id: "miami-fl", label: "Miami, FL", lat: 25.7617, lon: -80.1918, country_code: "US", admin1: "Florida" },
-  { id: "seattle-wa", label: "Seattle, WA", lat: 47.6062, lon: -122.3321, country_code: "US", admin1: "Washington" },
-];
-
 function favoritesStorageKey(userId?: string): string {
   return userId ? `cartosky_forecast_favorites_${userId}` : FAVORITES_STORAGE_KEY;
 }
@@ -144,10 +137,10 @@ export function useForecastLocations(userId?: string) {
     () => recents.filter(location => !favoriteIds.has(location.id)).slice(0, MAX_RECENTS),
     [favoriteIds, recents],
   );
-  const displayChips = useMemo(() => {
-    if (favorites.length === 0 && visibleRecents.length === 0) return defaultCities;
-    return [...favorites, ...visibleRecents];
-  }, [favorites, visibleRecents]);
+  const displayChips = useMemo(
+    () => [...favorites, ...visibleRecents],
+    [favorites, visibleRecents],
+  );
 
   const addFavorite = useCallback((location: ForecastLocation) => {
     setFavoritesState(current => {

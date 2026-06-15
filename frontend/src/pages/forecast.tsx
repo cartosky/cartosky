@@ -1674,7 +1674,7 @@ export default function Forecast() {
             </p>
             <div className="mx-auto mt-10 max-w-xl lg:mx-0">
               {searchBox}
-              {!isLoading && (
+              {!isLoading && displayChips.length > 0 && (
                 <div className="forecast-scroll mt-6 flex max-w-full flex-nowrap gap-2 overflow-x-auto pb-1 lg:max-w-xl">
                   {displayChips.map(location => {
                     const chipIsFavorite = isFavorite(location.id);
@@ -1762,7 +1762,7 @@ export default function Forecast() {
             <MapPinned className="h-5 w-5 text-cyan-200" />
             <h2 className="mt-4 text-lg font-semibold tracking-tight text-white">Any location, instantly</h2>
             <p className="mt-2 text-sm leading-7 text-white/55">
-              City, state, zip code, or international location. U.S. queries route through the NWS hybrid pipeline; international uses Open-Meteo.
+              U.S. city, state, zip code, or Canada location. U.S. queries route through the NWS hybrid pipeline; international uses Open-Meteo.
             </p>
           </div>
           <div className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-5">

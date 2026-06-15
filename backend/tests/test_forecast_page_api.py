@@ -617,6 +617,47 @@ async def test_search_locations_city_state_query_falls_back_to_city_search(
     assert payload["results"][0]["latitude"] == pytest.approx(39.7392)
 
 
+async def test_search_locations_ignores_stale_empty_geocode_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forecast_page_service._cache_set("geocode-search", "renton", [], forecast_page_service.GEOCODE_CACHE_TTL)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "geocoding-api.open-meteo.com" and path == "/v1/search":
+            name = request.url.params.get("name")
+            country_code = request.url.params.get("countryCode")
+            if name == "Renton" and country_code == "US":
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "id": 5808189,
+                                "name": "Renton",
+                                "latitude": 47.48288,
+                                "longitude": -122.21707,
+                                "timezone": "America/Los_Angeles",
+                                "country_code": "US",
+                                "country": "United States",
+                                "admin1": "Washington",
+                                "feature_code": "PPL",
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(200, json={"results": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.search_locations("Renton")
+
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["display_name"] == "Renton, WA"
+
+
 async def test_get_forecast_page_by_coordinates_probes_nws_when_reverse_geocode_lacks_country(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
