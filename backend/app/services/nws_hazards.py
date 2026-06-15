@@ -1033,6 +1033,16 @@ def build_mrms_warnings_overlay_geojson(
     api_base: str = NWS_API_BASE,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    mrms_color_overrides: dict[str, dict[str, str]] = {
+        "Flash Flood Warning": {
+            "fill": "#00FF00",
+            "stroke": _darken_hex_color("#00FF00"),
+        },
+        "Flash Flood Watch": {
+            "fill": "#00FF00",
+            "stroke": _darken_hex_color("#00FF00"),
+        },
+    }
     resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(
         timeout_seconds=timeout_seconds,
         api_base=api_base,
@@ -1055,6 +1065,15 @@ def build_mrms_warnings_overlay_geojson(
         features = frame.features
     except NWSHazardsError:
         features = []
+    for feature in features:
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        override = mrms_color_overrides.get(str(properties.get("risk_label") or "").strip())
+        if override is None:
+            continue
+        properties["fill"] = override["fill"]
+        properties["stroke"] = override["stroke"]
     return filter_geojson_for_mrms_warnings_overlay(
         {
             "type": "FeatureCollection",
@@ -1119,12 +1138,21 @@ def _dissolve_hover_label(properties_list: list[dict[str, Any]]) -> str:
     return f"{risk_label} ({len(area_names)} areas)" if risk_label else f"{len(area_names)} areas"
 
 
-def _dissolve_area_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dissolve_area_features(
+    features: list[dict[str, Any]],
+    *,
+    exclude_geometry_sources: frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    excluded_sources = exclude_geometry_sources or frozenset()
     dissolve_candidates: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     passthrough: list[dict[str, Any]] = []
     for feature in features:
         properties = feature.get("properties")
         geometry = feature.get("geometry")
+        geometry_source = str((properties or {}).get("geometry_source") or "").strip()
+        if geometry_source in excluded_sources:
+            passthrough.append(feature)
+            continue
         if not isinstance(properties, dict) or not _geometry_is_area(geometry):
             passthrough.append(feature)
             continue
@@ -1282,6 +1310,11 @@ def build_active_hazards_frame(
                     area_description=alert.area_description,
                     fill_opacity=render_style.fill_opacity,
                     stroke_width=render_style.stroke_width,
+                    extra_properties={
+                        "geometry_source": "native_alert",
+                    }
+                    if prefer_native_polygon_geometry
+                    else None,
                 )
             )
             continue
@@ -1401,7 +1434,11 @@ def build_active_hazards_frame(
             )
         )
 
-    all_features = _dissolve_area_features(county_features + zone_features + geometry_features)
+    dissolve_exclusions = frozenset({"native_alert"}) if prefer_native_polygon_geometry else frozenset()
+    all_features = _dissolve_area_features(
+        county_features + zone_features + geometry_features,
+        exclude_geometry_sources=dissolve_exclusions,
+    )
     all_features.sort(key=lambda feature: int((feature.get("properties") or {}).get("sort_rank") or 0))
     return HazardFramePayload(
         fh=int(fh),

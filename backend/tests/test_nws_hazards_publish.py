@@ -274,6 +274,142 @@ def test_mrms_overlay_prefers_native_polygon_geometry_over_county_rollup(tmp_pat
     assert mrms_geometries["Tornado Warning"]["geometry"] == storm_polygon
 
 
+def test_mrms_overlay_keeps_native_flash_flood_warnings_discrete(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning 1",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "North Maricopa",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-112.05, 33.35], [-111.95, 33.35], [-111.95, 33.45], [-112.05, 33.45], [-112.05, 33.35]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-2",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning 2",
+                    "sent": "2026-04-06T17:06:00Z",
+                    "effective": "2026-04-06T17:06:00Z",
+                    "expires": "2026-04-06T18:35:00Z",
+                    "areaDesc": "South Maricopa",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-112.05, 33.15], [-111.95, 33.15], [-111.95, 33.25], [-112.05, 33.25], [-112.05, 33.15]]],
+                },
+            },
+        ],
+    }
+
+    frame = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+        prefer_native_polygon_geometry=True,
+    )
+    flash_flood_features = [
+        feature
+        for feature in frame.features
+        if feature["properties"]["risk_label"] == "Flash Flood Warning"
+    ]
+    assert len(flash_flood_features) == 2
+    alert_ids = {feature["properties"]["alert_ids"][0] for feature in flash_flood_features}
+    assert alert_ids == {"ffw-1", "ffw-2"}
+    assert all(feature["properties"]["geometry_source"] == "native_alert" for feature in flash_flood_features)
+
+
+def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-112.05, 33.35], [-111.95, 33.35], [-111.95, 33.45], [-112.05, 33.45], [-112.05, 33.35]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-watch-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Watch",
+                    "headline": "Flash Flood Watch",
+                    "sent": "2026-04-06T16:55:00Z",
+                    "effective": "2026-04-06T16:55:00Z",
+                    "expires": "2026-04-06T19:00:00Z",
+                    "areaDesc": "Denver County",
+                    "geocode": {"SAME": ["008031"], "UGC": ["COC031"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-105.0, 39.7], [-104.8, 39.7], [-104.8, 39.85], [-105.0, 39.85], [-105.0, 39.7]]],
+                },
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        nws_hazards,
+        "sync_active_zone_reference",
+        lambda **_: nws_hazards.ZoneReferenceSyncResult(
+            path=zone_reference,
+            needed_zone_codes=(),
+            resolved_zone_codes=(),
+            signature="test",
+            updated=False,
+        ),
+    )
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    colors = {
+        feature["properties"]["risk_label"]: (
+            feature["properties"]["fill"],
+            feature["properties"]["stroke"],
+        )
+        for feature in overlay["features"]
+    }
+    assert colors["Flash Flood Warning"] == ("#00FF00", nws_hazards._darken_hex_color("#00FF00"))
+    assert colors["Flash Flood Watch"] == ("#00FF00", nws_hazards._darken_hex_color("#00FF00"))
+
+
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
     tmp_path: Path,
 ) -> None:
