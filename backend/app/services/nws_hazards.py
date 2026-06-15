@@ -880,6 +880,18 @@ def _prefers_alert_geometry(alert: NormalizedHazardAlert) -> bool:
     return normalized_event in GEOMETRY_PREFERRED_EVENTS
 
 
+def _uses_alert_geometry_directly(
+    alert: NormalizedHazardAlert,
+    *,
+    prefer_native_polygon_geometry: bool,
+) -> bool:
+    if alert.geometry is None:
+        return False
+    if prefer_native_polygon_geometry:
+        return _geometry_is_area(alert.geometry)
+    return _prefers_alert_geometry(alert)
+
+
 def _area_render_style(alert: NormalizedHazardAlert, *, default_fill_opacity: float, default_stroke_width: float) -> HazardAreaRenderStyle:
     return EVENT_AREA_STYLE_OVERRIDES.get(
         alert.event.strip().lower(),
@@ -1038,6 +1050,7 @@ def build_mrms_warnings_overlay_geojson(
             resolved_payload,
             county_reference_path=county_path,
             zone_reference_path=zone_path,
+            prefer_native_polygon_geometry=True,
         )
         features = frame.features
     except NWSHazardsError:
@@ -1227,6 +1240,7 @@ def build_active_hazards_frame(
     county_reference_path: Path,
     zone_reference_path: Path | None = None,
     fh: int = 0,
+    prefer_native_polygon_geometry: bool = False,
 ) -> HazardFramePayload:
     counties = load_county_reference(county_reference_path)
     zone_references = load_zone_reference(zone_reference_path) if zone_reference_path is not None else {}
@@ -1254,7 +1268,10 @@ def build_active_hazards_frame(
     needed_zone_codes: set[str] = set()
     for alert in normalized_alerts:
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
-        if alert.geometry is not None and _prefers_alert_geometry(alert):
+        if _uses_alert_geometry_directly(
+            alert,
+            prefer_native_polygon_geometry=prefer_native_polygon_geometry,
+        ):
             render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
             geometry_features.append(
                 _build_geometry_feature(

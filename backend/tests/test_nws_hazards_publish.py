@@ -205,6 +205,75 @@ def test_build_active_hazards_frame_prefers_precise_geometry_for_flood_alerts(tm
     assert feature["properties"]["fill"] == "#00FF00"
 
 
+def test_mrms_overlay_prefers_native_polygon_geometry_over_county_rollup(tmp_path: Path) -> None:
+    county_reference = _write_county_reference(tmp_path / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "zone_reference.geojson")
+    storm_polygon = {
+        "type": "Polygon",
+        "coordinates": [[[-112.05, 33.35], [-111.95, 33.35], [-111.95, 33.45], [-112.05, 33.45], [-112.05, 33.35]]],
+    }
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning for Maricopa County",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": storm_polygon,
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "tor-1",
+                    "status": "Actual",
+                    "event": "Tornado Warning",
+                    "headline": "Tornado Warning for Maricopa County",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T17:45:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": storm_polygon,
+            },
+        ],
+    }
+
+    standalone = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+    assert len(standalone.features) == 1
+    county_feature = standalone.features[0]
+    assert county_feature["properties"]["county_geoid"] == "04013"
+    assert county_feature["properties"]["risk_label"] == "Tornado Warning"
+    assert county_feature["geometry"] != storm_polygon
+
+    mrms = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+        prefer_native_polygon_geometry=True,
+    )
+    assert len(mrms.features) == 2
+    mrms_geometries = {feature["properties"]["risk_label"]: feature for feature in mrms.features}
+    assert "county_geoid" not in mrms_geometries["Flash Flood Warning"]["properties"]
+    assert mrms_geometries["Flash Flood Warning"]["geometry"] == storm_polygon
+    assert "county_geoid" not in mrms_geometries["Tornado Warning"]["properties"]
+    assert mrms_geometries["Tornado Warning"]["geometry"] == storm_polygon
+
+
 def test_build_active_hazards_frame_resolves_zone_geometry_for_marine_alerts(
     tmp_path: Path,
 ) -> None:
