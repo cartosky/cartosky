@@ -117,6 +117,7 @@ import {
   selectableFramesForVariable,
   resolveForecastHour,
   resolveForecastHourTransition,
+  viewerModelGroup,
   auditGridFrameCoverage,
   buildLegend,
   buildNwsActiveWarningsUrl,
@@ -1861,7 +1862,14 @@ export default function App() {
     setForecastHour(transition.resolvedHour);
     setTargetForecastHour(transition.resolvedHour);
     pendingProductSwitchHourRef.current = null;
-    if (notifyOnFallback && transition.didFallback && Number.isFinite(intentHour)) {
+    const modelGroup = viewerModelGroup(model);
+    const shouldShowFallbackToast = modelGroup === "MODELS" || modelGroup === "ENSEMBLES";
+    if (
+      notifyOnFallback
+      && shouldShowFallbackToast
+      && transition.didFallback
+      && Number.isFinite(intentHour)
+    ) {
       const modelLabel = models.find((entry) => entry.value === model)?.label ?? model;
       showForecastHourFallbackNotice(Number(intentHour), transition.resolvedHour, modelLabel);
     }
