@@ -3827,11 +3827,19 @@ export default function App() {
   }, [canUseGridPlayback, finalizePendingVariableSwitch, forecastHour, isPlaying, scheduleAutoplayUiHour, selectionKey, trackFirstViewerFrame]);
   const handleAnchorFrameSampled = useCallback((payload: {
     frameHour: number;
+    selectionEpoch?: number;
+    selectionKey?: string;
     gridSampled: boolean;
     values: Record<string, number | null>;
     units: string;
   }) => {
     if (!anchorBaseGeoJson || !variable || !Number.isFinite(payload.frameHour) || !anchorValueDisplayEnabled) {
+      return;
+    }
+    if (
+      (payload.selectionEpoch !== undefined && payload.selectionEpoch !== selectionEpochRef.current)
+      || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey && !payload.selectionKey.startsWith(`${selectionKey}:`))
+    ) {
       return;
     }
 

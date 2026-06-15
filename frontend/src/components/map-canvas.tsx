@@ -1003,6 +1003,8 @@ type MapCanvasProps = {
   anchorBatchPoints?: AnchorBatchPoint[];
   onAnchorFrameSampled?: (payload: {
     frameHour: number;
+    selectionEpoch?: number;
+    selectionKey?: string;
     gridSampled: boolean;
     values: Record<string, number | null>;
     units: string;
@@ -1456,6 +1458,8 @@ export function MapCanvas({
     const sampled = sampler.sampleAnchorPoints(anchorBatchPoints);
     onAnchorFrameSampled({
       frameHour: payload.frameHour,
+      selectionEpoch: payload.selectionEpoch,
+      selectionKey: payload.selectionKey,
       gridSampled: Boolean(sampled),
       values: sampled?.values ?? {},
       units: sampled?.units ?? "",
