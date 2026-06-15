@@ -430,11 +430,6 @@ export default function App() {
       title: "Display Settings",
       body: "Toggle city labels, zoom controls, basemap style, and overlay opacity",
     },
-    {
-      targetSelector: '[data-tour-target="forecast-scrubber"]',
-      title: "Forecast Hour",
-      body: "Drag or play through forecast hours. The timestamp updates in real time",
-    },
   ], []);
 
   const mobileTourSteps: TourStepDef[] = useMemo(() => [
