@@ -175,6 +175,20 @@ async def test_nws_hazards_latest_manifest_frames_and_vector_endpoint_resolve(cl
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
 
 
+async def test_nws_hazards_active_warnings_overlay_serves_latest_published_geojson(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/v4/nws-hazards/active/warnings")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/geo+json")
+    assert response.headers.get("cache-control") == "public, max-age=60"
+    assert response.headers.get("x-nws-hazards-run") == "20260406_1730z"
+    payload = response.json()
+    assert payload["type"] == "FeatureCollection"
+    assert payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
+
+
 async def test_nws_hazards_alert_detail_endpoint_returns_normalized_nws_alert(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

@@ -17,6 +17,7 @@ import {
   Share2,
   Star,
   Sun,
+  TriangleAlert,
   X,
   ZoomIn,
 } from "lucide-react";
@@ -1050,6 +1051,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     onViewLatestRun, runSelectionLocked,
     onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange,
+    nwsWarningsEnabled, onNwsWarningsEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legend,
   } = toolbar;
@@ -1246,6 +1248,14 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                   checked={pointLabelsEnabled}
                   onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
                 />
+                {model === "mrms" ? (
+                  <DisplayRow
+                    label="NWS Warnings"
+                    icon={TriangleAlert}
+                    checked={nwsWarningsEnabled}
+                    onToggle={() => onNwsWarningsEnabledChange(!nwsWarningsEnabled)}
+                  />
+                ) : null}
                 <DisplayRow
                   label="Zoom Controls"
                   icon={ZoomIn}
@@ -1334,7 +1344,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
-    runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange, legendVisible,
+    runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange,
+    nwsWarningsEnabled, onNwsWarningsEnabledChange, legendVisible,
     onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
     layoutMode, legend, mobileControlsOpen, onMobileControlsOpenChange,
@@ -1576,6 +1587,14 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           checked={pointLabelsEnabled}
           onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
         />
+        {model === "mrms" ? (
+          <DisplayRow
+            label="NWS Warnings"
+            icon={TriangleAlert}
+            checked={nwsWarningsEnabled}
+            onToggle={() => onNwsWarningsEnabledChange(!nwsWarningsEnabled)}
+          />
+        ) : null}
         <DisplayRow
           label="Legend"
           icon={Palette}

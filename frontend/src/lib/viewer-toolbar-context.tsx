@@ -42,6 +42,8 @@ export type ViewerToolbarProps = {
   // Display settings
   pointLabelsEnabled: boolean;
   onPointLabelsEnabledChange: (next: boolean) => void;
+  nwsWarningsEnabled: boolean;
+  onNwsWarningsEnabledChange: (next: boolean) => void;
   legendVisible: boolean;
   onLegendVisibleChange: (next: boolean) => void;
   basemapMode: BasemapMode;

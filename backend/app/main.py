@@ -3812,6 +3812,40 @@ async def nws_hazards_alert_detail(
     )
 
 
+NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS = 60
+
+
+@app.get("/api/v4/nws-hazards/active/warnings")
+def nws_hazards_active_warnings(
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    from .services.nws_hazards import NWS_HAZARDS_MODEL_ID
+
+    entitlements.require_product_access(principal, "mrms")
+    run_id = _resolve_latest_run(NWS_HAZARDS_MODEL_ID)
+    if not run_id:
+        raise HTTPException(status_code=404, detail="No published NWS hazards bundle available")
+
+    vector_path = PUBLISHED_ROOT / NWS_HAZARDS_MODEL_ID / run_id / "active" / "vectors" / "fh000.geojson"
+    if not vector_path.is_file():
+        raise HTTPException(status_code=404, detail="Active NWS warnings GeoJSON not found")
+
+    try:
+        payload = vector_path.read_bytes()
+    except Exception as exc:
+        logger.exception("Failed to read active NWS warnings GeoJSON at %s", vector_path)
+        raise HTTPException(status_code=500, detail="Failed to read active NWS warnings GeoJSON") from exc
+
+    return Response(
+        content=payload,
+        media_type="application/geo+json",
+        headers={
+            "Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}",
+            "X-NWS-Hazards-Run": run_id,
+        },
+    )
+
+
 @app.get("/tiles/v3/health")
 def health_tiles_v3():
     return {

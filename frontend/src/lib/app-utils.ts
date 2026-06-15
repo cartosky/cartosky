@@ -138,6 +138,7 @@ export const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 export const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
 export const LEGEND_VISIBILITY_STORAGE_KEY = "twf.map.legend_visible";
 export const POINT_LABELS_STORAGE_KEY = "twf.map.point_labels_enabled";
+export const NWS_WARNINGS_STORAGE_KEY = "twf.map.nws_warnings_enabled";
 export const ZOOM_CONTROLS_STORAGE_KEY = "twf.map.zoom_controls_visible";
 export const ANIMATION_DELAY_STORAGE_KEY = "cartosky_animation_delay_ms";
 export const MODEL_ORDER_BY_ID: Record<string, number> = {
@@ -397,6 +398,23 @@ export function readPointLabelsPreference(): boolean {
 
 export function writePointLabelsPreference(enabled: boolean): void {
   writeBooleanPreference(POINT_LABELS_STORAGE_KEY, enabled);
+}
+
+export function readNwsWarningsPreference(): boolean {
+  return readBooleanPreference(NWS_WARNINGS_STORAGE_KEY, true);
+}
+
+export function writeNwsWarningsPreference(enabled: boolean): void {
+  writeBooleanPreference(NWS_WARNINGS_STORAGE_KEY, enabled);
+}
+
+export function buildNwsActiveWarningsUrl(apiRoot: string, versionToken: string): string {
+  const baseUrl = `${apiRoot}/api/v4/nws-hazards/active/warnings`;
+  const token = String(versionToken ?? "").trim();
+  if (!token) {
+    return baseUrl;
+  }
+  return `${baseUrl}?v=${encodeURIComponent(token)}`;
 }
 
 export function readZoomControlsPreference(): boolean | null {

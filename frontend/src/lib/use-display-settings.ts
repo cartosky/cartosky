@@ -4,10 +4,12 @@ import { OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
 import {
   readBasemapModePreference,
   readLegendVisibilityPreference,
+  readNwsWarningsPreference,
   readPointLabelsPreference,
   readZoomControlsPreference,
   writeBasemapModePreference,
   writeLegendVisibilityPreference,
+  writeNwsWarningsPreference,
   writePointLabelsPreference,
   writeZoomControlsPreference,
 } from "@/lib/app-utils";
@@ -18,6 +20,8 @@ export interface UseDisplaySettingsReturn {
   setBasemapMode: React.Dispatch<React.SetStateAction<BasemapMode>>;
   pointLabelsEnabled: boolean;
   setPointLabelsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  nwsWarningsEnabled: boolean;
+  setNwsWarningsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   zoomControlsVisible: boolean;
   setZoomControlsVisible: React.Dispatch<React.SetStateAction<boolean>>;
   legendVisible: boolean;
@@ -45,6 +49,7 @@ export function useDisplaySettings(
 ): UseDisplaySettingsReturn {
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
   const [pointLabelsEnabled, setPointLabelsEnabled] = useState(() => readPointLabelsPreference());
+  const [nwsWarningsEnabled, setNwsWarningsEnabled] = useState(() => readNwsWarningsPreference());
 
   // null = never explicitly set; resolve to layout-appropriate default below.
   const [zoomPreference, setZoomPreference] = useState<boolean | null>(
@@ -77,6 +82,7 @@ export function useDisplaySettings(
 
   useEffect(() => { writeBasemapModePreference(basemapMode); }, [basemapMode]);
   useEffect(() => { writePointLabelsPreference(pointLabelsEnabled); }, [pointLabelsEnabled]);
+  useEffect(() => { writeNwsWarningsPreference(nwsWarningsEnabled); }, [nwsWarningsEnabled]);
 
   useEffect(() => {
     if (zoomPreference !== null) writeZoomControlsPreference(zoomPreference);
@@ -97,6 +103,8 @@ export function useDisplaySettings(
     setBasemapMode,
     pointLabelsEnabled,
     setPointLabelsEnabled,
+    nwsWarningsEnabled,
+    setNwsWarningsEnabled,
     zoomControlsVisible,
     setZoomControlsVisible,
     legendVisible,

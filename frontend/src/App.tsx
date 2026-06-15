@@ -119,6 +119,7 @@ import {
   resolveForecastHourTransition,
   auditGridFrameCoverage,
   buildLegend,
+  buildNwsActiveWarningsUrl,
   buildVectorLayerUrl,
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
@@ -167,6 +168,7 @@ const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc", "c
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
+const NWS_WARNINGS_REFRESH_MS = 60_000;
 const PERMALINK_FALLBACK_MESSAGE = "This link may be outdated - loading default view";
 
 function readRequestedForecastHour(targetHour: number, currentHour: number): number {
@@ -347,6 +349,7 @@ export default function App() {
   const {
     basemapMode, setBasemapMode,
     pointLabelsEnabled, setPointLabelsEnabled,
+    nwsWarningsEnabled, setNwsWarningsEnabled,
     zoomControlsVisible, setZoomControlsVisible,
     legendVisible, setLegendVisible,
     displayPanelOpen, setDisplayPanelOpen,
@@ -2265,6 +2268,30 @@ export default function App() {
       layerKey: "primary",
     });
   }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
+
+  const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(() => String(Date.now()));
+  const mrmsNwsWarningsEnabled = model === "mrms" && nwsWarningsEnabled;
+
+  useEffect(() => {
+    if (!mrmsNwsWarningsEnabled) {
+      return;
+    }
+    setNwsWarningsRefreshToken(String(Date.now()));
+    const intervalId = window.setInterval(() => {
+      setNwsWarningsRefreshToken(String(Date.now()));
+    }, NWS_WARNINGS_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [mrmsNwsWarningsEnabled]);
+
+  const mrmsNwsWarningsGeoJsonUrl = useMemo(() => {
+    if (!mrmsNwsWarningsEnabled) {
+      return null;
+    }
+    return buildNwsActiveWarningsUrl(apiRoot, nwsWarningsRefreshToken);
+  }, [apiRoot, mrmsNwsWarningsEnabled, nwsWarningsRefreshToken]);
+
+  const effectiveVectorGeoJsonUrl = mrmsNwsWarningsGeoJsonUrl ?? vectorGeoJsonUrl;
+
   const vectorPrefetchUrls = useMemo(() => {
     if (!selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
       return [] as string[];
@@ -4711,6 +4738,8 @@ export default function App() {
     runAvailabilityTone: runAvailability?.tone ?? null,
     pointLabelsEnabled,
     onPointLabelsEnabledChange: setPointLabelsEnabled,
+    nwsWarningsEnabled,
+    onNwsWarningsEnabledChange: setNwsWarningsEnabled,
     legendVisible,
     onLegendVisibleChange: (nextVisible: boolean) => {
       setLegendVisible(nextVisible);
@@ -4747,7 +4776,7 @@ export default function App() {
     allVariableCatalog, supportedVariableIds,
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
-    pointLabelsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
+    pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
   ]);
@@ -4776,7 +4805,7 @@ export default function App() {
             contourGeoJsonUrl={contourGeoJsonUrl}
             contourPrefetchUrls={contourPrefetchUrls}
             pressureCenters={pressureCenters}
-            vectorGeoJsonUrl={vectorGeoJsonUrl}
+            vectorGeoJsonUrl={effectiveVectorGeoJsonUrl}
           vectorPrefetchUrls={vectorPrefetchUrls}
           anchorGeoJson={anchorDisplayGeoJson}
           anchorBatchPoints={
@@ -4812,7 +4841,11 @@ export default function App() {
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}
-          onVectorHazardClick={model === "nws_hazards" ? setSelectedVectorHazard : undefined}
+          onVectorHazardClick={
+            model === "nws_hazards" || mrmsNwsWarningsEnabled
+              ? setSelectedVectorHazard
+              : undefined
+          }
           showZoomControls={zoomControlsVisible}
           isDesktopLayout={isDesktopViewerLayout}
           legendButtonVisible={!isDesktopViewerLayout && legendVisible}
