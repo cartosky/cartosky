@@ -211,27 +211,24 @@ GOES_IR13_COLORS = [color for _, color in GOES_IR13_LEGEND_STOPS]
 GOES_IR13_RANGE = (GOES_IR13_LEVELS[0], GOES_IR13_LEVELS[-1])
 
 GOES_WV9_LEGEND_STOPS = [
-    (-82.0, "#000080"),  # coldest - deep navy
-    (-78.0, "#0000c0"),
-    (-74.0, "#0020e0"),
-    (-70.0, "#0060f0"),  # cold - royal blue
-    (-66.0, "#0090e0"),
-    (-62.0, "#00b0c0"),
-    (-58.0, "#00c090"),  # mid - teal
-    (-54.0, "#00c060"),
-    (-50.0, "#20c030"),
-    (-46.0, "#60c000"),  # mid moist - yellow-green
-    (-42.0, "#a0c000"),
-    (-38.0, "#d0b000"),
-    (-34.0, "#f0a000"),  # moist - gold
-    (-30.0, "#f0c000"),
-    (-26.0, "#f0e000"),
-    (-22.0, "#ffff00"),  # warm moist - yellow
-    (-18.0, "#ffff40"),
-    (-15.0, "#ffff80"),
-    (-13.0, "#ffffc0"),
-    (-12.0, "#ffffff"),  # warmest - white
-    (-11.0, "#ffffff"),
+    (-79.0, "#ffffff"),  # p01 cold cloud tops - white
+    (-72.0, "#e0e0e0"),
+    (-65.0, "#c0c0ff"),  # cold dry - pale blue
+    (-59.0, "#8080ff"),  # p01 - blue
+    (-54.0, "#4040e0"),
+    (-49.0, "#2020c0"),  # p05 - dark blue
+    (-44.0, "#1060c0"),  # p10 - medium blue
+    (-39.0, "#1090d0"),  # p20
+    (-36.0, "#10b0b0"),  # p30 - teal
+    (-32.0, "#10c060"),  # p40 - teal-green
+    (-29.0, "#60c010"),  # p50 - yellow-green
+    (-27.0, "#a0b000"),
+    (-26.0, "#d0a000"),  # p60 - gold
+    (-24.0, "#f09000"),  # p70 - orange-gold
+    (-21.0, "#f0c000"),  # p80 - yellow
+    (-19.0, "#f8e000"),  # p90
+    (-15.0, "#ffff40"),  # p99 - bright yellow
+    (-11.0, "#ffff00"),  # max - pure yellow
 ]
 GOES_WV9_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_WV9_LEGEND_STOPS]
 GOES_WV9_COLORS = [color for _, color in GOES_WV9_LEGEND_STOPS]
