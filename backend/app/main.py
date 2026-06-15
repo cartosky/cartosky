@@ -3816,44 +3816,26 @@ NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS = 60
 
 
 @app.get("/api/v4/nws-hazards/active/warnings")
-def nws_hazards_active_warnings(
+async def nws_hazards_active_warnings(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     from .services import nws_hazards as nws_hazards_service
 
     entitlements.require_product_access(principal, "mrms")
-    run_id = _resolve_latest_run(nws_hazards_service.NWS_HAZARDS_MODEL_ID)
-    if not run_id:
-        raise HTTPException(status_code=404, detail="No published NWS hazards bundle available")
-
-    vector_path = (
-        PUBLISHED_ROOT
-        / nws_hazards_service.NWS_HAZARDS_MODEL_ID
-        / run_id
-        / "active"
-        / "vectors"
-        / "fh000.geojson"
-    )
-    if not vector_path.is_file():
-        raise HTTPException(status_code=404, detail="Active NWS warnings GeoJSON not found")
-
     try:
-        raw_payload = json.loads(vector_path.read_text())
-        filtered_payload = nws_hazards_service.filter_geojson_for_mrms_warnings_overlay(raw_payload)
-        payload = json.dumps(filtered_payload, separators=(",", ":")).encode("utf-8")
+        filtered_payload = await run_in_threadpool(
+            nws_hazards_service.build_mrms_warnings_overlay_geojson,
+            DATA_ROOT,
+        )
     except nws_hazards_service.NWSHazardsError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Failed to read active NWS warnings GeoJSON at %s", vector_path)
-        raise HTTPException(status_code=500, detail="Failed to read active NWS warnings GeoJSON") from exc
-
-    return Response(
-        content=payload,
-        media_type="application/geo+json",
-        headers={
-            "Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}",
-            "X-NWS-Hazards-Run": run_id,
-        },
+        return _error_response(
+            status_code=502,
+            code="NWS_MRMS_WARNINGS_UNAVAILABLE",
+            message=str(exc),
+        )
+    return JSONResponse(
+        content=filtered_payload,
+        headers={"Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}"},
     )
 
 

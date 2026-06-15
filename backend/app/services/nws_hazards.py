@@ -1014,6 +1014,42 @@ def filter_geojson_for_mrms_warnings_overlay(payload: dict[str, Any]) -> dict[st
     }
 
 
+def build_mrms_warnings_overlay_geojson(
+    data_root: Path,
+    *,
+    timeout_seconds: float = NWS_REQUEST_TIMEOUT,
+    api_base: str = NWS_API_BASE,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_payload = payload if payload is not None else fetch_active_alerts_geojson(
+        timeout_seconds=timeout_seconds,
+        api_base=api_base,
+    )
+    county_path = default_county_reference_path(data_root)
+    zone_path = default_zone_reference_path(data_root)
+    sync_active_zone_reference(
+        payload=resolved_payload,
+        zone_reference_path=zone_path,
+        timeout_seconds=timeout_seconds,
+        api_base=api_base,
+    )
+    try:
+        frame = build_active_hazards_frame(
+            resolved_payload,
+            county_reference_path=county_path,
+            zone_reference_path=zone_path,
+        )
+        features = frame.features
+    except NWSHazardsError:
+        features = []
+    return filter_geojson_for_mrms_warnings_overlay(
+        {
+            "type": "FeatureCollection",
+            "features": features,
+        }
+    )
+
+
 def _legend_entries_for_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[tuple[str, str, int]] = set()
     entries: list[dict[str, Any]] = []

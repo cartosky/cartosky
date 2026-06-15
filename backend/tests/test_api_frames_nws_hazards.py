@@ -218,13 +218,50 @@ async def test_nws_hazards_latest_manifest_frames_and_vector_endpoint_resolve(cl
 
 async def test_nws_hazards_active_warnings_overlay_filters_to_convective_products(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def fake_build_mrms_warnings_overlay_geojson(data_root: Path) -> dict:
+        del data_root
+        return nws_hazards_service.filter_geojson_for_mrms_warnings_overlay(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "risk_label": "Tornado Warning",
+                            "active_hazards": ["Tornado Warning"],
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "risk_label": "Flood Advisory",
+                            "active_hazards": ["Flood Advisory"],
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "risk_label": "Flash Flood Watch",
+                            "active_hazards": ["Flash Flood Watch"],
+                        },
+                    },
+                ],
+            }
+        )
+
+    monkeypatch.setattr(
+        nws_hazards_service,
+        "build_mrms_warnings_overlay_geojson",
+        fake_build_mrms_warnings_overlay_geojson,
+    )
+
     response = await client.get("/api/v4/nws-hazards/active/warnings")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/geo+json")
     assert response.headers.get("cache-control") == "public, max-age=60"
-    assert response.headers.get("x-nws-hazards-run") == "20260406_1730z"
     payload = response.json()
     assert payload["type"] == "FeatureCollection"
     labels = {feature["properties"]["risk_label"] for feature in payload["features"]}
