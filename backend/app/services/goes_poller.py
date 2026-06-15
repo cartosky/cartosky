@@ -32,7 +32,7 @@ from app.services.goes_publish import (
     publish_goes_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
-from app.services.publish_utils import enforce_run_artifact_retention
+from app.services.publish_utils import enforce_run_artifact_retention, write_latest_pointer
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
                 target_frame_count=target_frame_count,
                 now=now,
                 s3_client=s3_client,
+                write_latest=False,
             )
         )
 
@@ -139,6 +140,14 @@ def run_once(config: GOESPollerConfig) -> GOESPollerCycleResult:
     if skipped_bands:
         messages.append(f"Skipped unsupported bands: {', '.join(str(item) for item in skipped_bands)}.")
     if published_results:
+        final_run_id = published_results[-1].published_run_id
+        if final_run_id:
+            write_latest_pointer(
+                data_root=config.data_root,
+                model="goes-east",
+                run_id=final_run_id,
+                source="goes_publish_v1",
+            )
         _enforce_retention(config)
         _cleanup_cache_dir(config.cache_dir)
 
@@ -161,6 +170,7 @@ def _run_once_for_band(
     target_frame_count: int,
     now: datetime,
     s3_client: object,
+    write_latest: bool = True,
 ) -> GOESPollerCycleResult:
     discovered = discover_recent_scans_s3(
         s3_client=s3_client,
@@ -304,6 +314,7 @@ def _run_once_for_band(
         target_frame_count=len(frozen),
         expected_frame_count=len(frozen),
         band_config=band_config,
+        write_latest=write_latest,
     )
 
     message = f"Published GOES-East Band {band} bundle {publish_result.run_id} with {available_for_window}/{len(frozen)} frames"

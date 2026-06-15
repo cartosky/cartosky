@@ -205,6 +205,7 @@ def publish_goes_bundle(
     target_frame_count: int | None = None,
     expected_frame_count: int | None = None,
     band_config: GOESBandConfig | None = None,
+    write_latest: bool = True,
 ) -> GOESPublishResult:
     if not frames and not previous_frames:
         raise ValueError("GOES bundle publish requires at least one frame")
@@ -321,7 +322,8 @@ def publish_goes_bundle(
         run_id=run_id,
         preserved_variables=preserved_manifest_variables,
     )
-    write_latest_pointer(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id, source="goes_publish_v1")
+    if write_latest:
+        write_latest_pointer(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id, source="goes_publish_v1")
 
     manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
     published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
