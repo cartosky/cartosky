@@ -744,8 +744,15 @@ function vectorFillOpacityExpression(fade: number) {
   return ["*", Math.max(0, Math.min(1, fade)), ["coalesce", ["get", "fill_opacity"], 0.65]] as const;
 }
 
+function vectorHaloLineOpacity(lineOpacity: number, haloEnabled: boolean): number {
+  const clampedLineOpacity = Math.max(0, Math.min(1, lineOpacity));
+  return haloEnabled ? clampedLineOpacity : 0;
+}
+
 function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: number, haloEnabled = false) {
   const clampedFade = Math.max(0, Math.min(1, fade));
+  const lineOpacity = clampedFade;
+  const haloLineOpacity = vectorHaloLineOpacity(lineOpacity, haloEnabled);
   const fillLayerId = VECTOR_FILL_LAYER_IDS[bufferIndex];
   const haloLineLayerId = VECTOR_HALO_LINE_LAYER_IDS[bufferIndex];
   const lineLayerId = VECTOR_LINE_LAYER_IDS[bufferIndex];
@@ -753,14 +760,10 @@ function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: numbe
     map.setPaintProperty(fillLayerId, "fill-opacity", vectorFillOpacityExpression(clampedFade));
   }
   if (map.getLayer(haloLineLayerId)) {
-    map.setPaintProperty(
-      haloLineLayerId,
-      "line-opacity",
-      haloEnabled ? VECTOR_HALO_LINE_BASE_OPACITY * clampedFade : 0,
-    );
+    map.setPaintProperty(haloLineLayerId, "line-opacity", haloLineOpacity);
   }
   if (map.getLayer(lineLayerId)) {
-    map.setPaintProperty(lineLayerId, "line-opacity", clampedFade);
+    map.setPaintProperty(lineLayerId, "line-opacity", lineOpacity);
   }
 }
 
@@ -2451,13 +2454,14 @@ export function MapCanvas({
       showVectorBuffer(toBuffer, 0);
       showVectorBuffer(fromBuffer, 1);
       const startedAt = performance.now();
+      const haloEnabled = vectorLineHaloEnabledRef.current;
       const tick = (now: number) => {
         if (!map) {
           return;
         }
         const progress = Math.min(1, (now - startedAt) / VECTOR_TRANSITION_MS);
-        setVectorLayerFade(map, fromBuffer, 1 - progress);
-        setVectorLayerFade(map, toBuffer, progress);
+        setVectorLayerFade(map, fromBuffer, 1 - progress, haloEnabled);
+        setVectorLayerFade(map, toBuffer, progress, haloEnabled);
         if (progress >= 1) {
           vectorTransitionRafRef.current = null;
           hideVectorBuffer(fromBuffer);
@@ -2582,17 +2586,15 @@ export function MapCanvas({
       const fillVisible = map.getLayoutProperty(fillLayerId, "visibility") === "visible";
       if (!fillVisible) {
         setLayerVisibility(map, haloLayerId, false);
-        map.setPaintProperty(haloLayerId, "line-opacity", 0);
+        if (map.getLayer(haloLayerId)) {
+          map.setPaintProperty(haloLayerId, "line-opacity", 0);
+        }
         continue;
       }
       const lineOpacity = Number(map.getPaintProperty(VECTOR_LINE_LAYER_IDS[bufferIndex], "line-opacity") ?? 0);
       const fade = Math.max(0, Math.min(1, lineOpacity));
       setLayerVisibility(map, haloLayerId, vectorLineHaloEnabled);
-      map.setPaintProperty(
-        haloLayerId,
-        "line-opacity",
-        vectorLineHaloEnabled ? VECTOR_HALO_LINE_BASE_OPACITY * fade : 0,
-      );
+      setVectorLayerFade(map, bufferIndex, fade, vectorLineHaloEnabled);
     }
   }, [isLoaded, vectorLineHaloEnabled, vectorGeoJsonUrl]);
 

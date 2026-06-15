@@ -2294,7 +2294,6 @@ export default function App() {
     if (!mrmsNwsWarningsEnabled) {
       return;
     }
-    setNwsWarningsRefreshToken(String(Date.now()));
     const intervalId = window.setInterval(() => {
       setNwsWarningsRefreshToken(String(Date.now()));
     }, NWS_WARNINGS_REFRESH_MS);
