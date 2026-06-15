@@ -210,38 +210,32 @@ GOES_IR13_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_IR13_LEGEND_ST
 GOES_IR13_COLORS = [color for _, color in GOES_IR13_LEGEND_STOPS]
 GOES_IR13_RANGE = (GOES_IR13_LEVELS[0], GOES_IR13_LEVELS[-1])
 
-
 GOES_WV9_LEGEND_STOPS = [
-    (-90.0, "#000000"),
-    (-85.0, "#1a1a1a"),
-    (-80.0, "#383838"),
-    (-75.0, "#525252"),
-    (-70.0, "#6e6e6e"),
-    (-65.0, "#8a8a8a"),
-    (-60.0, "#a8a8a8"),
-    (-57.0, "#c8c8c8"),
-    (-54.0, "#e8e8e8"),
-    (-50.0, "#ffffff"),
-    (-46.0, "#d4e8ff"),
-    (-42.0, "#a8d0ff"),
-    (-38.0, "#78b4ff"),
-    (-34.0, "#4896ff"),
-    (-30.0, "#1478ff"),
-    (-26.0, "#0050e8"),
-    (-22.0, "#0028c8"),
-    (-18.0, "#0000a0"),
-    (-14.0, "#280080"),
-    (-10.0, "#500060"),
-    (-6.0, "#780040"),
-    (-2.0, "#a00020"),
-    (2.0, "#c80000"),
-    (6.0, "#e82000"),
-    (10.0, "#ff5000"),
-    (14.0, "#ff8000"),
-    (18.0, "#ffb000"),
-    (22.0, "#ffe000"),
-    (26.0, "#ffff00"),
-    (30.0, "#ffffff"),
+    (-90.0, "#ffffff"),  # coldest tops - white
+    (-85.0, "#e0e0e0"),
+    (-80.0, "#c0c0c0"),
+    (-75.0, "#a0a0a0"),
+    (-70.0, "#808080"),  # cold cloud - grey
+    (-65.0, "#604060"),
+    (-60.0, "#402060"),  # dry upper trop - dark purple
+    (-55.0, "#201080"),
+    (-50.0, "#1020a0"),  # dry air - dark blue
+    (-45.0, "#1040c0"),
+    (-40.0, "#2060d0"),
+    (-35.0, "#2080e0"),  # mid dry - medium blue
+    (-30.0, "#20a0e0"),
+    (-25.0, "#20c0e0"),  # moist - blue-teal
+    (-20.0, "#20d0c0"),
+    (-15.0, "#40d080"),  # moist - teal-green
+    (-10.0, "#80c040"),
+    (-5.0,  "#c0b020"),  # warm moist - yellow-green
+    (0.0,   "#e0a000"),  # warm moist - gold
+    (5.0,   "#f09000"),
+    (10.0,  "#f08000"),  # warmest - orange-gold
+    (15.0,  "#f0a000"),
+    (20.0,  "#f0c000"),
+    (25.0,  "#f0e000"),  # warmest moist - yellow
+    (30.0,  "#ffff00"),
 ]
 GOES_WV9_LEVELS = [round(value + 273.15, 2) for value, _ in GOES_WV9_LEGEND_STOPS]
 GOES_WV9_COLORS = [color for _, color in GOES_WV9_LEGEND_STOPS]
