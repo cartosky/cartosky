@@ -385,7 +385,7 @@ export function BottomForecastControls({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex flex-col items-center justify-end px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
+      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end overflow-x-hidden px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
         {forecastHourFallbackNotice ? (
           <div
             data-testid="forecast-hour-fallback-notice"
@@ -397,7 +397,7 @@ export function BottomForecastControls({
         ) : null}
         <div
           className={cn(
-            "pointer-events-auto relative flex w-full flex-col",
+            "pointer-events-auto relative flex w-full max-w-full flex-col overflow-x-hidden",
             isDesktopLayout
               ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]"
               : isTabletTouchLayout

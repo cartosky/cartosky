@@ -432,6 +432,7 @@ function RegionUtilitySelect({
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
@@ -535,7 +536,12 @@ function RegionUtilitySelect({
     if (!open || !inlinePanel) {
       return;
     }
-    triggerRef.current?.scrollIntoView({ block: "nearest" });
+    // Wait for the mobile sheet expand animation before scrolling/focusing so iOS shows the keyboard reliably.
+    const timer = window.setTimeout(() => {
+      triggerRef.current?.scrollIntoView({ block: "nearest" });
+      searchInputRef.current?.focus();
+    }, 380);
+    return () => window.clearTimeout(timer);
   }, [inlinePanel, open]);
 
   useEffect(() => {
@@ -701,6 +707,7 @@ function RegionUtilitySelect({
         <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
           <Search className="h-3.5 w-3.5 flex-none text-white/45" />
           <input
+            ref={searchInputRef}
             value={query}
             onChange={(event) => {
               clearInlineError();
@@ -708,13 +715,24 @@ function RegionUtilitySelect({
             }}
             placeholder="Search city or zip…"
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
             spellCheck={false}
-            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+            inputMode="search"
+            enterKeyHint="search"
+            type="search"
+            className={cn(
+              "viewer-touch-input w-full min-w-0 bg-transparent text-white outline-none placeholder:text-white/35",
+              inlinePanel ? "text-base" : "text-sm"
+            )}
           />
           {query.trim().length > 0 ? (
             <button
               type="button"
-              onClick={() => resetSearch()}
+              onClick={() => {
+                resetSearch();
+                searchInputRef.current?.focus();
+              }}
               className="flex h-5 w-5 flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68"
               aria-label="Clear location search"
             >
@@ -1349,12 +1367,16 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
   useEffect(() => {
     if (!sheetOpen) {
       document.body.style.removeProperty("overflow");
+      document.body.style.removeProperty("overflow-x");
       return;
     }
     const previousOverflow = document.body.style.overflow;
+    const previousOverflowX = document.body.style.overflowX;
     document.body.style.overflow = "hidden";
+    document.body.style.overflowX = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.body.style.overflowX = previousOverflowX;
     };
   }, [sheetOpen]);
 
@@ -1637,7 +1659,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
               transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
             } : undefined}
             className={cn(
-              "viewer-mobile-surface fixed z-[66] flex flex-col overflow-hidden",
+              "viewer-mobile-surface fixed z-[66] flex max-w-full flex-col overflow-x-hidden overflow-y-hidden",
               isTabletTouchLayout
                 ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
