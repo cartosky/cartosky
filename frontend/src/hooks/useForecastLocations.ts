@@ -171,12 +171,17 @@ export function useForecastLocations(userId?: string) {
     });
   }, [favoriteIds]);
 
+  const removeRecent = useCallback((id: string) => {
+    setRecents(current => withoutLocation(current, id));
+  }, []);
+
   return {
     favorites,
     recents: visibleRecents,
     displayChips,
     addFavorite,
     removeFavorite,
+    removeRecent,
     isFavorite,
     addRecent,
   };

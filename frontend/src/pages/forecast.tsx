@@ -1175,6 +1175,7 @@ export default function Forecast() {
     displayChips,
     addFavorite,
     removeFavorite,
+    removeRecent,
     isFavorite,
     addRecent,
   } = useForecastLocations(user?.id);
@@ -1202,12 +1203,22 @@ export default function Forecast() {
   useEffect(() => {
     function onOut(e: globalThis.MouseEvent) {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
+        cancelActiveSearch();
       }
     }
     document.addEventListener("mousedown", onOut);
     return () => document.removeEventListener("mousedown", onOut);
   }, []);
+
+  function cancelActiveSearch() {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    searchGenerationRef.current += 1;
+    setIsSearching(false);
+    setShowDropdown(false);
+  }
 
   useEffect(() => {
     const lat = readFiniteSearchParam(searchParams, "lat");
@@ -1417,9 +1428,10 @@ export default function Forecast() {
   }
 
   function clearSearch() {
+    cancelActiveSearch();
     setQuery(""); setPendingName(null); setForecast(null); setError(null);
     setFavoriteLimitMessage(null);
-    setSearchResults([]); setShowDropdown(false);
+    setSearchResults([]);
     if (loadAbortRef.current) loadAbortRef.current.abort();
     initialRestorePendingRef.current = false;
     setIsLoading(false);
@@ -1612,7 +1624,14 @@ export default function Forecast() {
                 void loadByQuery(query.trim());
               }
             }
-            if (e.key === "Escape") setShowDropdown(false);
+            if (e.key === "Escape") cancelActiveSearch();
+          }}
+          onBlur={() => {
+            window.setTimeout(() => {
+              if (!searchContainerRef.current?.contains(document.activeElement)) {
+                cancelActiveSearch();
+              }
+            }, 0);
           }}
           onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
           placeholder="Search city or zip code"
@@ -1705,25 +1724,27 @@ export default function Forecast() {
                         <button
                           type="button"
                           onClick={() => selectForecastLocation(location)}
-                          className={`whitespace-nowrap rounded-xl border border-white/10 bg-slate-950/18 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78 focus:outline-none focus-visible:border-cyan-200/45 focus-visible:text-white/82 ${chipIsFavorite ? "pl-2.5 pr-7" : "px-3"}`}
+                          className={`whitespace-nowrap rounded-xl border border-white/10 bg-slate-950/18 py-1.5 text-xs text-white/58 backdrop-blur-sm transition hover:border-white/18 hover:bg-white/[0.05] hover:text-white/78 focus:outline-none focus-visible:border-cyan-200/45 focus-visible:text-white/82 ${chipIsFavorite ? "pl-2.5 pr-7" : "pl-3 pr-7"}`}
                         >
                           {chipIsFavorite ? <span className="mr-1.5 text-amber-300">★</span> : null}
                           {location.label}
                         </button>
-                        {chipIsFavorite && (
-                          <button
-                            type="button"
-                            onClick={event => {
-                              event.stopPropagation();
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            if (chipIsFavorite) {
                               removeFavorite(location.id);
-                            }}
-                            title="Remove favorite"
-                            aria-label={`Remove ${location.label} from favorites`}
-                            className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/0 transition hover:bg-white/10 hover:text-white/75 focus:bg-white/10 focus:text-white/75 focus:outline-none group-hover:text-white/45 group-focus-within:text-white/45"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        )}
+                            } else {
+                              removeRecent(location.id);
+                            }
+                          }}
+                          title={chipIsFavorite ? "Remove favorite" : "Remove from recent searches"}
+                          aria-label={chipIsFavorite ? `Remove ${location.label} from favorites` : `Remove ${location.label} from recent searches`}
+                          className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/0 transition hover:bg-white/10 hover:text-white/75 focus:bg-white/10 focus:text-white/75 focus:outline-none group-hover:text-white/45 group-focus-within:text-white/45"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
                       </div>
                     );
                   })}
