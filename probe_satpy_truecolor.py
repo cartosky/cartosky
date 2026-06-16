@@ -153,17 +153,25 @@ def _run_satpy_composite(
 
     print(f"Resampled shape: {rgb.shape}")
 
-    # Convert to uint8 numpy array
-    print("\nConverting to uint8...")
-    rgb_data = rgb.values  # (3, H, W) float32, 0-1 range after enhancement
+    # Apply SatPy's enhancement pipeline — handles gamma, contrast stretching,
+    # and normalization. Raw .values without enhancement produces values outside
+    # 0-1 and results in blown-out imagery.
+    print("\nApplying SatPy enhancement...")
+    from satpy.enhancements.enhancer import get_enhanced_image
 
-    # SatPy sometimes returns (C, H, W) and sometimes (H, W, C) depending on version
+    img_enhanced = get_enhanced_image(rgb)
+    # img_enhanced.data is a dask array (C, H, W) with values in 0-1
+    rgb_data = np.array(img_enhanced.data)  # triggers dask compute
+
+    # Replace NaN (outside satellite view / masked pixels) with 0
+    rgb_data = np.nan_to_num(rgb_data, nan=0.0)
+
+    # (C, H, W) → (H, W, C)
     if rgb_data.ndim == 3 and rgb_data.shape[0] == 3:
-        # (C, H, W) → (H, W, C)
         rgb_data = np.moveaxis(rgb_data, 0, -1)
 
     print(f"RGB array shape: {rgb_data.shape}")
-    print(f"RGB value range: min={np.nanmin(rgb_data):.3f} max={np.nanmax(rgb_data):.3f}")
+    print(f"RGB value range after enhancement: min={rgb_data.min():.3f} max={rgb_data.max():.3f}")
 
     # Clip and convert to uint8
     rgb_uint8 = np.clip(rgb_data * 255, 0, 255).astype(np.uint8)
