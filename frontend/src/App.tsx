@@ -617,6 +617,7 @@ export default function App() {
   const telemetryRunIdRef = useRef<string | null>(null);
   const targetForecastHourRef = useRef(targetForecastHour);
   const gridReadyFrameUrlsRef = useRef<Set<string>>(new Set());
+  const rgbReadyFrameUrlsRef = useRef<Set<string>>(new Set());
   const gridPlaybackHourRef = useRef<number | null>(null);
   const gridPlaybackLoopWrapTargetRef = useRef<number | null>(null);
   const gridPlaybackWaitStateRef = useRef({
@@ -1031,6 +1032,67 @@ export default function App() {
     && rasterRgbFrameUrl !== null
     && selectionSupportsRasterRgb
   );
+  const rgbFrameUrlByHour = useMemo(() => {
+    const byHour = new Map<number, string>();
+    if (variable !== "true_color" || !rgbManifest) {
+      return byHour;
+    }
+    for (const frame of rgbManifest.frames) {
+      const rawUrl = String(frame.url ?? "").trim();
+      if (!rawUrl) {
+        continue;
+      }
+      const url = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `${apiRoot}${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+      byHour.set(Number(frame.fh), url);
+    }
+    return byHour;
+  }, [apiRoot, rgbManifest, variable]);
+  const rgbPrefetchUrls = useMemo(() => {
+    if (!rasterRgbActive || selectableFrameHours.length === 0) {
+      return [] as string[];
+    }
+    const pivotHour = Number.isFinite(targetForecastHour)
+      ? Number(targetForecastHour)
+      : (Number.isFinite(forecastHour) ? Number(forecastHour) : selectableFrameHours[0]);
+    const pivotIndex = selectableFrameHours.indexOf(nearestFrame(selectableFrameHours, pivotHour));
+    if (pivotIndex < 0) {
+      return [] as string[];
+    }
+    const urls: string[] = [];
+    const ahead = isPlaying ? 6 : (isScrubbing ? 4 : 2);
+    const behind = isScrubbing ? 4 : 2;
+    for (let step = 0; step <= ahead; step += 1) {
+      const hour = selectableFrameHours[pivotIndex + step];
+      if (hour === undefined) {
+        break;
+      }
+      const url = rgbFrameUrlByHour.get(hour);
+      if (url && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+    for (let step = 1; step <= behind; step += 1) {
+      const hour = selectableFrameHours[pivotIndex - step];
+      if (hour === undefined) {
+        break;
+      }
+      const url = rgbFrameUrlByHour.get(hour);
+      if (url && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+    return urls;
+  }, [
+    forecastHour,
+    isPlaying,
+    isScrubbing,
+    rasterRgbActive,
+    rgbFrameUrlByHour,
+    selectableFrameHours,
+    targetForecastHour,
+  ]);
 
   useEffect(() => {
     if (model !== "goes-east" || variable !== "true_color" || !rgbManifestRunKey || rgbManifestRunKey === "pending-grid") {
@@ -1264,6 +1326,7 @@ export default function App() {
     setGridReadyVersion(0);
     setIsGridPreloadingForPlay(false);
     setVisibleGridFrameHour(null);
+    rgbReadyFrameUrlsRef.current = new Set();
   }, [selectionKey]);
 
   useEffect(() => {
@@ -3783,7 +3846,7 @@ export default function App() {
       // Hold at the current frame when the next hour's grid frame exists but
       // hasn't loaded yet — mirrors the gridReadyHourSet gate in
       // attemptGridPlaybackAdvance so fast tick speeds can't outrun the loader.
-      if (gridFrameByHour.has(nextHour) && !isGridHourReady(nextHour)) {
+      if (!rasterRgbActive && gridFrameByHour.has(nextHour) && !isGridHourReady(nextHour)) {
         return;
       }
       if (rasterRgbActive) {
@@ -4048,6 +4111,16 @@ export default function App() {
       void attemptGridPlaybackAdvance();
     }
   }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying, normalizeGridFrameUrl]);
+  const handleRasterRgbFrameReady = useCallback((frameUrl: string) => {
+    if (!rasterRgbActive) {
+      return;
+    }
+    const normalized = String(frameUrl ?? "").trim();
+    if (!normalized || rgbReadyFrameUrlsRef.current.has(normalized)) {
+      return;
+    }
+    rgbReadyFrameUrlsRef.current.add(normalized);
+  }, [rasterRgbActive]);
   const handleGridFrameEvicted = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -4947,6 +5020,7 @@ export default function App() {
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
           rasterRgbFrameUrl={rasterRgbFrameUrl}
+          rasterRgbPrefetchUrls={rgbPrefetchUrls}
           rasterRgbActive={rasterRgbActive}
           gridContour={isGridLowMidActive ? gridContour : null}
             contourGeoJsonUrl={contourGeoJsonUrl}
@@ -4977,6 +5051,7 @@ export default function App() {
           onGridFrameVisible={handleGridFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
+          onRasterRgbFrameReady={handleRasterRgbFrameReady}
           getAnimatedGridPlaybackState={getAnimatedGridPlaybackState}
           getDirectGridPlaybackState={getDirectGridPlaybackState}
           directGridPlaybackActive={directGridPlaybackActive}

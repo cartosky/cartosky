@@ -163,14 +163,48 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   features: [],
 };
 
+const rasterRgbImagePreloads = new Map<string, Promise<void>>();
+
+function preloadRasterRgbImage(url: string): Promise<void> {
+  const normalized = String(url ?? "").trim();
+  if (!normalized) {
+    return Promise.resolve();
+  }
+  const existing = rasterRgbImagePreloads.get(normalized);
+  if (existing) {
+    return existing;
+  }
+  const promise = new Promise<void>((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.decoding = "async";
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error(`Failed to preload RGB frame: ${normalized}`));
+    img.src = normalized;
+  }).catch((error) => {
+    rasterRgbImagePreloads.delete(normalized);
+    throw error;
+  });
+  rasterRgbImagePreloads.set(normalized, promise);
+  return promise;
+}
+
 class RasterRgbLayerController {
   private activeBuffer: 0 | 1 = 0;
   private attached = false;
   private currentUrl: string | null = null;
-  private pendingUrl: string | null = null;
-  private pendingOpacity: number = 1;
-  private sourcedataListener: ((e: maplibregl.MapSourceDataEvent) => void) | null = null;
-  private fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
+  private loadToken = 0;
+  private onFrameReady: ((url: string) => void) | null = null;
+
+  setOnFrameReady(callback: ((url: string) => void) | null): void {
+    this.onFrameReady = callback;
+  }
+
+  prefetch(urls: string[]): void {
+    for (const url of urls) {
+      void preloadRasterRgbImage(url).catch(() => undefined);
+    }
+  }
 
   ensureAttached(map: maplibregl.Map, beforeLayerId: string): void {
     const hasBothSources = RASTER_RGB_SOURCE_IDS.every((sourceId) => Boolean(map.getSource(sourceId)));
@@ -260,7 +294,7 @@ class RasterRgbLayerController {
     const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
 
     if (!url) {
-      this._cancelPending(map);
+      this.loadToken += 1;
       map.setPaintProperty(nextLayerId, "raster-opacity", 0);
       map.setPaintProperty(activeLayerId, "raster-opacity", 0);
       this.activeBuffer = nextBuffer;
@@ -268,81 +302,58 @@ class RasterRgbLayerController {
       return;
     }
 
-    // Cancel any previously pending swap.
-    this._cancelPending(map);
-    this.pendingUrl = url;
-    this.pendingOpacity = opacity;
-
-    // Load the new image into the inactive buffer.
-    this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, url);
-
-    // Keep the current frame visible while the new one loads — prevents flash.
-    map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? opacity : 0);
-    map.setPaintProperty(nextLayerId, "raster-opacity", 0);
-
-    // Capture locals for the closure.
+    const loadToken = ++this.loadToken;
     const capturedUrl = url;
-    const capturedNextBuffer = nextBuffer;
-    const capturedNextSourceId = nextSourceId;
-    const capturedNextLayerId = nextLayerId;
-    const capturedActiveLayerId = activeLayerId;
+    const capturedOpacity = opacity;
 
-    const doSwap = () => {
-      if (this.pendingUrl !== capturedUrl) return;
-      this._cancelPending(map);
-      map.setPaintProperty(capturedNextLayerId, "raster-opacity", this.pendingOpacity);
-      map.setPaintProperty(capturedActiveLayerId, "raster-opacity", 0);
-      this.activeBuffer = capturedNextBuffer;
-      this.currentUrl = capturedUrl;
-    };
+    void preloadRasterRgbImage(capturedUrl)
+      .then(() => {
+        if (loadToken !== this.loadToken) {
+          return;
+        }
+        this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, capturedUrl);
+        map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? capturedOpacity : 0);
+        map.setPaintProperty(nextLayerId, "raster-opacity", 0);
 
-    const onSourceData = (e: maplibregl.MapSourceDataEvent) => {
-      if (
-        e.sourceId !== capturedNextSourceId
-        || e.dataType !== "source"
-        || !e.isSourceLoaded
-      ) {
-        return;
-      }
-      if (this.sourcedataListener === onSourceData) {
-        map.off("sourcedata", onSourceData);
-        this.sourcedataListener = null;
-      }
-      if (this.fallbackTimer !== null) {
-        window.clearTimeout(this.fallbackTimer);
-        this.fallbackTimer = null;
-      }
-      doSwap();
-    };
+        const swap = () => {
+          if (loadToken !== this.loadToken) {
+            return;
+          }
+          map.setPaintProperty(nextLayerId, "raster-opacity", capturedOpacity);
+          map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+          this.activeBuffer = nextBuffer;
+          this.currentUrl = capturedUrl;
+          this.onFrameReady?.(capturedUrl);
+        };
 
-    this.sourcedataListener = onSourceData;
-    map.on("sourcedata", onSourceData);
-
-    // Safety fallback — if sourcedata never fires (e.g. cached image),
-    // swap after a short delay anyway.
-    this.fallbackTimer = window.setTimeout(() => {
-      this.fallbackTimer = null;
-      doSwap();
-    }, 250);
-  }
-
-  private _cancelPending(map: maplibregl.Map): void {
-    if (this.sourcedataListener) {
-      map.off("sourcedata", this.sourcedataListener);
-      this.sourcedataListener = null;
-    }
-    if (this.fallbackTimer !== null) {
-      window.clearTimeout(this.fallbackTimer);
-      this.fallbackTimer = null;
-    }
-    this.pendingUrl = null;
+        map.once("idle", () => {
+          if (loadToken !== this.loadToken) {
+            return;
+          }
+          window.requestAnimationFrame(() => {
+            if (loadToken !== this.loadToken) {
+              return;
+            }
+            window.requestAnimationFrame(() => {
+              swap();
+            });
+          });
+        });
+        map.triggerRepaint();
+      })
+      .catch(() => {
+        if (loadToken !== this.loadToken) {
+          return;
+        }
+        // Keep the current frame visible if the next one fails to load.
+      });
   }
 
   remove(map: maplibregl.Map): void {
     if (!this.attached) {
       return;
     }
-    this._cancelPending(map);
+    this.loadToken += 1;
     for (let i = 0; i < 2; i += 1) {
       const layerId = RASTER_RGB_LAYER_IDS[i];
       const sourceId = RASTER_RGB_SOURCE_IDS[i];
@@ -1204,6 +1215,7 @@ type MapCanvasProps = {
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
   rasterRgbFrameUrl?: string | null;
+  rasterRgbPrefetchUrls?: string[];
   rasterRgbActive?: boolean;
   gridContour?: GridContourLayerConfig | null;
   contourGeoJsonUrl?: string | null;
@@ -1235,6 +1247,7 @@ type MapCanvasProps = {
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
+  onRasterRgbFrameReady?: (frameUrl: string) => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   /** Foreground grid frame path for scrub / post-scrub load (mirrors animation rAF delivery). */
   getDirectGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
@@ -1274,6 +1287,7 @@ export function MapCanvas({
   gridLegend = null,
   gridActive = false,
   rasterRgbFrameUrl = null,
+  rasterRgbPrefetchUrls = [],
   rasterRgbActive = false,
   gridContour = null,
   contourGeoJsonUrl,
@@ -1305,6 +1319,7 @@ export function MapCanvas({
   onGridFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
+  onRasterRgbFrameReady,
   getAnimatedGridPlaybackState = null,
   getDirectGridPlaybackState = null,
   directGridPlaybackActive = false,
@@ -1331,6 +1346,8 @@ export function MapCanvas({
     gridWebglControllerRef.current = new GridWebglLayerController();
   }
   const rasterRgbControllerRef = useRef<RasterRgbLayerController | null>(null);
+  const onRasterRgbFrameReadyRef = useRef(onRasterRgbFrameReady);
+  onRasterRgbFrameReadyRef.current = onRasterRgbFrameReady;
   const compositeGridControllersRef = useRef<Map<string, GridWebglLayerController>>(new Map());
   const gridRepaintRafRef = useRef<number | null>(null);
   const requestGridRepaint = useCallback(() => {
@@ -2998,6 +3015,13 @@ export function MapCanvas({
   ]);
 
   useEffect(() => {
+    if (!rasterRgbActive) {
+      return;
+    }
+    rasterRgbControllerRef.current?.prefetch(rasterRgbPrefetchUrls);
+  }, [rasterRgbActive, rasterRgbPrefetchUrls]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
       return;
@@ -3010,6 +3034,9 @@ export function MapCanvas({
     if (!rasterRgbControllerRef.current) {
       rasterRgbControllerRef.current = new RasterRgbLayerController();
     }
+    rasterRgbControllerRef.current.setOnFrameReady((url) => {
+      onRasterRgbFrameReadyRef.current?.(url);
+    });
     rasterRgbControllerRef.current.ensureAttached(map, gridOverlayBeforeLayerId(map));
     rasterRgbControllerRef.current.update(map, normalizedRasterRgbFrameUrl, opacity, gridOverlayBeforeLayerId(map));
     enforceLayerOrder(map);
