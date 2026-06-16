@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.models.goes_east import GOES_EAST_MODEL
+from app.models.goes_east import GOES_EAST_MODEL, GOES_EAST_RGB_LATEST_FILENAME
 from app.services.goes_l1b_processing import encode_rgba_webp
 from app.services.goes_publish import (
     GOES_EAST_MODEL_ID,
@@ -31,7 +31,6 @@ from app.services.run_ids import format_run_id
 
 TRUE_COLOR_VARIABLE_ID = "true_color"
 TRUE_COLOR_WEBP_QUALITY = 85
-GOES_EAST_RGB_LATEST_FILENAME = "LATEST_RGB.json"
 
 
 @dataclass(frozen=True)

@@ -80,8 +80,7 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
-from .services.goes_rgb_publish import GOES_EAST_RGB_LATEST_FILENAME
-from .services.goes_publish import GOES_EAST_MODEL_ID
+from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
 from .services import nws as nws_service
