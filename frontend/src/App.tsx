@@ -1007,8 +1007,14 @@ export default function App() {
       return null;
     }
     const frame = rgbManifest.frames.find((entry) => entry.fh === forecastHour) ?? rgbManifest.frames[0];
-    return frame?.url ?? null;
-  }, [forecastHour, rgbManifest, variable]);
+    const frameUrl = frame?.url ?? null;
+    if (!frameUrl) {
+      return null;
+    }
+    return /^https?:\/\//i.test(frameUrl)
+      ? frameUrl
+      : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
+  }, [apiRoot, forecastHour, rgbManifest, variable]);
   const rasterRgbActive = Boolean(
     selectionSupportsRasterRgb
     && variable === "true_color"
