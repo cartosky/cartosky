@@ -33,6 +33,7 @@ import {
   fetchSampleBatch,
   readCapabilityDefaultFrameSelection,
   readCapabilityLatestOnly,
+  readCapabilityRenderSubstrates,
   readCapabilitySupportsSampling,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
@@ -700,15 +701,21 @@ export default function App() {
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
   const selectionCapabilitiesResolved = Boolean(variable) && selectedCapabilityVarMap.has(variable);
-  const selectedVariableRenderSubstrates = selectionCapabilitiesResolved
-    ? (selectedCapabilityVarMap.get(variable)?.renderSubstrates ?? ["grid"])
-    : [];
+  const selectedVariableRenderSubstrates = useMemo(() => {
+    if (!variable) {
+      return [] as ReturnType<typeof readCapabilityRenderSubstrates>;
+    }
+    const fromCapabilityMap = selectedCapabilityVarMap.get(variable)?.renderSubstrates;
+    if (fromCapabilityMap && fromCapabilityMap.length > 0) {
+      return fromCapabilityMap;
+    }
+    return readCapabilityRenderSubstrates(selectedModelCapability?.variables?.[variable]);
+  }, [selectedCapabilityVarMap, selectedModelCapability, variable]);
   const selectionSupportsVector = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("vector");
-  const selectionSupportsGrid = selectionCapabilitiesResolved
-    && selectedVariableRenderSubstrates.includes("grid");
-  const selectionSupportsRasterRgb = selectionCapabilitiesResolved
-    && (selectedVariableRenderSubstrates.includes("raster_rgb") || selectedVariableRenderSubstrates.includes("image"));
+  const selectionSupportsGrid = selectedVariableRenderSubstrates.includes("grid");
+  const selectionSupportsRasterRgb = selectedVariableRenderSubstrates.includes("raster_rgb")
+    || selectedVariableRenderSubstrates.includes("image");
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
 
@@ -1016,10 +1023,10 @@ export default function App() {
       : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
   }, [apiRoot, forecastHour, rgbManifest, variable]);
   const rasterRgbActive = Boolean(
-    selectionSupportsRasterRgb
-    && variable === "true_color"
+    variable === "true_color"
     && rgbManifest !== null
     && rasterRgbFrameUrl !== null
+    && selectionSupportsRasterRgb
   );
 
   useEffect(() => {
@@ -3049,7 +3056,7 @@ export default function App() {
         setRunManifest(manifestData);
         const baseCapabilityVars = selectedCapabilityVars;
         const resolvedVars = manifestData
-          ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars)
+          ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars, { modelId: model })
           : baseCapabilityVars;
         const variableOptions = makeVariableOptions(resolvedVars, model);
         const variableIds = variableOptions.map((opt) => opt.value);
@@ -3466,7 +3473,7 @@ export default function App() {
               }
               return manifestData;
             });
-            const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars);
+            const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars, { modelId: model });
             if (capabilityVars.length > 0) {
               const variableOptions = makeVariableOptions(capabilityVars, model);
               const variableIds = variableOptions.map((opt) => opt.value);

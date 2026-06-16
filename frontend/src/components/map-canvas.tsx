@@ -175,6 +175,10 @@ class RasterRgbLayerController {
       return;
     }
 
+    if (!hasBothSources || !hasBothLayers) {
+      this.currentUrl = null;
+    }
+
     for (let i = 0; i < 2; i += 1) {
       const sourceId = RASTER_RGB_SOURCE_IDS[i];
       const layerId = RASTER_RGB_LAYER_IDS[i];
@@ -200,7 +204,42 @@ class RasterRgbLayerController {
     this.attached = true;
   }
 
-  update(map: maplibregl.Map, url: string | null, opacity: number): void {
+  private replaceImageSource(
+    map: maplibregl.Map,
+    sourceId: string,
+    layerId: string,
+    beforeLayerId: string,
+    url: string,
+  ): void {
+    const existing = map.getSource(sourceId) as maplibregl.ImageSource | undefined;
+    if (existing && typeof existing.updateImage === "function") {
+      existing.updateImage({ url, coordinates: RASTER_RGB_COORDINATES });
+      return;
+    }
+
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
+    map.addSource(sourceId, {
+      type: "image",
+      url,
+      coordinates: RASTER_RGB_COORDINATES,
+    });
+    map.addLayer({
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      paint: {
+        "raster-opacity": 0,
+        "raster-fade-duration": 0,
+      },
+    }, map.getLayer(beforeLayerId) ? beforeLayerId : undefined);
+  }
+
+  update(map: maplibregl.Map, url: string | null, opacity: number, beforeLayerId: string): void {
     if (!this.attached) {
       return;
     }
@@ -217,10 +256,7 @@ class RasterRgbLayerController {
     const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
 
     if (url) {
-      const source = map.getSource(nextSourceId) as maplibregl.ImageSource | undefined;
-      if (source && typeof source.updateImage === "function") {
-        source.updateImage({ url, coordinates: RASTER_RGB_COORDINATES });
-      }
+      this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, url);
       map.setPaintProperty(nextLayerId, "raster-opacity", opacity);
       map.setPaintProperty(activeLayerId, "raster-opacity", 0);
     } else {
@@ -1328,6 +1364,16 @@ export function MapCanvas({
   }, [refreshContourScreenLabels]);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
+  const normalizedRasterRgbFrameUrl = useMemo(() => {
+    const rawUrl = String(rasterRgbFrameUrl ?? "").trim();
+    if (!rawUrl) {
+      return null;
+    }
+    if (/^https?:\/\//i.test(rawUrl)) {
+      return rawUrl;
+    }
+    return `${apiRoot}${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+  }, [apiRoot, rasterRgbFrameUrl]);
   const buildGridPrefetchUrls = useCallback((params: {
     frameUrl: string | null;
     frameHour: number | null;
@@ -2217,12 +2263,12 @@ export function MapCanvas({
           compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
         }
       }
-      if (rasterRgbActive && rasterRgbFrameUrl) {
+      if (rasterRgbActive && normalizedRasterRgbFrameUrl) {
         if (!rasterRgbControllerRef.current) {
           rasterRgbControllerRef.current = new RasterRgbLayerController();
         }
         rasterRgbControllerRef.current.ensureAttached(map, gridOverlayBeforeLayerId(map));
-        rasterRgbControllerRef.current.update(map, rasterRgbFrameUrl, opacity);
+        rasterRgbControllerRef.current.update(map, normalizedRasterRgbFrameUrl, opacity, gridOverlayBeforeLayerId(map));
       }
       const contourSource = map.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       if (contourSource && typeof contourSource.setData === "function") {
@@ -2244,7 +2290,7 @@ export function MapCanvas({
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, opacity, rasterRgbActive, rasterRgbFrameUrl, shouldUseGridController]);
+  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive, shouldUseGridController]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2894,9 +2940,9 @@ export function MapCanvas({
       rasterRgbControllerRef.current = new RasterRgbLayerController();
     }
     rasterRgbControllerRef.current.ensureAttached(map, gridOverlayBeforeLayerId(map));
-    rasterRgbControllerRef.current.update(map, rasterRgbFrameUrl ?? null, opacity);
+    rasterRgbControllerRef.current.update(map, normalizedRasterRgbFrameUrl, opacity, gridOverlayBeforeLayerId(map));
     enforceLayerOrder(map);
-  }, [enforceLayerOrder, isLoaded, opacity, rasterRgbActive, rasterRgbFrameUrl]);
+  }, [enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive]);
 
   useEffect(() => {
     if (!getDirectGridPlaybackState || !directGridPlaybackActive) {

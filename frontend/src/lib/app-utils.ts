@@ -922,8 +922,12 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
 
 export function capabilityVarsForManifest(
   manifestVars: RunManifestResponse["variables"] | null | undefined,
-  capabilityVars: VariableEntry[]
+  capabilityVars: VariableEntry[],
+  options?: { modelId?: string | null },
 ): VariableEntry[] {
+  if (options?.modelId === "goes-east") {
+    return capabilityVars;
+  }
   if (!manifestVars) {
     return capabilityVars;
   }
