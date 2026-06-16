@@ -30,7 +30,7 @@ from app.services.publish_utils import (
 from app.services.run_ids import format_run_id
 
 TRUE_COLOR_VARIABLE_ID = "true_color"
-TRUE_COLOR_WEBP_QUALITY = 85
+TRUE_COLOR_WEBP_QUALITY = 92
 
 
 @dataclass(frozen=True)
