@@ -43,6 +43,9 @@ MRMS_WARNINGS_OVERLAY_EVENT_LABELS: frozenset[str] = frozenset({
     "severe thunderstorm watch",
     "flash flood watch",
 })
+MRMS_SKIP_COUNTY_ROLLUP_EVENTS: frozenset[str] = frozenset({
+    "severe thunderstorm watch",
+})
 MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS = 45.0
 EMPTY_FEATURE_COLLECTION: dict[str, Any] = {"type": "FeatureCollection", "features": []}
 
@@ -1025,6 +1028,89 @@ def _alert_matches_mrms_warnings_overlay_event(alert: NormalizedHazardAlert) -> 
     return alert.event.strip().lower() in MRMS_WARNINGS_OVERLAY_EVENT_LABELS
 
 
+def _zone_codes_from_affected_zones(props: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(sorted(_zone_lookup_hints_for_properties(props).keys()))
+
+
+def _skips_county_rollup_for_alert(
+    alert: NormalizedHazardAlert,
+    skip_county_rollup_events: frozenset[str] | None,
+) -> bool:
+    if not skip_county_rollup_events:
+        return False
+    return alert.event.strip().lower() in skip_county_rollup_events
+
+
+def _append_geometry_fallback_feature(
+    geometry_features: list[dict[str, Any]],
+    alert: NormalizedHazardAlert,
+    *,
+    prefer_native_polygon_geometry: bool,
+    hover_name: str | None = None,
+) -> None:
+    if alert.geometry is None:
+        return
+    render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
+    geometry_features.append(
+        _build_geometry_feature(
+            geometry=alert.geometry,
+            primary=alert,
+            alerts=[alert],
+            hover_name=hover_name or alert.headline,
+            area_description=alert.area_description,
+            fill_opacity=render_style.fill_opacity,
+            stroke_width=render_style.stroke_width,
+            extra_properties={
+                "geometry_source": "native_alert",
+            }
+            if prefer_native_polygon_geometry
+            else None,
+        )
+    )
+
+
+def _enrich_mrms_overlay_source_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    features_raw = payload.get("features")
+    if not isinstance(features_raw, list):
+        return payload
+    enriched_features: list[dict[str, Any]] = []
+    for feature in features_raw:
+        if not isinstance(feature, dict):
+            enriched_features.append(feature)
+            continue
+        props = feature.get("properties")
+        if not isinstance(props, dict):
+            enriched_features.append(feature)
+            continue
+        if str(props.get("event") or "").strip().lower() != "severe thunderstorm watch":
+            enriched_features.append(feature)
+            continue
+        zone_codes = _zone_codes_from_affected_zones(props)
+        if not zone_codes:
+            enriched_features.append(feature)
+            continue
+        geocode = props.get("geocode")
+        merged_geocode = dict(geocode) if isinstance(geocode, dict) else {}
+        existing_ugc = list(_string_list(merged_geocode.get("UGC")))
+        for zone_code in zone_codes:
+            if zone_code not in existing_ugc:
+                existing_ugc.append(zone_code)
+        merged_geocode["UGC"] = existing_ugc
+        enriched_features.append(
+            {
+                **feature,
+                "properties": {
+                    **props,
+                    "geocode": merged_geocode,
+                },
+            }
+        )
+    return {
+        **payload,
+        "features": enriched_features,
+    }
+
+
 def filter_nws_alerts_payload_for_mrms_overlay(payload: dict[str, Any]) -> dict[str, Any]:
     features_raw = payload.get("features")
     if not isinstance(features_raw, list):
@@ -1100,6 +1186,7 @@ def build_mrms_warnings_overlay_geojson(
     mrms_color_overrides: dict[str, str] = {
         "Flash Flood Warning": "#00FF00",
         "Flash Flood Watch": "#00FF00",
+        "Severe Thunderstorm Watch": "#FFFF00",
     }
     mrms_radar_overlay_fill_opacity = 0.1
     mrms_radar_overlay_stroke_width = 3.5
@@ -1113,6 +1200,7 @@ def build_mrms_warnings_overlay_geojson(
         return cached_overlay
 
     overlay_source_payload = filter_nws_alerts_payload_for_mrms_overlay(resolved_payload)
+    overlay_source_payload = _enrich_mrms_overlay_source_payload(overlay_source_payload)
     if not overlay_source_payload.get("features"):
         _mrms_warnings_overlay_cache_set(fingerprint, dict(EMPTY_FEATURE_COLLECTION))
         return dict(EMPTY_FEATURE_COLLECTION)
@@ -1125,6 +1213,7 @@ def build_mrms_warnings_overlay_geojson(
             county_reference_path=county_path,
             zone_reference_path=zone_path,
             prefer_native_polygon_geometry=True,
+            skip_county_rollup_events=MRMS_SKIP_COUNTY_ROLLUP_EVENTS,
         )
         features = frame.features
     except NWSHazardsError:
@@ -1361,6 +1450,7 @@ def build_active_hazards_frame(
     zone_reference_path: Path | None = None,
     fh: int = 0,
     prefer_native_polygon_geometry: bool = False,
+    skip_county_rollup_events: frozenset[str] | None = None,
 ) -> HazardFramePayload:
     counties = load_county_reference(county_reference_path)
     zone_references = load_zone_reference(zone_reference_path) if zone_reference_path is not None else {}
@@ -1414,9 +1504,17 @@ def build_active_hazards_frame(
             zone_candidate_alerts.append(alert)
             needed_zone_codes.update(alert.zone_codes)
             continue
-        if resolved_geoids:
+        if resolved_geoids and not _skips_county_rollup_for_alert(alert, skip_county_rollup_events):
             for geoid in resolved_geoids:
                 county_buckets.setdefault(geoid, []).append(alert)
+            continue
+        if resolved_geoids and _skips_county_rollup_for_alert(alert, skip_county_rollup_events):
+            _append_geometry_fallback_feature(
+                geometry_features,
+                alert,
+                prefer_native_polygon_geometry=prefer_native_polygon_geometry,
+                hover_name=alert.style.label,
+            )
             continue
         if alert.geometry is not None:
             render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
@@ -1447,23 +1545,15 @@ def build_active_hazards_frame(
                 zone_buckets.setdefault(zone_code, []).append(alert)
             continue
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
-        if resolved_geoids:
+        if resolved_geoids and not _skips_county_rollup_for_alert(alert, skip_county_rollup_events):
             for geoid in resolved_geoids:
                 county_buckets.setdefault(geoid, []).append(alert)
             continue
-        if alert.geometry is not None:
-            render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
-            geometry_features.append(
-                _build_geometry_feature(
-                    geometry=alert.geometry,
-                    primary=alert,
-                    alerts=[alert],
-                    hover_name=alert.headline,
-                    area_description=alert.area_description,
-                    fill_opacity=render_style.fill_opacity,
-                    stroke_width=render_style.stroke_width,
-                )
-            )
+        _append_geometry_fallback_feature(
+            geometry_features,
+            alert,
+            prefer_native_polygon_geometry=prefer_native_polygon_geometry,
+        )
 
     county_features: list[dict[str, Any]] = []
     for geoid, alerts in county_buckets.items():

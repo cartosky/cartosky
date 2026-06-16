@@ -411,6 +411,115 @@ def test_mrms_overlay_applies_green_colors_for_flash_flood_products(
         assert props["stroke_width"] == 3.5
 
 
+def test_mrms_overlay_uses_native_geometry_for_severe_thunderstorm_watch(tmp_path: Path) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    watch_polygon = {
+        "type": "Polygon",
+        "coordinates": [[[-112.05, 33.35], [-111.95, 33.35], [-111.95, 33.45], [-112.05, 33.45], [-112.05, 33.35]]],
+    }
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "svr-watch-1",
+                    "status": "Actual",
+                    "event": "Severe Thunderstorm Watch",
+                    "headline": "Severe Thunderstorm Watch issued April 6",
+                    "sent": "2026-04-06T16:55:00Z",
+                    "effective": "2026-04-06T16:55:00Z",
+                    "expires": "2026-04-06T19:00:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"UGC": ["AZC013"]},
+                },
+                "geometry": watch_polygon,
+            },
+        ],
+    }
+
+    standalone = nws_hazards.build_active_hazards_frame(
+        payload,
+        county_reference_path=county_reference,
+        zone_reference_path=zone_reference,
+    )
+    assert standalone.features[0]["properties"]["county_geoid"] == "04013"
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    assert len(overlay["features"]) == 1
+    feature = overlay["features"][0]
+    assert feature["properties"]["risk_label"] == "Severe Thunderstorm Watch"
+    assert feature["properties"]["fill"] == "#FFFF00"
+    assert feature["properties"]["stroke"] == "#FFFF00"
+    assert "county_geoid" not in feature["properties"]
+    assert feature["geometry"] == watch_polygon
+    assert feature["properties"]["geometry_source"] == "native_alert"
+
+
+def test_mrms_overlay_severe_thunderstorm_watch_prefers_zones_over_counties(tmp_path: Path) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_path = tmp_path / "hazards" / "zone_reference.geojson"
+    zone_path.parent.mkdir(parents=True, exist_ok=True)
+    zone_geometry = {
+        "type": "Polygon",
+        "coordinates": [[[-112.2, 33.1], [-111.4, 33.1], [-111.4, 33.7], [-112.2, 33.7], [-112.2, 33.1]]],
+    }
+    zone_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AZZ020",
+                            "name": "Greater Phoenix Area",
+                            "state": "AZ",
+                            "zone_type": "forecast",
+                        },
+                        "geometry": zone_geometry,
+                    }
+                ],
+            }
+        )
+    )
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "svr-watch-2",
+                    "status": "Actual",
+                    "event": "Severe Thunderstorm Watch",
+                    "headline": "Severe Thunderstorm Watch issued April 6",
+                    "sent": "2026-04-06T16:55:00Z",
+                    "effective": "2026-04-06T16:55:00Z",
+                    "expires": "2026-04-06T19:00:00Z",
+                    "areaDesc": "Greater Phoenix Area",
+                    "geocode": {"UGC": ["AZC013"]},
+                    "affectedZones": ["https://api.weather.gov/zones/forecast/AZZ020"],
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+    assert len(overlay["features"]) == 1
+    feature = overlay["features"][0]
+    assert feature["properties"]["risk_label"] == "Severe Thunderstorm Watch"
+    assert feature["properties"]["fill"] == "#FFFF00"
+    assert "county_geoid" not in feature["properties"]
+    assert feature["properties"]["zone_code"] == "AZZ020"
+    assert feature["geometry"] == zone_geometry
+
+
 def test_mrms_overlay_dedupes_repeated_native_geometry_hover_label(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
