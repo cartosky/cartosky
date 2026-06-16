@@ -31,6 +31,7 @@ from app.services.run_ids import format_run_id
 
 TRUE_COLOR_VARIABLE_ID = "true_color"
 TRUE_COLOR_WEBP_QUALITY = 85
+GOES_EAST_RGB_LATEST_FILENAME = "LATEST_RGB.json"
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class GOESRGBPublishResult:
 def load_latest_published_rgb_frames(
     data_root: Path,
 ) -> tuple[str | None, list[GOESRGBPublishedFrame]]:
-    latest_path = data_root / "published" / GOES_EAST_MODEL_ID / "LATEST.json"
+    latest_path = data_root / "published" / GOES_EAST_MODEL_ID / GOES_EAST_RGB_LATEST_FILENAME
     if not latest_path.is_file():
         return None, []
     try:
@@ -230,6 +231,18 @@ def publish_goes_rgb_bundle(
             run_id=run_id,
             source="goes_rgb_publish_v1",
         )
+    rgb_latest_path = (
+        data_root / "published" / GOES_EAST_MODEL_ID / GOES_EAST_RGB_LATEST_FILENAME
+    )
+    write_json_atomic(
+        rgb_latest_path,
+        {
+            "run_id": run_id,
+            "cycle_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": "goes_rgb_publish_v1",
+        },
+    )
 
     manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
     published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
