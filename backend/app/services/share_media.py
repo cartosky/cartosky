@@ -93,6 +93,11 @@ def build_share_png_filename_hint(
     return f"{'_'.join(parts)}.png"
 
 
+def validate_share_png_upload(data: bytes, *, content_type: str) -> None:
+    """Validate share PNG bytes before persisting to object storage."""
+    _validate_upload(data, content_type=content_type)
+
+
 def _validate_upload(data: bytes, *, content_type: str) -> None:
     normalized_content_type = (content_type or "").strip().lower()
     if normalized_content_type != PNG_CONTENT_TYPE:

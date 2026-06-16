@@ -1149,9 +1149,21 @@ export function TwfShareModal({
     setScreenshotKey(null);
 
     try {
+      if (!clerkLoaded) {
+        throw new Error("Checking CartoSky sign-in status.");
+      }
+      if (!isSignedIn) {
+        throw new Error("Sign in to CartoSky before uploading a share image.");
+      }
+      const token = await getToken({ template: clerkJwtTemplate() });
+      if (!token) {
+        throw new Error("Unable to load CartoSky auth token.");
+      }
+
       const result = await uploadShareMedia({
         blob,
         filename,
+        authToken: token,
         model: state?.model ?? null,
         run: state?.run ?? null,
         fh: state?.fh ?? null,

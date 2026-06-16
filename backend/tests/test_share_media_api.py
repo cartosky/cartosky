@@ -1,6 +1,6 @@
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import httpx
@@ -28,6 +28,14 @@ pytestmark = pytest.mark.anyio
 PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfakepngdata"
 
 
+@pytest.fixture(autouse=True)
+def clear_dependency_overrides() -> Iterator[None]:
+    previous_overrides = dict(main_module.app.dependency_overrides)
+    yield
+    main_module.app.dependency_overrides.clear()
+    main_module.app.dependency_overrides.update(previous_overrides)
+
+
 @pytest.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=main_module.app)
@@ -35,10 +43,27 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield test_client
 
 
+def _authenticate_clerk_user(*, user_id: str = "user_share_media") -> None:
+    async def require_test_clerk_user() -> main_module.ClerkPrincipal:
+        return main_module.ClerkPrincipal(user_id=user_id, claims={"sub": user_id}, token="test-token")
+
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = require_test_clerk_user
+
+
+async def test_share_media_upload_requires_auth(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v4/share/media",
+        files={"file": ("share.png", PNG_BYTES, "image/png")},
+    )
+
+    assert response.status_code == 401
+
+
 async def test_share_media_upload_accepts_valid_png(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _authenticate_clerk_user()
     captured: dict[str, object] = {}
 
     def fake_upload_share_png(*, data: bytes, filename_hint: str | None, content_type: str) -> dict[str, str]:
@@ -54,6 +79,7 @@ async def test_share_media_upload_accepts_valid_png(
 
     response = await client.post(
         "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
         data={
             "model": "HRRR",
             "run": "20260304_03z",
@@ -76,8 +102,11 @@ async def test_share_media_upload_accepts_valid_png(
 
 
 async def test_share_media_upload_rejects_invalid_content_type(client: httpx.AsyncClient) -> None:
+    _authenticate_clerk_user()
+
     response = await client.post(
         "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
         files={"file": ("share.txt", b"not-a-png", "text/plain")},
     )
 
@@ -90,11 +119,31 @@ async def test_share_media_upload_rejects_invalid_content_type(client: httpx.Asy
     }
 
 
+async def test_share_media_upload_rejects_invalid_png_signature(client: httpx.AsyncClient) -> None:
+    _authenticate_clerk_user()
+
+    response = await client.post(
+        "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
+        files={"file": ("share.png", b"not-a-png", "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "code": "INVALID_PNG",
+            "message": "Uploaded file is not a valid PNG image.",
+        }
+    }
+
+
 async def test_share_media_upload_rejects_oversized_png(client: httpx.AsyncClient) -> None:
+    _authenticate_clerk_user()
     large_png = PNG_BYTES + (b"0" * (main_module.share_media_service.MAX_SHARE_PNG_BYTES - len(PNG_BYTES) + 1))
 
     response = await client.post(
         "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
         files={"file": ("large.png", large_png, "image/png")},
     )
 
@@ -103,5 +152,38 @@ async def test_share_media_upload_rejects_oversized_png(client: httpx.AsyncClien
         "error": {
             "code": "FILE_TOO_LARGE",
             "message": "PNG upload exceeds the 10 MB limit.",
+        }
+    }
+
+
+async def test_share_media_upload_rate_limited_per_user(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _authenticate_clerk_user(user_id="user_rate_limited")
+    monkeypatch.setattr(main_module, "_SHARE_MEDIA_USER_LIMIT", 1)
+
+    def fake_upload_share_png(*, data: bytes, filename_hint: str | None, content_type: str) -> dict[str, str]:
+        return {"key": "share/test.png", "url": "https://cdn.cartosky.com/share/test.png"}
+
+    monkeypatch.setattr(main_module.share_media_service, "upload_share_png", fake_upload_share_png)
+
+    first = await client.post(
+        "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
+        files={"file": ("share.png", PNG_BYTES, "image/png")},
+    )
+    second = await client.post(
+        "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
+        files={"file": ("share.png", PNG_BYTES, "image/png")},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json() == {
+        "error": {
+            "code": "SHARE_MEDIA_RATE_LIMITED",
+            "message": "Too many share image uploads. Try again later.",
         }
     }

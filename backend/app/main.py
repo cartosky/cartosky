@@ -335,7 +335,10 @@ ADMIN_MEMBER_IDS = _parse_admin_member_ids(_env_value("CARTOSKY_ADMIN_MEMBER_IDS
 _twf_rate_lock = threading.Lock()
 _twf_ip_windows: dict[str, deque[float]] = {}
 _twf_session_windows: dict[str, deque[float]] = {}
+_share_media_user_windows: dict[str, deque[float]] = {}
 _twf_last_prune_monotonic = 0.0
+_SHARE_MEDIA_RATE_WINDOW_SECONDS = 3600.0
+_SHARE_MEDIA_USER_LIMIT = 30
 _LOOP_REQUEST_SOURCE_LOG_EVERY = 100
 _loop_request_counter_lock = threading.Lock()
 _loop_request_source_totals: dict[str, int] = {"cache": 0, "generated": 0, "rendered": 0}
@@ -679,6 +682,8 @@ def _maybe_prune_rate_limit_state(now: float) -> None:
     cutoff = now - _TWF_RATE_WINDOW_SECONDS
     _prune_rate_limit_bucket(_twf_ip_windows, cutoff=cutoff)
     _prune_rate_limit_bucket(_twf_session_windows, cutoff=cutoff)
+    share_media_cutoff = now - _SHARE_MEDIA_RATE_WINDOW_SECONDS
+    _prune_rate_limit_bucket(_share_media_user_windows, cutoff=share_media_cutoff)
     _twf_last_prune_monotonic = now
 
 
@@ -1121,6 +1126,19 @@ def _share_media_error_response(*, status_code: int, code: str, message: str) ->
             }
         },
     )
+
+
+def _share_media_rate_limit_retry_after(*, user_id: str) -> int:
+    now = time.monotonic()
+    with _twf_rate_lock:
+        _maybe_prune_rate_limit_state(now)
+        return _rate_limit_check(
+            _share_media_user_windows,
+            key=user_id,
+            limit=_SHARE_MEDIA_USER_LIMIT,
+            window_seconds=_SHARE_MEDIA_RATE_WINDOW_SECONDS,
+            now=now,
+        )
 
 # ----------------------------
 # TWF OAuth + Share Routes
@@ -2336,7 +2354,16 @@ async def share_media_upload(
     fh: str | None = Form(None),
     variable: str | None = Form(None),
     region: str | None = Form(None),
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
 ) -> JSONResponse:
+    retry_after = _share_media_rate_limit_retry_after(user_id=current_user.user_id)
+    if retry_after > 0:
+        return _share_media_error_response(
+            status_code=429,
+            code="SHARE_MEDIA_RATE_LIMITED",
+            message="Too many share image uploads. Try again later.",
+        )
+
     if file is None:
         return _share_media_error_response(
             status_code=400,
@@ -2353,21 +2380,16 @@ async def share_media_upload(
             message="Only PNG uploads are supported.",
         )
 
-    data = await file.read()
+    data = await file.read(share_media_service.MAX_SHARE_PNG_BYTES + 1)
     await file.close()
 
-    if not data:
+    try:
+        share_media_service.validate_share_png_upload(data, content_type=content_type)
+    except share_media_service.ShareMediaError as exc:
         return _share_media_error_response(
-            status_code=400,
-            code="EMPTY_FILE",
-            message="Uploaded file is empty.",
-        )
-
-    if len(data) > share_media_service.MAX_SHARE_PNG_BYTES:
-        return _share_media_error_response(
-            status_code=413,
-            code="FILE_TOO_LARGE",
-            message="PNG upload exceeds the 10 MB limit.",
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
         )
 
     filename_hint = share_media_service.build_share_png_filename_hint(

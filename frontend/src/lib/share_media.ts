@@ -5,6 +5,7 @@ const SHARE_MEDIA_UPLOAD_TIMEOUT_MS = 30_000;
 export type ShareMediaUploadParams = {
   blob: Blob;
   filename: string;
+  authToken: string;
   model?: string | null;
   run?: string | null;
   fh?: number | null;
@@ -49,6 +50,11 @@ async function readApiError(response: Response): Promise<ApiErrorInfo | null> {
 }
 
 export async function uploadShareMedia(params: ShareMediaUploadParams): Promise<ShareMediaUploadResult> {
+  const authToken = params.authToken.trim();
+  if (!authToken) {
+    throw new Error("Sign in to CartoSky before uploading a share image.");
+  }
+
   const formData = new FormData();
   formData.append("file", params.blob, params.filename);
   if (params.model) {
@@ -74,6 +80,9 @@ export async function uploadShareMedia(params: ShareMediaUploadParams): Promise<
   try {
     response = await fetch(`${API_V4_BASE}/share/media`, {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
       body: formData,
       signal: controller.signal,
     });
