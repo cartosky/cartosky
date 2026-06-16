@@ -24,6 +24,7 @@ from app.services.goes_fetch import (
 from app.services.goes_processing import decode_goes_scan
 from app.services.goes_publish import (
     BAND_CONFIG_IR13,
+    BAND_CONFIG_WV8,
     BAND_CONFIG_WV9,
     GOESBundleFrame,
     GOESBandConfig,
@@ -55,6 +56,7 @@ DEFAULT_MIN_OBJECT_BYTES = 1_000_000
 BAND_CONFIG_BY_BAND: dict[int, GOESBandConfig] = {
     13: BAND_CONFIG_IR13,
     9: BAND_CONFIG_WV9,
+    8: BAND_CONFIG_WV8,
 }
 
 

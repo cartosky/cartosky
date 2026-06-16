@@ -53,6 +53,10 @@ BAND_CONFIG_WV9 = GOESBandConfig(
     variable_id="wv9",
     color_map_id="goes_wv9_enhanced",
 )
+BAND_CONFIG_WV8 = GOESBandConfig(
+    variable_id="wv8",
+    color_map_id="goes_wv8_enhanced",
+)
 
 GOES_EAST_VARIABLE_ID = BAND_CONFIG_IR13.variable_id
 GOES_EAST_COLOR_MAP_ID = BAND_CONFIG_IR13.color_map_id

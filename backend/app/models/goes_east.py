@@ -31,6 +31,10 @@ class GOESEastPlugin(BaseModelPlugin):
             "water_vapor": "wv9",
             "band9": "wv9",
             "c09": "wv9",
+            "wv8": "wv8",
+            "upper_water_vapor": "wv8",
+            "band8": "wv8",
+            "c08": "wv8",
         }
         return aliases.get(normalized, normalized)
 
@@ -49,6 +53,8 @@ GOES_EAST_IR13_VARIABLE_ID = "ir13"
 GOES_EAST_IR13_COLOR_MAP_ID = "goes_ir13_enhanced"
 GOES_EAST_WV9_VARIABLE_ID = "wv9"
 GOES_EAST_WV9_COLOR_MAP_ID = "goes_wv9_enhanced"
+GOES_EAST_WV8_VARIABLE_ID = "wv8"
+GOES_EAST_WV8_COLOR_MAP_ID = "goes_wv8_enhanced"
 
 
 GOES_EAST_REGIONS: dict[str, RegionSpec] = {
@@ -100,6 +106,25 @@ GOES_EAST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    "wv8": VarSpec(
+        id="wv8",
+        name="Upper-Level Water Vapor",
+        selectors=VarSelectors(
+            hints={
+                "upstream_provider": "noaa_aws_s3",
+                "upstream_satellite": "goes19",
+                "upstream_bucket": "noaa-goes19",
+                "upstream_product": "ABI-L2-CMIPC",
+                "upstream_sector": "C",
+                "upstream_band": "8",
+                "upstream_variable": "CMI",
+                "quality_variable": "DQF",
+            }
+        ),
+        primary=False,
+        kind="continuous",
+        units="C",
+    ),
 }
 
 
@@ -128,6 +153,20 @@ GOES_EAST_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         color_map_id=GOES_EAST_WV9_COLOR_MAP_ID,
         buildable=True,
         order=1,
+        group="Satellite",
+        legend_title="Brightness Temperature",
+        render_substrates=["grid"],
+    ),
+    "wv8": VariableCapability(
+        var_key="wv8",
+        name="Upper-Level Water Vapor",
+        selectors=GOES_EAST_VARS["wv8"].selectors,
+        primary=False,
+        kind="continuous",
+        units="C",
+        color_map_id=GOES_EAST_WV8_COLOR_MAP_ID,
+        buildable=True,
+        order=2,
         group="Satellite",
         legend_title="Brightness Temperature",
         render_substrates=["grid"],

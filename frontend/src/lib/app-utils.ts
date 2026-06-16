@@ -552,6 +552,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   hgt500_anom: { label: "500mb Height Anomaly", group: "UPPER AIR", order: 33.5 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
   wv9: { label: "Mid-Level Water Vapor", group: "SATELLITE", order: 1 },
+  wv8: { label: "Upper-Level Water Vapor", group: "SATELLITE", order: 2 },
   rh2m: { label: "Surface Relative Humidity", group: "PRECIPITATION", order: 8 },
   rh700: { label: "700mb Relative Humidity", group: "PRECIPITATION", order: 9 },
   tornado_prob: { label: "SPC Tornado Probability", group: "OUTLOOKS", order: 0 },

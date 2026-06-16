@@ -229,6 +229,11 @@ GOES_WV9_COLORS = _expand_color_anchors(
 GOES_WV9_RANGE = (GOES_WV9_LEVELS[0], GOES_WV9_LEVELS[-1])
 GOES_WV9_LEGEND_STOPS = list(zip(_WV9_CELSIUS_LEVELS, GOES_WV9_COLORS))
 
+GOES_WV8_LEVELS = GOES_WV9_LEVELS
+GOES_WV8_COLORS = GOES_WV9_COLORS
+GOES_WV8_RANGE = GOES_WV9_RANGE
+GOES_WV8_LEGEND_STOPS = GOES_WV9_LEGEND_STOPS
+
 
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
@@ -1358,6 +1363,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Mid-Level Water Vapor",
         "legend_title": "Brightness Temperature",
         "legend_stops": GOES_WV9_LEGEND_STOPS,
+        "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
+    },
+    "goes_wv8_enhanced": {
+        "type": "discrete",
+        "display_palette_kind": "discrete",
+        "units": "C",
+        "levels": GOES_WV8_LEVELS,
+        "colors": GOES_WV8_COLORS,
+        "range": GOES_WV8_RANGE,
+        "display_name": "Upper-Level Water Vapor",
+        "legend_title": "Brightness Temperature",
+        "legend_stops": GOES_WV8_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
