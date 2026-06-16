@@ -167,6 +167,10 @@ class RasterRgbLayerController {
   private activeBuffer: 0 | 1 = 0;
   private attached = false;
   private currentUrl: string | null = null;
+  private pendingUrl: string | null = null;
+  private pendingOpacity: number = 1;
+  private sourcedataListener: ((e: maplibregl.MapSourceDataEvent) => void) | null = null;
+  private fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
 
   ensureAttached(map: maplibregl.Map, beforeLayerId: string): void {
     const hasBothSources = RASTER_RGB_SOURCE_IDS.every((sourceId) => Boolean(map.getSource(sourceId)));
@@ -255,23 +259,90 @@ class RasterRgbLayerController {
     const nextLayerId = RASTER_RGB_LAYER_IDS[nextBuffer];
     const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
 
-    if (url) {
-      this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, url);
-      map.setPaintProperty(nextLayerId, "raster-opacity", opacity);
-      map.setPaintProperty(activeLayerId, "raster-opacity", 0);
-    } else {
+    if (!url) {
+      this._cancelPending(map);
       map.setPaintProperty(nextLayerId, "raster-opacity", 0);
       map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+      this.activeBuffer = nextBuffer;
+      this.currentUrl = null;
+      return;
     }
 
-    this.activeBuffer = nextBuffer;
-    this.currentUrl = url;
+    // Cancel any previously pending swap.
+    this._cancelPending(map);
+    this.pendingUrl = url;
+    this.pendingOpacity = opacity;
+
+    // Load the new image into the inactive buffer.
+    this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, url);
+
+    // Keep the current frame visible while the new one loads — prevents flash.
+    map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? opacity : 0);
+    map.setPaintProperty(nextLayerId, "raster-opacity", 0);
+
+    // Capture locals for the closure.
+    const capturedUrl = url;
+    const capturedNextBuffer = nextBuffer;
+    const capturedNextSourceId = nextSourceId;
+    const capturedNextLayerId = nextLayerId;
+    const capturedActiveLayerId = activeLayerId;
+
+    const doSwap = () => {
+      if (this.pendingUrl !== capturedUrl) return;
+      this._cancelPending(map);
+      map.setPaintProperty(capturedNextLayerId, "raster-opacity", this.pendingOpacity);
+      map.setPaintProperty(capturedActiveLayerId, "raster-opacity", 0);
+      this.activeBuffer = capturedNextBuffer;
+      this.currentUrl = capturedUrl;
+    };
+
+    const onSourceData = (e: maplibregl.MapSourceDataEvent) => {
+      if (
+        e.sourceId !== capturedNextSourceId
+        || e.dataType !== "source"
+        || !e.isSourceLoaded
+      ) {
+        return;
+      }
+      if (this.sourcedataListener === onSourceData) {
+        map.off("sourcedata", onSourceData);
+        this.sourcedataListener = null;
+      }
+      if (this.fallbackTimer !== null) {
+        window.clearTimeout(this.fallbackTimer);
+        this.fallbackTimer = null;
+      }
+      doSwap();
+    };
+
+    this.sourcedataListener = onSourceData;
+    map.on("sourcedata", onSourceData);
+
+    // Safety fallback — if sourcedata never fires (e.g. cached image),
+    // swap after a short delay anyway.
+    this.fallbackTimer = window.setTimeout(() => {
+      this.fallbackTimer = null;
+      doSwap();
+    }, 250);
+  }
+
+  private _cancelPending(map: maplibregl.Map): void {
+    if (this.sourcedataListener) {
+      map.off("sourcedata", this.sourcedataListener);
+      this.sourcedataListener = null;
+    }
+    if (this.fallbackTimer !== null) {
+      window.clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
+    this.pendingUrl = null;
   }
 
   remove(map: maplibregl.Map): void {
     if (!this.attached) {
       return;
     }
+    this._cancelPending(map);
     for (let i = 0; i < 2; i += 1) {
       const layerId = RASTER_RGB_LAYER_IDS[i];
       const sourceId = RASTER_RGB_SOURCE_IDS[i];
