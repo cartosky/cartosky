@@ -296,6 +296,25 @@ export type RunManifestResponse = {
   variables: Record<string, RunManifestVariable>;
 };
 
+export interface RgbManifestFrame {
+  fh: number;
+  valid_time: string;
+  slot_time?: string;
+  filename: string;
+  url: string;
+}
+
+export interface RgbManifestResponse {
+  model: string;
+  run: string;
+  var: string;
+  kind: string;
+  render_substrate: string;
+  frames: RgbManifestFrame[];
+  available_frames: number;
+  expected_frames: number;
+}
+
 export type VarRow =
   | string
   | {
@@ -341,6 +360,9 @@ function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null 
   }
   if (normalized === "vector") {
     return "vector";
+  }
+  if (normalized === "raster_rgb" || normalized === "image") {
+    return "raster_rgb";
   }
   return null;
 }
@@ -713,6 +735,18 @@ export async function fetchGridManifest(
   } catch {
     return null;
   }
+}
+
+export async function fetchRgbManifest(
+  model: string,
+  run: string,
+  variable: string,
+  options?: FetchOptions,
+): Promise<RgbManifestResponse> {
+  return fetchJson<RgbManifestResponse>(
+    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(run || "latest")}/${encodeURIComponent(variable)}/rgb-manifest`,
+    { ...options, productId: model },
+  );
 }
 
 

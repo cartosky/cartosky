@@ -123,6 +123,8 @@ const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
 const VECTOR_HALO_LINE_LAYER_IDS = ["twf-vectors-halo-a", "twf-vectors-halo-b"] as const;
 const VECTOR_LINE_LAYER_IDS = ["twf-vectors-line-a", "twf-vectors-line-b"] as const;
+const RASTER_RGB_SOURCE_IDS = ["raster-rgb-a", "raster-rgb-b"] as const;
+const RASTER_RGB_LAYER_IDS = ["raster-rgb-layer-a", "raster-rgb-layer-b"] as const;
 const VECTOR_HALO_LINE_COLOR = "#000000";
 const VECTOR_HALO_LINE_BASE_OPACITY = 0.6;
 const VECTOR_HALO_LINE_WIDTH_OFFSET = 2;
@@ -137,11 +139,117 @@ const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const CONTOUR_LINE_COLOR = "#000000";
 const CONTOUR_LABEL_COLOR = "rgba(0,0,0,0.72)";
 const CONTOUR_LABEL_SHADOW = "0 1px 2px rgba(255,255,255,0.62)";
+const TRANSPARENT_PIXEL_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z8AARQMBgAEAtwH9WwAAAABJRU5ErkJggg==";
+
+// CONUS GOES-East grid extent converted from EPSG:3857 meters:
+// [-14920000.0, 2752000.0, -6676000.0, 7364000.0]
+const RASTER_RGB_BBOX_LNGLAT: [number, number, number, number] = [
+  -134.02864,
+  23.988444,
+  -59.971528,
+  55.010993,
+];
+
+const RASTER_RGB_COORDINATES: [[number, number], [number, number], [number, number], [number, number]] = [
+  [RASTER_RGB_BBOX_LNGLAT[0], RASTER_RGB_BBOX_LNGLAT[3]],
+  [RASTER_RGB_BBOX_LNGLAT[2], RASTER_RGB_BBOX_LNGLAT[3]],
+  [RASTER_RGB_BBOX_LNGLAT[2], RASTER_RGB_BBOX_LNGLAT[1]],
+  [RASTER_RGB_BBOX_LNGLAT[0], RASTER_RGB_BBOX_LNGLAT[1]],
+];
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+class RasterRgbLayerController {
+  private activeBuffer: 0 | 1 = 0;
+  private attached = false;
+  private currentUrl: string | null = null;
+
+  ensureAttached(map: maplibregl.Map, beforeLayerId: string): void {
+    const hasBothSources = RASTER_RGB_SOURCE_IDS.every((sourceId) => Boolean(map.getSource(sourceId)));
+    const hasBothLayers = RASTER_RGB_LAYER_IDS.every((layerId) => Boolean(map.getLayer(layerId)));
+    if (this.attached && hasBothSources && hasBothLayers) {
+      return;
+    }
+
+    for (let i = 0; i < 2; i += 1) {
+      const sourceId = RASTER_RGB_SOURCE_IDS[i];
+      const layerId = RASTER_RGB_LAYER_IDS[i];
+      if (!map.getSource(sourceId)) {
+        map.addSource(sourceId, {
+          type: "image",
+          url: TRANSPARENT_PIXEL_DATA_URL,
+          coordinates: RASTER_RGB_COORDINATES,
+        });
+      }
+      if (!map.getLayer(layerId)) {
+        map.addLayer({
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": 0,
+            "raster-fade-duration": 0,
+          },
+        }, map.getLayer(beforeLayerId) ? beforeLayerId : undefined);
+      }
+    }
+    this.attached = true;
+  }
+
+  update(map: maplibregl.Map, url: string | null, opacity: number): void {
+    if (!this.attached) {
+      return;
+    }
+    const inactiveBuffer = (1 - this.activeBuffer) as 0 | 1;
+    if (url === this.currentUrl) {
+      map.setPaintProperty(RASTER_RGB_LAYER_IDS[this.activeBuffer], "raster-opacity", url ? opacity : 0);
+      map.setPaintProperty(RASTER_RGB_LAYER_IDS[inactiveBuffer], "raster-opacity", 0);
+      return;
+    }
+
+    const nextBuffer = inactiveBuffer;
+    const nextSourceId = RASTER_RGB_SOURCE_IDS[nextBuffer];
+    const nextLayerId = RASTER_RGB_LAYER_IDS[nextBuffer];
+    const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
+
+    if (url) {
+      const source = map.getSource(nextSourceId) as maplibregl.ImageSource | undefined;
+      if (source && typeof source.updateImage === "function") {
+        source.updateImage({ url, coordinates: RASTER_RGB_COORDINATES });
+      }
+      map.setPaintProperty(nextLayerId, "raster-opacity", opacity);
+      map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+    } else {
+      map.setPaintProperty(nextLayerId, "raster-opacity", 0);
+      map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+    }
+
+    this.activeBuffer = nextBuffer;
+    this.currentUrl = url;
+  }
+
+  remove(map: maplibregl.Map): void {
+    if (!this.attached) {
+      return;
+    }
+    for (let i = 0; i < 2; i += 1) {
+      const layerId = RASTER_RGB_LAYER_IDS[i];
+      const sourceId = RASTER_RGB_SOURCE_IDS[i];
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+      if (map.getSource(sourceId)) {
+        map.removeSource(sourceId);
+      }
+    }
+    this.attached = false;
+    this.currentUrl = null;
+  }
+}
 
 function contourLabelFromValue(value: unknown): string | null {
   const numericValue = typeof value === "number" ? value : Number(value);
@@ -988,6 +1096,8 @@ type MapCanvasProps = {
   gridPrefetchPivotHour?: number | null;
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
+  rasterRgbFrameUrl?: string | null;
+  rasterRgbActive?: boolean;
   gridContour?: GridContourLayerConfig | null;
   contourGeoJsonUrl?: string | null;
   contourPrefetchUrls?: string[];
@@ -1056,6 +1166,8 @@ export function MapCanvas({
   gridPrefetchPivotHour = null,
   gridLegend = null,
   gridActive = false,
+  rasterRgbFrameUrl = null,
+  rasterRgbActive = false,
   gridContour = null,
   contourGeoJsonUrl,
   contourPrefetchUrls = [],
@@ -1111,6 +1223,7 @@ export function MapCanvas({
   if (!gridWebglControllerRef.current) {
     gridWebglControllerRef.current = new GridWebglLayerController();
   }
+  const rasterRgbControllerRef = useRef<RasterRgbLayerController | null>(null);
   const compositeGridControllersRef = useRef<Map<string, GridWebglLayerController>>(new Map());
   const gridRepaintRafRef = useRef<number | null>(null);
   const requestGridRepaint = useCallback(() => {
@@ -1855,6 +1968,11 @@ export function MapCanvas({
     if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
     }
+    for (const layerId of RASTER_RGB_LAYER_IDS) {
+      if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
+    }
     for (const layerId of compositeGridControllersRef.current.keys()) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {
         map.moveLayer(layerId, COASTLINE_LAYER_ID);
@@ -1989,6 +2107,8 @@ export function MapCanvas({
       map.off("error", handleMapError as any);
       clearAnchorMarkers();
       gridWebglControllerRef.current?.remove(map);
+      rasterRgbControllerRef.current?.remove(map);
+      rasterRgbControllerRef.current = null;
       for (const controller of compositeGridControllersRef.current.values()) {
         controller.remove(map);
       }
@@ -2097,6 +2217,13 @@ export function MapCanvas({
           compositeController.ensureAttached(map, gridOverlayBeforeLayerId(map));
         }
       }
+      if (rasterRgbActive && rasterRgbFrameUrl) {
+        if (!rasterRgbControllerRef.current) {
+          rasterRgbControllerRef.current = new RasterRgbLayerController();
+        }
+        rasterRgbControllerRef.current.ensureAttached(map, gridOverlayBeforeLayerId(map));
+        rasterRgbControllerRef.current.update(map, rasterRgbFrameUrl, opacity);
+      }
       const contourSource = map.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       if (contourSource && typeof contourSource.setData === "function") {
         const activeUrl = activeContourUrlRef.current;
@@ -2117,7 +2244,7 @@ export function MapCanvas({
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, shouldUseGridController]);
+  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, opacity, rasterRgbActive, rasterRgbFrameUrl, shouldUseGridController]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2752,6 +2879,24 @@ export function MapCanvas({
     mode,
     syncGridControllers,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    if (!rasterRgbActive) {
+      rasterRgbControllerRef.current?.remove(map);
+      rasterRgbControllerRef.current = null;
+      return;
+    }
+    if (!rasterRgbControllerRef.current) {
+      rasterRgbControllerRef.current = new RasterRgbLayerController();
+    }
+    rasterRgbControllerRef.current.ensureAttached(map, gridOverlayBeforeLayerId(map));
+    rasterRgbControllerRef.current.update(map, rasterRgbFrameUrl ?? null, opacity);
+    enforceLayerOrder(map);
+  }, [enforceLayerOrder, isLoaded, opacity, rasterRgbActive, rasterRgbFrameUrl]);
 
   useEffect(() => {
     if (!getDirectGridPlaybackState || !directGridPlaybackActive) {

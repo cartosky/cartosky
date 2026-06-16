@@ -13,6 +13,23 @@ from .base import (
 
 
 class GOESEastPlugin(BaseModelPlugin):
+    def __init__(
+        self,
+        id: str | None = None,
+        name: str | None = None,
+        regions: dict[str, RegionSpec] | None = None,
+        vars: dict[str, VarSpec] | None = None,
+        product: str | None = None,
+        capabilities: ModelCapabilities | None = None,
+    ) -> None:
+        object.__setattr__(self, "id", id or "goes-east")
+        object.__setattr__(self, "name", name or "Satellite")
+        object.__setattr__(self, "regions", regions if regions is not None else globals().get("GOES_EAST_REGIONS", {}))
+        object.__setattr__(self, "vars", vars if vars is not None else globals().get("GOES_EAST_VARS", {}))
+        object.__setattr__(self, "product", product or "obs")
+        object.__setattr__(self, "capabilities", capabilities if capabilities is not None else globals().get("GOES_EAST_CAPABILITIES"))
+        BaseModelPlugin.__post_init__(self)
+
     def target_fhs(self, cycle_hour: int) -> list[int]:
         del cycle_hour
         return []
@@ -35,6 +52,9 @@ class GOESEastPlugin(BaseModelPlugin):
             "upper_water_vapor": "wv8",
             "band8": "wv8",
             "c08": "wv8",
+            "true_color": "true_color",
+            "truecolor": "true_color",
+            "rgb": "true_color",
         }
         return aliases.get(normalized, normalized)
 
@@ -55,6 +75,7 @@ GOES_EAST_WV9_VARIABLE_ID = "wv9"
 GOES_EAST_WV9_COLOR_MAP_ID = "goes_wv9_enhanced"
 GOES_EAST_WV8_VARIABLE_ID = "wv8"
 GOES_EAST_WV8_COLOR_MAP_ID = "goes_wv8_enhanced"
+GOES_EAST_TRUE_COLOR_VARIABLE_ID = "true_color"
 
 
 GOES_EAST_REGIONS: dict[str, RegionSpec] = {
@@ -125,6 +146,23 @@ GOES_EAST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    GOES_EAST_TRUE_COLOR_VARIABLE_ID: VarSpec(
+        id=GOES_EAST_TRUE_COLOR_VARIABLE_ID,
+        name="True Color",
+        selectors=VarSelectors(
+            hints={
+                "upstream_provider": "noaa_aws_s3",
+                "upstream_satellite": "goes19",
+                "upstream_bucket": "noaa-goes19",
+                "upstream_product": "ABI-L1b-RadC",
+                "upstream_sector": "C",
+                "upstream_variable": "Rad",
+            }
+        ),
+        primary=False,
+        kind="continuous",
+        units="",
+    ),
 }
 
 
@@ -170,6 +208,20 @@ GOES_EAST_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         group="Satellite",
         legend_title="Brightness Temperature",
         render_substrates=["grid"],
+    ),
+    GOES_EAST_TRUE_COLOR_VARIABLE_ID: VariableCapability(
+        var_key=GOES_EAST_TRUE_COLOR_VARIABLE_ID,
+        name="True Color",
+        selectors=GOES_EAST_VARS[GOES_EAST_TRUE_COLOR_VARIABLE_ID].selectors,
+        primary=False,
+        kind="raster_rgb",
+        units="",
+        color_map_id=None,
+        buildable=True,
+        order=3,
+        group="Satellite",
+        legend_title=None,
+        render_substrates=["image"],
     ),
 }
 

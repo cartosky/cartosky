@@ -20,12 +20,14 @@ import {
   type FrameRow,
   type GridManifestResponse,
   type RegionPreset,
+  type RgbManifestResponse,
   type RunManifestResponse,
   fetchManifest,
   fetchCapabilities,
   fetchFrames,
   buildContourUrl,
   fetchGridManifest,
+  fetchRgbManifest,
   fetchRegionPresets,
   fetchRuns,
   fetchSampleBatch,
@@ -310,6 +312,7 @@ export default function App() {
   const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
   const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
+  const [rgbManifest, setRgbManifest] = useState<RgbManifestResponse | null>(null);
   const [compositeGridManifests, setCompositeGridManifests] = useState<Record<string, GridManifestResponse | null>>({});
   const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
   // Keep the last non-null resolved grid run so that selectionKey stays stable
@@ -704,6 +707,8 @@ export default function App() {
     && selectedVariableRenderSubstrates.includes("vector");
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
+  const selectionSupportsRasterRgb = selectionCapabilitiesResolved
+    && selectedVariableRenderSubstrates.includes("raster_rgb");
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
 
@@ -994,6 +999,52 @@ export default function App() {
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
+  const rgbManifestRunKey = model === "goes-east" && variable === "true_color"
+    ? (run === "latest" ? (latestRunId ?? resolvedRunForRequests) : resolvedRunForRequests)
+    : null;
+  const rasterRgbFrameUrl = useMemo(() => {
+    if (variable !== "true_color" || !rgbManifest) {
+      return null;
+    }
+    const frame = rgbManifest.frames.find((entry) => entry.fh === forecastHour) ?? rgbManifest.frames[0];
+    return frame?.url ?? null;
+  }, [forecastHour, rgbManifest, variable]);
+  const rasterRgbActive = Boolean(
+    selectionSupportsRasterRgb
+    && variable === "true_color"
+    && rgbManifest !== null
+    && rasterRgbFrameUrl !== null
+  );
+
+  useEffect(() => {
+    if (model !== "goes-east" || variable !== "true_color" || !rgbManifestRunKey || rgbManifestRunKey === "pending-grid") {
+      setRgbManifest(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const generation = requestGenerationRef.current;
+    fetchRgbManifest(model, rgbManifestRunKey, variable, { signal: controller.signal })
+      .then((manifest) => {
+        if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+          return;
+        }
+        setRgbManifest(manifest);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+          return;
+        }
+        setRgbManifest(null);
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          console.warn("[rgb] manifest fetch failed", { model, run: rgbManifestRunKey, variable, error });
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [model, rgbManifestRunKey, variable]);
 
   useEffect(() => {
     const mapView = mapViewRef.current;
@@ -3063,6 +3114,32 @@ export default function App() {
       forecastHourCommitted = true;
     };
 
+    if (variable === "true_color" && rgbManifest) {
+      const rows: FrameRow[] = rgbManifest.frames.map((frame) => ({
+        fh: frame.fh,
+        has_cog: true,
+        run: rgbManifest.run,
+        valid_time: frame.valid_time,
+      }));
+      setError(null);
+      setVariableSwitchState((current) => {
+        if (!current || current.toVariable !== variable) {
+          return current;
+        }
+        return {
+          ...current,
+          visualState: "warming_new",
+        };
+      });
+      setFrameRows(rows);
+      setLoadedFramesKey(selectionKey);
+      commitLoadedForecastHour(rows, true, true);
+      return;
+    }
+    if (variable === "true_color") {
+      return;
+    }
+
     async function loadFrames() {
       setError(null);
       let hydratedFromManifest = false;
@@ -3193,6 +3270,7 @@ export default function App() {
     commitForecastHourTransition,
     hasRenderableSelection,
     gridOnlySelection,
+    rgbManifest,
     readActiveRequestedForecastHour,
     resolvedGridLatestRunId,
     selectionKey,
@@ -3697,13 +3775,17 @@ export default function App() {
       if (gridFrameByHour.has(nextHour) && !isGridHourReady(nextHour)) {
         return;
       }
+      if (rasterRgbActive) {
+        commitAutoplayUiHourNow(nextHour);
+        return;
+      }
       setTargetForecastHour(nextHour);
     }, animationDelayMs);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [animationDelayMs, canUseGridPlayback, gridFrameByHour, isGridHourReady, isPlaying, selectableFrameHours]);
+  }, [animationDelayMs, canUseGridPlayback, commitAutoplayUiHourNow, gridFrameByHour, isGridHourReady, isPlaying, rasterRgbActive, selectableFrameHours]);
 
   useEffect(() => {
     if (selectableFrameHours.length === 0 && isPlaying) {
@@ -4853,6 +4935,8 @@ export default function App() {
           gridPrefetchPivotHour={gridPrefetchPivotHour}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
+          rasterRgbFrameUrl={rasterRgbFrameUrl}
+          rasterRgbActive={rasterRgbActive}
           gridContour={isGridLowMidActive ? gridContour : null}
             contourGeoJsonUrl={contourGeoJsonUrl}
             contourPrefetchUrls={contourPrefetchUrls}

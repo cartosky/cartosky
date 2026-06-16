@@ -1,0 +1,19 @@
+[Unit]
+Description=CartoSky GOES RGB Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/cartosky/scheduler-satellite-rgb.env
+WorkingDirectory=/opt/cartosky/backend
+ExecStart=/opt/cartosky/.venv/bin/python -m app.services.goes_rgb_poller
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=csky-satellite-rgb
+
+[Install]
+WantedBy=multi-user.target

@@ -178,11 +178,13 @@ export type VariableOption = GroupedOption;
 
 export type VariableEntry = {
   id: string;
+  name?: string;
   displayName?: string;
   order?: number | null;
   defaultFh?: number | null;
   buildable?: boolean;
   kind?: string | null;
+  units?: string;
   displayResamplingOverride?: string | null;
   group?: string | null;
   renderSubstrates?: WeatherSubstrate[];
@@ -553,6 +555,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
   wv9: { label: "Mid-Level Water Vapor", group: "SATELLITE", order: 1 },
   wv8: { label: "Upper-Level Water Vapor", group: "SATELLITE", order: 2 },
+  true_color: { label: "True Color", group: "SATELLITE", order: 3 },
   rh2m: { label: "Surface Relative Humidity", group: "PRECIPITATION", order: 8 },
   rh700: { label: "700mb Relative Humidity", group: "PRECIPITATION", order: 9 },
   tornado_prob: { label: "SPC Tornado Probability", group: "OUTLOOKS", order: 0 },

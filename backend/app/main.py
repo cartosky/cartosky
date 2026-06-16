@@ -3347,6 +3347,11 @@ def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_tok
     )
 
 
+def _rgb_file_url(model: str, run: str, var: str, filename: str, *, version_token: str) -> str:
+    safe_filename = Path(filename).name
+    return f"/api/v4/rgb/{model}/{run}/{var}/{safe_filename}?v={version_token}"
+
+
 def _product_cache_control(model: str, public_cache_control: str) -> str:
     if entitlements.pro_gating_enabled() and entitlements.get_required_feature_for_product(model) is not None:
         return "private, no-store"
@@ -4625,6 +4630,140 @@ def get_grid_manifest(
             "ETag": etag,
             "Server-Timing": timing_header,
         },
+    )
+
+
+@app.get("/api/v4/{model}/{run}/{var}/rgb-manifest")
+def get_rgb_manifest(
+    request: Request,
+    model: str,
+    run: str,
+    var: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    entitlements.require_product_access(principal, model)
+    resolved = _resolve_run(model, run, region=None)
+    if resolved is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+
+    plugin = get_model(model)
+    canonical_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
+    if canonical_var != "true_color":
+        return Response(
+            status_code=404,
+            content='{"error": "rgb manifest not supported for this variable"}',
+            media_type="application/json",
+        )
+
+    manifest_path = _manifest_path(model, resolved)
+    if not manifest_path.is_file():
+        return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return Response(status_code=404, content='{"error": "manifest read error"}', media_type="application/json")
+
+    var_entry = manifest.get("variables", {}).get(canonical_var)
+    if not isinstance(var_entry, dict):
+        return Response(status_code=404, content='{"error": "variable not in manifest"}', media_type="application/json")
+
+    version_token = _grid_version_token(model, resolved, canonical_var, region=None)
+    frames = var_entry.get("frames", [])
+    next_frames: list[dict[str, Any]] = []
+    if isinstance(frames, list):
+        for frame in frames:
+            if not isinstance(frame, dict):
+                continue
+            filename = str(frame.get("filename") or "").strip()
+            fh = frame.get("fh")
+            if not filename or not isinstance(fh, int):
+                continue
+            webp_path = PUBLISHED_ROOT / model / resolved / canonical_var / Path(filename).name
+            if not webp_path.is_file():
+                continue
+            next_frame = dict(frame)
+            next_frame["url"] = _rgb_file_url(
+                model,
+                resolved,
+                canonical_var,
+                filename,
+                version_token=version_token,
+            )
+            next_frames.append(next_frame)
+    next_frames.sort(key=lambda item: int(item.get("fh", 0)))
+
+    payload = {
+        "model": model,
+        "run": resolved,
+        "var": canonical_var,
+        "kind": "raster_rgb",
+        "render_substrate": "image",
+        "frames": next_frames,
+        "available_frames": len(next_frames),
+        "expected_frames": var_entry.get("expected_frames", len(next_frames)),
+    }
+    cache_control = _product_cache_control(model, "public, max-age=30, stale-while-revalidate=60")
+    etag = _make_etag(payload)
+    r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
+    if r304 is not None:
+        return r304
+    return Response(
+        content=json.dumps(payload),
+        media_type="application/json",
+        headers={"Cache-Control": cache_control, "ETag": etag},
+    )
+
+
+@app.get("/api/v4/rgb/{model}/{run}/{var}/{filename}")
+def get_rgb_file(
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    entitlements.require_product_access(principal, model)
+
+    safe_filename = Path(filename).name
+    if not safe_filename.endswith(".webp"):
+        raise HTTPException(status_code=400, detail="Only WebP files are served at this path")
+
+    resolved = _resolve_run(model, run, region=None)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    plugin = get_model(model)
+    canonical_var = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else str(var)
+    manifest_path = _manifest_path(model, resolved)
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    var_entry = manifest.get("variables", {}).get(canonical_var)
+    frames = var_entry.get("frames", []) if isinstance(var_entry, dict) else []
+    listed_filenames = {
+        str(frame.get("filename") or "").strip()
+        for frame in frames
+        if isinstance(frame, dict)
+    }
+    if safe_filename not in listed_filenames:
+        raise HTTPException(status_code=404, detail="File not listed in manifest")
+
+    candidate = PUBLISHED_ROOT / model / resolved / canonical_var / safe_filename
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    headers = {
+        "Cache-Control": _product_cache_control(
+            model,
+            "public, max-age=31536000, immutable",
+        ),
+    }
+    return FileResponse(
+        candidate,
+        media_type="image/webp",
+        headers=headers,
     )
 
 
