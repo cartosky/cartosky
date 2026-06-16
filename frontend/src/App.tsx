@@ -566,6 +566,9 @@ export default function App() {
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
   const datasetGenerationRef = useRef(0);
   const requestGenerationRef = useRef(0);
+  useLayoutEffect(() => {
+    requestGenerationRef.current += 1;
+  }, [model, run, variable]);
   const scrubRafRef = useRef<number | null>(null);
   const scrubLodHoldTimerRef = useRef<number | null>(null);
   const previousIsScrubbingRef = useRef(false);
@@ -1036,16 +1039,15 @@ export default function App() {
     }
 
     const controller = new AbortController();
-    const generation = requestGenerationRef.current;
     fetchRgbManifest(model, rgbManifestRunKey, variable, { signal: controller.signal })
       .then((manifest) => {
-        if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+        if (controller.signal.aborted) {
           return;
         }
         setRgbManifest(manifest);
       })
       .catch((error) => {
-        if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+        if (controller.signal.aborted) {
           return;
         }
         setRgbManifest(null);
@@ -2582,10 +2584,6 @@ export default function App() {
     setVariableSwitchState(null);
     return true;
   }, [loadedFramesKey, variable]);
-
-  useEffect(() => {
-    requestGenerationRef.current += 1;
-  }, [model, run, variable]);
 
   useEffect(() => {
     if (!variableSwitchState) {
