@@ -124,28 +124,14 @@ def _run_satpy_composite(
         filenames=[str(band1_path), str(band2_path), str(band3_path)],
     )
 
-    # Load the composite — SatPy resolves which bands are needed automatically
+    # Load the composite
     print(f"\nLoading composite: {composite_name}")
     scn.load([composite_name])
 
-    # Check what was loaded
-    available = scn.available_composite_names()
-    print(f"Available composites: {sorted(available)[:10]}...")
-
-    composite = scn[composite_name]
-    print(f"Composite shape: {composite.shape}")
-    print(f"Composite dtype: {composite.dtype}")
-    print(f"Composite dims: {composite.dims}")
-
-    # Resample to a flat EPSG:3857 CONUS grid matching our existing pipeline
-    # Use the native resolution of Band 2 (0.5km) downsampled to ~4km to match
-    # the existing GOES pipeline grid resolution
+    # Resample BEFORE accessing — required for composites that need it
     print(f"\nResampling to CONUS EPSG:3857 grid...")
     from pyresample.geometry import AreaDefinition
 
-    # Match the existing GOES-East CONUS grid:
-    # bbox meters: [-14920000, 2752000, -6676000, 7364000]
-    # grid_m: 4000m → 2061x1153 pixels
     width = 2061
     height = 1153
     west, south, east, north = -14920000.0, 2752000.0, -6676000.0, 7364000.0
@@ -160,7 +146,9 @@ def _run_satpy_composite(
         (west, south, east, north),
     )
 
-    resampled = scn.resample(area_def, resampler="native")
+    resampled = scn.resample(area_def, resampler="nearest")
+
+    # NOW access the composite from the resampled scene
     rgb = resampled[composite_name]
 
     print(f"Resampled shape: {rgb.shape}")
