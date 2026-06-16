@@ -169,8 +169,30 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   features: [],
 };
 
+const RASTER_RGB_PRELOAD_CACHE_LIMIT = 192;
 const rasterRgbImagePreloads = new Map<string, Promise<void>>();
 const rasterRgbLoadedUrls = new Set<string>();
+const rasterRgbLoadedUrlOrder: string[] = [];
+
+function rememberRasterRgbLoadedUrl(url: string): void {
+  const normalized = String(url ?? "").trim();
+  if (!normalized) {
+    return;
+  }
+  const existingIndex = rasterRgbLoadedUrlOrder.indexOf(normalized);
+  if (existingIndex >= 0) {
+    rasterRgbLoadedUrlOrder.splice(existingIndex, 1);
+  }
+  rasterRgbLoadedUrlOrder.push(normalized);
+  rasterRgbLoadedUrls.add(normalized);
+  while (rasterRgbLoadedUrlOrder.length > RASTER_RGB_PRELOAD_CACHE_LIMIT) {
+    const evictedUrl = rasterRgbLoadedUrlOrder.shift();
+    if (evictedUrl) {
+      rasterRgbLoadedUrls.delete(evictedUrl);
+      rasterRgbImagePreloads.delete(evictedUrl);
+    }
+  }
+}
 
 function preloadRasterRgbImage(url: string): Promise<void> {
   const normalized = String(url ?? "").trim();
@@ -190,7 +212,7 @@ function preloadRasterRgbImage(url: string): Promise<void> {
     img.decoding = "async";
     img.onload = () => {
       const markReady = () => {
-        rasterRgbLoadedUrls.add(normalized);
+        rememberRasterRgbLoadedUrl(normalized);
         resolve();
       };
       if (typeof img.decode === "function") {
@@ -3200,10 +3222,16 @@ export function MapCanvas({
   ]);
 
   useEffect(() => {
-    if (!rasterRgbActive) {
+    if (!rasterRgbActive || rasterRgbPrefetchUrls.length === 0) {
       return;
     }
-    rasterRgbControllerRef.current?.prefetch(rasterRgbPrefetchUrls);
+    if (!rasterRgbControllerRef.current) {
+      rasterRgbControllerRef.current = new RasterRgbLayerController();
+      rasterRgbControllerRef.current.setOnFrameReady((url) => {
+        onRasterRgbFrameReadyRef.current?.(url);
+      });
+    }
+    rasterRgbControllerRef.current.prefetch(rasterRgbPrefetchUrls);
   }, [rasterRgbActive, rasterRgbPrefetchUrls]);
 
   useEffect(() => {
