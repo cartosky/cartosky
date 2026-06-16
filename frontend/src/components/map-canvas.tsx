@@ -319,53 +319,63 @@ class RasterRgbLayerController {
     this.activeBuffer = nextBuffer;
   }
 
-  private waitForSourceReady(
+  private waitForSourceLoaded(
     map: maplibregl.Map,
     sourceId: string,
     generation: number,
     url: string,
+    wasPreloaded: boolean,
   ): Promise<boolean> {
     return new Promise((resolve) => {
+      if (!this.isDesiredGenerationCurrent(generation, url)) {
+        resolve(false);
+        return;
+      }
+
       let settled = false;
-      let idleScheduled = false;
       const finish = (ready: boolean) => {
         if (settled) {
           return;
         }
         settled = true;
+        window.clearInterval(cancelPoll);
+        window.clearTimeout(timeoutId);
         map.off("sourcedata", onSourceData);
         resolve(ready);
       };
 
-      const awaitIdle = () => {
-        if (idleScheduled) {
-          return;
-        }
-        idleScheduled = true;
-        map.off("sourcedata", onSourceData);
-        map.once("idle", () => {
+      const finishAfterPaint = () => {
+        window.requestAnimationFrame(() => {
           finish(this.isDesiredGenerationCurrent(generation, url));
         });
-        map.triggerRepaint();
       };
 
       const onSourceData = (event: maplibregl.MapSourceDataEvent) => {
         if (event.sourceId !== sourceId || !event.isSourceLoaded) {
           return;
         }
-        awaitIdle();
+        map.off("sourcedata", onSourceData);
+        finishAfterPaint();
       };
 
+      const cancelPoll = window.setInterval(() => {
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          finish(false);
+        }
+      }, 16);
+
+      const timeoutMs = wasPreloaded ? 750 : 3000;
+      const timeoutId = window.setTimeout(() => {
+        finish(this.isDesiredGenerationCurrent(generation, url) && map.isSourceLoaded(sourceId));
+      }, timeoutMs);
+
       if (map.isSourceLoaded(sourceId)) {
-        awaitIdle();
-      } else {
-        map.on("sourcedata", onSourceData);
-        map.triggerRepaint();
+        finishAfterPaint();
+        return;
       }
 
-      window.setTimeout(() => {
-        finish(this.isDesiredGenerationCurrent(generation, url) && map.isSourceLoaded(sourceId));
-      }, 5000);
+      map.on("sourcedata", onSourceData);
+      map.triggerRepaint();
     });
   }
 
@@ -403,6 +413,7 @@ class RasterRgbLayerController {
 
         const bufferAlreadyReady = this.bufferUrls[inactiveBuffer] === url && map.isSourceLoaded(nextSourceId);
         if (!bufferAlreadyReady) {
+          const wasPreloaded = rasterRgbLoadedUrls.has(url);
           try {
             await preloadRasterRgbImage(url);
           } catch {
@@ -421,7 +432,13 @@ class RasterRgbLayerController {
           map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? opacity : 0);
           map.setPaintProperty(nextLayerId, "raster-opacity", 0);
 
-          const sourceReady = await this.waitForSourceReady(map, nextSourceId, generation, url);
+          const sourceReady = await this.waitForSourceLoaded(
+            map,
+            nextSourceId,
+            generation,
+            url,
+            wasPreloaded || rasterRgbLoadedUrls.has(url),
+          );
           if (!sourceReady || !this.isDesiredGenerationCurrent(generation, url)) {
             continue;
           }
@@ -453,10 +470,25 @@ class RasterRgbLayerController {
       return;
     }
 
+    if (url && url !== this.currentUrl) {
+      const inactiveSourceId = RASTER_RGB_SOURCE_IDS[inactiveBuffer];
+      if (this.bufferUrls[inactiveBuffer] === url && map.isSourceLoaded(inactiveSourceId)) {
+        this.desiredUrl = undefined;
+        this.desiredOpacity = opacity;
+        this.desiredBeforeLayerId = beforeLayerId;
+        this.swapToBuffer(map, inactiveBuffer, opacity);
+        this.currentUrl = url;
+        this.onFrameReady?.(url);
+        return;
+      }
+    }
+
+    if (this.desiredUrl !== url) {
+      this.desiredGeneration += 1;
+    }
     this.desiredUrl = url;
     this.desiredOpacity = opacity;
     this.desiredBeforeLayerId = beforeLayerId;
-    this.desiredGeneration += 1;
     void this.runLoadLoop(map);
   }
 
