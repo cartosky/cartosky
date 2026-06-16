@@ -45,7 +45,7 @@ def decode_goes_l1b_triplet(
     *,
     slot_time: datetime,
     composite_name: str = "cimss_true_color_sunz_rayleigh",
-    resampler: str = "nearest",
+    resampler: str = "bilinear",
 ) -> GOESRGBFrame:
     try:
         if _CONUS_AREA_DEF is None:
