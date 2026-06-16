@@ -101,6 +101,39 @@ def _preserved_manifest_variables(
     run_id: str,
     exclude_var_id: str,
 ) -> dict[str, dict[str, Any]]:
+    preserved = _manifest_variables_for_preservation(
+        data_root=data_root,
+        run_id=run_id,
+        exclude_var_id=exclude_var_id,
+    )
+    latest_run_id = _latest_published_run_id(data_root)
+    if latest_run_id and latest_run_id != run_id:
+        latest_variables = _manifest_variables_for_preservation(
+            data_root=data_root,
+            run_id=latest_run_id,
+            exclude_var_id=exclude_var_id,
+        )
+        for var_id, entry in latest_variables.items():
+            preserved.setdefault(var_id, entry)
+    return preserved
+
+
+def _latest_published_run_id(data_root: Path) -> str | None:
+    latest_path = data_root / "published" / GOES_EAST_MODEL_ID / "LATEST.json"
+    try:
+        latest_payload = json.loads(latest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    run_id = str(latest_payload.get("run_id") or "").strip()
+    return run_id or None
+
+
+def _manifest_variables_for_preservation(
+    *,
+    data_root: Path,
+    run_id: str,
+    exclude_var_id: str,
+) -> dict[str, dict[str, Any]]:
     manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
     try:
         manifest = json.loads(manifest_path.read_text())
@@ -511,21 +544,68 @@ def _prepare_stage_run_dir(
         shutil.rmtree(stage_run, ignore_errors=True)
     stage_run.mkdir(parents=True, exist_ok=True)
 
-    published_run = data_root / "published" / GOES_EAST_MODEL_ID / run_id
-    if published_run.is_dir():
-        for var_dir in published_run.iterdir():
-            if not var_dir.is_dir():
-                continue
-            if replace_var_id and var_dir.name == replace_var_id:
-                continue
-            target_var_dir = stage_run / var_dir.name
-            target_var_dir.mkdir(parents=True, exist_ok=True)
-            for src_file in var_dir.rglob("*"):
-                if src_file.is_file():
-                    rel = src_file.relative_to(var_dir)
-                    dst_file = target_var_dir / rel
-                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    _link_or_copy(src_file, dst_file)
+    copied_vars: set[str] = set()
+    _copy_preserved_run_artifacts(
+        data_root=data_root,
+        source_run_id=run_id,
+        target_run_id=run_id,
+        stage_run=stage_run,
+        replace_var_id=replace_var_id,
+        copied_vars=copied_vars,
+    )
+    latest_run_id = _latest_published_run_id(data_root)
+    if latest_run_id and latest_run_id != run_id:
+        _copy_preserved_run_artifacts(
+            data_root=data_root,
+            source_run_id=latest_run_id,
+            target_run_id=run_id,
+            stage_run=stage_run,
+            replace_var_id=replace_var_id,
+            copied_vars=copied_vars,
+        )
+
+
+def _copy_preserved_run_artifacts(
+    *,
+    data_root: Path,
+    source_run_id: str,
+    target_run_id: str,
+    stage_run: Path,
+    replace_var_id: str | None,
+    copied_vars: set[str],
+) -> None:
+    published_run = data_root / "published" / GOES_EAST_MODEL_ID / source_run_id
+    if not published_run.is_dir():
+        return
+    for var_dir in published_run.iterdir():
+        if not var_dir.is_dir():
+            continue
+        if replace_var_id and var_dir.name == replace_var_id:
+            continue
+        if var_dir.name in copied_vars:
+            continue
+        target_var_dir = stage_run / var_dir.name
+        target_var_dir.mkdir(parents=True, exist_ok=True)
+        for src_file in var_dir.rglob("*"):
+            if src_file.is_file():
+                rel = src_file.relative_to(var_dir)
+                dst_file = target_var_dir / rel
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                _link_or_copy(src_file, dst_file)
+        _retarget_copied_sidecars(target_var_dir, run_id=target_run_id)
+        copied_vars.add(var_dir.name)
+
+
+def _retarget_copied_sidecars(var_dir: Path, *, run_id: str) -> None:
+    for sidecar_path in var_dir.glob("fh*.json"):
+        try:
+            sidecar = json.loads(sidecar_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(sidecar, dict) or sidecar.get("run") == run_id:
+            continue
+        sidecar["run"] = run_id
+        write_json_atomic(sidecar_path, sidecar)
 
 
 def _link_or_copy(source: Path, target: Path) -> None:

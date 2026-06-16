@@ -14,7 +14,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services import goes_publish
+from app.services import goes_publish  # noqa: E402
 
 
 def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
@@ -130,3 +130,43 @@ def test_publish_goes_bundle_reuses_previous_frame_by_slot_time(tmp_path: Path, 
     assert second_result.run_id == "20260521_1210z"
     assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
     assert first_result.run_id != second_result.run_id
+
+
+def test_publish_goes_bundle_carries_forward_other_latest_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_publish(monkeypatch)
+    ir_slot = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    ir_frame = goes_publish.GOESBundleFrame(
+        valid_time=ir_slot + timedelta(minutes=2),
+        slot_time=ir_slot,
+        values=np.ones((2, 2), dtype=np.float32) * 250.0,
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        source_metadata={"slot_time": "2026-05-21T12:00:00Z"},
+    )
+    first_result = goes_publish.publish_goes_bundle(
+        data_root=tmp_path,
+        frames=[ir_frame],
+        publish_time=datetime(2026, 5, 21, 12, 5, tzinfo=timezone.utc),
+    )
+
+    wv_slot = datetime(2026, 5, 21, 12, 15, tzinfo=timezone.utc)
+    wv_frame = goes_publish.GOESBundleFrame(
+        valid_time=wv_slot + timedelta(minutes=2),
+        slot_time=wv_slot,
+        values=np.ones((2, 2), dtype=np.float32) * 240.0,
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        source_metadata={"slot_time": "2026-05-21T12:15:00Z"},
+    )
+    second_result = goes_publish.publish_goes_bundle(
+        data_root=tmp_path,
+        frames=[wv_frame],
+        publish_time=datetime(2026, 5, 21, 12, 10, tzinfo=timezone.utc),
+        band_config=goes_publish.BAND_CONFIG_WV9,
+    )
+
+    assert first_result.run_id != second_result.run_id
+    assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "wv9" / "fh000.val.cog.tif").exists()
+    manifest = json.loads(second_result.manifest_path.read_text())
+    assert set(manifest["variables"]) == {"ir13", "wv9"}
+    assert manifest["variables"]["ir13"]["frames"] == [{"fh": 0, "valid_time": "2026-05-21T12:02:00Z"}]
+    assert manifest["variables"]["wv9"]["frames"] == [{"fh": 0, "valid_time": "2026-05-21T12:17:00Z"}]
