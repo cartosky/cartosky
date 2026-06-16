@@ -1013,11 +1013,37 @@ export default function App() {
   const rgbManifestRunKey = model === "goes-east" && variable === "true_color"
     ? (run === "latest" ? "latest" : resolvedRunForRequests)
     : null;
+  const requestedRasterRgbDisplayHour = useMemo(() => {
+    const requested = (isPlaying || isGridPreloadingForPlay || isScrubbing || isVariableSwitching)
+      ? targetForecastHour
+      : forecastHour;
+    if (Number.isFinite(requested)) {
+      return Number(requested);
+    }
+    return null;
+  }, [
+    forecastHour,
+    isGridPreloadingForPlay,
+    isPlaying,
+    isScrubbing,
+    isVariableSwitching,
+    targetForecastHour,
+  ]);
   const rasterRgbFrameUrl = useMemo(() => {
     if (variable !== "true_color" || !rgbManifest) {
       return null;
     }
-    const frame = rgbManifest.frames.find((entry) => entry.fh === forecastHour) ?? rgbManifest.frames[0];
+    const frameHours = rgbManifest.frames
+      .map((entry) => Number(entry.fh))
+      .filter((fh) => Number.isFinite(fh))
+      .sort((a, b) => a - b);
+    const requestedHour = Number.isFinite(requestedRasterRgbDisplayHour)
+      ? requestedRasterRgbDisplayHour
+      : forecastHour;
+    const displayHour = frameHours.length > 0 && Number.isFinite(requestedHour)
+      ? nearestFrame(frameHours, Number(requestedHour))
+      : frameHours[0];
+    const frame = rgbManifest.frames.find((entry) => entry.fh === displayHour) ?? rgbManifest.frames[0];
     const frameUrl = frame?.url ?? null;
     if (!frameUrl) {
       return null;
@@ -1025,7 +1051,7 @@ export default function App() {
     return /^https?:\/\//i.test(frameUrl)
       ? frameUrl
       : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
-  }, [apiRoot, forecastHour, rgbManifest, variable]);
+  }, [apiRoot, forecastHour, requestedRasterRgbDisplayHour, rgbManifest, variable]);
   const rasterRgbActive = Boolean(
     variable === "true_color"
     && rgbManifest !== null

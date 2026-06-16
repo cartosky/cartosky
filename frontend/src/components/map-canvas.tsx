@@ -164,10 +164,14 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
 };
 
 const rasterRgbImagePreloads = new Map<string, Promise<void>>();
+const rasterRgbLoadedUrls = new Set<string>();
 
 function preloadRasterRgbImage(url: string): Promise<void> {
   const normalized = String(url ?? "").trim();
   if (!normalized) {
+    return Promise.resolve();
+  }
+  if (rasterRgbLoadedUrls.has(normalized)) {
     return Promise.resolve();
   }
   const existing = rasterRgbImagePreloads.get(normalized);
@@ -178,7 +182,10 @@ function preloadRasterRgbImage(url: string): Promise<void> {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.decoding = "async";
-    img.onload = () => resolve();
+    img.onload = () => {
+      rasterRgbLoadedUrls.add(normalized);
+      resolve();
+    };
     img.onerror = () => reject(new Error(`Failed to preload RGB frame: ${normalized}`));
     img.src = normalized;
   }).catch((error) => {
@@ -193,7 +200,11 @@ class RasterRgbLayerController {
   private activeBuffer: 0 | 1 = 0;
   private attached = false;
   private currentUrl: string | null = null;
-  private loadToken = 0;
+  private desiredUrl: string | null | undefined = undefined;
+  private desiredOpacity = 0;
+  private desiredBeforeLayerId = "";
+  private desiredGeneration = 0;
+  private loadLoopRunning = false;
   private onFrameReady: ((url: string) => void) | null = null;
 
   setOnFrameReady(callback: ((url: string) => void) | null): void {
@@ -277,83 +288,135 @@ class RasterRgbLayerController {
     }, map.getLayer(beforeLayerId) ? beforeLayerId : undefined);
   }
 
+  private isDesiredGenerationCurrent(generation: number, url: string | null): boolean {
+    return generation === this.desiredGeneration && this.desiredUrl === url;
+  }
+
+  private waitForSwap(map: maplibregl.Map, generation: number, url: string, fastPath: boolean): Promise<void> {
+    return new Promise((resolve) => {
+      const swap = () => {
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          resolve();
+          return;
+        }
+        resolve();
+      };
+
+      if (fastPath) {
+        map.triggerRepaint();
+        window.requestAnimationFrame(swap);
+        return;
+      }
+
+      map.once("idle", () => {
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          resolve();
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          if (!this.isDesiredGenerationCurrent(generation, url)) {
+            resolve();
+            return;
+          }
+          window.requestAnimationFrame(swap);
+        });
+      });
+      map.triggerRepaint();
+    });
+  }
+
+  private async runLoadLoop(map: maplibregl.Map): Promise<void> {
+    if (this.loadLoopRunning) {
+      return;
+    }
+    this.loadLoopRunning = true;
+    try {
+      while (this.desiredUrl !== undefined && this.desiredUrl !== this.currentUrl) {
+        const url = this.desiredUrl;
+        const opacity = this.desiredOpacity;
+        const beforeLayerId = this.desiredBeforeLayerId;
+        const generation = this.desiredGeneration;
+        const inactiveBuffer = (1 - this.activeBuffer) as 0 | 1;
+        const nextSourceId = RASTER_RGB_SOURCE_IDS[inactiveBuffer];
+        const nextLayerId = RASTER_RGB_LAYER_IDS[inactiveBuffer];
+        const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
+
+        if (!url) {
+          map.setPaintProperty(nextLayerId, "raster-opacity", 0);
+          map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+          this.activeBuffer = inactiveBuffer;
+          this.currentUrl = null;
+          if (this.desiredUrl === url) {
+            this.desiredUrl = undefined;
+          }
+          continue;
+        }
+
+        const cachedBeforeLoad = rasterRgbLoadedUrls.has(url);
+        try {
+          await preloadRasterRgbImage(url);
+        } catch {
+          if (this.desiredUrl === url) {
+            this.desiredUrl = undefined;
+          }
+          continue;
+        }
+
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          continue;
+        }
+
+        this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, url);
+        map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? opacity : 0);
+        map.setPaintProperty(nextLayerId, "raster-opacity", 0);
+        await this.waitForSwap(map, generation, url, cachedBeforeLoad);
+
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          continue;
+        }
+
+        map.setPaintProperty(nextLayerId, "raster-opacity", opacity);
+        map.setPaintProperty(activeLayerId, "raster-opacity", 0);
+        this.activeBuffer = inactiveBuffer;
+        this.currentUrl = url;
+        if (this.desiredUrl === url) {
+          this.desiredUrl = undefined;
+        }
+        this.onFrameReady?.(url);
+      }
+    } finally {
+      this.loadLoopRunning = false;
+      if (this.desiredUrl !== undefined && this.desiredUrl !== this.currentUrl) {
+        void this.runLoadLoop(map);
+      }
+    }
+  }
+
   update(map: maplibregl.Map, url: string | null, opacity: number, beforeLayerId: string): void {
     if (!this.attached) {
       return;
     }
     const inactiveBuffer = (1 - this.activeBuffer) as 0 | 1;
-    if (url === this.currentUrl) {
+    if (url === this.currentUrl && this.desiredUrl === undefined) {
       map.setPaintProperty(RASTER_RGB_LAYER_IDS[this.activeBuffer], "raster-opacity", url ? opacity : 0);
       map.setPaintProperty(RASTER_RGB_LAYER_IDS[inactiveBuffer], "raster-opacity", 0);
       return;
     }
 
-    const nextBuffer = inactiveBuffer;
-    const nextSourceId = RASTER_RGB_SOURCE_IDS[nextBuffer];
-    const nextLayerId = RASTER_RGB_LAYER_IDS[nextBuffer];
-    const activeLayerId = RASTER_RGB_LAYER_IDS[this.activeBuffer];
-
-    if (!url) {
-      this.loadToken += 1;
-      map.setPaintProperty(nextLayerId, "raster-opacity", 0);
-      map.setPaintProperty(activeLayerId, "raster-opacity", 0);
-      this.activeBuffer = nextBuffer;
-      this.currentUrl = null;
-      return;
-    }
-
-    const loadToken = ++this.loadToken;
-    const capturedUrl = url;
-    const capturedOpacity = opacity;
-
-    void preloadRasterRgbImage(capturedUrl)
-      .then(() => {
-        if (loadToken !== this.loadToken) {
-          return;
-        }
-        this.replaceImageSource(map, nextSourceId, nextLayerId, beforeLayerId, capturedUrl);
-        map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? capturedOpacity : 0);
-        map.setPaintProperty(nextLayerId, "raster-opacity", 0);
-
-        const swap = () => {
-          if (loadToken !== this.loadToken) {
-            return;
-          }
-          map.setPaintProperty(nextLayerId, "raster-opacity", capturedOpacity);
-          map.setPaintProperty(activeLayerId, "raster-opacity", 0);
-          this.activeBuffer = nextBuffer;
-          this.currentUrl = capturedUrl;
-          this.onFrameReady?.(capturedUrl);
-        };
-
-        map.once("idle", () => {
-          if (loadToken !== this.loadToken) {
-            return;
-          }
-          window.requestAnimationFrame(() => {
-            if (loadToken !== this.loadToken) {
-              return;
-            }
-            window.requestAnimationFrame(() => {
-              swap();
-            });
-          });
-        });
-        map.triggerRepaint();
-      })
-      .catch(() => {
-        if (loadToken !== this.loadToken) {
-          return;
-        }
-        // Keep the current frame visible if the next one fails to load.
-      });
+    this.desiredUrl = url;
+    this.desiredOpacity = opacity;
+    this.desiredBeforeLayerId = beforeLayerId;
+    this.desiredGeneration += 1;
+    void this.runLoadLoop(map);
   }
 
   remove(map: maplibregl.Map): void {
     if (!this.attached) {
       return;
     }
-    this.loadToken += 1;
+    this.desiredGeneration += 1;
+    this.desiredUrl = undefined;
+    this.loadLoopRunning = false;
     for (let i = 0; i < 2; i += 1) {
       const layerId = RASTER_RGB_LAYER_IDS[i];
       const sourceId = RASTER_RGB_SOURCE_IDS[i];
