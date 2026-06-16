@@ -932,7 +932,18 @@ export function capabilityVarsForManifest(
     return [];
   }
   const manifestSet = new Set(manifestKeys);
-  const known = capabilityVars.filter((entry) => manifestSet.has(entry.id));
+  // Non-grid variables (e.g. raster_rgb / image substrate) have their own
+  // manifest path and are never present in the scalar run manifest. Always
+  // preserve them so they aren't filtered out when the scalar scheduler
+  // publishes a run that lacks their variable key.
+  const isNonGridVar = (entry: VariableEntry): boolean =>
+    Array.isArray(entry.renderSubstrates)
+    && entry.renderSubstrates.length > 0
+    && !entry.renderSubstrates.includes("grid")
+    && !entry.renderSubstrates.includes("vector");
+  const known = capabilityVars.filter(
+    (entry) => manifestSet.has(entry.id) || isNonGridVar(entry)
+  );
   const knownSet = new Set(known.map((entry) => entry.id));
   const extras = normalizeManifestVarRows(manifestVars).filter((entry) => !knownSet.has(entry.id));
   return [...known, ...extras];
