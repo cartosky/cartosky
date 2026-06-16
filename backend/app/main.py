@@ -80,6 +80,8 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
+from .services.goes_rgb_publish import GOES_EAST_RGB_LATEST_FILENAME
+from .services.goes_publish import GOES_EAST_MODEL_ID
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
 from .services import nws as nws_service
@@ -2627,6 +2629,79 @@ def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None
     return run_id
 
 
+def _rgb_latest_pointer_path(model: str) -> Path:
+    return PUBLISHED_ROOT / model / GOES_EAST_RGB_LATEST_FILENAME
+
+
+def _latest_rgb_run_from_pointer(model: str) -> str | None:
+    if model != GOES_EAST_MODEL_ID:
+        return None
+    latest_path = _rgb_latest_pointer_path(model)
+    if not latest_path.is_file():
+        return None
+    try:
+        payload = json.loads(latest_path.read_text())
+    except Exception:
+        logger.warning("Failed reading %s at %s", GOES_EAST_RGB_LATEST_FILENAME, latest_path)
+        return None
+
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
+        logger.warning(
+            "Invalid run_id in %s at %s: %r",
+            GOES_EAST_RGB_LATEST_FILENAME,
+            latest_path,
+            run_id,
+        )
+        return None
+    if not _run_matches_model_cycle(model, run_id):
+        logger.warning(
+            "%s points to out-of-cycle run for %s: %s",
+            GOES_EAST_RGB_LATEST_FILENAME,
+            model,
+            run_id,
+        )
+        return None
+
+    run_dir = PUBLISHED_ROOT / model / run_id
+    manifest_path = _manifest_path(model, run_id)
+    if not run_dir.is_dir() or not manifest_path.is_file():
+        logger.warning(
+            "%s points to incomplete run state for %s/%s",
+            GOES_EAST_RGB_LATEST_FILENAME,
+            model,
+            run_id,
+        )
+        return None
+    return run_id
+
+
+def _manifest_has_true_color_frames(manifest: dict[str, Any]) -> bool:
+    var_entry = manifest.get("variables", {}).get("true_color")
+    if not isinstance(var_entry, dict):
+        return False
+    frames = var_entry.get("frames")
+    return isinstance(frames, list) and bool(frames)
+
+
+def _resolve_true_color_run(model: str, run: str) -> str | None:
+    if model != GOES_EAST_MODEL_ID:
+        return _resolve_run(model, run, region=None)
+
+    rgb_latest = _latest_rgb_run_from_pointer(model)
+    if run == "latest":
+        return rgb_latest
+
+    resolved = _resolve_run(model, run, region=None)
+    if resolved is None:
+        return rgb_latest
+
+    manifest = _load_manifest(model, resolved)
+    if manifest is not None and _manifest_has_true_color_frames(manifest):
+        return resolved
+    return rgb_latest
+
+
 def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:
     del region
     model_manifest_dir = MANIFESTS_ROOT / model
@@ -4642,7 +4717,7 @@ def get_rgb_manifest(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
-    resolved = _resolve_run(model, run, region=None)
+    resolved = _resolve_true_color_run(model, run)
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 

@@ -1000,7 +1000,7 @@ export default function App() {
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
   const apiRoot = API_ORIGIN.replace(/\/$/, "");
   const rgbManifestRunKey = model === "goes-east" && variable === "true_color"
-    ? (run === "latest" ? (latestRunId ?? resolvedRunForRequests ?? "latest") : resolvedRunForRequests)
+    ? (run === "latest" ? "latest" : resolvedRunForRequests)
     : null;
   const rasterRgbFrameUrl = useMemo(() => {
     if (variable !== "true_color" || !rgbManifest) {
