@@ -364,6 +364,9 @@ function normalizeGridWeatherSubstrate(value: unknown): WeatherSubstrate | null 
   if (normalized === "raster_rgb" || normalized === "image") {
     return "raster_rgb";
   }
+  if (normalized === "image" || normalized === "raster_rgb") {
+    return "image";
+  }
   return null;
 }
 

@@ -708,7 +708,7 @@ export default function App() {
   const selectionSupportsGrid = selectionCapabilitiesResolved
     && selectedVariableRenderSubstrates.includes("grid");
   const selectionSupportsRasterRgb = selectionCapabilitiesResolved
-    && selectedVariableRenderSubstrates.includes("raster_rgb");
+    && (selectedVariableRenderSubstrates.includes("raster_rgb") || selectedVariableRenderSubstrates.includes("image"));
   const gridOnlySelection = selectionSupportsGrid;
   const prefersGridSubstrate = selectionSupportsGrid;
 
