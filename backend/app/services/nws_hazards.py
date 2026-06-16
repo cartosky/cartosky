@@ -5,7 +5,7 @@ import json
 import logging
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -44,6 +44,9 @@ MRMS_WARNINGS_OVERLAY_EVENT_LABELS: frozenset[str] = frozenset({
     "flash flood watch",
 })
 MRMS_SKIP_COUNTY_ROLLUP_EVENTS: frozenset[str] = frozenset({
+    "severe thunderstorm watch",
+})
+MRMS_MERGE_AFFECTED_ZONE_GEOMETRY_EVENTS: frozenset[str] = frozenset({
     "severe thunderstorm watch",
 })
 MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS = 45.0
@@ -671,13 +674,15 @@ def _zone_lookup_hints_for_payload(payload: dict[str, Any]) -> dict[str, str]:
     for feature in features_raw:
         if not isinstance(feature, dict):
             continue
+        props = feature.get("properties")
+        if isinstance(props, dict):
+            for zone_code, zone_type in _zone_lookup_hints_for_properties(props).items():
+                zone_hints[zone_code] = zone_type or zone_hints.get(zone_code, "")
         alert = _normalize_alert(feature)
         if alert is None:
             continue
-        props = feature.get("properties")
-        property_hints = _zone_lookup_hints_for_properties(props) if isinstance(props, dict) else {}
         for zone_code in alert.zone_codes:
-            zone_hints[zone_code] = property_hints.get(zone_code, zone_hints.get(zone_code, ""))
+            zone_hints.setdefault(zone_code, "")
     return zone_hints
 
 
@@ -737,9 +742,23 @@ def sync_active_zone_reference(
     timeout_seconds: float = NWS_REQUEST_TIMEOUT,
     api_base: str = NWS_API_BASE,
 ) -> ZoneReferenceSyncResult:
-    existing_zones = _load_zone_reference_file_cached(str(zone_reference_path.resolve())) if zone_reference_path.is_file() else {}
+    if zone_reference_path.is_file():
+        try:
+            existing_zones = _load_zone_reference_file_cached(str(zone_reference_path.resolve()))
+        except NWSHazardsError:
+            existing_zones = {}
+    else:
+        existing_zones = {}
     zone_lookup_hints = _zone_lookup_hints_for_payload(payload)
     needed_zone_codes = set(sorted(zone_lookup_hints.keys()))
+    if not needed_zone_codes:
+        return ZoneReferenceSyncResult(
+            path=zone_reference_path,
+            needed_zone_codes=(),
+            resolved_zone_codes=tuple(sorted(existing_zones.keys())),
+            signature=_zone_reference_signature(existing_zones),
+            updated=False,
+        )
     active_zones: dict[str, dict[str, Any]] = {
         zone_code: existing_zones[zone_code]
         for zone_code in sorted(needed_zone_codes)
@@ -1069,46 +1088,64 @@ def _append_geometry_fallback_feature(
     )
 
 
-def _enrich_mrms_overlay_source_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    features_raw = payload.get("features")
-    if not isinstance(features_raw, list):
-        return payload
-    enriched_features: list[dict[str, Any]] = []
-    for feature in features_raw:
-        if not isinstance(feature, dict):
-            enriched_features.append(feature)
+def _expand_alert_zone_codes_from_affected_zones(
+    alert: NormalizedHazardAlert,
+    props: dict[str, Any],
+    *,
+    expand_for_events: frozenset[str] | None,
+) -> NormalizedHazardAlert:
+    if not expand_for_events or alert.event.strip().lower() not in expand_for_events:
+        return alert
+    extra_zone_codes = _zone_codes_from_affected_zones(props)
+    if not extra_zone_codes:
+        return alert
+    merged_zone_codes = tuple(sorted(set(alert.zone_codes).union(extra_zone_codes)))
+    if merged_zone_codes == alert.zone_codes:
+        return alert
+    return replace(alert, zone_codes=merged_zone_codes)
+
+
+def _build_merged_zone_geometry_feature(
+    alert: NormalizedHazardAlert,
+    zone_codes: list[str],
+    zone_references: dict[str, dict[str, Any]],
+    *,
+    prefer_native_polygon_geometry: bool,
+) -> dict[str, Any] | None:
+    source_geometries = []
+    for zone_code in zone_codes:
+        zone = zone_references.get(zone_code)
+        if zone is None:
             continue
-        props = feature.get("properties")
-        if not isinstance(props, dict):
-            enriched_features.append(feature)
+        geometry = zone.get("geometry")
+        if not isinstance(geometry, dict) or not _geometry_is_area(geometry):
             continue
-        if str(props.get("event") or "").strip().lower() != "severe thunderstorm watch":
-            enriched_features.append(feature)
-            continue
-        zone_codes = _zone_codes_from_affected_zones(props)
-        if not zone_codes:
-            enriched_features.append(feature)
-            continue
-        geocode = props.get("geocode")
-        merged_geocode = dict(geocode) if isinstance(geocode, dict) else {}
-        existing_ugc = list(_string_list(merged_geocode.get("UGC")))
-        for zone_code in zone_codes:
-            if zone_code not in existing_ugc:
-                existing_ugc.append(zone_code)
-        merged_geocode["UGC"] = existing_ugc
-        enriched_features.append(
-            {
-                **feature,
-                "properties": {
-                    **props,
-                    "geocode": merged_geocode,
-                },
-            }
-        )
-    return {
-        **payload,
-        "features": enriched_features,
-    }
+        source_geometries.append(shape(geometry))
+    if not source_geometries:
+        return None
+    merged_geometry = unary_union(source_geometries)
+    if merged_geometry.is_empty:
+        return None
+    if isinstance(merged_geometry, GeometryCollection):
+        polygons = [geom for geom in merged_geometry.geoms if not geom.is_empty]
+        if not polygons:
+            return None
+        merged_geometry = unary_union(polygons)
+    render_style = _area_render_style(alert, default_fill_opacity=0.42, default_stroke_width=1.6)
+    return _build_geometry_feature(
+        geometry=mapping(merged_geometry),
+        primary=alert,
+        alerts=[alert],
+        hover_name=alert.style.label,
+        area_description=alert.area_description,
+        fill_opacity=render_style.fill_opacity,
+        stroke_width=render_style.stroke_width,
+        extra_properties={
+            "geometry_source": "native_alert",
+        }
+        if prefer_native_polygon_geometry
+        else None,
+    )
 
 
 def filter_nws_alerts_payload_for_mrms_overlay(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1200,7 +1237,6 @@ def build_mrms_warnings_overlay_geojson(
         return cached_overlay
 
     overlay_source_payload = filter_nws_alerts_payload_for_mrms_overlay(resolved_payload)
-    overlay_source_payload = _enrich_mrms_overlay_source_payload(overlay_source_payload)
     if not overlay_source_payload.get("features"):
         _mrms_warnings_overlay_cache_set(fingerprint, dict(EMPTY_FEATURE_COLLECTION))
         return dict(EMPTY_FEATURE_COLLECTION)
@@ -1208,12 +1244,20 @@ def build_mrms_warnings_overlay_geojson(
     county_path = default_county_reference_path(data_root)
     zone_path = default_zone_reference_path(data_root)
     try:
+        sync_active_zone_reference(
+            payload=overlay_source_payload,
+            zone_reference_path=zone_path,
+            timeout_seconds=timeout_seconds,
+            api_base=api_base,
+        )
         frame = build_active_hazards_frame(
             overlay_source_payload,
             county_reference_path=county_path,
             zone_reference_path=zone_path,
             prefer_native_polygon_geometry=True,
             skip_county_rollup_events=MRMS_SKIP_COUNTY_ROLLUP_EVENTS,
+            expand_zone_codes_from_affected_events=MRMS_MERGE_AFFECTED_ZONE_GEOMETRY_EVENTS,
+            merge_zone_geometry_events=MRMS_MERGE_AFFECTED_ZONE_GEOMETRY_EVENTS,
         )
         features = frame.features
     except NWSHazardsError:
@@ -1451,6 +1495,8 @@ def build_active_hazards_frame(
     fh: int = 0,
     prefer_native_polygon_geometry: bool = False,
     skip_county_rollup_events: frozenset[str] | None = None,
+    expand_zone_codes_from_affected_events: frozenset[str] | None = None,
+    merge_zone_geometry_events: frozenset[str] | None = None,
 ) -> HazardFramePayload:
     counties = load_county_reference(county_reference_path)
     zone_references = load_zone_reference(zone_reference_path) if zone_reference_path is not None else {}
@@ -1458,7 +1504,21 @@ def build_active_hazards_frame(
     if not isinstance(features_raw, list):
         raise NWSHazardsError("Active alerts payload is missing features")
 
-    normalized_alerts = [alert for feature in features_raw if (alert := _normalize_alert(feature)) is not None]
+    normalized_alerts: list[NormalizedHazardAlert] = []
+    for feature in features_raw:
+        if not isinstance(feature, dict):
+            continue
+        alert = _normalize_alert(feature)
+        if alert is None:
+            continue
+        props = feature.get("properties")
+        if isinstance(props, dict):
+            alert = _expand_alert_zone_codes_from_affected_zones(
+                alert,
+                props,
+                expand_for_events=expand_zone_codes_from_affected_events,
+            )
+        normalized_alerts.append(alert)
     if not normalized_alerts:
         raise NWSHazardsError("Active alerts payload had no recognized alerts")
 
@@ -1475,6 +1535,7 @@ def build_active_hazards_frame(
     zone_buckets: dict[str, list[NormalizedHazardAlert]] = {}
     geometry_features: list[dict[str, Any]] = []
     zone_candidate_alerts: list[NormalizedHazardAlert] = []
+    zone_merge_candidate_alerts: list[NormalizedHazardAlert] = []
     needed_zone_codes: set[str] = set()
     for alert in normalized_alerts:
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
@@ -1499,6 +1560,14 @@ def build_active_hazards_frame(
                     else None,
                 )
             )
+            continue
+        if (
+            alert.zone_codes
+            and merge_zone_geometry_events
+            and alert.event.strip().lower() in merge_zone_geometry_events
+        ):
+            zone_merge_candidate_alerts.append(alert)
+            needed_zone_codes.update(alert.zone_codes)
             continue
         if alert.zone_codes:
             zone_candidate_alerts.append(alert)
@@ -1538,6 +1607,21 @@ def build_active_hazards_frame(
         needed_zone_codes,
         zone_reference=zone_references,
     )
+    for alert in zone_merge_candidate_alerts:
+        resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
+        merged_feature = _build_merged_zone_geometry_feature(
+            alert,
+            resolved_zone_codes,
+            zone_references,
+            prefer_native_polygon_geometry=prefer_native_polygon_geometry,
+        )
+        if merged_feature is not None:
+            geometry_features.append(merged_feature)
+            continue
+        resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
+        if resolved_geoids and not _skips_county_rollup_for_alert(alert, skip_county_rollup_events):
+            for geoid in resolved_geoids:
+                county_buckets.setdefault(geoid, []).append(alert)
     for alert in zone_candidate_alerts:
         resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
         if resolved_zone_codes:

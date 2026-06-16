@@ -459,14 +459,18 @@ def test_mrms_overlay_uses_native_geometry_for_severe_thunderstorm_watch(tmp_pat
     assert feature["properties"]["geometry_source"] == "native_alert"
 
 
-def test_mrms_overlay_severe_thunderstorm_watch_prefers_zones_over_counties(tmp_path: Path) -> None:
+def test_mrms_overlay_severe_thunderstorm_watch_uses_merged_nws_county_zones(tmp_path: Path) -> None:
     nws_hazards._mrms_warnings_overlay_cache = None
     county_reference = _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
     zone_path = tmp_path / "hazards" / "zone_reference.geojson"
     zone_path.parent.mkdir(parents=True, exist_ok=True)
-    zone_geometry = {
+    zone_a_geometry = {
         "type": "Polygon",
-        "coordinates": [[[-112.2, 33.1], [-111.4, 33.1], [-111.4, 33.7], [-112.2, 33.7], [-112.2, 33.1]]],
+        "coordinates": [[[-112.2, 33.1], [-111.8, 33.1], [-111.8, 33.4], [-112.2, 33.4], [-112.2, 33.1]]],
+    }
+    zone_b_geometry = {
+        "type": "Polygon",
+        "coordinates": [[[-111.8, 33.1], [-111.4, 33.1], [-111.4, 33.4], [-111.8, 33.4], [-111.8, 33.1]]],
     }
     zone_path.write_text(
         json.dumps(
@@ -476,13 +480,23 @@ def test_mrms_overlay_severe_thunderstorm_watch_prefers_zones_over_counties(tmp_
                     {
                         "type": "Feature",
                         "properties": {
-                            "zone_code": "AZZ020",
-                            "name": "Greater Phoenix Area",
+                            "zone_code": "AZC013",
+                            "name": "Maricopa",
                             "state": "AZ",
-                            "zone_type": "forecast",
+                            "zone_type": "county",
                         },
-                        "geometry": zone_geometry,
-                    }
+                        "geometry": zone_a_geometry,
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AZC021",
+                            "name": "Pinal",
+                            "state": "AZ",
+                            "zone_type": "county",
+                        },
+                        "geometry": zone_b_geometry,
+                    },
                 ],
             }
         )
@@ -501,9 +515,12 @@ def test_mrms_overlay_severe_thunderstorm_watch_prefers_zones_over_counties(tmp_
                     "sent": "2026-04-06T16:55:00Z",
                     "effective": "2026-04-06T16:55:00Z",
                     "expires": "2026-04-06T19:00:00Z",
-                    "areaDesc": "Greater Phoenix Area",
-                    "geocode": {"UGC": ["AZC013"]},
-                    "affectedZones": ["https://api.weather.gov/zones/forecast/AZZ020"],
+                    "areaDesc": "Maricopa; Pinal",
+                    "geocode": {"UGC": ["AZC013", "AZC021"]},
+                    "affectedZones": [
+                        "https://api.weather.gov/zones/county/AZC013",
+                        "https://api.weather.gov/zones/county/AZC021",
+                    ],
                 },
                 "geometry": None,
             },
@@ -516,8 +533,8 @@ def test_mrms_overlay_severe_thunderstorm_watch_prefers_zones_over_counties(tmp_
     assert feature["properties"]["risk_label"] == "Severe Thunderstorm Watch"
     assert feature["properties"]["fill"] == "#FFFF00"
     assert "county_geoid" not in feature["properties"]
-    assert feature["properties"]["zone_code"] == "AZZ020"
-    assert feature["geometry"] == zone_geometry
+    assert feature["properties"]["geometry_source"] == "native_alert"
+    assert feature["geometry"]["type"] in {"Polygon", "MultiPolygon"}
 
 
 def test_mrms_overlay_dedupes_repeated_native_geometry_hover_label(
