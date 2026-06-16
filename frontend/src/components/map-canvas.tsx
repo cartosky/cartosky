@@ -220,6 +220,14 @@ class RasterRgbLayerController {
   private desiredGeneration = 0;
   private loadLoopRunning = false;
   private onFrameReady: ((url: string) => void) | null = null;
+  private supersessionPoll: ReturnType<typeof setInterval> | null = null;
+
+  private clearSupersessionPoll(): void {
+    if (this.supersessionPoll !== null) {
+      window.clearInterval(this.supersessionPoll);
+      this.supersessionPoll = null;
+    }
+  }
 
   private ensureInstantOpacityTransition(map: maplibregl.Map): void {
     for (const layerId of RASTER_RGB_LAYER_IDS) {
@@ -235,7 +243,11 @@ class RasterRgbLayerController {
 
   prefetch(urls: string[]): void {
     for (const url of urls) {
-      void preloadRasterRgbImage(url).catch(() => undefined);
+      void preloadRasterRgbImage(url)
+        .then(() => {
+          this.onFrameReady?.(url);
+        })
+        .catch(() => undefined);
     }
   }
 
@@ -383,6 +395,22 @@ class RasterRgbLayerController {
     return generation === this.desiredGeneration && this.desiredUrl === url;
   }
 
+  private waitForSupersession(generation: number, url: string): Promise<void> {
+    this.clearSupersessionPoll();
+    return new Promise((resolve) => {
+      if (!this.isDesiredGenerationCurrent(generation, url)) {
+        resolve();
+        return;
+      }
+      this.supersessionPoll = window.setInterval(() => {
+        if (!this.isDesiredGenerationCurrent(generation, url)) {
+          this.clearSupersessionPoll();
+          resolve();
+        }
+      }, 8);
+    });
+  }
+
   private async runLoadLoop(map: maplibregl.Map): Promise<void> {
     if (this.loadLoopRunning) {
       return;
@@ -415,12 +443,18 @@ class RasterRgbLayerController {
         if (!bufferAlreadyReady) {
           const wasPreloaded = rasterRgbLoadedUrls.has(url);
           try {
-            await preloadRasterRgbImage(url);
+            await Promise.race([
+              preloadRasterRgbImage(url),
+              this.waitForSupersession(generation, url),
+            ]);
           } catch {
+            this.clearSupersessionPoll();
             if (this.desiredUrl === url) {
               this.desiredUrl = undefined;
             }
             continue;
+          } finally {
+            this.clearSupersessionPoll();
           }
 
           if (!this.isDesiredGenerationCurrent(generation, url)) {
@@ -432,13 +466,16 @@ class RasterRgbLayerController {
           map.setPaintProperty(activeLayerId, "raster-opacity", this.currentUrl ? opacity : 0);
           map.setPaintProperty(nextLayerId, "raster-opacity", 0);
 
-          const sourceReady = await this.waitForSourceLoaded(
-            map,
-            nextSourceId,
-            generation,
-            url,
-            wasPreloaded || rasterRgbLoadedUrls.has(url),
-          );
+          const sourceReady = await Promise.race([
+            this.waitForSourceLoaded(
+              map,
+              nextSourceId,
+              generation,
+              url,
+              wasPreloaded || rasterRgbLoadedUrls.has(url),
+            ),
+            this.waitForSupersession(generation, url).then(() => false),
+          ]);
           if (!sourceReady || !this.isDesiredGenerationCurrent(generation, url)) {
             continue;
           }
@@ -452,6 +489,7 @@ class RasterRgbLayerController {
         this.onFrameReady?.(url);
       }
     } finally {
+      this.clearSupersessionPoll();
       this.loadLoopRunning = false;
       if (this.desiredUrl !== undefined && this.desiredUrl !== this.currentUrl) {
         void this.runLoadLoop(map);
@@ -499,6 +537,7 @@ class RasterRgbLayerController {
     this.desiredGeneration += 1;
     this.desiredUrl = undefined;
     this.loadLoopRunning = false;
+    this.clearSupersessionPoll();
     this.bufferUrls = [null, null];
     for (let i = 0; i < 2; i += 1) {
       const layerId = RASTER_RGB_LAYER_IDS[i];

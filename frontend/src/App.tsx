@@ -535,6 +535,7 @@ export default function App() {
 
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
+  const [rgbReadyVersion, setRgbReadyVersion] = useState(0);
   // Coalesce rapid gridReadyVersion bumps into a single state update per
   // microtask.  This prevents O(n) recomputations when many frames become
   // ready (or are evicted) within the same event-loop tick.
@@ -547,6 +548,17 @@ export default function App() {
     queueMicrotask(() => {
       gridReadyVersionPendingRef.current = false;
       setGridReadyVersion((c) => c + 1);
+    });
+  }, []);
+  const rgbReadyVersionPendingRef = useRef(false);
+  const bumpRgbReadyVersion = useCallback(() => {
+    if (rgbReadyVersionPendingRef.current) {
+      return;
+    }
+    rgbReadyVersionPendingRef.current = true;
+    queueMicrotask(() => {
+      rgbReadyVersionPendingRef.current = false;
+      setRgbReadyVersion((c) => c + 1);
     });
   }, []);
   const [visibleGridFrameHour, setVisibleGridFrameHour] = useState<number | null>(null);
@@ -1029,35 +1041,6 @@ export default function App() {
     isVariableSwitching,
     targetForecastHour,
   ]);
-  const rasterRgbFrameUrl = useMemo(() => {
-    if (variable !== "true_color" || !rgbManifest) {
-      return null;
-    }
-    const frameHours = rgbManifest.frames
-      .map((entry) => Number(entry.fh))
-      .filter((fh) => Number.isFinite(fh))
-      .sort((a, b) => a - b);
-    const requestedHour = Number.isFinite(requestedRasterRgbDisplayHour)
-      ? requestedRasterRgbDisplayHour
-      : forecastHour;
-    const displayHour = frameHours.length > 0 && Number.isFinite(requestedHour)
-      ? nearestFrame(frameHours, Number(requestedHour))
-      : frameHours[0];
-    const frame = rgbManifest.frames.find((entry) => entry.fh === displayHour) ?? rgbManifest.frames[0];
-    const frameUrl = frame?.url ?? null;
-    if (!frameUrl) {
-      return null;
-    }
-    return /^https?:\/\//i.test(frameUrl)
-      ? frameUrl
-      : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
-  }, [apiRoot, forecastHour, requestedRasterRgbDisplayHour, rgbManifest, variable]);
-  const rasterRgbActive = Boolean(
-    variable === "true_color"
-    && rgbManifest !== null
-    && rasterRgbFrameUrl !== null
-    && selectionSupportsRasterRgb
-  );
   const rgbFrameUrlByHour = useMemo(() => {
     const byHour = new Map<number, string>();
     if (variable !== "true_color" || !rgbManifest) {
@@ -1075,6 +1058,94 @@ export default function App() {
     }
     return byHour;
   }, [apiRoot, rgbManifest, variable]);
+  const rgbFrameHours = useMemo(() => {
+    if (!rgbManifest) {
+      return [] as number[];
+    }
+    return rgbManifest.frames
+      .map((entry) => Number(entry.fh))
+      .filter((fh) => Number.isFinite(fh))
+      .sort((a, b) => a - b);
+  }, [rgbManifest]);
+  const rgbReadyHours = useMemo(() => {
+    void rgbReadyVersion;
+    const readyHours: number[] = [];
+    for (const hour of rgbFrameHours) {
+      const url = rgbFrameUrlByHour.get(hour);
+      if (url && rgbReadyFrameUrlsRef.current.has(url)) {
+        readyHours.push(hour);
+      }
+    }
+    return readyHours;
+  }, [rgbFrameHours, rgbFrameUrlByHour, rgbReadyVersion]);
+  const presentedRasterRgbDisplayHour = useMemo(() => {
+    if (rgbFrameHours.length === 0 || !Number.isFinite(requestedRasterRgbDisplayHour)) {
+      return null;
+    }
+    const requestedHour = nearestFrame(rgbFrameHours, Number(requestedRasterRgbDisplayHour));
+    const requestedUrl = rgbFrameUrlByHour.get(requestedHour);
+    if (requestedUrl && rgbReadyFrameUrlsRef.current.has(requestedUrl)) {
+      return requestedHour;
+    }
+    if ((isScrubbing || isPlaying) && rgbReadyHours.length > 0) {
+      const direction = isScrubbing ? scrubDirectionRef.current : 1;
+      const directionalReadyHour = resolveDirectionalReadyHour(
+        rgbReadyHours,
+        requestedHour,
+        direction,
+      );
+      if (directionalReadyHour !== null) {
+        return directionalReadyHour;
+      }
+      const nearestReadyHour = nearestSortedNumber(rgbReadyHours, requestedHour);
+      if (nearestReadyHour !== null) {
+        return nearestReadyHour;
+      }
+    }
+    return requestedHour;
+  }, [
+    isPlaying,
+    isScrubbing,
+    requestedRasterRgbDisplayHour,
+    rgbFrameHours,
+    rgbFrameUrlByHour,
+    rgbReadyHours,
+    rgbReadyVersion,
+  ]);
+  const rasterRgbFrameUrl = useMemo(() => {
+    if (variable !== "true_color" || !rgbManifest) {
+      return null;
+    }
+    const displayHour = Number.isFinite(presentedRasterRgbDisplayHour)
+      ? presentedRasterRgbDisplayHour
+      : (Number.isFinite(requestedRasterRgbDisplayHour)
+        ? nearestFrame(rgbFrameHours, Number(requestedRasterRgbDisplayHour))
+        : null);
+    if (!Number.isFinite(displayHour)) {
+      return null;
+    }
+    const frame = rgbManifest.frames.find((entry) => entry.fh === displayHour) ?? rgbManifest.frames[0];
+    const frameUrl = frame?.url ?? null;
+    if (!frameUrl) {
+      return null;
+    }
+    return /^https?:\/\//i.test(frameUrl)
+      ? frameUrl
+      : `${apiRoot}${frameUrl.startsWith("/") ? "" : "/"}${frameUrl}`;
+  }, [
+    apiRoot,
+    presentedRasterRgbDisplayHour,
+    requestedRasterRgbDisplayHour,
+    rgbFrameHours,
+    rgbManifest,
+    variable,
+  ]);
+  const rasterRgbActive = Boolean(
+    variable === "true_color"
+    && rgbManifest !== null
+    && rasterRgbFrameUrl !== null
+    && selectionSupportsRasterRgb
+  );
   const rgbPrefetchUrls = useMemo(() => {
     if (!rasterRgbActive || selectableFrameHours.length === 0) {
       return [] as string[];
@@ -1087,8 +1158,8 @@ export default function App() {
       return [] as string[];
     }
     const urls: string[] = [];
-    const ahead = isPlaying ? 6 : (isScrubbing ? 4 : 2);
-    const behind = isScrubbing ? 4 : 2;
+    const ahead = isPlaying ? 6 : (isScrubbing ? 8 : 2);
+    const behind = isScrubbing ? 6 : 2;
     for (let step = 0; step <= ahead; step += 1) {
       const hour = selectableFrameHours[pivotIndex + step];
       if (hour === undefined) {
@@ -1350,6 +1421,7 @@ export default function App() {
       autoplayUiSyncTimerRef.current = null;
     }
     setGridReadyVersion(0);
+    setRgbReadyVersion(0);
     setIsGridPreloadingForPlay(false);
     setVisibleGridFrameHour(null);
     rgbReadyFrameUrlsRef.current = new Set();
@@ -4146,7 +4218,8 @@ export default function App() {
       return;
     }
     rgbReadyFrameUrlsRef.current.add(normalized);
-  }, [rasterRgbActive]);
+    bumpRgbReadyVersion();
+  }, [bumpRgbReadyVersion, rasterRgbActive]);
   const handleGridFrameEvicted = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
