@@ -234,6 +234,28 @@ GOES_WV8_COLORS = GOES_WV9_COLORS
 GOES_WV8_RANGE = GOES_WV9_RANGE
 GOES_WV8_LEGEND_STOPS = GOES_WV9_LEGEND_STOPS
 
+GOES_VIS2_COLOR_MAP_ID = "goes_vis2_enhanced"
+GOES_VIS2_COLOR_ANCHORS: list[tuple[float, tuple[int, int, int]]] = [
+    (0.00, (0, 0, 0)),
+    (0.02, (10, 10, 10)),
+    (0.10, (40, 40, 40)),
+    (0.20, (80, 80, 80)),
+    (0.35, (120, 120, 120)),
+    (0.50, (160, 160, 160)),
+    (0.65, (195, 195, 195)),
+    (0.80, (220, 220, 220)),
+    (0.90, (238, 238, 238)),
+    (1.00, (255, 255, 255)),
+]
+GOES_VIS2_COLOR_ANCHORS_HEX = [
+    (value, f"#{red:02x}{green:02x}{blue:02x}")
+    for value, (red, green, blue) in GOES_VIS2_COLOR_ANCHORS
+]
+GOES_VIS2_LEVELS = [index / 255.0 for index in range(256)]
+GOES_VIS2_COLORS = _expand_color_anchors(GOES_VIS2_LEVELS, GOES_VIS2_COLOR_ANCHORS_HEX)
+GOES_VIS2_RANGE = (0.0, 1.0)
+GOES_VIS2_LEGEND_STOPS = list(GOES_VIS2_COLOR_ANCHORS_HEX)
+
 
 GFS_PTYPE_INTENSITY_ORDER = ("rain", "snow", "ice")
 GFS_PTYPE_INTENSITY_BINS = {
@@ -1379,6 +1401,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
+    GOES_VIS2_COLOR_MAP_ID: {
+        "type": "discrete",
+        "display_palette_kind": "discrete",
+        "units": "reflectance",
+        "levels": GOES_VIS2_LEVELS,
+        "colors": GOES_VIS2_COLORS,
+        "range": GOES_VIS2_RANGE,
+        "display_name": "Visible",
+        "legend_title": "Reflectance",
+        "legend_stops": GOES_VIS2_LEGEND_STOPS,
+        "display_resampling_override": "bilinear",
+        "transparent_below_min": False,
+    },
 }
 
 # Aliases kept for historical compatibility with already-published metadata.
@@ -1395,6 +1430,9 @@ def get_color_map_spec(color_map_id: str) -> dict:
     if spec is None:
         raise KeyError(f"Unknown color_map_id: {color_map_id!r}")
     return spec
+
+
+get_colormap = get_color_map_spec
 
 _LUT_CACHE: dict[str, np.ndarray] = {}
 

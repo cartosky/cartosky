@@ -21,9 +21,11 @@ from app.services.goes_fetch import (
     download_scan,
     freeze_bundle_scans,
 )
+from app.services.goes_l1b_fetch import is_conus_daytime
 from app.services.goes_processing import decode_goes_scan
 from app.services.goes_publish import (
     BAND_CONFIG_IR13,
+    BAND_CONFIG_VIS2,
     BAND_CONFIG_WV8,
     BAND_CONFIG_WV9,
     GOESBundleFrame,
@@ -57,6 +59,7 @@ BAND_CONFIG_BY_BAND: dict[int, GOESBandConfig] = {
     13: BAND_CONFIG_IR13,
     9: BAND_CONFIG_WV9,
     8: BAND_CONFIG_WV8,
+    2: BAND_CONFIG_VIS2,
 }
 
 
@@ -251,6 +254,12 @@ def _run_once_for_band(
             len(scans_to_decode),
         )
         for index, scan in enumerate(scans_to_decode, start=1):
+            if band == 2 and not is_conus_daytime(scan.scan_start_time):
+                logger.info(
+                    "Band 2 (vis2): skipping nighttime scan slot=%s solar_elevation_check=failed",
+                    scan.slot_time.isoformat(),
+                )
+                continue
             logger.info(
                 "GOES frame %d/%d fetching s3://%s/%s slot=%s size=%d",
                 index,

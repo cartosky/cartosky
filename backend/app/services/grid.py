@@ -1065,6 +1065,13 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "C",
     },
+    ("goes-east", "vis2"): {
+        "dtype": GRID_DTYPE_UINT16,
+        "scale": 1.0 / 65534.0,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "reflectance",
+    },
 }
 
 _PRECIP_ANOM_PACKING = {

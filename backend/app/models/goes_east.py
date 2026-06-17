@@ -52,6 +52,11 @@ class GOESEastPlugin(BaseModelPlugin):
             "upper_water_vapor": "wv8",
             "band8": "wv8",
             "c08": "wv8",
+            "vis2": "vis2",
+            "vis": "vis2",
+            "visible": "vis2",
+            "band2": "vis2",
+            "c02": "vis2",
             "true_color": "true_color",
             "truecolor": "true_color",
             "rgb": "true_color",
@@ -76,6 +81,8 @@ GOES_EAST_WV9_VARIABLE_ID = "wv9"
 GOES_EAST_WV9_COLOR_MAP_ID = "goes_wv9_enhanced"
 GOES_EAST_WV8_VARIABLE_ID = "wv8"
 GOES_EAST_WV8_COLOR_MAP_ID = "goes_wv8_enhanced"
+GOES_EAST_VIS2_VARIABLE_ID = "vis2"
+GOES_EAST_VIS2_COLOR_MAP_ID = "goes_vis2_enhanced"
 GOES_EAST_TRUE_COLOR_VARIABLE_ID = "true_color"
 
 
@@ -147,6 +154,25 @@ GOES_EAST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    GOES_EAST_VIS2_VARIABLE_ID: VarSpec(
+        id=GOES_EAST_VIS2_VARIABLE_ID,
+        name="Visible",
+        selectors=VarSelectors(
+            hints={
+                "upstream_provider": "noaa_aws_s3",
+                "upstream_satellite": "goes19",
+                "upstream_bucket": "noaa-goes19",
+                "upstream_product": "ABI-L2-CMIPC",
+                "upstream_sector": "C",
+                "upstream_band": "2",
+                "upstream_variable": "CMI",
+                "quality_variable": "DQF",
+            }
+        ),
+        primary=False,
+        kind="continuous",
+        units="reflectance",
+    ),
     GOES_EAST_TRUE_COLOR_VARIABLE_ID: VarSpec(
         id=GOES_EAST_TRUE_COLOR_VARIABLE_ID,
         name="True Color",
@@ -208,6 +234,20 @@ GOES_EAST_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         order=2,
         group="Satellite",
         legend_title="Brightness Temperature",
+        render_substrates=["grid"],
+    ),
+    GOES_EAST_VIS2_VARIABLE_ID: VariableCapability(
+        var_key=GOES_EAST_VIS2_VARIABLE_ID,
+        name="Visible",
+        selectors=GOES_EAST_VARS[GOES_EAST_VIS2_VARIABLE_ID].selectors,
+        primary=False,
+        kind="continuous",
+        units="reflectance",
+        color_map_id=GOES_EAST_VIS2_COLOR_MAP_ID,
+        buildable=True,
+        order=4,
+        group="Satellite",
+        legend_title="Reflectance",
         render_substrates=["grid"],
     ),
     GOES_EAST_TRUE_COLOR_VARIABLE_ID: VariableCapability(
