@@ -236,16 +236,16 @@ GOES_WV8_LEGEND_STOPS = GOES_WV9_LEGEND_STOPS
 
 GOES_VIS2_COLOR_MAP_ID = "goes_vis2_enhanced"
 GOES_VIS2_COLOR_ANCHORS: list[tuple[float, tuple[int, int, int]]] = [
-    (0.00, (0, 0, 0)),
-    (0.02, (10, 10, 10)),
-    (0.10, (40, 40, 40)),
-    (0.20, (80, 80, 80)),
-    (0.35, (120, 120, 120)),
-    (0.50, (160, 160, 160)),
-    (0.65, (195, 195, 195)),
-    (0.80, (220, 220, 220)),
-    (0.90, (238, 238, 238)),
-    (1.00, (255, 255, 255)),
+    (0.00, (0,   0,   0  )),   # 0% — black (space/no signal)
+    (0.02, (15,  15,  15 )),   # 2% — very dark surface
+    (0.05, (40,  40,  40 )),   # 5% — dark ocean/land
+    (0.10, (70,  70,  70 )),   # 10% — dark land
+    (0.15, (100, 100, 100)),   # 15% — typical dark land
+    (0.20, (130, 130, 130)),   # 20% — typical land surface
+    (0.28, (165, 165, 165)),   # 28% — bright land / thin haze
+    (0.38, (195, 195, 195)),   # 38% — moderate cloud / bright land
+    (0.50, (220, 220, 220)),   # 50% — thick cloud
+    (0.65, (255, 255, 255)),   # 65% — maximum (bright convective cloud/snow)
 ]
 GOES_VIS2_COLOR_ANCHORS_HEX = [
     (value, f"#{red:02x}{green:02x}{blue:02x}")
@@ -253,7 +253,7 @@ GOES_VIS2_COLOR_ANCHORS_HEX = [
 ]
 GOES_VIS2_LEVELS = [index / 255.0 for index in range(256)]
 GOES_VIS2_COLORS = _expand_color_anchors(GOES_VIS2_LEVELS, GOES_VIS2_COLOR_ANCHORS_HEX)
-GOES_VIS2_RANGE = (0.0, 1.0)
+GOES_VIS2_RANGE = (0.0, 0.65)
 GOES_VIS2_LEGEND_STOPS = list(GOES_VIS2_COLOR_ANCHORS_HEX)
 
 
