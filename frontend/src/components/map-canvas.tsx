@@ -101,7 +101,6 @@ const FORECAST_SCRUB_PREFETCH_BUDGET = 14;
 const FORECAST_SCRUB_MIN_BEHIND = 1;
 /** Minimum ahead-direction slots during forecast scrub. */
 const FORECAST_SCRUB_MIN_AHEAD = 2;
-const MAP_DATA_URL_CAPTURE_INTERVAL_MS = 500;
 const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_AHEAD = 4;
 const OBSERVED_MOBILE_AUTOPLAY_PREFETCH_BEHIND = 1;
 const OBSERVED_MOBILE_SCRUB_PREFETCH_BUDGET = 6;
@@ -2382,7 +2381,7 @@ export function MapCanvas({
       dragRotate: false,
       touchPitch: false,
       attributionControl: false,
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: false,
     });
 
     map.touchZoomRotate.disableRotation();
@@ -2475,69 +2474,10 @@ export function MapCanvas({
     }
   }, [isLoaded]);
 
+  // Viewer map keeps preserveDrawingBuffer disabled for pan performance, so canvas
+  // snapshots are not cached here. screenshot_export.ts rebuilds an offscreen map.
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      latestMapDataUrlRef.current = null;
-      return;
-    }
-    if (isAnimating) {
-      return;
-    }
-
-    let rafId: number | null = null;
-    let warnedCaptureFailure = false;
-    let lastCaptureAt = -Infinity;
-
-    const captureLatestFrame = () => {
-      rafId = null;
-      try {
-        latestMapDataUrlRef.current = map.getCanvas().toDataURL("image/png");
-      } catch (error) {
-        if (!warnedCaptureFailure) {
-          warnedCaptureFailure = true;
-          console.warn("[screenshot] Failed to capture live map canvas frame.", error);
-        }
-      }
-    };
-
-    const scheduleCapture = () => {
-      if (isAnimating) {
-        return;
-      }
-      const now = Date.now();
-      if (now - lastCaptureAt < MAP_DATA_URL_CAPTURE_INTERVAL_MS) {
-        return;
-      }
-      if (rafId !== null) {
-        return;
-      }
-      lastCaptureAt = now;
-      rafId = window.requestAnimationFrame(captureLatestFrame);
-    };
-
-    // The render throttle is leading-edge only, so the last frame of a render
-    // burst (the settled view after a zoom/pan) can be dropped and never
-    // recaptured; idle fires once the map settles, so always capture there.
-    const captureSettledFrame = () => {
-      lastCaptureAt = Date.now();
-      if (rafId !== null) {
-        return;
-      }
-      rafId = window.requestAnimationFrame(captureLatestFrame);
-    };
-
-    scheduleCapture();
-    map.on("render", scheduleCapture);
-    map.on("idle", captureSettledFrame);
-
-    return () => {
-      map.off("render", scheduleCapture);
-      map.off("idle", captureSettledFrame);
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-      }
-    };
+    latestMapDataUrlRef.current = null;
   }, [isAnimating, isLoaded]);
 
   useEffect(() => {
