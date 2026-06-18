@@ -18,12 +18,13 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
+import httpx
 import numpy as np
 import rasterio
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -4017,6 +4018,74 @@ def boundaries_tile_v3(z: int, x: int, y: int):
         media_type="application/vnd.mapbox-vector-tile",
         headers=headers,
     )
+
+
+CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES = (
+    "https://coralreefwatch.noaa.gov",
+    "https://www.cpc.ncep.noaa.gov",
+    "https://droughtmonitor.unl.edu",
+    "https://www.tropicaltidbits.com",
+)
+CLIMATE_STATE_CACHE_TTL_SECONDS = 30 * 60
+_climate_state_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None}
+
+
+def _is_allowed_climate_image_proxy_url(url: str) -> bool:
+    return any(url.startswith(prefix) for prefix in CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES)
+
+
+def _build_unavailable_climate_state_payload() -> dict[str, Any]:
+    fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # TODO: Wire native CPC daily text/index feeds once the v1 climate UI is in place.
+    return {
+        "fetched_at": fetched_at,
+        "note": "Native index extraction coming soon",
+        "indices": {
+            "ao": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
+            "nao": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
+            "pna": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
+            "mjo": {"phase": None, "amplitude": None, "source": "CPC/ECMWF", "valid_date": None},
+            "enso": {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None},
+        },
+    }
+
+
+@app.get("/api/v4/climate/image-proxy")
+async def climate_image_proxy(url: str = Query(..., min_length=1)) -> Response:
+    headers = {"X-Proxy-Source": url}
+    if not _is_allowed_climate_image_proxy_url(url):
+        return JSONResponse(status_code=403, content={"detail": "forbidden"}, headers=headers)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            upstream_response = await client.get(url)
+    except (httpx.TimeoutException, httpx.RequestError):
+        return JSONResponse(status_code=502, content={"detail": "upstream fetch failed"}, headers=headers)
+
+    if upstream_response.status_code != 200:
+        return JSONResponse(status_code=502, content={"detail": "upstream fetch failed"}, headers=headers)
+
+    return Response(
+        content=upstream_response.content,
+        media_type=upstream_response.headers.get("Content-Type", "application/octet-stream"),
+        headers={
+            **headers,
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+@app.get("/api/v4/climate/state")
+async def climate_state() -> JSONResponse:
+    now = time.time()
+    cached_payload = _climate_state_cache.get("payload")
+    if isinstance(cached_payload, dict) and now < float(_climate_state_cache.get("expires_at", 0.0)):
+        return JSONResponse(content=cached_payload)
+
+    payload = _build_unavailable_climate_state_payload()
+    _climate_state_cache["payload"] = payload
+    _climate_state_cache["expires_at"] = now + CLIMATE_STATE_CACHE_TTL_SECONDS
+    return JSONResponse(content=payload)
 
 
 @app.get("/api/v4")
