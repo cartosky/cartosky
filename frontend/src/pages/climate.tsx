@@ -134,6 +134,16 @@ function formatIndexValue(value: number | null): string {
   return value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
 }
 
+function formatValidDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+    timeZone: "UTC",
+  }).format(d);
+}
+
 // ── StatusPill ────────────────────────────────────────────────────────
 
 function StatusPill({ state }: { state: ClimateStatePayload | null }) {
@@ -180,15 +190,22 @@ function StateRow({
   value,
   badge,
   badgeStyle,
+  validDate,
 }: {
   label: string;
   value: string;
   badge: string | null;
   badgeStyle: string;
+  validDate?: string | null;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] py-2.5 last:border-b-0">
-      <span className="text-[12px] font-medium text-white/60">{label}</span>
+      <div className="flex flex-col gap-0">
+        <span className="text-[12px] font-medium text-white/60">{label}</span>
+        {validDate && (
+          <span className="text-[10px] text-white/30">{formatValidDate(validDate)}</span>
+        )}
+      </div>
       <div className="flex shrink-0 items-center gap-2">
         <span className="text-[12px] font-medium text-white">{value}</span>
         {badge && (
@@ -229,6 +246,7 @@ function ClimateStatePanel({
             value={formatIndexValue(state.indices.enso?.nino34_anom ?? null)}
             badge={state.indices.enso?.state ?? null}
             badgeStyle={ensoBadgeStyle(state.indices.enso?.state ?? null)}
+            validDate={state.indices.enso?.valid_date}
           />
           <StateRow
             label="MJO"
@@ -243,24 +261,28 @@ function ClimateStatePanel({
             }
             badge={state.indices.mjo?.state ?? null}
             badgeStyle="bg-white/[0.06] text-white/45 border-white/10"
+            validDate={state.indices.mjo?.valid_date}
           />
           <StateRow
             label="AO"
             value={formatIndexValue(state.indices.ao?.value ?? null)}
             badge={state.indices.ao?.state ?? null}
             badgeStyle={oscillationBadgeStyle(state.indices.ao?.state ?? null)}
+            validDate={state.indices.ao?.valid_date}
           />
           <StateRow
             label="NAO"
             value={formatIndexValue(state.indices.nao?.value ?? null)}
             badge={state.indices.nao?.state ?? null}
             badgeStyle={oscillationBadgeStyle(state.indices.nao?.state ?? null)}
+            validDate={state.indices.nao?.valid_date}
           />
           <StateRow
             label="PNA"
             value={formatIndexValue(state.indices.pna?.value ?? null)}
             badge={state.indices.pna?.state ?? null}
             badgeStyle={oscillationBadgeStyle(state.indices.pna?.state ?? null)}
+            validDate={state.indices.pna?.valid_date}
           />
         </>
       ) : (
