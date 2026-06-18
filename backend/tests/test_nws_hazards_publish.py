@@ -652,6 +652,149 @@ def test_mrms_overlay_filters_alerts_before_zone_sync(
     assert seen_payloads[0]["features"][0]["properties"]["id"] == "ffw-1"
 
 
+def test_mrms_overlay_zone_sync_preserves_existing_zone_reference_entries(tmp_path: Path) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_path = tmp_path / "hazards" / "zone_reference.geojson"
+    zone_path.parent.mkdir(parents=True, exist_ok=True)
+    zone_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "AZC013",
+                            "name": "Maricopa",
+                            "state": "AZ",
+                            "zone_type": "county",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-112.8, 32.9], [-111.2, 32.9], [-111.2, 34.0], [-112.8, 34.0], [-112.8, 32.9]]],
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zone_code": "TXZ123",
+                            "name": "Unrelated active heat zone",
+                            "state": "TX",
+                            "zone_type": "public",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[-101.0, 30.0], [-100.0, 30.0], [-100.0, 31.0], [-101.0, 31.0], [-101.0, 30.0]]],
+                        },
+                    },
+                ],
+            }
+        )
+    )
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "ffw-1",
+                    "status": "Actual",
+                    "event": "Flash Flood Warning",
+                    "headline": "Flash Flood Warning",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"SAME": ["004013"], "UGC": ["AZC013"]},
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-112.05, 33.35], [-111.95, 33.35], [-111.95, 33.45], [-112.05, 33.45], [-112.05, 33.35]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "heat-1",
+                    "status": "Actual",
+                    "event": "Heat Advisory",
+                    "headline": "Heat Advisory",
+                    "sent": "2026-04-06T17:05:00Z",
+                    "effective": "2026-04-06T17:05:00Z",
+                    "expires": "2026-04-06T18:30:00Z",
+                    "areaDesc": "Somewhere hot",
+                    "geocode": {"UGC": ["TXZ123"]},
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+
+    assert len(overlay["features"]) == 1
+    persisted = json.loads(zone_path.read_text())
+    persisted_zone_codes = {
+        feature["properties"]["zone_code"]
+        for feature in persisted["features"]
+    }
+    assert persisted_zone_codes == {"AZC013", "TXZ123"}
+
+
+def test_mrms_overlay_severe_thunderstorm_watch_falls_back_to_county_when_zone_merge_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nws_hazards._mrms_warnings_overlay_cache = None
+    _write_county_reference(tmp_path / "hazards" / "county_reference.geojson")
+    zone_reference = _write_zone_reference(tmp_path / "hazards" / "zone_reference.geojson")
+    payload = {
+        "type": "FeatureCollection",
+        "updated": "2026-04-06T17:30:00Z",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "svr-watch-1",
+                    "status": "Actual",
+                    "event": "Severe Thunderstorm Watch",
+                    "headline": "Severe Thunderstorm Watch issued April 6",
+                    "sent": "2026-04-06T16:55:00Z",
+                    "effective": "2026-04-06T16:55:00Z",
+                    "expires": "2026-04-06T19:00:00Z",
+                    "areaDesc": "Maricopa County",
+                    "geocode": {"UGC": ["AZC013"]},
+                    "affectedZones": ["https://api.weather.gov/zones/county/AZC013"],
+                },
+                "geometry": None,
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        nws_hazards,
+        "sync_active_zone_reference",
+        lambda **_: nws_hazards.ZoneReferenceSyncResult(
+            path=zone_reference,
+            needed_zone_codes=(),
+            resolved_zone_codes=(),
+            signature="test",
+            updated=False,
+        ),
+    )
+
+    overlay = nws_hazards.build_mrms_warnings_overlay_geojson(tmp_path, payload=payload)
+
+    assert len(overlay["features"]) == 1
+    feature = overlay["features"][0]
+    assert feature["properties"]["risk_label"] == "Severe Thunderstorm Watch"
+    assert feature["properties"]["county_geoid"] == "04013"
+    assert feature["properties"]["fill"] == "#FFFF00"
+    assert feature["geometry"]["type"] == "Polygon"
+
+
 def test_mrms_overlay_build_uses_in_memory_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

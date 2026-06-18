@@ -741,6 +741,7 @@ def sync_active_zone_reference(
     zone_reference_path: Path,
     timeout_seconds: float = NWS_REQUEST_TIMEOUT,
     api_base: str = NWS_API_BASE,
+    prune_to_payload: bool = True,
 ) -> ZoneReferenceSyncResult:
     if zone_reference_path.is_file():
         try:
@@ -759,11 +760,15 @@ def sync_active_zone_reference(
             signature=_zone_reference_signature(existing_zones),
             updated=False,
         )
-    active_zones: dict[str, dict[str, Any]] = {
-        zone_code: existing_zones[zone_code]
-        for zone_code in sorted(needed_zone_codes)
-        if zone_code in existing_zones
-    }
+    active_zones: dict[str, dict[str, Any]]
+    if prune_to_payload:
+        active_zones = {
+            zone_code: existing_zones[zone_code]
+            for zone_code in sorted(needed_zone_codes)
+            if zone_code in existing_zones
+        }
+    else:
+        active_zones = dict(existing_zones)
     missing_zone_codes = [zone_code for zone_code in sorted(needed_zone_codes) if zone_code not in active_zones]
 
     if missing_zone_codes:
@@ -1249,6 +1254,7 @@ def build_mrms_warnings_overlay_geojson(
             zone_reference_path=zone_path,
             timeout_seconds=timeout_seconds,
             api_base=api_base,
+            prune_to_payload=False,
         )
         frame = build_active_hazards_frame(
             overlay_source_payload,
@@ -1619,9 +1625,16 @@ def build_active_hazards_frame(
             geometry_features.append(merged_feature)
             continue
         resolved_geoids = [geoid for geoid in alert.county_geoids if geoid in counties]
-        if resolved_geoids and not _skips_county_rollup_for_alert(alert, skip_county_rollup_events):
+        if resolved_geoids:
             for geoid in resolved_geoids:
                 county_buckets.setdefault(geoid, []).append(alert)
+            continue
+        _append_geometry_fallback_feature(
+            geometry_features,
+            alert,
+            prefer_native_polygon_geometry=prefer_native_polygon_geometry,
+            hover_name=alert.style.label,
+        )
     for alert in zone_candidate_alerts:
         resolved_zone_codes = [zone_code for zone_code in alert.zone_codes if zone_code in zone_references]
         if resolved_zone_codes:
