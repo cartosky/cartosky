@@ -130,3 +130,50 @@ def test_publish_goes_bundle_reuses_previous_frame_by_slot_time(tmp_path: Path, 
     assert second_result.run_id == "20260521_1210z"
     assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
     assert first_result.run_id != second_result.run_id
+
+
+def test_publish_goes_bundle_seeds_new_run_with_previous_latest_sibling_variables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_publish(monkeypatch)
+    slot = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+    ir_frame = goes_publish.GOESBundleFrame(
+        valid_time=slot + timedelta(minutes=2),
+        slot_time=slot,
+        values=np.ones((2, 2), dtype=np.float32) * 250.0,
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        source_metadata={"slot_time": "2026-05-21T12:00:00Z"},
+    )
+    first_result = goes_publish.publish_goes_bundle(
+        data_root=tmp_path,
+        frames=[ir_frame],
+        publish_time=datetime(2026, 5, 21, 12, 5, tzinfo=timezone.utc),
+    )
+    assert first_result.run_id == "20260521_1205z"
+
+    vis_frame = goes_publish.GOESBundleFrame(
+        valid_time=slot + timedelta(minutes=17),
+        slot_time=slot + timedelta(minutes=15),
+        values=np.array([[0.05, 0.15], [0.30, 0.50]], dtype=np.float32),
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
+        source_metadata={"slot_time": "2026-05-21T12:15:00Z"},
+    )
+    second_result = goes_publish.publish_goes_bundle(
+        data_root=tmp_path,
+        frames=[vis_frame],
+        publish_time=datetime(2026, 5, 21, 12, 10, tzinfo=timezone.utc),
+        band_config=goes_publish.BAND_CONFIG_VIS2,
+    )
+
+    assert second_result.run_id == "20260521_1210z"
+    assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "vis2" / "fh000.val.cog.tif").exists()
+
+    manifest = json.loads(second_result.manifest_path.read_text())
+    assert set(manifest["variables"]) == {"ir13", "vis2"}
+    assert manifest["variables"]["ir13"]["frames"] == [{"fh": 0, "valid_time": "2026-05-21T12:02:00Z"}]
+    assert manifest["variables"]["vis2"]["frames"] == [{"fh": 0, "valid_time": "2026-05-21T12:17:00Z"}]
+
+    preserved_sidecar = json.loads((second_result.published_run_dir / "ir13" / "fh000.json").read_text())
+    assert preserved_sidecar["run"] == second_result.run_id

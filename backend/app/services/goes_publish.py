@@ -124,6 +124,30 @@ def _preserved_manifest_variables(
     }
 
 
+def _latest_published_run_id(data_root: Path) -> str | None:
+    latest_path = data_root / "published" / GOES_EAST_MODEL_ID / "LATEST.json"
+    try:
+        latest_payload = json.loads(latest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    run_id = str(latest_payload.get("run_id") or "").strip()
+    return run_id or None
+
+
+def _preservation_source_run_id(data_root: Path, run_id: str) -> str:
+    current_manifest = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
+    if current_manifest.is_file():
+        return run_id
+    latest_run_id = _latest_published_run_id(data_root)
+    if not latest_run_id:
+        return run_id
+    latest_run = data_root / "published" / GOES_EAST_MODEL_ID / latest_run_id
+    latest_manifest = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{latest_run_id}.json"
+    if latest_run.is_dir() and latest_manifest.is_file():
+        return latest_run_id
+    return run_id
+
+
 def _merge_preserved_manifest_variables(
     *,
     data_root: Path,
@@ -222,12 +246,18 @@ def publish_goes_bundle(
     var_id = band_config.variable_id
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
+    preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
     preserved_manifest_variables = _preserved_manifest_variables(
         data_root=data_root,
-        run_id=run_id,
+        run_id=preservation_source_run_id,
         exclude_var_id=var_id,
     )
-    _prepare_stage_run_dir(data_root=data_root, run_id=run_id, replace_var_id=var_id)
+    _prepare_stage_run_dir(
+        data_root=data_root,
+        run_id=run_id,
+        replace_var_id=var_id,
+        source_run_id=preservation_source_run_id,
+    )
 
     merged_by_slot_time: dict[datetime, GOESPublishedFrame | GOESBundleFrame] = {}
     for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
@@ -512,14 +542,19 @@ def _forecast_hour_from_artifact_name(path: Path) -> int | None:
 
 
 def _prepare_stage_run_dir(
-    *, data_root: Path, run_id: str, replace_var_id: str | None = None
+    *,
+    data_root: Path,
+    run_id: str,
+    replace_var_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> None:
     stage_run = data_root / "staging" / GOES_EAST_MODEL_ID / run_id
     if stage_run.exists():
         shutil.rmtree(stage_run, ignore_errors=True)
     stage_run.mkdir(parents=True, exist_ok=True)
 
-    published_run = data_root / "published" / GOES_EAST_MODEL_ID / run_id
+    source_id = str(source_run_id or run_id).strip() or run_id
+    published_run = data_root / "published" / GOES_EAST_MODEL_ID / source_id
     if published_run.is_dir():
         for var_dir in published_run.iterdir():
             if not var_dir.is_dir():
@@ -533,7 +568,24 @@ def _prepare_stage_run_dir(
                     rel = src_file.relative_to(var_dir)
                     dst_file = target_var_dir / rel
                     dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    _link_or_copy(src_file, dst_file)
+                    _copy_preserved_run_artifact(src_file, dst_file, run_id=run_id, source_run_id=source_id)
+
+
+def _copy_preserved_run_artifact(source: Path, target: Path, *, run_id: str, source_run_id: str) -> None:
+    if source_run_id == run_id or source.suffix.lower() != ".json":
+        _link_or_copy(source, target)
+        return
+    try:
+        payload = json.loads(source.read_text())
+    except (OSError, json.JSONDecodeError):
+        _link_or_copy(source, target)
+        return
+    if not isinstance(payload, dict):
+        _link_or_copy(source, target)
+        return
+    if payload.get("run") == source_run_id:
+        payload["run"] = run_id
+    write_json_atomic(target, payload)
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
