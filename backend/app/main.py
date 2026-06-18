@@ -4090,7 +4090,7 @@ def _parse_psl_monthly(text: str, source_label: str) -> dict[str, Any]:
     value = round(best_value, 2)
     trend = "positive" if value > 0.5 else "negative" if value < -0.5 else "neutral"
     valid_date = f"{best_year}-{best_month_idx + 1:02d}-01"
-    return {"value": value, "trend": trend, "source": source_label, "valid_date": valid_date}
+    return {"value": value, "trend": trend, "state": trend.capitalize(), "source": source_label, "valid_date": valid_date}
 
 
 def _parse_enso(text: str) -> dict[str, Any]:

@@ -18,13 +18,22 @@ type ClimateStateMJO = {
   valid_date: string | null;
 };
 
-type ClimateStatePayload = {
-  enso: ClimateStateEntry | null;
-  mjo: ClimateStateMJO | null;
-  ao: ClimateStateEntry | null;
-  nao: ClimateStateEntry | null;
-  pna: ClimateStateEntry | null;
+type ClimateStateENSO = {
+  nino34_anom: number | null;
+  state: string | null;
   valid_date: string | null;
+  source: string | null;
+};
+
+type ClimateStatePayload = {
+  fetched_at: string;
+  indices: {
+    ao:   ClimateStateEntry | null;
+    nao:  ClimateStateEntry | null;
+    pna:  ClimateStateEntry | null;
+    mjo:  ClimateStateMJO   | null;
+    enso: ClimateStateENSO  | null;
+  };
 };
 
 // ── Section config ────────────────────────────────────────────────────
@@ -81,12 +90,12 @@ function formatValidDateUTC(iso: string | null): string {
 
 function getOldestValidDate(payload: ClimateStatePayload): string | null {
   const dates: string[] = [];
-  if (payload.valid_date)      dates.push(payload.valid_date);
-  if (payload.enso?.valid_date) dates.push(payload.enso.valid_date);
-  if (payload.mjo?.valid_date)  dates.push(payload.mjo.valid_date);
-  if (payload.ao?.valid_date)   dates.push(payload.ao.valid_date);
-  if (payload.nao?.valid_date)  dates.push(payload.nao.valid_date);
-  if (payload.pna?.valid_date)  dates.push(payload.pna.valid_date);
+  const { ao, nao, pna, mjo, enso } = payload.indices;
+  if (ao?.valid_date)   dates.push(ao.valid_date);
+  if (nao?.valid_date)  dates.push(nao.valid_date);
+  if (pna?.valid_date)  dates.push(pna.valid_date);
+  if (mjo?.valid_date)  dates.push(mjo.valid_date);
+  if (enso?.valid_date) dates.push(enso.valid_date);
   if (!dates.length) return null;
   return dates.reduce((oldest, d) =>
     new Date(d).getTime() < new Date(oldest).getTime() ? d : oldest,
@@ -97,7 +106,7 @@ function isStale(isoDate: string | null): boolean {
   if (!isoDate) return false;
   const d = new Date(isoDate);
   if (isNaN(d.getTime())) return true;
-  return d.getTime() < Date.now() - 2 * 24 * 60 * 60 * 1000;
+  return d.getTime() < Date.now() - 60 * 24 * 60 * 60 * 1000;
 }
 
 function ensoBadgeStyle(state: string | null): string {
@@ -217,41 +226,41 @@ function ClimateStatePanel({
         <>
           <StateRow
             label="ENSO"
-            value={formatIndexValue(state.enso?.value ?? null)}
-            badge={state.enso?.state ?? null}
-            badgeStyle={ensoBadgeStyle(state.enso?.state ?? null)}
+            value={formatIndexValue(state.indices.enso?.nino34_anom ?? null)}
+            badge={state.indices.enso?.state ?? null}
+            badgeStyle={ensoBadgeStyle(state.indices.enso?.state ?? null)}
           />
           <StateRow
             label="MJO"
             value={
-              state.mjo?.phase != null
-                ? `Phase ${state.mjo.phase}${
-                    state.mjo.amplitude != null
-                      ? ` · ${state.mjo.amplitude.toFixed(1)}`
+              state.indices.mjo?.phase != null
+                ? `Phase ${state.indices.mjo.phase}${
+                    state.indices.mjo.amplitude != null
+                      ? ` · ${state.indices.mjo.amplitude.toFixed(1)}`
                       : ""
                   }`
                 : "—"
             }
-            badge={state.mjo?.state ?? null}
+            badge={state.indices.mjo?.state ?? null}
             badgeStyle="bg-white/[0.06] text-white/45 border-white/10"
           />
           <StateRow
             label="AO"
-            value={formatIndexValue(state.ao?.value ?? null)}
-            badge={state.ao?.state ?? null}
-            badgeStyle={oscillationBadgeStyle(state.ao?.state ?? null)}
+            value={formatIndexValue(state.indices.ao?.value ?? null)}
+            badge={state.indices.ao?.state ?? null}
+            badgeStyle={oscillationBadgeStyle(state.indices.ao?.state ?? null)}
           />
           <StateRow
             label="NAO"
-            value={formatIndexValue(state.nao?.value ?? null)}
-            badge={state.nao?.state ?? null}
-            badgeStyle={oscillationBadgeStyle(state.nao?.state ?? null)}
+            value={formatIndexValue(state.indices.nao?.value ?? null)}
+            badge={state.indices.nao?.state ?? null}
+            badgeStyle={oscillationBadgeStyle(state.indices.nao?.state ?? null)}
           />
           <StateRow
             label="PNA"
-            value={formatIndexValue(state.pna?.value ?? null)}
-            badge={state.pna?.state ?? null}
-            badgeStyle={oscillationBadgeStyle(state.pna?.state ?? null)}
+            value={formatIndexValue(state.indices.pna?.value ?? null)}
+            badge={state.indices.pna?.state ?? null}
+            badgeStyle={oscillationBadgeStyle(state.indices.pna?.state ?? null)}
           />
         </>
       ) : (
