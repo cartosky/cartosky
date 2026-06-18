@@ -147,6 +147,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
               Viewer
             </PrefetchNavLink>
             <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
+            <NavItem to="/climate" label="Climate" className="ml-0 text-white/72 hover:text-white" />
             {showPricingNav ? <NavItem to="/pricing" label="Pricing" /> : null}
             {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
             <button
@@ -224,6 +225,7 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 <div className="flex flex-col gap-1">
                   <NavItem to="/viewer" label="Viewer" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   <NavItem to="/forecast" label="Forecast" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  <NavItem to="/climate" label="Climate" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   {showPricingNav ? (
                     <NavItem to="/pricing" label="Pricing" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
                   ) : null}

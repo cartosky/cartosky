@@ -4025,6 +4025,7 @@ CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES = (
     "https://www.cpc.ncep.noaa.gov",
     "https://droughtmonitor.unl.edu",
     "https://www.tropicaltidbits.com",
+    "https://www.cpc.ncep.noaa.gov/data/indices/",
 )
 CLIMATE_STATE_CACHE_TTL_SECONDS = 30 * 60
 _climate_state_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None}
@@ -4034,18 +4035,150 @@ def _is_allowed_climate_image_proxy_url(url: str) -> bool:
     return any(url.startswith(prefix) for prefix in CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES)
 
 
-def _build_unavailable_climate_state_payload() -> dict[str, Any]:
+_CPC_HEADERS = {"User-Agent": "Mozilla/5.0"}
+_CPC_TIMEOUT = 15.0
+
+_CPC_AO_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/daily_ao_index/ao.index.nc"
+_CPC_NAO_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/norm.nao.index.b500101.current.ascii.table"
+_CPC_PNA_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/norm.pna.index.b500101.current.ascii.table"
+_CPC_ENSO_URL = "https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii"
+
+
+def _oscillation_trend(value: float) -> str:
+    if value > 0.5:
+        return "positive"
+    if value < -0.5:
+        return "negative"
+    return "neutral"
+
+
+def _parse_ao(text: str) -> dict[str, Any]:
+    """Parse AO daily index: space-separated rows YYYY MM DD value."""
+    last_row: list[str] | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 4:
+            last_row = parts
+    if last_row is None:
+        return {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+    try:
+        yyyy, mm, dd = int(last_row[0]), int(last_row[1]), int(last_row[2])
+        value = round(float(last_row[3]), 2)
+        valid_date = f"{yyyy:04d}-{mm:02d}-{dd:02d}"
+        return {"value": value, "trend": _oscillation_trend(value), "source": "CPC", "valid_date": valid_date}
+    except (ValueError, IndexError):
+        return {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+
+
+_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _parse_monthly_table(text: str, source_label: str) -> dict[str, Any]:
+    """Parse CPC monthly table (NAO/PNA): YYYY Jan Feb ... Dec"""
+    current_year = datetime.now(timezone.utc).year
+    best_year: int | None = None
+    best_value: float | None = None
+    best_month_idx: int | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            row_year = int(parts[0])
+        except ValueError:
+            continue
+        # Only look at current year and previous year (in case current year row has all nulls)
+        if row_year < current_year - 1:
+            continue
+        for col_idx in range(1, len(parts)):
+            month_idx = col_idx - 1  # 0-based month index (0=Jan)
+            try:
+                val = float(parts[col_idx])
+            except ValueError:
+                continue
+            if abs(val) >= 99.0:
+                continue
+            # Prefer most recent year, then most recent month
+            if best_year is None or row_year > best_year or (row_year == best_year and month_idx > (best_month_idx or -1)):
+                best_year = row_year
+                best_month_idx = month_idx
+                best_value = val
+
+    if best_value is None or best_year is None or best_month_idx is None:
+        return {"value": None, "trend": None, "source": source_label, "valid_date": None}
+
+    value = round(best_value, 2)
+    valid_date = f"{best_year:04d}-{best_month_idx + 1:02d}-01"
+    return {"value": value, "trend": _oscillation_trend(value), "source": source_label, "valid_date": valid_date}
+
+
+def _parse_enso(text: str) -> dict[str, Any]:
+    """Parse CPC ENSO file: YR MON NINO1+2 ANOM NINO3 ANOM NINO4 ANOM NINO3.4 ANOM"""
+    last_row: list[str] | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("YR"):
+            continue
+        parts = line.split()
+        if len(parts) >= 8:
+            last_row = parts
+    if last_row is None:
+        return {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
+    try:
+        yr = int(last_row[0])
+        mon = int(last_row[1])
+        anom = round(float(last_row[7]), 2)
+        if anom >= 0.5:
+            state = "El Niño"
+        elif anom <= -0.5:
+            state = "La Niña"
+        else:
+            state = "Neutral"
+        valid_date = f"{yr:04d}-{mon:02d}-01"
+        return {"nino34_anom": anom, "state": state, "source": "CPC", "valid_date": valid_date}
+    except (ValueError, IndexError):
+        return {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
+
+
+async def _fetch_climate_state_live() -> dict[str, Any]:
     fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    # TODO: Wire native CPC daily text/index feeds once the v1 climate UI is in place.
+
+    async def _get(url: str) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=_CPC_TIMEOUT, headers=_CPC_HEADERS) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+        except Exception:
+            return None
+
+    ao_text, nao_text, pna_text, enso_text = await asyncio.gather(
+        _get(_CPC_AO_URL),
+        _get(_CPC_NAO_URL),
+        _get(_CPC_PNA_URL),
+        _get(_CPC_ENSO_URL),
+    )
+
+    ao_entry: dict[str, Any] = _parse_ao(ao_text) if ao_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+    nao_entry: dict[str, Any] = _parse_monthly_table(nao_text, "CPC") if nao_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+    pna_entry: dict[str, Any] = _parse_monthly_table(pna_text, "CPC") if pna_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+    enso_entry: dict[str, Any] = _parse_enso(enso_text) if enso_text else {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
+
     return {
         "fetched_at": fetched_at,
-        "note": "Native index extraction coming soon",
         "indices": {
-            "ao": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
-            "nao": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
-            "pna": {"value": None, "trend": None, "source": "CPC/GEFS", "valid_date": None},
+            "ao": ao_entry,
+            "nao": nao_entry,
+            "pna": pna_entry,
             "mjo": {"phase": None, "amplitude": None, "source": "CPC/ECMWF", "valid_date": None},
-            "enso": {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None},
+            "enso": enso_entry,
         },
     }
 
@@ -4082,7 +4215,7 @@ async def climate_state() -> JSONResponse:
     if isinstance(cached_payload, dict) and now < float(_climate_state_cache.get("expires_at", 0.0)):
         return JSONResponse(content=cached_payload)
 
-    payload = _build_unavailable_climate_state_payload()
+    payload = await _fetch_climate_state_live()
     _climate_state_cache["payload"] = payload
     _climate_state_cache["expires_at"] = now + CLIMATE_STATE_CACHE_TTL_SECONDS
     return JSONResponse(content=payload)

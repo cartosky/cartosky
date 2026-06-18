@@ -70,6 +70,7 @@ function lazyRoute<T extends React.ComponentType<any>>(
   });
 }
 
+const Climate = lazyRoute(() => import("./pages/climate"));
 const Forecast = lazyRoute(() => import("./pages/forecast"));
 const Models = lazyRoute(() => import("./pages/models"));
 const Variables = lazyRoute(() => import("./pages/variables"));
@@ -99,6 +100,7 @@ function getPageTitle(pathname: string) {
     ["/admin", "Admin"],
     ["/viewer", "Viewer"],
     ["/forecast", "Forecast"],
+    ["/climate", "Climate Indices"],
     ["/models", "Models"],
     ["/variables", "Variables"],
     ["/privacy", "Privacy Policy"],
@@ -126,6 +128,7 @@ export default function RouterApp() {
       <Route element={<MarketingLayout />}>
         <Route path="/" element={<Home />} />
         <Route path="/forecast" element={<Forecast />} />
+        <Route path="/climate" element={<Climate />} />
         <Route path="/models" element={<Models />} />
         <Route path="/variables" element={<Variables />} />
         <Route path="/login" element={<Login />} />
