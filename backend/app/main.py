@@ -4026,9 +4026,11 @@ CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES = (
     "https://droughtmonitor.unl.edu",
     "https://www.tropicaltidbits.com",
     "https://www.cpc.ncep.noaa.gov/data/indices/",
+    "https://psl.noaa.gov",
 )
 CLIMATE_STATE_CACHE_TTL_SECONDS = 30 * 60
 _climate_state_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None}
+_climate_state_cache["expires_at"] = 0.0  # force-clear on startup/reload
 
 
 def _is_allowed_climate_image_proxy_url(url: str) -> bool:
@@ -4038,50 +4040,22 @@ def _is_allowed_climate_image_proxy_url(url: str) -> bool:
 _CPC_HEADERS = {"User-Agent": "Mozilla/5.0"}
 _CPC_TIMEOUT = 15.0
 
-_CPC_AO_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/daily_ao_index/ao.index.nc"
-_CPC_NAO_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/norm.nao.index.b500101.current.ascii.table"
-_CPC_PNA_URL = "https://www.cpc.ncep.noaa.gov/products/precip/CWlink/pna/norm.pna.index.b500101.current.ascii.table"
+_CPC_AO_URL  = "https://psl.noaa.gov/data/correlation/ao.data"
+_CPC_NAO_URL = "https://psl.noaa.gov/data/correlation/nao.data"
+_CPC_PNA_URL = "https://psl.noaa.gov/data/correlation/pna.data"
 _CPC_ENSO_URL = "https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii"
 
 
-def _oscillation_trend(value: float) -> str:
-    if value > 0.5:
-        return "positive"
-    if value < -0.5:
-        return "negative"
-    return "neutral"
-
-
-def _parse_ao(text: str) -> dict[str, Any]:
-    """Parse AO daily index: space-separated rows YYYY MM DD value."""
-    last_row: list[str] | None = None
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) >= 4:
-            last_row = parts
-    if last_row is None:
-        return {"value": None, "trend": None, "source": "CPC", "valid_date": None}
-    try:
-        yyyy, mm, dd = int(last_row[0]), int(last_row[1]), int(last_row[2])
-        value = round(float(last_row[3]), 2)
-        valid_date = f"{yyyy:04d}-{mm:02d}-{dd:02d}"
-        return {"value": value, "trend": _oscillation_trend(value), "source": "CPC", "valid_date": valid_date}
-    except (ValueError, IndexError):
-        return {"value": None, "trend": None, "source": "CPC", "valid_date": None}
-
-
-_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
-
-def _parse_monthly_table(text: str, source_label: str) -> dict[str, Any]:
-    """Parse CPC monthly table (NAO/PNA): YYYY Jan Feb ... Dec"""
-    current_year = datetime.now(timezone.utc).year
+def _parse_psl_monthly(text: str, source_label: str) -> dict[str, Any]:
+    """
+    Parse NOAA PSL monthly index files (AO, NAO, PNA).
+    Format: YYYY  v1  v2  v3  v4  v5  v6  v7  v8  v9  v10  v11  v12
+    Missing values: -999, -999.000, -99.9, -99.90 (any value <= -98)
+    Returns the most recent valid monthly value with its valid_date.
+    """
     best_year: int | None = None
+    best_month_idx: int | None = None  # 0-based
     best_value: float | None = None
-    best_month_idx: int | None = None
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -4094,29 +4068,29 @@ def _parse_monthly_table(text: str, source_label: str) -> dict[str, Any]:
             row_year = int(parts[0])
         except ValueError:
             continue
-        # Only look at current year and previous year (in case current year row has all nulls)
-        if row_year < current_year - 1:
-            continue
-        for col_idx in range(1, len(parts)):
-            month_idx = col_idx - 1  # 0-based month index (0=Jan)
+        # Walk columns right-to-left to find last valid value in this row
+        for col_idx in range(min(12, len(parts) - 1), 0, -1):
             try:
                 val = float(parts[col_idx])
             except ValueError:
                 continue
-            if abs(val) >= 99.0:
+            if val <= -98:  # missing sentinel
                 continue
-            # Prefer most recent year, then most recent month
+            month_idx = col_idx - 1  # 0-based month
+            # Keep if this is a more recent observation
             if best_year is None or row_year > best_year or (row_year == best_year and month_idx > (best_month_idx or -1)):
                 best_year = row_year
                 best_month_idx = month_idx
                 best_value = val
+            break  # found the last valid in this row, move to next row
 
     if best_value is None or best_year is None or best_month_idx is None:
         return {"value": None, "trend": None, "source": source_label, "valid_date": None}
 
     value = round(best_value, 2)
-    valid_date = f"{best_year:04d}-{best_month_idx + 1:02d}-01"
-    return {"value": value, "trend": _oscillation_trend(value), "source": source_label, "valid_date": valid_date}
+    trend = "positive" if value > 0.5 else "negative" if value < -0.5 else "neutral"
+    valid_date = f"{best_year}-{best_month_idx + 1:02d}-01"
+    return {"value": value, "trend": trend, "source": source_label, "valid_date": valid_date}
 
 
 def _parse_enso(text: str) -> dict[str, Any]:
@@ -4166,9 +4140,9 @@ async def _fetch_climate_state_live() -> dict[str, Any]:
         _get(_CPC_ENSO_URL),
     )
 
-    ao_entry: dict[str, Any] = _parse_ao(ao_text) if ao_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
-    nao_entry: dict[str, Any] = _parse_monthly_table(nao_text, "CPC") if nao_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
-    pna_entry: dict[str, Any] = _parse_monthly_table(pna_text, "CPC") if pna_text else {"value": None, "trend": None, "source": "CPC", "valid_date": None}
+    ao_entry: dict[str, Any]  = _parse_psl_monthly(ao_text,  "CPC/PSL") if ao_text  else {"value": None, "trend": None, "source": "CPC/PSL", "valid_date": None}
+    nao_entry: dict[str, Any] = _parse_psl_monthly(nao_text, "CPC/PSL") if nao_text else {"value": None, "trend": None, "source": "CPC/PSL", "valid_date": None}
+    pna_entry: dict[str, Any] = _parse_psl_monthly(pna_text, "CPC/PSL") if pna_text else {"value": None, "trend": None, "source": "CPC/PSL", "valid_date": None}
     enso_entry: dict[str, Any] = _parse_enso(enso_text) if enso_text else {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
 
     return {
