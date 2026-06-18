@@ -4141,31 +4141,43 @@ def _parse_romi(text: str) -> dict[str, Any]:
         "source": "PSL/ROMI",
         "valid_date": valid_date,
     }
-    """Parse CPC ENSO file: YR MON NINO1+2 ANOM NINO3 ANOM NINO4 ANOM NINO3.4 ANOM"""
-    last_row: list[str] | None = None
+
+
+def _parse_enso(text: str) -> dict[str, Any]:
+    """
+    Parse NOAA CPC ENSO Niño 3.4 monthly SST anomaly file.
+    URL: https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii
+    Format: space-separated, columns: YR MON NINO1+2 ANOM NINO3 ANOM NINO4 ANOM NINO3.4 ANOM
+    Niño 3.4 anomaly is column index 7 (0-based).
+    """
+    best: tuple[int, int, float] | None = None  # (year, month, value)
+
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("YR"):
+        if not line:
             continue
         parts = line.split()
-        if len(parts) >= 8:
-            last_row = parts
-    if last_row is None:
+        if len(parts) < 8:
+            continue
+        try:
+            yr = int(parts[0])
+            mo = int(parts[1])
+            val = float(parts[7])
+        except ValueError:
+            continue
+        if abs(val) > 10:  # reject missing/garbage
+            continue
+        if best is None or (yr, mo) > (best[0], best[1]):
+            best = (yr, mo, val)
+
+    if best is None:
         return {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
-    try:
-        yr = int(last_row[0])
-        mon = int(last_row[1])
-        anom = round(float(last_row[7]), 2)
-        if anom >= 0.5:
-            state = "El Niño"
-        elif anom <= -0.5:
-            state = "La Niña"
-        else:
-            state = "Neutral"
-        valid_date = f"{yr:04d}-{mon:02d}-01"
-        return {"nino34_anom": anom, "state": state, "source": "CPC", "valid_date": valid_date}
-    except (ValueError, IndexError):
-        return {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
+
+    yr, mo, val = best
+    nino34 = round(val, 2)
+    state = "El Niño" if nino34 >= 0.5 else "La Niña" if nino34 <= -0.5 else "Neutral"
+    valid_date = f"{yr}-{mo:02d}-01"
+    return {"nino34_anom": nino34, "state": state, "source": "CPC", "valid_date": valid_date}
 
 
 async def _fetch_climate_state_live() -> dict[str, Any]:
