@@ -4028,6 +4028,7 @@ CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES = (
     "https://www.cpc.ncep.noaa.gov/data/indices/",
     "https://psl.noaa.gov",
     "https://ftp.cpc.ncep.noaa.gov",
+    "https://www.psl.noaa.gov",
 )
 CLIMATE_STATE_CACHE_TTL_SECONDS = 30 * 60
 _climate_state_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None}
@@ -4045,6 +4046,7 @@ _CPC_AO_URL  = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.ao.cdas.z1000.1
 _CPC_NAO_URL = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.nao.cdas.z500.19500101_current.csv"
 _CPC_PNA_URL = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.pna.cdas.z500.19500101_current.csv"
 _CPC_ENSO_URL = "https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii"
+_CPC_MJO_URL = "https://www.psl.noaa.gov/mjo/mjoindex/romi.cpcolr.1x.txt"
 
 
 def _parse_cdas_csv(text: str, source_label: str) -> dict[str, Any]:
@@ -4083,7 +4085,62 @@ def _parse_cdas_csv(text: str, source_label: str) -> dict[str, Any]:
     return {"value": value, "trend": trend, "state": state, "source": source_label, "valid_date": valid_date}
 
 
-def _parse_enso(text: str) -> dict[str, Any]:
+def _parse_romi(text: str) -> dict[str, Any]:
+    """
+    Parse NOAA PSL ROMI daily MJO index.
+    Format: YYYY MM DD HH PC1 PC2 Amplitude
+    Current to within ~3 days. Missing value sentinel: 1.E36 or 999.
+    Phase derived from atan2(PC2, PC1) mapped to Wheeler-Hendon octants.
+    """
+    best: tuple[int, int, int, float, float, float] | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 7:
+            continue
+        try:
+            yyyy, mm, dd = int(parts[0]), int(parts[1]), int(parts[2])
+            pc1 = float(parts[4])
+            pc2 = float(parts[5])
+            amp = float(parts[6])
+        except ValueError:
+            continue
+        # Reject missing value sentinels
+        if abs(pc1) > 100 or abs(pc2) > 100 or abs(amp) > 100:
+            continue
+        if best is None or (yyyy, mm, dd) > (best[0], best[1], best[2]):
+            best = (yyyy, mm, dd, pc1, pc2, amp)
+
+    if best is None:
+        return {"phase": None, "amplitude": None, "state": None,
+                "source": "PSL/ROMI", "valid_date": None}
+
+    yyyy, mm, dd, pc1, pc2, amp = best
+    amplitude = round(amp, 2)
+    valid_date = f"{yyyy}-{mm:02d}-{dd:02d}"
+
+    # Derive phase from atan2(PC2, PC1), mapped to WH04 octants
+    if amplitude < 1.0:
+        phase = None
+        state = "Weak / Incoherent"
+    else:
+        angle_deg = math.degrees(math.atan2(pc2, pc1))
+        angle_norm = (angle_deg + 180) % 360  # 0-360
+        phase = int(angle_norm / 45) + 1
+        if phase > 8:
+            phase = 8
+        state = f"Phase {phase}"
+
+    return {
+        "phase": phase,
+        "amplitude": amplitude,
+        "state": state,
+        "source": "PSL/ROMI",
+        "valid_date": valid_date,
+    }
     """Parse CPC ENSO file: YR MON NINO1+2 ANOM NINO3 ANOM NINO4 ANOM NINO3.4 ANOM"""
     last_row: list[str] | None = None
     for raw_line in text.splitlines():
@@ -4123,17 +4180,22 @@ async def _fetch_climate_state_live() -> dict[str, Any]:
         except Exception:
             return None
 
-    ao_text, nao_text, pna_text, enso_text = await asyncio.gather(
+    ao_text, nao_text, pna_text, enso_text, mjo_text = await asyncio.gather(
         _get(_CPC_AO_URL),
         _get(_CPC_NAO_URL),
         _get(_CPC_PNA_URL),
         _get(_CPC_ENSO_URL),
+        _get(_CPC_MJO_URL),
     )
 
     ao_entry: dict[str, Any]  = _parse_cdas_csv(ao_text,  "CPC") if ao_text  else {"value": None, "trend": None, "state": None, "source": "CPC", "valid_date": None}
     nao_entry: dict[str, Any] = _parse_cdas_csv(nao_text, "CPC") if nao_text else {"value": None, "trend": None, "state": None, "source": "CPC", "valid_date": None}
     pna_entry: dict[str, Any] = _parse_cdas_csv(pna_text, "CPC") if pna_text else {"value": None, "trend": None, "state": None, "source": "CPC", "valid_date": None}
     enso_entry: dict[str, Any] = _parse_enso(enso_text) if enso_text else {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
+    mjo_entry: dict[str, Any] = _parse_romi(mjo_text) if mjo_text else {
+        "phase": None, "amplitude": None, "state": None,
+        "source": "PSL/ROMI", "valid_date": None
+    }
 
     return {
         "fetched_at": fetched_at,
@@ -4141,7 +4203,7 @@ async def _fetch_climate_state_live() -> dict[str, Any]:
             "ao": ao_entry,
             "nao": nao_entry,
             "pna": pna_entry,
-            "mjo": {"phase": None, "amplitude": None, "source": "CPC/ECMWF", "valid_date": None},
+            "mjo": mjo_entry,
             "enso": enso_entry,
         },
     }

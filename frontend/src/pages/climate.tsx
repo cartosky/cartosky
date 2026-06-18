@@ -15,6 +15,7 @@ type ClimateStateMJO = {
   phase: number | null;
   amplitude: number | null;
   state: string | null;
+  source: string | null;
   valid_date: string | null;
 };
 
@@ -252,14 +253,15 @@ function ClimateStatePanel({
             label="MJO"
             value={
               state.indices.mjo?.phase != null
-                ? `Phase ${state.indices.mjo.phase}${
-                    state.indices.mjo.amplitude != null
-                      ? ` · ${state.indices.mjo.amplitude.toFixed(1)}`
-                      : ""
-                  }`
-                : "—"
+                ? `Phase ${state.indices.mjo.phase} · ${state.indices.mjo.amplitude?.toFixed(1)}`
+                : state.indices.mjo?.state === "Weak / Incoherent"
+                  ? "Weak"
+                  : "—"
             }
-            badge={state.indices.mjo?.state ?? null}
+            badge={
+              state.indices.mjo?.state === "Weak / Incoherent" ? "Incoherent" :
+              state.indices.mjo?.phase != null ? `Phase ${state.indices.mjo.phase}` : null
+            }
             badgeStyle="bg-white/[0.06] text-white/45 border-white/10"
             validDate={state.indices.mjo?.valid_date}
           />
