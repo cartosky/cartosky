@@ -4128,7 +4128,7 @@ def _parse_romi(text: str) -> dict[str, Any]:
         state = "Weak / Incoherent"
     else:
         angle_deg = math.degrees(math.atan2(-pc2, -pc1))
-        angle_norm = (angle_deg + 180) % 360  # 0-360
+        angle_norm = (angle_deg + 180 + 45) % 360  # 0-360
         phase = int(angle_norm / 45) + 1
         if phase > 8:
             phase = 8
