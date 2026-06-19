@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+import zipfile
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
+import shapefile
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -44,6 +46,26 @@ def _feature(cat: str, prob: float) -> dict:
             "idp_source": "610temp_latest",
         },
     }
+
+
+def _w34_zip_bytes(tmp_path: Path) -> bytes:
+    stem = tmp_path / "wk34_test"
+    writer = shapefile.Writer(str(stem), shapeType=shapefile.POLYGON)
+    writer.field("Cat", "C")
+    writer.field("Prob", "N", decimal=0)
+    writer.field("Fcst_Date", "D")
+    writer.field("Start_Date", "D")
+    writer.field("End_Date", "D")
+    writer.poly([[[-100.0, 40.0], [-99.0, 40.0], [-99.0, 41.0], [-100.0, 40.0]]])
+    writer.record("Above", 55, date(2026, 6, 5), date(2026, 6, 20), date(2026, 7, 3))
+    writer.close()
+
+    zip_path = tmp_path / "wk34_test.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for suffix in (".shp", ".shx", ".dbf"):
+            path = stem.with_suffix(suffix)
+            zf.write(path, arcname=path.name)
+    return zip_path.read_bytes()
 
 
 def test_normalize_cpc_temperature_categories_and_metadata() -> None:
@@ -138,10 +160,51 @@ def test_publish_cpc_outlooks_writes_vector_bundle(tmp_path: Path) -> None:
     assert manifest["variables"][config.var_id]["available_frames"] == 1
 
 
+def test_fetch_and_normalize_w34_shapefile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    zip_bytes = _w34_zip_bytes(tmp_path)
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return zip_bytes
+
+    def fake_urlopen(request: object, *, timeout: float) -> FakeResponse:
+        del request, timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(cpc_outlook, "urlopen", fake_urlopen)
+
+    normalized = cpc_outlook.fetch_and_normalize_w34_shapefile(
+        cpc_outlook.CPC_PRODUCT_CONFIGS["cpc_w34_temp"],
+    )
+
+    assert normalized.product.var_id == "cpc_w34_temp"
+    assert normalized.issued_at == datetime(2026, 6, 5, tzinfo=timezone.utc)
+    assert normalized.valid_start == datetime(2026, 6, 20, tzinfo=timezone.utc)
+    assert normalized.valid_end == datetime(2026, 7, 3, tzinfo=timezone.utc)
+    assert normalized.valid_seas is None
+    props = normalized.features[0]["properties"]
+    assert props["period"] == "w34"
+    assert props["category"] == "above"
+    assert props["probability"] == 55
+    assert props["displayLabel"] == "55% Above Normal"
+    assert props["valid_start"] == "2026-06-20T00:00:00Z"
+    assert props["valid_end"] == "2026-07-03T00:00:00Z"
+
+
 def test_cpc_catalog_includes_monthly_and_seasonal_products() -> None:
-    assert CPC_VARIABLE_CATALOG["cpc_1m_temp"].order == 4
-    assert CPC_VARIABLE_CATALOG["cpc_1m_precip"].order == 5
-    assert CPC_VARIABLE_CATALOG["cpc_3m_temp"].order == 6
-    assert CPC_VARIABLE_CATALOG["cpc_3m_precip"].order == 7
+    assert CPC_VARIABLE_CATALOG["cpc_w34_temp"].order == 4
+    assert CPC_VARIABLE_CATALOG["cpc_w34_precip"].order == 5
+    assert CPC_VARIABLE_CATALOG["cpc_1m_temp"].order == 6
+    assert CPC_VARIABLE_CATALOG["cpc_1m_precip"].order == 7
+    assert CPC_VARIABLE_CATALOG["cpc_3m_temp"].order == 8
+    assert CPC_VARIABLE_CATALOG["cpc_3m_precip"].order == 9
+    assert CPC_MODEL.normalize_var_id("w34-temperature") == "cpc_w34_temp"
+    assert CPC_MODEL.normalize_var_id("cpc_w34_precipitation") == "cpc_w34_precip"
     assert CPC_MODEL.normalize_var_id("1m-temperature") == "cpc_1m_temp"
     assert CPC_MODEL.normalize_var_id("cpc_3m_precipitation") == "cpc_3m_precip"

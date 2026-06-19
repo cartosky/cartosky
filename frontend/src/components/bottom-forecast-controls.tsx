@@ -33,6 +33,9 @@ type BottomForecastControlsProps = {
   runDateTimeISO: string | null;
   timeAxisMode?: TimeAxisMode;
   validTimeISO?: string | null;
+  cpcValidSeas?: string | null;
+  cpcValidStart?: string | null;
+  cpcValidEnd?: string | null;
   frameValidTimesByHour?: Record<number, string>;
   sourceStatusLabel?: string | null;
   sourceStatusDescription?: string | null;
@@ -86,6 +89,61 @@ function formatCpcIssuedDisplay(iso: string | null | undefined): string | null {
   }
 
   return `ISSUED: ${month} ${day}, ${year}, ${hour}:${minute}${dayPeriod}${timeZoneName ? ` ${timeZoneName}` : ""}`;
+}
+
+const CPC_SEASON_CODES: Record<string, string> = {
+  DJF: "Dec-Jan-Feb",
+  JFM: "Jan-Feb-Mar",
+  FMA: "Feb-Mar-Apr",
+  MAM: "Mar-Apr-May",
+  AMJ: "Apr-May-Jun",
+  MJJ: "May-Jun-Jul",
+  JJA: "Jun-Jul-Aug",
+  JAS: "Jul-Aug-Sep",
+  ASO: "Aug-Sep-Oct",
+  SON: "Sep-Oct-Nov",
+  OND: "Oct-Nov-Dec",
+  NDJ: "Nov-Dec-Jan",
+};
+
+function expandSeasonalShorthand(code: string): string {
+  return CPC_SEASON_CODES[code.trim().toUpperCase()] ?? code;
+}
+
+function formatCpcValidSeasDisplay(
+  validSeas: string | null | undefined,
+  validStart: string | null | undefined,
+  validEnd: string | null | undefined,
+): string | null {
+  const seas = (validSeas ?? "").trim();
+  if (seas) {
+    const expanded = seas.replace(/^([A-Z]{3,})(\s+\d{4})$/i, (_, codes, year) =>
+      expandSeasonalShorthand(codes) + year
+    );
+    return `VALID: ${expanded}`;
+  }
+
+  const start = validStart ? new Date(validStart) : null;
+  const end = validEnd ? new Date(validEnd) : null;
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+
+  const fmt = (date: Date) =>
+    new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(date);
+  const startStr = fmt(start);
+  const endStr = fmt(end);
+  if (start.getUTCFullYear() === end.getUTCFullYear()) {
+    if (start.getUTCMonth() === end.getUTCMonth()) {
+      const month = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(start);
+      const year = start.getUTCFullYear();
+      return `VALID: ${month} ${start.getUTCDate()}-${end.getUTCDate()}, ${year}`;
+    }
+    const startCompact = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: "UTC" }).format(start);
+    return `VALID: ${startCompact} - ${endStr}`;
+  }
+
+  return `VALID: ${startStr} - ${endStr}`;
 }
 
 function formatTimelineDisplay(params: {
@@ -216,6 +274,9 @@ export function BottomForecastControls({
   runDateTimeISO,
   timeAxisMode = "forecast",
   validTimeISO = null,
+  cpcValidSeas = null,
+  cpcValidStart = null,
+  cpcValidEnd = null,
   frameValidTimesByHour,
   sourceStatusLabel = null,
   sourceStatusDescription = null,
@@ -243,7 +304,9 @@ export function BottomForecastControls({
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const staticSnapshotLabel: string | null = (() => {
-    if (modelId === "cpc") return "Latest forecast";
+    if (modelId === "cpc") {
+      return formatCpcValidSeasDisplay(cpcValidSeas, cpcValidStart, cpcValidEnd) ?? "Latest forecast";
+    }
     if (modelId === "nws_hazards") return "Latest hazards";
     if (modelId === "mrms" && variableId === "mrms_recent_precip_72h") return "Latest observations";
     return null;

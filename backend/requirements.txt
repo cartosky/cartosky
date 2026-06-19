@@ -8,6 +8,7 @@ rio-tiler
 scipy
 herbie-data
 pyproj
+pyshp
 shapely
 Pillow
 httpx

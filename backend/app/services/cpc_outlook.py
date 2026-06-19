@@ -24,6 +24,8 @@ CPC_1M_TEMP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/service
 CPC_1M_PRECIP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_mthly_precip_outlk/MapServer"
 CPC_3M_TEMP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_sea_temp_outlk/MapServer"
 CPC_3M_PRECIP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_sea_precip_outlk/MapServer"
+CPC_W34_TEMP_ZIP_URL = "https://ftp.cpc.ncep.noaa.gov/GIS/us_tempprcpfcst/wk34temp_latest.zip"
+CPC_W34_PRECIP_ZIP_URL = "https://ftp.cpc.ncep.noaa.gov/GIS/us_tempprcpfcst/wk34prcp_latest.zip"
 
 
 class CPCOutlookError(RuntimeError):
@@ -99,6 +101,26 @@ CPC_PRODUCT_CONFIGS: dict[str, CPCProductConfig] = {
         variable="precipitation",
         base_url=CPC_814_BASE_URL,
         layer_id=1,
+        legend_title="CPC Precipitation Outlook",
+        style_key="cpc_precipitation_outlook",
+    ),
+    "cpc_w34_temp": CPCProductConfig(
+        var_id="cpc_w34_temp",
+        display_name="CPC Week 3-4 Temperature Outlook",
+        period="w34",
+        variable="temperature",
+        base_url=CPC_W34_TEMP_ZIP_URL,
+        layer_id=0,
+        legend_title="CPC Temperature Outlook",
+        style_key="cpc_temperature_outlook",
+    ),
+    "cpc_w34_precip": CPCProductConfig(
+        var_id="cpc_w34_precip",
+        display_name="CPC Week 3-4 Precipitation Outlook",
+        period="w34",
+        variable="precipitation",
+        base_url=CPC_W34_PRECIP_ZIP_URL,
+        layer_id=0,
         legend_title="CPC Precipitation Outlook",
         style_key="cpc_precipitation_outlook",
     ),
@@ -410,6 +432,110 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
     )
 
 
+def fetch_and_normalize_w34_shapefile(
+    config: CPCProductConfig,
+    *,
+    timeout_seconds: float = 30.0,
+) -> CPCOutlookPayload:
+    import datetime as dt_mod
+    import io
+    import zipfile
+
+    import shapefile
+
+    request = Request(
+        config.base_url,
+        headers={"User-Agent": "CartoSky-CPC/1.0"},
+    )
+    with urlopen(request, timeout=float(timeout_seconds)) as response:
+        zip_bytes = response.read()
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        shp_name = next(name for name in zf.namelist() if name.endswith(".shp"))
+        stem = shp_name[:-4]
+        sf = shapefile.Reader(
+            shp=io.BytesIO(zf.read(stem + ".shp")),
+            dbf=io.BytesIO(zf.read(stem + ".dbf")),
+            shx=io.BytesIO(zf.read(stem + ".shx")),
+        )
+
+        normalized_features: list[dict] = []
+        issued_at: datetime | None = None
+        valid_start: datetime | None = None
+        valid_end: datetime | None = None
+
+        def _date_to_dt(value: object) -> datetime | None:
+            if isinstance(value, dt_mod.date) and not isinstance(value, datetime):
+                return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+            if isinstance(value, datetime):
+                return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+            return _coerce_datetime(value)
+
+        for shape_rec in sf.shapeRecords():
+            rec = shape_rec.record.as_dict()
+            geom = shape_rec.shape.__geo_interface__
+
+            category = _category(rec.get("Cat"))
+            if category is None:
+                continue
+            category_key, category_label = category
+
+            probability = _probability(rec.get("Prob"))
+            fill, bucket = _style_for(config.variable, category_key, probability)
+            display_label = category_label if category_key == "near" else f"{probability or bucket}% {category_label}"
+
+            feature_fcst_date = _date_to_dt(rec.get("Fcst_Date"))
+            feature_valid_start = _date_to_dt(rec.get("Start_Date"))
+            feature_valid_end = _date_to_dt(rec.get("End_Date"))
+
+            issued_at = issued_at or feature_fcst_date
+            valid_start = valid_start or feature_valid_start
+            valid_end = valid_end or feature_valid_end
+
+            normalized_features.append(
+                {
+                    "type": "Feature",
+                    "geometry": geom,
+                    "properties": {
+                        "source": CPC_SOURCE_NAME,
+                        "outlook_type": config.variable,
+                        "period": config.period,
+                        "category": category_key,
+                        "label": category_label,
+                        "probability": probability,
+                        "probability_bucket": bucket if category_key != "near" else None,
+                        "displayLabel": display_label,
+                        "risk_label": display_label,
+                        "hover_label": _hover_label(
+                            category_label=category_label,
+                            probability=probability,
+                        ),
+                        "valid_start": _format_iso(feature_valid_start),
+                        "valid_end": _format_iso(feature_valid_end),
+                        "issued_at": _format_iso(feature_fcst_date),
+                        "fill": fill,
+                        "fill_opacity": 0.66 if category_key != "near" else 0.42,
+                        "stroke": "#30343b",
+                        "stroke_width": 0.75,
+                        "sort_rank": _sort_rank(category_key, probability),
+                    },
+                }
+            )
+
+    if not normalized_features:
+        raise CPCOutlookError(f"{config.display_name} shapefile had no recognized polygons")
+
+    normalized_features.sort(key=lambda item: int(item["properties"].get("sort_rank") or 0))
+    return CPCOutlookPayload(
+        product=config,
+        issued_at=issued_at,
+        valid_start=valid_start,
+        valid_end=valid_end,
+        valid_seas=None,
+        features=normalized_features,
+    )
+
+
 def _sort_rank(category: str, probability: int | None) -> int:
     base = {"near": 0, "below": 100, "above": 200}.get(category, 300)
     return base + int(probability or 0)
@@ -540,8 +666,11 @@ def collect_latest_cpc_outlooks(*, timeout_seconds: float = 30.0) -> tuple[dict[
     failures: list[str] = []
     for config in CPC_PRODUCT_CONFIGS.values():
         try:
-            raw = fetch_cpc_layer_geojson(config, timeout_seconds=timeout_seconds)
-            products[config.var_id] = normalize_cpc_features(raw, config=config)
+            if config.period == "w34":
+                products[config.var_id] = fetch_and_normalize_w34_shapefile(config, timeout_seconds=timeout_seconds)
+            else:
+                raw = fetch_cpc_layer_geojson(config, timeout_seconds=timeout_seconds)
+                products[config.var_id] = normalize_cpc_features(raw, config=config)
         except Exception as exc:
             failures.append(f"{config.var_id}: {exc}")
             logger.warning("Skipping CPC product var=%s error=%s", config.var_id, exc)

@@ -2445,6 +2445,20 @@ export default function App() {
     }
     return currentFrame;
   }, [currentFrame, frameByHour, visibleOverlayHour]);
+  const currentFrameMeta = useMemo(() => {
+    return extractLegendMeta(visibleOverlayFrame)
+      ?? extractLegendMeta(currentFrame)
+      ?? extractLegendMeta(frameRows[0] ?? null);
+  }, [currentFrame, frameRows, visibleOverlayFrame]);
+  const cpcValidSeas = model === "cpc"
+    ? ((currentFrameMeta as { valid_seas?: string | null } | null)?.valid_seas ?? null)
+    : null;
+  const cpcValidStart = model === "cpc"
+    ? ((currentFrameMeta as { valid_start?: string | null } | null)?.valid_start ?? null)
+    : null;
+  const cpcValidEnd = model === "cpc"
+    ? ((currentFrameMeta as { valid_end?: string | null } | null)?.valid_end ?? null)
+    : null;
   const displayedForecastHour = useMemo(() => {
     if (isGridLowMidActive && Number.isFinite(visibleOverlayHour)) {
       return Number(visibleOverlayHour);
@@ -5261,6 +5275,9 @@ export default function App() {
           runDateTimeISO={runDateTimeISO}
           timeAxisMode={selectedTimeAxisMode}
           validTimeISO={displayedValidTimeISO}
+          cpcValidSeas={cpcValidSeas}
+          cpcValidStart={cpcValidStart}
+          cpcValidEnd={cpcValidEnd}
           frameValidTimesByHour={frameValidTimesByHour}
           sourceStatusLabel={observedSourceStatus?.label ?? null}
           sourceStatusDescription={observedSourceStatus?.description ?? null}
