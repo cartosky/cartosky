@@ -20,6 +20,10 @@ CPC_REGION_ID = "conus"
 CPC_SOURCE_NAME = "NOAA CPC"
 CPC_610_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_6_10_day_outlk/MapServer"
 CPC_814_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_8_14_day_outlk/MapServer"
+CPC_1M_TEMP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_mthly_temp_outlk/MapServer"
+CPC_1M_PRECIP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_mthly_precip_outlk/MapServer"
+CPC_3M_TEMP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_sea_temp_outlk/MapServer"
+CPC_3M_PRECIP_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_sea_precip_outlk/MapServer"
 
 
 class CPCOutlookError(RuntimeError):
@@ -44,6 +48,7 @@ class CPCOutlookPayload:
     issued_at: datetime | None
     valid_start: datetime | None
     valid_end: datetime | None
+    valid_seas: str | None
     features: list[dict]
 
 
@@ -94,6 +99,46 @@ CPC_PRODUCT_CONFIGS: dict[str, CPCProductConfig] = {
         variable="precipitation",
         base_url=CPC_814_BASE_URL,
         layer_id=1,
+        legend_title="CPC Precipitation Outlook",
+        style_key="cpc_precipitation_outlook",
+    ),
+    "cpc_1m_temp": CPCProductConfig(
+        var_id="cpc_1m_temp",
+        display_name="CPC 1-Month Temperature Outlook",
+        period="1m",
+        variable="temperature",
+        base_url=CPC_1M_TEMP_BASE_URL,
+        layer_id=0,
+        legend_title="CPC Temperature Outlook",
+        style_key="cpc_temperature_outlook",
+    ),
+    "cpc_1m_precip": CPCProductConfig(
+        var_id="cpc_1m_precip",
+        display_name="CPC 1-Month Precipitation Outlook",
+        period="1m",
+        variable="precipitation",
+        base_url=CPC_1M_PRECIP_BASE_URL,
+        layer_id=0,
+        legend_title="CPC Precipitation Outlook",
+        style_key="cpc_precipitation_outlook",
+    ),
+    "cpc_3m_temp": CPCProductConfig(
+        var_id="cpc_3m_temp",
+        display_name="CPC 3-Month Temperature Outlook",
+        period="3m",
+        variable="temperature",
+        base_url=CPC_3M_TEMP_BASE_URL,
+        layer_id=0,
+        legend_title="CPC Temperature Outlook",
+        style_key="cpc_temperature_outlook",
+    ),
+    "cpc_3m_precip": CPCProductConfig(
+        var_id="cpc_3m_precip",
+        display_name="CPC 3-Month Precipitation Outlook",
+        period="3m",
+        variable="precipitation",
+        base_url=CPC_3M_PRECIP_BASE_URL,
+        layer_id=0,
         legend_title="CPC Precipitation Outlook",
         style_key="cpc_precipitation_outlook",
     ),
@@ -214,13 +259,22 @@ def _first_datetime(props: dict, *keys: str) -> datetime | None:
     return None
 
 
+def _first_text(props: dict, *keys: str) -> str | None:
+    for key in keys:
+        for candidate in (props.get(key), props.get(key.lower())):
+            text = str(candidate or "").strip()
+            if text:
+                return text
+    return None
+
+
 def _category(value: object) -> tuple[str, str] | None:
     text = str(value or "").strip().lower()
     if text in {"above", "a", "above normal"}:
         return "above", "Above Normal"
     if text in {"below", "b", "below normal"}:
         return "below", "Below Normal"
-    if text in {"normal", "near", "n", "near normal"}:
+    if text in {"normal", "near", "n", "near normal", "ec", "equal chances", "equal chance"}:
         return "near", "Near Normal"
     return None
 
@@ -280,6 +334,7 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
     issued_at: datetime | None = None
     valid_start: datetime | None = None
     valid_end: datetime | None = None
+    valid_seas: str | None = None
     forecast_date: datetime | None = None
 
     for feature in features_raw:
@@ -302,11 +357,13 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
 
         feature_valid_start = _first_datetime(props, "start_date", "START_DATE")
         feature_valid_end = _first_datetime(props, "end_date", "END_DATE")
+        feature_valid_seas = _first_text(props, "valid_seas", "VALID_SEAS")
         feature_issued_at = _first_datetime(props, "idp_filedate", "idp_FILEDATE", "fcst_date", "FCST_DATE")
         forecast_date = forecast_date or _first_datetime(props, "fcst_date", "FCST_DATE")
         issued_at = issued_at or feature_issued_at
         valid_start = valid_start or feature_valid_start
         valid_end = valid_end or feature_valid_end
+        valid_seas = valid_seas or feature_valid_seas
 
         normalized_features.append(
             {
@@ -328,6 +385,7 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
                     ),
                     "valid_start": _format_iso(feature_valid_start),
                     "valid_end": _format_iso(feature_valid_end),
+                    "valid_seas": feature_valid_seas,
                     "issued_at": _format_iso(feature_issued_at),
                     "fill": fill,
                     "fill_opacity": 0.66 if category_key != "near" else 0.42,
@@ -347,6 +405,7 @@ def normalize_cpc_features(raw_data: dict, *, config: CPCProductConfig) -> CPCOu
         issued_at=issued_at or forecast_date,
         valid_start=valid_start,
         valid_end=valid_end,
+        valid_seas=valid_seas,
         features=normalized_features,
     )
 
@@ -408,6 +467,7 @@ def _build_frame_sidecar(*, run_id: str, outlook: CPCOutlookPayload) -> dict:
         "issued_at": _format_iso(outlook.issued_at),
         "valid_start": _format_iso(outlook.valid_start),
         "valid_end": _format_iso(outlook.valid_end),
+        "valid_seas": outlook.valid_seas,
         "source": CPC_SOURCE_NAME,
         "kind": "categorical",
         "legend_title": outlook.product.legend_title,

@@ -23,6 +23,7 @@ os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
 os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
+from app.models.cpc import CPC_MODEL, CPC_VARIABLE_CATALOG
 from app.services import cpc_outlook
 
 
@@ -71,6 +72,23 @@ def test_normalize_cpc_temperature_categories_and_metadata() -> None:
     assert by_category["above"]["hover_label"] == "Category: Above normal · Probability: 40%"
 
 
+def test_normalize_cpc_equal_chances_and_valid_seas_metadata() -> None:
+    feature = _feature("EC", 33.0)
+    feature["properties"]["valid_seas"] = "JAS 2026"
+    payload = {"type": "FeatureCollection", "features": [feature]}
+
+    normalized = cpc_outlook.normalize_cpc_features(
+        payload,
+        config=cpc_outlook.CPC_PRODUCT_CONFIGS["cpc_3m_temp"],
+    )
+
+    props = normalized.features[0]["properties"]
+    assert normalized.valid_seas == "JAS 2026"
+    assert props["category"] == "near"
+    assert props["label"] == "Near Normal"
+    assert props["valid_seas"] == "JAS 2026"
+
+
 def test_normalize_cpc_precip_palette() -> None:
     payload = {"type": "FeatureCollection", "features": [_feature("Above", 60.0), _feature("Below", 50.0)]}
 
@@ -88,8 +106,10 @@ def test_normalize_cpc_precip_palette() -> None:
 
 def test_publish_cpc_outlooks_writes_vector_bundle(tmp_path: Path) -> None:
     config = cpc_outlook.CPC_PRODUCT_CONFIGS["cpc_610_temp"]
+    feature = _feature("Above", 40.0)
+    feature["properties"]["VALID_SEAS"] = "Jul 2026"
     normalized = cpc_outlook.normalize_cpc_features(
-        {"type": "FeatureCollection", "features": [_feature("Above", 40.0)]},
+        {"type": "FeatureCollection", "features": [feature]},
         config=config,
     )
 
@@ -106,10 +126,22 @@ def test_publish_cpc_outlooks_writes_vector_bundle(tmp_path: Path) -> None:
     assert sidecar["vector_layers"]["primary"]["style_key"] == "cpc_temperature_outlook"
     assert sidecar["legend_note"].startswith("Probabilities of above")
     assert sidecar["valid_start"] == "2026-05-27T00:00:00Z"
+    assert sidecar["valid_seas"] == "Jul 2026"
 
-    vector = json.loads((tmp_path / "published" / "cpc" / result.run_id / config.var_id / "vectors" / "fh000.geojson").read_text())
+    vector = json.loads(
+        (tmp_path / "published" / "cpc" / result.run_id / config.var_id / "vectors" / "fh000.geojson").read_text()
+    )
     assert vector["features"][0]["properties"]["risk_label"] == "40% Above Normal"
 
     manifest = json.loads((tmp_path / "manifests" / "cpc" / f"{result.run_id}.json").read_text())
     assert manifest["metadata"]["time_axis_mode"] == "valid"
     assert manifest["variables"][config.var_id]["available_frames"] == 1
+
+
+def test_cpc_catalog_includes_monthly_and_seasonal_products() -> None:
+    assert CPC_VARIABLE_CATALOG["cpc_1m_temp"].order == 4
+    assert CPC_VARIABLE_CATALOG["cpc_1m_precip"].order == 5
+    assert CPC_VARIABLE_CATALOG["cpc_3m_temp"].order == 6
+    assert CPC_VARIABLE_CATALOG["cpc_3m_precip"].order == 7
+    assert CPC_MODEL.normalize_var_id("1m-temperature") == "cpc_1m_temp"
+    assert CPC_MODEL.normalize_var_id("cpc_3m_precipitation") == "cpc_3m_precip"
