@@ -41,8 +41,8 @@ type ClimateStatePayload = {
 
 const SECTIONS = [
   { id: "sst",          label: "Sea Surface Temps" },
-  { id: "mjo",          label: "MJO Forecast"      },
   { id: "enso",         label: "ENSO · Niño 3.4"   },
+  { id: "mjo",          label: "MJO Forecast"      },
   { id: "oscillations", label: "AO / NAO / PNA"    },
   { id: "drought",      label: "Drought Monitor"   },
 ] as const;
@@ -57,12 +57,14 @@ function proxy(url: string): string {
 
 const CORAL_BASE = "https://coralreefwatch.noaa.gov/data_current/5km/v3.1_op/daily/png";
 const CPC_BASE   = "https://www.cpc.ncep.noaa.gov/products";
+const ECMWF_CHARTS_BASE = "https://charts.ecmwf.int";
 
 const IMG = {
   sstAnomaly:    `${CORAL_BASE}/ct5km_ssta_v3.1_global_current.png`,
   sstTrend7d:    `${CORAL_BASE}/ct5km_sst-trend-7d_v3.1_global_current.png`,
   mjoEcmf:       `${CPC_BASE}/precip/mjo/img/ECMF.png`,
   mjoEmon:       `${CPC_BASE}/precip/mjo/img/EMON.png`,
+  ensoEcmfPlumes:`${ECMWF_CHARTS_BASE}/products/seasonal_system5_nino_plumes?nino_area=NINO3-4`,
   ensoCfs:       `${CPC_BASE}/CFSv2/imagesInd3/nino34Mon.gif`,
   ensoCpcProb:   `${CPC_BASE}/analysis_monitoring/enso_advisory/figure07.gif`,
   ninoTidbits:   "https://www.tropicaltidbits.com/analysis/ocean/nino34.png",
@@ -260,7 +262,11 @@ function ClimateStatePanel({
             }
             badge={
               state.indices.mjo?.state === "Weak / Incoherent" ? "Incoherent" :
-              state.indices.mjo?.phase != null ? `Phase ${state.indices.mjo.phase}` : null
+              state.indices.mjo?.amplitude != null
+                ? state.indices.mjo.amplitude >= 2.0 ? "Strong"
+                  : state.indices.mjo.amplitude >= 1.5 ? "Moderate"
+                  : "Active"
+                : null
             }
             badgeStyle="bg-white/[0.06] text-white/45 border-white/10"
             validDate={state.indices.mjo?.valid_date}
@@ -483,6 +489,45 @@ export default function Climate() {
               </div>
             </section>
 
+            {/* ── ENSO — Niño 3.4 ──────────────────────────────────── */}
+            <section id="enso" className="scroll-mt-24">
+              <SectionHeader title="ENSO — Niño 3.4" />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <ClimateIndexWidget
+                  title="ECMWF ENSO Plumes"
+                  source="ECMWF · SEAS5"
+                  cadence="Monthly"
+                  proxyUrl={`${API_V4_BASE}/climate/ecmwf-enso-plumes`}
+                  sourceUrl={IMG.ensoEcmfPlumes}
+                  aspectRatio="tall"
+                />
+                <ClimateIndexWidget
+                  title="CPC ENSO Probability"
+                  source="CPC"
+                  cadence="Monthly"
+                  proxyUrl={proxy(IMG.ensoCpcProb)}
+                  sourceUrl={IMG.ensoCpcProb}
+                  aspectRatio="tall"
+                />
+                <ClimateIndexWidget
+                  title="CFSv2 Forecast"
+                  source="CPC · CFSv2"
+                  cadence="Daily"
+                  proxyUrl={proxy(IMG.ensoCfs)}
+                  sourceUrl={IMG.ensoCfs}
+                  aspectRatio="tall"
+                />
+                <ClimateIndexWidget
+                  title="Niño 3.4 Observed"
+                  source="Tropical Tidbits"
+                  cadence="Daily"
+                  proxyUrl={proxy(IMG.ninoTidbits)}
+                  sourceUrl={IMG.ninoTidbits}
+                  aspectRatio="tall"
+                />
+              </div>
+            </section>
+
             {/* ── MJO Forecast ─────────────────────────────────────── */}
             <section id="mjo" className="scroll-mt-24">
               <SectionHeader title="MJO Forecast" />
@@ -521,45 +566,6 @@ export default function Climate() {
                 >
                   CPC MJO data ↗
                 </a>
-              </div>
-            </section>
-
-            {/* ── ENSO — Niño 3.4 ──────────────────────────────────── */}
-            <section id="enso" className="scroll-mt-24">
-              <SectionHeader title="ENSO — Niño 3.4" />
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <ClimateIndexWidget
-                  title="ECMWF ENSO Plumes"
-                  source="CPC · CFSv2"
-                  cadence="Monthly"
-                  proxyUrl={proxy(IMG.ensoCfs)}
-                  sourceUrl={IMG.ensoCfs}
-                  aspectRatio="tall"
-                />
-                <ClimateIndexWidget
-                  title="CPC ENSO Probability"
-                  source="CPC"
-                  cadence="Monthly"
-                  proxyUrl={proxy(IMG.ensoCpcProb)}
-                  sourceUrl={IMG.ensoCpcProb}
-                  aspectRatio="tall"
-                />
-                <ClimateIndexWidget
-                  title="CFSv2 Forecast"
-                  source="CPC · CFSv2"
-                  cadence="Daily"
-                  proxyUrl={proxy(IMG.ensoCfs)}
-                  sourceUrl={IMG.ensoCfs}
-                  aspectRatio="tall"
-                />
-                <ClimateIndexWidget
-                  title="Niño 3.4 Observed"
-                  source="Tropical Tidbits"
-                  cadence="Daily"
-                  proxyUrl={proxy(IMG.ninoTidbits)}
-                  sourceUrl={IMG.ninoTidbits}
-                  aspectRatio="tall"
-                />
               </div>
             </section>
 

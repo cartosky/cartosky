@@ -73,7 +73,7 @@ export default function ClimateIndexWidget({
 
   return (
     <div
-      className="group relative flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#07111f] cursor-pointer transition-colors hover:border-white/20 hover:bg-white/[0.025]"
+      className="group relative flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#07111f] cursor-pointer transition-colors hover:border-cyan-300/25 hover:bg-cyan-300/[0.06]"
       onClick={openSource}
       role="link"
       tabIndex={0}
@@ -118,7 +118,7 @@ export default function ClimateIndexWidget({
           type="button"
           onClick={handleExpandClick}
           aria-label="Open source in new tab"
-          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-black/50 text-sm text-white/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 hover:border-white/20 hover:text-white"
+          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-black/50 text-sm text-white/60 opacity-0 backdrop-blur-sm transition-colors group-hover:opacity-100 hover:border-cyan-300/30 hover:text-cyan-200"
         >
           ↗
         </button>

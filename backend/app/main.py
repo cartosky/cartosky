@@ -4034,6 +4034,17 @@ CLIMATE_STATE_CACHE_TTL_SECONDS = 30 * 60
 _climate_state_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 _climate_state_cache["expires_at"] = 0.0  # force-clear on startup/reload
 
+_ECMWF_NINO_PLUMES_API_URL = (
+    "https://charts.ecmwf.int/opencharts-api/v1/products/seasonal_system5_nino_plumes/"
+)
+_ECMWF_NINO_PLUMES_CACHE_TTL_SECONDS = 60 * 60
+_ecmwf_nino_plumes_cache: dict[str, Any] = {
+    "expires_at": 0.0,
+    "content": None,
+    "content_type": None,
+    "image_url": None,
+}
+
 
 def _is_allowed_climate_image_proxy_url(url: str) -> bool:
     try:
@@ -4263,6 +4274,58 @@ async def climate_image_proxy(url: str = Query(..., min_length=1)) -> Response:
         headers={
             **headers,
             "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+async def _fetch_ecmwf_nino_plumes_image() -> tuple[bytes, str, str]:
+    params = {"nino_area": "NINO3-4"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        api_response = await client.get(_ECMWF_NINO_PLUMES_API_URL, params=params)
+        api_response.raise_for_status()
+        payload = api_response.json()
+        image_url = payload.get("data", {}).get("link", {}).get("href")
+        if not image_url or not isinstance(image_url, str):
+            raise ValueError("missing ECMWF plumes image link")
+        if not image_url.startswith("https://charts.ecmwf.int/content/"):
+            raise ValueError("unexpected ECMWF plumes image host")
+
+        image_response = await client.get(image_url)
+        image_response.raise_for_status()
+        content_type = image_response.headers.get("Content-Type", "image/png")
+        return image_response.content, content_type, image_url
+
+
+@app.get("/api/v4/climate/ecmwf-enso-plumes")
+async def climate_ecmwf_enso_plumes() -> Response:
+    now = time.time()
+    cached_content = _ecmwf_nino_plumes_cache.get("content")
+    if isinstance(cached_content, bytes) and now < float(_ecmwf_nino_plumes_cache.get("expires_at", 0.0)):
+        return Response(
+            content=cached_content,
+            media_type=str(_ecmwf_nino_plumes_cache.get("content_type") or "image/png"),
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "X-Proxy-Source": str(_ecmwf_nino_plumes_cache.get("image_url") or ""),
+            },
+        )
+
+    try:
+        content, content_type, image_url = await _fetch_ecmwf_nino_plumes_image()
+    except (httpx.HTTPError, ValueError, KeyError):
+        return JSONResponse(status_code=502, content={"detail": "upstream fetch failed"})
+
+    _ecmwf_nino_plumes_cache["content"] = content
+    _ecmwf_nino_plumes_cache["content_type"] = content_type
+    _ecmwf_nino_plumes_cache["image_url"] = image_url
+    _ecmwf_nino_plumes_cache["expires_at"] = now + _ECMWF_NINO_PLUMES_CACHE_TTL_SECONDS
+
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Proxy-Source": image_url,
         },
     )
 
