@@ -22,6 +22,8 @@ export type ScreenshotExportState = {
   timeAxisMode?: TimeAxisMode;
   runTimeISO?: string | null;
   validTimeISO?: string | null;
+  cpcValidSeas?: string | null;
+  cpcValidEnd?: string | null;
   sourceStatusLabel?: string | null;
   region?: { id: string; label: string };
   animationEnabled: boolean;
@@ -266,6 +268,41 @@ async function projectAnchorsForScreenshot(
   }
 }
 
+function buildCpcValidLine(state: ScreenshotExportState): string | null {
+  // Prefer valid_seas (monthly/seasonal products)
+  const seas = (state.cpcValidSeas ?? "").trim();
+  if (seas) {
+    const CPC_SEASON_CODES: Record<string, string> = {
+      DJF: "Dec-Jan-Feb", JFM: "Jan-Feb-Mar", FMA: "Feb-Mar-Apr",
+      MAM: "Mar-Apr-May", AMJ: "Apr-May-Jun", MJJ: "May-Jun-Jul",
+      JJA: "Jun-Jul-Aug", JAS: "Jul-Aug-Sep", ASO: "Aug-Sep-Oct",
+      SON: "Sep-Oct-Nov", OND: "Oct-Nov-Dec", NDJ: "Nov-Dec-Jan",
+    };
+    const expanded = seas.replace(/^([A-Z]{3,})(\s+\d{4})$/i, (_, codes, year) => {
+      const upper = codes.trim().toUpperCase();
+      return (CPC_SEASON_CODES[upper] ?? upper) + year;
+    });
+    return `Valid: ${expanded}`;
+  }
+
+  // Fall back to valid_start / valid_end date range (6-10, 8-14, W3-4)
+  const start = state.validTimeISO ? new Date(state.validTimeISO) : null;
+  const end = state.cpcValidEnd ? new Date(state.cpcValidEnd) : null;
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+  if (start.getUTCFullYear() === end.getUTCFullYear() && start.getUTCMonth() === end.getUTCMonth()) {
+    const month = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(start);
+    return `Valid: ${month} ${start.getUTCDate()}–${end.getUTCDate()}, ${start.getUTCFullYear()}`;
+  }
+  const fmt = (d: Date) =>
+    new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
+  const startCompact = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: "UTC" }).format(start);
+  return start.getUTCFullYear() === end.getUTCFullYear()
+    ? `Valid: ${startCompact} – ${fmt(end)}`
+    : `Valid: ${fmt(start)} – ${fmt(end)}`;
+}
+
 function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayload | null): string[] {
   const model = state.model.trim() || "Model";
   const run = state.run.trim() || "Run";
@@ -303,6 +340,10 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
         const line2 = dayNumber !== null ? `Day ${dayNumber} • ${compactDate}` : compactDate;
         return [line1, line2];
       }
+    }
+    if (isCpcProbabilityLegend(legend)) {
+      const validLine = buildCpcValidLine(state);
+      return validLine ? [line1, validLine] : [line1];
     }
     return [line1];
   }

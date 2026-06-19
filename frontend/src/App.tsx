@@ -4892,6 +4892,8 @@ export default function App() {
       timeAxisMode: selectedTimeAxisMode,
       runTimeISO: runDateTimeISO,
       validTimeISO: displayedValidTimeISO,
+      cpcValidSeas: model === "cpc" ? (currentFrameMeta?.valid_seas ?? null) : null,
+      cpcValidEnd: model === "cpc" ? (currentFrameMeta?.valid_end ?? null) : null,
       sourceStatusLabel: observedSourceStatus?.label ?? null,
       region: {
         id: region || "region",
@@ -4919,6 +4921,7 @@ export default function App() {
     selectedTimeAxisMode,
     displayedValidTimeISO,
     runDateTimeISO,
+    currentFrameMeta,
     observedSourceStatus,
     region,
     selectedRegionLabel,
