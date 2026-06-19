@@ -145,6 +145,9 @@ export type LegendMeta = {
   legend_note?: string;
   units?: string;
   valid_time?: string;
+  valid_start?: string;
+  valid_end?: string;
+  valid_seas?: string;
   issue_time?: string;
   generated_at?: string;
   legend_stops?: LegendStops;
