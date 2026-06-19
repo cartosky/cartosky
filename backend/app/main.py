@@ -4077,7 +4077,7 @@ _CPC_TIMEOUT = 15.0
 _CPC_AO_URL  = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.ao.cdas.z1000.19500101_current.csv"
 _CPC_NAO_URL = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.nao.cdas.z500.19500101_current.csv"
 _CPC_PNA_URL = "https://ftp.cpc.ncep.noaa.gov/cwlinks/norm.daily.pna.cdas.z500.19500101_current.csv"
-_CPC_ENSO_URL = "https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii"
+_CPC_ENSO_URL = "https://www.cpc.ncep.noaa.gov/data/indices/wksst9120.for"
 _CPC_MJO_URL = "https://www.psl.noaa.gov/mjo/mjoindex/romi.cpcolr.1x.txt"
 
 
@@ -4177,38 +4177,53 @@ def _parse_romi(text: str) -> dict[str, Any]:
 
 def _parse_enso(text: str) -> dict[str, Any]:
     """
-    Parse NOAA CPC ENSO Niño 3.4 monthly SST anomaly file.
-    URL: https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii
-    Format: space-separated, columns: YR MON NINO1+2 ANOM NINO3 ANOM NINO4 ANOM NINO3.4 ANOM
-    Niño 3.4 anomaly is column index 7 (0-based).
+    Parse CPC weekly SST observations file (wksst9120.for).
+    Format: DDMmmYYYY  SST SSTA  SST SSTA  SST SSTA  SST SSTA
+    Columns after date: Nino1+2 SST/SSTA, Nino3 SST/SSTA, Nino34 SST/SSTA, Nino4 SST/SSTA
+    Nino3.4 SSTA is the 7th whitespace-separated token (index 6, 0-based after splitting).
+    Date format: 02SEP1981, 10JUN2026 etc.
     """
-    best: tuple[int, int, float] | None = None  # (year, month, value)
+    MONTH_MAP = {
+        "JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+        "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12
+    }
+    best_date: tuple[int,int,int] | None = None
+    best_val: float | None = None
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
         parts = line.split()
-        if len(parts) < 8:
+        # Date token is first, format DDMmmYYYY e.g. "10JUN2026"
+        if len(parts) < 7:
+            continue
+        date_tok = parts[0]
+        m = re.match(r'^(\d{2})([A-Z]{3})(\d{4})$', date_tok)
+        if not m:
+            continue
+        dd, mon_str, yyyy = int(m.group(1)), m.group(2), int(m.group(3))
+        mo = MONTH_MAP.get(mon_str)
+        if not mo:
             continue
         try:
-            yr = int(parts[0])
-            mo = int(parts[1])
-            val = float(parts[7])
-        except ValueError:
+            # Nino3.4 SSTA is index 6 (0-based): date nino12_sst nino12_ssta nino3_sst nino3_ssta nino34_sst nino34_ssta ...
+            nino34_ssta = float(parts[6])
+        except (ValueError, IndexError):
             continue
-        if abs(val) > 10:  # reject missing/garbage
+        if abs(nino34_ssta) > 10:
             continue
-        if best is None or (yr, mo) > (best[0], best[1]):
-            best = (yr, mo, val)
+        if best_date is None or (yyyy, mo, dd) > best_date:
+            best_date = (yyyy, mo, dd)
+            best_val = nino34_ssta
 
-    if best is None:
+    if best_val is None or best_date is None:
         return {"nino34_anom": None, "state": None, "source": "CPC", "valid_date": None}
 
-    yr, mo, val = best
-    nino34 = round(val, 2)
+    yyyy, mo, dd = best_date
+    nino34 = round(best_val, 2)
     state = "El Niño" if nino34 >= 0.5 else "La Niña" if nino34 <= -0.5 else "Neutral"
-    valid_date = f"{yr}-{mo:02d}-01"
+    valid_date = f"{yyyy}-{mo:02d}-{dd:02d}"
     return {"nino34_anom": nino34, "state": state, "source": "CPC", "valid_date": valid_date}
 
 

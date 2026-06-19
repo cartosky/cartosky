@@ -494,11 +494,11 @@ export default function Climate() {
               <SectionHeader title="ENSO — Niño 3.4" />
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <ClimateIndexWidget
-                  title="ECMWF ENSO Plumes"
-                  source="ECMWF · SEAS5"
-                  cadence="Monthly"
-                  proxyUrl={`${API_V4_BASE}/climate/ecmwf-enso-plumes`}
-                  sourceUrl={IMG.ensoEcmfPlumes}
+                  title="Niño 3.4 Observed"
+                  source="Tropical Tidbits"
+                  cadence="Daily"
+                  proxyUrl={proxy(IMG.ninoTidbits)}
+                  sourceUrl={IMG.ninoTidbits}
                   aspectRatio="tall"
                 />
                 <ClimateIndexWidget
@@ -510,19 +510,19 @@ export default function Climate() {
                   aspectRatio="tall"
                 />
                 <ClimateIndexWidget
+                  title="ECMWF ENSO Plumes"
+                  source="ECMWF · SEAS5"
+                  cadence="Monthly"
+                  proxyUrl={`${API_V4_BASE}/climate/ecmwf-enso-plumes`}
+                  sourceUrl={IMG.ensoEcmfPlumes}
+                  aspectRatio="tall"
+                />
+                <ClimateIndexWidget
                   title="CFSv2 Forecast"
                   source="CPC · CFSv2"
                   cadence="Daily"
                   proxyUrl={proxy(IMG.ensoCfs)}
                   sourceUrl={IMG.ensoCfs}
-                  aspectRatio="tall"
-                />
-                <ClimateIndexWidget
-                  title="Niño 3.4 Observed"
-                  source="Tropical Tidbits"
-                  cadence="Daily"
-                  proxyUrl={proxy(IMG.ninoTidbits)}
-                  sourceUrl={IMG.ninoTidbits}
                   aspectRatio="tall"
                 />
               </div>
