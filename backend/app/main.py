@@ -4036,7 +4036,28 @@ _climate_state_cache["expires_at"] = 0.0  # force-clear on startup/reload
 
 
 def _is_allowed_climate_image_proxy_url(url: str) -> bool:
-    return any(url.startswith(prefix) for prefix in CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES)
+    try:
+        parsed_url = urlsplit(url.strip())
+    except ValueError:
+        return False
+    if parsed_url.scheme != "https" or not parsed_url.hostname:
+        return False
+
+    requested_host = parsed_url.hostname.lower()
+    requested_path = parsed_url.path or "/"
+    for raw_prefix in CLIMATE_IMAGE_PROXY_ALLOWED_PREFIXES:
+        try:
+            parsed_prefix = urlsplit(raw_prefix)
+        except ValueError:
+            continue
+        allowed_host = (parsed_prefix.hostname or "").lower()
+        if parsed_url.scheme != parsed_prefix.scheme or requested_host != allowed_host:
+            continue
+        allowed_path = parsed_prefix.path
+        if allowed_path and not requested_path.startswith(allowed_path):
+            continue
+        return True
+    return False
 
 
 _CPC_HEADERS = {"User-Agent": "Mozilla/5.0"}
