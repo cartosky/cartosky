@@ -109,7 +109,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_w34_temp": VariableCapability(
         var_key="cpc_w34_temp",
-        name="W3-4 Temp",
+        name="Week 3-4 Temp Outlook",
         kind="categorical",
         buildable=True,
         order=4,
@@ -119,7 +119,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_w34_precip": VariableCapability(
         var_key="cpc_w34_precip",
-        name="W3-4 Precip",
+        name="Week 3-4 Precip Outlook",
         kind="categorical",
         buildable=True,
         order=5,
@@ -129,7 +129,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_1m_temp": VariableCapability(
         var_key="cpc_1m_temp",
-        name="1-Month Temp",
+        name="One Month Temp Outlook",
         primary=False,
         kind="categorical",
         buildable=True,
@@ -140,7 +140,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_1m_precip": VariableCapability(
         var_key="cpc_1m_precip",
-        name="1-Month Precip",
+        name="One Month Precip Outlook",
         kind="categorical",
         buildable=True,
         order=7,
@@ -150,7 +150,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_3m_temp": VariableCapability(
         var_key="cpc_3m_temp",
-        name="3-Month Temp",
+        name="Three Month Temp Outlook",
         kind="categorical",
         buildable=True,
         order=8,
@@ -160,7 +160,7 @@ CPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     ),
     "cpc_3m_precip": VariableCapability(
         var_key="cpc_3m_precip",
-        name="3-Month Precip",
+        name="Three Month Precip Outlook",
         kind="categorical",
         buildable=True,
         order=9,

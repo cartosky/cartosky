@@ -88,6 +88,46 @@ function focusWeatherMap(): void {
   map.focus({ preventScroll: true });
 }
 
+type CpcPair = {
+  periodKey: string;
+  periodLabel: string;
+  temp: VariableOption | null;
+  precip: VariableOption | null;
+};
+
+const CPC_PERIOD_ORDER = ["610", "814", "w34", "1m", "3m"] as const;
+
+const CPC_PERIOD_LABELS: Record<string, string> = {
+  "610": "6-10 Day",
+  "814": "8-14 Day",
+  "w34": "Week 3-4",
+  "1m":  "One Month",
+  "3m":  "Three Month",
+};
+
+function buildCpcPairs(options: VariableOption[]): CpcPair[] {
+  const byPeriod = new Map<string, { temp: VariableOption | null; precip: VariableOption | null }>();
+  for (const period of CPC_PERIOD_ORDER) {
+    byPeriod.set(period, { temp: null, precip: null });
+  }
+  for (const option of options) {
+    for (const period of CPC_PERIOD_ORDER) {
+      if (option.value === `cpc_${period}_temp`) {
+        byPeriod.get(period)!.temp = option;
+      } else if (option.value === `cpc_${period}_precip`) {
+        byPeriod.get(period)!.precip = option;
+      }
+    }
+  }
+  return CPC_PERIOD_ORDER
+    .map((period) => ({
+      periodKey: period,
+      periodLabel: CPC_PERIOD_LABELS[period]!,
+      ...byPeriod.get(period)!,
+    }))
+    .filter((pair) => pair.temp !== null || pair.precip !== null);
+}
+
 export function VariablePicker({
   modelId,
   value,
@@ -107,6 +147,7 @@ export function VariablePicker({
   const [query, setQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<CategoryId>("SURFACE");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [cpcActivePeriod, setCpcActivePeriod] = useState<string>("610");
   const [panelPosition, setPanelPosition] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -162,6 +203,15 @@ export function VariablePicker({
     }
     return byCategory;
   }, [availableCategoryRows, options]);
+
+  const cpcPairs = useMemo(
+    () => modelId === "cpc" ? buildCpcPairs(categorizedOptions.get("FORECASTS") ?? []) : [],
+    [modelId, categorizedOptions]
+  );
+  const cpcActivePair = cpcPairs.find((pair) => pair.periodKey === cpcActivePeriod) ?? cpcPairs[0] ?? null;
+  const cpcVisibleOptions = cpcActivePair
+    ? [cpcActivePair.temp, cpcActivePair.precip].filter((o): o is VariableOption => o !== null)
+    : [];
 
   const favoriteOptions = useMemo(
     () => favorites.map((favoriteId) => optionById.get(favoriteId)).filter((option): option is VariableOption => Boolean(option)),
@@ -389,100 +439,185 @@ export function VariablePicker({
       </div>
 
       <div className={cn("grid grid-cols-[118px_minmax(0,1fr)]", inlinePanel ? "min-h-0 flex-1" : "h-[292px]")}> 
-        <div className="min-h-0 overflow-hidden border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
-          {categoryRows.map((category) => {
-            const active = !hasSearch && category.id === activeCategory;
-            return (
-              <button
-                key={category.id}
-                type="button"
-                onClick={() => setActiveCategory(category.id)}
-                className={cn(
-                  "flex h-8 w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
-                  active
-                    ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
-                    : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
-                )}
-              >
-                <span className="min-w-0 truncate">{category.label}</span>
-                <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
-                  {category.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div ref={listRef} className="picker-scroll min-h-0 overflow-y-scroll p-1.5">
-          {visibleOptions.length === 0 ? (
-            <div className="flex h-full items-center justify-center px-4 text-center text-[12px] font-medium text-white/42">
-              No variables found
-            </div>
-          ) : visibleOptions.map((option, index) => {
-            const supported = supportedSet.has(option.value);
-            const selected = option.value === value;
-            const highlighted = index === highlightedIndex;
-            const favorited = favoriteSet.has(option.value);
-            const categoryLabel = CATEGORY_LABELS.get(normalizeGroup(option.group) ?? "SURFACE") ?? "Other";
-            const anomalyOption = isAnomalyOption(option);
-            const showAnomalyHeading = !hasSearch
-              && activeCategory !== "FAVORITES"
-              && anomalyOption
-              && (index === 0 || !isAnomalyOption(visibleOptions[index - 1]!));
-            return (
-              <Fragment key={option.value}>
-                {showAnomalyHeading ? (
-                  <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/62">
-                    Anomalies
-                  </div>
-                ) : null}
-                <div
-                  data-variable-index={index}
-                  className={cn(
-                    "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
-                    selected
-                      ? "bg-[#185FA5]/20 text-cyan-100"
-                      : highlighted
-                        ? "bg-white/[0.07] text-white"
-                        : supported
-                          ? "text-white/82 hover:bg-white/[0.055] hover:text-white"
-                          : "text-white/32"
-                  )}
-                >
+        {modelId === "cpc" && !hasSearch ? (
+          <>
+            <div className="min-h-0 overflow-hidden border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
+              {cpcPairs.map((pair) => {
+                const active = pair.periodKey === cpcActivePeriod;
+                return (
                   <button
+                    key={pair.periodKey}
                     type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleFavorite(option.value);
-                    }}
+                    onClick={() => setCpcActivePeriod(pair.periodKey)}
                     className={cn(
-                      "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                      favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
+                      "flex h-8 w-full items-center gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
+                      active
+                        ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
+                        : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                     )}
-                    aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
                   >
-                    <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                    <span className="min-w-0 truncate">{pair.periodLabel}</span>
                   </button>
-                  <button
-                    type="button"
-                    disabled={!supported}
-                    onClick={() => chooseVariable(option.value)}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
-                    title={supported ? option.label : `${option.label} is not available for this model`}
-                  >
-                    <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
-                    {hasSearch ? (
-                      <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
-                        {categoryLabel}
-                      </span>
-                    ) : null}
-                  </button>
+                );
+              })}
+            </div>
+
+            <div ref={listRef} className="picker-scroll min-h-0 overflow-y-scroll p-1.5">
+              {cpcVisibleOptions.length === 0 ? (
+                <div className="flex h-full items-center justify-center px-4 text-center text-[12px] font-medium text-white/42">
+                  No variables found
                 </div>
-              </Fragment>
-            );
-          })}
-        </div>
+              ) : (
+                cpcVisibleOptions.map((option, index) => {
+                  const supported = supportedSet.has(option.value);
+                  const selected = option.value === value;
+                  const highlighted = index === highlightedIndex;
+                  const favorited = favoriteSet.has(option.value);
+                  return (
+                    <div
+                      key={option.value}
+                      data-variable-index={index}
+                      className={cn(
+                        "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
+                        selected
+                          ? "bg-[#185FA5]/20 text-cyan-100"
+                          : highlighted
+                            ? "bg-white/[0.07] text-white"
+                            : supported
+                              ? "text-white/82 hover:bg-white/[0.055] hover:text-white"
+                              : "text-white/32"
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleFavorite(option.value);
+                        }}
+                        className={cn(
+                          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                          favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
+                        )}
+                        aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
+                      >
+                        <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!supported}
+                        onClick={() => chooseVariable(option.value)}
+                        onMouseEnter={() => setHighlightedIndex(index)}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
+                        title={supported ? option.label : `${option.label} is not available for this model`}
+                      >
+                        <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="min-h-0 overflow-hidden border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
+              {categoryRows.map((category) => {
+                const active = !hasSearch && category.id === activeCategory;
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => setActiveCategory(category.id)}
+                    className={cn(
+                      "flex h-8 w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
+                      active
+                        ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
+                        : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
+                    )}
+                  >
+                    <span className="min-w-0 truncate">{category.label}</span>
+                    <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
+                      {category.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div ref={listRef} className="picker-scroll min-h-0 overflow-y-scroll p-1.5">
+              {visibleOptions.length === 0 ? (
+                <div className="flex h-full items-center justify-center px-4 text-center text-[12px] font-medium text-white/42">
+                  No variables found
+                </div>
+              ) : (
+                visibleOptions.map((option, index) => {
+                  const supported = supportedSet.has(option.value);
+                  const selected = option.value === value;
+                  const highlighted = index === highlightedIndex;
+                  const favorited = favoriteSet.has(option.value);
+                  const categoryLabel = CATEGORY_LABELS.get(normalizeGroup(option.group) ?? "SURFACE") ?? "Other";
+                  const anomalyOption = isAnomalyOption(option);
+                  const showAnomalyHeading = !hasSearch
+                    && activeCategory !== "FAVORITES"
+                    && anomalyOption
+                    && (index === 0 || !isAnomalyOption(visibleOptions[index - 1]!));
+                  return (
+                    <Fragment key={option.value}>
+                      {showAnomalyHeading ? (
+                        <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/62">
+                          Anomalies
+                        </div>
+                      ) : null}
+                      <div
+                        data-variable-index={index}
+                        className={cn(
+                          "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
+                          selected
+                            ? "bg-[#185FA5]/20 text-cyan-100"
+                            : highlighted
+                              ? "bg-white/[0.07] text-white"
+                              : supported
+                                ? "text-white/82 hover:bg-white/[0.055] hover:text-white"
+                                : "text-white/32"
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleFavorite(option.value);
+                          }}
+                          className={cn(
+                            "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                            favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
+                          )}
+                          aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
+                        >
+                          <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!supported}
+                          onClick={() => chooseVariable(option.value)}
+                          onMouseEnter={() => setHighlightedIndex(index)}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
+                          title={supported ? option.label : `${option.label} is not available for this model`}
+                        >
+                          <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                          {hasSearch ? (
+                            <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
+                              {categoryLabel}
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
+                    </Fragment>
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
       </div>
 
     </div>
