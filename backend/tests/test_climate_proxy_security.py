@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("TWF_BASE", "https://example.com")
+os.environ.setdefault("TWF_CLIENT_ID", "client-id")
+os.environ.setdefault("TWF_CLIENT_SECRET", "client-secret")
+os.environ.setdefault("TWF_REDIRECT_URI", "https://example.com/callback")
+os.environ.setdefault("FRONTEND_RETURN", "https://example.com/app")
+os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
+os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+
 from app.main import _is_allowed_climate_image_proxy_url
 
 
