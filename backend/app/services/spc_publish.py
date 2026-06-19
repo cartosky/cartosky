@@ -80,11 +80,22 @@ SPC_HAIL_PRODUCT = SPCProductConfig(
     probability_name="Hail",
 )
 
+SPC_EXTENDED_PRODUCT = SPCProductConfig(
+    var_id="extended",
+    display_name="SPC Extended Outlook",
+    legend_title="Severe Probability",
+    kind="categorical",
+    style_key="spc_extended_probability",
+    day_layers=((21, "Day 4"), (22, "Day 5"), (23, "Day 6"), (24, "Day 7"), (25, "Day 8")),
+    probability_name="Any Severe",
+)
+
 SPC_PRODUCT_CONFIGS: dict[str, SPCProductConfig] = {
     SPC_CONVECTIVE_PRODUCT.var_id: SPC_CONVECTIVE_PRODUCT,
     SPC_TORNADO_PRODUCT.var_id: SPC_TORNADO_PRODUCT,
     SPC_WIND_PRODUCT.var_id: SPC_WIND_PRODUCT,
     SPC_HAIL_PRODUCT.var_id: SPC_HAIL_PRODUCT,
+    SPC_EXTENDED_PRODUCT.var_id: SPC_EXTENDED_PRODUCT,
 }
 
 SPC_VARIABLE_ID = SPC_CONVECTIVE_PRODUCT.var_id
@@ -233,6 +244,38 @@ def _format_probability_hover_label(*, probability_name: str, percent: int | Non
     return f"{percent}% {probability_name} Probability"
 
 
+def _non_empty_string_property(props: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = props.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _is_no_meaningful_probability_feature(feature: object) -> bool:
+    if not isinstance(feature, dict):
+        return True
+    props = feature.get("properties")
+    if not isinstance(props, dict):
+        return True
+
+    label = props.get("label")
+    if label is None and "label" not in props:
+        label = props.get("LABEL")
+
+    dn = props.get("dn")
+    if dn is None and "dn" not in props:
+        dn = props.get("DN")
+
+    dn_is_zero = False
+    try:
+        dn_is_zero = float(dn) == 0.0
+    except (TypeError, ValueError):
+        pass
+
+    return label is None or dn_is_zero
+
+
 def _legend_entries_for_frame(frame: SPCFramePayload) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
@@ -314,6 +357,8 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
     features_raw = payload.get("features")
     if not isinstance(features_raw, list):
         raise SPCPublishError("SPC payload is missing features")
+    if not features_raw or all(_is_no_meaningful_probability_feature(feature) for feature in features_raw):
+        raise SPCPublishError("no meaningful features (predictability too low)")
 
     probability_name = str(product.probability_name or product.display_name).strip() or product.display_name
     normalized_features: list[dict] = []
@@ -330,21 +375,26 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
             props = {}
 
         label = str(props.get("label") or props.get("LABEL") or "").strip()
-        label2 = str(props.get("label2") or props.get("LABEL2") or "").strip()
+        label2 = _non_empty_string_property(props, "label2", "LABEL2")
         percent = _probability_percent_from_label(label)
-        is_significant = label.upper().startswith("CIG") or "conditional intensity group" in label2.lower()
+        is_significant = label.upper().startswith("CIG") or "conditional intensity group" in (label2 or "").lower()
         if percent is None and not is_significant:
             continue
 
         sort_rank = 1000 if is_significant else int(percent or 0)
         display_label = "SIG" if is_significant else f"{percent}%"
+        hover_label = label2 or _format_probability_hover_label(
+            probability_name=probability_name,
+            percent=percent,
+            significant=is_significant,
+        )
         normalized_features.append(
             {
                 "type": "Feature",
                 "properties": {
                     "risk_code": sort_rank,
                     "risk_label": display_label,
-                    "hover_label": _format_probability_hover_label(probability_name=probability_name, percent=percent, significant=is_significant),
+                    "hover_label": hover_label,
                     "fill": str(props.get("fill") or props.get("FILL") or "#888888"),
                     "fill_opacity": 0.35 if is_significant else 0.65,
                     "stroke": str(props.get("stroke") or props.get("STROKE") or "#000000"),

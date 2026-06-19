@@ -74,6 +74,11 @@ SPC_VARS: dict[str, VarSpec] = {
         name="SPC Hail Probability",
         kind="categorical",
     ),
+    "extended": VarSpec(
+        id="extended",
+        name="SPC Extended Outlook",
+        kind="categorical",
+    ),
 }
 
 
@@ -117,6 +122,16 @@ SPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         order=3,
         group="Outlooks",
         legend_title="Hail Probability",
+        render_substrates=["vector"],
+    ),
+    "extended": VariableCapability(
+        var_key="extended",
+        name="SPC Extended Outlook",
+        kind="categorical",
+        buildable=True,
+        order=4,
+        group="Outlooks",
+        legend_title="Severe Probability",
         render_substrates=["vector"],
     ),
 }
