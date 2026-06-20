@@ -541,6 +541,90 @@ def _sort_rank(category: str, probability: int | None) -> int:
     return base + int(probability or 0)
 
 
+def _latest_published_run_id(data_root: Path) -> str | None:
+    latest_path = data_root / "published" / CPC_MODEL_ID / "LATEST.json"
+    try:
+        latest_payload = json.loads(latest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    run_id = str(latest_payload.get("run_id") or "").strip()
+    return run_id or None
+
+
+def _preservation_source_run_id(data_root: Path, run_id: str) -> str:
+    current_manifest = data_root / "manifests" / CPC_MODEL_ID / f"{run_id}.json"
+    if current_manifest.is_file():
+        return run_id
+    latest_run_id = _latest_published_run_id(data_root)
+    if not latest_run_id:
+        return run_id
+    latest_run = data_root / "published" / CPC_MODEL_ID / latest_run_id
+    latest_manifest = data_root / "manifests" / CPC_MODEL_ID / f"{latest_run_id}.json"
+    if latest_run.is_dir() and latest_manifest.is_file():
+        return latest_run_id
+    return run_id
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    try:
+        target.hardlink_to(source)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _copy_preserved_run_artifact(source: Path, target: Path, *, run_id: str, source_run_id: str) -> None:
+    if source_run_id == run_id or source.suffix.lower() != ".json":
+        _link_or_copy(source, target)
+        return
+    try:
+        payload = json.loads(source.read_text())
+    except (OSError, json.JSONDecodeError):
+        _link_or_copy(source, target)
+        return
+    if not isinstance(payload, dict):
+        _link_or_copy(source, target)
+        return
+    if payload.get("run") == source_run_id:
+        payload["run"] = run_id
+    write_json_atomic(target, payload)
+
+
+def _seed_preserved_cpc_variables(
+    *,
+    data_root: Path,
+    run_id: str,
+    source_run_id: str,
+    refreshed_var_ids: set[str],
+) -> list[str]:
+    if source_run_id == run_id:
+        return []
+    published_run = data_root / "published" / CPC_MODEL_ID / source_run_id
+    if not published_run.is_dir():
+        return []
+    stage_run = data_root / "staging" / CPC_MODEL_ID / run_id
+    preserved: list[str] = []
+    for var_dir in sorted(published_run.iterdir()):
+        if not var_dir.is_dir():
+            continue
+        var_id = var_dir.name
+        if var_id in refreshed_var_ids or var_id not in CPC_PRODUCT_CONFIGS:
+            continue
+        target_var_dir = stage_run / var_id
+        target_var_dir.mkdir(parents=True, exist_ok=True)
+        for src_file in var_dir.rglob("*"):
+            if not src_file.is_file():
+                continue
+            rel = src_file.relative_to(var_dir)
+            dst_file = target_var_dir / rel
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            _copy_preserved_run_artifact(src_file, dst_file, run_id=run_id, source_run_id=source_run_id)
+        preserved.append(var_id)
+    return preserved
+
+
 def cache_cpc_outlook(data_root: Path, outlook: CPCOutlookPayload, *, run_id: str) -> None:
     var_root = data_root / "staging" / CPC_MODEL_ID / run_id / outlook.product.var_id
     vector_root = var_root / "vectors"
@@ -623,18 +707,28 @@ def publish_cpc_outlooks(
         raise CPCOutlookError("CPC publish requires at least one product")
 
     run_id = format_run_id(issued_at.astimezone(timezone.utc), include_minutes=True)
+    preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
     staging_run_root = data_root / "staging" / CPC_MODEL_ID / run_id
     if staging_run_root.exists():
         shutil.rmtree(staging_run_root, ignore_errors=True)
     staging_run_root.mkdir(parents=True, exist_ok=True)
 
-    targets: list[tuple[str, int]] = []
+    preserved_var_ids = _seed_preserved_cpc_variables(
+        data_root=data_root,
+        run_id=run_id,
+        source_run_id=preservation_source_run_id,
+        refreshed_var_ids=set(products.keys()),
+    )
+
+    targets: list[tuple[str, int]] = [(var_id, 0) for var_id in preserved_var_ids]
     latest_valid_time: datetime | None = None
     for var_id, outlook in products.items():
         cache_cpc_outlook(data_root, outlook, run_id=run_id)
         targets.append((var_id, 0))
         if outlook.valid_end is not None:
             latest_valid_time = outlook.valid_end if latest_valid_time is None else max(latest_valid_time, outlook.valid_end)
+
+    published_variable_ids = sorted(set(products.keys()) | set(preserved_var_ids))
 
     promote_run(data_root=data_root, model=CPC_MODEL_ID, run_id=run_id)
     write_run_manifest(
@@ -657,7 +751,7 @@ def publish_cpc_outlooks(
         published_run_dir=data_root / "published" / CPC_MODEL_ID / run_id,
         manifest_path=data_root / "manifests" / CPC_MODEL_ID / f"{run_id}.json",
         frame_count=len(targets),
-        variable_ids=sorted(products.keys()),
+        variable_ids=published_variable_ids,
     )
 
 
