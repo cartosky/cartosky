@@ -327,6 +327,49 @@ export default function Compare() {
     new URLSearchParams(window.location.search).get("screenshot") === "1"
   , []);
 
+  const leftFrameReadyRef = useRef(false);
+  const rightFrameReadyRef = useRef(false);
+
+  const clearCompareReadySignal = useCallback(() => {
+    leftFrameReadyRef.current = false;
+    rightFrameReadyRef.current = false;
+    if (typeof document !== "undefined") {
+      document.documentElement.removeAttribute("data-compare-ready");
+    }
+  }, []);
+
+  const maybeSignalCompareReady = useCallback(() => {
+    if (!isScreenshotMode) {
+      return;
+    }
+    if (leftFrameReadyRef.current && rightFrameReadyRef.current) {
+      document.documentElement.setAttribute("data-compare-ready", "1");
+    }
+  }, [isScreenshotMode]);
+
+  const handleLeftFirstFrameReady = useCallback(() => {
+    leftFrameReadyRef.current = true;
+    maybeSignalCompareReady();
+  }, [maybeSignalCompareReady]);
+
+  const handleRightFirstFrameReady = useCallback(() => {
+    rightFrameReadyRef.current = true;
+    maybeSignalCompareReady();
+  }, [maybeSignalCompareReady]);
+
+  useEffect(() => {
+    clearCompareReadySignal();
+  }, [
+    lModel,
+    lVariable,
+    lRun,
+    rModel,
+    rVariable,
+    rRun,
+    forecastHour,
+    clearCompareReadySignal,
+  ]);
+
   // Track desktop vs mobile so the split width / divider only apply >= 768px.
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -760,6 +803,7 @@ export default function Compare() {
             basemapMode={basemapMode}
             showLegend={showLegends}
             onMapReady={handleLeftMapReady}
+            onFirstFrameReady={handleLeftFirstFrameReady}
             onMapHover={handleLeftHover}
             onMapHoverEnd={handleHoverEnd}
             resolvedRun={leftLoader.resolvedRun}
@@ -826,6 +870,7 @@ export default function Compare() {
             basemapMode={basemapMode}
             showLegend={showLegends}
             onMapReady={handleRightMapReady}
+            onFirstFrameReady={handleRightFirstFrameReady}
             onMapHover={handleRightHover}
             onMapHoverEnd={handleHoverEnd}
             resolvedRun={rightLoader.resolvedRun}

@@ -48,39 +48,78 @@ class ScreenshotService:
                 params["legend"] = "1"
                 params["basemap"] = basemap
                 render_url = urlunsplit(parsed._replace(query=urlencode(params)))
+                is_compare = "/compare" in parsed.path
 
                 await page.goto(render_url, wait_until="commit", timeout=SCREENSHOT_TIMEOUT_MS)
 
-                await page.wait_for_selector(
-                    'div[role="img"][aria-label="Weather map"] canvas',
-                    timeout=SCREENSHOT_TIMEOUT_MS,
-                )
+                if is_compare:
+                    # Wait for both panels to signal readiness
+                    await page.wait_for_function(
+                        "() => document.documentElement.getAttribute('data-compare-ready') === '1'",
+                        timeout=SCREENSHOT_TIMEOUT_MS,
+                    )
+                    # Additional settle time for WebGL frames to flush
+                    await page.wait_for_timeout(1500)
 
-                await page.wait_for_function(
-                    """() => {
-                        const canvas = document.querySelector(
-                            'div[role="img"][aria-label="Weather map"] canvas'
-                        );
-                        if (!canvas) return false;
-                        try {
-                            const gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
-                            if (gl) return true;
-                        } catch {}
-                        return canvas.width > 0 && canvas.height > 0;
-                    }""",
-                    timeout=SCREENSHOT_TIMEOUT_MS,
-                )
+                    data_url = await page.evaluate(
+                        """() => {
+                            const canvases = Array.from(
+                                document.querySelectorAll('div[role="img"][aria-label="Weather map"] canvas')
+                            );
+                            if (canvases.length < 2) return null;
 
-                await page.wait_for_timeout(2000)
+                            const leftCanvas = canvases[0];
+                            const rightCanvas = canvases[1];
+                            const W = leftCanvas.width + rightCanvas.width;
+                            const H = Math.max(leftCanvas.height, rightCanvas.height);
 
-                data_url = await page.evaluate(
-                    """() => {
-                        const canvas = document.querySelector(
-                            'div[role="img"][aria-label="Weather map"] canvas'
-                        );
-                        return canvas ? canvas.toDataURL('image/png') : null;
-                    }"""
-                )
+                            const out = document.createElement('canvas');
+                            out.width = W;
+                            out.height = H;
+                            const ctx = out.getContext('2d');
+                            if (!ctx) return null;
+
+                            ctx.drawImage(leftCanvas, 0, 0);
+                            ctx.drawImage(rightCanvas, leftCanvas.width, 0);
+
+                            // Draw divider line
+                            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                            ctx.fillRect(leftCanvas.width - 1, 0, 2, H);
+
+                            return out.toDataURL('image/png');
+                        }"""
+                    )
+                else:
+                    await page.wait_for_selector(
+                        'div[role="img"][aria-label="Weather map"] canvas',
+                        timeout=SCREENSHOT_TIMEOUT_MS,
+                    )
+
+                    await page.wait_for_function(
+                        """() => {
+                            const canvas = document.querySelector(
+                                'div[role="img"][aria-label="Weather map"] canvas'
+                            );
+                            if (!canvas) return false;
+                            try {
+                                const gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
+                                if (gl) return true;
+                            } catch {}
+                            return canvas.width > 0 && canvas.height > 0;
+                        }""",
+                        timeout=SCREENSHOT_TIMEOUT_MS,
+                    )
+
+                    await page.wait_for_timeout(2000)
+
+                    data_url = await page.evaluate(
+                        """() => {
+                            const canvas = document.querySelector(
+                                'div[role="img"][aria-label="Weather map"] canvas'
+                            );
+                            return canvas ? canvas.toDataURL('image/png') : null;
+                        }"""
+                    )
 
                 if not data_url or not data_url.startswith("data:image/png;base64,"):
                     raise ValueError("Canvas data URL not available")

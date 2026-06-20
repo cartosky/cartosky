@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type maplibregl from "maplibre-gl";
 
 import {
@@ -24,6 +24,7 @@ type ComparePanelProps = {
   basemapMode: BasemapMode;
   showLegend: boolean;
   onMapReady: (map: maplibregl.Map) => void;
+  onFirstFrameReady?: () => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
   // Derived from loader in parent — no loader runs inside this component
@@ -49,6 +50,7 @@ export function ComparePanel({
   basemapMode,
   showLegend,
   onMapReady,
+  onFirstFrameReady,
   onMapHover,
   onMapHoverEnd,
   resolvedRun,
@@ -123,6 +125,45 @@ export function ComparePanel({
 
   const gridActive = prefersGridSubstrate && Boolean(gridManifest) && Boolean(activeGridFrameUrl);
 
+  const onFirstFrameReadyRef = useRef(onFirstFrameReady);
+  onFirstFrameReadyRef.current = onFirstFrameReady;
+  const firstFrameReadyFiredRef = useRef(false);
+
+  useEffect(() => {
+    firstFrameReadyFiredRef.current = false;
+  }, [selectionKey, forecastHour, gridActive]);
+
+  const signalFirstFrameReady = useCallback(() => {
+    if (firstFrameReadyFiredRef.current) {
+      return;
+    }
+    firstFrameReadyFiredRef.current = true;
+    onFirstFrameReadyRef.current?.();
+  }, []);
+
+  const handleGridFrameReady = useCallback(() => {
+    signalFirstFrameReady();
+  }, [signalFirstFrameReady]);
+
+  const handleMapReady = useCallback(
+    (map: maplibregl.Map) => {
+      onMapReady(map);
+      if (!gridActive) {
+        const onIdle = () => {
+          signalFirstFrameReady();
+        };
+        if (map.loaded()) {
+          map.once("idle", onIdle);
+        } else {
+          map.once("load", () => {
+            map.once("idle", onIdle);
+          });
+        }
+      }
+    },
+    [gridActive, onMapReady, signalFirstFrameReady],
+  );
+
   return (
     <div className="relative w-full h-full overflow-hidden">
       <MapCanvas
@@ -141,7 +182,8 @@ export function ComparePanel({
         opacity={OVERLAY_DEFAULT_OPACITY}
         mode="idle-warmup"
         basemapMode={basemapMode}
-        onMapReady={onMapReady}
+        onMapReady={handleMapReady}
+        onGridFrameReady={handleGridFrameReady}
         onMapHover={onMapHover ? (lat, lon, x, y) => onMapHover(lat, lon, x, y) : undefined}
         onMapHoverEnd={onMapHoverEnd}
       />
