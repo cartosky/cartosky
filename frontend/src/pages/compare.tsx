@@ -320,10 +320,20 @@ export default function Compare() {
     });
   }, [capabilities]);
 
+  // Force the full desktop layout when the page is rendered for a server-side
+  // screenshot (?screenshot=1), regardless of the headless viewport width.
+  const isScreenshotMode = useMemo(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("screenshot") === "1"
+  , []);
+
   // Track desktop vs mobile so the split width / divider only apply >= 768px.
-  const [isDesktop, setIsDesktop] = useState(() =>
-    typeof window === "undefined" ? true : window.matchMedia("(min-width: 768px)").matches,
-  );
+  const [isDesktop, setIsDesktop] = useState(() => {
+    if (typeof window === "undefined") return true;
+    // Force desktop layout when rendering for server-side screenshot
+    if (new URLSearchParams(window.location.search).get("screenshot") === "1") return true;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -622,7 +632,7 @@ export default function Compare() {
       >
         {/* Desktop: three columns tracking the map split exactly */}
         <div
-          className="hidden xl:grid"
+          className={isScreenshotMode ? "grid" : "hidden xl:grid"}
           style={{ gridTemplateColumns: `${splitPercent}% 12px 1fr` }}
         >
           {/* Left panel controls */}
