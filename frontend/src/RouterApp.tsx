@@ -6,6 +6,7 @@ import AdminLayout from "./layouts/AdminLayout";
 import Home from "./pages/home";
 import { AdminProtectedRoute } from "./components/AdminProtectedRoute";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { CapabilitiesProvider } from "./lib/capabilities-context";
 
 const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
 
@@ -87,6 +88,7 @@ const AdminTraces = lazyRoute(() => import("./pages/admin/traces"));
 const AdminFeedback = lazyRoute(() => import("./pages/admin/feedback"));
 const AdminRoadmap = lazyRoute(() => import("./pages/admin/roadmap"));
 const Viewer = lazyRoute(() => import("./pages/viewer"));
+const Compare = lazyRoute(() => import("./pages/compare"));
 
 function getPageTitle(pathname: string) {
   const pageTitles: Array<[prefix: string, title: string]> = [
@@ -99,6 +101,7 @@ function getPageTitle(pathname: string) {
     ["/roadmap", "Roadmap"],
     ["/admin", "Admin"],
     ["/viewer", "Viewer"],
+    ["/compare", "Compare"],
     ["/forecast", "Forecast"],
     ["/climate", "Climate Indices"],
     ["/models", "Models"],
@@ -143,6 +146,7 @@ export default function RouterApp() {
 
       <Route element={<AppLayout />}>
         <Route path="/viewer" element={<Viewer />} />
+        <Route path="/compare" element={<CapabilitiesProvider><Compare /></CapabilitiesProvider>} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AdminProtectedRoute />}>
             <Route path="/roadmap" element={<AdminRoadmap />} />

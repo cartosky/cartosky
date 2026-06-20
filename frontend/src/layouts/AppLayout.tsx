@@ -13,6 +13,11 @@ export default function AppLayout() {
   const isRoadmapRoute = location.pathname === "/roadmap";
   const isScrollableAppRoute = isAdminRoute || isRoadmapRoute;
   const isViewerRoute = location.pathname === "/viewer";
+  const isCompareRoute = location.pathname === "/compare";
+  // Viewer and compare share the same non-scrollable, fixed-height shell. The
+  // layout class is keyed off isScrollableAppRoute (admin/roadmap), so both of
+  // these routes already fall into the fixed-height branch below.
+  const isViewerLike = isViewerRoute || isCompareRoute;
 
   return (
     <div
@@ -22,10 +27,10 @@ export default function AppLayout() {
           : "h-svh min-h-svh flex flex-col overflow-hidden bg-background text-foreground"
       }
     >
-      {isViewerRoute ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
+      {isViewerLike ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
 
       <div className={isScrollableAppRoute ? "flex-1 min-h-0 w-full" : "flex flex-1 min-h-0 overflow-hidden"}>
-        <Suspense fallback={isViewerRoute ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
+        <Suspense fallback={isViewerLike ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
           <Outlet />
           <BootstrapCompleteMarker />
         </Suspense>

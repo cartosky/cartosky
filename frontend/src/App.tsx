@@ -63,6 +63,7 @@ import {
   runIdToIso,
 } from "@/lib/time-axis";
 import { buildPermalinkSearch } from "@/lib/permalink";
+import { buildComparePermalinkSearch } from "@/lib/compare-permalink";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
@@ -5037,6 +5038,26 @@ export default function App() {
     region,
   });
 
+  const compareHref = useMemo(() => {
+    const publishedRuns = capabilities?.availability?.[model]?.published_runs ?? [];
+    const isLeftLatest = run === "latest" || run === publishedRuns[0];
+    const rightRun = !isLeftLatest ? "latest" : (publishedRuns[1] ?? "latest");
+    const mapView = mapViewRef.current;
+    const search = buildComparePermalinkSearch({
+      lm: model || undefined,
+      lv: variable || undefined,
+      lr: run || undefined,
+      rm: model || undefined,
+      rv: variable || undefined,
+      rr: rightRun,
+      fh: Number.isFinite(forecastHour) ? Number(forecastHour) : undefined,
+      lat: mapView.lat,
+      lon: mapView.lon,
+      z: mapView.z,
+    });
+    return `/compare${search}`;
+  }, [capabilities, forecastHour, mapViewTick, model, run, variable]);
+
   const toolbarContextValue = useMemo(() => ({
     region,
     onRegionChange: handleRegionChange,
@@ -5093,6 +5114,7 @@ export default function App() {
     displayPanelOpen,
     onDisplayPanelOpenChange: setDisplayPanelOpen,
     legend,
+    compareHref,
     onShare: handleOpenShareModal,
     onFeedback: openFeedback,
     mobileControlsOpen,
@@ -5106,7 +5128,7 @@ export default function App() {
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
-    legendPopoverOpen, displayPanelOpen, handleOpenShareModal, viewerLayoutMode, legend,
+    legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
   ]);
 

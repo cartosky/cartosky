@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, MessageSquareText, Pause, Play, Share2, Settings } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertCircle, GitCompareArrows, MessageSquareText, Pause, Play, Share2, Settings } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
@@ -298,6 +299,7 @@ export function BottomForecastControls({
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
   const onShare = toolbar?.onShare;
+  const compareHref = toolbar?.compareHref;
   const onFeedback = toolbar?.onFeedback;
   const onOpenControls = toolbar?.onMobileControlsOpenChange;
   const DRAG_UPDATE_MS = 48;
@@ -541,6 +543,15 @@ export function BottomForecastControls({
                   >
                     <Share2 className="h-3.5 w-3.5" />
                   </button>
+                ) : null}
+                {compareHref ? (
+                  <Link
+                    to={compareHref}
+                    aria-label="Compare"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                  >
+                    <GitCompareArrows className="h-3.5 w-3.5" />
+                  </Link>
                 ) : null}
                 {onFeedback ? (
                   <button

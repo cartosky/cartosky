@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import {
   Boxes,
   CalendarClock,
   Check,
+  GitCompareArrows,
   Layers,
   MapPin,
   MapPinSearch,
@@ -1049,7 +1050,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked,
-    onShare, displayPanelOpen, onDisplayPanelOpenChange,
+    compareHref, onShare, displayPanelOpen, onDisplayPanelOpenChange,
     pointLabelsEnabled, onPointLabelsEnabledChange,
     nwsWarningsEnabled, onNwsWarningsEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
@@ -1181,6 +1182,17 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             >
               <Share2 className="h-3.5 w-3.5" />
             </button>
+          ) : null}
+
+          {compareHref ? (
+            <Link
+              to={compareHref}
+              title="Compare"
+              aria-label="Compare"
+              className={DESKTOP_ICON_BUTTON_CLASSNAME}
+            >
+              <GitCompareArrows className="h-3.5 w-3.5" />
+            </Link>
           ) : null}
 
           {onFeedback ? (

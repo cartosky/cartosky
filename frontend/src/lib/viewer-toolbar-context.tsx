@@ -59,6 +59,8 @@ export type ViewerToolbarProps = {
   onDisplayPanelOpenChange: (next: boolean) => void;
   // Legend
   legend: LegendPayload | null;
+  // Compare
+  compareHref?: string;
   // Share
   onShare?: () => void;
   // Feedback
