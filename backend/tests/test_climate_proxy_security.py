@@ -32,3 +32,10 @@ def test_climate_image_proxy_allows_configured_hosts_and_paths() -> None:
     assert _is_allowed_climate_image_proxy_url(
         "https://coralreefwatch.noaa.gov/product/5km/index_5km_ssta.php"
     )
+
+
+def test_climate_image_proxy_rejects_disallowed_redirect_target() -> None:
+    assert not _is_allowed_climate_image_proxy_url("https://169.254.169.254/latest/meta-data/")
+    assert not _is_allowed_climate_image_proxy_url(
+        "https://www.cpc.ncep.noaa.gov.evil.example/data/indices/image.png"
+    )

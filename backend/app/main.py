@@ -4280,6 +4280,9 @@ async def climate_image_proxy(url: str = Query(..., min_length=1)) -> Response:
     except (httpx.TimeoutException, httpx.RequestError):
         return JSONResponse(status_code=502, content={"detail": "upstream fetch failed"}, headers=headers)
 
+    if not _is_allowed_climate_image_proxy_url(str(upstream_response.url)):
+        return JSONResponse(status_code=403, content={"detail": "forbidden"}, headers=headers)
+
     if upstream_response.status_code != 200:
         return JSONResponse(status_code=502, content={"detail": "upstream fetch failed"}, headers=headers)
 
