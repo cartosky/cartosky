@@ -485,6 +485,26 @@ function drawMapImageCover(
   ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
 }
 
+function isCompareScreenshotState(state: ScreenshotExportState): boolean {
+  return /\s+vs\s+/i.test(state.model);
+}
+
+function drawCompareDivider(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  scaleFactor: number,
+): void {
+  const splitX = width / 2;
+  const gutterW = 4 * scaleFactor;
+  ctx.save();
+  ctx.fillStyle = "#07111f";
+  ctx.fillRect(splitX - gutterW / 2, 0, gutterW, height);
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.fillRect(splitX - scaleFactor / 2, 0, scaleFactor, height);
+  ctx.restore();
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   lines: string[],
@@ -1248,6 +1268,9 @@ export async function exportViewerScreenshotPng(
     outputCtx.save();
     outputCtx.scale(pixelRatio, pixelRatio);
     drawMapImageCover(outputCtx, mapImage, width, height);
+    if (isCompareScreenshotState(state)) {
+      drawCompareDivider(outputCtx, width, height, scaleFactor);
+    }
     drawAnchors(outputCtx, projectedAnchors, width, height, state.isMobile, scaleFactor);
     drawOverlay(outputCtx, overlayLines, width, scaleFactor);
 

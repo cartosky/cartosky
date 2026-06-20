@@ -79,12 +79,16 @@ class ScreenshotService:
                             const ctx = out.getContext('2d');
                             if (!ctx) return null;
 
+                            const splitX = leftCanvas.width;
                             ctx.drawImage(leftCanvas, 0, 0);
-                            ctx.drawImage(rightCanvas, leftCanvas.width, 0);
+                            ctx.drawImage(rightCanvas, splitX, 0);
 
-                            // Draw divider line
-                            ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                            ctx.fillRect(leftCanvas.width - 1, 0, 2, H);
+                            // Divider gutter matching the live compare UI
+                            const gutterW = 4;
+                            ctx.fillStyle = '#07111f';
+                            ctx.fillRect(splitX - Math.floor(gutterW / 2), 0, gutterW, H);
+                            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+                            ctx.fillRect(splitX, 0, 1, H);
 
                             return out.toDataURL('image/png');
                         }"""

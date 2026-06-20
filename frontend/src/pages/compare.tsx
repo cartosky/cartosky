@@ -721,16 +721,6 @@ export default function Compare() {
               onRunChange={setRRun}
             />
             <div className="ml-auto flex shrink-0 items-end gap-2 pb-0.5">
-              <button
-                type="button"
-                onClick={handleShare}
-                className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
-                aria-label="Share to TWF"
-                title="Share to TWF"
-              >
-                <Share2 className="h-3 w-3 shrink-0" />
-                <span>Share</span>
-              </button>
               <Link
                 to={viewerHref}
                 className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
@@ -740,6 +730,15 @@ export default function Compare() {
                 <ArrowLeft className="h-3 w-3 shrink-0" />
                 <span>Viewer</span>
               </Link>
+              <button
+                type="button"
+                onClick={handleShare}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+                aria-label="Share to TWF"
+                title="Share to TWF"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+              </button>
               <button
                 ref={settingsButtonRef}
                 type="button"
