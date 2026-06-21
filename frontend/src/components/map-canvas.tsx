@@ -12,6 +12,7 @@ import {
   CITY_VALUE_LABELS_LAYER_ID,
   clearCityValueLabels,
   initCityLayers,
+  moveCityLabelLayersToTop,
   queryVisibleCityPoints,
   updateCityValueLabels,
   type CityLabelPoint,
@@ -1478,6 +1479,15 @@ type MapCanvasProps = {
     values: Record<string, number | null>;
     units: string;
   }) => void;
+  onCityFrameSampled?: (payload: {
+    frameHour: number;
+    selectionEpoch?: number;
+    selectionKey?: string;
+    gridSampled: boolean;
+    points: CityLabelPoint[];
+    values: Record<string, number | null>;
+    units: string;
+  }) => void;
 };
 
 export function MapCanvas({
@@ -1543,6 +1553,7 @@ export function MapCanvas({
   onVectorHazardClick,
   anchorBatchPoints = [],
   onAnchorFrameSampled,
+  onCityFrameSampled,
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapSlotRef = useRef<HTMLDivElement | null>(null);
@@ -1626,6 +1637,9 @@ export function MapCanvas({
   const autoplayGridStateSignatureRef = useRef("");
   const directGridStateSignatureRef = useRef("");
   const lastAppliedViewResetSignalRef = useRef<number | null>(null);
+  const onCityFrameSampledRef = useRef(onCityFrameSampled);
+  onCityFrameSampledRef.current = onCityFrameSampled;
+  const cityLabelIdleScheduledRef = useRef(false);
 
   const view = useMemo(() => {
     return regionViews?.[region] ?? {
@@ -1968,19 +1982,51 @@ export function MapCanvas({
     // watches pointLabelsEnabled clears the source).
     if (sampler && pointLabelsEnabled && mapRef.current) {
       const map = mapRef.current;
-      // queryRenderedFeatures returns [] until the GeoJSON source has loaded
-      // into the tile system; guard so we don't sample an empty candidate set.
-      // initCityLayers triggers a repaint on source load so this fires again.
-      if (map.getSource(CITIES_STATIC_SOURCE_ID) && map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
-        const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
-        if (cityPoints.length > 0) {
-          const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
-          const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
-          if (citySampled) {
-            updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
-          }
+      const sampleCityLabels = () => {
+        if (!map.getSource(CITIES_STATIC_SOURCE_ID) || !map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+          return;
         }
+        const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
+        if (cityPoints.length === 0) {
+          return;
+        }
+        const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
+        const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
+        if (citySampled) {
+          updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
+          onCityFrameSampledRef.current?.({
+            frameHour: payload.frameHour,
+            selectionEpoch: payload.selectionEpoch,
+            selectionKey: payload.selectionKey,
+            gridSampled: true,
+            points: cityPoints,
+            values: citySampled.values,
+            units: citySampled.units,
+          });
+          return;
+        }
+        // Show name + "…" until frame bytes or /sample/batch can fill values.
+        updateCityValueLabels(map, cityPoints, {}, "");
+        onCityFrameSampledRef.current?.({
+          frameHour: payload.frameHour,
+          selectionEpoch: payload.selectionEpoch,
+          selectionKey: payload.selectionKey,
+          gridSampled: false,
+          points: cityPoints,
+          values: {},
+          units: "",
+        });
+      };
+      // onFrameVisible fires from the custom WebGL layer mid-render; symbol
+      // placement for city-label-candidates may not be ready until idle.
+      if (cityLabelIdleScheduledRef.current) {
+        return;
       }
+      cityLabelIdleScheduledRef.current = true;
+      map.once("idle", () => {
+        cityLabelIdleScheduledRef.current = false;
+        sampleCityLabels();
+      });
     }
   }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible, pointLabelsEnabled]);
 
@@ -2239,15 +2285,7 @@ export function MapCanvas({
     }
     map.moveLayer("twf-labels");
     // City label layers sit above weather raster/WebGL and basemap labels.
-    // (Hover/tooltip surfaces are DOM overlays, not MapLibre layers, so there
-    //  is nothing above these to sit below.) Added async by initCityLayers, so
-    //  they may not exist on the first pass — getLayer guards handle that.
-    if (map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
-      map.moveLayer(CITY_LABEL_CANDIDATES_LAYER_ID);
-    }
-    if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
-      map.moveLayer(CITY_VALUE_LABELS_LAYER_ID);
-    }
+    moveCityLabelLayersToTop(map);
   }, []);
 
   useEffect(() => {
@@ -2334,7 +2372,12 @@ export function MapCanvas({
       // Fire-and-forget: fetches city candidates and adds the city label
       // sources/layers. Handles its own errors and never throws. A follow-up
       // enforceLayerOrder() runs once isLoaded flips, re-ordering these layers.
-      void initCityLayers(map);
+      void initCityLayers(map).then((initialized) => {
+        if (initialized) {
+          enforceLayerOrder(map);
+          map.triggerRepaint();
+        }
+      });
       onMapReadyRef.current?.(map);
     });
 
@@ -2430,7 +2473,12 @@ export function MapCanvas({
       enforceLayerOrder(map);
       // setStyle() wiped all sources/layers, including the city label layers.
       // Re-init them; the double-init guard and setGlyphs are both idempotent.
-      void initCityLayers(map);
+      void initCityLayers(map).then((initialized) => {
+        if (initialized) {
+          enforceLayerOrder(map);
+          map.triggerRepaint();
+        }
+      });
     };
 
     map.once("styledata", onStyleData);

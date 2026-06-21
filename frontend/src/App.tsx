@@ -45,6 +45,7 @@ import {
   shouldEnableAnchorValueDisplay,
   type AnchorFeatureCollection,
 } from "@/lib/anchor-labels";
+import { updateCityValueLabels, type CityLabelPoint } from "@/lib/city-labels";
 import {
   API_ORIGIN,
   isDeferredNonCriticalBootstrapEnabled,
@@ -4290,6 +4291,69 @@ export default function App() {
     }
     startAnchorBatchRequest(payload.frameHour, context);
   }, [anchorBaseGeoJson, anchorValueDisplayEnabled, resetAnchorBatchQueue, selectionKey, startAnchorBatchRequest, variable]);
+  const handleCityFrameSampled = useCallback((payload: {
+    frameHour: number;
+    selectionEpoch?: number;
+    selectionKey?: string;
+    gridSampled: boolean;
+    points: CityLabelPoint[];
+    values: Record<string, number | null>;
+    units: string;
+  }) => {
+    if (payload.gridSampled || !anchorValueDisplayEnabled || !pointLabelsEnabled) {
+      return;
+    }
+    if (!variable || !model || !Number.isFinite(payload.frameHour) || payload.points.length === 0) {
+      return;
+    }
+    if (
+      (payload.selectionEpoch !== undefined && payload.selectionEpoch !== selectionEpochRef.current)
+      || (payload.selectionKey !== undefined && payload.selectionKey !== selectionKey && !payload.selectionKey.startsWith(`${selectionKey}:`))
+    ) {
+      return;
+    }
+
+    const map = mapInstanceRef.current;
+    if (!map) {
+      return;
+    }
+
+    const batchPoints = payload.points.map((point) => ({
+      id: point.id,
+      lat: point.lat,
+      lon: point.lng,
+    }));
+    void fetchSampleBatch({
+      model,
+      run: resolvedRunForRequests,
+      variable,
+      ensembleView,
+      forecastHour: payload.frameHour,
+      points: batchPoints,
+    })
+      .then((result) => {
+        if (!mapInstanceRef.current || !result) {
+          return;
+        }
+        updateCityValueLabels(
+          mapInstanceRef.current,
+          payload.points,
+          result.values,
+          result.units,
+        );
+      })
+      .catch((error) => {
+        console.warn("[city-labels] batch sample failed", error);
+      });
+  }, [
+    anchorValueDisplayEnabled,
+    ensembleView,
+    model,
+    pointLabelsEnabled,
+    resolvedRunForRequests,
+    selectionKey,
+    variable,
+  ]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
     if (!normalized) {
@@ -5248,6 +5312,9 @@ export default function App() {
           }
           onAnchorFrameSampled={
             anchorValueDisplayEnabled && pointLabelsEnabled ? handleAnchorFrameSampled : undefined
+          }
+          onCityFrameSampled={
+            anchorValueDisplayEnabled && pointLabelsEnabled ? handleCityFrameSampled : undefined
           }
           pointLabelsEnabled={pointLabelsEnabled}
           region={region}

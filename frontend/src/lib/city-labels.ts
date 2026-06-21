@@ -32,6 +32,19 @@ const CITY_CANDIDATE_ZOOM_FILTER = [
   ["all", [">=", ["zoom"], 9], ["==", ["get", "rank"], 5]],
 ];
 
+/** Keep city label symbol layers above weather overlays and basemap labels. */
+export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
+  if (!map.getLayer("twf-labels")) {
+    return;
+  }
+  if (map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
+    map.moveLayer(CITY_LABEL_CANDIDATES_LAYER_ID);
+  }
+  if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
+    map.moveLayer(CITY_VALUE_LABELS_LAYER_ID);
+  }
+}
+
 /**
  * Adds the city-label MapLibre sources and layers used by the zoom-adaptive
  * city label system. Fire-and-forget: handles its own errors and never throws.
@@ -42,11 +55,11 @@ const CITY_CANDIDATE_ZOOM_FILTER = [
  * - `city-value-labels`: the visible layer Phase 3 will populate with sampled
  *   values. Collision is already resolved upstream, so overlap is allowed here.
  */
-export async function initCityLayers(map: maplibregl.Map): Promise<void> {
+export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
   try {
     // Guard against double-init (e.g. style reloads re-running the load path).
     if (map.getSource(CITIES_STATIC_SOURCE_ID)) {
-      return;
+      return true;
     }
 
     // The CartoSky basemap uses raster PNG tiles, so the style has no `glyphs`
@@ -72,7 +85,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
 
     // The style may have been torn down while the fetch was in flight.
     if (map.getSource(CITIES_STATIC_SOURCE_ID)) {
-      return;
+      return true;
     }
 
     map.addSource(CITIES_STATIC_SOURCE_ID, {
@@ -84,13 +97,17 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       id: CITY_LABEL_CANDIDATES_LAYER_ID,
       type: "symbol",
       source: CITIES_STATIC_SOURCE_ID,
+      minzoom: 4,
       filter: CITY_CANDIDATE_ZOOM_FILTER as any,
       layout: {
         "text-field": ["get", "name"] as any,
         "text-font": ["Noto Sans Regular"],
         "text-allow-overlap": false,
-        "symbol-sort-key": ["-", ["get", "pop_max"]] as any,
-        "text-size": 0,
+        // Higher pop_max → higher sort key → wins collision placement.
+        "symbol-sort-key": ["get", "pop_max"] as any,
+        // text-size must be > 0 or MapLibre skips layout and queryRenderedFeatures
+        // returns nothing. Opacity hides the text; collision boxes stay real.
+        "text-size": 12,
       },
       paint: {
         "text-opacity": 0,
@@ -138,12 +155,17 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
     const onCitiesSourceLoaded = (e: maplibregl.MapSourceDataEvent) => {
       if (e.sourceId === CITIES_STATIC_SOURCE_ID && e.isSourceLoaded) {
         map.off("sourcedata", onCitiesSourceLoaded);
+        moveCityLabelLayersToTop(map);
         map.triggerRepaint();
       }
     };
     map.on("sourcedata", onCitiesSourceLoaded);
+    moveCityLabelLayersToTop(map);
+    map.triggerRepaint();
+    return true;
   } catch (error) {
     console.warn("[city-labels] Failed to initialize city label layers", error);
+    return false;
   }
 }
 
@@ -157,22 +179,78 @@ export type CityLabelPoint = {
 // Accepts a MapLibre map instance, queries the invisible candidate layer,
 // and returns the collision-resolved visible city set for this viewport.
 // Returns empty array if the source isn't loaded yet.
+function cityRankEligibleAtZoom(rank: number, zoom: number): boolean {
+  if (rank === 1) return zoom >= 4;
+  if (rank === 2) return zoom >= 5;
+  if (rank === 3) return zoom >= 6;
+  if (rank === 4) return zoom >= 7;
+  if (rank === 5) return zoom >= 9;
+  return false;
+}
+
+function cityPointsFromFeatures(features: maplibregl.MapGeoJSONFeature[]): CityLabelPoint[] {
+  const seen = new Set<string>();
+  const points: CityLabelPoint[] = [];
+  for (const feature of features) {
+    const name = String(feature.properties?.name ?? "").trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    if (feature.geometry?.type !== "Point") {
+      continue;
+    }
+    const [lng, lat] = feature.geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+      continue;
+    }
+    seen.add(name);
+    points.push({
+      id: name, // use name as stable ID — f.id is always undefined for Natural Earth features
+      name,
+      lng,
+      lat,
+    });
+  }
+  return points;
+}
+
 export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
-  if (!map.getSource(CITIES_STATIC_SOURCE_ID)) return [];
-  const features = map.queryRenderedFeatures(undefined, {
+  if (!map.getSource(CITIES_STATIC_SOURCE_ID) || !map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
+    return [];
+  }
+
+  const rendered = map.queryRenderedFeatures(undefined, {
     layers: [CITY_LABEL_CANDIDATES_LAYER_ID],
   });
-  return features
-    .map((f) => {
-      const name = String(f.properties?.name ?? "");
-      return {
-        id: name, // use name as stable ID — f.id is always undefined for Natural Earth features
-        name,
-        lng: (f.geometry as GeoJSON.Point).coordinates[0],
-        lat: (f.geometry as GeoJSON.Point).coordinates[1],
-      };
-    })
-    .filter((p) => p.name && Number.isFinite(p.lng) && Number.isFinite(p.lat));
+  const renderedPoints = cityPointsFromFeatures(rendered);
+  if (renderedPoints.length > 0) {
+    return renderedPoints;
+  }
+
+  // Before the first symbol-placement pass completes, queryRenderedFeatures can
+  // still be empty even though the source is loaded. Fall back to viewport
+  // features filtered by the same zoom/rank gates as the candidate layer.
+  if (!map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+    return [];
+  }
+  const zoom = map.getZoom();
+  const bounds = map.getBounds();
+  const sourceFeatures = map.querySourceFeatures(CITIES_STATIC_SOURCE_ID);
+  const viewportFeatures = sourceFeatures.filter((feature) => {
+    if (feature.geometry?.type !== "Point") {
+      return false;
+    }
+    const rank = Number(feature.properties?.rank);
+    if (!Number.isFinite(rank) || !cityRankEligibleAtZoom(rank, zoom)) {
+      return false;
+    }
+    const [lng, lat] = feature.geometry.coordinates;
+    return bounds.contains([lng, lat]);
+  });
+  viewportFeatures.sort(
+    (a, b) => Number(b.properties?.pop_max ?? 0) - Number(a.properties?.pop_max ?? 0),
+  );
+  return cityPointsFromFeatures(viewportFeatures).slice(0, 80);
 }
 
 // Pushes a sampled FeatureCollection to city-value-labels.
