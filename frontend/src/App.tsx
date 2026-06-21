@@ -939,11 +939,21 @@ export default function App() {
   );
 
   const currentFrame = frameByHour.get(forecastHour) ?? frameRows[0] ?? null;
+  const prefersSpcExtendedMetaValidTime = model === "spc" && variable === "extended";
+  const resolveFrameDisplayValidTime = (row: FrameRow | null | undefined): string | null => {
+    if (prefersSpcExtendedMetaValidTime) {
+      const metaValidTime = (extractLegendMeta(row) as { valid_time?: string | null } | null)?.valid_time ?? null;
+      if (typeof metaValidTime === "string" && metaValidTime.trim()) {
+        return metaValidTime.trim();
+      }
+    }
+    return frameValidTime(row);
+  };
   const frameValidTimesByHour = useMemo(() => {
     const map: Record<number, string> = {};
     for (const row of frameRows) {
       const fh = Number(row?.fh);
-      const validTime = frameValidTime(row);
+      const validTime = resolveFrameDisplayValidTime(row);
       if (!Number.isFinite(fh) || !validTime) {
         continue;
       }
@@ -961,10 +971,13 @@ export default function App() {
       }
     }
     return map;
-  }, [frameRows, runManifest, variable]);
+  }, [frameRows, resolveFrameDisplayValidTime, runManifest, variable]);
   const currentFrameValidTimeISO = useMemo(() => {
+    if (prefersSpcExtendedMetaValidTime) {
+      return resolveFrameDisplayValidTime(currentFrame) ?? frameValidTimesByHour[forecastHour] ?? null;
+    }
     return frameValidTimesByHour[forecastHour] ?? frameValidTime(currentFrame) ?? null;
-  }, [frameValidTimesByHour, forecastHour, currentFrame]);
+  }, [currentFrame, frameValidTimesByHour, forecastHour, prefersSpcExtendedMetaValidTime, resolveFrameDisplayValidTime]);
   const newestFrameValidTimeISO = useMemo(() => {
     let newest: string | null = null;
     let newestTimestamp = Number.NEGATIVE_INFINITY;
@@ -2467,9 +2480,7 @@ export default function App() {
   const cpcValidEnd = model === "cpc"
     ? ((currentFrameMeta as { valid_end?: string | null } | null)?.valid_end ?? null)
     : null;
-  const frameDayLabel = typeof (currentFrame?.meta as { day_label?: string | null } | null | undefined)?.day_label === "string"
-    ? ((currentFrame?.meta as { day_label?: string | null } | null | undefined)?.day_label ?? null)
-    : null;
+  const frameDayLabel = (currentFrameMeta as { day_label?: string | null } | null)?.day_label ?? null;
   const displayedForecastHour = useMemo(() => {
     if (isGridLowMidActive && Number.isFinite(visibleOverlayHour)) {
       return Number(visibleOverlayHour);
@@ -2477,6 +2488,12 @@ export default function App() {
     return Number.isFinite(forecastHour) ? Number(forecastHour) : 0;
   }, [forecastHour, isGridLowMidActive, visibleOverlayHour]);
   const displayedValidTimeISO = useMemo(() => {
+    if (prefersSpcExtendedMetaValidTime) {
+      const frameValidTimeFromMeta = resolveFrameDisplayValidTime(visibleOverlayFrame);
+      if (frameValidTimeFromMeta) {
+        return frameValidTimeFromMeta;
+      }
+    }
     if (Number.isFinite(displayedForecastHour)) {
       const mappedValidTime = frameValidTimesByHour[displayedForecastHour];
       if (mappedValidTime) {
@@ -2484,7 +2501,7 @@ export default function App() {
       }
     }
     return frameValidTime(visibleOverlayFrame) ?? currentFrameValidTimeISO;
-  }, [currentFrameValidTimeISO, displayedForecastHour, frameValidTimesByHour, visibleOverlayFrame]);
+  }, [currentFrameValidTimeISO, displayedForecastHour, frameValidTimesByHour, prefersSpcExtendedMetaValidTime, resolveFrameDisplayValidTime, visibleOverlayFrame]);
   // Keep the legacy GeoJSON contour renderer as the production path for now.
   // The companion-grid shader path regressed line quality and frame availability
   // for GFS-style products, even though the shaded grid playback itself is good.
