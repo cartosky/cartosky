@@ -23,13 +23,19 @@ The current product surface is centered on a technical, map-dominant workflow: o
 
 - Map-first viewer built with React 19, Vite, and MapLibre GL.
 - FastAPI API serving manifests, frames, grid binaries, point sampling, contours, vectors, and bootstrap metadata under `api/v4`.
-- Supported guidance catalog includes HRRR, NAM, GFS, NBM, ECMWF, AIFS, AIGFS, GEFS, EPS, SPC outlooks, NWS hazards, and MRMS.
+- Supported guidance catalog includes HRRR, NAM, GFS, NBM, ECMWF, AIFS, AIGFS, GEFS, EPS, SPC outlooks Day 1-8, CPC outlooks, NWS hazards, and MRMS.
+- Satellite imagery via GOES bands, including Band 13 Clean IR, Band 9 Mid-Level WV, and Band 8 Upper-Level WV.
 - Location-first Forecast page backed by geocoding, current conditions, hourly/daily forecasts, alerts, NWS forecast discussions, attribution, and freshness metadata.
+- Location favorites on the Forecast page for quick return navigation.
 - Forecast and anchor workflows for location-based weather summaries, NWS anchor-city modals, and handoff into the map viewer.
 - Derived and advanced variables such as 10m/upper-level wind speed, 500 mb height/vorticity overlays, total precipitation, precipitation-type intensity, 10:1 and Kuchera snowfall, ice accumulation, and ERA5-baseline anomaly products.
 - Ensemble-aware products for GEFS and EPS, including mean fields and temperature/height/precipitation anomaly workflows.
+- CPC outlook coverage for 6-10 Day, 8-14 Day, Weeks 3-4, One Month, and Three Month products.
+- NWS warning polygons overlay.
+- Climate indices page covering AO, NAO, PNA, MJO, and ENSO.
+- Side-by-side model comparison tool at `/compare`.
 - Admin surfaces for performance telemetry, usage summaries, operational health, analytics, and observability rollouts.
-- Share and auth flows integrated with The Weather Forums.
+- TWF sharing integration with server-side screenshot generation, post drafting, and direct thread posting.
 - Production-oriented deployment assets for systemd, nginx, Prometheus, Tempo, and Grafana.
 - Extensive backend test coverage plus Playwright end-to-end coverage for the frontend.
 
@@ -53,10 +59,12 @@ The current product surface is centered on a technical, map-dominant workflow: o
 - `backend/app/services/`: publishing, telemetry, grid, boundary tile, tracing, and weather-domain services.
 - `backend/tests/`: backend regression and API contract coverage.
 - `frontend/src/App.tsx`: main weather viewer.
+- `frontend/src/pages/compare.tsx`: side-by-side model comparison viewer.
 - `frontend/src/pages/home.tsx`: marketing and product overview surface.
 - `frontend/src/pages/forecast.tsx`: location-first forecast workflow.
 - `frontend/src/pages/models.tsx` and `frontend/src/pages/variables.tsx`: public catalog surfaces for supported guidance and variables.
 - `frontend/src/pages/admin/`: admin shell for performance, usage, analytics, status, and observability.
+- `frontend/src/pages/admin/roadmap.tsx`: internal admin roadmap tracker.
 
 ## Getting Started
 
@@ -68,6 +76,11 @@ The current product surface is centered on a technical, map-dominant workflow: o
 
 > [!NOTE]
 > `backend/requirements.txt` includes `rasterio`, `rio-tiler`, and `pyproj`. On a fresh machine you may need GDAL/PROJ-related system libraries before `pip install` succeeds.
+
+### Authentication
+
+> [!NOTE]
+> CartoSky uses Clerk for authentication. To run locally you need `VITE_CLERK_PUBLISHABLE_KEY` for the frontend and `CLERK_SECRET_KEY` for the backend. These values are not included in the example env files and must be obtained from the Clerk dashboard.
 
 ### 1. Start the backend
 
