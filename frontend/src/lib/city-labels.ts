@@ -140,12 +140,17 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
   const features = map.queryRenderedFeatures(undefined, {
     layers: [CITY_LABEL_CANDIDATES_LAYER_ID],
   });
-  return features.map((f) => ({
-    id: String(f.id ?? f.properties?.name ?? ""),
-    name: String(f.properties?.name ?? ""),
-    lng: (f.geometry as GeoJSON.Point).coordinates[0],
-    lat: (f.geometry as GeoJSON.Point).coordinates[1],
-  })).filter((p) => p.name && Number.isFinite(p.lng) && Number.isFinite(p.lat));
+  return features
+    .map((f) => {
+      const name = String(f.properties?.name ?? "");
+      return {
+        id: name, // use name as stable ID — f.id is always undefined for Natural Earth features
+        name,
+        lng: (f.geometry as GeoJSON.Point).coordinates[0],
+        lat: (f.geometry as GeoJSON.Point).coordinates[1],
+      };
+    })
+    .filter((p) => p.name && Number.isFinite(p.lng) && Number.isFinite(p.lat));
 }
 
 // Pushes a sampled FeatureCollection to city-value-labels.
