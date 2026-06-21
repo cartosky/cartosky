@@ -54,7 +54,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       // settles asynchronously; calling addSource/addLayer before it lands races
       // the update and throws. Wait for the map to go idle before proceeding.
       await new Promise<void>((resolve) => {
-        map.setGlyphs("https://fonts.maplibre.org/fonts/{fontstack}/{range}.pbf");
+        map.setGlyphs("https://glfonts.lukasmartinelli.ch/fonts/{fontstack}/{range}.pbf");
         map.once("idle", resolve);
       });
     }

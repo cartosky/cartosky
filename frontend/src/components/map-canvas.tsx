@@ -1971,7 +1971,7 @@ export function MapCanvas({
       // queryRenderedFeatures returns [] until the GeoJSON source has loaded
       // into the tile system; guard so we don't sample an empty candidate set.
       // initCityLayers triggers a repaint on source load so this fires again.
-      if (map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+      if (map.getSource(CITIES_STATIC_SOURCE_ID) && map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
         const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
         if (cityPoints.length > 0) {
           const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
