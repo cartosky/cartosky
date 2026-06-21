@@ -2439,7 +2439,7 @@ export function MapCanvas({
       center: view.center,
       zoom: view.zoom,
       minZoom: view.minZoom ?? 3,
-      maxZoom: view.maxZoom ?? 11,
+      maxZoom: view.maxZoom ?? 14,
       minPitch: 0,
       maxPitch: 0,
       pitchWithRotate: false,
@@ -3452,7 +3452,7 @@ export function MapCanvas({
       return;
     }
     map.setMinZoom(view.minZoom ?? 3);
-    map.setMaxZoom(view.maxZoom ?? 11);
+    map.setMaxZoom(view.maxZoom ?? 14);
   }, [isLoaded, view.maxZoom, view.minZoom]);
 
   useEffect(() => {
