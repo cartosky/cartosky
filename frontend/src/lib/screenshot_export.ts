@@ -46,6 +46,27 @@ export type ScreenshotExportOptions = {
   overlayLines?: string[];
 };
 
+export type ViewerScreenshotReadiness = {
+  mapIdle: boolean;
+  gridFrameReady: boolean;
+  rgbFrameReady: boolean;
+  selectionSupportsGrid: boolean;
+  selectionSupportsRasterRgb: boolean;
+};
+
+export function isViewerScreenshotReady(readiness: ViewerScreenshotReadiness): boolean {
+  if (!readiness.mapIdle) {
+    return false;
+  }
+  if (readiness.selectionSupportsGrid) {
+    return readiness.gridFrameReady;
+  }
+  if (readiness.selectionSupportsRasterRgb) {
+    return readiness.rgbFrameReady;
+  }
+  return true;
+}
+
 const NORMALIZED_OUTPUT_WIDTH = 1280;
 const PORTRAIT_OUTPUT_WIDTH = 720;
 const DEFAULT_WIDTH = NORMALIZED_OUTPUT_WIDTH;
