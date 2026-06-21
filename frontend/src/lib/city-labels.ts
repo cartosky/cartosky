@@ -9,6 +9,10 @@ export const CITY_LABEL_CANDIDATES_LAYER_ID = "city-label-candidates";
 export const CITY_VALUE_LABELS_SOURCE_ID = "city-value-labels";
 export const CITY_VALUE_LABELS_LAYER_ID = "city-value-labels";
 
+/** CORS-enabled glyph endpoint (Stadia / OpenMapTiles font stack). */
+const CITY_LABEL_GLYPHS_URL =
+  "https://tiles.stadiamaps.com/fonts/{fontstack}/{range}.pbf";
+
 /**
  * Loaded city candidate data. Plain module-level ref (not React state) so the
  * Phase 3 sampling wiring can read it synchronously without re-rendering.
@@ -49,12 +53,13 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
     // configured. MapLibre requires glyphs before any symbol layer can render
     // `text-field`. setGlyphs() (MapLibre GL JS v3+) sets them without a full
     // style reload, preserving existing sources/layers.
-    if (!(map.getStyle() as any).glyphs) {
+    const styleGlyphs = (map.getStyle() as { glyphs?: string }).glyphs;
+    if (styleGlyphs !== CITY_LABEL_GLYPHS_URL) {
       // setGlyphs() in MapLibre GL JS v4 schedules an internal style update that
       // settles asynchronously; calling addSource/addLayer before it lands races
       // the update and throws. Wait for the map to go idle before proceeding.
       await new Promise<void>((resolve) => {
-        map.setGlyphs("https://glfonts.lukasmartinelli.ch/fonts/{fontstack}/{range}.pbf");
+        map.setGlyphs(CITY_LABEL_GLYPHS_URL);
         map.once("idle", resolve);
       });
     }
