@@ -50,7 +50,13 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
     // `text-field`. setGlyphs() (MapLibre GL JS v3+) sets them without a full
     // style reload, preserving existing sources/layers.
     if (!(map.getStyle() as any).glyphs) {
-      map.setGlyphs("https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf");
+      // setGlyphs() in MapLibre GL JS v4 schedules an internal style update that
+      // settles asynchronously; calling addSource/addLayer before it lands races
+      // the update and throws. Wait for the map to go idle before proceeding.
+      await new Promise<void>((resolve) => {
+        map.setGlyphs("https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf");
+        map.once("idle", resolve);
+      });
     }
 
     const response = await fetch(CITIES_GEOJSON_URL);
@@ -115,6 +121,6 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       },
     } as LayerSpecification);
   } catch (error) {
-    console.warn("[city-labels] Failed to initialize city label layers", error);
+    console.error("[city-labels] Failed to initialize city label layers:", error);
   }
 }
