@@ -166,83 +166,51 @@ export type CityLabelPoint = {
   name: string;
   lng: number;
   lat: number;
+  pop_max: number;
 };
 
-// Accepts a MapLibre map instance, queries the invisible candidate layer,
-// and returns the collision-resolved visible city set for this viewport.
-// Returns empty array if the source isn't loaded yet.
-function cityRankEligibleAtZoom(rank: number, zoom: number): boolean {
-  if (rank === 1) return zoom >= 4;
-  if (rank === 2) return zoom >= 5;
-  if (rank === 3) return zoom >= 6;
-  if (rank === 4) return zoom >= 7;
-  if (rank === 5) return zoom >= 9;
-  return false;
-}
-
-function cityPointsFromFeatures(features: maplibregl.MapGeoJSONFeature[]): CityLabelPoint[] {
-  const seen = new Set<string>();
-  const points: CityLabelPoint[] = [];
-  for (const feature of features) {
-    const name = String(feature.properties?.name ?? "").trim();
-    if (!name || seen.has(name)) {
-      continue;
-    }
-    if (feature.geometry?.type !== "Point") {
-      continue;
-    }
-    const [lng, lat] = feature.geometry.coordinates;
-    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-      continue;
-    }
-    seen.add(name);
-    points.push({
-      id: name, // use name as stable ID — f.id is always undefined for Natural Earth features
-      name,
-      lng,
-      lat,
-    });
-  }
-  return points;
-}
-
+// Computes visible candidate cities directly from the loaded GeoJSON using the
+// map's current bounds + zoom. Deliberately does NOT use queryRenderedFeatures:
+// that returns [] until glyph PBFs finish downloading (only after the first font
+// cache), which broke city labels on initial load.
 export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
-  if (!map.getSource(CITIES_STATIC_SOURCE_ID) || !map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
-    return [];
-  }
+  if (!citiesStaticData) return [];
 
-  const rendered = map.queryRenderedFeatures(undefined, {
-    layers: [CITY_LABEL_CANDIDATES_LAYER_ID],
-  });
-  const renderedPoints = cityPointsFromFeatures(rendered);
-  if (renderedPoints.length > 0) {
-    return renderedPoints;
-  }
-
-  // Before the first symbol-placement pass completes, queryRenderedFeatures can
-  // still be empty even though the source is loaded. Fall back to viewport
-  // features filtered by the same zoom/rank gates as the candidate layer.
-  if (!map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
-    return [];
-  }
-  const zoom = map.getZoom();
   const bounds = map.getBounds();
-  const sourceFeatures = map.querySourceFeatures(CITIES_STATIC_SOURCE_ID);
-  const viewportFeatures = sourceFeatures.filter((feature) => {
-    if (feature.geometry?.type !== "Point") {
-      return false;
-    }
-    const rank = Number(feature.properties?.rank);
-    if (!Number.isFinite(rank) || !cityRankEligibleAtZoom(rank, zoom)) {
-      return false;
-    }
-    const [lng, lat] = feature.geometry.coordinates;
-    return bounds.contains([lng, lat]);
-  });
-  viewportFeatures.sort(
-    (a, b) => Number(b.properties?.pop_max ?? 0) - Number(a.properties?.pop_max ?? 0),
-  );
-  return cityPointsFromFeatures(viewportFeatures).slice(0, 80);
+  const zoom = map.getZoom();
+
+  // Match the same zoom/rank thresholds as CITY_CANDIDATE_ZOOM_FILTER.
+  const maxRank =
+    zoom >= 9 ? 5 :
+    zoom >= 7 ? 4 :
+    zoom >= 6 ? 3 :
+    zoom >= 5 ? 2 :
+    zoom >= 4 ? 1 : 0;
+
+  if (maxRank === 0) return [];
+
+  const results: CityLabelPoint[] = [];
+  for (const feature of citiesStaticData.features) {
+    const rank = feature.properties?.rank as number;
+    if (!rank || rank > maxRank) continue;
+
+    const geometry = feature.geometry;
+    if (geometry?.type !== "Point") continue;
+    const [lng, lat] = geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+    if (!bounds.contains([lng, lat])) continue;
+
+    const name = String(feature.properties?.name ?? "").trim();
+    if (!name) continue;
+
+    results.push({ id: name, name, lng, lat, pop_max: feature.properties?.pop_max ?? 0 });
+  }
+
+  // Sort by pop_max descending so high-population cities are sampled first.
+  results.sort((a, b) => b.pop_max - a.pop_max);
+
+  // Cap at 50 cities per viewport to avoid overloading the sampler.
+  return results.slice(0, 50);
 }
 
 // Pushes a sampled FeatureCollection to city-value-labels.

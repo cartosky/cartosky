@@ -1637,9 +1637,6 @@ export function MapCanvas({
   const autoplayGridStateSignatureRef = useRef("");
   const directGridStateSignatureRef = useRef("");
   const lastAppliedViewResetSignalRef = useRef<number | null>(null);
-  const onCityFrameSampledRef = useRef(onCityFrameSampled);
-  onCityFrameSampledRef.current = onCityFrameSampled;
-  const cityLabelIdleScheduledRef = useRef(false);
 
   const view = useMemo(() => {
     return regionViews?.[region] ?? {
@@ -1979,57 +1976,19 @@ export function MapCanvas({
 
     // City label sampling — the MapLibre symbol layer is the canonical label
     // renderer. Skipped when point labels are toggled off (the effect that
-    // watches pointLabelsEnabled clears the source).
+    // watches pointLabelsEnabled clears the source). queryVisibleCityPoints is a
+    // synchronous bounds query over the loaded GeoJSON (no glyph/render
+    // dependency), so this runs inline without idle deferral.
     if (sampler && pointLabelsEnabled && mapRef.current) {
       const map = mapRef.current;
-      const sampleCityLabels = () => {
-        // Existence check only — queryVisibleCityPoints returns [] until the
-        // source is queryable, so isSourceLoaded would just skip valid attempts
-        // during the source-added→source-loaded window.
-        if (!map.getSource(CITIES_STATIC_SOURCE_ID)) {
-          return;
-        }
-        const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
-        if (cityPoints.length === 0) {
-          return;
-        }
+      const cityPoints = queryVisibleCityPoints(map);
+      if (cityPoints.length > 0) {
         const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
         const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
         if (citySampled) {
           updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
-          onCityFrameSampledRef.current?.({
-            frameHour: payload.frameHour,
-            selectionEpoch: payload.selectionEpoch,
-            selectionKey: payload.selectionKey,
-            gridSampled: true,
-            points: cityPoints,
-            values: citySampled.values,
-            units: citySampled.units,
-          });
-          return;
         }
-        // Show name + "…" until frame bytes or /sample/batch can fill values.
-        updateCityValueLabels(map, cityPoints, {}, "");
-        onCityFrameSampledRef.current?.({
-          frameHour: payload.frameHour,
-          selectionEpoch: payload.selectionEpoch,
-          selectionKey: payload.selectionKey,
-          gridSampled: false,
-          points: cityPoints,
-          values: {},
-          units: "",
-        });
-      };
-      // onFrameVisible fires from the custom WebGL layer mid-render; symbol
-      // placement for city-label-candidates may not be ready until idle.
-      if (cityLabelIdleScheduledRef.current) {
-        return;
       }
-      cityLabelIdleScheduledRef.current = true;
-      map.once("idle", () => {
-        cityLabelIdleScheduledRef.current = false;
-        sampleCityLabels();
-      });
     }
   }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible, pointLabelsEnabled]);
 
