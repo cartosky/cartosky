@@ -102,9 +102,14 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "text-field": ["get", "name"] as any,
         "text-font": ["Noto Sans Regular"],
-        "text-allow-overlap": false,
-        // Higher pop_max → higher sort key → wins collision placement.
-        "symbol-sort-key": ["get", "pop_max"] as any,
+        // Pure data-delivery layer: overlap + ignore-placement disable collision
+        // so EVERY zoom/rank-filtered city renders (invisibly) and is therefore
+        // queryable. Visual collision is handled by the city-value-labels layer.
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+        // MapLibre sorts ascending (lower key = higher priority), so negate
+        // pop_max to keep high-population cities first.
+        "symbol-sort-key": ["-", ["get", "pop_max"]] as any,
         // text-size must be > 0 or MapLibre skips layout and queryRenderedFeatures
         // returns nothing. Opacity hides the text; collision boxes stay real.
         "text-size": 12,
