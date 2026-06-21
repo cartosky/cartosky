@@ -1568,6 +1568,11 @@ export function MapCanvas({
   onRasterRgbFrameReadyRef.current = onRasterRgbFrameReady;
   const compositeGridControllersRef = useRef<Map<string, GridWebglLayerController>>(new Map());
   const gridRepaintRafRef = useRef<number | null>(null);
+  const cityLabelRefreshRafRef = useRef<number | null>(null);
+  const latestCitySamplingRef = useRef<{
+    payload: GridFrameVisiblePayload;
+    sampler: GridWebglLayerController;
+  } | null>(null);
   const requestGridRepaint = useCallback(() => {
     const map = mapRef.current;
     if (!map) {
@@ -1587,6 +1592,10 @@ export function MapCanvas({
         window.cancelAnimationFrame(gridRepaintRafRef.current);
         gridRepaintRafRef.current = null;
       }
+      if (cityLabelRefreshRafRef.current !== null) {
+        window.cancelAnimationFrame(cityLabelRefreshRafRef.current);
+        cityLabelRefreshRafRef.current = null;
+      }
     };
   }, []);
 
@@ -1601,6 +1610,10 @@ export function MapCanvas({
   vectorLineHaloEnabledRef.current = vectorLineHaloEnabled;
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const isLoadedRef = useRef(isLoaded);
+  isLoadedRef.current = isLoaded;
+  const pointLabelsEnabledRef = useRef(pointLabelsEnabled);
+  pointLabelsEnabledRef.current = pointLabelsEnabled;
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
@@ -1957,11 +1970,46 @@ export function MapCanvas({
     gridActive || gridManifest || gridFrameUrl || gridPrefetchUrls.length > 0 || compositeGridLayers.length > 0
   );
 
+  const refreshCityValueLabels = useCallback(() => {
+    const map = mapRef.current;
+    const latest = latestCitySamplingRef.current;
+    if (!map || !isLoadedRef.current || !pointLabelsEnabledRef.current || !latest) {
+      return;
+    }
+
+    const cityPoints = queryVisibleCityPoints(map);
+    if (cityPoints.length === 0) {
+      clearCityValueLabels(map);
+      return;
+    }
+
+    const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
+    const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
+    if (citySampled) {
+      updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
+    } else {
+      clearCityValueLabels(map);
+    }
+  }, []);
+
+  const scheduleCityLabelRefresh = useCallback(() => {
+    if (cityLabelRefreshRafRef.current !== null) {
+      return;
+    }
+    cityLabelRefreshRafRef.current = window.requestAnimationFrame(() => {
+      cityLabelRefreshRafRef.current = null;
+      refreshCityValueLabels();
+    });
+  }, [refreshCityValueLabels]);
+
   const emitGridFrameVisible = useCallback((
     payload: GridFrameVisiblePayload,
     sampler: GridWebglLayerController | null,
   ) => {
     onGridFrameVisible?.(payload);
+    if (sampler) {
+      latestCitySamplingRef.current = { payload, sampler };
+    }
     if (onAnchorFrameSampled && anchorBatchPoints.length > 0 && sampler) {
       const sampled = sampler.sampleAnchorPoints(anchorBatchPoints);
       onAnchorFrameSampled({
@@ -1974,23 +2022,10 @@ export function MapCanvas({
       });
     }
 
-    // City label sampling — the MapLibre symbol layer is the canonical label
-    // renderer. Skipped when point labels are toggled off (the effect that
-    // watches pointLabelsEnabled clears the source). queryVisibleCityPoints is a
-    // synchronous bounds query over the loaded GeoJSON (no glyph/render
-    // dependency), so this runs inline without idle deferral.
-    if (sampler && pointLabelsEnabled && mapRef.current) {
-      const map = mapRef.current;
-      const cityPoints = queryVisibleCityPoints(map);
-      if (cityPoints.length > 0) {
-        const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
-        const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
-        if (citySampled) {
-          updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
-        }
-      }
+    if (sampler) {
+      refreshCityValueLabels();
     }
-  }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible, pointLabelsEnabled]);
+  }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible, refreshCityValueLabels]);
 
   const syncGridControllers = useCallback((params: {
     frameUrl: string | null;
@@ -2337,7 +2372,7 @@ export function MapCanvas({
       void initCityLayers(map).then((initialized) => {
         if (initialized) {
           enforceLayerOrder(map);
-          map.triggerRepaint();
+          scheduleCityLabelRefresh();
         }
       });
       onMapReadyRef.current?.(map);
@@ -2388,7 +2423,7 @@ export function MapCanvas({
       mapRef.current = null;
       setIsLoaded(false);
     };
-  }, [enforceLayerOrder]);
+  }, [enforceLayerOrder, scheduleCityLabelRefresh]);
 
   // Viewer map keeps preserveDrawingBuffer disabled for pan performance, so canvas
   // snapshots are not cached here. screenshot_export.ts rebuilds an offscreen map.
@@ -2438,7 +2473,7 @@ export function MapCanvas({
       void initCityLayers(map).then((initialized) => {
         if (initialized) {
           enforceLayerOrder(map);
-          map.triggerRepaint();
+          scheduleCityLabelRefresh();
         }
       });
     };
@@ -2449,7 +2484,7 @@ export function MapCanvas({
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive, shouldUseGridController]);
+  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive, scheduleCityLabelRefresh, shouldUseGridController]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -3007,15 +3042,19 @@ export function MapCanvas({
     };
   }, [isLoaded, vectorFetchProductId, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
-  // Point labels toggled off: clear the city value labels immediately. When
-  // toggled back on, the next grid frame sample (emitGridFrameVisible) repopulates.
+  // Point labels toggled off: clear immediately. Toggled on: refresh from the
+  // latest visible grid frame instead of waiting for a new texture signature.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isLoaded || pointLabelsEnabled) {
+    if (!map || !isLoaded) {
+      return;
+    }
+    if (pointLabelsEnabled) {
+      scheduleCityLabelRefresh();
       return;
     }
     clearCityValueLabels(map);
-  }, [isLoaded, pointLabelsEnabled]);
+  }, [isLoaded, pointLabelsEnabled, scheduleCityLabelRefresh]);
 
   // Clear stale city value labels on variable/model switch (selectionKey
   // changes on either). The next grid frame sample repopulates them.
@@ -3024,6 +3063,7 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
+    latestCitySamplingRef.current = null;
     clearCityValueLabels(map);
   }, [isLoaded, variable, selectionKey]);
 
@@ -3034,21 +3074,20 @@ export function MapCanvas({
     const map = mapRef.current;
     if (!map || !isLoaded) return;
 
-    // If already loaded, nothing to do — emitGridFrameVisible will sample on next frame.
     if (map.getSource(CITIES_STATIC_SOURCE_ID) && map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+      scheduleCityLabelRefresh();
       return;
     }
 
     const onSourceData = (e: maplibregl.MapSourceDataEvent) => {
       if (e.sourceId !== CITIES_STATIC_SOURCE_ID || !e.isSourceLoaded) return;
       map.off("sourcedata", onSourceData);
-      // Force a repaint so onFrameVisible fires and populates city labels.
-      map.triggerRepaint();
+      scheduleCityLabelRefresh();
     };
 
     map.on("sourcedata", onSourceData);
     return () => { map.off("sourcedata", onSourceData); };
-  }, [isLoaded]);
+  }, [isLoaded, scheduleCityLabelRefresh]);
 
   // --- Grid controller update (runs on every frame / config change) ---
   useEffect(() => {
@@ -3268,11 +3307,13 @@ export function MapCanvas({
       gestureActiveRef.current = false;
       emitRoutingSignal();
       emitViewportChange();
+      scheduleCityLabelRefresh();
     };
 
     const handleMoveEnd = () => {
       checkZoom();
       emitViewportChange();
+      scheduleCityLabelRefresh();
     };
 
     map.on("zoomstart", handleZoomStart);
@@ -3292,7 +3333,7 @@ export function MapCanvas({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [isLoaded, onZoomBucketChange, onZoomRoutingSignal]);
+  }, [isLoaded, onZoomBucketChange, onZoomRoutingSignal, scheduleCityLabelRefresh]);
 
   useEffect(() => {
     const map = mapRef.current;
