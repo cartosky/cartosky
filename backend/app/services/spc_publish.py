@@ -270,6 +270,12 @@ def _format_probability_hover_label(*, probability_name: str, percent: int | Non
     return f"{percent}% {probability_name} Probability"
 
 
+def _format_extended_hover_label(percent: int | None) -> str:
+    if percent is None:
+        return "Any Severe Risk"
+    return f"{percent}% Any Severe Risk"
+
+
 def _non_empty_string_property(props: dict, *keys: str) -> str | None:
     for key in keys:
         value = props.get(key)
@@ -425,11 +431,14 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
 
         sort_rank = 1000 if is_significant else int(percent or 0)
         display_label = "SIG" if is_significant else f"{percent}%"
-        hover_label = label2 or _format_probability_hover_label(
-            probability_name=probability_name,
-            percent=percent,
-            significant=is_significant,
-        )
+        if product.var_id == SPC_EXTENDED_PRODUCT.var_id:
+            hover_label = _format_extended_hover_label(percent)
+        else:
+            hover_label = label2 or _format_probability_hover_label(
+                probability_name=probability_name,
+                percent=percent,
+                significant=is_significant,
+            )
         fill = str(props.get("fill") or props.get("FILL") or "#888888")
         stroke = str(props.get("stroke") or props.get("STROKE") or "#000000")
         if dn_style is not None:

@@ -108,8 +108,8 @@ def test_normalize_extended_probability_geojson_uses_dn_styles_and_idp_filedate(
     assert [feature["properties"]["fill"] for feature in frame.features] == ["#FFEB7F", "#FF9600"]
     assert [feature["properties"]["stroke"] for feature in frame.features] == ["#FF9600", "#FF4500"]
     assert [feature["properties"]["hover_label"] for feature in frame.features] == [
-        "15% Any Severe Probability",
-        "30% Any Severe Probability",
+        "15% Any Severe Risk",
+        "30% Any Severe Risk",
     ]
 
 
