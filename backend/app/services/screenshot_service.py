@@ -114,7 +114,14 @@ class ScreenshotService:
                         timeout=SCREENSHOT_TIMEOUT_MS,
                     )
 
-                    await page.wait_for_timeout(2000)
+                    # Wait for the viewer to signal that both the basemap (idle)
+                    # and the grid texture are fully composited, rather than a
+                    # blind sleep. 28s stays inside the 30s hard timeout.
+                    await page.wait_for_selector(
+                        ':root[data-viewer-ready="1"]',
+                        timeout=28_000,
+                    )
+                    await page.wait_for_timeout(150)
 
                     data_url = await page.evaluate(
                         """() => {

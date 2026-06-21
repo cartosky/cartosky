@@ -600,6 +600,13 @@ export default function App() {
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const manualLocationJumpRef = useRef(false);
   const latestMapDataUrlGetterRef = useRef<(() => string | null) | null>(null);
+  const captureDraftRef = useRef<(() => Promise<string | null>) | null>(null);
+  const screenshotModeRef = useRef(
+    typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("screenshot") === "1",
+  );
+  const gridFrameReadyRef = useRef(false);
+  const mapIdleRef = useRef(false);
   const [regionViewResetSignal, setRegionViewResetSignal] = useState(0);
   const mapViewRef = useRef({
     lat: MAP_VIEW_DEFAULTS.center[0],
@@ -4092,8 +4099,27 @@ export default function App() {
     setZoomGestureActive(payload.gestureActive);
   }, []);
 
+  const maybeSignalViewerReady = useCallback(() => {
+    if (!screenshotModeRef.current) {
+      return;
+    }
+    if (gridFrameReadyRef.current && mapIdleRef.current) {
+      document.documentElement.setAttribute("data-viewer-ready", "1");
+    }
+  }, []);
+
   const handleMapReady = useCallback((map: MapLibreMap) => {
     mapInstanceRef.current = map;
+    if (screenshotModeRef.current) {
+      // onMapReady fires inside the map's "load" handler, before "idle" has
+      // ever fired, so once("idle") reliably catches the first idle. (No
+      // immediate movement-proxy fallback: at load the proxy is always true and
+      // would satisfy the basemap gate prematurely, defeating the dual gate.)
+      map.once("idle", () => {
+        mapIdleRef.current = true;
+        maybeSignalViewerReady();
+      });
+    }
     const center = map.getCenter();
     mapViewRef.current = {
       lat: center.lat,
@@ -4119,10 +4145,14 @@ export default function App() {
         });
       }
     }
-  }, [telemetryRunId, region, forecastHour]);
+  }, [telemetryRunId, region, forecastHour, maybeSignalViewerReady]);
 
   const handleLatestMapDataUrl = useCallback((getter: (() => string | null) | null) => {
     latestMapDataUrlGetterRef.current = getter;
+  }, []);
+
+  const handleCaptureDraft = useCallback((capture: (() => Promise<string | null>) | null) => {
+    captureDraftRef.current = capture;
   }, []);
 
   const handleViewportChange = useCallback((payload: { lat: number; lon: number; z: number }) => {
@@ -4228,10 +4258,14 @@ export default function App() {
       gridReadyFrameUrlsRef.current.add(normalized);
       bumpGridReadyVersion();
     }
+    if (screenshotModeRef.current) {
+      gridFrameReadyRef.current = true;
+      maybeSignalViewerReady();
+    }
     if (isPlaying && canUseGridPlayback) {
       void attemptGridPlaybackAdvance();
     }
-  }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying, normalizeGridFrameUrl]);
+  }, [attemptGridPlaybackAdvance, bumpGridReadyVersion, canUseGridPlayback, isPlaying, maybeSignalViewerReady, normalizeGridFrameUrl]);
   const handleRasterRgbFrameReady = useCallback((frameUrl: string) => {
     if (!rasterRgbActive) {
       return;
@@ -5194,6 +5228,7 @@ export default function App() {
           onViewportChange={handleViewportChange}
           onMapReady={handleMapReady}
           onLatestMapDataUrl={handleLatestMapDataUrl}
+          onCaptureDraft={handleCaptureDraft}
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}
@@ -5332,6 +5367,7 @@ export default function App() {
             payload={sharePayload}
             buildScreenshotState={buildScreenshotExportState}
             getLegend={() => legend}
+            getDraftDataUrl={() => captureDraftRef.current?.() ?? Promise.resolve(null)}
           />
         </Suspense>
       ) : null}

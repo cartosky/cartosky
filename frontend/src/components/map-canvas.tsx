@@ -1467,6 +1467,7 @@ type MapCanvasProps = {
   scrubProtectedFetchUrlsRef?: { current: string[] };
   onMapReady?: (map: maplibregl.Map) => void;
   onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
+  onCaptureDraft?: (capture: (() => Promise<string | null>) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
@@ -1538,6 +1539,7 @@ export function MapCanvas({
   scrubProtectedFetchUrlsRef = undefined,
   onMapReady,
   onLatestMapDataUrl,
+  onCaptureDraft,
   onMapHover,
   onMapHoverEnd,
   onAnchorClick,
@@ -1607,6 +1609,8 @@ export function MapCanvas({
   onMapReadyRef.current = onMapReady;
   const onLatestMapDataUrlRef = useRef(onLatestMapDataUrl);
   onLatestMapDataUrlRef.current = onLatestMapDataUrl;
+  const onCaptureDraftRef = useRef(onCaptureDraft);
+  onCaptureDraftRef.current = onCaptureDraft;
   const onViewportChangeRef = useRef(onViewportChange);
   onViewportChangeRef.current = onViewportChange;
   const contourRequestTokenRef = useRef(0);
@@ -2367,6 +2371,32 @@ export function MapCanvas({
   }, []);
 
   useEffect(() => {
+    const captureDraftDataUrl = (): Promise<string | null> => {
+      const map = mapRef.current;
+      if (!map) {
+        return Promise.resolve(null);
+      }
+      // The live map keeps preserveDrawingBuffer disabled, so toDataURL() must
+      // run inside a render callback (before the buffer swap) to capture pixels.
+      return new Promise((resolve) => {
+        map.once("render", () => {
+          try {
+            resolve(map.getCanvas().toDataURL("image/jpeg", 0.7));
+          } catch {
+            resolve(null);
+          }
+        });
+        map.triggerRepaint();
+      });
+    };
+    onCaptureDraftRef.current?.(captureDraftDataUrl);
+
+    return () => {
+      onCaptureDraftRef.current?.(null);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return;
     }
@@ -2462,21 +2492,6 @@ export function MapCanvas({
       setIsLoaded(false);
     };
   }, [clearAnchorMarkers, enforceLayerOrder]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (!mapRef.current || !isLoaded) {
-      return;
-    }
-    if (new URLSearchParams(window.location.search).get("screenshot") === "1") {
-      (window as any)._cartosky_map = mapRef.current;
-      return () => {
-        delete (window as any)._cartosky_map;
-      };
-    }
-  }, [isLoaded]);
 
   // Viewer map keeps preserveDrawingBuffer disabled for pan performance, so canvas
   // snapshots are not cached here. screenshot_export.ts rebuilds an offscreen map.

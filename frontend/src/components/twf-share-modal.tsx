@@ -77,6 +77,7 @@ type TwfShareModalProps = {
   payload: SharePayload;
   buildScreenshotState?: () => ScreenshotExportState | null;
   getLegend?: () => LegendPayload | null;
+  getDraftDataUrl?: () => Promise<string | null>;
 };
 
 const TWF_PERMALINK_LABEL = "View map on CartoSky";
@@ -414,6 +415,7 @@ export function TwfShareModal({
   payload,
   buildScreenshotState,
   getLegend,
+  getDraftDataUrl,
 }: TwfShareModalProps) {
   const { getToken, isLoaded: clerkLoaded, isSignedIn } = useAuth();
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
@@ -458,6 +460,7 @@ export function TwfShareModal({
   const [contentDirty, setContentDirty] = useState(false);
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [draftDataUrl, setDraftDataUrl] = useState<string | null>(null);
   const [screenshotBlob, setScreenshotBlob] = useState<Blob | null>(null);
   const [screenshotBlobUrl, setScreenshotBlobUrl] = useState<string | null>(null);
   const [screenshotStateSnapshot, setScreenshotStateSnapshot] = useState<ScreenshotExportState | null>(null);
@@ -651,6 +654,7 @@ export function TwfShareModal({
   }, [buildScreenshotState, getLegend]);
 
   const generateServerScreenshot = useCallback(async (): Promise<{
+    blob: Blob;
     blobUrl: string;
     filename: string;
     state: ScreenshotExportState;
@@ -668,14 +672,22 @@ export function TwfShareModal({
         throw new Error("No permalink available.");
       }
       const screenshotUrl = screenshotUrlForState(permalink, state);
-      const response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: screenshotUrl,
-          basemap: state.basemapMode ?? "light",
-        }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
+      let response: Response;
+      try {
+        response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: screenshotUrl,
+            basemap: state.basemapMode ?? "light",
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!response.ok) {
         throw new Error(`Server screenshot failed (${response.status})`);
       }
@@ -716,9 +728,15 @@ export function TwfShareModal({
         }
         return objectUrl;
       });
-      return { blobUrl: objectUrl, filename, state: stateWithCapture };
+      setDraftDataUrl(null);
+      return { blob: finalBlob, blobUrl: objectUrl, filename, state: stateWithCapture };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Server screenshot failed.";
+      const message =
+        error instanceof Error && error.name === "AbortError"
+          ? "Screenshot timed out. Try again."
+          : error instanceof Error
+            ? error.message
+            : "Server screenshot failed.";
       setScreenshotError(message);
       return null;
     } finally {
@@ -729,6 +747,7 @@ export function TwfShareModal({
   useEffect(() => {
     if (!open) {
       wasOpenRef.current = false;
+      setDraftDataUrl(null);
       return;
     }
     if (wasOpenRef.current) {
@@ -782,6 +801,11 @@ export function TwfShareModal({
     captureProductAnalyticsEvent("share_initiated", {
       user_type: twfStatus.linked ? "twf" : "anonymous",
     });
+    if (getDraftDataUrl && SERVER_SCREENSHOT_ENABLED) {
+      void getDraftDataUrl().then((dataUrl) => {
+        if (dataUrl) setDraftDataUrl(dataUrl);
+      });
+    }
   }, [open, defaultContent, defaultTopicTitle]);
 
 
@@ -1186,6 +1210,7 @@ export function TwfShareModal({
   };
 
   const handlePrepareScreenshot = async () => {
+    setScreenshotError(null);
     if (screenshotBusy || screenshotUploadBusy) {
       return;
     }
@@ -1200,6 +1225,7 @@ export function TwfShareModal({
       return screenshotUrl;
     }
     if (screenshotBusy || screenshotUploadBusy) {
+      setScreenshotError("Screenshot is still generating — wait a moment and try again.");
       return null;
     }
     const generated = screenshotBlob
@@ -1208,7 +1234,9 @@ export function TwfShareModal({
           filename: screenshotFilenameValue,
           state: screenshotStateSnapshot,
         }
-      : await generatePreviewScreenshot();
+      : await (SERVER_SCREENSHOT_ENABLED
+          ? generateServerScreenshot()
+          : generatePreviewScreenshot());
     if (!generated) {
       return null;
     }
@@ -1443,6 +1471,17 @@ export function TwfShareModal({
                       className="h-full w-full object-contain"
                     />
                   </>
+                ) : screenshotBusy && draftDataUrl ? (
+                  <>
+                    <img
+                      src={draftDataUrl}
+                      alt="Draft preview"
+                      className="h-full w-full object-contain"
+                    />
+                    <div className="absolute bottom-2 left-2 rounded-md bg-black/70 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
+                      Generating forum image…
+                    </div>
+                  </>
                 ) : screenshotBusy ? (
                   <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
                     <div
@@ -1459,6 +1498,32 @@ export function TwfShareModal({
                       <div className="text-center text-xs font-medium text-white/76">
                         Generating screenshot
                       </div>
+                    </div>
+                  </div>
+                ) : screenshotError ? (
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
+                    <div
+                      role="alert"
+                      className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
+                    >
+                      <div className="text-center text-xs font-medium text-white/76">
+                        {screenshotError.length > 80
+                          ? `${screenshotError.slice(0, 80)}…`
+                          : screenshotError}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handlePrepareScreenshot()}
+                        disabled={!canPrepareScreenshot}
+                        className={`${secondaryButtonClass} disabled:opacity-50`}
+                      >
+                        Retry
+                      </button>
+                      {SERVER_SCREENSHOT_ENABLED && (
+                        <div className="text-center text-xs text-white/50">
+                          Forum image unavailable — retry or post without image.
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
