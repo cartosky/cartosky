@@ -54,7 +54,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       // settles asynchronously; calling addSource/addLayer before it lands races
       // the update and throws. Wait for the map to go idle before proceeding.
       await new Promise<void>((resolve) => {
-        map.setGlyphs("https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf");
+        map.setGlyphs("https://fonts.maplibre.org/fonts/{fontstack}/{range}.pbf");
         map.once("idle", resolve);
       });
     }
@@ -82,6 +82,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       filter: CITY_CANDIDATE_ZOOM_FILTER as any,
       layout: {
         "text-field": ["get", "name"] as any,
+        "text-font": ["Noto Sans Regular"],
         "text-allow-overlap": false,
         "symbol-sort-key": ["-", ["get", "pop_max"]] as any,
         "text-size": 0,
@@ -110,7 +111,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
         // Collision is already resolved by the candidate layer, so the visible
         // value labels are allowed to overlap one another freely.
         "text-allow-overlap": true,
-        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-font": ["Noto Sans Regular"],
         "text-size": 12,
         "text-anchor": "top",
       },
