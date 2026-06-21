@@ -50,7 +50,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
     // `text-field`. setGlyphs() (MapLibre GL JS v3+) sets them without a full
     // style reload, preserving existing sources/layers.
     if (!(map.getStyle() as any).glyphs) {
-      map.setGlyphs("https://fonts.openmaptiles.org/{fontstack}/{range}.pbf");
+      map.setGlyphs("https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf");
     }
 
     const response = await fetch(CITIES_GEOJSON_URL);
