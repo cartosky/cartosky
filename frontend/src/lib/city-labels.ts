@@ -45,6 +45,14 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       return;
     }
 
+    // The CartoSky basemap uses raster PNG tiles, so the style has no `glyphs`
+    // configured. MapLibre requires glyphs before any symbol layer can render
+    // `text-field`. setGlyphs() (MapLibre GL JS v3+) sets them without a full
+    // style reload, preserving existing sources/layers.
+    if (!(map.getStyle() as any).glyphs) {
+      map.setGlyphs("https://fonts.openmaptiles.org/{fontstack}/{range}.pbf");
+    }
+
     const response = await fetch(CITIES_GEOJSON_URL);
     if (!response.ok) {
       throw new Error(`Failed to fetch city labels: ${response.status} ${response.statusText}`);
