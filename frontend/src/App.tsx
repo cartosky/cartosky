@@ -2467,6 +2467,9 @@ export default function App() {
   const cpcValidEnd = model === "cpc"
     ? ((currentFrameMeta as { valid_end?: string | null } | null)?.valid_end ?? null)
     : null;
+  const frameDayLabel = typeof (currentFrame?.meta as { day_label?: string | null } | null | undefined)?.day_label === "string"
+    ? ((currentFrame?.meta as { day_label?: string | null } | null | undefined)?.day_label ?? null)
+    : null;
   const displayedForecastHour = useMemo(() => {
     if (isGridLowMidActive && Number.isFinite(visibleOverlayHour)) {
       return Number(visibleOverlayHour);
@@ -5338,6 +5341,7 @@ export default function App() {
           cpcValidSeas={cpcValidSeas}
           cpcValidStart={cpcValidStart}
           cpcValidEnd={cpcValidEnd}
+          frameDayLabel={frameDayLabel}
           frameValidTimesByHour={frameValidTimesByHour}
           sourceStatusLabel={observedSourceStatus?.label ?? null}
           sourceStatusDescription={observedSourceStatus?.description ?? null}

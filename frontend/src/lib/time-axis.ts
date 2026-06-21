@@ -197,7 +197,12 @@ export function validAxisLabel(
   variableId?: string | null | undefined,
   runTimeISO?: string | null | undefined,
   validTimeISO?: string | null | undefined,
+  dayLabelOverride?: string | null | undefined,
 ): string {
+  const overrideLabel = typeof dayLabelOverride === "string" ? dayLabelOverride.trim() : "";
+  if (overrideLabel) {
+    return overrideLabel;
+  }
   const resolved = Number.isFinite(forecastHour) ? Math.max(0, Math.round(Number(forecastHour))) : 0;
   const normalizedVariableId = String(variableId ?? "").trim().toLowerCase();
   if (normalizedVariableId === "maxt" || normalizedVariableId === "mint") {

@@ -37,6 +37,7 @@ type BottomForecastControlsProps = {
   cpcValidSeas?: string | null;
   cpcValidStart?: string | null;
   cpcValidEnd?: string | null;
+  frameDayLabel?: string | null;
   frameValidTimesByHour?: Record<number, string>;
   sourceStatusLabel?: string | null;
   sourceStatusDescription?: string | null;
@@ -154,6 +155,7 @@ function formatTimelineDisplay(params: {
   timeAxisMode: TimeAxisMode;
   variableId?: string | null;
   validTimeISO?: string | null;
+  frameDayLabel?: string | null;
 }): {
   primary: string;
   secondary: string;
@@ -194,7 +196,13 @@ function formatTimelineDisplay(params: {
     if (!primary) {
       return null;
     }
-    const secondary = validAxisLabel(params.forecastHour, params.variableId, params.runDateISO, params.validTimeISO);
+    const secondary = validAxisLabel(
+      params.forecastHour,
+      params.variableId,
+      params.runDateISO,
+      params.validTimeISO,
+      params.frameDayLabel,
+    );
     return {
       primary,
       secondary,
@@ -278,6 +286,7 @@ export function BottomForecastControls({
   cpcValidSeas = null,
   cpcValidStart = null,
   cpcValidEnd = null,
+  frameDayLabel = null,
   frameValidTimesByHour,
   sourceStatusLabel = null,
   sourceStatusDescription = null,
@@ -326,12 +335,13 @@ export function BottomForecastControls({
       forecastHour: previewHour ?? forecastHour,
       timeAxisMode,
       variableId,
+      frameDayLabel,
       validTimeISO:
         timeAxisMode === "observed"
           ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
           : validTimeISO,
     }),
-    [modelId, runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, validTimeISO, frameValidTimesByHour]
+    [modelId, runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, frameDayLabel, validTimeISO, frameValidTimesByHour]
   );
 
   const hasFrames = availableFrames.length > 0;
