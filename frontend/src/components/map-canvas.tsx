@@ -1983,7 +1983,10 @@ export function MapCanvas({
     if (sampler && pointLabelsEnabled && mapRef.current) {
       const map = mapRef.current;
       const sampleCityLabels = () => {
-        if (!map.getSource(CITIES_STATIC_SOURCE_ID) || !map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+        // Existence check only — queryVisibleCityPoints returns [] until the
+        // source is queryable, so isSourceLoaded would just skip valid attempts
+        // during the source-added→source-loaded window.
+        if (!map.getSource(CITIES_STATIC_SOURCE_ID)) {
           return;
         }
         const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
@@ -3064,6 +3067,29 @@ export function MapCanvas({
     }
     clearCityValueLabels(map);
   }, [isLoaded, variable, selectionKey]);
+
+  // One-shot: run city sampling as soon as cities-static finishes loading.
+  // Handles the race where emitGridFrameVisible fires before the GeoJSON source
+  // is ready, which causes isSourceLoaded to return false and sampling to be skipped.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) return;
+
+    // If already loaded, nothing to do — emitGridFrameVisible will sample on next frame.
+    if (map.getSource(CITIES_STATIC_SOURCE_ID) && map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+      return;
+    }
+
+    const onSourceData = (e: maplibregl.MapSourceDataEvent) => {
+      if (e.sourceId !== CITIES_STATIC_SOURCE_ID || !e.isSourceLoaded) return;
+      map.off("sourcedata", onSourceData);
+      // Force a repaint so onFrameVisible fires and populates city labels.
+      map.triggerRepaint();
+    };
+
+    map.on("sourcedata", onSourceData);
+    return () => { map.off("sourcedata", onSourceData); };
+  }, [isLoaded]);
 
   // --- Grid controller update (runs on every frame / config change) ---
   useEffect(() => {

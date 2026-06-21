@@ -149,22 +149,9 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       },
     } as LayerSpecification);
 
-    // The candidate query returns [] until the source finishes loading into the
-    // tile system. Trigger one repaint when it lands so onFrameVisible fires
-    // again and the now-queryable candidates get sampled and labeled.
-    //
-    // Note: a one-shot map.once("sourcedata") would be consumed by the first
-    // sourcedata event from ANY source (basemap/boundary tiles fire these
-    // constantly during load), so it rarely matches cities-static. Use a
-    // self-removing handler that detaches only once our source has loaded.
-    const onCitiesSourceLoaded = (e: maplibregl.MapSourceDataEvent) => {
-      if (e.sourceId === CITIES_STATIC_SOURCE_ID && e.isSourceLoaded) {
-        map.off("sourcedata", onCitiesSourceLoaded);
-        moveCityLabelLayersToTop(map);
-        map.triggerRepaint();
-      }
-    };
-    map.on("sourcedata", onCitiesSourceLoaded);
+    // Put the city label layers on top now that they exist. The
+    // repaint-once-cities-static-loads behavior lives in a dedicated effect in
+    // map-canvas.tsx; a sourcedata listener here too would double-repaint.
     moveCityLabelLayersToTop(map);
     map.triggerRepaint();
     return true;
