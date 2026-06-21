@@ -29,6 +29,13 @@ SPC_RISK_STYLE_BY_CODE: dict[int, dict[str, object]] = {
     6: {"risk_label": "High", "fill": "#FF00FF", "sort_rank": 6},
 }
 
+DN_PROBABILITY_STYLES: dict[int, tuple[int, str, str]] = {
+    15: (15, "#FFEB7F", "#FF9600"),
+    30: (30, "#FF9600", "#FF4500"),
+    45: (45, "#FF4500", "#CC0000"),
+    60: (60, "#FF0000", "#990000"),
+}
+
 
 @dataclass(frozen=True)
 class SPCProductConfig:
@@ -252,6 +259,16 @@ def _non_empty_string_property(props: dict, *keys: str) -> str | None:
     return None
 
 
+def _probability_style_from_dn(props: dict) -> tuple[int, str, str] | None:
+    for candidate in (props.get("dn"), props.get("DN")):
+        try:
+            dn = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        return DN_PROBABILITY_STYLES.get(dn)
+    return None
+
+
 def _is_no_meaningful_probability_feature(feature: object) -> bool:
     if not isinstance(feature, dict):
         return True
@@ -273,7 +290,7 @@ def _is_no_meaningful_probability_feature(feature: object) -> bool:
     except (TypeError, ValueError):
         pass
 
-    return label is None or dn_is_zero
+    return (label is None and _probability_style_from_dn(props) is None) or dn_is_zero
 
 
 def _legend_entries_for_frame(frame: SPCFramePayload) -> list[dict[str, object]]:
@@ -374,9 +391,15 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
         if not isinstance(props, dict):
             props = {}
 
-        label = str(props.get("label") or props.get("LABEL") or "").strip()
+        raw_label = props.get("label")
+        if raw_label is None and "label" not in props:
+            raw_label = props.get("LABEL")
+        label = str(raw_label or "").strip()
         label2 = _non_empty_string_property(props, "label2", "LABEL2")
+        dn_style = _probability_style_from_dn(props) if not label else None
         percent = _probability_percent_from_label(label)
+        if percent is None and dn_style is not None:
+            percent = dn_style[0]
         is_significant = label.upper().startswith("CIG") or "conditional intensity group" in (label2 or "").lower()
         if percent is None and not is_significant:
             continue
@@ -388,6 +411,11 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
             percent=percent,
             significant=is_significant,
         )
+        fill = str(props.get("fill") or props.get("FILL") or "#888888")
+        stroke = str(props.get("stroke") or props.get("STROKE") or "#000000")
+        if dn_style is not None:
+            fill = dn_style[1]
+            stroke = dn_style[2]
         normalized_features.append(
             {
                 "type": "Feature",
@@ -395,9 +423,9 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
                     "risk_code": sort_rank,
                     "risk_label": display_label,
                     "hover_label": hover_label,
-                    "fill": str(props.get("fill") or props.get("FILL") or "#888888"),
+                    "fill": fill,
                     "fill_opacity": 0.35 if is_significant else 0.65,
-                    "stroke": str(props.get("stroke") or props.get("STROKE") or "#000000"),
+                    "stroke": stroke,
                     "stroke_width": 2.0 if is_significant else 1.25,
                     "sort_rank": sort_rank,
                     "day_label": day_label,
@@ -408,6 +436,19 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
         )
         valid_time = valid_time or _parse_timestamp(props, "valid", "VALID", "VALID2", "VALID_TIME", "VALIDTIME", "prodValid")
         issue_time = issue_time or _parse_timestamp(props, "issue", "ISSUE", "ISSUE2", "ISSUED", "ISSUE_TIME", "productIssued")
+
+    if issue_time is None:
+        for feature in features_raw:
+            if not isinstance(feature, dict):
+                continue
+            props = feature.get("properties")
+            if not isinstance(props, dict):
+                continue
+            issue_time = _parse_timestamp(props, "idp_filedate", "IDP_FILEDATE")
+            if issue_time is not None:
+                break
+    if valid_time is None:
+        valid_time = issue_time
 
     if not normalized_features:
         raise SPCPublishError(f"SPC {product.display_name} {day_label} payload had no recognized features")

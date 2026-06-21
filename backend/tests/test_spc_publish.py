@@ -62,6 +62,54 @@ def test_normalize_spc_geojson_maps_risks_and_orders_features() -> None:
     assert all(feature["properties"]["stroke"] == "#000000" for feature in frame.features)
 
 
+def test_normalize_extended_probability_geojson_uses_dn_styles_and_idp_filedate() -> None:
+    payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "dn": 30,
+                    "idp_filedate": 1779390916000,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-98.0, 35.0], [-97.0, 35.0], [-97.0, 36.0], [-98.0, 35.0]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "dn": 15,
+                    "idp_filedate": 1779390916000,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[-100.0, 34.0], [-99.0, 34.0], [-99.0, 35.0], [-100.0, 34.0]]],
+                },
+            },
+        ],
+    }
+
+    frame = spc_publish._normalize_probability_geojson(
+        payload,
+        product=spc_publish.SPC_EXTENDED_PRODUCT,
+        day_label="Day 4",
+        fh=0,
+    )
+
+    expected_issue_time = datetime(2026, 5, 21, 19, 15, 16, tzinfo=timezone.utc)
+    assert frame.issue_time == expected_issue_time
+    assert frame.valid_time == expected_issue_time
+    assert [feature["properties"]["risk_label"] for feature in frame.features] == ["15%", "30%"]
+    assert [feature["properties"]["fill"] for feature in frame.features] == ["#FFEB7F", "#FF9600"]
+    assert [feature["properties"]["stroke"] for feature in frame.features] == ["#FF9600", "#FF4500"]
+    assert [feature["properties"]["hover_label"] for feature in frame.features] == [
+        "15% Any Severe Probability",
+        "30% Any Severe Probability",
+    ]
+
+
 def test_publish_spc_bundle_writes_manifest_latest_pointer_and_vector_sidecars(tmp_path: Path) -> None:
     issue_time = datetime(2026, 4, 1, 6, 30, tzinfo=timezone.utc)
     frames = [
@@ -287,6 +335,11 @@ def test_collect_latest_spc_products_includes_probability_products_and_skips_mis
             ],
         },
         13: {"type": "FeatureCollection", "features": []},
+        21: {"type": "FeatureCollection", "features": []},
+        22: {"type": "FeatureCollection", "features": []},
+        23: {"type": "FeatureCollection", "features": []},
+        24: {"type": "FeatureCollection", "features": []},
+        25: {"type": "FeatureCollection", "features": []},
     }
 
     monkeypatch.setattr(spc_publish, "fetch_spc_layer_geojson", lambda layer_id, **_: payloads[layer_id])
@@ -295,8 +348,8 @@ def test_collect_latest_spc_products_includes_probability_products_and_skips_mis
 
     assert set(products.keys()) == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
     assert [frame.fh for frame in products["hail_prob"]] == [0]
-    assert products["tornado_prob"][0].features[0]["properties"]["hover_label"] == "5% Tornado Probability"
-    assert products["tornado_prob"][0].features[1]["properties"]["hover_label"] == "Tornado Probability"
+    assert products["tornado_prob"][0].features[0]["properties"]["hover_label"] == "5% Tornado Risk"
+    assert products["tornado_prob"][0].features[1]["properties"]["hover_label"] == "Tornado Conditional Intensity Group 1 Risk"
     assert issue_time == datetime(2026, 4, 1, 6, 30, tzinfo=timezone.utc)
 
 
@@ -314,6 +367,11 @@ def test_publish_latest_spc_outlooks_writes_multiple_probability_variables(
         15: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.05", "label2": "5% Wind Risk", "fill": "#C5A392", "stroke": "#8B4726", "VALID": "2026-04-02T12:00:00Z", "ISSUE": "2026-04-01T07:45:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-84.0, 29.0], [-83.0, 29.0], [-83.0, 30.0], [-84.0, 29.0]]]}}]},
         5: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"label": "0.15", "label2": "15% Hail Risk", "fill": "#FFEB7F", "stroke": "#FF9600", "VALID": "2026-04-01T12:00:00Z", "ISSUE": "2026-04-01T06:30:00Z"}, "geometry": {"type": "Polygon", "coordinates": [[[-82.0, 28.0], [-81.0, 28.0], [-81.0, 29.0], [-82.0, 28.0]]]}}]},
         13: {"type": "FeatureCollection", "features": []},
+        21: {"type": "FeatureCollection", "features": []},
+        22: {"type": "FeatureCollection", "features": []},
+        23: {"type": "FeatureCollection", "features": []},
+        24: {"type": "FeatureCollection", "features": []},
+        25: {"type": "FeatureCollection", "features": []},
     }
 
     monkeypatch.setattr(spc_publish, "fetch_spc_layer_geojson", lambda layer_id, **_: payloads[layer_id])
@@ -330,4 +388,4 @@ def test_publish_latest_spc_outlooks_writes_multiple_probability_variables(
     assert tornado_sidecar["legend_entries"][0]["label"] == "5%"
 
     wind_payload = json.loads((result.published_run_dir / "wind_prob" / "vectors" / "fh001.geojson").read_text())
-    assert wind_payload["features"][0]["properties"]["hover_label"] == "5% Wind Probability"
+    assert wind_payload["features"][0]["properties"]["hover_label"] == "5% Wind Risk"
