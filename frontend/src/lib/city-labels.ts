@@ -7,11 +7,14 @@ export const CITIES_GEOJSON_URL = "https://api.cartosky.com/static/cities/v1/cit
 export const CITIES_STATIC_SOURCE_ID = "cities-static";
 export const CITY_LABEL_CANDIDATES_LAYER_ID = "city-label-candidates";
 export const CITY_VALUE_LABELS_SOURCE_ID = "city-value-labels";
+export const CITY_VALUE_LABEL_NAMES_LAYER_ID = "city-value-label-names";
 export const CITY_VALUE_LABELS_LAYER_ID = "city-value-labels";
 
 /** CORS-enabled glyph endpoint (Stadia / OpenMapTiles font stack). */
 const CITY_LABEL_GLYPHS_URL =
   "https://tiles.stadiamaps.com/fonts/{fontstack}/{range}.pbf";
+const CITY_VALUE_PILL_IMAGE_ID = "city-value-label-pill";
+const CITY_LABEL_COLLISION_GAP_PX = 4;
 
 /**
  * Loaded city candidate data. Plain module-level ref (not React state) so the
@@ -32,6 +35,89 @@ const CITY_CANDIDATE_ZOOM_FILTER = [
   ["all", [">=", ["zoom"], 9], ["==", ["get", "rank"], 5]],
 ];
 
+type ScreenRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+function addRoundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function ensureCityValuePillImage(map: maplibregl.Map): void {
+  if (map.hasImage(CITY_VALUE_PILL_IMAGE_ID) || typeof document === "undefined") {
+    return;
+  }
+
+  const width = 40;
+  const height = 20;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+
+  ctx.clearRect(0, 0, width, height);
+  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 7);
+  ctx.fillStyle = "rgba(20, 27, 34, 0.78)";
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
+  ctx.fillRect(7, 1, width - 14, 1);
+
+  map.addImage(CITY_VALUE_PILL_IMAGE_ID, ctx.getImageData(0, 0, width, height), {
+    stretchX: [[8, width - 8]],
+    stretchY: [[8, height - 8]],
+    content: [8, 4, width - 8, height - 4],
+  });
+}
+
+function estimateCityLabelRect(point: { x: number; y: number }, name: string): ScreenRect {
+  const nameWidth = Math.min(92, Math.max(28, name.length * 5.6));
+  const valueWidth = 48;
+  const width = Math.max(nameWidth, valueWidth) + 8;
+  const height = 38;
+  return {
+    left: point.x - width / 2,
+    right: point.x + width / 2,
+    top: point.y - 22,
+    bottom: point.y + height - 22,
+  };
+}
+
+function intersectsRect(left: ScreenRect, right: ScreenRect): boolean {
+  return (
+    left.left < right.right + CITY_LABEL_COLLISION_GAP_PX
+    && left.right > right.left - CITY_LABEL_COLLISION_GAP_PX
+    && left.top < right.bottom + CITY_LABEL_COLLISION_GAP_PX
+    && left.bottom > right.top - CITY_LABEL_COLLISION_GAP_PX
+  );
+}
+
 /** Keep city label symbol layers above weather overlays and basemap labels. */
 export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
   if (!map.getLayer("twf-labels")) {
@@ -39,6 +125,9 @@ export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
   }
   if (map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
     map.moveLayer(CITY_LABEL_CANDIDATES_LAYER_ID);
+  }
+  if (map.getLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID)) {
+    map.moveLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID);
   }
   if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
     map.moveLayer(CITY_VALUE_LABELS_LAYER_ID);
@@ -49,16 +138,16 @@ export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
  * Adds the city-label MapLibre sources and layers used by the zoom-adaptive
  * city label system. Fire-and-forget: handles its own errors and never throws.
  *
- * - `cities-static` / `city-label-candidates`: invisible symbol layer that runs
- *   MapLibre's collision solver over the candidate cities so Phase 3 can sample
- *   which labels survive at the current zoom.
- * - `city-value-labels`: the visible layer Phase 3 will populate with sampled
- *   values. Collision is already resolved upstream, so overlap is allowed here.
+ * - `cities-static` / `city-label-candidates`: invisible data layer kept for
+ *   style participation and future MapLibre queries.
+ * - `city-value-labels`: the visible sampled value source/layers. The selected
+ *   cities are pre-thinned in screen space before sampling.
  */
 export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
   try {
     // Guard against double-init (e.g. style reloads re-running the load path).
     if (map.getSource(CITIES_STATIC_SOURCE_ID)) {
+      ensureCityValuePillImage(map);
       return true;
     }
 
@@ -124,28 +213,54 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       data: { type: "FeatureCollection", features: [] },
     });
 
+    ensureCityValuePillImage(map);
+
+    map.addLayer({
+      id: CITY_VALUE_LABEL_NAMES_LAYER_ID,
+      type: "symbol",
+      source: CITY_VALUE_LABELS_SOURCE_ID,
+      layout: {
+        "text-field": ["get", "name"] as any,
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 10.5,
+        "text-anchor": "bottom",
+        "text-offset": [0, -0.38],
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+      },
+      paint: {
+        "text-color": "rgba(255, 255, 255, 0.92)",
+        "text-halo-color": "rgba(20, 27, 34, 0.82)",
+        "text-halo-width": 1.25,
+        "text-halo-blur": 0.35,
+      },
+    } as LayerSpecification);
+
     map.addLayer({
       id: CITY_VALUE_LABELS_LAYER_ID,
       type: "symbol",
       source: CITY_VALUE_LABELS_SOURCE_ID,
       layout: {
-        "text-field": [
-          "format",
-          ["get", "name"], { "font-scale": 0.85 },
-          "\n", {},
-          ["coalesce", ["get", "value_label"], "…"], { "font-scale": 1.0 },
-        ] as any,
-        // Collision is already resolved by the candidate layer, so the visible
-        // value labels are allowed to overlap one another freely.
+        "icon-image": CITY_VALUE_PILL_IMAGE_ID,
+        "icon-text-fit": "both",
+        "icon-text-fit-padding": [3, 7, 3, 7],
+        "icon-anchor": "center",
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "text-field": ["coalesce", ["get", "value_label"], "…"] as any,
+        // Collision is handled before sampling in queryVisibleCityPoints(), so
+        // this layer just renders the selected city/value pairs.
         "text-allow-overlap": true,
+        "text-ignore-placement": true,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 12,
-        "text-anchor": "top",
+        "text-size": 11,
+        "text-anchor": "center",
+        "text-offset": [0, 0.55],
       },
       paint: {
-        "text-color": "#ffffff",
-        "text-halo-color": "#000000",
-        "text-halo-width": 1.5,
+        "text-color": "rgba(255, 255, 255, 0.98)",
+        "text-halo-color": "rgba(0, 0, 0, 0.16)",
+        "text-halo-width": 0.35,
       },
     } as LayerSpecification);
 
@@ -209,8 +324,26 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
   // Sort by pop_max descending so high-population cities are sampled first.
   results.sort((a, b) => b.pop_max - a.pop_max);
 
+  const accepted: CityLabelPoint[] = [];
+  const occupiedRects: ScreenRect[] = [];
+  for (const point of results) {
+    const projected = map.project([point.lng, point.lat]);
+    if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
+      continue;
+    }
+    const rect = estimateCityLabelRect(projected, point.name);
+    if (occupiedRects.some((occupied) => intersectsRect(rect, occupied))) {
+      continue;
+    }
+    accepted.push(point);
+    occupiedRects.push(rect);
+    if (accepted.length >= 50) {
+      break;
+    }
+  }
+
   // Cap at 50 cities per viewport to avoid overloading the sampler.
-  return results.slice(0, 50);
+  return accepted;
 }
 
 // Pushes a sampled FeatureCollection to city-value-labels.
