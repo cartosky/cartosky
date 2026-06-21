@@ -120,6 +120,22 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
         "text-halo-width": 1.5,
       },
     } as LayerSpecification);
+
+    // The candidate query returns [] until the source finishes loading into the
+    // tile system. Trigger one repaint when it lands so onFrameVisible fires
+    // again and the now-queryable candidates get sampled and labeled.
+    //
+    // Note: a one-shot map.once("sourcedata") would be consumed by the first
+    // sourcedata event from ANY source (basemap/boundary tiles fire these
+    // constantly during load), so it rarely matches cities-static. Use a
+    // self-removing handler that detaches only once our source has loaded.
+    const onCitiesSourceLoaded = (e: maplibregl.MapSourceDataEvent) => {
+      if (e.sourceId === CITIES_STATIC_SOURCE_ID && e.isSourceLoaded) {
+        map.off("sourcedata", onCitiesSourceLoaded);
+        map.triggerRepaint();
+      }
+    };
+    map.on("sourcedata", onCitiesSourceLoaded);
   } catch (error) {
     console.warn("[city-labels] Failed to initialize city label layers", error);
   }

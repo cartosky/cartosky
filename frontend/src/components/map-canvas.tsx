@@ -7,6 +7,7 @@ import type { GeoJSON } from "geojson";
 import type { LegendPayload } from "@/components/map-legend";
 import { type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import {
+  CITIES_STATIC_SOURCE_ID,
   CITY_LABEL_CANDIDATES_LAYER_ID,
   CITY_VALUE_LABELS_LAYER_ID,
   clearCityValueLabels,
@@ -1966,12 +1967,18 @@ export function MapCanvas({
     // renderer. Skipped when point labels are toggled off (the effect that
     // watches pointLabelsEnabled clears the source).
     if (sampler && pointLabelsEnabled && mapRef.current) {
-      const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(mapRef.current);
-      if (cityPoints.length > 0) {
-        const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
-        const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
-        if (citySampled) {
-          updateCityValueLabels(mapRef.current, cityPoints, citySampled.values, citySampled.units);
+      const map = mapRef.current;
+      // queryRenderedFeatures returns [] until the GeoJSON source has loaded
+      // into the tile system; guard so we don't sample an empty candidate set.
+      // initCityLayers triggers a repaint on source load so this fires again.
+      if (map.isSourceLoaded(CITIES_STATIC_SOURCE_ID)) {
+        const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(map);
+        if (cityPoints.length > 0) {
+          const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
+          const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
+          if (citySampled) {
+            updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
+          }
         }
       }
     }
