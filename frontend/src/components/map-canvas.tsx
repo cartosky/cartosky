@@ -5,7 +5,7 @@ import maplibregl, { type LayerSpecification, type StyleSpecification } from "ma
 import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
-import { getActiveAnchorLabels, type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import { type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
 import {
   CITY_LABEL_CANDIDATES_LAYER_ID,
   CITY_VALUE_LABELS_LAYER_ID,
@@ -118,7 +118,6 @@ const OBSERVED_MOBILE_SCRUB_MIN_BEHIND = 2;
 const OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET = 12;
 const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
-const ANCHOR_HOVER_RESUME_DELAY_MS = 30;
 const CONTOUR_CACHE_MAX_ENTRIES = 96;
 const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 8;
 const CONTOUR_PREFETCH_CONCURRENCY_MOBILE = 1;
@@ -1208,18 +1207,6 @@ function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: numbe
   }
 }
 
-type AnchorMarkerRecord = {
-  marker: maplibregl.Marker;
-  element: HTMLDivElement;
-  chip: HTMLDivElement;
-};
-
-type AnchorTooltipState = {
-  cityName: string;
-  x: number;
-  y: number;
-};
-
 export function buildMapStyle(
   contourGeoJsonUrl?: string | null,
   vectorGeoJsonUrl?: string | null,
@@ -1603,14 +1590,10 @@ export function MapCanvas({
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
-  const [anchorTooltip, setAnchorTooltip] = useState<AnchorTooltipState | null>(null);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
 
-  const anchorMarkersRef = useRef<Map<string, AnchorMarkerRecord>>(new Map());
   const geolocationMarkerRef = useRef<maplibregl.Marker | null>(null);
-  const isHoveringAnchorRef = useRef(false);
-  const anchorHoverLeaveTimeoutRef = useRef<number | null>(null);
   const prevGridFrameHourRef = useRef<number | null>(null);
   /** Detected scrub direction: 1 = forward, -1 = backward, 0 = unknown. */
   const scrubDirectionRef = useRef<1 | -1 | 0>(0);
@@ -1979,9 +1962,10 @@ export function MapCanvas({
       });
     }
 
-    // City label sampling — Phase 3
-    // Only runs if the city layers are initialized and a sampler is available.
-    if (sampler && mapRef.current) {
+    // City label sampling — the MapLibre symbol layer is the canonical label
+    // renderer. Skipped when point labels are toggled off (the effect that
+    // watches pointLabelsEnabled clears the source).
+    if (sampler && pointLabelsEnabled && mapRef.current) {
       const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(mapRef.current);
       if (cityPoints.length > 0) {
         const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
@@ -1991,7 +1975,7 @@ export function MapCanvas({
         }
       }
     }
-  }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible]);
+  }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible, pointLabelsEnabled]);
 
   const syncGridControllers = useCallback((params: {
     frameUrl: string | null;
@@ -2140,19 +2124,6 @@ export function MapCanvas({
     variable,
   ]);
 
-  const clearAnchorMarkers = useCallback(() => {
-    if (anchorHoverLeaveTimeoutRef.current !== null) {
-      window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-      anchorHoverLeaveTimeoutRef.current = null;
-    }
-    isHoveringAnchorRef.current = false;
-    setAnchorTooltip(null);
-    for (const record of anchorMarkersRef.current.values()) {
-      record.marker.remove();
-    }
-    anchorMarkersRef.current.clear();
-  }, []);
-
   useEffect(() => {
     return () => {
       geolocationMarkerRef.current?.remove();
@@ -2203,127 +2174,6 @@ export function MapCanvas({
 
     geolocationMarkerRef.current.setLngLat([geolocationMarker.lon, geolocationMarker.lat]);
   }, [geolocationMarker, isLoaded]);
-
-  const showAnchorTooltip = useCallback((map: maplibregl.Map, cityName: string, lngLat: [number, number]) => {
-    const projected = map.project(lngLat);
-    setAnchorTooltip({
-      cityName,
-      x: projected.x,
-      y: projected.y,
-    });
-  }, []);
-
-  const hideAnchorTooltip = useCallback(() => {
-    setAnchorTooltip(null);
-  }, []);
-
-  const syncAnchorMarkers = useCallback(
-    (map: maplibregl.Map, data: AnchorFeatureCollection | null, visible: boolean) => {
-      if (!visible) {
-        clearAnchorMarkers();
-        return;
-      }
-
-      const activeMarkers = getActiveAnchorLabels(data, map.getZoom());
-      const nextIds = new Set(activeMarkers.map((item) => item.id));
-
-      for (const [id, record] of anchorMarkersRef.current) {
-        if (nextIds.has(id)) {
-          continue;
-        }
-        record.marker.remove();
-        anchorMarkersRef.current.delete(id);
-      }
-
-      for (const activeMarker of activeMarkers) {
-        const existing = anchorMarkersRef.current.get(activeMarker.id);
-        if (existing) {
-          if (existing.chip.textContent !== activeMarker.label) {
-            existing.chip.textContent = activeMarker.label;
-          }
-          if (existing.chip.getAttribute("aria-label") !== activeMarker.cityName) {
-            existing.chip.setAttribute("aria-label", activeMarker.cityName);
-          }
-          existing.marker.setLngLat(activeMarker.lngLat);
-          continue;
-        }
-
-        const element = document.createElement("div");
-        element.className = "map-anchor-marker";
-        element.setAttribute("aria-hidden", "true");
-
-        const chip = document.createElement("div");
-        chip.className = activeMarker.supportsNws
-          ? "map-anchor-marker__chip"
-          : "map-anchor-marker__chip map-anchor-marker__chip--static";
-        chip.textContent = activeMarker.label;
-        chip.setAttribute("aria-label", activeMarker.cityName);
-        chip.addEventListener("mouseenter", () => {
-          if (anchorHoverLeaveTimeoutRef.current !== null) {
-            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-            anchorHoverLeaveTimeoutRef.current = null;
-          }
-          isHoveringAnchorRef.current = true;
-          onMapHoverEnd?.();
-          showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
-        });
-        chip.addEventListener("mouseleave", () => {
-          hideAnchorTooltip();
-          if (anchorHoverLeaveTimeoutRef.current !== null) {
-            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-          }
-          anchorHoverLeaveTimeoutRef.current = window.setTimeout(() => {
-            isHoveringAnchorRef.current = false;
-            anchorHoverLeaveTimeoutRef.current = null;
-          }, ANCHOR_HOVER_RESUME_DELAY_MS);
-        });
-        chip.addEventListener("focus", () => {
-          if (anchorHoverLeaveTimeoutRef.current !== null) {
-            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-            anchorHoverLeaveTimeoutRef.current = null;
-          }
-          isHoveringAnchorRef.current = true;
-          onMapHoverEnd?.();
-          showAnchorTooltip(map, activeMarker.cityName, activeMarker.lngLat);
-        });
-        chip.addEventListener("blur", () => {
-          hideAnchorTooltip();
-          if (anchorHoverLeaveTimeoutRef.current !== null) {
-            window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-          }
-          anchorHoverLeaveTimeoutRef.current = window.setTimeout(() => {
-            isHoveringAnchorRef.current = false;
-            anchorHoverLeaveTimeoutRef.current = null;
-          }, ANCHOR_HOVER_RESUME_DELAY_MS);
-        });
-        chip.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (!activeMarker.supportsNws) {
-            return;
-          }
-          onAnchorClick?.({
-            id: activeMarker.id,
-            city: activeMarker.cityName,
-            state: activeMarker.state,
-            st: activeMarker.st,
-          });
-        });
-
-        element.appendChild(chip);
-
-        const marker = new maplibregl.Marker({
-          element,
-          anchor: "center",
-          offset: [0, 0],
-        })
-          .setLngLat(activeMarker.lngLat)
-          .addTo(map);
-
-        anchorMarkersRef.current.set(activeMarker.id, { marker, element, chip });
-      }
-    },
-    [clearAnchorMarkers, hideAnchorTooltip, onAnchorClick, onMapHoverEnd, showAnchorTooltip]
-  );
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
     if (!map.getLayer("twf-labels")) {
@@ -2450,7 +2300,6 @@ export function MapCanvas({
     });
 
     map.touchZoomRotate.disableRotation();
-    (window as any).__cmap = map;
 
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;
@@ -2515,7 +2364,6 @@ export function MapCanvas({
       vectorAbortRef.current?.abort();
       vectorAbortRef.current = null;
       map.off("error", handleMapError as any);
-      clearAnchorMarkers();
       clearCityValueLabels(map);
       gridWebglControllerRef.current?.remove(map);
       rasterRgbControllerRef.current?.remove(map);
@@ -2528,7 +2376,7 @@ export function MapCanvas({
       mapRef.current = null;
       setIsLoaded(false);
     };
-  }, [clearAnchorMarkers, enforceLayerOrder]);
+  }, [enforceLayerOrder]);
 
   // Viewer map keeps preserveDrawingBuffer disabled for pan performance, so canvas
   // snapshots are not cached here. screenshot_export.ts rebuilds an offscreen map.
@@ -3142,37 +2990,15 @@ export function MapCanvas({
     };
   }, [isLoaded, vectorFetchProductId, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
+  // Point labels toggled off: clear the city value labels immediately. When
+  // toggled back on, the next grid frame sample (emitGridFrameVisible) repopulates.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isLoaded) {
+    if (!map || !isLoaded || pointLabelsEnabled) {
       return;
     }
-
-    let rafId: number | null = null;
-    const scheduleSync = () => {
-      if (rafId !== null) {
-        return;
-      }
-      rafId = window.requestAnimationFrame(() => {
-        rafId = null;
-        syncAnchorMarkers(map, anchorGeoJson, pointLabelsEnabled);
-      });
-    };
-
-    scheduleSync();
-    map.on("move", scheduleSync);
-    map.on("moveend", scheduleSync);
-    map.on("resize", scheduleSync);
-
-    return () => {
-      map.off("move", scheduleSync);
-      map.off("moveend", scheduleSync);
-      map.off("resize", scheduleSync);
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-      }
-    };
-  }, [anchorGeoJson, isLoaded, pointLabelsEnabled, syncAnchorMarkers]);
+    clearCityValueLabels(map);
+  }, [isLoaded, pointLabelsEnabled]);
 
   // Clear stale city value labels on variable/model switch (selectionKey
   // changes on either). The next grid frame sample repopulates them.
@@ -3183,25 +3009,6 @@ export function MapCanvas({
     }
     clearCityValueLabels(map);
   }, [isLoaded, variable, selectionKey]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
-    }
-
-    const hideTooltipOnMove = () => {
-      setAnchorTooltip(null);
-    };
-
-    map.on("movestart", hideTooltipOnMove);
-    map.on("zoomstart", hideTooltipOnMove);
-
-    return () => {
-      map.off("movestart", hideTooltipOnMove);
-      map.off("zoomstart", hideTooltipOnMove);
-    };
-  }, [isLoaded]);
 
   // --- Grid controller update (runs on every frame / config change) ---
   useEffect(() => {
@@ -3500,6 +3307,8 @@ export function MapCanvas({
   onMapHoverEndRef.current = onMapHoverEnd;
   const onVectorHazardClickRef = useRef(onVectorHazardClick);
   onVectorHazardClickRef.current = onVectorHazardClick;
+  const onAnchorClickRef = useRef(onAnchorClick);
+  onAnchorClickRef.current = onAnchorClick;
 
   useEffect(() => {
     const map = mapRef.current;
@@ -3510,9 +3319,6 @@ export function MapCanvas({
     canvas.style.cursor = "";
 
     const handleMove = (e: maplibregl.MapMouseEvent) => {
-      if (isHoveringAnchorRef.current) {
-        return;
-      }
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
       const vectorFeatures = map.queryRenderedFeatures(e.point, {
@@ -3574,20 +3380,39 @@ export function MapCanvas({
       onMapHoverEndRef.current?.();
     };
 
+    // City value labels (MapLibre symbol layer) behave like the old anchor
+    // chips: pointer cursor on hover, fire onAnchorClick on click.
+    const handleCityClick = (e: maplibregl.MapLayerMouseEvent) => {
+      const feature = e.features?.[0];
+      const name = typeof feature?.properties?.name === "string" ? feature.properties.name.trim() : "";
+      if (!name) {
+        return;
+      }
+      // State/wfo lookup is a Phase 6 concern — pass the city name only.
+      onAnchorClickRef.current?.({ id: name, city: name, state: "", st: "" });
+    };
+    const handleCityEnter = () => {
+      canvas.style.cursor = "pointer";
+    };
+    const handleCityLeave = () => {
+      canvas.style.cursor = "";
+    };
+
     map.on("mousemove", handleMove);
     map.on("click", handleClick);
+    map.on("click", CITY_VALUE_LABELS_LAYER_ID, handleCityClick);
+    map.on("mouseenter", CITY_VALUE_LABELS_LAYER_ID, handleCityEnter);
+    map.on("mouseleave", CITY_VALUE_LABELS_LAYER_ID, handleCityLeave);
     canvas.addEventListener("mouseleave", handleLeave);
 
     return () => {
       map.off("mousemove", handleMove);
       map.off("click", handleClick);
+      map.off("click", CITY_VALUE_LABELS_LAYER_ID, handleCityClick);
+      map.off("mouseenter", CITY_VALUE_LABELS_LAYER_ID, handleCityEnter);
+      map.off("mouseleave", CITY_VALUE_LABELS_LAYER_ID, handleCityLeave);
       canvas.removeEventListener("mouseleave", handleLeave);
       canvas.style.cursor = "";
-      if (anchorHoverLeaveTimeoutRef.current !== null) {
-        window.clearTimeout(anchorHoverLeaveTimeoutRef.current);
-        anchorHoverLeaveTimeoutRef.current = null;
-      }
-      isHoveringAnchorRef.current = false;
     };
   }, [isLoaded]);
 
@@ -3610,19 +3435,6 @@ export function MapCanvas({
           aria-label="Weather map"
         />
       </div>
-
-      {anchorTooltip && (
-        <div
-          className="pointer-events-none absolute z-[60] rounded-xl glass px-2.5 py-1.5 text-[11px] font-medium text-white/95 shadow-xl"
-          style={{
-            left: anchorTooltip.x,
-            top: anchorTooltip.y,
-            transform: "translate(-50%, calc(-100% - 10px))",
-          }}
-        >
-          {anchorTooltip.cityName}
-        </div>
-      )}
 
       {pressureCenterScreenLabels.map((item) => (
         <div
