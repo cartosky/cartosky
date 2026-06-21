@@ -9,7 +9,11 @@ import { getActiveAnchorLabels, type AnchorBatchPoint, type AnchorFeatureCollect
 import {
   CITY_LABEL_CANDIDATES_LAYER_ID,
   CITY_VALUE_LABELS_LAYER_ID,
+  clearCityValueLabels,
   initCityLayers,
+  queryVisibleCityPoints,
+  updateCityValueLabels,
+  type CityLabelPoint,
 } from "@/lib/city-labels";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
@@ -1963,18 +1967,30 @@ export function MapCanvas({
     sampler: GridWebglLayerController | null,
   ) => {
     onGridFrameVisible?.(payload);
-    if (!onAnchorFrameSampled || anchorBatchPoints.length === 0 || !sampler) {
-      return;
+    if (onAnchorFrameSampled && anchorBatchPoints.length > 0 && sampler) {
+      const sampled = sampler.sampleAnchorPoints(anchorBatchPoints);
+      onAnchorFrameSampled({
+        frameHour: payload.frameHour,
+        selectionEpoch: payload.selectionEpoch,
+        selectionKey: payload.selectionKey,
+        gridSampled: Boolean(sampled),
+        values: sampled?.values ?? {},
+        units: sampled?.units ?? "",
+      });
     }
-    const sampled = sampler.sampleAnchorPoints(anchorBatchPoints);
-    onAnchorFrameSampled({
-      frameHour: payload.frameHour,
-      selectionEpoch: payload.selectionEpoch,
-      selectionKey: payload.selectionKey,
-      gridSampled: Boolean(sampled),
-      values: sampled?.values ?? {},
-      units: sampled?.units ?? "",
-    });
+
+    // City label sampling — Phase 3
+    // Only runs if the city layers are initialized and a sampler is available.
+    if (sampler && mapRef.current) {
+      const cityPoints: CityLabelPoint[] = queryVisibleCityPoints(mapRef.current);
+      if (cityPoints.length > 0) {
+        const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
+        const citySampled = sampler.sampleAnchorPoints(cityBatchPoints);
+        if (citySampled) {
+          updateCityValueLabels(mapRef.current, cityPoints, citySampled.values, citySampled.units);
+        }
+      }
+    }
   }, [anchorBatchPoints, onAnchorFrameSampled, onGridFrameVisible]);
 
   const syncGridControllers = useCallback((params: {
@@ -2499,6 +2515,7 @@ export function MapCanvas({
       vectorAbortRef.current = null;
       map.off("error", handleMapError as any);
       clearAnchorMarkers();
+      clearCityValueLabels(map);
       gridWebglControllerRef.current?.remove(map);
       rasterRgbControllerRef.current?.remove(map);
       rasterRgbControllerRef.current = null;
@@ -2555,6 +2572,9 @@ export function MapCanvas({
         }
       }
       enforceLayerOrder(map);
+      // setStyle() wiped all sources/layers, including the city label layers.
+      // Re-init them; the double-init guard and setGlyphs are both idempotent.
+      void initCityLayers(map);
     };
 
     map.once("styledata", onStyleData);
@@ -3152,6 +3172,16 @@ export function MapCanvas({
       }
     };
   }, [anchorGeoJson, isLoaded, pointLabelsEnabled, syncAnchorMarkers]);
+
+  // Clear stale city value labels on variable/model switch (selectionKey
+  // changes on either). The next grid frame sample repopulates them.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    clearCityValueLabels(map);
+  }, [isLoaded, variable, selectionKey]);
 
   useEffect(() => {
     const map = mapRef.current;

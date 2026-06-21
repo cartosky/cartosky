@@ -124,3 +124,58 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
     console.warn("[city-labels] Failed to initialize city label layers", error);
   }
 }
+
+export type CityLabelPoint = {
+  id: string;
+  name: string;
+  lng: number;
+  lat: number;
+};
+
+// Accepts a MapLibre map instance, queries the invisible candidate layer,
+// and returns the collision-resolved visible city set for this viewport.
+// Returns empty array if the source isn't loaded yet.
+export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
+  if (!map.getSource(CITIES_STATIC_SOURCE_ID)) return [];
+  const features = map.queryRenderedFeatures(undefined, {
+    layers: [CITY_LABEL_CANDIDATES_LAYER_ID],
+  });
+  return features.map((f) => ({
+    id: String(f.id ?? f.properties?.name ?? ""),
+    name: String(f.properties?.name ?? ""),
+    lng: (f.geometry as GeoJSON.Point).coordinates[0],
+    lat: (f.geometry as GeoJSON.Point).coordinates[1],
+  })).filter((p) => p.name && Number.isFinite(p.lng) && Number.isFinite(p.lat));
+}
+
+// Pushes a sampled FeatureCollection to city-value-labels.
+// values: Record<id, number|null>, units: string (e.g. "°F")
+export function updateCityValueLabels(
+  map: maplibregl.Map,
+  points: CityLabelPoint[],
+  values: Record<string, number | null>,
+  units: string,
+): void {
+  const source = map.getSource(CITY_VALUE_LABELS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (!source) return;
+  const features: GeoJSON.Feature[] = points.map((p) => {
+    const raw = values[p.id];
+    const num = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+    const valueLabel = num !== null
+      ? `${Math.round(num * 10) / 10}${units}`
+      : null;
+    return {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      properties: { name: p.name, value_label: valueLabel },
+    };
+  });
+  source.setData({ type: "FeatureCollection", features });
+}
+
+// Clears city-value-labels (call on variable switch, model switch, etc.)
+export function clearCityValueLabels(map: maplibregl.Map): void {
+  const source = map.getSource(CITY_VALUE_LABELS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (!source) return;
+  source.setData({ type: "FeatureCollection", features: [] });
+}
