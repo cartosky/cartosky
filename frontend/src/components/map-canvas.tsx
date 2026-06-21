@@ -2434,6 +2434,7 @@ export function MapCanvas({
     });
 
     map.touchZoomRotate.disableRotation();
+    (window as any).__cmap = map;
 
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;
