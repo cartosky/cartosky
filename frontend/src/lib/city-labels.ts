@@ -69,8 +69,8 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
     return;
   }
 
-  const width = 40;
-  const height = 20;
+  const width = 32;
+  const height = 16;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -80,32 +80,34 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
   }
 
   ctx.clearRect(0, 0, width, height);
-  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 7);
-  ctx.fillStyle = "rgba(20, 27, 34, 0.78)";
+  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 5);
+  ctx.fillStyle = "rgba(4, 16, 30, 0.82)";
   ctx.fill();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+  ctx.strokeStyle = "rgba(125, 211, 252, 0.24)";
   ctx.stroke();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
-  ctx.fillRect(7, 1, width - 14, 1);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.fillRect(6, 1, width - 12, 1);
+  ctx.fillStyle = "rgba(8, 47, 73, 0.28)";
+  ctx.fillRect(2, height - 3, width - 4, 1);
 
   map.addImage(CITY_VALUE_PILL_IMAGE_ID, ctx.getImageData(0, 0, width, height), {
-    stretchX: [[8, width - 8]],
-    stretchY: [[8, height - 8]],
-    content: [8, 4, width - 8, height - 4],
+    stretchX: [[6, width - 6]],
+    stretchY: [[6, height - 6]],
+    content: [5, 2, width - 5, height - 2],
   });
 }
 
 function estimateCityLabelRect(point: { x: number; y: number }, name: string): ScreenRect {
-  const nameWidth = Math.min(92, Math.max(28, name.length * 5.6));
-  const valueWidth = 48;
-  const width = Math.max(nameWidth, valueWidth) + 8;
-  const height = 38;
+  const nameWidth = Math.min(82, Math.max(24, name.length * 5.1));
+  const valueWidth = 40;
+  const width = Math.max(nameWidth, valueWidth) + 5;
+  const height = 30;
   return {
     left: point.x - width / 2,
     right: point.x + width / 2,
-    top: point.y - 22,
-    bottom: point.y + height - 22,
+    top: point.y - 17,
+    bottom: point.y + height - 17,
   };
 }
 
@@ -222,17 +224,17 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "text-field": ["get", "name"] as any,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 10.5,
+        "text-size": 9.5,
         "text-anchor": "bottom",
-        "text-offset": [0, -0.38],
+        "text-offset": [0, -0.18],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
       },
       paint: {
-        "text-color": "rgba(255, 255, 255, 0.92)",
-        "text-halo-color": "rgba(20, 27, 34, 0.82)",
-        "text-halo-width": 1.25,
-        "text-halo-blur": 0.35,
+        "text-color": "rgba(226, 244, 255, 0.90)",
+        "text-halo-color": "rgba(4, 16, 30, 0.86)",
+        "text-halo-width": 1.1,
+        "text-halo-blur": 0.3,
       },
     } as LayerSpecification);
 
@@ -243,7 +245,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "icon-image": CITY_VALUE_PILL_IMAGE_ID,
         "icon-text-fit": "both",
-        "icon-text-fit-padding": [3, 7, 3, 7],
+        "icon-text-fit-padding": [1, 4, 1, 4],
         "icon-anchor": "center",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
@@ -253,14 +255,14 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 11,
+        "text-size": 9.5,
         "text-anchor": "center",
-        "text-offset": [0, 0.55],
+        "text-offset": [0, 0.38],
       },
       paint: {
-        "text-color": "rgba(255, 255, 255, 0.98)",
-        "text-halo-color": "rgba(0, 0, 0, 0.16)",
-        "text-halo-width": 0.35,
+        "text-color": "rgba(245, 252, 255, 0.98)",
+        "text-halo-color": "rgba(3, 10, 18, 0.22)",
+        "text-halo-width": 0.25,
       },
     } as LayerSpecification);
 
