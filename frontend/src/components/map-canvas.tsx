@@ -6,6 +6,11 @@ import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
 import { getActiveAnchorLabels, type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import {
+  CITY_LABEL_CANDIDATES_LAYER_ID,
+  CITY_VALUE_LABELS_LAYER_ID,
+  initCityLayers,
+} from "@/lib/city-labels";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import {
@@ -2360,6 +2365,16 @@ export function MapCanvas({
       map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
     }
     map.moveLayer("twf-labels");
+    // City label layers sit above weather raster/WebGL and basemap labels.
+    // (Hover/tooltip surfaces are DOM overlays, not MapLibre layers, so there
+    //  is nothing above these to sit below.) Added async by initCityLayers, so
+    //  they may not exist on the first pass — getLayer guards handle that.
+    if (map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
+      map.moveLayer(CITY_LABEL_CANDIDATES_LAYER_ID);
+    }
+    if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
+      map.moveLayer(CITY_VALUE_LABELS_LAYER_ID);
+    }
   }, []);
 
   useEffect(() => {
@@ -2443,6 +2458,10 @@ export function MapCanvas({
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       enforceLayerOrder(map);
+      // Fire-and-forget: fetches city candidates and adds the city label
+      // sources/layers. Handles its own errors and never throws. A follow-up
+      // enforceLayerOrder() runs once isLoaded flips, re-ordering these layers.
+      void initCityLayers(map);
       onMapReadyRef.current?.(map);
     });
 
