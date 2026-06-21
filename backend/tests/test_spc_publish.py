@@ -71,6 +71,7 @@ def test_normalize_extended_probability_geojson_uses_dn_styles_and_idp_filedate(
                 "properties": {
                     "dn": 30,
                     "idp_filedate": 1779390916000,
+                    "idp_source": "day5otlk_20260621_prob",
                 },
                 "geometry": {
                     "type": "Polygon",
@@ -82,6 +83,7 @@ def test_normalize_extended_probability_geojson_uses_dn_styles_and_idp_filedate(
                 "properties": {
                     "dn": 15,
                     "idp_filedate": 1779390916000,
+                    "idp_source": "day5otlk_20260621_prob",
                 },
                 "geometry": {
                     "type": "Polygon",
@@ -99,8 +101,9 @@ def test_normalize_extended_probability_geojson_uses_dn_styles_and_idp_filedate(
     )
 
     expected_issue_time = datetime(2026, 5, 21, 19, 15, 16, tzinfo=timezone.utc)
+    expected_valid_time = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
     assert frame.issue_time == expected_issue_time
-    assert frame.valid_time == expected_issue_time
+    assert frame.valid_time == expected_valid_time
     assert [feature["properties"]["risk_label"] for feature in frame.features] == ["15%", "30%"]
     assert [feature["properties"]["fill"] for feature in frame.features] == ["#FFEB7F", "#FF9600"]
     assert [feature["properties"]["stroke"] for feature in frame.features] == ["#FF9600", "#FF4500"]

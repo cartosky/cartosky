@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 SPC_MODEL_ID = "spc"
 SPC_REGION_ID = "conus"
 SPC_LAYER_BASE_URL = "https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/FeatureServer"
+IDP_SOURCE_VALID_TIME_RE = re.compile(r"^day(?P<day>\d+)otlk_(?P<date>\d{8})_prob$", re.IGNORECASE)
 
 SPC_RISK_STYLE_BY_CODE: dict[int, dict[str, object]] = {
     1: {"risk_label": "T-Storms", "fill": "#808080", "sort_rank": 1},
@@ -187,6 +189,23 @@ def _parse_timestamp(props: dict, *candidate_keys: str) -> datetime | None:
         if parsed is not None:
             return parsed
     return None
+
+
+def _valid_time_from_idp_source(props: dict) -> datetime | None:
+    source = _non_empty_string_property(props, "idp_source", "IDP_SOURCE")
+    if not source:
+        return None
+    match = IDP_SOURCE_VALID_TIME_RE.match(source)
+    if not match:
+        return None
+    try:
+        day_number = int(match.group("day"))
+        base_date = datetime.strptime(match.group("date"), "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if day_number < 1:
+        return None
+    return base_date.replace(hour=12) + timedelta(days=day_number - 1)
 
 
 def _risk_code_from_properties(props: dict) -> int | None:
@@ -446,6 +465,16 @@ def _normalize_probability_geojson(payload: dict, *, product: SPCProductConfig, 
                 continue
             issue_time = _parse_timestamp(props, "idp_filedate", "IDP_FILEDATE")
             if issue_time is not None:
+                break
+    if valid_time is None:
+        for feature in features_raw:
+            if not isinstance(feature, dict):
+                continue
+            props = feature.get("properties")
+            if not isinstance(props, dict):
+                continue
+            valid_time = _valid_time_from_idp_source(props)
+            if valid_time is not None:
                 break
     if valid_time is None:
         valid_time = issue_time
