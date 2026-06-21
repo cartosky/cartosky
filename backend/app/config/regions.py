@@ -7,7 +7,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-96.25, 39.5],
         "defaultZoom": 4,
         "minZoom": 2,
-        "maxZoom": 8,
+        "maxZoom": 14,
     },
     "na": {
         "label": "North America",
@@ -15,7 +15,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-101.5, 45.0],
         "defaultZoom": 0.5,
         "minZoom": -1,
-        "maxZoom": 7,
+        "maxZoom": 14,
     },
     "pnw": {
         "label": "Northwest",
@@ -23,7 +23,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-120.8, 45.6],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "north_central": {
         "label": "N. Great Plains",
@@ -31,7 +31,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-103.0, 45.75],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "midwest": {
         "label": "Midwest",
@@ -39,7 +39,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-92.0, 43.0],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "northeast": {
         "label": "Northeast",
@@ -47,7 +47,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-74.25, 42.4],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "southeast": {
         "label": "Southeast",
@@ -55,7 +55,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-85.0, 30.4],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "south_great_plains": {
         "label": "S. Great Plains",
@@ -63,7 +63,7 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-99.75, 35.25],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
     "southwest": {
         "label": "Southwest",
@@ -71,6 +71,6 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-113.5, 36.5],
         "defaultZoom": 5,
         "minZoom": 3,
-        "maxZoom": 10,
+        "maxZoom": 14,
     },
 }
