@@ -50,7 +50,7 @@ from .models.serialization import (
     serialize_variable_capability,
 )
 from .services.observed_bundle_health import build_observed_bundle_health, is_observed_model_capability
-from .services.screenshot_service import screenshot_service
+from .services.screenshot_service import SCREENSHOT_CONCURRENCY, screenshot_service
 from .services.boundary_tiles import (
     BOUNDARIES_MBTILES,
     BOUNDARY_CACHE_HIT,
@@ -1875,6 +1875,20 @@ async def admin_traces_summary(
     _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
 ) -> dict[str, Any]:
     return otel_tracing.get_traces_summary()
+
+
+@app.get("/api/v4/admin/screenshot-stats")
+async def admin_screenshot_stats(
+    request: Request,
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
+    results = screenshot_service.recent_stats()
+    return {
+        "concurrency": SCREENSHOT_CONCURRENCY,
+        "queue_depth": screenshot_service._queue_depth,
+        "count": len(results),
+        "results": results,
+    }
 
 
 @app.get("/api/v4/admin/status/results")

@@ -128,9 +128,13 @@ export function ComparePanel({
   const onFirstFrameReadyRef = useRef(onFirstFrameReady);
   onFirstFrameReadyRef.current = onFirstFrameReady;
   const firstFrameReadyFiredRef = useRef(false);
+  const gridFrameReadyRef = useRef(false);
+  const mapIdleReadyRef = useRef(false);
 
   useEffect(() => {
     firstFrameReadyFiredRef.current = false;
+    gridFrameReadyRef.current = false;
+    mapIdleReadyRef.current = false;
   }, [selectionKey, forecastHour, gridActive]);
 
   const signalFirstFrameReady = useCallback(() => {
@@ -141,27 +145,37 @@ export function ComparePanel({
     onFirstFrameReadyRef.current?.();
   }, []);
 
-  const handleGridFrameReady = useCallback(() => {
-    signalFirstFrameReady();
+  const maybeSignalBothReady = useCallback(() => {
+    if (gridFrameReadyRef.current && mapIdleReadyRef.current) {
+      signalFirstFrameReady();
+    }
   }, [signalFirstFrameReady]);
+
+  const handleGridFrameReady = useCallback(() => {
+    gridFrameReadyRef.current = true;
+    maybeSignalBothReady();
+  }, [maybeSignalBothReady]);
 
   const handleMapReady = useCallback(
     (map: maplibregl.Map) => {
       onMapReady(map);
-      if (!gridActive) {
-        const onIdle = () => {
-          signalFirstFrameReady();
-        };
-        if (map.loaded()) {
-          map.once("idle", onIdle);
+      const onIdle = () => {
+        if (gridActive) {
+          mapIdleReadyRef.current = true;
+          maybeSignalBothReady();
         } else {
-          map.once("load", () => {
-            map.once("idle", onIdle);
-          });
+          signalFirstFrameReady();
         }
+      };
+      if (map.loaded()) {
+        map.once("idle", onIdle);
+      } else {
+        map.once("load", () => {
+          map.once("idle", onIdle);
+        });
       }
     },
-    [gridActive, onMapReady, signalFirstFrameReady],
+    [gridActive, maybeSignalBothReady, onMapReady, signalFirstFrameReady],
   );
 
   return (

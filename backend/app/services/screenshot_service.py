@@ -1,11 +1,18 @@
 import asyncio
 import base64
 import logging
+import time
+from collections import deque
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from playwright.async_api import Browser, Playwright, async_playwright
 
+from . import prometheus_metrics
+
 logger = logging.getLogger(__name__)
+
+# Phases reported in the structured timing log, in display order.
+_SCREENSHOT_PHASES = ("queue_wait", "navigate", "ready_wait", "settle", "capture", "total")
 
 SCREENSHOT_CONCURRENCY = 2
 SCREENSHOT_TIMEOUT_MS = 30_000
@@ -19,6 +26,10 @@ class ScreenshotService:
         self._browser: Browser | None = None
         self._semaphore = asyncio.Semaphore(SCREENSHOT_CONCURRENCY)
         self._lock = asyncio.Lock()
+        # Number of requests currently waiting for or holding a semaphore slot.
+        self._queue_depth = 0
+        # Ring buffer of the most recent render results for the admin stats view.
+        self._recent: deque[dict] = deque(maxlen=50)
 
     async def _ensure_browser(self) -> Browser:
         async with self._lock:
@@ -34,23 +45,38 @@ class ScreenshotService:
             return self._browser
 
     async def render(self, url: str, *, basemap: str = "light") -> bytes:
-        async with self._semaphore:
+        # Timing wrappers only — no behavioral changes to the render logic.
+        t_entry = time.monotonic()
+        is_compare = "/compare" in urlsplit(url).path
+        path_label = "compare" if is_compare else "viewer"
+
+        self._queue_depth += 1
+        queue_depth = self._queue_depth
+        try:
+            await self._semaphore.acquire()
+        finally:
+            self._queue_depth -= 1
+
+        t_acquired = time.monotonic()
+        marks: dict[str, float] = {}
+        error_type: str | None = None
+        try:
             browser = await self._ensure_browser()
             context = await browser.new_context(
                 viewport={"width": SCREENSHOT_VIEWPORT_WIDTH, "height": SCREENSHOT_VIEWPORT_HEIGHT},
                 device_scale_factor=1,
             )
-            page = await context.new_page()
             try:
+                page = await context.new_page()
                 parsed = urlsplit(url)
                 params = dict(parse_qsl(parsed.query, keep_blank_values=True))
                 params["screenshot"] = "1"
                 params["legend"] = "1"
                 params["basemap"] = basemap
                 render_url = urlunsplit(parsed._replace(query=urlencode(params)))
-                is_compare = "/compare" in parsed.path
 
                 await page.goto(render_url, wait_until="commit", timeout=SCREENSHOT_TIMEOUT_MS)
+                marks["navigated"] = time.monotonic()
 
                 if is_compare:
                     # Wait for both panels to signal readiness
@@ -58,8 +84,10 @@ class ScreenshotService:
                         "() => document.documentElement.getAttribute('data-compare-ready') === '1'",
                         timeout=SCREENSHOT_TIMEOUT_MS,
                     )
+                    marks["ready"] = time.monotonic()
                     # Additional settle time for WebGL frames to flush
                     await page.wait_for_timeout(1500)
+                    marks["settled"] = time.monotonic()
 
                     data_url = await page.evaluate(
                         """() => {
@@ -121,7 +149,9 @@ class ScreenshotService:
                         ':root[data-viewer-ready="1"]',
                         timeout=28_000,
                     )
+                    marks["ready"] = time.monotonic()
                     await page.wait_for_timeout(150)
+                    marks["settled"] = time.monotonic()
 
                     data_url = await page.evaluate(
                         """() => {
@@ -136,9 +166,95 @@ class ScreenshotService:
                     raise ValueError("Canvas data URL not available")
 
                 png_bytes = base64.b64decode(data_url.split(",", 1)[1])
+                # Capture phase covers the canvas read-back (page.evaluate) and decode.
+                marks["captured"] = time.monotonic()
                 return png_bytes
             finally:
                 await context.close()
+        except Exception as exc:
+            error_type = type(exc).__name__
+            raise
+        finally:
+            self._semaphore.release()
+            self._record_render(
+                url=url,
+                path=path_label,
+                queue_depth=queue_depth,
+                t_entry=t_entry,
+                t_acquired=t_acquired,
+                marks=marks,
+                t_done=time.monotonic(),
+                error_type=error_type,
+            )
+
+    def _record_render(
+        self,
+        *,
+        url: str,
+        path: str,
+        queue_depth: int,
+        t_entry: float,
+        t_acquired: float,
+        marks: dict[str, float],
+        t_done: float,
+        error_type: str | None,
+    ) -> None:
+        """Emit the structured timing log line, Prometheus metrics, and ring-buffer entry."""
+
+        def dur(start: float | None, end: float | None) -> float | None:
+            if start is None or end is None:
+                return None
+            return round(max(0.0, end - start), 2)
+
+        phases: dict[str, float | None] = {
+            "queue_wait": dur(t_entry, t_acquired),
+            "navigate": dur(t_acquired, marks.get("navigated")),
+            "ready_wait": dur(marks.get("navigated"), marks.get("ready")),
+            "settle": dur(marks.get("ready"), marks.get("settled")),
+            "capture": dur(marks.get("settled"), marks.get("captured")),
+            "total": dur(t_entry, t_done),
+        }
+
+        truncated_url = url[:120]
+        fields = " ".join(
+            f"{phase}={phases[phase]:.2f}s" if phases[phase] is not None else f"{phase}=n/a"
+            for phase in _SCREENSHOT_PHASES
+        )
+        line = (
+            f"screenshot phase_timings path={path} queue_depth={queue_depth} "
+            f"{fields} url={truncated_url}"
+        )
+        if error_type is not None:
+            logger.warning("%s error=%s", line, error_type)
+        else:
+            logger.info(line)
+
+        try:
+            prometheus_metrics.observe_screenshot_render(
+                path=path,
+                success=error_type is None,
+                phases=phases,
+                queue_depth=queue_depth,
+            )
+        except Exception:  # pragma: no cover - metrics must never break a render
+            logger.debug("Failed to record screenshot prometheus metrics", exc_info=True)
+
+        self._recent.append(
+            {
+                "timestamp": time.time(),
+                "path": path,
+                "url": truncated_url,
+                "queue_depth": queue_depth,
+                "success": error_type is None,
+                "error": error_type,
+                "total": phases["total"],
+                "phases": {phase: phases[phase] for phase in _SCREENSHOT_PHASES},
+            }
+        )
+
+    def recent_stats(self) -> list[dict]:
+        """Most-recent-first snapshot of the render ring buffer for the admin view."""
+        return list(reversed(self._recent))
 
     async def close(self):
         if self._browser:

@@ -74,6 +74,21 @@ BUILD_DURATION_AVG_MINUTES = Gauge(
     registry=_REGISTRY,
 )
 
+SCREENSHOT_PHASE_DURATION_SECONDS = Histogram(
+    "cartosky_screenshot_phase_duration_seconds",
+    "Per-phase latency of server-side screenshot rendering.",
+    labelnames=("path", "phase"),
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 30.0),
+    registry=_REGISTRY,
+)
+
+SCREENSHOT_REQUESTS_TOTAL = Counter(
+    "cartosky_screenshot_requests_total",
+    "Server-side screenshot render outcomes.",
+    labelnames=("path", "outcome"),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -174,6 +189,25 @@ def reset_build_duration_avgs() -> None:
     BUILD_DURATION_AVG_MINUTES.clear()
 
 
+def observe_screenshot_render(
+    *,
+    path: str,
+    success: bool,
+    phases: dict[str, float | None],
+    queue_depth: int,
+) -> None:
+    path_label = str(path).strip() or "unknown"
+    outcome = "success" if success else "error"
+    SCREENSHOT_REQUESTS_TOTAL.labels(path=path_label, outcome=outcome).inc()
+    for phase, value in phases.items():
+        if value is None:
+            continue
+        SCREENSHOT_PHASE_DURATION_SECONDS.labels(
+            path=path_label,
+            phase=str(phase),
+        ).observe(max(0.0, float(value)))
+
+
 def metrics_payload() -> bytes:
     return generate_latest(_REGISTRY)
 
@@ -258,3 +292,5 @@ def reset_metrics_for_tests() -> None:
     PUBLISHED_RUN_AGE_HOURS.clear()
     PUBLISHED_RUN_COMPLETION_RATIO.clear()
     BUILD_DURATION_SECONDS.clear()
+    SCREENSHOT_PHASE_DURATION_SECONDS.clear()
+    SCREENSHOT_REQUESTS_TOTAL.clear()
