@@ -121,6 +121,6 @@ export async function initCityLayers(map: maplibregl.Map): Promise<void> {
       },
     } as LayerSpecification);
   } catch (error) {
-    console.error("[city-labels] Failed to initialize city label layers:", error);
+    console.warn("[city-labels] Failed to initialize city label layers", error);
   }
 }
