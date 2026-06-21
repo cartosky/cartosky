@@ -516,6 +516,14 @@ app.add_middleware(
 # endpoints.  Added *after* CORSMiddleware so it wraps the outermost layer.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
+# Static asset hosting — city label GeoJSON and other infrequently-changing files.
+# Served from $CARTOSKY_DATA_ROOT/static/; versioned subdirectories (e.g. cities/v1/)
+# prevent cache invalidation issues when files are updated.
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+_static_dir = DATA_ROOT / "static"
+_static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", _StaticFiles(directory=str(_static_dir)), name="static")
 
 @app.on_event("startup")
 async def startup() -> None:
