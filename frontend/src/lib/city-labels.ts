@@ -2,7 +2,7 @@ import type maplibregl from "maplibre-gl";
 import type { LayerSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
-export const CITIES_GEOJSON_URL = "https://api.cartosky.com/static/cities/v1/cities_conus_can_V2.json";
+export const CITIES_GEOJSON_URL = "https://api.cartosky.com/static/cities/v1/cities_conus_can_v2.json";
 
 export const CITIES_STATIC_SOURCE_ID = "cities-static";
 export const CITY_LABEL_CANDIDATES_LAYER_ID = "city-label-candidates";
