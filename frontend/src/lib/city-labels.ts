@@ -133,6 +133,31 @@ export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
   }
 }
 
+export function setCityLabelNameOnlyMode(map: maplibregl.Map, nameOnly: boolean): void {
+  if (!map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) return;
+  // Show the candidate layer as visible name labels when no values are shown
+  map.setPaintProperty(
+    CITY_LABEL_CANDIDATES_LAYER_ID,
+    "text-opacity",
+    nameOnly ? 1 : 0
+  );
+  // Hide the value pill layer entirely in name-only mode
+  if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
+    map.setLayoutProperty(
+      CITY_VALUE_LABELS_LAYER_ID,
+      "visibility",
+      nameOnly ? "none" : "visible"
+    );
+  }
+  if (map.getLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID)) {
+    map.setLayoutProperty(
+      CITY_VALUE_LABEL_NAMES_LAYER_ID,
+      "visibility",
+      nameOnly ? "none" : "visible"
+    );
+  }
+}
+
 /**
  * Adds the city-label MapLibre sources and layers used by the zoom-adaptive
  * city label system. Fire-and-forget: handles its own errors and never throws.
@@ -203,7 +228,13 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-size": 12,
       },
       paint: {
+        // Default hidden; setCityLabelNameOnlyMode() flips opacity to 1 when the
+        // active variable/model has no scalar field to sample. Color + halo make
+        // it legible against the basemap when shown.
         "text-opacity": 0,
+        "text-color": "#ffffff",
+        "text-halo-color": "#000000",
+        "text-halo-width": 1.5,
       },
     } as LayerSpecification);
 

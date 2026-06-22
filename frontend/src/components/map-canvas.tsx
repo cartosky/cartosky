@@ -14,6 +14,7 @@ import {
   initCityLayers,
   moveCityLabelLayersToTop,
   queryVisibleCityPoints,
+  setCityLabelNameOnlyMode,
   updateCityValueLabels,
   type CityLabelPoint,
 } from "@/lib/city-labels";
@@ -1916,12 +1917,13 @@ export function MapCanvas({
     }
 
     // No scalar field to sample for this variable/model (e.g. radar ptype,
-    // MRMS, GOES-East): render city names with the "…" placeholder so users get
-    // location context without implying a value exists.
+    // MRMS, GOES-East): show clean city name labels (no value pill) instead.
     if (!cityLabelsValueEnabledRef.current) {
-      updateCityValueLabels(map, cityPoints, {}, "");
+      setCityLabelNameOnlyMode(map, true);
       return;
     }
+    // Ensure value mode is active when values are enabled.
+    setCityLabelNameOnlyMode(map, false);
 
     const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
     const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
@@ -2999,6 +3001,20 @@ export function MapCanvas({
     }
     clearCityValueLabels(map);
   }, [isLoaded, pointLabelsEnabled, scheduleCityLabelRefresh]);
+
+  // Toggle name-only mode immediately when value display is enabled/disabled
+  // (e.g. switching to/from ptype/MRMS/GOES-East), so the layer flips without
+  // waiting for the next frame sample. A follow-up refresh repopulates values.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    setCityLabelNameOnlyMode(map, !cityLabelsValueEnabled);
+    if (cityLabelsValueEnabled) {
+      scheduleCityLabelRefresh();
+    }
+  }, [cityLabelsValueEnabled, isLoaded, scheduleCityLabelRefresh]);
 
   // Clear stale city value labels on variable/model switch (selectionKey
   // changes on either). The next grid frame sample repopulates them.
