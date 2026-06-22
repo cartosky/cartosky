@@ -397,6 +397,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "F",
     },
+    ("eps", "rh2m__mean"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "%",
+    },
     ("eps", "rh700__mean"): {
         "scale": 0.1,
         "offset": 0.0,
@@ -499,7 +505,19 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "in",
     },
+    ("eps", "pwat__mean"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
     ("gefs", "precip_total__mean"): {
+        "scale": 0.01,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "in",
+    },
+    ("eps", "precip_total__mean"): {
         "scale": 0.01,
         "offset": 0.0,
         "nodata": 65535,
@@ -1094,8 +1112,9 @@ for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", 
 _PACKING_BY_MODEL_VAR[("ecmwf", "precip_15d_anom")] = dict(_PRECIP_ANOM_PACKING)
 for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"):
     _PACKING_BY_MODEL_VAR[("aifs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
-_PACKING_BY_MODEL_VAR[("eps", "precip_15d_anom")] = dict(_PRECIP_ANOM_PACKING)
-_PACKING_BY_MODEL_VAR[("eps", "precip_15d_anom__mean")] = dict(_PRECIP_ANOM_PACKING)
+for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"):
+    _PACKING_BY_MODEL_VAR[("eps", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
+    _PACKING_BY_MODEL_VAR[("eps", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
 
 _NDFD_GRID_PACKING_BY_VAR: dict[str, dict[str, Any]] = {
     "mint": {
