@@ -367,6 +367,10 @@ EPS_VARS = {
         kind="continuous",
         units="F",
     ),
+    "precip_total": replace(
+        ECMWF_VARS["precip_total"],
+        name="Total Precip (Mean)",
+    ),
     "precip_total__mean": replace(
         ECMWF_VARS["precip_total"],
         id="precip_total__mean",
