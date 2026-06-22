@@ -1392,7 +1392,20 @@ export function buildMapStyle(
             id: "twf-labels",
             type: "raster",
             source: "twf-labels",
-            paint: labelPaint,
+            paint: {
+              ...labelPaint,
+              // Combine the existing low-zoom fade-IN (4.3→5.1) with a fade-OUT
+              // between z6 and z8: at the zooms where city value chips appear
+              // (z≥7) CartoDB's baked place names are redundant clutter.
+              "raster-opacity": [
+                "interpolate", ["linear"], ["zoom"],
+                4.3, 0,   // hidden at the low-zoom overview
+                5.1, 1,   // faded in
+                6, 1.0,   // fully visible at z=6 and below
+                8, 0.0,   // fully hidden at z=8 and above
+              ] as any,
+              "raster-fade-duration": 0,
+            },
           } as LayerSpecification]),
       ...buildVectorBufferLayers(),
     ],
