@@ -2,7 +2,7 @@ import type maplibregl from "maplibre-gl";
 import type { LayerSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
-export const CITIES_GEOJSON_URL = "https://api.cartosky.com/static/cities/v1/cities_conus_can.json";
+export const CITIES_GEOJSON_URL = "https://api.cartosky.com/static/cities/v1/cities_conus_can_V2.json";
 
 export const CITIES_STATIC_SOURCE_ID = "cities-static";
 export const CITY_LABEL_CANDIDATES_LAYER_ID = "city-label-candidates";
@@ -224,7 +224,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "text-field": ["get", "name"] as any,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 9.5,
+        "text-size": 10,
         "text-anchor": "bottom",
         "text-offset": [0, -0.18],
         "text-allow-overlap": true,
@@ -233,8 +233,8 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       paint: {
         "text-color": "rgba(226, 244, 255, 0.90)",
         "text-halo-color": "rgba(4, 16, 30, 0.86)",
-        "text-halo-width": 1.1,
-        "text-halo-blur": 0.3,
+        "text-halo-width": 1,
+        "text-halo-blur": 0,
       },
     } as LayerSpecification);
 
@@ -255,14 +255,12 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 9.5,
+        "text-size": 10,
         "text-anchor": "center",
         "text-offset": [0, 0.38],
       },
       paint: {
         "text-color": "rgba(245, 252, 255, 0.98)",
-        "text-halo-color": "rgba(3, 10, 18, 0.22)",
-        "text-halo-width": 0.25,
       },
     } as LayerSpecification);
 
