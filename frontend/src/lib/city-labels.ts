@@ -70,8 +70,8 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
     return;
   }
 
-  const width = 38;
-  const height = 20;
+  const width = 34;
+  const height = 19;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -96,21 +96,21 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
   ctx.fill();
 
   map.addImage(CITY_VALUE_PILL_IMAGE_ID, ctx.getImageData(0, 0, width, height), {
-    stretchX: [[7, width - 7]],
-    stretchY: [[7, height - 7]],
-    content: [6, 2, width - 6, height - 2],
+    stretchX: [[6, width - 6]],
+    stretchY: [[6, height - 6]],
+    content: [4, 2, width - 4, height - 2],
   });
 }
 
 function estimateCityLabelRect(point: { x: number; y: number }, name: string): ScreenRect {
-  const nameWidth = Math.min(104, Math.max(30, name.length * 5.6));
-  const valueWidth = 46;
+  const nameWidth = Math.min(108, Math.max(32, name.length * 5.9));
+  const valueWidth = 40;
   const width = Math.max(nameWidth, valueWidth) + 8;
   return {
     left: point.x - width / 2,
     right: point.x + width / 2,
-    top: point.y - 13,
-    bottom: point.y + 26,
+    top: point.y - 12,
+    bottom: point.y + 27,
   };
 }
 
@@ -274,17 +274,17 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "text-field": ["get", "name"] as any,
         "text-font": ["Noto Sans Regular"],
-        "text-size": 11,
+        "text-size": 12,
         "text-anchor": "top",
-        "text-offset": [0, 0.82],
+        "text-offset": [0, 0.68],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
       },
       paint: {
         "text-color": "rgba(255, 255, 255, 0.98)",
-        "text-halo-color": "rgba(25, 29, 39, 0.72)",
-        "text-halo-width": 1.35,
-        "text-halo-blur": 0.35,
+        "text-halo-color": "rgba(25, 29, 39, 0.62)",
+        "text-halo-width": 0.9,
+        "text-halo-blur": 0.15,
       },
     } as LayerSpecification);
 
@@ -295,7 +295,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "icon-image": CITY_VALUE_PILL_IMAGE_ID,
         "icon-text-fit": "both",
-        "icon-text-fit-padding": [2, 6, 2, 6],
+        "icon-text-fit-padding": [1, 4, 1, 4],
         "icon-anchor": "center",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
