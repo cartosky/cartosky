@@ -42,25 +42,11 @@ const CARTO_LIGHT_BASE_TILES = [
   `https://d.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
 ];
 
-const CARTO_LIGHT_LABEL_TILES = [
-  `https://a.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://b.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://c.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://d.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-];
-
 const CARTO_DARK_BASE_TILES = [
   `https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
   `https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
   `https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
   `https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-];
-
-const CARTO_DARK_LABEL_TILES = [
-  `https://a.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://b.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://c.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
-  `https://d.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
 ];
 
 const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE}/tiles/v3/boundaries/v1/tilejson.json`;
@@ -1068,45 +1054,6 @@ function getMapBackgroundColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#1f2a33" : "#e8edf1";
 }
 
-type LabelOpacityExpression = readonly [
-  "interpolate",
-  readonly ["linear"],
-  readonly ["zoom"],
-  number,
-  number,
-  number,
-  number,
-];
-
-function getLabelPaintSettings(basemapMode: BasemapMode): {
-  "raster-resampling": "linear";
-  "raster-opacity": number | LabelOpacityExpression;
-  "raster-contrast": number;
-  "raster-saturation": number;
-  "raster-brightness-min": number;
-  "raster-brightness-max": number;
-} {
-  const labelOpacityByZoom = ["interpolate", ["linear"], ["zoom"], 4.3, 0, 5.1, 1] as const;
-  if (basemapMode === "dark") {
-    return {
-      "raster-resampling": "linear",
-      "raster-opacity": labelOpacityByZoom,
-      "raster-contrast": 0.1,
-      "raster-saturation": -0.06,
-      "raster-brightness-min": 0.05,
-      "raster-brightness-max": 1,
-    };
-  }
-  return {
-    "raster-resampling": "linear",
-    "raster-opacity": labelOpacityByZoom,
-    "raster-contrast": 0.08,
-    "raster-saturation": -0.06,
-    "raster-brightness-min": 0,
-    "raster-brightness-max": 1,
-  };
-}
-
 function setLayerVisibility(map: maplibregl.Map, id: string, visible: boolean) {
   if (!map.getLayer(id)) {
     return;
@@ -1215,15 +1162,11 @@ export function buildMapStyle(
   basemapMode: BasemapMode = "light"
 ): StyleSpecification {
   void vectorGeoJsonUrl;
-  const screenshotMode = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("screenshot") === "1";
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
-  const labelTiles = basemapMode === "dark" ? CARTO_DARK_LABEL_TILES : CARTO_LIGHT_LABEL_TILES;
   const mapBackgroundColor = getMapBackgroundColor(basemapMode);
   const boundaryLineColor = getBoundaryLineColor(basemapMode);
   const lakeFillColor = getLakeFillColor(basemapMode);
   const basemapPaint = getBasemapPaintSettings(basemapMode);
-  const labelPaint = getLabelPaintSettings(basemapMode);
 
   return {
     version: 8,
@@ -1233,15 +1176,6 @@ export function buildMapStyle(
         tiles: basemapTiles,
         tileSize: CARTO_TILE_SIZE,
       },
-      ...(screenshotMode
-        ? {}
-        : {
-            "twf-labels": {
-              type: "raster",
-              tiles: labelTiles,
-              tileSize: CARTO_TILE_SIZE,
-            },
-          }),
       [STATE_BOUNDARY_SOURCE_ID]: {
         type: "vector",
         url: BOUNDARIES_VECTOR_TILES_URL,
@@ -1386,27 +1320,6 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 2.5, 12, 3.5],
         },
       },
-      ...(screenshotMode
-        ? []
-        : [{
-            id: "twf-labels",
-            type: "raster",
-            source: "twf-labels",
-            paint: {
-              ...labelPaint,
-              // Combine the existing low-zoom fade-IN (4.3→5.1) with a fade-OUT
-              // between z6 and z8: at the zooms where city value chips appear
-              // (z≥7) CartoDB's baked place names are redundant clutter.
-              "raster-opacity": [
-                "interpolate", ["linear"], ["zoom"],
-                4.3, 0,   // hidden at the low-zoom overview
-                5.1, 1,   // faded in
-                6, 1.0,   // fully visible at z=6 and below
-                8, 0.0,   // fully hidden at z=8 and above
-              ] as any,
-              "raster-fade-duration": 0,
-            },
-          } as LayerSpecification]),
       ...buildVectorBufferLayers(),
     ],
   };
@@ -1443,6 +1356,9 @@ type MapCanvasProps = {
   vectorLineHaloEnabled?: boolean;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
+  /** When false, city labels render names with a "…" placeholder instead of a
+   *  sampled value (e.g. ptype/MRMS/GOES-East have no scalar field to sample). */
+  cityLabelsValueEnabled?: boolean;
   showZoomControls?: boolean;
   isDesktopLayout?: boolean;
   legendButtonVisible?: boolean;
@@ -1527,6 +1443,7 @@ export function MapCanvas({
   vectorLineHaloEnabled = false,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
+  cityLabelsValueEnabled = true,
   showZoomControls = false,
   isDesktopLayout = false,
   legendButtonVisible = false,
@@ -1627,6 +1544,8 @@ export function MapCanvas({
   isLoadedRef.current = isLoaded;
   const pointLabelsEnabledRef = useRef(pointLabelsEnabled);
   pointLabelsEnabledRef.current = pointLabelsEnabled;
+  const cityLabelsValueEnabledRef = useRef(cityLabelsValueEnabled);
+  cityLabelsValueEnabledRef.current = cityLabelsValueEnabled;
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
@@ -1996,6 +1915,14 @@ export function MapCanvas({
       return;
     }
 
+    // No scalar field to sample for this variable/model (e.g. radar ptype,
+    // MRMS, GOES-East): render city names with the "…" placeholder so users get
+    // location context without implying a value exists.
+    if (!cityLabelsValueEnabledRef.current) {
+      updateCityValueLabels(map, cityPoints, {}, "");
+      return;
+    }
+
     const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
     const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
     if (citySampled) {
@@ -2239,7 +2166,9 @@ export function MapCanvas({
   }, [geolocationMarker, isLoaded]);
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
-    if (!map.getLayer("twf-labels")) {
+    // Coastline is part of the base style and always present once the style is
+    // ready — use it as the readiness guard (twf-labels no longer exists).
+    if (!map.getLayer(COASTLINE_LAYER_ID)) {
       return;
     }
 
@@ -2276,25 +2205,27 @@ export function MapCanvas({
       }
     }
     if (map.getLayer(CONTOUR_LAYER_ID)) {
-      map.moveLayer(CONTOUR_LAYER_ID, map.getLayer(COASTLINE_LAYER_ID) ? COASTLINE_LAYER_ID : "twf-labels");
+      map.moveLayer(CONTOUR_LAYER_ID, COASTLINE_LAYER_ID);
     }
+    // Coastline / boundaries / lake shoreline move to the top (in this order,
+    // so lake shoreline ends up highest of the group). twf-labels is gone, so
+    // there is no before-anchor — move each to the absolute top.
     if (map.getLayer(COASTLINE_LAYER_ID)) {
-      map.moveLayer(COASTLINE_LAYER_ID, "twf-labels");
+      map.moveLayer(COASTLINE_LAYER_ID);
     }
     if (map.getLayer(COUNTRY_BOUNDARY_LAYER_ID)) {
-      map.moveLayer(COUNTRY_BOUNDARY_LAYER_ID, "twf-labels");
+      map.moveLayer(COUNTRY_BOUNDARY_LAYER_ID);
     }
     if (map.getLayer(STATE_BOUNDARY_LAYER_ID)) {
-      map.moveLayer(STATE_BOUNDARY_LAYER_ID, "twf-labels");
+      map.moveLayer(STATE_BOUNDARY_LAYER_ID);
     }
     if (map.getLayer(COUNTY_BOUNDARY_LAYER_ID)) {
-      map.moveLayer(COUNTY_BOUNDARY_LAYER_ID, "twf-labels");
+      map.moveLayer(COUNTY_BOUNDARY_LAYER_ID);
     }
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
-      map.moveLayer(LAKE_SHORELINE_LAYER_ID, "twf-labels");
+      map.moveLayer(LAKE_SHORELINE_LAYER_ID);
     }
-    map.moveLayer("twf-labels");
-    // City label layers sit above weather raster/WebGL and basemap labels.
+    // City label layers sit at the very top, above the boundaries just moved up.
     moveCityLabelLayersToTop(map);
   }, []);
 

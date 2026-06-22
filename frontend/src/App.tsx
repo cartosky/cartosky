@@ -5317,6 +5317,7 @@ export default function App() {
             anchorValueDisplayEnabled && pointLabelsEnabled ? handleCityFrameSampled : undefined
           }
           pointLabelsEnabled={pointLabelsEnabled}
+          cityLabelsValueEnabled={anchorValueDisplayEnabled}
           region={region}
           regionViews={regionViews}
           opacity={opacity}

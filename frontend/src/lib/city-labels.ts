@@ -122,9 +122,6 @@ function intersectsRect(left: ScreenRect, right: ScreenRect): boolean {
 
 /** Keep city label symbol layers above weather overlays and basemap labels. */
 export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
-  if (!map.getLayer("twf-labels")) {
-    return;
-  }
   if (map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
     map.moveLayer(CITY_LABEL_CANDIDATES_LAYER_ID);
   }
