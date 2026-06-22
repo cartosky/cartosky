@@ -141,6 +141,18 @@ export function setCityLabelNameOnlyMode(map: maplibregl.Map, nameOnly: boolean)
     "text-opacity",
     nameOnly ? 1 : 0
   );
+  // In name-only mode, let the candidate symbol layer participate in normal
+  // collision placement so dense clusters do not visually overlap.
+  map.setLayoutProperty(
+    CITY_LABEL_CANDIDATES_LAYER_ID,
+    "text-allow-overlap",
+    nameOnly ? false : true
+  );
+  map.setLayoutProperty(
+    CITY_LABEL_CANDIDATES_LAYER_ID,
+    "text-ignore-placement",
+    nameOnly ? false : true
+  );
   // Hide the value pill layer entirely in name-only mode
   if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
     map.setLayoutProperty(
