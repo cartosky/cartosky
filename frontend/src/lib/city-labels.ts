@@ -14,7 +14,8 @@ export const CITY_VALUE_LABELS_LAYER_ID = "city-value-labels";
 const CITY_LABEL_GLYPHS_URL =
   "https://tiles.stadiamaps.com/fonts/{fontstack}/{range}.pbf";
 const CITY_VALUE_PILL_IMAGE_ID = "city-value-label-pill";
-const CITY_LABEL_COLLISION_GAP_PX = 4;
+const CITY_LABEL_COLLISION_GAP_PX = 8;
+const CITY_VALUE_LABEL_MAX_COUNT = 42;
 
 /**
  * Loaded city candidate data. Plain module-level ref (not React state) so the
@@ -69,8 +70,8 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
     return;
   }
 
-  const width = 32;
-  const height = 16;
+  const width = 44;
+  const height = 24;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -80,35 +81,43 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
   }
 
   ctx.clearRect(0, 0, width, height);
-  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 5);
-  ctx.fillStyle = "rgba(4, 16, 30, 0.82)";
+  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 9);
+  ctx.fillStyle = "rgba(25, 29, 39, 0.90)";
   ctx.fill();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(125, 211, 252, 0.24)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
   ctx.stroke();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-  ctx.fillRect(6, 1, width - 12, 1);
-  ctx.fillStyle = "rgba(8, 47, 73, 0.28)";
-  ctx.fillRect(2, height - 3, width - 4, 1);
+  addRoundedRectPath(ctx, 2, 2, width - 4, height - 4, 8);
+  const highlight = ctx.createLinearGradient(0, 2, 0, height - 2);
+  highlight.addColorStop(0, "rgba(255, 255, 255, 0.12)");
+  highlight.addColorStop(0.35, "rgba(255, 255, 255, 0.04)");
+  highlight.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = highlight;
+  ctx.fill();
 
   map.addImage(CITY_VALUE_PILL_IMAGE_ID, ctx.getImageData(0, 0, width, height), {
-    stretchX: [[6, width - 6]],
-    stretchY: [[6, height - 6]],
-    content: [5, 2, width - 5, height - 2],
+    stretchX: [[9, width - 9]],
+    stretchY: [[9, height - 9]],
+    content: [7, 3, width - 7, height - 3],
   });
 }
 
 function estimateCityLabelRect(point: { x: number; y: number }, name: string): ScreenRect {
-  const nameWidth = Math.min(82, Math.max(24, name.length * 5.1));
-  const valueWidth = 40;
-  const width = Math.max(nameWidth, valueWidth) + 5;
-  const height = 30;
+  const nameWidth = Math.min(112, Math.max(32, name.length * 5.9));
+  const valueWidth = 52;
+  const width = Math.max(nameWidth, valueWidth) + 10;
   return {
     left: point.x - width / 2,
     right: point.x + width / 2,
-    top: point.y - 17,
-    bottom: point.y + height - 17,
+    top: point.y - 39,
+    bottom: point.y + 8,
   };
+}
+
+function cityLabelLimitForZoom(zoom: number): number {
+  if (zoom < 5) return 24;
+  if (zoom < 6) return 32;
+  return CITY_VALUE_LABEL_MAX_COUNT;
 }
 
 function intersectsRect(left: ScreenRect, right: ScreenRect): boolean {
@@ -264,17 +273,17 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       source: CITY_VALUE_LABELS_SOURCE_ID,
       layout: {
         "text-field": ["get", "name"] as any,
-        "text-font": ["Noto Sans Regular"],
-        "text-size": 10,
-        "text-anchor": "bottom",
-        "text-offset": [0, -0.18],
+        "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
+        "text-size": 11,
+        "text-anchor": "top",
+        "text-offset": [0, -0.72],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
       },
       paint: {
-        "text-color": "rgba(226, 244, 255, 0.90)",
-        "text-halo-color": "rgba(4, 16, 30, 0.86)",
-        "text-halo-width": 1,
+        "text-color": "rgba(246, 250, 255, 0.94)",
+        "text-halo-color": "rgba(25, 29, 39, 0.88)",
+        "text-halo-width": 2.1,
         "text-halo-blur": 0,
       },
     } as LayerSpecification);
@@ -286,8 +295,9 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "icon-image": CITY_VALUE_PILL_IMAGE_ID,
         "icon-text-fit": "both",
-        "icon-text-fit-padding": [1, 4, 1, 4],
+        "icon-text-fit-padding": [3, 8, 3, 8],
         "icon-anchor": "center",
+        "icon-offset": [0, -24],
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         "text-field": ["coalesce", ["get", "value_label"], "…"] as any,
@@ -295,13 +305,15 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         // this layer just renders the selected city/value pairs.
         "text-allow-overlap": true,
         "text-ignore-placement": true,
-        "text-font": ["Noto Sans Regular"],
-        "text-size": 10,
+        "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
+        "text-size": 12,
         "text-anchor": "center",
-        "text-offset": [0, 0.38],
+        "text-offset": [0, -2],
       },
       paint: {
         "text-color": "rgba(245, 252, 255, 0.98)",
+        "text-halo-color": "rgba(25, 29, 39, 0.62)",
+        "text-halo-width": 0.4,
       },
     } as LayerSpecification);
 
@@ -378,30 +390,31 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
     }
     accepted.push(point);
     occupiedRects.push(rect);
-    if (accepted.length >= 50) {
+    if (accepted.length >= cityLabelLimitForZoom(zoom)) {
       break;
     }
   }
 
-  // Cap at 50 cities per viewport to avoid overloading the sampler.
+  // Cap visible labels by zoom to keep the larger value-first treatment readable.
   return accepted;
 }
 
 // Pushes a sampled FeatureCollection to city-value-labels.
-// values: Record<id, number|null>, units: string (e.g. "°F")
+// values: Record<id, number|null>
 export function updateCityValueLabels(
   map: maplibregl.Map,
   points: CityLabelPoint[],
   values: Record<string, number | null>,
-  units: string,
+  _units: string,
 ): void {
   const source = map.getSource(CITY_VALUE_LABELS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
   if (!source) return;
   const features: GeoJSON.Feature[] = points.map((p) => {
     const raw = values[p.id];
     const num = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-    const valueLabel = num !== null
-      ? `${Math.round(num * 10) / 10}${units}`
+    const rounded = num !== null ? Math.round(num * 10) / 10 : null;
+    const valueLabel = rounded !== null
+      ? Number.isInteger(rounded) ? String(Math.round(rounded)) : rounded.toFixed(1)
       : null;
     return {
       type: "Feature",
