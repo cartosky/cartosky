@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
+import { RadarPreviewCard } from "@/components/forecast/RadarPreviewCard";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
@@ -1521,44 +1522,54 @@ export default function Forecast() {
 
         {/* Conditions Strip */}
         <div>
-          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 flex flex-wrap items-center gap-5 border-b-[0.5px] border-white/[0.08]">
-            <div className="flex items-center gap-3 flex-none">
-              <WeatherIcon code={f.current.icon} size={40} className="flex-none" />
-              <div>
-                <div className="text-[36px] font-medium leading-none text-white">
-                  {f.current.temperature_f ?? "--"}°
+          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 border-b-[0.5px] border-white/[0.08]">
+            <div className="flex flex-col md:flex-row md:items-stretch md:justify-between gap-5">
+              <div className="flex flex-wrap items-center gap-5 min-w-0">
+                <div className="flex items-center gap-3 flex-none">
+                  <WeatherIcon code={f.current.icon} size={40} className="flex-none" />
+                  <div>
+                    <div className="text-[36px] font-medium leading-none text-white">
+                      {f.current.temperature_f ?? "--"}°
+                    </div>
+                    <div className="mt-1 text-[13px] text-white/55">
+                      {f.current.short_text ?? ""}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-1 text-[13px] text-white/55">
-                  {f.current.short_text ?? ""}
+
+                <div className="hidden sm:block self-stretch w-px bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
+
+                <div className="flex flex-wrap gap-x-6 gap-y-3">
+                  {(() => {
+                    const fl = feelsLikeF(f.current.temperature_f, f.current.wind_speed_mph, f.current.humidity_pct);
+                    return fl !== null && fl !== f.current.temperature_f
+                      ? <MetaItem label="Feels Like" value={`${fl}°`} />
+                      : null;
+                  })()}
+                  {f.current.dewpoint_f != null && (
+                    <MetaItem label="Dew Point" value={`${f.current.dewpoint_f}°`} />
+                  )}
+                  {f.current.humidity_pct != null && (
+                    <MetaItem label="Humidity" value={`${f.current.humidity_pct}%`} />
+                  )}
+                  <MetaItem
+                    label="Wind"
+                    value={`${degreesToCardinal(f.current.wind_dir_deg)} ${f.current.wind_speed_mph ?? "--"} mph${f.current.wind_gust_mph ? ` · G${f.current.wind_gust_mph}` : ""}`}
+                  />
+                  {f.current.pressure_mb != null && (
+                    <MetaItem label="Pressure" value={`${f.current.pressure_mb} mb`} />
+                  )}
+                  {f.current.visibility_mi != null && (
+                    <MetaItem label="Visibility" value={`${f.current.visibility_mi} mi`} />
+                  )}
                 </div>
               </div>
-            </div>
 
-            <div className="hidden sm:block self-stretch w-px bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
-
-            <div className="flex flex-wrap gap-x-6 gap-y-3">
-              {(() => {
-                const fl = feelsLikeF(f.current.temperature_f, f.current.wind_speed_mph, f.current.humidity_pct);
-                return fl !== null && fl !== f.current.temperature_f
-                  ? <MetaItem label="Feels Like" value={`${fl}°`} />
-                  : null;
-              })()}
-              {f.current.dewpoint_f != null && (
-                <MetaItem label="Dew Point" value={`${f.current.dewpoint_f}°`} />
-              )}
-              {f.current.humidity_pct != null && (
-                <MetaItem label="Humidity" value={`${f.current.humidity_pct}%`} />
-              )}
-              <MetaItem
-                label="Wind"
-                value={`${degreesToCardinal(f.current.wind_dir_deg)} ${f.current.wind_speed_mph ?? "--"} mph${f.current.wind_gust_mph ? ` · G${f.current.wind_gust_mph}` : ""}`}
+              <RadarPreviewCard
+                lat={f.location.latitude}
+                lon={f.location.longitude}
+                className="w-full md:w-[320px] md:flex-none"
               />
-              {f.current.pressure_mb != null && (
-                <MetaItem label="Pressure" value={`${f.current.pressure_mb} mb`} />
-              )}
-              {f.current.visibility_mi != null && (
-                <MetaItem label="Visibility" value={`${f.current.visibility_mi} mi`} />
-              )}
             </div>
           </div>
         </div>

@@ -74,3 +74,7 @@ env_vars.sh
 mnt/
 frontend/public/poc/
 frontend/scripts/generate_poc_frames.js
+.openskills/
+AGENTS.md
+prpm.lock
+/docs/plans/
