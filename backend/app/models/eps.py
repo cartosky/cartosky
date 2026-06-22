@@ -18,7 +18,11 @@ from dataclasses import replace
 
 from .base import HerbieRequest, ModelCapabilities, VarSelectors, VariableCapability
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS
-from .gfs import PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY, _precip_anomaly_var_spec
+from .gfs import (
+    PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY,
+    PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY,
+    _precip_anomaly_var_spec,
+)
 
 
 EPS_FHS_SYNOPTIC = list(range(0, 361, 6))
@@ -35,6 +39,17 @@ class EPSPlugin(ECMWFPlugin):
         normalized = str(var_id).strip().lower()
         aliases = {
             "tmp2m__mean": "tmp2m__mean",
+            "pwat": "pwat",
+            "pwat__mean": "pwat__mean",
+            "precipitable_water": "pwat",
+            "precipitablewater": "pwat",
+            "tcwv": "pwat",
+            "rh2m": "rh2m",
+            "rh2m__mean": "rh2m__mean",
+            "r2m": "rh2m",
+            "2m_rh": "rh2m",
+            "surface_rh": "rh2m",
+            "surface_relative_humidity": "rh2m",
             "rh700": "rh700",
             "rh700__mean": "rh700__mean",
             "r700": "rh700",
@@ -70,6 +85,12 @@ class EPSPlugin(ECMWFPlugin):
             "hgt500__mean": "hgt500__mean",
             "hgt500_anom": "hgt500_anom",
             "hgt500_anom__mean": "hgt500_anom__mean",
+            "precip_5d_anom": "precip_5d_anom",
+            "precip_5d_anom__mean": "precip_5d_anom__mean",
+            "precip_7d_anom": "precip_7d_anom",
+            "precip_7d_anom__mean": "precip_7d_anom__mean",
+            "precip_10d_anom": "precip_10d_anom",
+            "precip_10d_anom__mean": "precip_10d_anom__mean",
             "precip_15d_anom": "precip_15d_anom",
             "precip_15d_anom__mean": "precip_15d_anom__mean",
             "wspd10m": "wspd10m",
@@ -107,7 +128,22 @@ class EPSPlugin(ECMWFPlugin):
         herbie_kwargs = dict(base_request.herbie_kwargs)
         if runtime_var in {"hgt500__mean"}:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_direct_mean_or_pf_mean"
-        elif runtime_var in {"tmp2m__mean", "tmp850__mean", "tmp850_anom__mean", "rh700__mean", "10u__mean", "10v__mean", "precip_total__mean"}:
+        elif runtime_var in {
+            "tmp2m__mean",
+            "tmp850__mean",
+            "tmp850_anom__mean",
+            "rh700__mean",
+            "rh2m__mean",
+            "dp2m__mean",
+            "10u__mean",
+            "10v__mean",
+            "pwat__mean",
+            "precip_total__mean",
+            "precip_5d_anom__mean",
+            "precip_7d_anom__mean",
+            "precip_10d_anom__mean",
+            "precip_15d_anom__mean",
+        }:
             herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
         return HerbieRequest(
             model="ifs",
@@ -134,6 +170,45 @@ EPS_VARS = {
         ECMWF_VARS["rh700"],
         id="rh700__mean",
         name="700mb Relative Humidity (Mean)",
+    ),
+    "pwat": replace(
+        ECMWF_VARS["pwat"],
+        name="Precipitable Water (Mean)",
+    ),
+    "pwat__mean": replace(
+        ECMWF_VARS["pwat"],
+        id="pwat__mean",
+        name="Precipitable Water (Mean)",
+    ),
+    "dp2m__mean": replace(
+        ECMWF_VARS["dp2m"],
+        id="dp2m__mean",
+        name="Surface Dew Point (Mean)",
+    ),
+    "rh2m": replace(
+        ECMWF_VARS["rh2m"],
+        name="Surface Relative Humidity (Mean)",
+        selectors=VarSelectors(
+            hints={
+                "temp_component": "tmp2m__mean",
+                "dewpoint_component": "dp2m__mean",
+                "temp_units": "c",
+                "dewpoint_units": "c",
+            }
+        ),
+    ),
+    "rh2m__mean": replace(
+        ECMWF_VARS["rh2m"],
+        id="rh2m__mean",
+        name="Surface Relative Humidity (Mean)",
+        selectors=VarSelectors(
+            hints={
+                "temp_component": "tmp2m__mean",
+                "dewpoint_component": "dp2m__mean",
+                "temp_units": "c",
+                "dewpoint_units": "c",
+            }
+        ),
     ),
     "tmp2m_anom": replace(
         ECMWF_VARS["tmp2m_anom"],
@@ -328,26 +403,54 @@ EPS_VARS = {
             }
         ),
     ),
-    "precip_15d_anom": replace(
-        _precip_anomaly_var_spec(
-            "precip_15d_anom",
-            15,
-            PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
-            base_component="precip_total__mean",
-        ),
-        name="Precip Anomaly",
-    ),
-    "precip_15d_anom__mean": replace(
-        _precip_anomaly_var_spec(
-            "precip_15d_anom__mean",
-            15,
-            PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
-            base_component="precip_total__mean",
-        ),
-        id="precip_15d_anom__mean",
-        name="Precip Anomaly",
-    ),
 }
+
+for _eps_precip_anom_key, _eps_precip_anom_fh in PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY.items():
+    _eps_days = int(_eps_precip_anom_key.split("_", 2)[1].removesuffix("d"))
+    EPS_VARS[_eps_precip_anom_key] = replace(
+        _precip_anomaly_var_spec(
+            _eps_precip_anom_key,
+            _eps_days,
+            PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get(_eps_precip_anom_key),
+            base_component="precip_total__mean",
+        ),
+        name="Precip Anomaly",
+    )
+    EPS_VARS[f"{_eps_precip_anom_key}__mean"] = replace(
+        EPS_VARS[_eps_precip_anom_key],
+        id=f"{_eps_precip_anom_key}__mean",
+    )
+
+
+def _eps_precip_anomaly_capability(var_key: str, *, internal: bool = False) -> VariableCapability:
+    public_key = var_key.removesuffix("__mean")
+    target_fh = PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY[public_key]
+    days = int(public_key.split("_", 2)[1].removesuffix("d"))
+    constraints: dict[str, int] = {"min_fh": target_fh}
+    if public_key in PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY:
+        constraints["max_fh"] = target_fh
+    return VariableCapability(
+        var_key=var_key,
+        name="Precip Anomaly",
+        selectors=EPS_VARS[var_key].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="precip_accum_anomaly_departure",
+        kind="continuous",
+        units="in",
+        color_map_id="precip_anom",
+        default_fh=target_fh,
+        buildable=not internal,
+        order=10.0 + (days / 100.0),
+        group="Anomalies",
+        constraints=constraints,
+        frontend={"internal_only": True} if internal else {},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            **({} if internal else {"artifact_map": {"mean": f"{public_key}__mean"}}),
+        },
+    )
 
 
 EPS_VARIABLE_CATALOG = {
@@ -469,6 +572,105 @@ EPS_VARIABLE_CATALOG = {
             "default_view": "mean",
         },
     ),
+    "pwat": VariableCapability(
+        var_key="pwat",
+        name=EPS_VARS["pwat"].name,
+        selectors=EPS_VARS["pwat"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="pwat",
+        default_fh=0,
+        buildable=True,
+        order=9,
+        group="Moisture",
+        conversion="kgm2_to_in",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "pwat__mean"},
+        },
+    ),
+    "pwat__mean": VariableCapability(
+        var_key="pwat__mean",
+        name=EPS_VARS["pwat__mean"].name,
+        selectors=EPS_VARS["pwat__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="pwat",
+        default_fh=0,
+        buildable=False,
+        order=9,
+        group="Moisture",
+        conversion="kgm2_to_in",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "dp2m__mean": VariableCapability(
+        var_key="dp2m__mean",
+        name=EPS_VARS["dp2m__mean"].name,
+        selectors=EPS_VARS["dp2m__mean"].selectors,
+        primary=False,
+        derived=False,
+        kind="continuous",
+        units="C",
+        color_map_id="dp2m",
+        default_fh=0,
+        buildable=False,
+        order=99,
+        group="Moisture",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
+    "rh2m": VariableCapability(
+        var_key="rh2m",
+        name=EPS_VARS["rh2m"].name,
+        selectors=EPS_VARS["rh2m"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="relative_humidity_from_temp_dewpoint",
+        kind="continuous",
+        units="%",
+        color_map_id="rh",
+        default_fh=0,
+        buildable=True,
+        order=2.5,
+        group="Moisture",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "rh2m__mean"},
+        },
+    ),
+    "rh2m__mean": VariableCapability(
+        var_key="rh2m__mean",
+        name=EPS_VARS["rh2m__mean"].name,
+        selectors=EPS_VARS["rh2m__mean"].selectors,
+        primary=True,
+        derived=True,
+        derive_strategy_id="relative_humidity_from_temp_dewpoint",
+        kind="continuous",
+        units="%",
+        color_map_id="rh",
+        default_fh=0,
+        buildable=False,
+        order=2.5,
+        group="Moisture",
+        frontend={"internal_only": True},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+        },
+    ),
     "hgt500_anom": VariableCapability(
         var_key="hgt500_anom",
         name=EPS_VARS["hgt500_anom"].name,
@@ -527,6 +729,25 @@ EPS_VARIABLE_CATALOG = {
         ensemble={
             "supported_views": ["mean"],
             "default_view": "mean",
+        },
+    ),
+    "tmp850": VariableCapability(
+        var_key="tmp850",
+        name=EPS_VARS["tmp850__mean"].name,
+        selectors=EPS_VARS["tmp850__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="C",
+        color_map_id="tmp850",
+        default_fh=0,
+        buildable=True,
+        order=3,
+        group="Temperature",
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "tmp850__mean"},
         },
     ),
     "tmp850__mean": VariableCapability(
@@ -588,6 +809,27 @@ EPS_VARIABLE_CATALOG = {
             "default_view": "mean",
         },
     ),
+    "precip_total": VariableCapability(
+        var_key="precip_total",
+        name=EPS_VARS["precip_total__mean"].name,
+        selectors=EPS_VARS["precip_total__mean"].selectors,
+        primary=True,
+        derived=False,
+        kind="continuous",
+        units="in",
+        color_map_id="precip_total",
+        default_fh=6,
+        buildable=True,
+        order=10,
+        group="Precipitation",
+        conversion="m_to_in",
+        constraints={"min_fh": 6},
+        ensemble={
+            "supported_views": ["mean"],
+            "default_view": "mean",
+            "artifact_map": {"mean": "precip_total__mean"},
+        },
+    ),
     "precip_total__mean": VariableCapability(
         var_key="precip_total__mean",
         name=EPS_VARS["precip_total__mean"].name,
@@ -604,48 +846,6 @@ EPS_VARIABLE_CATALOG = {
         conversion="m_to_in",
         frontend={"internal_only": True},
         constraints={"min_fh": 6},
-        ensemble={
-            "supported_views": ["mean"],
-            "default_view": "mean",
-        },
-    ),
-    "precip_15d_anom": VariableCapability(
-        var_key="precip_15d_anom",
-        name=EPS_VARS["precip_15d_anom"].name,
-        selectors=EPS_VARS["precip_15d_anom"].selectors,
-        primary=True,
-        derived=True,
-        derive_strategy_id="precip_accum_anomaly_departure",
-        kind="continuous",
-        units="in",
-        color_map_id="precip_anom",
-        default_fh=360,
-        buildable=True,
-        order=10.4,
-        group="Anomalies",
-        constraints={"min_fh": 360, "max_fh": 360},
-        ensemble={
-            "supported_views": ["mean"],
-            "default_view": "mean",
-            "artifact_map": {"mean": "precip_15d_anom__mean"},
-        },
-    ),
-    "precip_15d_anom__mean": VariableCapability(
-        var_key="precip_15d_anom__mean",
-        name=EPS_VARS["precip_15d_anom__mean"].name,
-        selectors=EPS_VARS["precip_15d_anom__mean"].selectors,
-        primary=True,
-        derived=True,
-        derive_strategy_id="precip_accum_anomaly_departure",
-        kind="continuous",
-        units="in",
-        color_map_id="precip_anom",
-        default_fh=360,
-        buildable=False,
-        order=10.4,
-        group="Anomalies",
-        frontend={"internal_only": True},
-        constraints={"min_fh": 360, "max_fh": 360},
         ensemble={
             "supported_views": ["mean"],
             "default_view": "mean",
@@ -694,6 +894,15 @@ EPS_VARIABLE_CATALOG = {
         },
     ),
 }
+
+for _eps_precip_anom_key in PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY:
+    EPS_VARIABLE_CATALOG[_eps_precip_anom_key] = _eps_precip_anomaly_capability(_eps_precip_anom_key)
+    EPS_VARIABLE_CATALOG[f"{_eps_precip_anom_key}__mean"] = _eps_precip_anomaly_capability(
+        f"{_eps_precip_anom_key}__mean",
+        internal=True,
+    )
+
+
 EPS_CAPABILITIES = ModelCapabilities(
     model_id="eps",
     name="EPS",
