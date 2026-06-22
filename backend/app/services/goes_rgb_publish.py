@@ -18,6 +18,7 @@ from app.services.goes_publish import (
     _parse_iso_datetime,
     _patch_run_manifest_frame_counts,
     _prepare_stage_run_dir,
+    _preservation_source_run_id,
     _preserved_manifest_variables,
 )
 from app.services.observed_bundle_health import build_observed_bundle_health
@@ -130,15 +131,17 @@ def publish_goes_rgb_bundle(
 
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
+    preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
     preserved_manifest_variables = _preserved_manifest_variables(
         data_root=data_root,
-        run_id=run_id,
+        run_id=preservation_source_run_id,
         exclude_var_id=TRUE_COLOR_VARIABLE_ID,
     )
     _prepare_stage_run_dir(
         data_root=data_root,
         run_id=run_id,
         replace_var_id=TRUE_COLOR_VARIABLE_ID,
+        source_run_id=preservation_source_run_id,
     )
 
     merged_by_slot_time: dict[datetime, GOESRGBPublishedFrame | GOESRGBBundleFrame] = {}

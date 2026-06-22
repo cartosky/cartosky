@@ -203,6 +203,45 @@ def test_publish_cpc_outlooks_preserves_previous_variables_when_refresh_is_parti
     assert preserved_sidecar["outlook_type"] == "precipitation"
 
 
+def test_publish_cpc_outlooks_preserves_previous_variables_when_same_run_id_refresh_is_partial(
+    tmp_path: Path,
+) -> None:
+    temp_config = cpc_outlook.CPC_PRODUCT_CONFIGS["cpc_610_temp"]
+    precip_config = cpc_outlook.CPC_PRODUCT_CONFIGS["cpc_610_precip"]
+    temp_outlook = cpc_outlook.normalize_cpc_features(
+        {"type": "FeatureCollection", "features": [_feature("Above", 40.0)]},
+        config=temp_config,
+    )
+    precip_outlook = cpc_outlook.normalize_cpc_features(
+        {"type": "FeatureCollection", "features": [_feature("Below", 60.0)]},
+        config=precip_config,
+    )
+    issued_at = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+
+    first_result = cpc_outlook.publish_cpc_outlooks(
+        data_root=tmp_path,
+        products={
+            temp_config.var_id: temp_outlook,
+            precip_config.var_id: precip_outlook,
+        },
+        issued_at=issued_at,
+    )
+    assert first_result.run_id == "20260521_1200z"
+
+    second_result = cpc_outlook.publish_cpc_outlooks(
+        data_root=tmp_path,
+        products={temp_config.var_id: temp_outlook},
+        issued_at=issued_at,
+    )
+
+    assert second_result.run_id == first_result.run_id
+    assert set(second_result.variable_ids) == {temp_config.var_id, precip_config.var_id}
+    assert (second_result.published_run_dir / precip_config.var_id / "vectors" / "fh000.geojson").is_file()
+
+    manifest = json.loads((tmp_path / "manifests" / "cpc" / f"{second_result.run_id}.json").read_text())
+    assert set(manifest["variables"]) == {temp_config.var_id, precip_config.var_id}
+
+
 def test_fetch_and_normalize_w34_shapefile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     zip_bytes = _w34_zip_bytes(tmp_path)
 
