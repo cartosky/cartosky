@@ -70,8 +70,8 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
     return;
   }
 
-  const width = 44;
-  const height = 24;
+  const width = 38;
+  const height = 20;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -81,13 +81,13 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
   }
 
   ctx.clearRect(0, 0, width, height);
-  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 9);
-  ctx.fillStyle = "rgba(25, 29, 39, 0.90)";
+  addRoundedRectPath(ctx, 1, 1, width - 2, height - 2, 7);
+  ctx.fillStyle = "rgba(25, 29, 39, 0.88)";
   ctx.fill();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.13)";
   ctx.stroke();
-  addRoundedRectPath(ctx, 2, 2, width - 4, height - 4, 8);
+  addRoundedRectPath(ctx, 2, 2, width - 4, height - 4, 6);
   const highlight = ctx.createLinearGradient(0, 2, 0, height - 2);
   highlight.addColorStop(0, "rgba(255, 255, 255, 0.12)");
   highlight.addColorStop(0.35, "rgba(255, 255, 255, 0.04)");
@@ -96,21 +96,21 @@ function ensureCityValuePillImage(map: maplibregl.Map): void {
   ctx.fill();
 
   map.addImage(CITY_VALUE_PILL_IMAGE_ID, ctx.getImageData(0, 0, width, height), {
-    stretchX: [[9, width - 9]],
-    stretchY: [[9, height - 9]],
-    content: [7, 3, width - 7, height - 3],
+    stretchX: [[7, width - 7]],
+    stretchY: [[7, height - 7]],
+    content: [6, 2, width - 6, height - 2],
   });
 }
 
 function estimateCityLabelRect(point: { x: number; y: number }, name: string): ScreenRect {
-  const nameWidth = Math.min(112, Math.max(32, name.length * 5.9));
-  const valueWidth = 52;
-  const width = Math.max(nameWidth, valueWidth) + 10;
+  const nameWidth = Math.min(104, Math.max(30, name.length * 5.6));
+  const valueWidth = 46;
+  const width = Math.max(nameWidth, valueWidth) + 8;
   return {
     left: point.x - width / 2,
     right: point.x + width / 2,
-    top: point.y - 16,
-    bottom: point.y + 30,
+    top: point.y - 13,
+    bottom: point.y + 26,
   };
 }
 
@@ -273,18 +273,18 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       source: CITY_VALUE_LABELS_SOURCE_ID,
       layout: {
         "text-field": ["get", "name"] as any,
-        "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
+        "text-font": ["Noto Sans Regular"],
         "text-size": 11,
         "text-anchor": "top",
-        "text-offset": [0, 0.92],
+        "text-offset": [0, 0.82],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
       },
       paint: {
-        "text-color": "rgba(246, 250, 255, 0.94)",
-        "text-halo-color": "rgba(25, 29, 39, 0.88)",
-        "text-halo-width": 2.1,
-        "text-halo-blur": 0,
+        "text-color": "rgba(255, 255, 255, 0.98)",
+        "text-halo-color": "rgba(25, 29, 39, 0.72)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35,
       },
     } as LayerSpecification);
 
@@ -295,7 +295,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       layout: {
         "icon-image": CITY_VALUE_PILL_IMAGE_ID,
         "icon-text-fit": "both",
-        "icon-text-fit-padding": [3, 8, 3, 8],
+        "icon-text-fit-padding": [2, 6, 2, 6],
         "icon-anchor": "center",
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
@@ -305,7 +305,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-allow-overlap": true,
         "text-ignore-placement": true,
         "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
-        "text-size": 12,
+        "text-size": 11.5,
         "text-anchor": "center",
       },
       paint: {
