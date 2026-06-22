@@ -599,8 +599,6 @@ def _seed_preserved_cpc_variables(
     source_run_id: str,
     refreshed_var_ids: set[str],
 ) -> list[str]:
-    if source_run_id == run_id:
-        return []
     published_run = data_root / "published" / CPC_MODEL_ID / source_run_id
     if not published_run.is_dir():
         return []
