@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import {
   formatRadarFrameAge,
   isRadarPreviewAvailable,
+  RADAR_PREVIEW_MAP_HEIGHT_CLASS,
   viewerRadarHref,
 } from "@/lib/radar-preview";
 import { useRadarPreview } from "@/lib/use-radar-preview";
@@ -43,8 +44,20 @@ export function RadarPreviewCard({ lat, lon, className = "" }: RadarPreviewCardP
 
   useEffect(() => {
     setMapPaintPending(true);
-    setDisplayFrameIndex(Math.max(0, loopFrames.length - 1));
-  }, [lat, lon, loopFrames]);
+    setDisplayFrameIndex(0);
+  }, [lat, lon]);
+
+  useEffect(() => {
+    if (loopFrames.length === 0) {
+      return;
+    }
+    setDisplayFrameIndex((current) => {
+      if (current >= loopFrames.length) {
+        return loopFrames.length - 1;
+      }
+      return current;
+    });
+  }, [loopFrames]);
 
   useEffect(() => {
     if (!available) {
@@ -139,7 +152,7 @@ export function RadarPreviewCard({ lat, lon, className = "" }: RadarPreviewCardP
       className={`overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] cursor-pointer transition hover:border-cyan-300/30 hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 ${className}`}
       aria-label="Open live MRMS radar in the viewer"
     >
-      <div className="relative h-[88px] md:h-[96px] w-full">
+      <div className={`relative w-full ${RADAR_PREVIEW_MAP_HEIGHT_CLASS}`}>
         {showSkeleton ? (
           <div className="absolute inset-0 animate-pulse bg-white/[0.04]" />
         ) : null}

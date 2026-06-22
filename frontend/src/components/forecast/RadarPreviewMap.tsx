@@ -8,12 +8,14 @@ import { OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
 import { GridWebglLayerController } from "@/lib/grid-webgl";
 import {
   buildRadarPreviewMapStyle,
+  installRadarPreviewCityLabels,
   RADAR_PREVIEW_FRAME_UPDATE_TIMEOUT_MS,
   RADAR_PREVIEW_INITIAL_TIMEOUT_MS,
   RADAR_PREVIEW_LOOP_MS,
   RADAR_PREVIEW_ZOOM,
   type PreviewFrame,
 } from "@/lib/radar-preview";
+import { moveCityLabelLayersToTop } from "@/lib/city-labels";
 
 const PREVIEW_GRID_LAYER_ID = "radar-preview-grid-webgl";
 
@@ -161,6 +163,8 @@ export function RadarPreviewMap({
       },
     });
 
+    moveCityLabelLayersToTop(map);
+
     if (controller.isFrameAvailable(frame.url) === "texture") {
       handleFramePaintSuccess(frame.url, frame.hour);
     } else {
@@ -251,6 +255,10 @@ export function RadarPreviewMap({
     map.on("error", handleMapError as (event: { error?: unknown }) => void);
     map.on("load", () => {
       setMapLoaded(true);
+      void installRadarPreviewCityLabels(map).then(() => {
+        moveCityLabelLayersToTop(map);
+        map.triggerRepaint();
+      });
     });
 
     mapRef.current = map;
