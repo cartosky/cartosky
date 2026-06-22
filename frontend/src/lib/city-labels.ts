@@ -109,8 +109,8 @@ function estimateCityLabelRect(point: { x: number; y: number }, name: string): S
   return {
     left: point.x - width / 2,
     right: point.x + width / 2,
-    top: point.y - 39,
-    bottom: point.y + 8,
+    top: point.y - 16,
+    bottom: point.y + 30,
   };
 }
 
@@ -276,7 +276,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
         "text-size": 11,
         "text-anchor": "top",
-        "text-offset": [0, -0.72],
+        "text-offset": [0, 0.92],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
       },
@@ -297,7 +297,6 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "icon-text-fit": "both",
         "icon-text-fit-padding": [3, 8, 3, 8],
         "icon-anchor": "center",
-        "icon-offset": [0, -24],
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
         "text-field": ["coalesce", ["get", "value_label"], "…"] as any,
@@ -308,7 +307,6 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
         "text-size": 12,
         "text-anchor": "center",
-        "text-offset": [0, -2],
       },
       paint: {
         "text-color": "rgba(245, 252, 255, 0.98)",
