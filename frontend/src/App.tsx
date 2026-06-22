@@ -608,6 +608,7 @@ export default function App() {
   );
   const gridFrameReadyRef = useRef(false);
   const rgbFrameReadyRef = useRef(false);
+  const cityLabelsReadyRef = useRef(false);
   const mapIdleRef = useRef(false);
   const selectionSupportsGridRef = useRef(false);
   const selectionSupportsRasterRgbRef = useRef(false);
@@ -4130,6 +4131,7 @@ export default function App() {
       return;
     }
     if (
+      cityLabelsReadyRef.current &&
       isViewerScreenshotReady({
         mapIdle: mapIdleRef.current,
         gridFrameReady: gridFrameReadyRef.current,
@@ -4148,6 +4150,7 @@ export default function App() {
     }
     gridFrameReadyRef.current = false;
     rgbFrameReadyRef.current = false;
+    cityLabelsReadyRef.current = false;
     document.documentElement.removeAttribute("data-viewer-ready");
   }, [selectionKey]);
 
@@ -5318,6 +5321,10 @@ export default function App() {
           }
           pointLabelsEnabled={pointLabelsEnabled}
           cityLabelsValueEnabled={anchorValueDisplayEnabled}
+          onCityLabelsReady={() => {
+            cityLabelsReadyRef.current = true;
+            maybeSignalViewerReady();
+          }}
           region={region}
           regionViews={regionViews}
           opacity={opacity}

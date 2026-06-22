@@ -9,7 +9,9 @@ import { type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/ancho
 import {
   CITIES_STATIC_SOURCE_ID,
   CITY_LABEL_CANDIDATES_LAYER_ID,
+  CITY_VALUE_LABEL_NAMES_LAYER_ID,
   CITY_VALUE_LABELS_LAYER_ID,
+  citiesStaticData,
   clearCityValueLabels,
   initCityLayers,
   moveCityLabelLayersToTop,
@@ -1382,6 +1384,9 @@ type MapCanvasProps = {
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
   onRasterRgbFrameReady?: (frameUrl: string) => void;
+  /** Fired the first time city labels populate for the current selection
+   *  (value labels or name-only mode). Used to gate screenshot readiness. */
+  onCityLabelsReady?: () => void;
   getAnimatedGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
   /** Foreground grid frame path for scrub / post-scrub load (mirrors animation rAF delivery). */
   getDirectGridPlaybackState?: (() => AnimatedGridPlaybackState | null) | null;
@@ -1467,6 +1472,7 @@ export function MapCanvas({
   onGridFrameReady,
   onGridFrameEvicted,
   onRasterRgbFrameReady,
+  onCityLabelsReady,
   getAnimatedGridPlaybackState = null,
   getDirectGridPlaybackState = null,
   directGridPlaybackActive = false,
@@ -1547,6 +1553,11 @@ export function MapCanvas({
   pointLabelsEnabledRef.current = pointLabelsEnabled;
   const cityLabelsValueEnabledRef = useRef(cityLabelsValueEnabled);
   cityLabelsValueEnabledRef.current = cityLabelsValueEnabled;
+  const onCityLabelsReadyRef = useRef(onCityLabelsReady);
+  onCityLabelsReadyRef.current = onCityLabelsReady;
+  // Per-selection latch: fire onCityLabelsReady once per selection (reset on
+  // selectionKey change), same pattern as App's gridFrameReadyRef.
+  const cityLabelsReadyFiredRef = useRef(false);
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
@@ -1905,14 +1916,45 @@ export function MapCanvas({
 
   const refreshCityValueLabels = useCallback(() => {
     const map = mapRef.current;
+    // Map/style not ready yet — transient, don't signal readiness (a later
+    // refresh will). markCityLabelsReady only touches refs, so define it here.
+    if (!map || !isLoadedRef.current) {
+      return;
+    }
+
+    const markCityLabelsReady = () => {
+      if (cityLabelsReadyFiredRef.current) {
+        return;
+      }
+      cityLabelsReadyFiredRef.current = true;
+      onCityLabelsReadyRef.current?.();
+    };
+
+    // Case 2: point labels disabled — no labels will render, so let the
+    // screenshot proceed rather than block on labels that never appear.
+    if (!pointLabelsEnabledRef.current) {
+      markCityLabelsReady();
+      return;
+    }
+
+    // Case 1: no grid sampler (vector-only / hazard / static selection) — city
+    // values can never sample, so don't block the screenshot.
     const latest = latestCitySamplingRef.current;
-    if (!map || !isLoadedRef.current || !pointLabelsEnabledRef.current || !latest) {
+    if (!latest) {
+      markCityLabelsReady();
       return;
     }
 
     const cityPoints = queryVisibleCityPoints(map);
     if (cityPoints.length === 0) {
       clearCityValueLabels(map);
+      // Case 3: genuinely no cities in this viewport (zoom < 4 or out of
+      // bounds) → ready. queryVisibleCityPoints also returns [] while
+      // citiesStaticData is still loading, so guard on the data being present —
+      // the screenshot should wait for the city data to load, not fire early.
+      if (citiesStaticData !== null) {
+        markCityLabelsReady();
+      }
       return;
     }
 
@@ -1920,6 +1962,7 @@ export function MapCanvas({
     // MRMS, GOES-East): show clean city name labels (no value pill) instead.
     if (!cityLabelsValueEnabledRef.current) {
       setCityLabelNameOnlyMode(map, true);
+      markCityLabelsReady();
       return;
     }
     // Ensure value mode is active when values are enabled.
@@ -1929,6 +1972,7 @@ export function MapCanvas({
     const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
     if (citySampled) {
       updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
+      markCityLabelsReady();
     } else {
       clearCityValueLabels(map);
     }
@@ -2988,18 +3032,29 @@ export function MapCanvas({
     };
   }, [isLoaded, vectorFetchProductId, vectorGeoJsonUrl, vectorPrefetchUrls]);
 
-  // Point labels toggled off: clear immediately. Toggled on: refresh from the
-  // latest visible grid frame instead of waiting for a new texture signature.
+  // Point labels toggled off: hide BOTH value labels and name-only labels.
+  // Toggled on: restore the correct mode (value vs name-only) and refresh from
+  // the latest visible grid frame instead of waiting for a new texture signature.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
+    if (!map || !isLoaded) return;
+    if (!pointLabelsEnabled) {
+      clearCityValueLabels(map);
+      setCityLabelNameOnlyMode(map, false); // hides candidate layer too (opacity 0)
+      // Also hide value layers explicitly
+      if (map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
+        map.setLayoutProperty(CITY_VALUE_LABELS_LAYER_ID, "visibility", "none");
+      }
+      if (map.getLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID)) {
+        map.setLayoutProperty(CITY_VALUE_LABEL_NAMES_LAYER_ID, "visibility", "none");
+      }
+    } else {
+      // Restore correct mode and refresh
+      setCityLabelNameOnlyMode(map, !cityLabelsValueEnabledRef.current);
+      if (cityLabelsValueEnabledRef.current) {
+        scheduleCityLabelRefresh();
+      }
     }
-    if (pointLabelsEnabled) {
-      scheduleCityLabelRefresh();
-      return;
-    }
-    clearCityValueLabels(map);
   }, [isLoaded, pointLabelsEnabled, scheduleCityLabelRefresh]);
 
   // Toggle name-only mode immediately when value display is enabled/disabled
@@ -3024,6 +3079,7 @@ export function MapCanvas({
       return;
     }
     latestCitySamplingRef.current = null;
+    cityLabelsReadyFiredRef.current = false;
     clearCityValueLabels(map);
   }, [isLoaded, variable, selectionKey]);
 

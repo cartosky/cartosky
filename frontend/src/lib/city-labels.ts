@@ -244,9 +244,10 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         // active variable/model has no scalar field to sample. Color + halo make
         // it legible against the basemap when shown.
         "text-opacity": 0,
-        "text-color": "#ffffff",
-        "text-halo-color": "#000000",
-        "text-halo-width": 1.5,
+        "text-color": "rgba(226, 244, 255, 0.90)",
+        "text-halo-color": "rgba(4, 16, 30, 0.86)",
+        "text-halo-width": 1.1,
+        "text-halo-blur": 0,
       },
     } as LayerSpecification);
 
