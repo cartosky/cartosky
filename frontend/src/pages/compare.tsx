@@ -390,6 +390,8 @@ export default function Compare() {
   // Live map instances, captured via onMapReady, used to sync + re-measure.
   const leftMapRef = useRef<MapLibreMap | null>(null);
   const rightMapRef = useRef<MapLibreMap | null>(null);
+  const leftMapSyncCleanupRef = useRef<(() => void) | null>(null);
+  const rightMapSyncCleanupRef = useRef<(() => void) | null>(null);
   // True while we are programmatically driving one map from the other, so the
   // driven map's move/moveend events don't bounce back and cause a sync loop.
   const isSyncingRef = useRef(false);
@@ -432,7 +434,7 @@ export default function Compare() {
   // programmatic sync is in flight).
   const attachSyncedMapListeners = useCallback(
     (map: MapLibreMap, getOtherMap: () => MapLibreMap | null) => {
-      map.on("move", () => {
+      const handleMove = () => {
         if (isSyncingRef.current) {
           return;
         }
@@ -448,31 +450,48 @@ export default function Compare() {
           pitch: map.getPitch(),
         });
         isSyncingRef.current = false;
-      });
-      map.on("moveend", () => {
+      };
+      const handleMoveEnd = () => {
         if (isSyncingRef.current) {
           return;
         }
         handleMapMoveEnd(map);
-      });
+      };
+      map.on("move", handleMove);
+      map.on("moveend", handleMoveEnd);
+      return () => {
+        map.off("move", handleMove);
+        map.off("moveend", handleMoveEnd);
+      };
     },
     [handleMapMoveEnd],
   );
 
   const handleLeftMapReady = useCallback(
     (map: MapLibreMap) => {
+      leftMapSyncCleanupRef.current?.();
       leftMapRef.current = map;
-      attachSyncedMapListeners(map, () => rightMapRef.current);
+      leftMapSyncCleanupRef.current = attachSyncedMapListeners(map, () => rightMapRef.current);
     },
     [attachSyncedMapListeners],
   );
   const handleRightMapReady = useCallback(
     (map: MapLibreMap) => {
+      rightMapSyncCleanupRef.current?.();
       rightMapRef.current = map;
-      attachSyncedMapListeners(map, () => leftMapRef.current);
+      rightMapSyncCleanupRef.current = attachSyncedMapListeners(map, () => leftMapRef.current);
     },
     [attachSyncedMapListeners],
   );
+
+  useEffect(() => {
+    return () => {
+      leftMapSyncCleanupRef.current?.();
+      leftMapSyncCleanupRef.current = null;
+      rightMapSyncCleanupRef.current?.();
+      rightMapSyncCleanupRef.current = null;
+    };
+  }, []);
 
   const handleSwap = useCallback(() => {
     setLModel(rModel);

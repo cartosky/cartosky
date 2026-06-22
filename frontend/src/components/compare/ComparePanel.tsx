@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type maplibregl from "maplibre-gl";
 
 import {
@@ -41,6 +41,15 @@ type ComparePanelProps = {
 };
 
 const API_ROOT = API_ORIGIN.replace(/\/$/, "");
+const EMPTY_REGION_VIEWS = {};
+
+function selectionEpochForKey(key: string): number {
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
 
 export function ComparePanel({
   side,
@@ -118,10 +127,7 @@ export function ComparePanel({
 
   // ── MapCanvas selection identity ───────────────────────────────────────
   const selectionKey = `${side}:${model}:${resolvedRun}:${variable}:${region}`;
-  const [selectionEpoch, setSelectionEpoch] = useState(0);
-  useEffect(() => {
-    setSelectionEpoch((epoch) => epoch + 1);
-  }, [selectionKey]);
+  const selectionEpoch = useMemo(() => selectionEpochForKey(selectionKey), [selectionKey]);
 
   const gridActive = prefersGridSubstrate && Boolean(gridManifest) && Boolean(activeGridFrameUrl);
 
@@ -192,7 +198,7 @@ export function ComparePanel({
         gridActive={gridActive}
         variable={variable}
         region={region}
-        regionViews={{}}
+        regionViews={EMPTY_REGION_VIEWS}
         opacity={OVERLAY_DEFAULT_OPACITY}
         mode="idle-warmup"
         basemapMode={basemapMode}

@@ -24,6 +24,21 @@ import {
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 
+function hasSameJsonContent(left: unknown, right: unknown): boolean {
+  if (left === right) {
+    return true;
+  }
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function preserveReferenceIfEqual<T>(previous: T, next: T): T {
+  return hasSameJsonContent(previous, next) ? previous : next;
+}
+
 export interface UseModelLoaderParams {
   model: string;
   /** "latest" or a specific run ID. */
@@ -209,10 +224,10 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
   // Reset run/manifest/frame state when the model changes so stale data from a
   // previous model can't leak into the next selection's request resolution.
   useEffect(() => {
-    setRuns([]);
-    setRunManifest(null);
-    setGridManifest(null);
-    setFrameRows([]);
+    setRuns((prevRuns) => (prevRuns.length === 0 ? prevRuns : []));
+    setRunManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
+    setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
+    setFrameRows((prevRows) => (prevRows.length === 0 ? prevRows : []));
     setResolvedGridLatestRunId(null);
     loadedFramesKeyRef.current = "";
   }, [model]);
@@ -237,14 +252,15 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         if (controller.signal.aborted) {
           return;
         }
-        setRuns(sortRunIdsDescending(raw));
+        const sortedRuns = sortRunIdsDescending(raw);
+        setRuns((prevRuns) => preserveReferenceIfEqual(prevRuns, sortedRuns));
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
           return;
         }
         setError(err instanceof Error ? err.message : "Failed to load runs");
-        setRuns([]);
+        setRuns((prevRuns) => (prevRuns.length === 0 ? prevRuns : []));
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -253,6 +269,15 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       });
     return () => controller.abort();
   }, [model]);
+
+  const manifestRunKey = useMemo(() => {
+    if (run !== "latest") {
+      return run;
+    }
+    return prefersGridSubstrate && resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)
+      ? resolvedGridLatestRunId
+      : "latest";
+  }, [run, prefersGridSubstrate, resolvedGridLatestRunId, runs]);
 
   // Load the run manifest. Re-runs once the grid probe resolves a concrete run
   // so the manifest is refetched against the run actually being rendered.
@@ -263,24 +288,18 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     }
     const controller = new AbortController();
     setManifestLoading(true);
-    const manifestRunKey =
-      run === "latest"
-        ? prefersGridSubstrate && resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)
-          ? resolvedGridLatestRunId
-          : "latest"
-        : run;
     fetchManifest(model, manifestRunKey, region, resolvedEnsembleView, { signal: controller.signal })
       .then((data) => {
         if (controller.signal.aborted) {
           return;
         }
-        setRunManifest(data);
+        setRunManifest((prevManifest) => preserveReferenceIfEqual(prevManifest, data));
       })
       .catch(() => {
         if (controller.signal.aborted) {
           return;
         }
-        setRunManifest(null);
+        setRunManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -288,14 +307,14 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         }
       });
     return () => controller.abort();
-  }, [model, run, region, resolvedEnsembleView, prefersGridSubstrate, resolvedGridLatestRunId, runs]);
+  }, [model, manifestRunKey, region, resolvedEnsembleView]);
 
   // Resolve and load the grid manifest. For a grid-only "latest" selection,
   // probe candidate runs in parallel and adopt the first that returns a valid
   // manifest (App.tsx run-probe pattern).
   useEffect(() => {
     if (!prefersGridSubstrate || !hasRenderableSelection) {
-      setGridManifest(null);
+      setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
       setGridLoading(false);
       return;
     }
@@ -318,12 +337,12 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         for (const result of results) {
           if (result.status === "fulfilled" && result.value.manifest) {
             setResolvedGridLatestRunId(result.value.candidateRun);
-            setGridManifest(result.value.manifest);
+            setGridManifest((prevManifest) => preserveReferenceIfEqual(prevManifest, result.value.manifest));
             return;
           }
         }
         setResolvedGridLatestRunId(null);
-        setGridManifest(null);
+        setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
         return;
       }
 
@@ -333,7 +352,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       if (controller.signal.aborted) {
         return;
       }
-      setGridManifest(manifest);
+      setGridManifest((prevManifest) => preserveReferenceIfEqual(prevManifest, manifest));
     };
 
     void resolveManifest()
@@ -344,7 +363,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         if (run === "latest") {
           setResolvedGridLatestRunId(null);
         }
-        setGridManifest(null);
+        setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -367,7 +386,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
 
   // Clear frame rows when the effective selection changes.
   useEffect(() => {
-    setFrameRows([]);
+    setFrameRows((prevRows) => (prevRows.length === 0 ? prevRows : []));
     loadedFramesKeyRef.current = "";
   }, [selectionKey]);
 
@@ -380,7 +399,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     }
     // Grid-only "latest" can't fetch frames until the run is resolved.
     if (prefersGridSubstrate && run === "latest" && !resolvedGridLatestRunId) {
-      setFrameRows([]);
+      setFrameRows((prevRows) => (prevRows.length === 0 ? prevRows : []));
       loadedFramesKeyRef.current = "";
       setFramesLoading(false);
       return;
@@ -404,7 +423,9 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       if (manifestMatchesSelection && manifestFrameList.hasFrameList) {
         const { rows } = manifestFrameList;
         const allowCarryForward = loadedFramesKeyRef.current === selectionKey;
-        setFrameRows((prevRows) => mergeManifestRowsWithPrevious(rows, prevRows, allowCarryForward));
+        setFrameRows((prevRows) =>
+          preserveReferenceIfEqual(prevRows, mergeManifestRowsWithPrevious(rows, prevRows, allowCarryForward)),
+        );
         loadedFramesKeyRef.current = selectionKey;
         hydratedFromManifest = true;
       }
@@ -430,7 +451,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         // replace would contract the slider on still-populating runs.
         setFrameRows((prevRows) => {
           if (prevRows.length === 0) {
-            return rows;
+            return preserveReferenceIfEqual(prevRows, rows);
           }
           const merged = new Map<number, FrameRow>();
           for (const row of prevRows) {
@@ -445,7 +466,10 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
               merged.set(fh, row);
             }
           }
-          return Array.from(merged.values()).sort((a, b) => Number(a.fh) - Number(b.fh));
+          return preserveReferenceIfEqual(
+            prevRows,
+            Array.from(merged.values()).sort((a, b) => Number(a.fh) - Number(b.fh)),
+          );
         });
         loadedFramesKeyRef.current = selectionKey;
       } catch (err) {
@@ -455,7 +479,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         if (!hydratedFromManifest) {
           loadedFramesKeyRef.current = "";
           setError(err instanceof Error ? err.message : "Failed to load frames");
-          setFrameRows([]);
+          setFrameRows((prevRows) => (prevRows.length === 0 ? prevRows : []));
         }
       }
     };

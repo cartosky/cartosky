@@ -630,6 +630,51 @@ test.describe('Grid-only smoke', () => {
     expect(tileRequests).toEqual([]);
   });
 
+  test('compare grid mount avoids maximum update depth warnings', async ({ page }) => {
+    const reactLoopErrors: string[] = [];
+    const loaderRequests: string[] = [];
+    const captureMessage = (message: string) => {
+      if (message.includes('Maximum update depth exceeded')) {
+        reactLoopErrors.push(message);
+      }
+    };
+    page.on('console', (message) => captureMessage(message.text()));
+    page.on('pageerror', (error) => captureMessage(error.message));
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url.includes('/manifest') || url.includes('/grid-manifest') || url.includes('/frames')) {
+        loaderRequests.push(url);
+      }
+    });
+
+    await stubViewerGridRoutes(page);
+
+    await page.goto('/compare?lm=hrrr&lv=tmp2m&lr=latest&rm=hrrr&rv=dp2m&rr=latest&fh=0&screenshot=1');
+    await page.waitForLoadState('networkidle');
+
+    expect(reactLoopErrors).toEqual([]);
+    const latestManifestRequests = loaderRequests.filter((url) => url.includes('/api/v4/hrrr/latest/manifest'));
+    expect(latestManifestRequests.length).toBeLessThanOrEqual(4);
+  });
+
+  test('default compare grid mount avoids maximum update depth warnings', async ({ page }) => {
+    const reactLoopErrors: string[] = [];
+    const captureMessage = (message: string) => {
+      if (message.includes('Maximum update depth exceeded')) {
+        reactLoopErrors.push(message);
+      }
+    };
+    page.on('console', (message) => captureMessage(message.text()));
+    page.on('pageerror', (error) => captureMessage(error.message));
+
+    await stubViewerVariableFallbackRoutes(page);
+
+    await page.goto('/compare');
+    await page.waitForLoadState('networkidle');
+
+    expect(reactLoopErrors).toEqual([]);
+  });
+
   test('viewer globe dropdown location search updates and restores permalink camera', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only globe dropdown control.');
 

@@ -1425,12 +1425,17 @@ type MapCanvasProps = {
   }) => void;
 };
 
+const EMPTY_COMPOSITE_GRID_LAYERS: NonNullable<MapCanvasProps["compositeGridLayers"]> = [];
+const EMPTY_STRING_ARRAY: string[] = [];
+const EMPTY_PRESSURE_CENTERS: PressureCenter[] = [];
+const EMPTY_ANCHOR_BATCH_POINTS: AnchorBatchPoint[] = [];
+
 export function MapCanvas({
   productId = null,
   selectionKey,
   selectionEpoch,
   gridManifest = null,
-  compositeGridLayers = [],
+  compositeGridLayers = EMPTY_COMPOSITE_GRID_LAYERS,
   gridLodLevel = null,
   gridFrameUrl = null,
   gridFrameHour = null,
@@ -1438,14 +1443,14 @@ export function MapCanvas({
   gridLegend = null,
   gridActive = false,
   rasterRgbFrameUrl = null,
-  rasterRgbPrefetchUrls = [],
+  rasterRgbPrefetchUrls = EMPTY_STRING_ARRAY,
   rasterRgbActive = false,
   gridContour = null,
   contourGeoJsonUrl,
-  contourPrefetchUrls = [],
-  pressureCenters = [],
+  contourPrefetchUrls = EMPTY_STRING_ARRAY,
+  pressureCenters = EMPTY_PRESSURE_CENTERS,
   vectorGeoJsonUrl,
-  vectorPrefetchUrls = [],
+  vectorPrefetchUrls = EMPTY_STRING_ARRAY,
   vectorLineHaloEnabled = false,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
@@ -1488,7 +1493,7 @@ export function MapCanvas({
   onMapHoverEnd,
   onAnchorClick,
   onVectorHazardClick,
-  anchorBatchPoints = [],
+  anchorBatchPoints = EMPTY_ANCHOR_BATCH_POINTS,
   onAnchorFrameSampled,
   onCityFrameSampled,
 }: MapCanvasProps) {
