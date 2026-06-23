@@ -8,6 +8,8 @@ import ComparePanel from "@/components/compare/ComparePanel";
 import CompareScrubber, { deriveValidTime } from "@/components/compare/CompareScrubber";
 import CompareDiffPanel from "@/components/compare/CompareDiffPanel";
 import CompareModeToggle, { type CompareMode } from "@/components/compare/CompareModeToggle";
+import CompareMobileDiffBar from "@/components/compare/CompareMobileDiffBar";
+import CompareMobileDrawer from "@/components/compare/CompareMobileDrawer";
 import { CompareTooltip } from "@/components/compare/CompareTooltip";
 import { TwfShareModal, type SharePayload } from "@/components/twf-share-modal";
 import type { BasemapMode } from "@/components/map-canvas";
@@ -30,6 +32,7 @@ import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch, replaceUrlQuery } from "@/lib/permalink";
 import { useModelLoader, type UseModelLoaderResult } from "@/lib/use-model-loader";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
+import { useViewerLayoutMode } from "@/lib/viewer-layout";
 import {
   makeModelOptions,
   makeVariableOptions,
@@ -151,6 +154,16 @@ function resolveGridMeta(manifest: GridManifestResponse | null): GridMeta | null
     nodata: Number(grid?.nodata) || 65535,
     units: typeof grid?.units === "string" ? grid.units : undefined,
   };
+}
+
+/** Parse a resolved run id ("YYYYMMDD_HHz") into compact display parts. */
+function parseRunParts(resolvedRun: string): { hour: string; ymd: string; date: string } | null {
+  const match = resolvedRun.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day, hour] = match;
+  return { hour: `${hour}Z`, ymd: `${year}${month}${day}`, date: `${Number(month)}/${Number(day)}` };
 }
 
 /** Default grid variable for a model: its declared default if it is grid-backed, else the first grid variable. */
@@ -481,6 +494,10 @@ export default function Compare() {
     typeof window !== "undefined" &&
       window.sessionStorage.getItem(DIFF_AUTOCORRECT_NOTICE_FLAG) === "1",
   );
+
+  // Phone layout (≤639px) swaps the diff control rows for a summary bar + drawer.
+  const layoutMode = useViewerLayoutMode();
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   // Shared forecast hour + map viewport.
   const [forecastHour, setForecastHour] = useState(initial.fh ?? 0);
@@ -961,6 +978,30 @@ export default function Compare() {
     return deriveValidTime(run, hour);
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
 
+  // One-line summary for the mobile diff bar:
+  // "{lRun} {lModel} − {rRun} {rModel} · {variable}". Runs show hour only, with
+  // the date appended on both sides only when the two runs are on different days.
+  const diffSummaryText = useMemo(() => {
+    const lParts = parseRunParts(leftLoader.resolvedRun);
+    const rParts = parseRunParts(rightLoader.resolvedRun);
+    const differentDates = Boolean(lParts && rParts && lParts.ymd !== rParts.ymd);
+    const lRunStr = lParts ? (differentDates ? `${lParts.hour} ${lParts.date}` : lParts.hour) : "";
+    const rRunStr = rParts ? (differentDates ? `${rParts.hour} ${rParts.date}` : rParts.hour) : "";
+    const lModelDisp = modelOptions.find((o) => o.value === lModel)?.label ?? lModel.toUpperCase();
+    const rModelDisp = modelOptions.find((o) => o.value === rModel)?.label ?? rModel.toUpperCase();
+    const varDisp = variableCatalog.find((v) => v.value === lVariable)?.label ?? lVariable;
+    const left = `${lRunStr ? `${lRunStr} ` : ""}${lModelDisp}`;
+    const right = `${rRunStr ? `${rRunStr} ` : ""}${rModelDisp}`;
+    return `${left} − ${right} · ${varDisp}`;
+  }, [leftLoader.resolvedRun, rightLoader.resolvedRun, modelOptions, variableCatalog, lModel, rModel, lVariable]);
+
+  // The mobile drawer only exists in mobile diff mode — close it if either changes.
+  useEffect(() => {
+    if (mobileDrawerOpen && (layoutMode !== "mobile" || mode !== "diff")) {
+      setMobileDrawerOpen(false);
+    }
+  }, [mobileDrawerOpen, layoutMode, mode]);
+
   const sharePayload = useMemo<SharePayload>(() => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
     const rightVarLabel = variableCatalog.find(v => v.value === rVariable)?.label ?? rVariable;
@@ -1266,6 +1307,63 @@ export default function Compare() {
           />
         </div>
         </>
+        ) : (layoutMode === "mobile" && !isScreenshotMode) ? (
+          // Mobile diff: keep the mode toggle + utility row, collapse the picker
+          // rows into a summary bar that opens the bottom drawer.
+          <div className="px-4 pb-2">
+            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
+              Difference
+            </div>
+            <div className="flex items-center gap-2">
+              <CompareModeToggle mode={mode} onChange={handleModeChange} />
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <Link
+                  to={viewerHref}
+                  className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
+                  aria-label="Open current view in Viewer"
+                  title="Open in Viewer"
+                >
+                  <ArrowLeft className="h-3 w-3 shrink-0" />
+                  <span>Viewer</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+                  aria-label="Share to TWF"
+                  title="Share to TWF"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  ref={settingsButtonRef}
+                  type="button"
+                  onClick={handleSettingsClick}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+                  aria-label="Display settings"
+                  title="Display settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-2">
+              <CompareMobileDiffBar summary={diffSummaryText} onOpenDrawer={() => setMobileDrawerOpen(true)} />
+            </div>
+            {diffNotice ? (
+              <div className="mt-2 flex items-start gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[11px] font-medium text-cyan-100/90">
+                <span className="min-w-0 flex-1">{diffNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setDiffNotice(null)}
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-cyan-100/50 transition-colors hover:bg-white/[0.08] hover:text-cyan-50"
+                  aria-label="Dismiss notice"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <DiffControlBar
             lModel={lModel}
@@ -1528,6 +1626,27 @@ export default function Compare() {
           buildScreenshotState={buildShareScreenshotState}
         />
       ) : null}
+
+      <CompareMobileDrawer
+        open={mobileDrawerOpen && layoutMode === "mobile" && mode === "diff" && !isScreenshotMode}
+        onClose={() => setMobileDrawerOpen(false)}
+        lModel={lModel}
+        rModel={rModel}
+        sharedVariable={lVariable}
+        lRun={lRun}
+        rRun={rRun}
+        modelOptions={modelOptions}
+        variableCatalog={variableCatalog}
+        diffMutualVariables={diffMutualVariables}
+        leftRunOptions={leftRunOptions}
+        rightRunOptions={rightRunOptions}
+        onLeftModelChange={handleDiffLeftModelChange}
+        onRightModelChange={handleDiffRightModelChange}
+        onSharedVariableChange={handleSharedVariableChange}
+        onLeftRunChange={setLRun}
+        onRightRunChange={setRRun}
+        onSwap={handleSwap}
+      />
     </div>
   );
 }
