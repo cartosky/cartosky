@@ -9,6 +9,7 @@ export type ComparePermalinkState = {
   lat?: number;
   lon?: number;
   z?: number;
+  mode?: "split" | "diff";  // compare mode (default "split")
 };
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
@@ -87,17 +88,27 @@ export function readComparePermalink(): ComparePermalinkState {
     state.z = Number(z);
   }
 
+  const mode = readStringParam(params, "mode");
+  state.mode = mode === "diff" ? "diff" : "split";
+
   return state;
 }
 
 export function buildComparePermalinkSearch(state: ComparePermalinkState): string {
   const params = new URLSearchParams();
 
+  // In diff mode the variable is shared: lv and rv must serialize as equal
+  // values. lv is the source of truth (falling back to rv if only it is set).
+  const isDiff = state.mode === "diff";
+  const sharedVar = isDiff ? (state.lv ?? state.rv) : undefined;
+  const leftVar = isDiff ? sharedVar : state.lv;
+  const rightVar = isDiff ? sharedVar : state.rv;
+
   if (state.lm) {
     params.set("lm", state.lm);
   }
-  if (state.lv) {
-    params.set("lv", state.lv);
+  if (leftVar) {
+    params.set("lv", leftVar);
   }
   if (state.lr) {
     params.set("lr", state.lr);
@@ -105,8 +116,8 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   if (state.rm) {
     params.set("rm", state.rm);
   }
-  if (state.rv) {
-    params.set("rv", state.rv);
+  if (rightVar) {
+    params.set("rv", rightVar);
   }
   if (state.rr) {
     params.set("rr", state.rr);
@@ -122,6 +133,9 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   }
   if (Number.isFinite(state.z) && Number(state.z) >= 0 && Number(state.z) <= 24) {
     params.set("z", Number(state.z).toFixed(2));
+  }
+  if (isDiff) {
+    params.set("mode", "diff");
   }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";

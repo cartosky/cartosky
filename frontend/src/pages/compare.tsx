@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ArrowLeftRight, Layers, Moon, Settings, Share2, Sun, X } from "lucide-react";
 import type { Map as MapLibreMap } from "maplibre-gl";
@@ -6,6 +6,8 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { Link } from "react-router-dom";
 import ComparePanel from "@/components/compare/ComparePanel";
 import CompareScrubber from "@/components/compare/CompareScrubber";
+import CompareDiffPanel from "@/components/compare/CompareDiffPanel";
+import CompareModeToggle, { type CompareMode } from "@/components/compare/CompareModeToggle";
 import { CompareTooltip } from "@/components/compare/CompareTooltip";
 import { TwfShareModal, type SharePayload } from "@/components/twf-share-modal";
 import type { BasemapMode } from "@/components/map-canvas";
@@ -15,17 +17,23 @@ import { VariablePicker } from "@/components/VariablePicker";
 import {
   readCapabilityRenderSubstrates,
   type CapabilitiesResponse,
+  type GridManifestResponse,
   type RegionPreset,
 } from "@/lib/api";
 import { useCapabilities } from "@/lib/capabilities-context";
 import { buildComparePermalinkSearch, readComparePermalink } from "@/lib/compare-permalink";
-import { MAP_VIEW_DEFAULTS } from "@/lib/config";
+import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
+import { useCompareDiff } from "@/lib/use-compare-diff";
+import type { GridMeta } from "@/lib/compare-diff";
+import { selectGridManifestLod } from "@/lib/grid-lod";
+import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch, replaceUrlQuery } from "@/lib/permalink";
-import { useModelLoader } from "@/lib/use-model-loader";
+import { useModelLoader, type UseModelLoaderResult } from "@/lib/use-model-loader";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
 import {
   makeModelOptions,
   makeVariableOptions,
+  nearestFrame,
   normalizeCapabilityVarRows,
   normalizeModelRows,
   readBasemapModePreference,
@@ -49,6 +57,9 @@ const DEFAULT_MODEL = "gfs";
 const DEFAULT_VARIABLE = "tmp2m";
 const DEFAULT_RUN = "latest";
 
+/** sessionStorage flag so the diff auto-correction notice shows once per session. */
+const DIFF_AUTOCORRECT_NOTICE_FLAG = "compare-diff-autocorrect-notice";
+
 const SPLIT_MIN = 20;
 const SPLIT_MAX = 80;
 const DEFAULT_SPLIT = 50;
@@ -63,11 +74,50 @@ const EMPTY_CAPABILITIES: CapabilitiesResponse = {
   availability: {},
 };
 
+/** Same base-URL resolution ComparePanel applies to grid frame URLs. */
+const API_ROOT = API_ORIGIN.replace(/\/$/, "");
+
 function clampSplit(value: number): number {
   if (!Number.isFinite(value)) {
     return DEFAULT_SPLIT;
   }
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value));
+}
+
+/** Resolve the active grid frame URL for a loader at a forecast hour (mirrors ComparePanel). */
+function resolveActiveGridFrameUrl(loader: UseModelLoaderResult, forecastHour: number): string | null {
+  const hours = loader.gridFrameHours;
+  if (hours.length === 0) {
+    return null;
+  }
+  const hour = nearestFrame(hours, forecastHour);
+  const url = loader.gridFrameByHour.get(hour)?.url;
+  if (!url) {
+    return null;
+  }
+  return /^https?:\/\//i.test(url) ? url : `${API_ROOT}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
+/** Build the diff GridMeta from a loader's grid manifest (level-zero LOD). bbox is EPSG:3857 meters. */
+function resolveGridMeta(manifest: GridManifestResponse | null): GridMeta | null {
+  if (!manifest || !Array.isArray(manifest.bbox) || manifest.bbox.length !== 4) {
+    return null;
+  }
+  const lod = selectGridManifestLod(manifest, null);
+  if (!lod) {
+    return null;
+  }
+  const grid = manifest.grid;
+  return {
+    width: Math.max(1, Math.floor(Number(lod.width) || 1)),
+    height: Math.max(1, Math.floor(Number(lod.height) || 1)),
+    bbox: manifest.bbox as [number, number, number, number],
+    dtype: String(grid?.dtype ?? "").trim().toLowerCase() === "uint8" ? "uint8" : "uint16",
+    scale: Number(grid?.scale) || 1,
+    offset: Number(grid?.offset) || 0,
+    nodata: Number(grid?.nodata) || 65535,
+    units: typeof grid?.units === "string" ? grid.units : undefined,
+  };
 }
 
 /** Default grid variable for a model: its declared default if it is grid-backed, else the first grid variable. */
@@ -193,6 +243,183 @@ function ComparePanelControls({
   );
 }
 
+function ControlLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="px-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/42">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Difference-mode control bar: collapses the split layout to a single row of
+ * LEFT MODEL · RIGHT MODEL · VARIABLE (shared) · L-RUN · R-RUN, plus the mode
+ * toggle and action buttons. Wraps on narrow viewports. The shared variable
+ * picker is restricted to mutually diff-eligible variables.
+ */
+function DiffControlBar({
+  lModel,
+  rModel,
+  sharedVariable,
+  lRun,
+  rRun,
+  mode,
+  modelOptions,
+  variableCatalog,
+  diffMutualVariables,
+  leftRunOptions,
+  rightRunOptions,
+  viewerHref,
+  diffNotice,
+  settingsButtonRef,
+  onModeChange,
+  onLeftModelChange,
+  onRightModelChange,
+  onSharedVariableChange,
+  onLeftRunChange,
+  onRightRunChange,
+  onSwap,
+  onShare,
+  onSettingsClick,
+  onDismissNotice,
+}: {
+  lModel: string;
+  rModel: string;
+  sharedVariable: string;
+  lRun: string;
+  rRun: string;
+  mode: CompareMode;
+  modelOptions: GroupedOption[];
+  variableCatalog: VariableOption[];
+  diffMutualVariables: string[];
+  leftRunOptions: CompareSelectOption[];
+  rightRunOptions: CompareSelectOption[];
+  viewerHref: string;
+  diffNotice: string | null;
+  settingsButtonRef: RefObject<HTMLButtonElement | null>;
+  onModeChange: (mode: CompareMode) => void;
+  onLeftModelChange: (value: string) => void;
+  onRightModelChange: (value: string) => void;
+  onSharedVariableChange: (value: string) => void;
+  onLeftRunChange: (value: string) => void;
+  onRightRunChange: (value: string) => void;
+  onSwap: () => void;
+  onShare: () => void;
+  onSettingsClick: () => void;
+  onDismissNotice: () => void;
+}) {
+  const variablesDisabled = diffMutualVariables.length === 0;
+  return (
+    <div className="px-4 pb-2">
+      <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
+        Difference
+      </div>
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <ControlLabel>Left Model</ControlLabel>
+          <ModelPicker
+            value={lModel}
+            onChange={onLeftModelChange}
+            options={modelOptions}
+            minWidth="min-w-[130px] max-w-[160px]"
+          />
+        </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          <ControlLabel>Right Model</ControlLabel>
+          <ModelPicker
+            value={rModel}
+            onChange={onRightModelChange}
+            options={modelOptions}
+            minWidth="min-w-[130px] max-w-[160px]"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onSwap}
+          className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.14] bg-[#07111f] text-white/50 shadow-[0_2px_8px_rgba(0,0,0,0.5)] transition-all hover:border-white/30 hover:text-white"
+          aria-label="Swap left and right panels"
+          title="Swap panels"
+        >
+          <ArrowLeftRight className="h-3.5 w-3.5" />
+        </button>
+        <div className="flex min-w-0 flex-col gap-1">
+          <ControlLabel>Variable (shared)</ControlLabel>
+          <VariablePicker
+            modelId={lModel}
+            value={sharedVariable}
+            onChange={onSharedVariableChange}
+            variableCatalog={variableCatalog}
+            supportedVariableIds={diffMutualVariables}
+            disabled={variablesDisabled}
+            placeholder={variablesDisabled ? "No shared variable" : "Variable"}
+            minWidth="min-w-[160px] max-w-[220px]"
+          />
+        </div>
+        <CompareSelect
+          label="L Run"
+          value={lRun}
+          onValueChange={onLeftRunChange}
+          options={leftRunOptions}
+          placeholder="Run"
+          minWidth="min-w-[132px]"
+        />
+        <CompareSelect
+          label="R Run"
+          value={rRun}
+          onValueChange={onRightRunChange}
+          options={rightRunOptions}
+          placeholder="Run"
+          minWidth="min-w-[132px]"
+        />
+        <div className="ml-auto flex shrink-0 items-center gap-2 pb-0.5">
+          <CompareModeToggle mode={mode} onChange={onModeChange} />
+          <Link
+            to={viewerHref}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
+            aria-label="Open current view in Viewer"
+            title="Open in Viewer"
+          >
+            <ArrowLeft className="h-3 w-3 shrink-0" />
+            <span>Viewer</span>
+          </Link>
+          <button
+            type="button"
+            onClick={onShare}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+            aria-label="Share to TWF"
+            title="Share to TWF"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            ref={settingsButtonRef}
+            type="button"
+            onClick={onSettingsClick}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+            aria-label="Display settings"
+            title="Display settings"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      {diffNotice ? (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[11px] font-medium text-cyan-100/90">
+          <span className="min-w-0 flex-1">{diffNotice}</span>
+          <button
+            type="button"
+            onClick={onDismissNotice}
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-cyan-100/50 transition-colors hover:bg-white/[0.08] hover:text-cyan-50"
+            aria-label="Dismiss notice"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Compare() {
   const { capabilities, regionPresets, error } = useCapabilities();
 
@@ -212,6 +439,15 @@ export default function Compare() {
   const [rModel, setRModel] = useState(initial.rm ?? DEFAULT_MODEL);
   const [rVariable, setRVariable] = useState(initial.rv ?? DEFAULT_VARIABLE);
   const [rRun, setRRun] = useState(initial.rr ?? DEFAULT_RUN);
+
+  // Compare mode (split = side-by-side, diff = difference). Driven by permalink.
+  const [mode, setMode] = useState<CompareMode>(initial.mode === "diff" ? "diff" : "split");
+  // Inline notice shown once per session when entering diff auto-corrects the variable.
+  const [diffNotice, setDiffNotice] = useState<string | null>(null);
+  const diffNoticeShownRef = useRef<boolean>(
+    typeof window !== "undefined" &&
+      window.sessionStorage.getItem(DIFF_AUTOCORRECT_NOTICE_FLAG) === "1",
+  );
 
   // Shared forecast hour + map viewport.
   const [forecastHour, setForecastHour] = useState(initial.fh ?? 0);
@@ -320,6 +556,119 @@ export default function Compare() {
     });
   }, [capabilities]);
 
+  // ── Difference mode: shared eligible variable ──────────────────────────
+  // var_keys usable in diff mode for the current model pair (intersection of
+  // both models' grid variables ∩ the v1 diff-eligible allowlist).
+  const diffMutualVariables = useMemo(
+    () => (capabilities ? mutualDiffEligibleVariables(lModel, rModel, capabilities) : []),
+    [capabilities, lModel, rModel],
+  );
+
+  const showDiffAutocorrectNotice = useCallback((message: string) => {
+    if (diffNoticeShownRef.current) {
+      return;
+    }
+    diffNoticeShownRef.current = true;
+    try {
+      window.sessionStorage.setItem(DIFF_AUTOCORRECT_NOTICE_FLAG, "1");
+    } catch {
+      // sessionStorage may be unavailable (private mode); the ref still gates it.
+    }
+    setDiffNotice(message);
+  }, []);
+
+  // Keep the shared variable valid + in sync while in diff mode (covers initial
+  // permalink load and model changes). Silent — the once-per-session notice is
+  // raised only by the explicit split→diff toggle in handleModeChange.
+  useEffect(() => {
+    if (mode !== "diff" || !capabilities) {
+      return;
+    }
+    if (diffMutualVariables.length === 0) {
+      return; // No mutual eligible variable — diff panel shows the blocking state.
+    }
+    const next = diffMutualVariables.includes(lVariable) ? lVariable : diffMutualVariables[0];
+    if (next !== lVariable) {
+      setLVariable(next);
+    }
+    if (next !== rVariable) {
+      setRVariable(next);
+    }
+  }, [mode, capabilities, diffMutualVariables, lVariable, rVariable]);
+
+  const handleModeChange = useCallback((nextMode: CompareMode) => {
+    if (nextMode === mode) {
+      return;
+    }
+    if (nextMode === "split") {
+      setDiffNotice(null);
+      setMode("split");
+      return;
+    }
+    // Entering diff mode: auto-correct the variable if it is not mutually
+    // eligible, and surface the one-per-session inline notice. The actual
+    // variable assignment is handled by the reconcile effect above.
+    const mutual = capabilities ? mutualDiffEligibleVariables(lModel, rModel, capabilities) : [];
+    if (mutual.length > 0 && !mutual.includes(lVariable)) {
+      const next = mutual[0];
+      const label = variableCatalog.find((v) => v.value === next)?.label ?? next;
+      showDiffAutocorrectNotice(
+        `Variable changed to "${label}" — difference mode only compares continuous fields.`,
+      );
+    }
+    setMode("diff");
+  }, [mode, capabilities, lModel, rModel, lVariable, variableCatalog, showDiffAutocorrectNotice]);
+
+  // In diff mode the variable picker is shared: changing it sets both sides.
+  const handleSharedVariableChange = useCallback((value: string) => {
+    setLVariable(value);
+    setRVariable(value);
+  }, []);
+
+  // Diff-mode model changes reset that side's run; the reconcile effect keeps
+  // the shared variable valid for the new pair (no notice — silent).
+  const handleDiffLeftModelChange = useCallback((nextModel: string) => {
+    if (nextModel === lModel) {
+      return;
+    }
+    setLModel(nextModel);
+    setLRun("latest");
+  }, [lModel]);
+
+  const handleDiffRightModelChange = useCallback((nextModel: string) => {
+    if (nextModel === rModel) {
+      return;
+    }
+    setRModel(nextModel);
+    setRRun("latest");
+  }, [rModel]);
+
+  // ── Difference pipeline (orchestrated by useCompareDiff) ───────────────
+  const leftDiffFrameUrl = useMemo(
+    () => resolveActiveGridFrameUrl(leftLoader, forecastHour),
+    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, forecastHour],
+  );
+  const rightDiffFrameUrl = useMemo(
+    () => resolveActiveGridFrameUrl(rightLoader, forecastHour),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, forecastHour],
+  );
+  const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
+  const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
+
+  const diff = useCompareDiff({
+    leftFrameUrl: leftDiffFrameUrl,
+    rightFrameUrl: rightDiffFrameUrl,
+    leftGridMeta,
+    rightGridMeta,
+    leftModel: lModel,
+    rightModel: rModel,
+    varKey: mode === "diff" ? lVariable : null,
+    enabled: mode === "diff",
+  });
+
+  // Readiness gate step 4: the diff MapCanvas has rendered + gone idle.
+  const [diffMapReady, setDiffMapReady] = useState(false);
+
   // Force the full desktop layout when the page is rendered for a server-side
   // screenshot (?screenshot=1), regardless of the headless viewport width.
   const isScreenshotMode = useMemo(() =>
@@ -333,19 +682,22 @@ export default function Compare() {
   const clearCompareReadySignal = useCallback(() => {
     leftFrameReadyRef.current = false;
     rightFrameReadyRef.current = false;
+    setDiffMapReady(false);
     if (typeof document !== "undefined") {
       document.documentElement.removeAttribute("data-compare-ready");
     }
   }, []);
 
+  // Split-mode gate: both panels' first frames ready. (No-op in diff mode — the
+  // diff four-step gate is handled by the effect below.)
   const maybeSignalCompareReady = useCallback(() => {
-    if (!isScreenshotMode) {
+    if (!isScreenshotMode || mode === "diff") {
       return;
     }
     if (leftFrameReadyRef.current && rightFrameReadyRef.current) {
       document.documentElement.setAttribute("data-compare-ready", "1");
     }
-  }, [isScreenshotMode]);
+  }, [isScreenshotMode, mode]);
 
   const handleLeftFirstFrameReady = useCallback(() => {
     leftFrameReadyRef.current = true;
@@ -367,8 +719,26 @@ export default function Compare() {
     rVariable,
     rRun,
     forecastHour,
+    mode,
     clearCompareReadySignal,
   ]);
+
+  // Diff-mode four-step readiness gate: left fetched, right fetched, compute
+  // done (all from useCompareDiff), plus the diff MapCanvas rendered + idle.
+  // Fail closed — only set when all four are simultaneously true.
+  useEffect(() => {
+    if (!isScreenshotMode || mode !== "diff") {
+      return;
+    }
+    if (
+      diff.readySteps.leftFetched
+      && diff.readySteps.rightFetched
+      && diff.readySteps.computeDone
+      && diffMapReady
+    ) {
+      document.documentElement.setAttribute("data-compare-ready", "1");
+    }
+  }, [isScreenshotMode, mode, diff.readySteps, diffMapReady]);
 
   // Track desktop vs mobile so the split width / divider only apply >= 768px.
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -399,8 +769,8 @@ export default function Compare() {
   // Mirror the latest selection + forecast hour into a ref so the map event
   // listeners (attached once, on map-ready) can build a fresh permalink
   // without capturing stale state in their closures.
-  const selectionStateRef = useRef({ lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour });
-  selectionStateRef.current = { lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour };
+  const selectionStateRef = useRef({ lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode });
+  selectionStateRef.current = { lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode };
 
   // Commit the viewport (from whichever map emitted moveend) to state + URL.
   const handleMapMoveEnd = useCallback((map: MapLibreMap) => {
@@ -424,6 +794,7 @@ export default function Compare() {
         lat: nextLat,
         lon: nextLon,
         z: nextZ,
+        mode: selection.mode,
       }),
     );
   }, []);
@@ -493,6 +864,19 @@ export default function Compare() {
     };
   }, []);
 
+  // Diff mode has a single map. Reuse the same listener attach (no peer to sync)
+  // so panning still commits the viewport to the permalink.
+  const handleDiffMapReady = useCallback(
+    (map: MapLibreMap) => {
+      leftMapRef.current = map;
+      attachSyncedMapListeners(map, () => null);
+    },
+    [attachSyncedMapListeners],
+  );
+  const handleDiffMapRenderReady = useCallback(() => {
+    setDiffMapReady(true);
+  }, []);
+
   const handleSwap = useCallback(() => {
     setLModel(rModel);
     setLVariable(rVariable);
@@ -513,19 +897,22 @@ export default function Compare() {
     const search = buildComparePermalinkSearch({
       lm: lModel, lv: lVariable, lr: lRun,
       rm: rModel, rv: rVariable, rr: rRun,
-      fh: forecastHour, lat, lon, z,
+      fh: forecastHour, lat, lon, z, mode,
     });
     return `${window.location.origin}/compare${search}`;
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, lat, lon, z]);
+  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, lat, lon, z, mode]);
 
   const sharePayload = useMemo<SharePayload>(() => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
     const rightVarLabel = variableCatalog.find(v => v.value === rVariable)?.label ?? rVariable;
+    const summary = mode === "diff"
+      ? `Difference: ${lModel.toUpperCase()} − ${rModel.toUpperCase()} | ${lVariable} | F+${Math.round(forecastHour)}`
+      : `${lModel.toUpperCase()} ${leftVarLabel} vs ${rModel.toUpperCase()} ${rightVarLabel} • FH ${Math.round(forecastHour)}`;
     return {
       permalink: sharePermalink,
-      summary: `${lModel.toUpperCase()} ${leftVarLabel} vs ${rModel.toUpperCase()} ${rightVarLabel} • FH ${Math.round(forecastHour)}`,
+      summary,
     };
-  }, [sharePermalink, lModel, lVariable, rModel, rVariable, forecastHour, variableCatalog]);
+  }, [sharePermalink, lModel, lVariable, rModel, rVariable, forecastHour, variableCatalog, mode]);
 
   const buildShareScreenshotState = useCallback((): ScreenshotExportState | null => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
@@ -558,6 +945,7 @@ export default function Compare() {
 
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
+  const diffPanelRef = useRef<HTMLDivElement | null>(null);
 
   const { tooltip: leftTooltip, onHover: onLeftHover, onHoverEnd: onLeftHoverEnd } = useSampleTooltip({
     model: lModel,
@@ -599,6 +987,17 @@ export default function Compare() {
     onRightHoverEnd();
   }, [onLeftHoverEnd, onRightHoverEnd]);
 
+  // Diff-mode hover: single map, sample both models at the same lat/lon so the
+  // tooltip can show Δ plus the L/R breakdown.
+  const handleDiffHover = useCallback((lat: number, lon: number, x: number, y: number) => {
+    setHoverSide("left");
+    setHoverX(x);
+    setHoverY(y);
+    setHoverContainerWidth(diffPanelRef.current?.offsetWidth ?? 0);
+    onLeftHover(lat, lon, x, y);
+    onRightHover(lat, lon, x, y);
+  }, [onLeftHover, onRightHover]);
+
   // Persist selection + forecast hour to the URL (debounced). Viewport changes
   // are written immediately by handleMapMoveEnd, so they are not tracked here;
   // the current lat/lon/z are still included so a selection change preserves
@@ -616,11 +1015,12 @@ export default function Compare() {
         lat,
         lon,
         z,
+        mode,
       });
       replaceUrlQuery(search);
     }, URL_SYNC_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour]);
+  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -692,6 +1092,8 @@ export default function Compare() {
         className="relative z-10 shrink-0 border-b border-white/[0.08] bg-[#04101e]/[0.92] shadow-[0_10px_28px_rgba(0,0,0,0.24)] backdrop-blur-md"
         style={{ paddingTop: "4rem" }}
       >
+        {mode === "split" ? (
+        <>
         {/* Desktop: three columns tracking the map split exactly */}
         <div
           className={isScreenshotMode ? "grid" : "hidden xl:grid"}
@@ -739,7 +1141,8 @@ export default function Compare() {
               onVariableChange={setRVariable}
               onRunChange={setRRun}
             />
-            <div className="ml-auto flex shrink-0 items-end gap-2 pb-0.5">
+            <div className="ml-auto flex shrink-0 items-center gap-2 pb-0.5">
+              <CompareModeToggle mode={mode} onChange={handleModeChange} />
               <Link
                 to={viewerHref}
                 className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
@@ -775,6 +1178,7 @@ export default function Compare() {
 
         {/* Mobile fallback: stacked controls */}
         <div className="flex xl:hidden flex-col gap-3 px-4 pb-2">
+          <CompareModeToggle mode={mode} onChange={handleModeChange} />
           <ComparePanelControls
             model={lModel}
             variable={lVariable}
@@ -802,12 +1206,45 @@ export default function Compare() {
             onRunChange={setRRun}
           />
         </div>
+        </>
+        ) : (
+          <DiffControlBar
+            lModel={lModel}
+            rModel={rModel}
+            sharedVariable={lVariable}
+            lRun={lRun}
+            rRun={rRun}
+            mode={mode}
+            modelOptions={modelOptions}
+            variableCatalog={variableCatalog}
+            diffMutualVariables={diffMutualVariables}
+            leftRunOptions={leftRunOptions}
+            rightRunOptions={rightRunOptions}
+            viewerHref={viewerHref}
+            diffNotice={diffNotice}
+            settingsButtonRef={settingsButtonRef}
+            onModeChange={handleModeChange}
+            onLeftModelChange={handleDiffLeftModelChange}
+            onRightModelChange={handleDiffRightModelChange}
+            onSharedVariableChange={handleSharedVariableChange}
+            onLeftRunChange={setLRun}
+            onRightRunChange={setRRun}
+            onSwap={handleSwap}
+            onShare={handleShare}
+            onSettingsClick={handleSettingsClick}
+            onDismissNotice={() => setDiffNotice(null)}
+          />
+        )}
       </div>
 
       <div
         ref={containerRef}
-        className={`relative min-h-0 flex-1 flex ${isDesktop ? "flex-row" : "flex-col"} overflow-hidden`}
+        className={`relative min-h-0 flex-1 overflow-hidden ${
+          mode === "split" ? `flex ${isDesktop ? "flex-row" : "flex-col"}` : ""
+        }`}
       >
+        {mode === "split" ? (
+        <>
         <div
           ref={leftPanelRef}
           className={`relative min-h-0 min-w-0 ${isDesktop ? "shrink-0" : "flex-1"}`}
@@ -913,6 +1350,42 @@ export default function Compare() {
             />
           )}
         </div>
+        </>
+        ) : (
+          <div ref={diffPanelRef} className="relative h-full w-full">
+            <CompareDiffPanel
+              hasMutualEligibleVariables={diffMutualVariables.length > 0}
+              leftModel={lModel}
+              rightModel={rModel}
+              variable={lVariable}
+              region={region}
+              basemapMode={basemapMode}
+              showLegend={showLegends}
+              diffManifest={diff.diffManifest}
+              diffLegend={diff.diffLegend}
+              isLoading={diff.isLoading}
+              error={diff.error}
+              onMapReady={handleDiffMapReady}
+              onDiffMapReady={handleDiffMapRenderReady}
+              onMapHover={handleDiffHover}
+              onMapHoverEnd={handleHoverEnd}
+            />
+            {hoverSide !== null ? (
+              <CompareTooltip
+                mode="diff"
+                varKey={lVariable}
+                leftModel={lModel}
+                rightModel={rModel}
+                leftTooltip={leftTooltip}
+                rightTooltip={rightTooltip}
+                x={hoverX}
+                y={hoverY}
+                containerWidth={hoverContainerWidth}
+                side="left"
+              />
+            ) : null}
+          </div>
+        )}
         <CompareScrubber
           leftFrameHours={leftLoader.frameHours}
           rightFrameHours={rightLoader.frameHours}

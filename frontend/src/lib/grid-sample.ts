@@ -18,6 +18,26 @@ function mercatorYFromMeters(y: number): number {
   return (MERCATOR_HALF_WORLD - y) / (2 * MERCATOR_HALF_WORLD);
 }
 
+/**
+ * Inverse of {@link lonLatToGridUv}: map a normalized grid coordinate (u, v) in
+ * [0, 1] back to lon/lat. `bbox` is in Web-Mercator meters (EPSG:3857), the same
+ * convention `lonLatToGridUv` expects. The mercator-normalization affine cancels
+ * out, so the meters span maps linearly; only the Y→lat step is non-linear.
+ */
+export function gridUvToLonLat(
+  u: number,
+  v: number,
+  bbox: [number, number, number, number],
+): [number, number] {
+  const [west, south, east, north] = bbox;
+  const meterX = west + u * (east - west);
+  const meterY = north + v * (south - north);
+  const lon = (meterX * 180) / MERCATOR_HALF_WORLD;
+  const latRadians = 2 * Math.atan(Math.exp((meterY * Math.PI) / MERCATOR_HALF_WORLD)) - Math.PI / 2;
+  const lat = (latRadians * 180) / Math.PI;
+  return [lon, lat];
+}
+
 export function lonLatToGridUv(
   lon: number,
   lat: number,
@@ -71,7 +91,7 @@ function decodePackedSample(
   return encoded * scale + offset;
 }
 
-function sampleBilinearValue(
+export function sampleBilinearValue(
   bytes: Uint8Array<ArrayBufferLike>,
   width: number,
   height: number,
