@@ -285,24 +285,24 @@ function SplitComparisonFields({
   return (
     <>
       <div className="flex items-end gap-2">
-        <Field label="Left Product">
+        <Field label="Upper Product">
           <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
         </Field>
         <button
           type="button"
           onClick={onSwap}
-          aria-label="Swap left and right panels"
+          aria-label="Swap upper and lower panels"
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
         >
           <ArrowLeftRight className="h-4 w-4" />
         </button>
-        <Field label="Right Product">
+        <Field label="Lower Product">
           <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
         </Field>
       </div>
 
       <div className="mt-3 flex items-end gap-2">
-        <Field label="Left Variable">
+        <Field label="Upper Variable">
           <DrawerSelect
             value={lVariable}
             onValueChange={onLeftVariableChange}
@@ -311,7 +311,7 @@ function SplitComparisonFields({
             disabled={leftVariableOptions.length === 0}
           />
         </Field>
-        <Field label="Right Variable">
+        <Field label="Lower Variable">
           <DrawerSelect
             value={rVariable}
             onValueChange={onRightVariableChange}
@@ -325,10 +325,10 @@ function SplitComparisonFields({
       <div className="my-3 border-t border-white/[0.08]" />
 
       <div className="flex items-end gap-2">
-        <Field label="L Run">
+        <Field label="Upper Run">
           <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
         </Field>
-        <Field label="R Run">
+        <Field label="Lower Run">
           <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
         </Field>
       </div>
