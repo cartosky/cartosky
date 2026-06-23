@@ -1,4 +1,4 @@
-import { SlidersHorizontal } from "lucide-react";
+import { Settings } from "lucide-react";
 
 type CompareMobileDiffBarProps = {
   /** Line 1: "{lRun} {lModel} − {rRun} {rModel}". */
@@ -32,7 +32,7 @@ export function CompareMobileDiffBar({ modelLine, variableLine, onOpenDrawer }: 
         aria-label="Comparison settings"
         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
       >
-        <SlidersHorizontal className="h-4 w-4" />
+        <Settings className="h-4 w-4" />
       </button>
     </div>
   );

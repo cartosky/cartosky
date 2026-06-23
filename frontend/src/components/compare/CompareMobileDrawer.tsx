@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeftRight, Layers, Moon, Sun } from "lucide-react";
+import { ArrowLeftRight, Layers, Moon, Sun, X } from "lucide-react";
 
 import {
   Select,
@@ -186,35 +186,44 @@ function DrawerInner({
           <div className="h-1 w-10 rounded-full bg-white/25" />
         </div>
 
-        <div
-          className="min-h-0 overflow-y-auto px-4 pb-6 pt-1"
-          style={{ maxHeight: snap === "full" ? "calc(90dvh - 3rem)" : "calc(60dvh - 3rem)" }}
-        >
-          {/* Tab bar — two equal pills, same treatment as the mode toggle. */}
-          <div className="mb-3 grid grid-cols-2 gap-0.5 rounded-xl border border-white/[0.09] bg-white/[0.05] p-0.5">
+        {/* Header: underline tabs + close button */}
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 pt-2">
+          <div className="flex">
             {([
               { id: "comparison" as const, label: "Comparison" },
               { id: "display" as const, label: "Display" },
-            ]).map((tab) => {
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => onTabChange(tab.id)}
-                  className={cn(
-                    "h-10 w-full rounded-lg text-[12px] font-medium transition-all duration-150",
-                    active
-                      ? "border border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 shadow-[inset_0_1px_0_rgba(103,232,249,0.08)]"
-                      : "border border-transparent text-white/55 hover:bg-white/[0.06] hover:text-white",
-                  )}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
+            ]).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onTabChange(tab.id)}
+                className={cn(
+                  "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                  activeTab === tab.id ? "text-white" : "text-white/40 hover:text-white/65",
+                )}
+              >
+                {tab.label}
+                {activeTab === tab.id ? (
+                  <span className="absolute bottom-0 left-0 right-5 h-[2px] rounded-full bg-cyan-400" />
+                ) : null}
+              </button>
+            ))}
           </div>
 
+          <button
+            type="button"
+            onClick={onClose}
+            className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
+            aria-label="Close comparison settings"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div
+          className="min-h-0 overflow-y-auto px-4 pb-6 pt-3"
+          style={{ maxHeight: snap === "full" ? "calc(90dvh - 5.5rem)" : "calc(60dvh - 5.5rem)" }}
+        >
           {activeTab === "comparison" ? (
             <>
               {/* Left model · swap · right model */}
