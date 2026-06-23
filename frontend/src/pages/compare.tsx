@@ -1335,14 +1335,21 @@ export default function Compare() {
                 >
                   <Share2 className="h-3.5 w-3.5" />
                 </button>
-                {/* Display settings now live in the drawer's Display tab on mobile diff. */}
+                <button
+                  type="button"
+                  onClick={() => setMobileDrawerOpen(true)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+                  aria-label="Comparison settings"
+                  title="Comparison settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
             <div className="mt-2">
               <CompareMobileDiffBar
                 modelLine={diffSummaryParts.modelLine}
                 variableLine={diffSummaryParts.variableLine}
-                onOpenDrawer={() => setMobileDrawerOpen(true)}
               />
             </div>
             {diffNotice ? (

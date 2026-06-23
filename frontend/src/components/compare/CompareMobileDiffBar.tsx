@@ -1,19 +1,16 @@
-import { Settings } from "lucide-react";
-
 type CompareMobileDiffBarProps = {
   /** Line 1: "{lRun} {lModel} − {rRun} {rModel}". */
   modelLine: string;
   /** Line 2: variable display name. */
   variableLine: string;
-  onOpenDrawer: () => void;
 };
 
 /**
  * Collapsed two-line diff summary bar for mobile (`layoutMode === "mobile"`).
- * Render-only: receives the formatted summary lines and a callback to open the
- * comparison-settings drawer. Replaces the multi-row control header on mobile.
+ * Render-only: receives the formatted summary lines. The comparison-settings
+ * drawer is opened from the settings button in the top utility row.
  */
-export function CompareMobileDiffBar({ modelLine, variableLine, onOpenDrawer }: CompareMobileDiffBarProps) {
+export function CompareMobileDiffBar({ modelLine, variableLine }: CompareMobileDiffBarProps) {
   return (
     <div className="flex items-center gap-2">
       <span
@@ -26,14 +23,6 @@ export function CompareMobileDiffBar({ modelLine, variableLine, onOpenDrawer }: 
         <div className="text-[12px] font-medium text-white/82">{modelLine}</div>
         <div className="text-xs text-slate-400">{variableLine}</div>
       </div>
-      <button
-        type="button"
-        onClick={onOpenDrawer}
-        aria-label="Comparison settings"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
-      >
-        <Settings className="h-3.5 w-3.5" />
-      </button>
     </div>
   );
 }
