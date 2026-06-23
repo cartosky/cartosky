@@ -60,6 +60,24 @@ async def test_require_clerk_user_extracts_user_and_metadata_role(monkeypatch: p
     assert principal.is_admin is True
 
 
+async def test_require_clerk_user_ignores_user_writable_unsafe_metadata_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_123")
+    _clear_clerk_config_cache()
+
+    async def fake_verify_token_async(token: str, options: object) -> dict[str, object]:
+        assert token == "test-token"
+        return {"sub": "user_123", "unsafe_metadata": {"role": "admin"}}
+
+    monkeypatch.setattr(clerk_auth, "verify_token_async", fake_verify_token_async)
+
+    principal = await clerk_auth.require_clerk_user(_request())
+
+    assert principal.role is None
+    assert principal.is_admin is False
+
+
 async def test_require_clerk_admin_rejects_non_admin_role(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_123")
     _clear_clerk_config_cache()

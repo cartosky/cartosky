@@ -184,7 +184,7 @@ GRID_ACCEL_REDIRECT_PREFIX = _normalized_path_prefix(
 
 
 def _legacy_telemetry_write_enabled() -> bool:
-    return _env_bool("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", default=True)
+    return _env_bool("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", default=False)
 
 
 LOOP_WEBP_QUALITY = int(
@@ -310,6 +310,9 @@ _TWF_ERROR_PATHS = {
     "/twf/topics",
     "/twf/share/topic",
     "/twf/share/post",
+    "/api/v4/telemetry/perf",
+    "/api/v4/telemetry/usage",
+    "/api/v4/telemetry/rum",
 }
 _TWF_RATE_PRUNE_INTERVAL_SECONDS = 60.0
 _ADMIN_WINDOW_SECONDS = {
@@ -338,9 +341,15 @@ _twf_rate_lock = threading.Lock()
 _twf_ip_windows: dict[str, deque[float]] = {}
 _twf_session_windows: dict[str, deque[float]] = {}
 _share_media_user_windows: dict[str, deque[float]] = {}
+_share_screenshot_user_windows: dict[str, deque[float]] = {}
+_telemetry_identity_windows: dict[str, deque[float]] = {}
 _twf_last_prune_monotonic = 0.0
 _SHARE_MEDIA_RATE_WINDOW_SECONDS = 3600.0
 _SHARE_MEDIA_USER_LIMIT = 30
+_SHARE_SCREENSHOT_RATE_WINDOW_SECONDS = 3600.0
+_SHARE_SCREENSHOT_USER_LIMIT = 20
+_TELEMETRY_RATE_WINDOW_SECONDS = 60.0
+_TELEMETRY_IDENTITY_LIMIT = 240
 _LOOP_REQUEST_SOURCE_LOG_EVERY = 100
 _loop_request_counter_lock = threading.Lock()
 _loop_request_source_totals: dict[str, int] = {"cache": 0, "generated": 0, "rendered": 0}
@@ -694,6 +703,10 @@ def _maybe_prune_rate_limit_state(now: float) -> None:
     _prune_rate_limit_bucket(_twf_session_windows, cutoff=cutoff)
     share_media_cutoff = now - _SHARE_MEDIA_RATE_WINDOW_SECONDS
     _prune_rate_limit_bucket(_share_media_user_windows, cutoff=share_media_cutoff)
+    share_screenshot_cutoff = now - _SHARE_SCREENSHOT_RATE_WINDOW_SECONDS
+    _prune_rate_limit_bucket(_share_screenshot_user_windows, cutoff=share_screenshot_cutoff)
+    telemetry_cutoff = now - _TELEMETRY_RATE_WINDOW_SECONDS
+    _prune_rate_limit_bucket(_telemetry_identity_windows, cutoff=telemetry_cutoff)
     _twf_last_prune_monotonic = now
 
 
@@ -1150,6 +1163,75 @@ def _share_media_rate_limit_retry_after(*, user_id: str) -> int:
             now=now,
         )
 
+
+def _share_screenshot_rate_limit_retry_after(*, user_id: str) -> int:
+    now = time.monotonic()
+    with _twf_rate_lock:
+        _maybe_prune_rate_limit_state(now)
+        return _rate_limit_check(
+            _share_screenshot_user_windows,
+            key=user_id,
+            limit=_SHARE_SCREENSHOT_USER_LIMIT,
+            window_seconds=_SHARE_SCREENSHOT_RATE_WINDOW_SECONDS,
+            now=now,
+        )
+
+
+def _share_screenshot_allowed_hosts() -> set[str]:
+    hosts = {"cartosky.com", "www.cartosky.com"}
+    if _env_bool("CARTOSKY_SHARE_SCREENSHOT_ALLOW_LOCALHOST", default=False):
+        hosts.update({"127.0.0.1", "localhost"})
+    return hosts
+
+
+def _telemetry_identity(
+    request: Request,
+    current_user: ClerkPrincipal | None,
+    payload: TelemetryEventBase,
+    *,
+    allow_anonymous: bool = False,
+) -> tuple[list[str], int | None]:
+    sess = _maybe_twf_session(request)
+    if sess:
+        return [f"twf:{sess.session_id}"], sess.member_id
+    if current_user:
+        return [f"clerk:{current_user.user_id}"], None
+    if allow_anonymous:
+        session_id = payload.session_id.strip() if isinstance(payload.session_id, str) else "anonymous"
+        ip_key = hashlib.sha256(_client_ip(request).encode("utf-8")).hexdigest()
+        session_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        return [f"anon-ip:{ip_key}", f"anon-session:{session_key}"], None
+    raise TwfApiError(
+        status_code=401,
+        code="TELEMETRY_AUTH_REQUIRED",
+        message="Telemetry ingest requires authentication.",
+    )
+
+
+def _check_telemetry_rate_limit(identity_keys: list[str]) -> None:
+    now = time.monotonic()
+    retry_after = 0
+    with _twf_rate_lock:
+        _maybe_prune_rate_limit_state(now)
+        for identity_key in identity_keys:
+            retry_after = max(
+                retry_after,
+                _rate_limit_check(
+                    _telemetry_identity_windows,
+                    key=identity_key,
+                    limit=_TELEMETRY_IDENTITY_LIMIT,
+                    window_seconds=_TELEMETRY_RATE_WINDOW_SECONDS,
+                    now=now,
+                ),
+            )
+    if retry_after > 0:
+        raise TwfApiError(
+            status_code=429,
+            code="TELEMETRY_RATE_LIMITED",
+            message="Too many telemetry events. Please try again shortly.",
+        )
+
+
 # ----------------------------
 # TWF OAuth + Share Routes
 # ----------------------------
@@ -1435,7 +1517,14 @@ async def stripe_billing_webhook(request: Request) -> dict[str, bool]:
 
 
 @app.post("/api/v4/share/screenshot")
-async def generate_share_screenshot(request: Request) -> Response:
+async def generate_share_screenshot(
+    request: Request,
+    current_user: ClerkPrincipal = Depends(require_clerk_user),
+) -> Response:
+    retry_after = _share_screenshot_rate_limit_retry_after(user_id=current_user.user_id)
+    if retry_after > 0:
+        return JSONResponse({"error": "Too many screenshot requests"}, status_code=429)
+
     body = await request.json()
     url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
     basemap = str(body.get("basemap", "light")).strip().lower() if isinstance(body, dict) else "light"
@@ -1445,8 +1534,7 @@ async def generate_share_screenshot(request: Request) -> Response:
         basemap = "light"
 
     parsed = urlparse(url)
-    allowed_hosts = {"cartosky.com", "www.cartosky.com", "127.0.0.1", "localhost"}
-    if parsed.hostname not in allowed_hosts:
+    if parsed.hostname not in _share_screenshot_allowed_hosts():
         return JSONResponse({"error": "URL not allowed"}, status_code=400)
 
     try:
@@ -1651,34 +1739,49 @@ async def post_feedback(
 
 
 @app.post("/api/v4/telemetry/perf", status_code=204)
-async def post_perf_telemetry(request: Request, payload: PerfTelemetryIn) -> Response:
+async def post_perf_telemetry(
+    request: Request,
+    payload: PerfTelemetryIn,
+    current_user: ClerkPrincipal | None = Depends(maybe_clerk_user),
+) -> Response:
+    identity_keys, member_id = _telemetry_identity(request, current_user, payload)
+    _check_telemetry_rate_limit(identity_keys)
     if not _legacy_telemetry_write_enabled():
         return Response(status_code=204, headers={"X-Cartosky-Legacy-Telemetry": "disabled"})
-    sess = _maybe_twf_session(request)
     try:
-        admin_telemetry.record_perf_event(payload.model_dump(), member_id=sess.member_id if sess else None)
+        admin_telemetry.record_perf_event(payload.model_dump(), member_id=member_id)
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_PERF_EVENT", message=str(exc)) from exc
     return Response(status_code=204)
 
 
 @app.post("/api/v4/telemetry/usage", status_code=204)
-async def post_usage_telemetry(request: Request, payload: UsageTelemetryIn) -> Response:
+async def post_usage_telemetry(
+    request: Request,
+    payload: UsageTelemetryIn,
+    current_user: ClerkPrincipal | None = Depends(maybe_clerk_user),
+) -> Response:
+    identity_keys, member_id = _telemetry_identity(request, current_user, payload)
+    _check_telemetry_rate_limit(identity_keys)
     if not _legacy_telemetry_write_enabled():
         return Response(status_code=204, headers={"X-Cartosky-Legacy-Telemetry": "disabled"})
-    sess = _maybe_twf_session(request)
     try:
-        admin_telemetry.record_usage_event(payload.model_dump(), member_id=sess.member_id if sess else None)
+        admin_telemetry.record_usage_event(payload.model_dump(), member_id=member_id)
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_USAGE_EVENT", message=str(exc)) from exc
     return Response(status_code=204)
 
 
 @app.post("/api/v4/telemetry/rum", status_code=204)
-async def post_rum_telemetry(request: Request, payload: RumTelemetryIn) -> Response:
-    sess = _maybe_twf_session(request)
+async def post_rum_telemetry(
+    request: Request,
+    payload: RumTelemetryIn,
+    current_user: ClerkPrincipal | None = Depends(maybe_clerk_user),
+) -> Response:
+    identity_keys, member_id = _telemetry_identity(request, current_user, payload, allow_anonymous=True)
+    _check_telemetry_rate_limit(identity_keys)
     try:
-        admin_telemetry.record_rum_metric(payload.model_dump(), member_id=sess.member_id if sess else None)
+        admin_telemetry.record_rum_metric(payload.model_dump(), member_id=member_id)
     except ValueError as exc:
         raise TwfApiError(status_code=400, code="INVALID_RUM_METRIC", message=str(exc)) from exc
     return Response(status_code=204)

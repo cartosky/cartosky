@@ -26,6 +26,7 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 os.environ.setdefault("TWM_ADMIN_MEMBER_IDS", "42")
 
 from app import main as main_module
+from app.auth.clerk import ClerkPrincipal
 
 twf_oauth = main_module.twf_oauth
 admin_telemetry = main_module.admin_telemetry
@@ -45,13 +46,22 @@ def isolate_databases(tmp_path: Path) -> None:
     admin_telemetry.STATUS_DB_PATH = status_db
     admin_telemetry._db_initialized = False
     admin_telemetry._status_db_initialized = False
+    main_module.ADMIN_MEMBER_IDS = {42}
+    with main_module._twf_rate_lock:
+        main_module._telemetry_identity_windows.clear()
     prometheus_metrics.reset_metrics_for_tests()
     otel_tracing.reset_for_tests()
+    os.environ.pop("CLERK_SECRET_KEY", None)
+    main_module.app_config.clerk_secret_key.cache_clear()
+    main_module.app_config.clerk_auth_enabled.cache_clear()
+    main_module.app_config.clerk_jwt_audience.cache_clear()
+    main_module.app_config.clerk_authorized_parties.cache_clear()
     os.environ.pop("CARTOSKY_PROMETHEUS_ENABLED", None)
     os.environ.pop("CARTOSKY_OTEL_ENABLED", None)
     os.environ.pop("CARTOSKY_OTEL_SAMPLE_RATIO", None)
     os.environ.pop("CARTOSKY_OTEL_SLOW_REQUEST_MS", None)
     os.environ.pop("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", None)
+    os.environ["CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED"] = "1"
 
 
 @pytest.fixture
@@ -59,6 +69,11 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=main_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
+    main_module.app.dependency_overrides.pop(main_module.require_clerk_user, None)
+
+
+async def _fake_clerk_user() -> ClerkPrincipal:
+    return ClerkPrincipal(user_id="user_test", claims={}, token="clerk-test-token")
 
 
 def _create_session(*, session_id: str, member_id: int, name: str) -> None:
@@ -155,6 +170,93 @@ async def test_legacy_telemetry_write_cutoff_returns_204_without_persisting(clie
     assert usage_summary.json()["events"] == []
 
 
+async def test_legacy_telemetry_writes_default_to_disabled(client: httpx.AsyncClient) -> None:
+    os.environ.pop("CARTOSKY_LEGACY_TELEMETRY_WRITE_ENABLED", None)
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    response = await client.post(
+        "/api/v4/telemetry/perf",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+        json={
+            "event_name": "frame_change",
+            "duration_ms": 120.0,
+            "session_id": "viewer-session-default-cutoff",
+            "page": "/viewer",
+        },
+    )
+
+    assert response.status_code == 204
+    assert response.headers.get("X-Cartosky-Legacy-Telemetry") == "disabled"
+
+    summary = await client.get(
+        "/api/v4/admin/performance/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    assert summary.json()["metrics"]["frame_change"]["count"] == 0
+
+
+async def test_perf_telemetry_rejects_anonymous_ingest(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v4/telemetry/perf",
+        json={
+            "event_name": "frame_change",
+            "duration_ms": 120.0,
+            "session_id": "viewer-session-anon",
+            "page": "/viewer",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+async def test_rum_telemetry_allows_anonymous_ingest_for_current_dashboards(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/v4/telemetry/rum",
+        json={
+            "metric_name": "lcp",
+            "metric_value": 2100.0,
+            "metric_unit": "ms",
+            "session_id": "viewer-session-anon",
+            "page": "/viewer",
+        },
+    )
+
+    assert response.status_code == 204
+
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+    summary = await client.get(
+        "/api/v4/admin/overview/summary?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert summary.status_code == 200
+    assert summary.json()["web_vitals"]["lcp"]["count"] == 1
+
+
+async def test_rum_telemetry_rate_limits_anonymous_ingest(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_module, "_TELEMETRY_IDENTITY_LIMIT", 1)
+
+    payload = {
+        "metric_name": "lcp",
+        "metric_value": 2100.0,
+        "metric_unit": "ms",
+        "session_id": "viewer-session-rate-limited",
+        "page": "/viewer",
+    }
+
+    first = await client.post("/api/v4/telemetry/rum", json=payload)
+    second = await client.post("/api/v4/telemetry/rum", json=payload)
+
+    assert first.status_code == 204
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "TELEMETRY_RATE_LIMITED"
+
+
 async def test_perf_telemetry_summary_supports_phase1_loop_metrics(client: httpx.AsyncClient) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
 
@@ -244,6 +346,7 @@ async def test_usage_telemetry_summary_returns_counts(client: httpx.AsyncClient)
 
     response = await client.post(
         "/api/v4/telemetry/usage",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
         json={
             "event_name": "model_selected",
             "session_id": "viewer-session-1",
@@ -619,6 +722,7 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
 
 async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:
     os.environ["CARTOSKY_PROMETHEUS_ENABLED"] = "1"
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
 
     response = await client.get("/auth/twf/status")
     assert response.status_code == 200
@@ -653,6 +757,7 @@ async def test_admin_observability_summary_requires_admin_and_reports_recent_sta
         lambda: [{"model_id": "hrrr", "run_age_hours": 2.5, "completion_ratio": 0.92}],
     )
 
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
     await client.get("/auth/twf/status")
 
     response = await client.get(
@@ -703,6 +808,7 @@ async def test_tracing_summary_requires_admin_and_reports_recent_traces(client: 
     assert any(item["trace_id"] == trace_id for item in body["traces"])
     assert all(item["decision"] in {"sampled", "slow", "error"} for item in body["traces"])
 
+    main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
     noise_response = await client.get("/auth/twf/status")
     assert noise_response.status_code == 200
     metrics_response = await client.get("/metrics")

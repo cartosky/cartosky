@@ -73,6 +73,68 @@ def test_checkout_session_completed_writes_pro_plan_and_ids(monkeypatch: pytest.
             "object": "checkout.session",
             "customer": "cus_123",
             "subscription": "sub_123",
+            "payment_status": "paid",
+            "metadata": {"clerk_user_id": "user_123"},
+        },
+    ))
+    monkeypatch.setattr(stripe_billing, "_update_clerk_user_plan", lambda clerk_user_id, plan, stripe_customer_id=None, stripe_subscription_id=None, stripe_subscription_status=None: updates.append({
+        "clerk_user_id": clerk_user_id,
+        "plan": plan,
+        "stripe_customer_id": stripe_customer_id,
+        "stripe_subscription_id": stripe_subscription_id,
+        "stripe_subscription_status": stripe_subscription_status,
+    }))
+    monkeypatch.setattr(stripe_billing.stripe.Subscription, "retrieve", lambda subscription_id: {"id": subscription_id, "status": "active"})
+
+    stripe_billing.handle_webhook_event(b"{}", "sig")
+
+    assert updates == [{
+        "clerk_user_id": "user_123",
+        "plan": "pro",
+        "stripe_customer_id": "cus_123",
+        "stripe_subscription_id": "sub_123",
+        "stripe_subscription_status": "active",
+    }]
+
+
+def test_checkout_session_completed_with_unpaid_status_does_not_grant_pro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(stripe_billing.stripe.Webhook, "construct_event", lambda payload, sig_header, secret: _event(
+        "checkout.session.completed",
+        {
+            "object": "checkout.session",
+            "customer": "cus_123",
+            "subscription": "sub_123",
+            "payment_status": "unpaid",
+            "metadata": {"clerk_user_id": "user_123"},
+        },
+    ))
+    monkeypatch.setattr(stripe_billing, "_update_clerk_user_plan", lambda *args, **kwargs: updates.append({
+        "args": args,
+        "kwargs": kwargs,
+    }))
+    monkeypatch.setattr(stripe_billing.stripe.Subscription, "retrieve", lambda subscription_id: {"id": subscription_id, "status": "active"})
+
+    stripe_billing.handle_webhook_event(b"{}", "sig")
+
+    assert updates == []
+
+
+def test_checkout_session_async_payment_succeeded_grants_pro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(stripe_billing.stripe.Webhook, "construct_event", lambda payload, sig_header, secret: _event(
+        "checkout.session.async_payment_succeeded",
+        {
+            "object": "checkout.session",
+            "customer": "cus_123",
+            "subscription": "sub_123",
+            "payment_status": "paid",
             "metadata": {"clerk_user_id": "user_123"},
         },
     ))

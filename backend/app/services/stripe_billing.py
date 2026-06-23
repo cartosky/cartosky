@@ -395,15 +395,24 @@ def _resolve_clerk_user_id(event_object: Any, subscription_id: str | None, custo
     return None, subscription_object, customer_object
 
 
-def _handle_checkout_session_completed(event_id: str, event_object: Any) -> None:
+def _checkout_session_can_grant_pro(event_object: Any, subscription_object: Any) -> bool:
+    payment_status = _normalize_string(_object_get(event_object, "payment_status"))
+    subscription_status = _normalize_string(_object_get(subscription_object, "status")) or ""
+    return payment_status == "paid" and subscription_status in {"active", "trialing"}
+
+
+def _handle_checkout_session_completed(event_id: str, event_type: str, event_object: Any) -> None:
     customer_id = _normalize_string(_object_get(event_object, "customer"))
     subscription_id = _normalize_string(_object_get(event_object, "subscription"))
     clerk_user_id, subscription_object, _ = _resolve_clerk_user_id(event_object, subscription_id, customer_id)
-    subscription_status = _normalize_string(_object_get(subscription_object, "status")) or "active"
+    if subscription_object is None and subscription_id:
+        subscription_object = _retrieve_subscription(subscription_id)
+    subscription_status = _normalize_string(_object_get(subscription_object, "status")) or ""
 
     logger.info(
-        "Processing Stripe event id=%s type=checkout.session.completed customer_id=%s subscription_id=%s clerk_user_id=%s",
+        "Processing Stripe event id=%s type=%s customer_id=%s subscription_id=%s clerk_user_id=%s",
         event_id,
+        event_type,
         customer_id,
         subscription_id,
         clerk_user_id,
@@ -414,6 +423,16 @@ def _handle_checkout_session_completed(event_id: str, event_object: Any) -> None
             event_id,
             customer_id,
             subscription_id,
+        )
+        return
+    if not _checkout_session_can_grant_pro(event_object, subscription_object):
+        logger.info(
+            "Skipping Stripe checkout Pro grant event id=%s type=%s payment_status=%s subscription_status=%s clerk_user_id=%s",
+            event_id,
+            event_type,
+            _normalize_string(_object_get(event_object, "payment_status")),
+            subscription_status,
+            clerk_user_id,
         )
         return
     _update_clerk_user_plan(
@@ -492,8 +511,8 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> None:
         clerk_user_id,
     )
 
-    if event_type == "checkout.session.completed":
-        _handle_checkout_session_completed(event_id, event_object)
+    if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        _handle_checkout_session_completed(event_id, event_type, event_object)
         return
     if event_type in {"customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"}:
         _handle_subscription_event(event_id, event_type, event_object)

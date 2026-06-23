@@ -3,6 +3,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
@@ -19,6 +21,20 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app.auth import twf_oauth
+
+
+def test_oauth_cookie_rejects_tampered_clerk_user_id() -> None:
+    packed = twf_oauth.pack_oauth_cookie(
+        "state-123",
+        "verifier-123",
+        "/account",
+        "user_attacker",
+    )
+    replacement = "A" if packed[-1] != "A" else "B"
+    tampered = f"{packed[:-1]}{replacement}"
+
+    with pytest.raises(Exception):
+        twf_oauth.unpack_oauth_cookie(tampered)
 
 
 def test_session_store_keys_connections_by_clerk_user_id(tmp_path, monkeypatch) -> None:

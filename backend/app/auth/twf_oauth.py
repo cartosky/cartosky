@@ -807,11 +807,10 @@ def pack_oauth_cookie(
     if isinstance(clerk_user_id, str) and clerk_user_id.strip():
         payload["clerk_user_id"] = clerk_user_id.strip()
     blob = json.dumps(payload).encode("utf-8")
-    return _b64url(blob)
+    return FERNET.encrypt(blob).decode("ascii")
 
 def unpack_oauth_cookie(val: str) -> dict[str, str]:
-    padded = val + "=" * (-len(val) % 4)
-    raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+    raw = FERNET.decrypt(val.encode("ascii"), ttl=10 * 60)
     obj = json.loads(raw.decode("utf-8"))
     payload = {"state": obj["state"], "verifier": obj["verifier"]}
     if isinstance(obj.get("return_to"), str) and obj["return_to"].strip():

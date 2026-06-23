@@ -61,7 +61,7 @@ def clerk_role_from_claims(claims: dict[str, Any]) -> str | None:
     if isinstance(role, str) and role.strip():
         return role.strip()
 
-    for metadata_key in ("metadata", "public_metadata", "private_metadata", "unsafe_metadata"):
+    for metadata_key in ("metadata", "public_metadata", "private_metadata"):
         metadata = claims.get(metadata_key)
         if not isinstance(metadata, dict):
             continue
