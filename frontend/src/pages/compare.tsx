@@ -1314,9 +1314,6 @@ export default function Compare() {
           // Mobile diff: keep the mode toggle + utility row, collapse the picker
           // rows into a summary bar that opens the bottom drawer.
           <div className="px-4 pb-2">
-            <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
-              Difference
-            </div>
             <div className="flex items-center gap-2">
               <CompareModeToggle mode={mode} onChange={handleModeChange} compact />
               <div className="ml-auto flex shrink-0 items-center gap-2">
