@@ -16,34 +16,48 @@ import { cn } from "@/lib/utils";
 type RunOption = { value: string; label: string };
 type DrawerTab = "comparison" | "display";
 
-export type CompareMobileDrawerProps = {
+type CompareMobileDrawerBaseProps = {
   open: boolean;
   onClose: () => void;
   activeTab: DrawerTab;
   onTabChange: (tab: DrawerTab) => void;
-  // Picker state (same state/setters as the desktop control bar — no second store).
   lModel: string;
   rModel: string;
-  sharedVariable: string;
   lRun: string;
   rRun: string;
   modelOptions: GroupedOption[];
   variableCatalog: VariableOption[];
-  diffMutualVariables: string[];
   leftRunOptions: RunOption[];
   rightRunOptions: RunOption[];
   onLeftModelChange: (value: string) => void;
   onRightModelChange: (value: string) => void;
-  onSharedVariableChange: (value: string) => void;
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
-  // Display settings — same state the desktop display panel reads/writes.
   basemapMode: BasemapMode;
   onToggleBasemap: () => void;
   showLegends: boolean;
   onToggleLegends: () => void;
 };
+
+type CompareMobileDrawerDiffProps = CompareMobileDrawerBaseProps & {
+  compareMode: "diff";
+  sharedVariable: string;
+  diffMutualVariables: string[];
+  onSharedVariableChange: (value: string) => void;
+};
+
+type CompareMobileDrawerSplitProps = CompareMobileDrawerBaseProps & {
+  compareMode: "split";
+  lVariable: string;
+  rVariable: string;
+  leftVariableIds: string[];
+  rightVariableIds: string[];
+  onLeftVariableChange: (value: string) => void;
+  onRightVariableChange: (value: string) => void;
+};
+
+export type CompareMobileDrawerProps = CompareMobileDrawerDiffProps | CompareMobileDrawerSplitProps;
 
 /** Labeled field wrapper — label above a 44px control. */
 function Field({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
@@ -85,37 +99,267 @@ function DrawerSelect({
   );
 }
 
-function DrawerInner({
-  onClose,
-  activeTab,
-  onTabChange,
+function DisplaySettings({
+  basemapMode,
+  onToggleBasemap,
+  showLegends,
+  onToggleLegends,
+}: {
+  basemapMode: BasemapMode;
+  onToggleBasemap: () => void;
+  showLegends: boolean;
+  onToggleLegends: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={onToggleBasemap}
+        className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-left transition-all duration-150 hover:bg-white/[0.07]"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+          {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/60" /> : <Sun className="h-4 w-4 text-white/60" />}
+          Basemap
+        </div>
+        <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
+          {basemapMode === "dark" ? "Dark" : "Light"}
+        </span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleLegends}
+        aria-pressed={showLegends}
+        className={cn(
+          "flex h-12 w-full items-center justify-between gap-3 rounded-lg border px-3 text-left transition-all duration-150",
+          showLegends
+            ? "border-cyan-300/20 bg-cyan-300/[0.07] hover:bg-cyan-300/[0.11]"
+            : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]",
+        )}
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+          <Layers className="h-4 w-4 text-white/72" />
+          Legends
+        </div>
+        <span className={cn("font-['IBM_Plex_Mono',monospace] text-[10px] font-medium", showLegends ? "text-cyan-300/90" : "text-white/38")}>
+          {showLegends ? "On" : "Off"}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function DiffComparisonFields({
   lModel,
   rModel,
-  sharedVariable,
   lRun,
   rRun,
-  modelOptions,
-  variableCatalog,
+  sharedVariable,
   diffMutualVariables,
+  modelSelectOptions,
   leftRunOptions,
   rightRunOptions,
+  variableCatalog,
   onLeftModelChange,
   onRightModelChange,
   onSharedVariableChange,
   onLeftRunChange,
   onRightRunChange,
   onSwap,
+}: {
+  lModel: string;
+  rModel: string;
+  lRun: string;
+  rRun: string;
+  sharedVariable: string;
+  diffMutualVariables: string[];
+  modelSelectOptions: RunOption[];
+  leftRunOptions: RunOption[];
+  rightRunOptions: RunOption[];
+  variableCatalog: VariableOption[];
+  onLeftModelChange: (value: string) => void;
+  onRightModelChange: (value: string) => void;
+  onSharedVariableChange: (value: string) => void;
+  onLeftRunChange: (value: string) => void;
+  onRightRunChange: (value: string) => void;
+  onSwap: () => void;
+}) {
+  const variableSelectOptions = diffMutualVariables.map((key) => ({
+    value: key,
+    label: variableCatalog.find((entry) => entry.value === key)?.label ?? key,
+  }));
+  const variablesDisabled = variableSelectOptions.length === 0;
+
+  return (
+    <>
+      <div className="flex items-end gap-2">
+        <Field label="Left Model">
+          <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
+        </Field>
+        <button
+          type="button"
+          onClick={onSwap}
+          aria-label="Swap left and right models"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
+        >
+          <ArrowLeftRight className="h-4 w-4" />
+        </button>
+        <Field label="Right Model">
+          <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
+        </Field>
+      </div>
+
+      <Field label="Variable (Shared)" className="mt-3">
+        <DrawerSelect
+          value={sharedVariable}
+          onValueChange={onSharedVariableChange}
+          options={variableSelectOptions}
+          placeholder={variablesDisabled ? "No shared variable" : "Variable"}
+          disabled={variablesDisabled}
+        />
+      </Field>
+
+      <div className="my-3 border-t border-white/[0.08]" />
+
+      <div className="flex items-end gap-2">
+        <Field label="L Run">
+          <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
+        </Field>
+        <Field label="R Run">
+          <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
+        </Field>
+      </div>
+    </>
+  );
+}
+
+function SplitComparisonFields({
+  lModel,
+  rModel,
+  lVariable,
+  rVariable,
+  lRun,
+  rRun,
+  leftVariableIds,
+  rightVariableIds,
+  modelSelectOptions,
+  leftRunOptions,
+  rightRunOptions,
+  variableCatalog,
+  onLeftModelChange,
+  onRightModelChange,
+  onLeftVariableChange,
+  onRightVariableChange,
+  onLeftRunChange,
+  onRightRunChange,
+  onSwap,
+}: {
+  lModel: string;
+  rModel: string;
+  lVariable: string;
+  rVariable: string;
+  lRun: string;
+  rRun: string;
+  leftVariableIds: string[];
+  rightVariableIds: string[];
+  modelSelectOptions: RunOption[];
+  leftRunOptions: RunOption[];
+  rightRunOptions: RunOption[];
+  variableCatalog: VariableOption[];
+  onLeftModelChange: (value: string) => void;
+  onRightModelChange: (value: string) => void;
+  onLeftVariableChange: (value: string) => void;
+  onRightVariableChange: (value: string) => void;
+  onLeftRunChange: (value: string) => void;
+  onRightRunChange: (value: string) => void;
+  onSwap: () => void;
+}) {
+  const variableOptionsForIds = (ids: string[]): RunOption[] =>
+    ids.map((key) => ({
+      value: key,
+      label: variableCatalog.find((entry) => entry.value === key)?.label ?? key,
+    }));
+  const leftVariableOptions = variableOptionsForIds(leftVariableIds);
+  const rightVariableOptions = variableOptionsForIds(rightVariableIds);
+
+  return (
+    <>
+      <div className="flex items-end gap-2">
+        <Field label="Left Product">
+          <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
+        </Field>
+        <button
+          type="button"
+          onClick={onSwap}
+          aria-label="Swap left and right panels"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
+        >
+          <ArrowLeftRight className="h-4 w-4" />
+        </button>
+        <Field label="Right Product">
+          <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
+        </Field>
+      </div>
+
+      <div className="mt-3 flex items-end gap-2">
+        <Field label="Left Variable">
+          <DrawerSelect
+            value={lVariable}
+            onValueChange={onLeftVariableChange}
+            options={leftVariableOptions}
+            placeholder="Variable"
+            disabled={leftVariableOptions.length === 0}
+          />
+        </Field>
+        <Field label="Right Variable">
+          <DrawerSelect
+            value={rVariable}
+            onValueChange={onRightVariableChange}
+            options={rightVariableOptions}
+            placeholder="Variable"
+            disabled={rightVariableOptions.length === 0}
+          />
+        </Field>
+      </div>
+
+      <div className="my-3 border-t border-white/[0.08]" />
+
+      <div className="flex items-end gap-2">
+        <Field label="L Run">
+          <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
+        </Field>
+        <Field label="R Run">
+          <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
+        </Field>
+      </div>
+    </>
+  );
+}
+
+type DrawerShellProps = {
+  onClose: () => void;
+  activeTab: DrawerTab;
+  onTabChange: (tab: DrawerTab) => void;
+  basemapMode: BasemapMode;
+  onToggleBasemap: () => void;
+  showLegends: boolean;
+  onToggleLegends: () => void;
+  comparisonContent: ReactNode;
+};
+
+function DrawerShell({
+  onClose,
+  activeTab,
+  onTabChange,
   basemapMode,
   onToggleBasemap,
   showLegends,
   onToggleLegends,
-}: Omit<CompareMobileDrawerProps, "open">) {
-  // Three-state sheet, mirroring the viewer's mobile sheet. "closed" is modeled
-  // by unmounting (the `open` prop), so internally we only track peek/full.
+  comparisonContent,
+}: DrawerShellProps) {
   const [snap, setSnap] = useState<"peek" | "full">("peek");
   const dragStartY = useRef<number | null>(null);
 
-  // Lock body scroll while the drawer is mounted.
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -142,19 +386,8 @@ function DrawerInner({
     setSnap((current) => (current === "peek" ? "full" : "peek"));
   };
 
-  const modelSelectOptions: RunOption[] = modelOptions.map((option) => ({
-    value: option.value,
-    label: option.label,
-  }));
-  const variableSelectOptions: RunOption[] = diffMutualVariables.map((key) => ({
-    value: key,
-    label: variableCatalog.find((entry) => entry.value === key)?.label ?? key,
-  }));
-  const variablesDisabled = variableSelectOptions.length === 0;
-
   return (
     <>
-      {/* Backdrop — subtler at peek, darker + blurred at full. */}
       <div
         className={cn(
           "fixed inset-0 z-[65] transition-[background-color,backdrop-filter] duration-300",
@@ -164,7 +397,6 @@ function DrawerInner({
         aria-hidden="true"
       />
 
-      {/* Sheet */}
       <div
         style={{
           maxHeight: snap === "full" ? "90dvh" : "60dvh",
@@ -174,7 +406,6 @@ function DrawerInner({
         role="dialog"
         aria-label="Comparison settings"
       >
-        {/* Drag handle — tap toggles peek/full, drag snaps/closes. */}
         <div
           className="flex touch-none select-none justify-center pt-3 pb-1 active:opacity-70"
           onTouchStart={handleDragStart}
@@ -186,7 +417,6 @@ function DrawerInner({
           <div className="h-1 w-10 rounded-full bg-white/25" />
         </div>
 
-        {/* Header: underline tabs + close button */}
         <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 pt-2">
           <div className="flex">
             {([
@@ -224,85 +454,13 @@ function DrawerInner({
           className="min-h-0 overflow-y-auto px-4 pb-6 pt-3"
           style={{ maxHeight: snap === "full" ? "calc(90dvh - 5.5rem)" : "calc(60dvh - 5.5rem)" }}
         >
-          {activeTab === "comparison" ? (
-            <>
-              {/* Left model · swap · right model */}
-              <div className="flex items-end gap-2">
-                <Field label="Left Model">
-                  <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
-                </Field>
-                <button
-                  type="button"
-                  onClick={onSwap}
-                  aria-label="Swap left and right models"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
-                >
-                  <ArrowLeftRight className="h-4 w-4" />
-                </button>
-                <Field label="Right Model">
-                  <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
-                </Field>
-              </div>
-
-              {/* Shared variable */}
-              <Field label="Variable (Shared)" className="mt-3">
-                <DrawerSelect
-                  value={sharedVariable}
-                  onValueChange={onSharedVariableChange}
-                  options={variableSelectOptions}
-                  placeholder={variablesDisabled ? "No shared variable" : "Variable"}
-                  disabled={variablesDisabled}
-                />
-              </Field>
-
-              <div className="my-3 border-t border-white/[0.08]" />
-
-              {/* Independent runs */}
-              <div className="flex items-end gap-2">
-                <Field label="L Run">
-                  <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
-                </Field>
-                <Field label="R Run">
-                  <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
-                </Field>
-              </div>
-            </>
-          ) : (
-            <div className="space-y-1.5">
-              <button
-                type="button"
-                onClick={onToggleBasemap}
-                className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-left transition-all duration-150 hover:bg-white/[0.07]"
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/60" /> : <Sun className="h-4 w-4 text-white/60" />}
-                  Basemap
-                </div>
-                <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
-                  {basemapMode === "dark" ? "Dark" : "Light"}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onToggleLegends}
-                aria-pressed={showLegends}
-                className={cn(
-                  "flex h-12 w-full items-center justify-between gap-3 rounded-lg border px-3 text-left transition-all duration-150",
-                  showLegends
-                    ? "border-cyan-300/20 bg-cyan-300/[0.07] hover:bg-cyan-300/[0.11]"
-                    : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]",
-                )}
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Layers className="h-4 w-4 text-white/72" />
-                  Legends
-                </div>
-                <span className={cn("font-['IBM_Plex_Mono',monospace] text-[10px] font-medium", showLegends ? "text-cyan-300/90" : "text-white/38")}>
-                  {showLegends ? "On" : "Off"}
-                </span>
-              </button>
-            </div>
+          {activeTab === "comparison" ? comparisonContent : (
+            <DisplaySettings
+              basemapMode={basemapMode}
+              onToggleBasemap={onToggleBasemap}
+              showLegends={showLegends}
+              onToggleLegends={onToggleLegends}
+            />
           )}
         </div>
       </div>
@@ -311,15 +469,87 @@ function DrawerInner({
 }
 
 /**
- * Bottom drawer holding the diff picker controls on mobile. Mounts via portal
- * only while `open`; unmounting models the "closed" snap state. All selects read
- * and write the same compare state passed in as props (no second state machine).
+ * Bottom drawer holding compare picker controls on mobile. Mounts via portal
+ * only while `open`; unmounting models the "closed" snap state.
  */
-export function CompareMobileDrawer({ open, ...rest }: CompareMobileDrawerProps) {
-  if (!open) {
+export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
+  if (!props.open) {
     return null;
   }
-  return createPortal(<DrawerInner {...rest} />, document.body);
+
+  const shellProps = {
+    onClose: props.onClose,
+    activeTab: props.activeTab,
+    onTabChange: props.onTabChange,
+    basemapMode: props.basemapMode,
+    onToggleBasemap: props.onToggleBasemap,
+    showLegends: props.showLegends,
+    onToggleLegends: props.onToggleLegends,
+  };
+
+  const modelSelectOptions: RunOption[] = props.modelOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+  }));
+
+  if (props.compareMode === "diff") {
+    return createPortal(
+      <DrawerShell
+        {...shellProps}
+        comparisonContent={(
+          <DiffComparisonFields
+            lModel={props.lModel}
+            rModel={props.rModel}
+            lRun={props.lRun}
+            rRun={props.rRun}
+            sharedVariable={props.sharedVariable}
+            diffMutualVariables={props.diffMutualVariables}
+            modelSelectOptions={modelSelectOptions}
+            leftRunOptions={props.leftRunOptions}
+            rightRunOptions={props.rightRunOptions}
+            variableCatalog={props.variableCatalog}
+            onLeftModelChange={props.onLeftModelChange}
+            onRightModelChange={props.onRightModelChange}
+            onSharedVariableChange={props.onSharedVariableChange}
+            onLeftRunChange={props.onLeftRunChange}
+            onRightRunChange={props.onRightRunChange}
+            onSwap={props.onSwap}
+          />
+        )}
+      />,
+      document.body,
+    );
+  }
+
+  return createPortal(
+    <DrawerShell
+      {...shellProps}
+      comparisonContent={(
+        <SplitComparisonFields
+          lModel={props.lModel}
+          rModel={props.rModel}
+          lVariable={props.lVariable}
+          rVariable={props.rVariable}
+          lRun={props.lRun}
+          rRun={props.rRun}
+          leftVariableIds={props.leftVariableIds}
+          rightVariableIds={props.rightVariableIds}
+          modelSelectOptions={modelSelectOptions}
+          leftRunOptions={props.leftRunOptions}
+          rightRunOptions={props.rightRunOptions}
+          variableCatalog={props.variableCatalog}
+          onLeftModelChange={props.onLeftModelChange}
+          onRightModelChange={props.onRightModelChange}
+          onLeftVariableChange={props.onLeftVariableChange}
+          onRightVariableChange={props.onRightVariableChange}
+          onLeftRunChange={props.onLeftRunChange}
+          onRightRunChange={props.onRightRunChange}
+          onSwap={props.onSwap}
+        />
+      )}
+    />,
+    document.body,
+  );
 }
 
 export default CompareMobileDrawer;
