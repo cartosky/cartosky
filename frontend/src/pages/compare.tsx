@@ -24,7 +24,7 @@ import { useCapabilities } from "@/lib/capabilities-context";
 import { buildComparePermalinkSearch, readComparePermalink } from "@/lib/compare-permalink";
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
-import type { GridMeta } from "@/lib/compare-diff";
+import { intersectSortedHours, resolveMutualGridHour, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch, replaceUrlQuery } from "@/lib/permalink";
@@ -677,13 +677,18 @@ export default function Compare() {
   }, [rModel]);
 
   // ── Difference pipeline (orchestrated by useCompareDiff) ───────────────
+  const resolvedDiffHour = useMemo(
+    () => resolveMutualGridHour(leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour),
+    [leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour],
+  );
+
   const leftDiffFrameUrl = useMemo(
-    () => resolveActiveGridFrameUrl(leftLoader, forecastHour),
-    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, forecastHour],
+    () => (resolvedDiffHour === null ? null : resolveActiveGridFrameUrl(leftLoader, resolvedDiffHour)),
+    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, resolvedDiffHour],
   );
   const rightDiffFrameUrl = useMemo(
-    () => resolveActiveGridFrameUrl(rightLoader, forecastHour),
-    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, forecastHour],
+    () => (resolvedDiffHour === null ? null : resolveActiveGridFrameUrl(rightLoader, resolvedDiffHour)),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour],
   );
   const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
   const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
@@ -691,12 +696,12 @@ export default function Compare() {
   // Adjacent-hour frame URLs warmed into GridFrameCache after each diff settles,
   // so sequential scrubbing finds bytes already cached (no loading flash).
   const leftPrefetchUrls = useMemo(
-    () => resolveAdjacentGridFrameUrls(leftLoader, forecastHour),
-    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, forecastHour],
+    () => (resolvedDiffHour === null ? [] : resolveAdjacentGridFrameUrls(leftLoader, resolvedDiffHour)),
+    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, resolvedDiffHour],
   );
   const rightPrefetchUrls = useMemo(
-    () => resolveAdjacentGridFrameUrls(rightLoader, forecastHour),
-    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, forecastHour],
+    () => (resolvedDiffHour === null ? [] : resolveAdjacentGridFrameUrls(rightLoader, resolvedDiffHour)),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour],
   );
 
   const diff = useCompareDiff({
@@ -707,7 +712,7 @@ export default function Compare() {
     leftModel: lModel,
     rightModel: rModel,
     varKey: mode === "diff" ? lVariable : null,
-    enabled: mode === "diff",
+    enabled: mode === "diff" && !leftLoader.loading && !rightLoader.loading,
     leftPrefetchUrls,
     rightPrefetchUrls,
   });
@@ -955,11 +960,31 @@ export default function Compare() {
     if (!run) {
       return null;
     }
-    const rightSet = new Set(rightLoader.frameHours);
-    const validHours = leftLoader.frameHours.filter((h) => rightSet.has(h));
-    const hour = validHours.length > 0 ? nearestFrame(validHours, forecastHour) : forecastHour;
+    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
+    const hour = mutualHours.length > 0 ? nearestFrame(mutualHours, forecastHour) : forecastHour;
     return deriveValidTime(run, hour);
-  }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
+  }, [
+    leftLoader.resolvedRun,
+    rightLoader.resolvedRun,
+    leftLoader.gridFrameHours,
+    rightLoader.gridFrameHours,
+    forecastHour,
+  ]);
+
+  // Keep the scrubber selection on a grid hour both sides can actually render.
+  useEffect(() => {
+    if (mode !== "diff") {
+      return;
+    }
+    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
+    if (mutualHours.length === 0) {
+      return;
+    }
+    const snapped = nearestFrame(mutualHours, forecastHour);
+    if (snapped !== forecastHour) {
+      setForecastHour(snapped);
+    }
+  }, [mode, leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour]);
 
   const sharePayload = useMemo<SharePayload>(() => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
@@ -1447,8 +1472,8 @@ export default function Compare() {
           </div>
         )}
         <CompareScrubber
-          leftFrameHours={leftLoader.frameHours}
-          rightFrameHours={rightLoader.frameHours}
+          leftFrameHours={mode === "diff" ? leftLoader.gridFrameHours : leftLoader.frameHours}
+          rightFrameHours={mode === "diff" ? rightLoader.gridFrameHours : rightLoader.frameHours}
           forecastHour={forecastHour}
           onForecastHourChange={setForecastHour}
           leftResolvedRun={leftLoader.resolvedRun}
