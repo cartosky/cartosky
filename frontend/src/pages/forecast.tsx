@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { useUser } from "@clerk/react";
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useAuth, useUser } from "@clerk/react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -21,6 +21,10 @@ import { ModelsTabContent } from "@/components/model-guidance/ModelsTabContent";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
+import { eligibleTemperatureModels } from "@/lib/eligible-temperature-models";
+import { useEntitlements } from "@/lib/entitlements";
+import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
+import { prefetchMeteogram } from "@/lib/meteogram-cache";
 import { useSiteLoading } from "@/lib/site-loading";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -1144,6 +1148,8 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 
 export default function Forecast() {
   const { user } = useUser();
+  const { getToken, isSignedIn } = useAuth();
+  const { canAccessProduct, isLoaded: entitlementsLoaded } = useEntitlements();
   const { start: startSiteLoading } = useSiteLoading();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialRestorePending = (() => {
@@ -1185,6 +1191,46 @@ export default function Forecast() {
       location_type: "geocoded",
     });
   }, []);
+
+  const meteogramPrefetchModelsKey = useMemo(() => {
+    if (!forecast || !entitlementsLoaded) return "";
+    return eligibleTemperatureModels(
+      forecast.location.latitude,
+      forecast.location.longitude,
+      canAccessProduct,
+    ).join(",");
+  }, [
+    forecast?.location.latitude,
+    forecast?.location.longitude,
+    entitlementsLoaded,
+    canAccessProduct,
+  ]);
+
+  // Warm meteogram cache as soon as a Forecast location is ready — before Models tab open.
+  useEffect(() => {
+    if (!forecast || !entitlementsLoaded) return;
+    const { latitude: lat, longitude: lon } = forecast.location;
+    const models = eligibleTemperatureModels(lat, lon, canAccessProduct);
+    if (models.length === 0) return;
+
+    prefetchMeteogram(
+      {
+        lat,
+        lon,
+        models,
+        variables: ["tmp2m"],
+        getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
+      },
+      "forecast-page-prefetch",
+    );
+  }, [
+    forecast?.location.latitude,
+    forecast?.location.longitude,
+    meteogramPrefetchModelsKey,
+    entitlementsLoaded,
+    getToken,
+    isSignedIn,
+  ]);
 
   useEffect(() => {
     return () => {

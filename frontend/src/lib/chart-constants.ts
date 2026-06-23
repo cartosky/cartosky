@@ -37,6 +37,22 @@ export const CHART_THEME = {
   dayBoundary: "hsla(0, 0%, 100%, 0.15)",
 } as const;
 
+// Long-range temperature guidance models (Models tab Phase 1A). NAM omitted — discontinued.
+export const TEMPERATURE_GUIDANCE_MODELS = ["ecmwf", "gfs", "aifs", "nbm"] as const;
+
+export type TemperatureGuidanceModel = (typeof TEMPERATURE_GUIDANCE_MODELS)[number];
+
+// Models omitted from pills and meteogram requests outside CONUS.
+export const CONUS_ONLY_GUIDANCE_MODELS = new Set<string>(["nbm"]);
+
+// uPlot series dash patterns: [on, off, …] in CSS pixels. Omit / undefined = solid.
+export const MODEL_LINE_DASH: Record<TemperatureGuidanceModel, number[] | undefined> = {
+  ecmwf: undefined,
+  gfs: [8, 4],
+  aifs: [2, 3],
+  nbm: [8, 3, 2, 3],
+};
+
 // Model display short names, used by pills and tooltips.
 export const MODEL_SHORT_NAMES: Record<string, string> = {
   ecmwf: "ECMWF",
@@ -50,8 +66,8 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
   gefs: "GEFS",
 };
 
-// CONUS bounding box [west, south, east, north]. NAM/NBM are CONUS-only models;
-// outside this box they are omitted from pills and the meteogram request.
+// CONUS bounding box [west, south, east, north]. NBM is CONUS-only for guidance charts;
+// outside this box it is omitted from pills and the meteogram request.
 export const CONUS_BBOX = { west: -134, south: 24, east: -60, north: 55 } as const;
 
 export function isInsideConus(lat: number, lon: number): boolean {
@@ -67,6 +83,27 @@ export function modelColor(model: string): string {
   return (MODEL_COLORS as Record<string, string>)[model.toLowerCase()] ?? "#9CA3AF";
 }
 
+/** Stroke color with alpha so co-linear model lines remain distinguishable when overlaid. */
+export function modelLineStroke(model: string, alpha = 0.88): string {
+  const hex = modelColor(model);
+  if (!hex.startsWith("#") || hex.length < 7) return hex;
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Marker radius at coincident-value timestamps; earlier series draw larger rings underneath. */
+export const COINCIDENT_POINT_SIZE_BY_INDEX = [6, 5.5, 5, 4.5] as const;
+
 export function modelShortName(model: string): string {
   return MODEL_SHORT_NAMES[model.toLowerCase()] ?? model.toUpperCase();
+}
+
+export function modelLineDash(model: string): number[] | undefined {
+  const key = model.toLowerCase() as TemperatureGuidanceModel;
+  if (key in MODEL_LINE_DASH) {
+    return MODEL_LINE_DASH[key];
+  }
+  return undefined;
 }

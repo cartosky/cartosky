@@ -3,14 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ChartContainer } from "@/components/charts/ChartContainer";
 import { ModelPillFilter } from "@/components/charts/ModelPillFilter";
 import { MultiModelTemperatureChart } from "@/components/model-guidance/MultiModelTemperatureChart";
-import { isInsideConus } from "@/lib/chart-constants";
-import { useEntitlements } from "@/lib/entitlements";
 import { useMeteogram } from "@/hooks/useMeteogram";
-
-// Phase 1A temperature models in display order.
-const TEMPERATURE_MODELS = ["ecmwf", "gfs", "nam", "aifs", "nbm"];
-// Models restricted to CONUS coverage (omitted from pills + request outside it).
-const CONUS_ONLY_MODELS = new Set(["nam", "nbm"]);
+import { eligibleTemperatureModels } from "@/lib/eligible-temperature-models";
+import { useEntitlements } from "@/lib/entitlements";
 
 type Props = {
   lat: number;
@@ -21,14 +16,10 @@ type Props = {
 export function ModelsTabContent({ lat, lon, timezone }: Props) {
   const { canAccessProduct } = useEntitlements();
 
-  const eligibleModels = useMemo(() => {
-    const insideConus = isInsideConus(lat, lon);
-    return TEMPERATURE_MODELS.filter((model) => {
-      if (CONUS_ONLY_MODELS.has(model) && !insideConus) return false;
-      if (!canAccessProduct(model)) return false;
-      return true;
-    });
-  }, [lat, lon, canAccessProduct]);
+  const eligibleModels = useMemo(
+    () => eligibleTemperatureModels(lat, lon, canAccessProduct),
+    [lat, lon, canAccessProduct],
+  );
 
   const eligibleKey = eligibleModels.join(",");
 
@@ -40,21 +31,27 @@ export function ModelsTabContent({ lat, lon, timezone }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey]);
 
-  const { data, loading, error, reload } = useMeteogram({
+  const { data, loading, isUpdating, error, reload } = useMeteogram({
     lat,
     lon,
     models: eligibleModels,
     variables: ["tmp2m"],
   });
 
+  const showSkeleton = loading && !data;
+
   const subtitle = useMemo(() => {
-    if (!data) return undefined;
-    const degraded = eligibleModels.some((model) => {
-      const status = data.series?.[model]?.status;
-      return status === "partial" || status === "unavailable";
-    });
-    return degraded ? "Some models unavailable" : undefined;
-  }, [data, eligibleModels]);
+    const parts: string[] = [];
+    if (isUpdating) parts.push("Updating…");
+    if (data) {
+      const degraded = eligibleModels.some((model) => {
+        const status = data.series?.[model]?.status;
+        return status === "partial" || status === "unavailable";
+      });
+      if (degraded) parts.push("Some models unavailable");
+    }
+    return parts.length > 0 ? parts.join(" · ") : undefined;
+  }, [data, eligibleModels, isUpdating]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -62,7 +59,7 @@ export function ModelsTabContent({ lat, lon, timezone }: Props) {
         <ChartContainer
           title="Temperature"
           subtitle={subtitle}
-          isLoading={loading}
+          isLoading={showSkeleton}
           error={error}
           onRetry={reload}
           filterSlot={

@@ -2,11 +2,17 @@ import { useMemo } from "react";
 import uPlot from "uplot";
 
 import { UplotChart } from "@/components/charts/UplotChart";
-import { CHART_THEME, modelColor, modelShortName } from "@/lib/chart-constants";
-import type { MeteogramResponse } from "@/hooks/useMeteogram";
+import {
+  CHART_THEME,
+  COINCIDENT_POINT_SIZE_BY_INDEX,
+  TEMPERATURE_GUIDANCE_MODELS,
+  modelColor,
+  modelLineDash,
+  modelLineStroke,
+  modelShortName,
+} from "@/lib/chart-constants";
+import type { MeteogramResponse } from "@/lib/meteogram-types";
 
-// Fixed draw order for temperature lines.
-const MODEL_ORDER = ["ecmwf", "gfs", "nam", "aifs", "nbm"];
 const CHART_HEIGHT = 320;
 
 type Props = {
@@ -27,6 +33,65 @@ function tmp2mPoints(response: MeteogramResponse | null, model: string) {
   if (!series || (series.status !== "ok" && series.status !== "partial")) return null;
   const points = series.variables?.tmp2m?.points;
   return Array.isArray(points) && points.length > 0 ? points : null;
+}
+
+function toTimestampSec(validTime: string): number | null {
+  const ts = Math.floor(new Date(validTime).getTime() / 1000);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/** Timestamps where this model has a native forecast frame (value may still be null). */
+function nativeTimestampsForModel(
+  response: MeteogramResponse | null,
+  model: string,
+): Set<number> {
+  const points = tmp2mPoints(response, model);
+  const timestamps = new Set<number>();
+  if (!points) return timestamps;
+  for (const point of points) {
+    if (!point.valid_time) continue;
+    const ts = toTimestampSec(point.valid_time);
+    if (ts != null) timestamps.add(ts);
+  }
+  return timestamps;
+}
+
+/**
+ * Span null slots on the shared union x-axis only when the gap is due to another
+ * model's denser cadence — not when this model has a native frame with a missing
+ * value at an intermediate timestamp.
+ */
+function shouldSpanCadenceGap(
+  xs: number[],
+  nativeTimestamps: Set<number>,
+  idx0: number,
+  idx1: number,
+): boolean {
+  for (let i = idx0 + 1; i < idx1; i++) {
+    if (nativeTimestamps.has(xs[i]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** True when another visible series has a nearly equal value at the same x index. */
+function hasCoincidentPeerAtIndex(
+  u: uPlot,
+  seriesIdx: number,
+  dataIdx: number,
+  tolerance = 0.1,
+): boolean {
+  const self = u.data[seriesIdx]?.[dataIdx];
+  if (self == null || typeof self !== "number") return false;
+  for (let s = 1; s < u.data.length; s++) {
+    if (s === seriesIdx) continue;
+    const peer = u.data[s]?.[dataIdx];
+    if (peer != null && typeof peer === "number" && Math.abs(peer - self) <= tolerance) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // uPlot plugin: dashed vertical "Now" marker at the current instant.
@@ -183,7 +248,7 @@ function dayBoundaryPlugin(tz: string): uPlot.Plugin {
 
 export function MultiModelTemperatureChart({ response, visibleModels, timezone, nowMs }: Props) {
   const activeModels = useMemo(
-    () => MODEL_ORDER.filter((model) => visibleModels.has(model) && tmp2mPoints(response, model)),
+    () => TEMPERATURE_GUIDANCE_MODELS.filter((model) => visibleModels.has(model) && tmp2mPoints(response, model)),
     [response, visibleModels],
   );
 
@@ -195,17 +260,18 @@ export function MultiModelTemperatureChart({ response, visibleModels, timezone, 
     return "F";
   }, [response, activeModels]);
 
-  const { data, hasData } = useMemo(() => {
+  const { data, hasData, nativeTimestampsByModel } = useMemo(() => {
     const xsSet = new Set<number>();
+    const nativeTimestampsByModel = new Map<string, Set<number>>();
+
     for (const model of activeModels) {
-      const points = tmp2mPoints(response, model);
-      if (!points) continue;
-      for (const point of points) {
-        if (!point.valid_time) continue;
-        const ts = Math.floor(new Date(point.valid_time).getTime() / 1000);
-        if (Number.isFinite(ts)) xsSet.add(ts);
+      const nativeTs = nativeTimestampsForModel(response, model);
+      nativeTimestampsByModel.set(model, nativeTs);
+      for (const ts of nativeTs) {
+        xsSet.add(ts);
       }
     }
+
     const xs = [...xsSet].sort((a, b) => a - b);
     const indexByTs = new Map(xs.map((ts, idx) => [ts, idx]));
 
@@ -215,7 +281,8 @@ export function MultiModelTemperatureChart({ response, visibleModels, timezone, 
       if (points) {
         for (const point of points) {
           if (!point.valid_time) continue;
-          const ts = Math.floor(new Date(point.valid_time).getTime() / 1000);
+          const ts = toTimestampSec(point.valid_time);
+          if (ts == null) continue;
           const idx = indexByTs.get(ts);
           if (idx != null) arr[idx] = point.value;
         }
@@ -224,7 +291,7 @@ export function MultiModelTemperatureChart({ response, visibleModels, timezone, 
     });
 
     const aligned = [xs, ...seriesArrays] as unknown as uPlot.AlignedData;
-    return { data: aligned, hasData: xs.length > 0 };
+    return { data: aligned, hasData: xs.length > 0, nativeTimestampsByModel };
   }, [response, activeModels]);
 
   const nowSec = Math.floor((nowMs ?? Date.now()) / 1000);
@@ -245,14 +312,35 @@ export function MultiModelTemperatureChart({ response, visibleModels, timezone, 
       } } },
       series: [
         {},
-        ...activeModels.map((model) => ({
-          label: modelShortName(model),
-          stroke: modelColor(model),
-          width: 2,
-          spanGaps: false,
-          points: { show: false },
-          value: (_u: uPlot, v: number | null) => (v == null ? "—" : `${v} ${unitsLabel(units)}`),
-        })),
+        ...activeModels.map((model, modelIndex) => {
+          const dash = modelLineDash(model);
+          const nativeTimestamps = nativeTimestampsByModel.get(model) ?? new Set<number>();
+          const stroke = modelLineStroke(model);
+          const pointSize = COINCIDENT_POINT_SIZE_BY_INDEX[modelIndex] ?? 4.5;
+          return {
+            label: modelShortName(model),
+            stroke,
+            width: dash ? 2.25 : 2,
+            ...(dash ? { dash } : {}),
+            // Connect across nulls on the union x-axis when another model's denser
+            // cadence inserted the timestamp; keep gaps for missing native values.
+            spanGaps: (u: uPlot, seriesIdx: number, idx0: number, idx1: number) => {
+              if (seriesIdx - 1 !== modelIndex) return false;
+              const xs = u.data[0] as number[];
+              return shouldSpanCadenceGap(xs, nativeTimestamps, idx0, idx1);
+            },
+            // When values coincide on the same timestamp, ring markers keep each model visible.
+            points: {
+              show: (u: uPlot, seriesIdx: number, dataIdx: number) =>
+                hasCoincidentPeerAtIndex(u, seriesIdx, dataIdx),
+              size: pointSize,
+              fill: modelColor(model),
+              stroke: CHART_THEME.background,
+              width: 1.5,
+            },
+            value: (_u: uPlot, v: number | null) => (v == null ? "—" : `${v} ${unitsLabel(units)}`),
+          };
+        }),
       ],
       axes: [
         {
@@ -279,7 +367,7 @@ export function MultiModelTemperatureChart({ response, visibleModels, timezone, 
       plugins: [dayBoundaryPlugin(tz), nowMarkerPlugin(nowSec)],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeModels, units, timezone, nowSec]);
+  }, [activeModels, units, timezone, nowSec, nativeTimestampsByModel]);
 
   if (!hasData) {
     return (

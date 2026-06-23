@@ -1,36 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { useAuth } from "@clerk/react";
 
-import { clerkJwtTemplate } from "@/lib/admin-api";
-import { API_V4_BASE } from "@/lib/config";
+import {
+  buildMeteogramCacheKey,
+  fetchMeteogramCached,
+  getMeteogramCacheEntry,
+  isMeteogramFetchInFlight,
+  meteogramLocationMatches,
+  subscribeMeteogramCache,
+} from "@/lib/meteogram-cache";
+import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
 
-export type MeteogramPoint = {
-  fh: number;
-  valid_time: string | null;
-  value: number | null;
-};
-
-export type MeteogramVariable = {
-  units: string;
-  points: MeteogramPoint[] | null;
-  error?: string;
-};
-
-export type MeteogramSeriesStatus = "ok" | "partial" | "unavailable" | "not_entitled";
-
-export type MeteogramSeries = {
-  status: MeteogramSeriesStatus;
-  run_id?: string | null;
-  run_time?: string | null;
-  variables?: Record<string, MeteogramVariable>;
-};
-
-export type MeteogramResponse = {
-  location: { lat: number; lon: number };
-  generated_at: string;
-  run_policy: { type: string };
-  series: Record<string, MeteogramSeries>;
-};
+export type {
+  MeteogramPoint,
+  MeteogramResponse,
+  MeteogramSeries,
+  MeteogramSeriesStatus,
+  MeteogramVariable,
+} from "@/lib/meteogram-types";
 
 type UseMeteogramParams = {
   lat: number;
@@ -40,18 +27,21 @@ type UseMeteogramParams = {
   enabled?: boolean;
 };
 
+import type { MeteogramResponse } from "@/lib/meteogram-types";
+
 type UseMeteogramResult = {
   data: MeteogramResponse | null;
+  /** True only when there is no displayable data yet and a fetch is in progress. */
   loading: boolean;
+  /** True when a same-location refetch is in progress but prior data is still shown. */
+  isUpdating: boolean;
   error: string | null;
   reload: () => void;
 };
 
 /**
- * Fetches a multi-model meteogram for a location. Sends the Clerk token when
- * signed in (optional auth) so per-model entitlements resolve correctly. The
- * caller passes the eligible model set (already filtered for coverage +
- * entitlement); pill toggling is client-side and does not refetch.
+ * Fetches a multi-model meteogram for a location. Shares a module-level cache
+ * with background prefetch so the Models tab can render immediately when warmed.
  */
 export function useMeteogram({
   lat,
@@ -61,83 +51,63 @@ export function useMeteogram({
   enabled = true,
 }: UseMeteogramParams): UseMeteogramResult {
   const { getToken, isSignedIn } = useAuth();
-  const [data, setData] = useState<MeteogramResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [, bumpCacheVersion] = useReducer((version: number) => version + 1, 0);
   const [reloadKey, setReloadKey] = useState(0);
-
-  const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
   const modelsKey = models.join(",");
   const variablesKey = variables.join(",");
+  const cacheKey = useMemo(
+    () => buildMeteogramCacheKey(lat, lon, models, variables),
+    [lat, lon, modelsKey, variablesKey],
+  );
+
+  const getAuthHeaders = useCallback(
+    () => meteogramAuthHeaders(getToken, isSignedIn === true),
+    [getToken, isSignedIn],
+  );
 
   useEffect(() => {
     if (!enabled || models.length === 0 || variables.length === 0) {
-      setData(null);
-      setError(null);
-      setLoading(false);
       return;
     }
 
-    const controller = new AbortController();
-    let cancelled = false;
+    const unsubscribe = subscribeMeteogramCache(cacheKey, bumpCacheVersion);
 
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        };
-        if (isSignedIn) {
-          try {
-            const token = await getToken({ template: clerkJwtTemplate() });
-            if (token) headers.Authorization = `Bearer ${token}`;
-          } catch {
-            // Proceed unauthenticated; backend falls back to free entitlements.
-          }
-        }
+  void fetchMeteogramCached(
+    { lat, lon, models, variables, getAuthHeaders },
+    {
+      reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
+      force: reloadKey > 0,
+    },
+  ).catch(() => {
+      // Cache entry + subscribers carry the error state.
+    });
 
-        const response = await fetch(`${API_V4_BASE}/forecast/meteogram`, {
-          method: "POST",
-          headers,
-          credentials: "omit",
-          signal: controller.signal,
-          body: JSON.stringify({
-            lat,
-            lon,
-            models,
-            variables,
-            run_policy: { type: "latest_per_model" },
-          }),
-        });
+    return unsubscribe;
+  }, [
+    cacheKey,
+    enabled,
+    getAuthHeaders,
+    lat,
+    lon,
+    models,
+    modelsKey,
+    reloadKey,
+    variables,
+    variablesKey,
+  ]);
 
-        if (!response.ok) {
-          if (response.status === 429) {
-            throw new Error("Too many requests. Please wait a moment and retry.");
-          }
-          throw new Error(`Unable to load model guidance (${response.status}).`);
-        }
+  const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
-        const json = (await response.json()) as MeteogramResponse;
-        if (!cancelled) setData(json);
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load model guidance.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+  const entry = getMeteogramCacheEntry(cacheKey);
+  const rawData = entry?.data ?? null;
+  const data =
+    rawData && meteogramLocationMatches(rawData, lat, lon) ? rawData : null;
+  const error = entry?.error ?? null;
+  const inFlight = isMeteogramFetchInFlight(cacheKey);
 
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lat, lon, modelsKey, variablesKey, enabled, reloadKey, getToken, isSignedIn]);
+  const loading = enabled && models.length > 0 && !data && inFlight;
+  const isUpdating = enabled && !!data && inFlight;
 
-  return { data, loading, error, reload };
+  return { data, loading, isUpdating, error, reload };
 }
