@@ -1547,13 +1547,8 @@ export default function Compare() {
           <div
             role="separator"
             aria-orientation="horizontal"
-            className="relative z-20 h-3 shrink-0 bg-[#07111f] shadow-[0_2px_8px_rgba(0,0,0,0.5)] before:absolute before:inset-x-0 before:top-1/2 before:h-px before:-translate-y-1/2 before:bg-white/18"
-          >
-            <div className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center gap-[3px]">
-              <div className="h-[3px] w-4 rounded-full bg-white/20" />
-              <div className="h-[3px] w-4 rounded-full bg-white/20" />
-            </div>
-          </div>
+            className="relative z-20 -mt-px h-3 shrink-0 bg-[#07111f] shadow-[0_2px_8px_rgba(0,0,0,0.5)]"
+          />
         ) : null}
 
         {isDesktop && dragPreviewPercent !== null ? (
