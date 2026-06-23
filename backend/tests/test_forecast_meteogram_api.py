@@ -86,7 +86,19 @@ def _write_value_raster(path: Path) -> None:
         ds.write(data, 1)
 
 
-def _publish_tmp2m(published_root: Path, manifests_root: Path, model: str, run_id: str) -> None:
+def _publish_tmp2m(
+    published_root: Path,
+    manifests_root: Path,
+    model: str,
+    run_id: str,
+    *,
+    frame_hours: list[int] = FRAME_HOURS,
+    expected_frames: int | None = None,
+    set_latest: bool = True,
+) -> None:
+    # `available_frames` reflects published frames; `expected_frames` is the run
+    # target. A run is "complete" for tmp2m when available >= expected.
+    expected = expected_frames if expected_frames is not None else len(frame_hours)
     manifest_dir = manifests_root / model
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (manifest_dir / f"{run_id}.json").write_text(
@@ -94,9 +106,9 @@ def _publish_tmp2m(published_root: Path, manifests_root: Path, model: str, run_i
             {
                 "variables": {
                     "tmp2m": {
-                        "expected_frames": len(FRAME_HOURS),
-                        "available_frames": len(FRAME_HOURS),
-                        "frames": [{"fh": fh} for fh in FRAME_HOURS],
+                        "expected_frames": expected,
+                        "available_frames": len(frame_hours),
+                        "frames": [{"fh": fh} for fh in frame_hours],
                     }
                 }
             }
@@ -105,10 +117,11 @@ def _publish_tmp2m(published_root: Path, manifests_root: Path, model: str, run_i
 
     model_root = published_root / model
     model_root.mkdir(parents=True, exist_ok=True)
-    (model_root / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
+    if set_latest:
+        (model_root / "LATEST.json").write_text(json.dumps({"run_id": run_id}))
 
     var_dir = model_root / run_id / "tmp2m"
-    for index, fh in enumerate(FRAME_HOURS):
+    for fh in frame_hours:
         _write_value_raster(var_dir / f"fh{fh:03d}.val.cog.tif")
         (var_dir / f"fh{fh:03d}.json").write_text(
             json.dumps({"units": "F", "valid_time": f"2026-03-06T{fh:02d}:00:00Z"})
@@ -231,6 +244,74 @@ async def test_meteogram_rate_limit_returns_429(
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["error"] == "rate limit exceeded"
+
+
+async def test_meteogram_skips_incomplete_latest_run(client: httpx.AsyncClient) -> None:
+    # gfs already has a complete 00z run from the fixture. Publish a newer 12z run
+    # that is still building (2 of 10 frames) and point LATEST at it.
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_12z",
+        frame_hours=[0, 3],
+        expected_frames=10,
+        set_latest=True,
+    )
+    _reset_main_caches()
+
+    response = await client.post(
+        "/api/v4/forecast/meteogram",
+        json=_body(["gfs"], ["tmp2m"]),
+    )
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    # The building 12z run is skipped; the previous complete 00z run is used.
+    assert gfs["run_id"] == "20260306_00z"
+    assert gfs["status"] == "ok"
+
+
+async def test_meteogram_uses_latest_complete_run(client: httpx.AsyncClient) -> None:
+    # Publish a newer 12z run that is itself complete.
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_12z",
+        frame_hours=FRAME_HOURS,
+        set_latest=True,
+    )
+    _reset_main_caches()
+
+    response = await client.post(
+        "/api/v4/forecast/meteogram",
+        json=_body(["gfs"], ["tmp2m"]),
+    )
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    assert gfs["run_id"] == "20260306_12z"
+    assert gfs["status"] == "ok"
+
+
+async def test_meteogram_no_complete_run_is_unavailable(client: httpx.AsyncClient) -> None:
+    # nam has only a building run (2 of 10 frames) -> no complete run -> unavailable.
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "nam",
+        "20260306_00z",
+        frame_hours=[0, 3],
+        expected_frames=10,
+        set_latest=True,
+    )
+    _reset_main_caches()
+
+    response = await client.post(
+        "/api/v4/forecast/meteogram",
+        json=_body(["nam"], ["tmp2m"]),
+    )
+    assert response.status_code == 200
+    assert response.json()["series"]["nam"]["status"] == "unavailable"
 
 
 async def test_meteogram_invalid_body_returns_422(client: httpx.AsyncClient) -> None:

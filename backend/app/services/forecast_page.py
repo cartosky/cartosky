@@ -2000,14 +2000,16 @@ def get_forecast_meteogram(
                 + ", ".join(unsupported)
             )
 
-    # Resolve the latest run per (entitled) model first; run ids are part of the
-    # cache key so a cycle publish correctly invalidates the cached payload.
+    # Resolve the latest *complete* run per (entitled) model first — not merely
+    # the latest discovered run, which may still be publishing frames (a building
+    # run would otherwise produce truncated lines near "Now"). Run ids are part of
+    # the cache key so a cycle publish correctly invalidates the cached payload.
     run_ids: dict[str, str | None] = {}
     for model in norm_models:
         if entitled.get(model) is False:
             continue
         try:
-            run_ids[model] = sampling.resolve_run(model, "latest", region=region)
+            run_ids[model] = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
         except Exception:
             logger.exception("Meteogram run resolution failed for %s", model)
             run_ids[model] = None

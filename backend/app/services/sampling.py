@@ -27,7 +27,16 @@ import rasterio
 from pyproj import Transformer
 from rasterio.windows import Window
 
+from .run_ids import parse_run_id_datetime
+
 logger = logging.getLogger(__name__)
+
+# When a manifest variable carries no `expected_frames` completion marker and the
+# plugin can't supply a scheduled count, treat a run as usable only once it has
+# published more than a trivial handful of frames (avoids picking a run that has
+# just the first few hours). Real manifests always carry `expected_frames`, so
+# this fallback is rarely exercised.
+_MIN_USABLE_FRAMES_FALLBACK = 6
 
 # ── Open dataset cache ────────────────────────────────────────────────────
 _ds_cache: dict[str, rasterio.DatasetReader] = {}
@@ -162,6 +171,109 @@ def resolve_run(model: str, run: str, *, region: str | None = None) -> str | Non
     from .. import main as _main
 
     return _main._resolve_run(model, run, region=region)
+
+
+def _scheduled_frame_count(plugin: Any, var: str, run_id: str) -> int | None:
+    """Authoritative frame target for ``var`` in ``run_id`` from the plugin."""
+    if plugin is None or not hasattr(plugin, "scheduled_fhs_for_var"):
+        return None
+    run_dt = parse_run_id_datetime(run_id)
+    if run_dt is None:
+        return None
+    try:
+        fhs = plugin.scheduled_fhs_for_var(var, run_dt.hour)
+    except Exception:
+        return None
+    return len(fhs) if fhs else None
+
+
+def _variable_run_complete(plugin: Any, var_entry: dict[str, Any], var: str, run_id: str) -> bool:
+    """Whether ``var`` is fully published in this run.
+
+    Completion marker (preferred): manifest ``available_frames >= expected_frames``
+    (same signal as ``main._manifest_run_complete``). Falls back to the plugin's
+    scheduled frame count, then to a small minimum frame threshold.
+    """
+    from .. import main as _main
+
+    available = _main._manifest_var_available_frames(var_entry)
+    if available <= 0:
+        return False
+
+    expected_raw = var_entry.get("expected_frames")
+    if isinstance(expected_raw, int) and expected_raw > 0:
+        return available >= expected_raw
+
+    scheduled = _scheduled_frame_count(plugin, var, run_id)
+    if scheduled is not None and scheduled > 0:
+        return available >= scheduled
+
+    return available >= _MIN_USABLE_FRAMES_FALLBACK
+
+
+def resolve_latest_complete_run(
+    model: str,
+    variables: list[str],
+    *,
+    region: str | None = None,
+) -> str | None:
+    """Newest published run that is *complete* for the requested variable(s).
+
+    Fixes the building-run bug: ``latest_per_model`` must mean the latest
+    complete usable run, not the latest discovered run (which may still be
+    publishing frames). Scans runs newest-first and returns the first where every
+    requested variable present in the manifest is complete and at least one
+    requested variable is present and complete. Returns ``None`` when no run
+    qualifies (caller maps that to ``unavailable``).
+    """
+    from .. import main as _main
+    from ..models.registry import get_model
+
+    try:
+        candidates = _main._scan_manifest_runs(model, region=region)
+    except Exception:
+        logger.exception("Meteogram run scan failed for %s", model)
+        return None
+    if not candidates:
+        return None
+
+    try:
+        plugin = get_model(model)
+    except Exception:
+        plugin = None
+
+    for run_id in candidates:
+        manifest = _main._load_manifest(model, run_id, region=region)
+        if not isinstance(manifest, dict):
+            continue
+        variables_map = manifest.get("variables")
+        if not isinstance(variables_map, dict):
+            continue
+
+        saw_complete = False
+        disqualified = False
+        for var in variables:
+            canonical = var
+            if plugin is not None and hasattr(plugin, "normalize_var_id"):
+                try:
+                    canonical = plugin.normalize_var_id(var)
+                except Exception:
+                    canonical = var
+            entry = variables_map.get(canonical)
+            if not isinstance(entry, dict):
+                entry = variables_map.get(var)
+            if not isinstance(entry, dict):
+                continue  # variable absent in this run -> ignore (don't disqualify)
+            if _variable_run_complete(plugin, entry, canonical, run_id):
+                saw_complete = True
+            else:
+                disqualified = True  # present but still building -> not usable
+                break
+
+        if saw_complete and not disqualified:
+            return run_id
+
+    return None
 
 
 def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None = None) -> list[int]:
