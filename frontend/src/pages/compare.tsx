@@ -498,6 +498,7 @@ export default function Compare() {
   // Phone layout (≤639px) swaps the diff control rows for a summary bar + drawer.
   const layoutMode = useViewerLayoutMode();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [mobileDrawerTab, setMobileDrawerTab] = useState<"comparison" | "display">("comparison");
 
   // Shared forecast hour + map viewport.
   const [forecastHour, setForecastHour] = useState(initial.fh ?? 0);
@@ -978,10 +979,12 @@ export default function Compare() {
     return deriveValidTime(run, hour);
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
 
-  // One-line summary for the mobile diff bar:
-  // "{lRun} {lModel} − {rRun} {rModel} · {variable}". Runs show hour only, with
-  // the date appended on both sides only when the two runs are on different days.
-  const diffSummaryText = useMemo(() => {
+  // Two-line summary for the mobile diff bar:
+  //   line 1: "{lRun} {lModel} − {rRun} {rModel}"
+  //   line 2: "{variable}"
+  // Runs show hour only, with the date appended on both sides only when the two
+  // runs are on different days.
+  const diffSummaryParts = useMemo(() => {
     const lParts = parseRunParts(leftLoader.resolvedRun);
     const rParts = parseRunParts(rightLoader.resolvedRun);
     const differentDates = Boolean(lParts && rParts && lParts.ymd !== rParts.ymd);
@@ -992,7 +995,7 @@ export default function Compare() {
     const varDisp = variableCatalog.find((v) => v.value === lVariable)?.label ?? lVariable;
     const left = `${lRunStr ? `${lRunStr} ` : ""}${lModelDisp}`;
     const right = `${rRunStr ? `${rRunStr} ` : ""}${rModelDisp}`;
-    return `${left} − ${right} · ${varDisp}`;
+    return { modelLine: `${left} − ${right}`, variableLine: varDisp };
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, modelOptions, variableCatalog, lModel, rModel, lVariable]);
 
   // The mobile drawer only exists in mobile diff mode — close it if either changes.
@@ -1315,7 +1318,7 @@ export default function Compare() {
               Difference
             </div>
             <div className="flex items-center gap-2">
-              <CompareModeToggle mode={mode} onChange={handleModeChange} />
+              <CompareModeToggle mode={mode} onChange={handleModeChange} compact />
               <div className="ml-auto flex shrink-0 items-center gap-2">
                 <Link
                   to={viewerHref}
@@ -1335,20 +1338,15 @@ export default function Compare() {
                 >
                   <Share2 className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  ref={settingsButtonRef}
-                  type="button"
-                  onClick={handleSettingsClick}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
-                  aria-label="Display settings"
-                  title="Display settings"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                </button>
+                {/* Display settings now live in the drawer's Display tab on mobile diff. */}
               </div>
             </div>
             <div className="mt-2">
-              <CompareMobileDiffBar summary={diffSummaryText} onOpenDrawer={() => setMobileDrawerOpen(true)} />
+              <CompareMobileDiffBar
+                modelLine={diffSummaryParts.modelLine}
+                variableLine={diffSummaryParts.variableLine}
+                onOpenDrawer={() => setMobileDrawerOpen(true)}
+              />
             </div>
             {diffNotice ? (
               <div className="mt-2 flex items-start gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[11px] font-medium text-cyan-100/90">
@@ -1630,6 +1628,8 @@ export default function Compare() {
       <CompareMobileDrawer
         open={mobileDrawerOpen && layoutMode === "mobile" && mode === "diff" && !isScreenshotMode}
         onClose={() => setMobileDrawerOpen(false)}
+        activeTab={mobileDrawerTab}
+        onTabChange={setMobileDrawerTab}
         lModel={lModel}
         rModel={rModel}
         sharedVariable={lVariable}
@@ -1646,6 +1646,10 @@ export default function Compare() {
         onLeftRunChange={setLRun}
         onRightRunChange={setRRun}
         onSwap={handleSwap}
+        basemapMode={basemapMode}
+        onToggleBasemap={() => setBasemapMode((prev) => (prev === "dark" ? "light" : "dark"))}
+        showLegends={showLegends}
+        onToggleLegends={() => setShowLegends((v) => !v)}
       />
     </div>
   );

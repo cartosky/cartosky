@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, Layers, Moon, Sun } from "lucide-react";
 
 import {
   Select,
@@ -9,14 +9,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { BasemapMode } from "@/components/map-canvas";
 import type { GroupedOption, VariableOption } from "@/lib/app-utils";
 import { cn } from "@/lib/utils";
 
 type RunOption = { value: string; label: string };
+type DrawerTab = "comparison" | "display";
 
 export type CompareMobileDrawerProps = {
   open: boolean;
   onClose: () => void;
+  activeTab: DrawerTab;
+  onTabChange: (tab: DrawerTab) => void;
   // Picker state (same state/setters as the desktop control bar — no second store).
   lModel: string;
   rModel: string;
@@ -34,6 +38,11 @@ export type CompareMobileDrawerProps = {
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
+  // Display settings — same state the desktop display panel reads/writes.
+  basemapMode: BasemapMode;
+  onToggleBasemap: () => void;
+  showLegends: boolean;
+  onToggleLegends: () => void;
 };
 
 /** Labeled field wrapper — label above a 44px control. */
@@ -78,6 +87,8 @@ function DrawerSelect({
 
 function DrawerInner({
   onClose,
+  activeTab,
+  onTabChange,
   lModel,
   rModel,
   sharedVariable,
@@ -94,6 +105,10 @@ function DrawerInner({
   onLeftRunChange,
   onRightRunChange,
   onSwap,
+  basemapMode,
+  onToggleBasemap,
+  showLegends,
+  onToggleLegends,
 }: Omit<CompareMobileDrawerProps, "open">) {
   // Three-state sheet, mirroring the viewer's mobile sheet. "closed" is modeled
   // by unmounting (the `open` prop), so internally we only track peek/full.
@@ -175,50 +190,111 @@ function DrawerInner({
           className="min-h-0 overflow-y-auto px-4 pb-6 pt-1"
           style={{ maxHeight: snap === "full" ? "calc(90dvh - 3rem)" : "calc(60dvh - 3rem)" }}
         >
-          <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
-            Comparison Settings
+          {/* Tab bar — two equal pills, same treatment as the mode toggle. */}
+          <div className="mb-3 grid grid-cols-2 gap-0.5 rounded-xl border border-white/[0.09] bg-white/[0.05] p-0.5">
+            {([
+              { id: "comparison" as const, label: "Comparison" },
+              { id: "display" as const, label: "Display" },
+            ]).map((tab) => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onTabChange(tab.id)}
+                  className={cn(
+                    "h-10 w-full rounded-lg text-[12px] font-medium transition-all duration-150",
+                    active
+                      ? "border border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 shadow-[inset_0_1px_0_rgba(103,232,249,0.08)]"
+                      : "border border-transparent text-white/55 hover:bg-white/[0.06] hover:text-white",
+                  )}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Left model · swap · right model */}
-          <div className="flex items-end gap-2">
-            <Field label="Left Model">
-              <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
-            </Field>
-            <button
-              type="button"
-              onClick={onSwap}
-              aria-label="Swap left and right models"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
-            >
-              <ArrowLeftRight className="h-4 w-4" />
-            </button>
-            <Field label="Right Model">
-              <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
-            </Field>
-          </div>
+          {activeTab === "comparison" ? (
+            <>
+              {/* Left model · swap · right model */}
+              <div className="flex items-end gap-2">
+                <Field label="Left Model">
+                  <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
+                </Field>
+                <button
+                  type="button"
+                  onClick={onSwap}
+                  aria-label="Swap left and right models"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
+                >
+                  <ArrowLeftRight className="h-4 w-4" />
+                </button>
+                <Field label="Right Model">
+                  <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
+                </Field>
+              </div>
 
-          {/* Shared variable */}
-          <Field label="Variable (Shared)" className="mt-3">
-            <DrawerSelect
-              value={sharedVariable}
-              onValueChange={onSharedVariableChange}
-              options={variableSelectOptions}
-              placeholder={variablesDisabled ? "No shared variable" : "Variable"}
-              disabled={variablesDisabled}
-            />
-          </Field>
+              {/* Shared variable */}
+              <Field label="Variable (Shared)" className="mt-3">
+                <DrawerSelect
+                  value={sharedVariable}
+                  onValueChange={onSharedVariableChange}
+                  options={variableSelectOptions}
+                  placeholder={variablesDisabled ? "No shared variable" : "Variable"}
+                  disabled={variablesDisabled}
+                />
+              </Field>
 
-          <div className="my-3 border-t border-white/[0.08]" />
+              <div className="my-3 border-t border-white/[0.08]" />
 
-          {/* Independent runs */}
-          <div className="flex items-end gap-2">
-            <Field label="L Run">
-              <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
-            </Field>
-            <Field label="R Run">
-              <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
-            </Field>
-          </div>
+              {/* Independent runs */}
+              <div className="flex items-end gap-2">
+                <Field label="L Run">
+                  <DrawerSelect value={lRun} onValueChange={onLeftRunChange} options={leftRunOptions} placeholder="Run" />
+                </Field>
+                <Field label="R Run">
+                  <DrawerSelect value={rRun} onValueChange={onRightRunChange} options={rightRunOptions} placeholder="Run" />
+                </Field>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={onToggleBasemap}
+                className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-left transition-all duration-150 hover:bg-white/[0.07]"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/60" /> : <Sun className="h-4 w-4 text-white/60" />}
+                  Basemap
+                </div>
+                <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
+                  {basemapMode === "dark" ? "Dark" : "Light"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleLegends}
+                aria-pressed={showLegends}
+                className={cn(
+                  "flex h-12 w-full items-center justify-between gap-3 rounded-lg border px-3 text-left transition-all duration-150",
+                  showLegends
+                    ? "border-cyan-300/20 bg-cyan-300/[0.07] hover:bg-cyan-300/[0.11]"
+                    : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]",
+                )}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Layers className="h-4 w-4 text-white/72" />
+                  Legends
+                </div>
+                <span className={cn("font-['IBM_Plex_Mono',monospace] text-[10px] font-medium", showLegends ? "text-cyan-300/90" : "text-white/38")}>
+                  {showLegends ? "On" : "Off"}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </>

@@ -6,6 +6,11 @@ type CompareModeToggleProps = {
   mode: CompareMode;
   onChange: (mode: CompareMode) => void;
   className?: string;
+  /**
+   * Compact sizing: h-7 buttons (no 44px mobile min) so the pill reads as a peer
+   * next to h-8 icon buttons. Used in the mobile diff utility row.
+   */
+  compact?: boolean;
 };
 
 const OPTIONS: Array<{ value: CompareMode; label: string }> = [
@@ -18,13 +23,15 @@ const OPTIONS: Array<{ value: CompareMode; label: string }> = [
  * compare modes. Stateless — the active mode and change handler are owned by the
  * parent (compare.tsx).
  */
-export function CompareModeToggle({ mode, onChange, className }: CompareModeToggleProps) {
+export function CompareModeToggle({ mode, onChange, className, compact = false }: CompareModeToggleProps) {
   return (
     <div
       role="radiogroup"
       aria-label="Compare mode"
       className={cn(
         "inline-flex items-center gap-0.5 rounded-xl border border-white/[0.09] bg-white/[0.05] p-0.5",
+        // Compact: fix the pill to h-8 so it matches sibling h-8 icon buttons exactly.
+        compact && "h-8",
         className,
       )}
     >
@@ -42,8 +49,10 @@ export function CompareModeToggle({ mode, onChange, className }: CompareModeTogg
               }
             }}
             className={cn(
-              // 44px min tap target on touch/mobile; compact h-7 on desktop (sm+).
-              "h-7 min-h-[44px] rounded-lg px-3 text-[11px] font-medium transition-all duration-150 sm:min-h-0",
+              "rounded-lg text-[11px] font-medium transition-all duration-150",
+              // Compact fills the fixed h-8 pill (peer to h-8 icon buttons); default
+              // keeps a 44px mobile tap target, collapsing to h-7 on desktop (sm+).
+              compact ? "h-full px-2.5" : "h-7 min-h-[44px] px-3 sm:min-h-0",
               active
                 ? "border border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 shadow-[inset_0_1px_0_rgba(103,232,249,0.08)]"
                 : "border border-transparent text-white/55 hover:bg-white/[0.06] hover:text-white",
