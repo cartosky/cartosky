@@ -1362,6 +1362,7 @@ export default function Compare() {
               basemapMode={basemapMode}
               showLegend={showLegends}
               diffManifest={diff.diffManifest}
+              diffFrameUrl={diff.diffFrameUrl}
               diffLegend={diff.diffLegend}
               isLoading={diff.isLoading}
               error={diff.error}
