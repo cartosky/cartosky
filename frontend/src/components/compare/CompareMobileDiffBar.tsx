@@ -1,28 +1,24 @@
 type CompareMobileDiffBarProps = {
-  /** Line 1: "{lRun} {lModel} − {rRun} {rModel}". */
-  modelLine: string;
-  /** Line 2: variable display name. */
-  variableLine: string;
+  /** e.g. "6/23 06Z GFS - 6/23 00Z GFS * Surface Temp" */
+  summaryLine: string;
 };
 
 /**
- * Collapsed two-line diff summary bar for mobile (`layoutMode === "mobile"`).
- * Render-only: receives the formatted summary lines. The comparison-settings
- * drawer is opened from the settings button in the top utility row.
+ * Collapsed single-line diff summary for mobile (`layoutMode === "mobile"`).
+ * The comparison-settings drawer is opened from the settings button in the top utility row.
  */
-export function CompareMobileDiffBar({ modelLine, variableLine }: CompareMobileDiffBarProps) {
+export function CompareMobileDiffBar({ summaryLine }: CompareMobileDiffBarProps) {
   return (
-    <div className="flex items-center justify-center gap-2">
+    <div className="flex items-center justify-center gap-2 px-1">
       <span
         aria-hidden="true"
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-cyan-300/25 bg-cyan-300/[0.10] text-[13px] font-bold text-cyan-100 shadow-[inset_0_1px_0_rgba(103,232,249,0.08)]"
       >
         Δ
       </span>
-      <div className="min-w-0 leading-tight text-center">
-        <div className="text-[12px] font-medium text-white/82">{modelLine}</div>
-        <div className="text-xs text-slate-400">{variableLine}</div>
-      </div>
+      <p className="min-w-0 text-center text-[12px] font-medium leading-tight text-white/82">
+        {summaryLine}
+      </p>
     </div>
   );
 }

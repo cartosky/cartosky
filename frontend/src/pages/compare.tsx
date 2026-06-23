@@ -979,23 +979,17 @@ export default function Compare() {
     return deriveValidTime(run, hour);
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
 
-  // Two-line summary for the mobile diff bar:
-  //   line 1: "{lRun} {lModel} − {rRun} {rModel}"
-  //   line 2: "{variable}"
-  // Runs show hour only, with the date appended on both sides only when the two
-  // runs are on different days.
-  const diffSummaryParts = useMemo(() => {
+  // Single-line summary for the mobile diff bar, e.g.
+  // "6/23 06Z GFS - 6/23 00Z GFS * Surface Temp"
+  const diffSummaryLine = useMemo(() => {
     const lParts = parseRunParts(leftLoader.resolvedRun);
     const rParts = parseRunParts(rightLoader.resolvedRun);
-    const differentDates = Boolean(lParts && rParts && lParts.ymd !== rParts.ymd);
-    const lRunStr = lParts ? (differentDates ? `${lParts.hour} ${lParts.date}` : lParts.hour) : "";
-    const rRunStr = rParts ? (differentDates ? `${rParts.hour} ${rParts.date}` : rParts.hour) : "";
     const lModelDisp = modelOptions.find((o) => o.value === lModel)?.label ?? lModel.toUpperCase();
     const rModelDisp = modelOptions.find((o) => o.value === rModel)?.label ?? rModel.toUpperCase();
     const varDisp = variableCatalog.find((v) => v.value === lVariable)?.label ?? lVariable;
-    const left = `${lRunStr ? `${lRunStr} ` : ""}${lModelDisp}`;
-    const right = `${rRunStr ? `${rRunStr} ` : ""}${rModelDisp}`;
-    return { modelLine: `${left} − ${right}`, variableLine: varDisp };
+    const formatSide = (parts: ReturnType<typeof parseRunParts>, modelDisp: string) =>
+      parts ? `${parts.date} ${parts.hour} ${modelDisp}` : modelDisp;
+    return `${formatSide(lParts, lModelDisp)} - ${formatSide(rParts, rModelDisp)} * ${varDisp}`;
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, modelOptions, variableCatalog, lModel, rModel, lVariable]);
 
   // The mobile drawer only exists in mobile diff mode — close it if either changes.
@@ -1347,10 +1341,7 @@ export default function Compare() {
               </div>
             </div>
             <div className="mt-2">
-              <CompareMobileDiffBar
-                modelLine={diffSummaryParts.modelLine}
-                variableLine={diffSummaryParts.variableLine}
-              />
+              <CompareMobileDiffBar summaryLine={diffSummaryLine} />
             </div>
             {diffNotice ? (
               <div className="mt-2 flex items-start gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[11px] font-medium text-cyan-100/90">
