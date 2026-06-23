@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from . import nws as nws_service
+from . import sampling
+from .run_ids import parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -1835,3 +1838,240 @@ async def get_model_guidance_placeholder(lat: float, lon: float) -> dict[str, An
             },
         ],
     }
+
+
+# ── Model Guidance meteogram ──────────────────────────────────────────────
+
+
+class MeteogramRequestError(ValueError):
+    """Raised for a structurally valid request the service refuses (HTTP 400)."""
+
+
+# In-process origin cache (mirrors main._sample_cache). The CDN layer
+# (Cache-Control) is the primary cache; this absorbs repeat origin fan-outs
+# within the 5-minute window. Key includes the resolved run_id per model, so a
+# new cycle publish is a (correct) cache miss rather than stale data.
+METEOGRAM_CACHE_TTL_SECONDS = 300.0
+_meteogram_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_meteogram_cache_lock = threading.Lock()
+
+
+def _meteogram_cache_key(
+    *,
+    lat: float,
+    lon: float,
+    models: list[str],
+    variables: list[str],
+    policy_type: str,
+    include_members: bool,
+    run_ids: dict[str, str | None],
+    entitled: dict[str, bool],
+) -> str:
+    def _hash(parts: list[str]) -> str:
+        return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:12]
+
+    models_hash = _hash(sorted(models))
+    vars_hash = _hash(sorted(variables))
+    policy_hash = _hash([policy_type])
+    run_ids_hash = _hash([f"{m}:{run_ids.get(m) or '-'}" for m in sorted(models)])
+    # Folded in (beyond the plan's key spec) so differing entitlements never
+    # share a cached payload at the origin.
+    entitled_hash = _hash([f"{m}:{int(bool(entitled.get(m, True)))}" for m in sorted(models)])
+    return (
+        f"meteogram:v1:{round(lat, 3)}:{round(lon, 3)}:"
+        f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}"
+    )
+
+
+def _variable_units(model: str, var: str, sidecar_units: str | None) -> str:
+    if sidecar_units:
+        return sidecar_units
+    try:
+        from ..models.registry import get_model
+
+        plugin = get_model(model)
+        canonical = plugin.normalize_var_id(var) if hasattr(plugin, "normalize_var_id") else var
+        capability = (
+            plugin.get_var_capability(canonical) if hasattr(plugin, "get_var_capability") else None
+        )
+        units = getattr(capability, "units", None) if capability is not None else None
+        if units:
+            return str(units)
+    except Exception:
+        pass
+    return ""
+
+
+def _model_supports_members(model: str) -> bool:
+    try:
+        from ..models.registry import get_model
+
+        plugin = get_model(model)
+        if not hasattr(plugin, "supported_ensemble_views"):
+            return False
+        # No canonical var is required to know members are unsupported repo-wide
+        # in Phase 1A/2; probe the plugin's declared views for any variable.
+        views = plugin.supported_ensemble_views("tmp2m") if hasattr(plugin, "supported_ensemble_views") else []
+        return "members" in (views or [])
+    except Exception:
+        return False
+
+
+def _sample_variable_series(
+    model: str,
+    run_id: str,
+    var: str,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None,
+) -> dict[str, Any]:
+    fhs = sampling.manifest_frame_hours(model, run_id, var, region=region)
+    if not fhs:
+        return {"units": _variable_units(model, var, None), "points": None, "error": "artifact_not_found"}
+
+    points: list[dict[str, Any]] = []
+    units: str | None = None
+    for fh in fhs:
+        cog = sampling._resolve_val_cog(model, run_id, var, fh, region=region)
+        if cog is None:
+            continue
+        try:
+            value = sampling.sample_point_value(cog, lat=lat, lon=lon)
+        except Exception:
+            logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
+            value = None
+        sidecar = sampling._resolve_sidecar(model, run_id, var, fh, region=region)
+        if units is None and isinstance(sidecar, dict):
+            sidecar_units = sidecar.get("units")
+            if sidecar_units:
+                units = str(sidecar_units)
+        valid_time = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
+        points.append({"fh": fh, "valid_time": valid_time, "value": value})
+
+    resolved_units = _variable_units(model, var, units)
+    if not points:
+        return {"units": resolved_units, "points": None, "error": "artifact_not_found"}
+
+    points.sort(key=lambda item: item["fh"])
+    return {"units": resolved_units, "points": points}
+
+
+def get_forecast_meteogram(
+    *,
+    lat: float,
+    lon: float,
+    models: list[str],
+    variables: list[str],
+    run_policy: dict[str, Any] | None = None,
+    include_members: bool = False,
+    region: str | None = None,
+    entitled: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    """Fan out point samples across models/variables and return one payload.
+
+    Reads only already-published artifacts via :mod:`app.services.sampling`
+    (same COG read path as ``/api/v4/sample``). Never raises for missing data:
+    per-model and per-variable status fields carry the outcome. Raises
+    :class:`MeteogramRequestError` only for refused requests (HTTP 400).
+    """
+    resolved_policy = run_policy or {"type": "latest_per_model"}
+    policy_type = str(resolved_policy.get("type") or "latest_per_model")
+    if policy_type != "latest_per_model":
+        raise MeteogramRequestError(f"Unsupported run_policy: {policy_type}")
+
+    entitled = entitled or {}
+    norm_models: list[str] = []
+    for model in models:
+        normalized = str(model or "").strip().lower()
+        if normalized and normalized not in norm_models:
+            norm_models.append(normalized)
+    norm_vars: list[str] = []
+    for var in variables:
+        normalized = str(var or "").strip().lower()
+        if normalized and normalized not in norm_vars:
+            norm_vars.append(normalized)
+
+    if include_members:
+        unsupported = [m for m in norm_models if not _model_supports_members(m)]
+        if unsupported:
+            raise MeteogramRequestError(
+                "include_members requires per-member data; unsupported for: "
+                + ", ".join(unsupported)
+            )
+
+    # Resolve the latest run per (entitled) model first; run ids are part of the
+    # cache key so a cycle publish correctly invalidates the cached payload.
+    run_ids: dict[str, str | None] = {}
+    for model in norm_models:
+        if entitled.get(model) is False:
+            continue
+        try:
+            run_ids[model] = sampling.resolve_run(model, "latest", region=region)
+        except Exception:
+            logger.exception("Meteogram run resolution failed for %s", model)
+            run_ids[model] = None
+
+    cache_key = _meteogram_cache_key(
+        lat=lat,
+        lon=lon,
+        models=norm_models,
+        variables=norm_vars,
+        policy_type=policy_type,
+        include_members=include_members,
+        run_ids=run_ids,
+        entitled=entitled,
+    )
+    now = time.monotonic()
+    with _meteogram_cache_lock:
+        cached = _meteogram_cache.get(cache_key)
+        if cached is not None:
+            expires_at, payload = cached
+            if expires_at > now:
+                return payload
+            _meteogram_cache.pop(cache_key, None)
+
+    series: dict[str, Any] = {}
+    for model in norm_models:
+        if entitled.get(model) is False:
+            series[model] = {"status": "not_entitled"}
+            continue
+
+        run_id = run_ids.get(model)
+        if not run_id:
+            series[model] = {"status": "unavailable", "run_id": None}
+            continue
+
+        run_dt = parse_run_id_datetime(run_id)
+        run_time = _isoformat(run_dt) if run_dt is not None else None
+
+        var_results: dict[str, Any] = {}
+        vars_with_values = 0
+        for var in norm_vars:
+            result = _sample_variable_series(model, run_id, var, lat=lat, lon=lon, region=region)
+            var_results[var] = result
+            points = result.get("points")
+            if isinstance(points, list) and any(p.get("value") is not None for p in points):
+                vars_with_values += 1
+
+        if vars_with_values == len(norm_vars) and vars_with_values > 0:
+            status = "ok"
+        else:
+            status = "partial"
+
+        series[model] = {
+            "run_id": run_id,
+            "run_time": run_time,
+            "status": status,
+            "variables": var_results,
+        }
+
+    payload = {
+        "location": {"lat": lat, "lon": lon},
+        "generated_at": _isoformat(_utcnow()),
+        "run_policy": {"type": "latest_per_model"},
+        "series": series,
+    }
+    with _meteogram_cache_lock:
+        _meteogram_cache[cache_key] = (time.monotonic() + METEOGRAM_CACHE_TTL_SECONDS, payload)
+    return payload

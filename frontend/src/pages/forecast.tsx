@@ -17,6 +17,7 @@ import {
 
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
 import { RadarPreviewCard } from "@/components/forecast/RadarPreviewCard";
+import { ModelsTabContent } from "@/components/model-guidance/ModelsTabContent";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
@@ -1115,17 +1116,7 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
 }
 
 // ── Models Tab ────────────────────────────────────────────────────────
-
-function ModelsTab() {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-      <p className="text-[15px] font-medium text-white/65">Model guidance coming soon</p>
-      <p className="mt-2 text-[13px] text-white/35">
-        Model and ensemble charts, including meteograms, are coming soon. In the meantime, you can view the data directly via the map viewer.
-      </p>
-    </div>
-  );
-}
+// Models top-level tab content lives in components/model-guidance/ModelsTabContent.
 
 // ── Discussion Tab ────────────────────────────────────────────────────
 
@@ -1606,7 +1597,13 @@ export default function Forecast() {
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
           {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
           {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
-          {activeTab === "models"     && <ModelsTab />}
+          {activeTab === "models"     && (
+            <ModelsTabContent
+              lat={f.location.latitude}
+              lon={f.location.longitude}
+              timezone={f.location.timezone}
+            />
+          )}
           {activeTab === "discussion" && <DiscussionTab afd={f.afd} />}
         </div>
 
