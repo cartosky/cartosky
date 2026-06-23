@@ -81,6 +81,19 @@ from .services.render_resampling import (
     variable_color_map_id,
 )
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
+from .services.sampling import (
+    _DS_CACHE_MAX,
+    _ds_cache,
+    _ds_cache_lock,
+    _get_cached_dataset,
+    _read_sample_value,
+    _resolve_sidecar,
+    _resolve_val_cog,
+    _sample_batch_values,
+    _sample_dataset_index,
+    _sample_dataset_xy,
+    _sample_transformer,
+)
 from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
@@ -282,6 +295,20 @@ SAMPLE_RATE_LIMIT_MAX_REQUESTS = int(
         "CARTOSKY_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
         "TWF_V3_SAMPLE_RATE_LIMIT_MAX_REQUESTS",
         default="240",
+    )
+)
+# Meteogram fan-out is far heavier per request than a single sample, so it gets
+# its own dedicated sliding-window bucket (must not starve map-viewer sampling).
+METEOGRAM_RATE_LIMIT_WINDOW_SECONDS = float(
+    _env_value(
+        "CARTOSKY_METEOGRAM_RATE_LIMIT_WINDOW_SECONDS",
+        default="60.0",
+    )
+)
+METEOGRAM_RATE_LIMIT_MAX_REQUESTS = int(
+    _env_value(
+        "CARTOSKY_METEOGRAM_RATE_LIMIT_MAX_REQUESTS",
+        default="20",
     )
 )
 
@@ -2558,10 +2585,8 @@ class SampleBatchIn(BaseModel):
     forecast_hour: int = Field(..., ge=0)
     points: list[SampleBatchPointIn] = Field(..., min_length=1, max_length=500)
 
-_ds_cache: dict[str, rasterio.DatasetReader] = {}
-_ds_cache_lock = threading.Lock()
-_DS_CACHE_MAX = 16
-
+# _ds_cache / _ds_cache_lock / _DS_CACHE_MAX moved to app.services.sampling
+# (imported above); referenced here via the re-exported names.
 _manifest_cache: dict[str, dict[str, Any]] = {}
 _sidecar_cache: dict[str, dict[str, Any]] = {}
 _grid_manifest_cache: dict[str, dict[str, Any]] = {}
@@ -2578,6 +2603,8 @@ _sample_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _sample_inflight: dict[str, _SampleInflight] = {}
 _sample_rate_window: dict[str, list[float]] = {}
 _sample_lock = threading.Lock()
+_meteogram_rate_window: dict[str, list[float]] = {}
+_meteogram_lock = threading.Lock()
 _capabilities_availability_cache_lock = threading.Lock()
 _capabilities_availability_cache: dict[str, Any] = {
     "expires_at": 0.0,
@@ -2682,23 +2709,6 @@ def _load_json_cached(path: Path, cache: dict[str, dict[str, Any]]) -> dict | No
             "payload": payload,
         }
     return payload
-
-
-def _get_cached_dataset(path: Path) -> rasterio.DatasetReader:
-    key = str(path)
-    with _ds_cache_lock:
-        ds = _ds_cache.get(key)
-        if ds is not None and not ds.closed:
-            return ds
-        if len(_ds_cache) >= _DS_CACHE_MAX:
-            evict_key = next(iter(_ds_cache))
-            try:
-                _ds_cache.pop(evict_key).close()
-            except Exception:
-                _ds_cache.pop(evict_key, None)
-        ds = rasterio.open(path)
-        _ds_cache[key] = ds
-        return ds
 
 
 def _latest_run_from_pointer(model: str) -> str | None:
@@ -3502,24 +3512,9 @@ def _published_var_dir(model: str, run: str, var: str, *, region: str | None = N
     return PUBLISHED_ROOT / model / run / var
 
 
-def _resolve_val_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> Path | None:
-    del region
-    resolved = _resolve_run(model, run) or run
-    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.val.cog.tif"
-    if candidate.is_file():
-        return candidate
-    return None
-
-
-def _resolve_sidecar(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> dict | None:
-    del region
-    resolved = _resolve_run(model, run) or run
-    runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
-    if candidate.is_file():
-        return _load_json_cached(candidate, _sidecar_cache)
-    return None
+# _resolve_val_cog / _resolve_sidecar moved to app.services.sampling
+# (imported above); they delegate run/runtime-var/path resolution back to the
+# helpers defined in this module.
 
 
 def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> bool:
@@ -3626,60 +3621,9 @@ def _sample_points_hash(points: list[SampleBatchPointIn]) -> str:
     ).hexdigest()
 
 
-@lru_cache(maxsize=16)
-def _sample_transformer(dst_crs: str) -> Transformer:
-    return Transformer.from_crs("EPSG:4326", dst_crs, always_xy=True)
-
-
-def _sample_dataset_xy(ds: rasterio.DatasetReader, *, lon: float, lat: float) -> tuple[float, float]:
-    ds_crs = ds.crs
-    if ds_crs is None:
-        raise ValueError(f"Sample dataset missing CRS: {ds.name}")
-    dst_crs = ds_crs.to_string()
-    if dst_crs == "EPSG:4326":
-        return float(lon), float(lat)
-    return _sample_transformer(dst_crs).transform(lon, lat)
-
-
-def _sample_dataset_index(ds: rasterio.DatasetReader, *, lon: float, lat: float) -> tuple[int, int]:
-    x, y = _sample_dataset_xy(ds, lon=lon, lat=lat)
-    row, col = ds.index(x, y)
-    return row, col
-
-
-def _read_sample_value(
-    ds: rasterio.DatasetReader,
-    *,
-    row: int,
-    col: int,
-    masked: bool,
-) -> tuple[float | None, bool]:
-    if row < 0 or row >= ds.height or col < 0 or col >= ds.width:
-        return None, True
-
-    window = Window(col, row, 1, 1)  # type: ignore[call-arg]
-    pixel = ds.read(1, window=window, masked=masked)
-    raw_value = pixel[0, 0]
-    if np.ma.is_masked(raw_value):
-        return None, True
-
-    value = float(raw_value)
-    if np.isnan(value):
-        return None, True
-    return value, False
-
-
-def _sample_batch_values(
-    ds: rasterio.DatasetReader,
-    *,
-    points: list[SampleBatchPointIn],
-) -> dict[str, float | None]:
-    values: dict[str, float | None] = {}
-    for point in points:
-        row, col = _sample_dataset_index(ds, lon=point.lon, lat=point.lat)
-        value, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-        values[point.id] = None if no_data or value is None else round(float(value), 1)
-    return values
+# _sample_transformer / _sample_dataset_xy / _sample_dataset_index /
+# _read_sample_value / _sample_batch_values moved to app.services.sampling
+# (imported above).
 
 
 def _sample_rate_limit_allow(client_id: str) -> tuple[bool, float]:
@@ -3698,6 +3642,33 @@ def _sample_rate_limit_allow(client_id: str) -> tuple[bool, float]:
         while window and window[0] < cutoff:
             window.pop(0)
         if len(window) >= SAMPLE_RATE_LIMIT_MAX_REQUESTS:
+            return False, retry_after
+        window.append(now)
+
+    return True, 0.0
+
+
+def _meteogram_rate_limit_allow(client_id: str) -> tuple[bool, float]:
+    """Sliding-window limiter dedicated to the meteogram endpoint.
+
+    Separate from ``_sample_rate_limit_allow`` so meteogram fan-out cannot
+    starve map-viewer point sampling.
+    """
+    if METEOGRAM_RATE_LIMIT_MAX_REQUESTS <= 0:
+        return True, 0.0
+
+    now = time.monotonic()
+    cutoff = now - max(0.01, METEOGRAM_RATE_LIMIT_WINDOW_SECONDS)
+    retry_after = max(1.0, METEOGRAM_RATE_LIMIT_WINDOW_SECONDS)
+
+    with _meteogram_lock:
+        window = _meteogram_rate_window.get(client_id)
+        if window is None:
+            window = []
+            _meteogram_rate_window[client_id] = window
+        while window and window[0] < cutoff:
+            window.pop(0)
+        if len(window) >= METEOGRAM_RATE_LIMIT_MAX_REQUESTS:
             return False, retry_after
         window.append(now)
 
@@ -3958,6 +3929,64 @@ async def model_guidance_placeholder_v4(
     lon: float = Query(..., ge=-180.0, le=180.0),
 ):
     return await model_guidance_placeholder(lat, lon)
+
+
+class MeteogramRequestIn(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    models: list[str] = Field(..., min_length=1, max_length=8)
+    variables: list[str] = Field(..., min_length=1, max_length=6)
+    run_policy: dict[str, Any] = Field(default_factory=lambda: {"type": "latest_per_model"})
+    include_members: bool = False
+    region: str | None = None
+
+
+@app.post("/api/v4/forecast/meteogram")
+def forecast_meteogram(
+    request: Request,
+    body: MeteogramRequestIn,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    client_id = request.client.host if request.client and request.client.host else "unknown"
+    allowed, retry_after = _meteogram_rate_limit_allow(client_id)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
+            headers={"Retry-After": str(int(max(1, retry_after)))},
+        )
+
+    # Per-model entitlement check is non-fatal: unauthorized models come back
+    # with status "not_entitled" rather than 403-ing the whole request.
+    entitled = {
+        str(model or "").strip().lower(): entitlements.can_access_product(
+            principal, str(model or "").strip().lower()
+        )
+        for model in body.models
+        if str(model or "").strip()
+    }
+
+    try:
+        payload = forecast_page_service.get_forecast_meteogram(
+            lat=body.lat,
+            lon=body.lon,
+            models=body.models,
+            variables=body.variables,
+            run_policy=body.run_policy,
+            include_members=body.include_members,
+            region=body.region,
+            entitled=entitled,
+        )
+    except forecast_page_service.MeteogramRequestError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    # `private` (not `public`): responses vary by per-model entitlement, so they
+    # must not be shared at the CDN. The origin in-process cache still absorbs
+    # repeat fan-outs; entitlement-aware CDN caching is deferred.
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @app.get("/api/v4/anchors/{anchor_id}/weather")
