@@ -1,4 +1,5 @@
 import type { GridManifestResponse } from "@/lib/api";
+import { nearestFrame } from "@/lib/app-utils";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { gridUvToLonLat, lonLatToGridUv } from "@/lib/grid-sample";
 import type { DiffScale } from "@/lib/compare-diff-scales";
@@ -28,6 +29,28 @@ export type GridMeta = {
 const DIFF_NODATA = 65535;
 const DIFF_ENCODE_MAX = 65534;
 
+/** Intersection of two sorted hour lists (both sides must have a ready grid frame). */
+export function intersectSortedHours(left: number[], right: number[]): number[] {
+  const rightSet = new Set(right);
+  return left.filter((hour) => rightSet.has(hour));
+}
+
+/**
+ * Snap a scrubber forecast hour to the nearest hour present in **both** grid
+ * manifests. Returns null when no mutual grid frames exist.
+ */
+export function resolveMutualGridHour(
+  leftHours: number[],
+  rightHours: number[],
+  forecastHour: number,
+): number | null {
+  const mutual = intersectSortedHours(leftHours, rightHours);
+  if (mutual.length === 0) {
+    return null;
+  }
+  return nearestFrame(mutual, forecastHour);
+}
+
 /**
  * Fetch raw frame bytes, going through the diff-only {@link gridFrameCache}.
  * Clean independent fetch — does not reuse any `GridWebglLayerController` logic.
@@ -55,8 +78,14 @@ export async function fetchGridFrameBytes(url: string, signal?: AbortSignal): Pr
 export function decodeGridFrame(bytes: Uint8Array, gridMeta: GridMeta): Float32Array {
   const { width, height, dtype, scale, offset, nodata } = gridMeta;
   const count = Math.max(0, Math.floor(width) * Math.floor(height));
-  const out = new Float32Array(count);
   const bytesPerSample = dtype === "uint8" ? 1 : 2;
+  const expectedBytes = count * bytesPerSample;
+  if (bytes.byteLength < expectedBytes) {
+    throw new Error(
+      `Frame undersized: expected ${expectedBytes} bytes for ${width}x${height} ${dtype}, got ${bytes.byteLength}`,
+    );
+  }
+  const out = new Float32Array(count);
   for (let index = 0; index < count; index += 1) {
     const byteIndex = index * bytesPerSample;
     let encoded = bytes[byteIndex] ?? 0;

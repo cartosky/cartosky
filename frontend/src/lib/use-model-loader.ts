@@ -321,6 +321,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
 
     const controller = new AbortController();
     setGridLoading(true);
+    setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
 
     const resolveManifest = async () => {
       if (run === "latest") {

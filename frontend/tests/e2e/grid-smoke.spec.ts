@@ -1,5 +1,28 @@
 import { test, expect, type Page } from '@playwright/test';
 
+function nearestFrame(frames: number[], current: number): number {
+  if (frames.length === 0) return 0;
+  if (frames.includes(current)) return current;
+  return frames.reduce((nearest, value) => {
+    const nearestDelta = Math.abs(nearest - current);
+    const valueDelta = Math.abs(value - current);
+    return valueDelta < nearestDelta || (valueDelta === nearestDelta && value > nearest) ? value : nearest;
+  }, frames[0]);
+}
+
+function intersectSortedHours(left: number[], right: number[]): number[] {
+  const rightSet = new Set(right);
+  return left.filter((hour) => rightSet.has(hour));
+}
+
+function resolveMutualGridHour(left: number[], right: number[], forecastHour: number): number | null {
+  const mutual = intersectSortedHours(left, right);
+  if (mutual.length === 0) {
+    return null;
+  }
+  return nearestFrame(mutual, forecastHour);
+}
+
 const GRID_RUN_ID = '20260330_12z';
 const GRID_FRAME_A = new Uint16Array([1320, 1405, 65535, 877]);
 const GRID_FRAME_B = new Uint16Array([1315, 1390, 65535, 860]);
@@ -600,6 +623,20 @@ async function stubViewerSpcEmptyStateRoutes(page: Page) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
   });
 }
+
+test.describe('compare diff hour resolution', () => {
+  test('independent nearestFrame can pick different hours for the same fh', () => {
+    const leftHours = [0, 12];
+    const rightHours = [0, 6, 12];
+    expect(nearestFrame(leftHours, 6)).toBe(12);
+    expect(nearestFrame(rightHours, 6)).toBe(6);
+  });
+
+  test('resolveMutualGridHour snaps both sides to the same mutual hour', () => {
+    expect(resolveMutualGridHour([0, 12], [0, 6, 12], 6)).toBe(12);
+    expect(resolveMutualGridHour([0, 6, 18], [0, 12, 18], 6)).toBe(0);
+  });
+});
 
 test.describe('Grid-only smoke', () => {
   test('grid-default viewer path avoids retired legacy requests', async ({ page }) => {
