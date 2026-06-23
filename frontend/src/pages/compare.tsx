@@ -980,16 +980,19 @@ export default function Compare() {
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
 
   // Single-line summary for the mobile diff bar, e.g.
-  // "6/23 06Z GFS - 6/23 00Z GFS * Surface Temp"
-  const diffSummaryLine = useMemo(() => {
+  // "06Z 6/23 GFS - 00Z 6/23 GFS" + variable label (separated by a cyan dot in the UI).
+  const diffSummaryParts = useMemo(() => {
     const lParts = parseRunParts(leftLoader.resolvedRun);
     const rParts = parseRunParts(rightLoader.resolvedRun);
     const lModelDisp = modelOptions.find((o) => o.value === lModel)?.label ?? lModel.toUpperCase();
     const rModelDisp = modelOptions.find((o) => o.value === rModel)?.label ?? rModel.toUpperCase();
     const varDisp = variableCatalog.find((v) => v.value === lVariable)?.label ?? lVariable;
     const formatSide = (parts: ReturnType<typeof parseRunParts>, modelDisp: string) =>
-      parts ? `${parts.date} ${parts.hour} ${modelDisp}` : modelDisp;
-    return `${formatSide(lParts, lModelDisp)} - ${formatSide(rParts, rModelDisp)} * ${varDisp}`;
+      parts ? `${parts.hour} ${parts.date} ${modelDisp}` : modelDisp;
+    return {
+      comparisonPart: `${formatSide(lParts, lModelDisp)} - ${formatSide(rParts, rModelDisp)}`,
+      variablePart: varDisp,
+    };
   }, [leftLoader.resolvedRun, rightLoader.resolvedRun, modelOptions, variableCatalog, lModel, rModel, lVariable]);
 
   // The mobile drawer only exists in mobile diff mode — close it if either changes.
@@ -1341,7 +1344,10 @@ export default function Compare() {
               </div>
             </div>
             <div className="mt-2">
-              <CompareMobileDiffBar summaryLine={diffSummaryLine} />
+              <CompareMobileDiffBar
+                comparisonPart={diffSummaryParts.comparisonPart}
+                variablePart={diffSummaryParts.variablePart}
+              />
             </div>
             {diffNotice ? (
               <div className="mt-2 flex items-start gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-2 text-[11px] font-medium text-cyan-100/90">
