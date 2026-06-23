@@ -12,7 +12,7 @@ type CompareScrubberProps = {
   rightResolvedRun: string;
 };
 
-function deriveValidTime(resolvedRun: string, forecastHour: number): string | null {
+export function deriveValidTime(resolvedRun: string, forecastHour: number): string | null {
   // resolvedRun format: "YYYYMMDD_HHz" e.g. "20260619_12z"
   const match = resolvedRun.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
   if (!match) return null;

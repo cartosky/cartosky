@@ -42,7 +42,8 @@ export function CompareModeToggle({ mode, onChange, className }: CompareModeTogg
               }
             }}
             className={cn(
-              "h-7 rounded-lg px-3 text-[11px] font-medium transition-all duration-150",
+              // 44px min tap target on touch/mobile; compact h-7 on desktop (sm+).
+              "h-7 min-h-[44px] rounded-lg px-3 text-[11px] font-medium transition-all duration-150 sm:min-h-0",
               active
                 ? "border border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 shadow-[inset_0_1px_0_rgba(103,232,249,0.08)]"
                 : "border border-transparent text-white/55 hover:bg-white/[0.06] hover:text-white",

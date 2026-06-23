@@ -5,7 +5,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 
 import { Link } from "react-router-dom";
 import ComparePanel from "@/components/compare/ComparePanel";
-import CompareScrubber from "@/components/compare/CompareScrubber";
+import CompareScrubber, { deriveValidTime } from "@/components/compare/CompareScrubber";
 import CompareDiffPanel from "@/components/compare/CompareDiffPanel";
 import CompareModeToggle, { type CompareMode } from "@/components/compare/CompareModeToggle";
 import { CompareTooltip } from "@/components/compare/CompareTooltip";
@@ -84,6 +84,11 @@ function clampSplit(value: number): number {
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value));
 }
 
+/** Apply ComparePanel's base-URL resolution to a (possibly relative) grid frame URL. */
+function toAbsoluteFrameUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `${API_ROOT}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
 /** Resolve the active grid frame URL for a loader at a forecast hour (mirrors ComparePanel). */
 function resolveActiveGridFrameUrl(loader: UseModelLoaderResult, forecastHour: number): string | null {
   const hours = loader.gridFrameHours;
@@ -95,7 +100,35 @@ function resolveActiveGridFrameUrl(loader: UseModelLoaderResult, forecastHour: n
   if (!url) {
     return null;
   }
-  return /^https?:\/\//i.test(url) ? url : `${API_ROOT}${url.startsWith("/") ? "" : "/"}${url}`;
+  return toAbsoluteFrameUrl(url);
+}
+
+/**
+ * Resolve the grid frame URLs for the forecast hours immediately adjacent to the
+ * active one (previous + next), for adjacent-frame prefetch. Returns absolute
+ * URLs matching {@link resolveActiveGridFrameUrl}, so the prefetched bytes hit
+ * the same GridFrameCache key the compute later reads.
+ */
+function resolveAdjacentGridFrameUrls(loader: UseModelLoaderResult, forecastHour: number): string[] {
+  const hours = loader.gridFrameHours;
+  if (hours.length === 0) {
+    return [];
+  }
+  const activeIndex = hours.indexOf(nearestFrame(hours, forecastHour));
+  if (activeIndex < 0) {
+    return [];
+  }
+  const urls: string[] = [];
+  for (const neighborIndex of [activeIndex - 1, activeIndex + 1]) {
+    if (neighborIndex < 0 || neighborIndex >= hours.length) {
+      continue;
+    }
+    const url = loader.gridFrameByHour.get(hours[neighborIndex])?.url;
+    if (url) {
+      urls.push(toAbsoluteFrameUrl(url));
+    }
+  }
+  return urls;
 }
 
 /** Build the diff GridMeta from a loader's grid manifest (level-zero LOD). bbox is EPSG:3857 meters. */
@@ -314,7 +347,7 @@ function DiffControlBar({
       <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
         Difference
       </div>
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-end gap-x-2 gap-y-2 sm:gap-x-4">
         <div className="flex min-w-0 flex-col gap-1">
           <ControlLabel>Left Model</ControlLabel>
           <ModelPicker
@@ -371,7 +404,7 @@ function DiffControlBar({
           placeholder="Run"
           minWidth="min-w-[132px]"
         />
-        <div className="ml-auto flex shrink-0 items-center gap-2 pb-0.5">
+        <div className="flex flex-wrap items-center gap-2 pb-0.5 sm:ml-auto sm:flex-nowrap">
           <CompareModeToggle mode={mode} onChange={onModeChange} />
           <Link
             to={viewerHref}
@@ -655,6 +688,17 @@ export default function Compare() {
   const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
   const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
 
+  // Adjacent-hour frame URLs warmed into GridFrameCache after each diff settles,
+  // so sequential scrubbing finds bytes already cached (no loading flash).
+  const leftPrefetchUrls = useMemo(
+    () => resolveAdjacentGridFrameUrls(leftLoader, forecastHour),
+    [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, forecastHour],
+  );
+  const rightPrefetchUrls = useMemo(
+    () => resolveAdjacentGridFrameUrls(rightLoader, forecastHour),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, forecastHour],
+  );
+
   const diff = useCompareDiff({
     leftFrameUrl: leftDiffFrameUrl,
     rightFrameUrl: rightDiffFrameUrl,
@@ -664,6 +708,8 @@ export default function Compare() {
     rightModel: rModel,
     varKey: mode === "diff" ? lVariable : null,
     enabled: mode === "diff",
+    leftPrefetchUrls,
+    rightPrefetchUrls,
   });
 
   // Readiness gate step 4: the diff MapCanvas has rendered + gone idle.
@@ -902,17 +948,30 @@ export default function Compare() {
     return `${window.location.origin}/compare${search}`;
   }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, lat, lon, z, mode]);
 
+  // Valid time for the displayed (nearest shared) forecast hour — same run +
+  // format the scrubber shows. Used in the diff-mode share summary.
+  const diffValidTime = useMemo(() => {
+    const run = leftLoader.resolvedRun || rightLoader.resolvedRun;
+    if (!run) {
+      return null;
+    }
+    const rightSet = new Set(rightLoader.frameHours);
+    const validHours = leftLoader.frameHours.filter((h) => rightSet.has(h));
+    const hour = validHours.length > 0 ? nearestFrame(validHours, forecastHour) : forecastHour;
+    return deriveValidTime(run, hour);
+  }, [leftLoader.resolvedRun, rightLoader.resolvedRun, leftLoader.frameHours, rightLoader.frameHours, forecastHour]);
+
   const sharePayload = useMemo<SharePayload>(() => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
     const rightVarLabel = variableCatalog.find(v => v.value === rVariable)?.label ?? rVariable;
     const summary = mode === "diff"
-      ? `Difference: ${lModel.toUpperCase()} − ${rModel.toUpperCase()} | ${lVariable} | F+${Math.round(forecastHour)}`
+      ? `Difference: ${lModel.toUpperCase()} − ${rModel.toUpperCase()} | ${leftVarLabel}${diffValidTime ? ` | Valid ${diffValidTime}` : ` | F+${Math.round(forecastHour)}`}`
       : `${lModel.toUpperCase()} ${leftVarLabel} vs ${rModel.toUpperCase()} ${rightVarLabel} • FH ${Math.round(forecastHour)}`;
     return {
       permalink: sharePermalink,
       summary,
     };
-  }, [sharePermalink, lModel, lVariable, rModel, rVariable, forecastHour, variableCatalog, mode]);
+  }, [sharePermalink, lModel, lVariable, rModel, rVariable, forecastHour, variableCatalog, mode, diffValidTime]);
 
   const buildShareScreenshotState = useCallback((): ScreenshotExportState | null => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;

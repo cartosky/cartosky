@@ -66,24 +66,28 @@ export function CompareDiffPanel({
     setSelectionEpoch((epoch) => epoch + 1);
   }, [selectionKey]);
 
-  // Readiness gate step 4: grid frame ready AND map idle.
+  // Readiness gate step 4: the diff frame is rendered. We require the grid frame
+  // texture to be ready AND painted. "Painted" is satisfied by the map's `idle`
+  // event when it fires, but the grid controller's repaint/warm activity can keep
+  // the map from ever going idle — so a double-rAF after the frame is ready is an
+  // equally valid "rendered" signal (design: "onGridFrameReady / map idle equivalent").
   const onDiffMapReadyRef = useRef(onDiffMapReady);
   onDiffMapReadyRef.current = onDiffMapReady;
   const firedRef = useRef(false);
   const gridFrameReadyRef = useRef(false);
-  const mapIdleReadyRef = useRef(false);
+  const paintedRef = useRef(false);
 
   useEffect(() => {
     firedRef.current = false;
     gridFrameReadyRef.current = false;
-    mapIdleReadyRef.current = false;
+    paintedRef.current = false;
   }, [selectionKey]);
 
   const maybeSignalReady = useCallback(() => {
     if (firedRef.current) {
       return;
     }
-    if (gridFrameReadyRef.current && mapIdleReadyRef.current) {
+    if (gridFrameReadyRef.current && paintedRef.current) {
       firedRef.current = true;
       onDiffMapReadyRef.current?.();
     }
@@ -91,14 +95,23 @@ export function CompareDiffPanel({
 
   const handleGridFrameReady = useCallback(() => {
     gridFrameReadyRef.current = true;
+    // Wait for the painted frame to flush before signaling render-complete.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        paintedRef.current = true;
+        maybeSignalReady();
+      }),
+    );
     maybeSignalReady();
   }, [maybeSignalReady]);
 
   const handleMapReady = useCallback(
     (map: MapLibreMap) => {
       onMapReady?.(map);
+      // Map idle is a strong "settled + painted" signal when it fires; treat it
+      // as an alternate way to satisfy the painted condition.
       const onIdle = () => {
-        mapIdleReadyRef.current = true;
+        paintedRef.current = true;
         maybeSignalReady();
       };
       if (map.loaded()) {

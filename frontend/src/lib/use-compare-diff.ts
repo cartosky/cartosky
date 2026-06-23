@@ -8,6 +8,7 @@ import {
   fetchGridFrameBytes,
   type GridMeta,
 } from "@/lib/compare-diff";
+import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { buildDiffLegend, getDiffScale } from "@/lib/compare-diff-scales";
 
 const DIFF_DEBOUNCE_MS = 150;
@@ -35,6 +36,10 @@ export type UseCompareDiffParams = {
   varKey: string | null;
   /** False when not in diff mode — the hook is a no-op returning null state. */
   enabled: boolean;
+  /** Adjacent-hour frame URLs (left side) to warm into GridFrameCache after a diff settles. */
+  leftPrefetchUrls?: string[];
+  /** Adjacent-hour frame URLs (right side) to warm into GridFrameCache after a diff settles. */
+  rightPrefetchUrls?: string[];
 };
 
 export type UseCompareDiffResult = {
@@ -84,28 +89,79 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     }
   };
 
+  // Latest adjacent-hour URLs, read via ref so they never re-trigger the compute
+  // effect (prefetch is a side benefit of a settled diff, not a compute input).
+  const prefetchUrlsRef = useRef<string[]>([]);
+  prefetchUrlsRef.current = [
+    ...(params.leftPrefetchUrls ?? []),
+    ...(params.rightPrefetchUrls ?? []),
+  ];
+
+  // Fire-and-forget, low-priority warming of adjacent frames into GridFrameCache.
+  // No AbortSignal — prefetch must never cancel or be cancelled by the active
+  // compute cycle; it only populates the cache for the next scrub step.
+  const prefetchCancelRef = useRef<(() => void) | null>(null);
+  const cancelPrefetch = () => {
+    prefetchCancelRef.current?.();
+    prefetchCancelRef.current = null;
+  };
+  const schedulePrefetch = () => {
+    cancelPrefetch();
+    const urls = prefetchUrlsRef.current.filter((url) => url && !gridFrameCache.has(url));
+    if (urls.length === 0) {
+      return;
+    }
+    const warm = () => {
+      for (const url of urls) {
+        void fetchGridFrameBytes(url).catch(() => {
+          // Best-effort warm — a failed prefetch just means the next scrub
+          // fetches normally; never surface it as an error.
+        });
+      }
+    };
+    if (typeof requestIdleCallback === "function") {
+      const handle = requestIdleCallback(warm, { timeout: 1500 });
+      prefetchCancelRef.current = () => cancelIdleCallback(handle);
+    } else {
+      const handle = window.setTimeout(warm, 200);
+      prefetchCancelRef.current = () => window.clearTimeout(handle);
+    }
+  };
+
   useEffect(() => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
+    cancelPrefetch();
 
-    // Always clear stale output immediately on any input change (don't show a
-    // stale diff while the new one loads).
-    revokePublishedBlob();
-    setDiffManifest(null);
-    setDiffFrameUrl(null);
-    setDiffLegend(null);
+    // Readiness must always re-confirm for the new selection (screenshot gate).
     setReadySteps(RESET_STEPS);
 
     const ready = Boolean(
       enabled && leftFrameUrl && rightFrameUrl && leftGridMeta && rightGridMeta && varKey,
     );
     if (!ready) {
+      revokePublishedBlob();
+      setDiffManifest(null);
+      setDiffFrameUrl(null);
+      setDiffLegend(null);
       setIsLoading(false);
       setError(null);
       return;
     }
 
-    setIsLoading(true);
+    // If both frames are already cached (sequential scrub after prefetch), the
+    // recompute is near-instant: keep the previous diff on screen and show no
+    // loading overlay. Only a real network fetch clears the stale frame + spins.
+    const bothCached = gridFrameCache.has(leftFrameUrl!) && gridFrameCache.has(rightFrameUrl!);
+    if (bothCached) {
+      setIsLoading(false);
+    } else {
+      revokePublishedBlob();
+      setDiffManifest(null);
+      setDiffFrameUrl(null);
+      setDiffLegend(null);
+      setIsLoading(true);
+    }
     setError(null);
 
     const controller = new AbortController();
@@ -151,12 +207,21 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
             return;
           }
 
+          // Revoke the just-replaced frame now (in the cached path it was kept on
+          // screen rather than revoked up front). It is fully rendered by now, so
+          // this never truncates an in-flight controller fetch.
+          if (blobUrlRef.current && blobUrlRef.current !== frameUrl) {
+            URL.revokeObjectURL(blobUrlRef.current);
+          }
           blobUrlRef.current = frameUrl;
           setDiffManifest(manifest);
           setDiffFrameUrl(frameUrl);
           setDiffLegend(buildDiffLegend(leftModel, rightModel, varKey!, scale));
           setReadySteps((steps) => ({ ...steps, computeDone: true }));
           setIsLoading(false);
+
+          // Warm the adjacent forecast hours so the next scrub step is cache-hot.
+          schedulePrefetch();
         } catch (err) {
           if (!isCurrent() || (err instanceof DOMException && err.name === "AbortError")) {
             return;
@@ -189,8 +254,11 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     varKey,
   ]);
 
-  // Revoke the last blob on unmount.
-  useEffect(() => () => revokePublishedBlob(), []);
+  // Revoke the last blob + cancel any pending prefetch on unmount.
+  useEffect(() => () => {
+    revokePublishedBlob();
+    cancelPrefetch();
+  }, []);
 
   return { diffManifest, diffFrameUrl, diffLegend, isLoading, error, readySteps };
 }
