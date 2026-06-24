@@ -1,6 +1,9 @@
 import type { MeteogramResponse } from "@/lib/meteogram-types";
 import { API_V4_BASE } from "@/lib/config";
 
+/** Match backend `Cache-Control: private, max-age=300` for meteogram responses. */
+const METEOGRAM_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export type MeteogramFetchParams = {
   lat: number;
   lon: number;
@@ -12,6 +15,7 @@ export type MeteogramFetchParams = {
 type CacheEntry = {
   data: MeteogramResponse | null;
   error: string | null;
+  expiresAt: number | null;
 };
 
 const cache = new Map<string, CacheEntry>();
@@ -41,7 +45,15 @@ export function meteogramLocationMatches(
 }
 
 export function getMeteogramCacheEntry(key: string): CacheEntry | undefined {
-  return cache.get(key);
+  const entry = cache.get(key);
+  if (!entry) {
+    return undefined;
+  }
+  if (entry.expiresAt != null && Date.now() > entry.expiresAt) {
+    cache.delete(key);
+    return undefined;
+  }
+  return entry;
 }
 
 export function isMeteogramFetchInFlight(key: string): boolean {
@@ -122,7 +134,7 @@ async function requestMeteogram(
       throw new Error("Meteogram response location mismatch.");
     }
 
-    cache.set(key, { data: json, error: null });
+    cache.set(key, { data: json, error: null, expiresAt: Date.now() + METEOGRAM_CACHE_TTL_MS });
     notifyMeteogramCache(key);
 
     devLog("fetch ok", {
@@ -137,7 +149,7 @@ async function requestMeteogram(
     return json;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load model guidance.";
-    cache.set(key, { data: null, error: message });
+    cache.set(key, { data: null, error: message, expiresAt: Date.now() + METEOGRAM_CACHE_TTL_MS });
     notifyMeteogramCache(key);
     devLog("fetch failed", {
       key,
@@ -159,7 +171,7 @@ export function fetchMeteogramCached(
   const force = options?.force === true;
 
   if (!force) {
-    const cached = cache.get(key);
+    const cached = getMeteogramCacheEntry(key);
     if (cached?.data) {
       devLog("cache hit", { key, reason });
       return Promise.resolve(cached.data);
@@ -184,7 +196,7 @@ export function fetchMeteogramCached(
 export function prefetchMeteogram(params: MeteogramFetchParams, reason = "prefetch"): void {
   const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
   if (params.models.length === 0 || params.variables.length === 0) return;
-  if (cache.get(key)?.data) {
+  if (getMeteogramCacheEntry(key)?.data) {
     devLog("prefetch skipped (cache hit)", { key, reason });
     return;
   }
