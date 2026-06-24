@@ -239,6 +239,19 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     }
   }, [prefersGridSubstrate, model, run, variable, resolvedEnsembleView]);
 
+  // Drop a resolved grid run id once retention prunes it from /runs — otherwise
+  // frame fetches keep targeting a 404 run until the grid probe finishes.
+  useEffect(() => {
+    if (!resolvedGridLatestRunId) {
+      return;
+    }
+    if (runs.length > 0 && !runs.includes(resolvedGridLatestRunId)) {
+      setResolvedGridLatestRunId(null);
+      setGridManifest((prevManifest) => (prevManifest === null ? prevManifest : null));
+      loadedFramesKeyRef.current = "";
+    }
+  }, [runs, resolvedGridLatestRunId]);
+
   // Load the available runs for the model.
   useEffect(() => {
     if (!model) {
@@ -432,9 +445,13 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       }
 
       try {
+        const retainedGridLatestRunId =
+          resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)
+            ? resolvedGridLatestRunId
+            : null;
         const framesRunKey =
           prefersGridSubstrate && run === "latest"
-            ? resolvedGridLatestRunId
+            ? retainedGridLatestRunId
             : run === "latest"
               ? "latest"
               : resolvedRun;
@@ -503,6 +520,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     resolvedGridLatestRunId,
     resolvedRun,
     runManifest,
+    runs,
     selectionKey,
   ]);
 
