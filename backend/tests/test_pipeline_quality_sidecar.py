@@ -171,17 +171,17 @@ def test_hgt500_anom_uses_requested_discrete_color_bins() -> None:
     rgba, meta = float_to_rgba(data, "hgt500_anom")
 
     assert meta["kind"] == "discrete"
-    assert meta["legend_stops"][0] == [-400.0, "#061652"]
-    assert meta["legend_stops"][-1] == [360.0, "#790378"]
+    assert meta["legend_stops"][0] == [-440.0, "#aaabab"]
+    assert meta["legend_stops"][-1] == [420.0, "#c5a5c2"]
     assert rgba[:3, 0, :].T.tolist() == [
-        [6, 22, 82],
-        [6, 22, 82],
-        [12, 47, 95],
+        [147, 157, 157],
+        [65, 118, 80],
+        [26, 99, 56],
         [255, 255, 255],
         [255, 255, 255],
-        [252, 219, 198],
-        [121, 3, 120],
-        [121, 3, 120],
+        [253, 247, 161],
+        [198, 134, 181],
+        [198, 134, 181],
     ]
     assert rgba[3, 0, :].tolist() == [255, 255, 255, 255, 255, 255, 255, 255]
 
@@ -201,16 +201,16 @@ def test_hgt500_anom_sidecar_legend_matches_requested_steps() -> None:
 
     assert sidecar["kind"] == "discrete"
     assert sidecar["legend"]["type"] == "discrete"
-    assert len(sidecar["legend"]["stops"]) == 26
+    assert len(sidecar["legend"]["stops"]) == 70
     assert sidecar["legend"]["stops"][:4] == [
-        [-400.0, "#061652"],
-        [-360.0, "#0c2f5f"],
-        [-340.0, "#14437b"],
-        [-300.0, "#1c5695"],
+        [-440.0, "#aaabab"],
+        [-420.0, "#939d9d"],
+        [-400.0, "#53866e"],
+        [-380.0, "#417650"],
     ]
     assert sidecar["legend"]["stops"][-4:] == [
-        [260.0, "#b41c2b"],
-        [300.0, "#9c1028"],
-        [340.0, "#810622"],
-        [360.0, "#790378"],
+        [360.0, "#cd5897"],
+        [380.0, "#c686b5"],
+        [400.0, "#c686b5"],
+        [420.0, "#c5a5c2"],
     ]

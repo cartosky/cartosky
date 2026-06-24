@@ -603,26 +603,38 @@ TMP2M_ANOM_F_COLORS = [
 TMP2M_ANOM_F_LEGEND_STOPS = list(zip(TMP2M_ANOM_F_LEVELS[:-1], TMP2M_ANOM_F_COLORS))
 TMP2M_ANOM_F_COLOR_ANCHORS = TMP2M_ANOM_F_LEGEND_STOPS
 TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
-HGT500_ANOM_DAM_LEVELS = [
-    -40.0, -36.0, -34.0, -30.0, -26.0, -24.0, -20.0, -18.0, -14.0,
-    -12.0, -10.0, -6.0, -4.0, 0.0, 4.0, 6.0, 10.0, 12.0,
-    16.0, 18.0, 20.0, 24.0, 26.0, 30.0, 34.0, 36.0, 40.0,
+HGT500_ANOM_M_LEVELS = [
+    -440.0, -420.0, -400.0, -380.0, -360.0, -340.0, -320.0, -300.0, -280.0,
+    -270.0, -260.0, -250.0, -240.0, -230.0, -220.0, -210.0, -200.0, -190.0,
+    -180.0, -170.0, -160.0, -150.0, -140.0, -130.0, -120.0, -110.0, -100.0,
+    -90.0, -80.0, -70.0, -60.0, -50.0, -40.0, -30.0, -20.0, 0.0, 20.0,
+    30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0,
+    140.0, 150.0, 160.0, 170.0, 180.0, 190.0, 200.0, 210.0, 220.0, 230.0,
+    240.0, 250.0, 260.0, 270.0, 280.0, 300.0, 320.0, 340.0, 360.0, 380.0,
+    400.0, 420.0, 440.0,
 ]
-HGT500_ANOM_DAM_COLORS = [
-    "#061652", "#0c2f5f", "#14437b", "#1c5695", "#2368ad", "#307ab6",
-    "#3c8abe", "#4f9ac7", "#6eadd1", "#8ac0db", "#a2cde2", "#bad9e9",
-    "#ffffff", "#ffffff", "#fcdbc6", "#f9c7ae", "#f6b293", "#f19e7b",
-    "#e6856a", "#da6a55", "#cf5246", "#c2383a", "#b41c2b", "#9c1028",
-    "#810622", "#790378",
+HGT500_ANOM_M_COLORS = [
+    "#aaabab", "#939d9d", "#53866e", "#417650", "#1a6338", "#20743a",
+    "#4d9553", "#77a262", "#7db86c", "#96c977", "#aed986", "#c1e88f",
+    "#d1f399", "#cad496", "#bbd19b", "#b5c59a", "#a8ad9f", "#a4a5a8",
+    "#9d9ea0", "#92919d", "#817ca2", "#7d6da7", "#6050ac", "#5046ae",
+    "#3244af", "#284cad", "#1f53ad", "#276ec5", "#2d7edd", "#388de3",
+    "#529de7", "#87bbed", "#93c1ef", "#9fc9f1", "#ffffff", "#ffffff",
+    "#ffffff", "#feffb3", "#fefda9", "#fdf7a1", "#fdf195", "#fce783",
+    "#fbdf78", "#fbd770", "#facf67", "#fac55d", "#f9bb52", "#f8a33e",
+    "#f79737", "#f7892d", "#f66c1a", "#f55c11", "#f54a09", "#f54909",
+    "#e42000", "#e42000", "#c61112", "#c61112", "#c10006", "#c10006",
+    "#c71313", "#d41740", "#d41740", "#da225d", "#d53b7c", "#cd5897",
+    "#cd5897", "#c686b5", "#c686b5", "#c5a5c2",
 ]
-HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM_DAM_COLORS))
-HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
-HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
-HGT500_ANOM_M_LEVELS = [value * 10.0 for value in HGT500_ANOM_DAM_LEVELS]
-HGT500_ANOM_M_COLORS = HGT500_ANOM_DAM_COLORS
 HGT500_ANOM_M_LEGEND_STOPS = list(zip(HGT500_ANOM_M_LEVELS[:-1], HGT500_ANOM_M_COLORS))
 HGT500_ANOM_M_COLOR_ANCHORS = HGT500_ANOM_M_LEGEND_STOPS
-HGT500_ANOM_M_RANGE = (-400.0, 400.0)
+HGT500_ANOM_M_RANGE = (-440.0, 440.0)
+HGT500_ANOM_DAM_LEVELS = [value / 10.0 for value in HGT500_ANOM_M_LEVELS]
+HGT500_ANOM_DAM_COLORS = HGT500_ANOM_M_COLORS
+HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM_DAM_COLORS))
+HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
+HGT500_ANOM_DAM_RANGE = (-44.0, 44.0)
 PRECIP_ANOM_IN_LEVELS = [
     -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.8, -1.6, -1.4,
     -1.2, -1.0, -0.8, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2,
