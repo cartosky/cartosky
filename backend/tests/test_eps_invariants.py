@@ -238,6 +238,7 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert hgt500_anom["buildable"] is True
     assert hgt500_anom["derived"] is True
     assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
+    assert hgt500_anom["units"] == "m"
     assert hgt500_anom["color_map_id"] == "hgt500_anom"
     assert hgt500_anom["default_fh"] == 0
     assert hgt500_anom["group"] == "Dynamics"

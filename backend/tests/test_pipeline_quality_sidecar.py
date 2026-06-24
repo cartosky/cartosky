@@ -101,18 +101,18 @@ def test_build_sidecar_uses_discrete_display_kind_for_hgt500_anom() -> None:
         var_id="hgt500_anom__mean",
         fh=12,
         run_date=datetime(2026, 4, 22, 6, tzinfo=timezone.utc),
-        colorize_meta={"kind": "continuous", "units": "dam", "min": -18.0, "max": 24.0},
+        colorize_meta={"kind": "continuous", "units": "m", "min": -180.0, "max": 240.0},
         var_spec={
             "type": "continuous",
             "display_palette_kind": "discrete",
-            "range": [-40.0, 40.0],
-            "anchors": [(-40.0, "#081d58"), (0.0, "#f7f3ee"), (40.0, "#67000d")],
+            "range": [-400.0, 400.0],
+            "anchors": [(-400.0, "#081d58"), (0.0, "#f7f3ee"), (400.0, "#67000d")],
         },
     )
 
     assert sidecar["kind"] == "discrete"
     assert sidecar["legend"]["type"] == "discrete"
-    assert sidecar["legend"]["stops"] == [[-40.0, "#081d58"], [0.0, "#f7f3ee"], [40.0, "#67000d"]]
+    assert sidecar["legend"]["stops"] == [[-400.0, "#081d58"], [0.0, "#f7f3ee"], [400.0, "#67000d"]]
 
 
 def test_tmp2m_anom_uses_requested_discrete_color_bins() -> None:
@@ -166,13 +166,13 @@ def test_tmp2m_anom_sidecar_legend_matches_requested_steps() -> None:
 
 
 def test_hgt500_anom_uses_requested_discrete_color_bins() -> None:
-    data = np.array([[-41.0, -37.0, -36.0, -2.0, 2.0, 5.0, 39.0, 40.0]], dtype=np.float32)
+    data = np.array([[-410.0, -370.0, -360.0, -20.0, 20.0, 50.0, 390.0, 400.0]], dtype=np.float32)
 
     rgba, meta = float_to_rgba(data, "hgt500_anom")
 
     assert meta["kind"] == "discrete"
-    assert meta["legend_stops"][0] == [-40.0, "#061652"]
-    assert meta["legend_stops"][-1] == [36.0, "#790378"]
+    assert meta["legend_stops"][0] == [-400.0, "#061652"]
+    assert meta["legend_stops"][-1] == [360.0, "#790378"]
     assert rgba[:3, 0, :].T.tolist() == [
         [6, 22, 82],
         [6, 22, 82],
@@ -195,7 +195,7 @@ def test_hgt500_anom_sidecar_legend_matches_requested_steps() -> None:
         var_id="hgt500_anom__mean",
         fh=12,
         run_date=datetime(2026, 5, 14, tzinfo=timezone.utc),
-        colorize_meta={"kind": "discrete", "units": "dam", "min": -18.0, "max": 24.0},
+        colorize_meta={"kind": "discrete", "units": "m", "min": -180.0, "max": 240.0},
         var_spec=spec,
     )
 
@@ -203,14 +203,14 @@ def test_hgt500_anom_sidecar_legend_matches_requested_steps() -> None:
     assert sidecar["legend"]["type"] == "discrete"
     assert len(sidecar["legend"]["stops"]) == 26
     assert sidecar["legend"]["stops"][:4] == [
-        [-40.0, "#061652"],
-        [-36.0, "#0c2f5f"],
-        [-34.0, "#14437b"],
-        [-30.0, "#1c5695"],
+        [-400.0, "#061652"],
+        [-360.0, "#0c2f5f"],
+        [-340.0, "#14437b"],
+        [-300.0, "#1c5695"],
     ]
     assert sidecar["legend"]["stops"][-4:] == [
-        [26.0, "#b41c2b"],
-        [30.0, "#9c1028"],
-        [34.0, "#810622"],
-        [36.0, "#790378"],
+        [260.0, "#b41c2b"],
+        [300.0, "#9c1028"],
+        [340.0, "#810622"],
+        [360.0, "#790378"],
     ]

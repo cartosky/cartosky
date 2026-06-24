@@ -2149,13 +2149,21 @@ def _filter_inventory_step(inventory: Any, *, fh: int) -> Any:
 
             if pd.api.types.is_timedelta64_dtype(step_series):
                 step_values = step_series.dt.total_seconds() / 3600.0
+            else:
+                numeric_values = pd.to_numeric(step_series, errors="coerce")
+                if bool(numeric_values.notna().any()):
+                    step_values = numeric_values
+                else:
+                    timedelta_values = pd.to_timedelta(step_series, errors="coerce")
+                    if bool(timedelta_values.notna().any()):
+                        step_values = timedelta_values.dt.total_seconds() / 3600.0
         except Exception:
             step_values = None
         if step_values is None:
-            step_values = np.to_numeric(step_series, errors="coerce")
+            return inventory.iloc[0:0]
         return inventory.loc[step_values == int(fh)]
     except Exception:
-        return inventory
+        return inventory.iloc[0:0]
 
 
 def _fetch_ecmwf_direct_mean_variable(
@@ -2221,9 +2229,10 @@ def _fetch_ecmwf_direct_mean_variable(
                     direct_inventory = inventory.iloc[0:0]
                 direct_inventory = _filter_inventory_step(direct_inventory, fh=fh)
 
-                if len(direct_inventory) == 0:
+                if len(direct_inventory) != 1:
                     raise RuntimeError(
-                        f"ECMWF EPS direct mean inventory contained no em record for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                        f"ECMWF EPS direct mean inventory expected one em record for {model_id} "
+                        f"fh{fh:03d} pattern={search_pattern!r}; found {len(direct_inventory)}"
                     )
 
                 first_inventory_line = ""
@@ -2243,7 +2252,7 @@ def _fetch_ecmwf_direct_mean_variable(
                     ).hexdigest()[:16]
                     subset_hint = _eps_subset_fallback_path(prefix="eps_direct_mean", token=fallback_name)
 
-                subset_path = _aggregation_subset_path(subset_hint, "cartosky_em")
+                subset_path = _aggregation_subset_path(subset_hint, f"cartosky_em_fh{int(fh):03d}")
                 with _subset_download_lock(subset_path):
                     cached_ok, _cached_size = _subset_file_status(subset_path)
                     if not cached_ok:
@@ -4195,6 +4204,11 @@ def _meters_to_decameters(data: np.ndarray) -> np.ndarray:
     return data / 10.0
 
 
+def _decameters_to_meters(data: np.ndarray) -> np.ndarray:
+    """Convert decameters to meters, preserving NaN."""
+    return data * 10.0
+
+
 # Registry: conversion-key -> converter function.
 # Variables not listed here need no conversion (GRIB units match spec units).
 # NOTE: GDAL's GRIB driver applies GRIB_NORMALIZE_UNITS=YES by default,
@@ -4213,6 +4227,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "geopotential_to_height_m": _geopotential_to_height_m,
     "geopotential_to_height_dam": _geopotential_to_height_dam,
     "m_to_dam": _meters_to_decameters,
+    "dam_to_m": _decameters_to_meters,
     ("aifs", "hgt500"): _aifs_geopotential_to_height_dam,
     # Legacy var-key fallback path
     "tmp2m": _celsius_to_fahrenheit,

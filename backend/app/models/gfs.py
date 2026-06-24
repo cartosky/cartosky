@@ -473,6 +473,7 @@ GFS_VARS: dict[str, VarSpec] = {
                 "baseline_region": "na",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
+                "anomaly_conversion": "dam_to_m",
                 "contour_component": "hgt500",
                 "contour_conversion": "m_to_dam",
                 "contour_interval": "6",
@@ -486,7 +487,7 @@ GFS_VARS: dict[str, VarSpec] = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="dam",
+        units="m",
     ),
     "tmp2m_anom": VarSpec(
         id="tmp2m_anom",
@@ -1174,7 +1175,6 @@ GFS_GROUP_BY_VAR_KEY: dict[str, str] = {
 GFS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "c_to_f",
     "dp2m": "c_to_f",
-    "hgt500_anom": "m_to_dam",
     "vort500": "s-1_to_1e5s-1",
     "wspd850": "ms_to_kt",
     "wspd300": "ms_to_kt",

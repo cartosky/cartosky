@@ -618,6 +618,11 @@ HGT500_ANOM_DAM_COLORS = [
 HGT500_ANOM_DAM_LEGEND_STOPS = list(zip(HGT500_ANOM_DAM_LEVELS[:-1], HGT500_ANOM_DAM_COLORS))
 HGT500_ANOM_DAM_COLOR_ANCHORS = HGT500_ANOM_DAM_LEGEND_STOPS
 HGT500_ANOM_DAM_RANGE = (-40.0, 40.0)
+HGT500_ANOM_M_LEVELS = [value * 10.0 for value in HGT500_ANOM_DAM_LEVELS]
+HGT500_ANOM_M_COLORS = HGT500_ANOM_DAM_COLORS
+HGT500_ANOM_M_LEGEND_STOPS = list(zip(HGT500_ANOM_M_LEVELS[:-1], HGT500_ANOM_M_COLORS))
+HGT500_ANOM_M_COLOR_ANCHORS = HGT500_ANOM_M_LEGEND_STOPS
+HGT500_ANOM_M_RANGE = (-400.0, 400.0)
 PRECIP_ANOM_IN_LEVELS = [
     -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.8, -1.6, -1.4,
     -1.2, -1.0, -0.8, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2,
@@ -1201,13 +1206,13 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "hgt500_anom": {
         "type": "discrete",
-        "units": "dam",
-        "range": HGT500_ANOM_DAM_RANGE,
-        "levels": HGT500_ANOM_DAM_LEVELS,
-        "colors": HGT500_ANOM_DAM_COLORS,
+        "units": "m",
+        "range": HGT500_ANOM_M_RANGE,
+        "levels": HGT500_ANOM_M_LEVELS,
+        "colors": HGT500_ANOM_M_COLORS,
         "display_name": "500mb Height Anomaly",
-        "legend_title": "500mb Height Anomaly (dam)",
-        "legend_stops": HGT500_ANOM_DAM_LEGEND_STOPS,
+        "legend_title": "500mb Height Anomaly (m)",
+        "legend_stops": HGT500_ANOM_M_LEGEND_STOPS,
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },

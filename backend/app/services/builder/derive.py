@@ -882,6 +882,7 @@ def _derive_anomaly_departure(
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     base_component = str(hints.get("base_component") or "").strip() or "tmp2m"
     base_conversion = str(hints.get("base_conversion") or "").strip()
+    anomaly_conversion = str(hints.get("anomaly_conversion") or "").strip()
     baseline_field = str(hints.get("baseline_field") or "").strip() or base_component.split("__", 1)[0]
     baseline_source = normalize_baseline_source(
         str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
@@ -957,6 +958,13 @@ def _derive_anomaly_departure(
         )
 
     anomaly = (forecast_values - baseline_values).astype(np.float32, copy=False)
+    if anomaly_conversion:
+        anomaly = convert_units(
+            anomaly,
+            var_key,
+            model_id=model_id,
+            var_capability=_ConversionCapabilityOverride(conversion=anomaly_conversion),
+        ).astype(np.float32, copy=False)
     _record_derive_sidecar_metadata(
         ctx,
         var_key=var_key,

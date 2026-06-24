@@ -128,6 +128,34 @@ def _publish_tmp2m(
         )
 
 
+def _publish_variable(
+    published_root: Path,
+    manifests_root: Path,
+    model: str,
+    run_id: str,
+    var: str,
+    units: str,
+    *,
+    frame_hours: list[int] = FRAME_HOURS,
+) -> None:
+    # Append an additional variable to an existing run manifest + publish its COGs.
+    manifest_path = manifests_root / model / f"{run_id}.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["variables"][var] = {
+        "expected_frames": len(frame_hours),
+        "available_frames": len(frame_hours),
+        "frames": [{"fh": fh} for fh in frame_hours],
+    }
+    manifest_path.write_text(json.dumps(manifest))
+
+    var_dir = published_root / model / run_id / var
+    for fh in frame_hours:
+        _write_value_raster(var_dir / f"fh{fh:03d}.val.cog.tif")
+        (var_dir / f"fh{fh:03d}.json").write_text(
+            json.dumps({"units": units, "valid_time": f"2026-03-06T{fh:02d}:00:00Z"})
+        )
+
+
 @pytest.fixture
 async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
     data_root = tmp_path / "data" / "v3"
@@ -312,6 +340,48 @@ async def test_meteogram_no_complete_run_is_unavailable(client: httpx.AsyncClien
     )
     assert response.status_code == 200
     assert response.json()["series"]["nam"]["status"] == "unavailable"
+
+
+async def test_meteogram_multi_variable_returns_all_three(client: httpx.AsyncClient) -> None:
+    # Phase 1B: the Models tab requests tmp2m + precip_total + wspd10m together.
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_00z",
+        "precip_total",
+        "in",
+    )
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_00z",
+        "wspd10m",
+        "mph",
+    )
+    _reset_main_caches()
+
+    response = await client.post(
+        "/api/v4/forecast/meteogram",
+        json=_body(["gfs"], ["tmp2m", "precip_total", "wspd10m"]),
+    )
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    assert gfs["status"] == "ok"
+    assert gfs["variables"]["tmp2m"]["units"] == "F"
+    assert gfs["variables"]["precip_total"]["units"] == "in"
+    assert gfs["variables"]["wspd10m"]["units"] == "mph"
+    for var in ("tmp2m", "precip_total", "wspd10m"):
+        points = gfs["variables"][var]["points"]
+        assert points and all(p["value"] == TEST_VALUE for p in points)
+
+
+async def test_model_guidance_v4_returns_410(client: httpx.AsyncClient) -> None:
+    # Retired after Phase 1B; clients must use POST /api/v4/forecast/meteogram.
+    response = await client.get("/api/v4/model-guidance?lat=45.5&lon=-100.5")
+    assert response.status_code == 410
+    assert response.json()["error"] == "gone"
 
 
 async def test_meteogram_invalid_body_returns_422(client: httpx.AsyncClient) -> None:

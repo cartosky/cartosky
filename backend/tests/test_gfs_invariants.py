@@ -138,7 +138,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert hgt500_anom["derived"] is True
     assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
     assert hgt500_anom["kind"] == "continuous"
-    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["units"] == "m"
     assert hgt500_anom["display_name"] == "500mb Height Anomaly"
     assert hgt500_anom["group"] == "Dynamics"
     assert hgt500_anom["color_map_id"] == "hgt500_anom"
@@ -345,7 +345,8 @@ def test_gfs_hgt500_anom_uses_hgt500_component_and_height_contours() -> None:
     assert var_spec.derived is True
     assert var_spec.derive == "anomaly_departure"
     assert var_spec.kind == "continuous"
-    assert var_spec.units == "dam"
+    assert var_spec.units == "m"
+    assert var_spec.selectors.hints["anomaly_conversion"] == "dam_to_m"
     assert var_spec.selectors.hints["base_component"] == "hgt500"
     assert var_spec.selectors.hints["baseline_field"] == "hgt500"
     assert var_spec.selectors.hints["baseline_region"] == "na"

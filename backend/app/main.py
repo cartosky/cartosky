@@ -3924,11 +3924,17 @@ async def model_guidance_placeholder(
 
 
 @app.get("/api/v4/model-guidance")
-async def model_guidance_placeholder_v4(
-    lat: float = Query(..., ge=-90.0, le=90.0),
-    lon: float = Query(..., ge=-180.0, le=180.0),
-):
-    return await model_guidance_placeholder(lat, lon)
+async def model_guidance_placeholder_v4():
+    # Retired after Model Guidance Phase 1B. The Models tab now sources data from
+    # POST /api/v4/forecast/meteogram. 410 (not 404) signals a deliberately
+    # removed endpoint to any lingering clients.
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": "gone",
+            "detail": "Use POST /api/v4/forecast/meteogram instead.",
+        },
+    )
 
 
 class MeteogramRequestIn(BaseModel):

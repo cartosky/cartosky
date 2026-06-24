@@ -929,6 +929,7 @@ async def test_forecast_page_routes_smoke(
     )
     forecast_response = await client.get("/api/v4/forecast-page/by-query", params={"q": "57104"})
     discussion_response = await client.get("/api/v4/forecast-discussion", params={"office": "FSD"})
+    # Retired after Model Guidance Phase 1B — clients use POST /api/v4/forecast/meteogram.
     guidance_response = await client.get("/api/v4/model-guidance", params={"lat": 43.55, "lon": -96.73})
 
     assert search_response.status_code == 200
@@ -939,5 +940,5 @@ async def test_forecast_page_routes_smoke(
     assert forecast_response.json()["location"]["query"] == "57104"
     assert discussion_response.status_code == 200
     assert discussion_response.json()["office"] == "FSD"
-    assert guidance_response.status_code == 200
-    assert guidance_response.json()["status"] == "placeholder"
+    assert guidance_response.status_code == 410
+    assert guidance_response.json()["error"] == "gone"

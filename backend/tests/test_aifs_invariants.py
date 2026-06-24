@@ -322,7 +322,8 @@ def test_aifs_buildable_var_set_and_defaults_invariants() -> None:
     assert hgt500_anom_spec.derived is True
     assert hgt500_anom_spec.derive == "anomaly_departure"
     assert hgt500_anom_spec.kind == "continuous"
-    assert hgt500_anom_spec.units == "dam"
+    assert hgt500_anom_spec.units == "m"
+    assert hgt500_anom_spec.selectors.hints["anomaly_conversion"] == "dam_to_m"
     assert hgt500_anom_spec.selectors.hints["base_component"] == "hgt500"
     assert hgt500_anom_spec.selectors.hints["baseline_field"] == "hgt500"
     assert hgt500_anom_spec.selectors.hints["baseline_region"] == "na"
@@ -542,7 +543,7 @@ def test_aifs_capabilities_schema_snapshot_invariants() -> None:
     assert hgt500_anom["var_key"] == "hgt500_anom"
     assert hgt500_anom["display_name"] == "500mb Height Anomaly"
     assert hgt500_anom["kind"] == "continuous"
-    assert hgt500_anom["units"] == "dam"
+    assert hgt500_anom["units"] == "m"
     assert hgt500_anom["buildable"] is True
     assert hgt500_anom["derived"] is True
     assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"

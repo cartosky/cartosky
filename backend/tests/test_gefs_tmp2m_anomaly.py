@@ -238,7 +238,7 @@ def test_derive_gefs_tmp2m_anomaly_records_sidecar_metadata(
     assert sidecar_metadata["reference_period"] == "1991-2020"
 
 
-def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
+def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -301,7 +301,7 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500__mean"
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -316,7 +316,7 @@ def test_derive_gefs_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_eps_hgt500_anomaly_uses_mean_height_component_and_dam_units(
+def test_derive_eps_hgt500_anomaly_uses_mean_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -379,7 +379,7 @@ def test_derive_eps_hgt500_anomaly_uses_mean_height_component_and_dam_units(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500__mean"
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -471,7 +471,7 @@ def test_derive_eps_tmp2m_anomaly_uses_mean_tmp2m_component_and_era5_baseline(
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_gfs_hgt500_anomaly_uses_raw_height_component_and_dam_units(
+def test_derive_gfs_hgt500_anomaly_uses_raw_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -534,7 +534,7 @@ def test_derive_gfs_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500"
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -782,7 +782,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_na_era5_baseli
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_dam_units(
+def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -845,7 +845,7 @@ def test_derive_ecmwf_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500"
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1014,7 +1014,7 @@ def test_derive_ecmwf_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_aifs_hgt500_anomaly_uses_geopotential_height_component_and_dam_units(
+def test_derive_aifs_hgt500_anomaly_uses_geopotential_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1080,7 +1080,7 @@ def test_derive_aifs_hgt500_anomaly_uses_geopotential_height_component_and_dam_u
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500"
     expected_forecast_dam = (forecast_data_geopotential / np.float32(9.80665)) / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-3)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1409,7 +1409,7 @@ def test_derive_eps_tmp850_anomaly_uses_mean_tmp850_component_and_era5_baseline(
     assert sidecar_metadata["baseline_region"] == "na"
 
 
-def test_derive_aigfs_hgt500_anomaly_uses_raw_height_component_and_dam_units(
+def test_derive_aigfs_hgt500_anomaly_uses_raw_height_component_and_meter_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1473,7 +1473,7 @@ def test_derive_aigfs_hgt500_anomaly_uses_raw_height_component_and_dam_units(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "hgt500"
     expected_forecast_dam = forecast_data_m / np.float32(10.0)
-    expected = expected_forecast_dam - baseline_data_dam
+    expected = (expected_forecast_dam - baseline_data_dam) * np.float32(10.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
