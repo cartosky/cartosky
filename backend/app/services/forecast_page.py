@@ -1964,6 +1964,7 @@ def get_forecast_meteogram(
     models: list[str],
     variables: list[str],
     run_policy: dict[str, Any] | None = None,
+    pinned_runs: dict[str, str] | None = None,
     include_members: bool = False,
     region: str | None = None,
     entitled: dict[str, bool] | None = None,
