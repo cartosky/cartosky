@@ -11,6 +11,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.main import _resolve_requested_ensemble_view, _runtime_var_id_for_request, _serialize_model_capability
 from app.models.eps import EPS_MODEL
+from app.services.colormaps import get_color_map_spec
+from app.services.render_resampling import variable_color_map_id
 from app.services.scheduler import _resolve_vars_to_schedule
 
 
@@ -267,6 +269,18 @@ def test_eps_runtime_resolution_helpers() -> None:
         assert exc.status_code == 404
     else:
         raise AssertionError("Expected unsupported EPS ensemble view to raise HTTPException")
+
+
+def test_eps_hgt500_anom_mean_uses_updated_shared_colormap() -> None:
+    runtime_var = _runtime_var_id_for_request("eps", "hgt500_anom", "mean")
+
+    assert runtime_var == "hgt500_anom__mean"
+    assert variable_color_map_id("eps", runtime_var) == "hgt500_anom"
+
+    spec = get_color_map_spec("hgt500_anom")
+    assert len(spec["legend_stops"]) == 70
+    assert spec["legend_stops"][0] == (-440.0, "#aaabab")
+    assert spec["legend_stops"][-1] == (420.0, "#c5a5c2")
 
 
 def test_eps_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:

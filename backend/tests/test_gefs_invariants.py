@@ -12,6 +12,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.main import _resolve_requested_ensemble_view, _runtime_var_id_for_request, _serialize_model_capability
 from app.models.gefs import GEFS_MODEL
+from app.services.colormaps import get_color_map_spec
+from app.services.render_resampling import variable_color_map_id
 
 
 def test_gefs_target_fhs_invariants() -> None:
@@ -397,6 +399,18 @@ def test_gefs_runtime_resolution_helpers() -> None:
         assert exc.status_code == 404
     else:
         raise AssertionError("Expected unsupported GEFS ensemble view to raise HTTPException")
+
+
+def test_gefs_hgt500_anom_mean_uses_updated_shared_colormap() -> None:
+    runtime_var = _runtime_var_id_for_request("gefs", "hgt500_anom", "mean")
+
+    assert runtime_var == "hgt500_anom__mean"
+    assert variable_color_map_id("gefs", runtime_var) == "hgt500_anom"
+
+    spec = get_color_map_spec("hgt500_anom")
+    assert len(spec["legend_stops"]) == 70
+    assert spec["legend_stops"][0] == (-440.0, "#aaabab")
+    assert spec["legend_stops"][-1] == (420.0, "#c5a5c2")
 
 
 def test_gefs_precip_apcp_selector_matches_live_inventory_shape() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -695,6 +696,26 @@ def _build_frame_sidecar(*, run_id: str, outlook: CPCOutlookPayload) -> dict:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def build_cpc_products_fingerprint(products: dict[str, CPCOutlookPayload]) -> str:
+    """Content fingerprint over the refreshed products.
+
+    The bundle ``run_id`` is derived from the *oldest* product issue time, so it stays
+    pinned for weeks while the slowest-cadence outlook (1-month / 3-month) is unchanged.
+    This fingerprint lets the poller detect when any individual product (e.g. the daily
+    6-10 / 8-14 day outlooks) has fresh data and republish into the same ``run_id``.
+    """
+    parts: list[str] = []
+    for var_id in sorted(products.keys()):
+        outlook = products[var_id]
+        issue_stamp = (
+            outlook.issued_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if outlook.issued_at is not None
+            else "none"
+        )
+        parts.append(f"{var_id}:{issue_stamp}:{len(outlook.features)}")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 def publish_cpc_outlooks(
     *,
     data_root: Path,
@@ -741,6 +762,7 @@ def publish_cpc_outlooks(
             "target_frame_count": len(targets),
             "available_frame_count": len(targets),
             "latest_valid_time": (latest_valid_time or issued_at).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source_fingerprint": build_cpc_products_fingerprint(products),
         },
     )
     write_latest_pointer(data_root=data_root, model=CPC_MODEL_ID, run_id=run_id, source="cpc_outlook")

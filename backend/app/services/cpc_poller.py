@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
 
-from app.services.cpc_outlook import CPCOutlookError, collect_latest_cpc_outlooks, publish_latest_cpc_outlooks
+from app.services.cpc_outlook import (
+    CPCOutlookError,
+    build_cpc_products_fingerprint,
+    collect_latest_cpc_outlooks,
+    publish_latest_cpc_outlooks,
+)
 from app.services.publish_utils import enforce_run_artifact_retention
 
 logger = logging.getLogger(__name__)
@@ -39,14 +44,19 @@ class CPCPollerCycleResult:
 def run_once(config: CPCPollerConfig) -> CPCPollerCycleResult:
     products, issue_time = collect_latest_cpc_outlooks(timeout_seconds=config.timeout_seconds)
     run_id = issue_time.astimezone(timezone.utc).strftime("%Y%m%d_%H%Mz").lower()
-    if _latest_published_run_id(config.data_root) == run_id and _bundle_exists(config.data_root, run_id):
-        if _manifest_variable_ids(config.data_root, run_id) == set(products.keys()):
-            return CPCPollerCycleResult(
-                action="noop",
-                published_run_id=run_id,
-                latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                message=f"CPC latest bundle {run_id} is already published.",
-            )
+    fingerprint = build_cpc_products_fingerprint(products)
+    if (
+        _latest_published_run_id(config.data_root) == run_id
+        and _bundle_exists(config.data_root, run_id)
+        and _manifest_variable_ids(config.data_root, run_id) == set(products.keys())
+        and _manifest_source_fingerprint(config.data_root, run_id) == fingerprint
+    ):
+        return CPCPollerCycleResult(
+            action="noop",
+            published_run_id=run_id,
+            latest_issue_time=issue_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            message=f"CPC latest bundle {run_id} is already published.",
+        )
 
     result = publish_latest_cpc_outlooks(data_root=config.data_root, timeout_seconds=config.timeout_seconds)
     _enforce_retention(config)
@@ -104,6 +114,21 @@ def _manifest_variable_ids(data_root: Path, run_id: str) -> set[str]:
     if not isinstance(variables, dict):
         return set()
     return {str(key).strip() for key in variables.keys() if str(key).strip()}
+
+
+def _manifest_source_fingerprint(data_root: Path, run_id: str) -> str | None:
+    manifest_path = data_root / "manifests" / "cpc" / f"{run_id}.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    fingerprint = metadata.get("source_fingerprint")
+    return str(fingerprint).strip() if isinstance(fingerprint, str) and fingerprint.strip() else None
 
 
 def _bundle_exists(data_root: Path, run_id: str) -> bool:
