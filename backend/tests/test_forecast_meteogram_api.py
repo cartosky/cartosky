@@ -321,6 +321,61 @@ async def test_meteogram_uses_latest_complete_run(client: httpx.AsyncClient) -> 
     assert gfs["status"] == "ok"
 
 
+async def test_meteogram_honors_complete_pinned_run(client: httpx.AsyncClient) -> None:
+    # A newer 12z run is complete, so latest_per_model would pick it; pinning the
+    # older (still complete) 00z run must override that.
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_12z",
+        frame_hours=FRAME_HOURS,
+        set_latest=True,
+    )
+    _reset_main_caches()
+
+    body = _body(["gfs"], ["tmp2m"])
+    body["pinned_runs"] = {"gfs": "20260306_00z"}
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    assert gfs["run_id"] == "20260306_00z"
+    assert gfs["status"] == "ok"
+
+
+async def test_meteogram_pinned_incomplete_run_falls_back(client: httpx.AsyncClient) -> None:
+    # Pinning a still-building run is not honored; the latest complete run is used.
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gfs",
+        "20260306_12z",
+        frame_hours=[0, 3],
+        expected_frames=10,
+        set_latest=True,
+    )
+    _reset_main_caches()
+
+    body = _body(["gfs"], ["tmp2m"])
+    body["pinned_runs"] = {"gfs": "20260306_12z"}
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    assert gfs["run_id"] == "20260306_00z"
+    assert gfs["status"] == "ok"
+
+
+async def test_meteogram_pinned_unknown_run_falls_back(client: httpx.AsyncClient) -> None:
+    # An unknown/nonexistent pinned run id falls back to the latest complete run.
+    body = _body(["gfs"], ["tmp2m"])
+    body["pinned_runs"] = {"gfs": "20991231_18z"}
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+    assert response.status_code == 200
+    gfs = response.json()["series"]["gfs"]
+    assert gfs["run_id"] == "20260306_00z"
+    assert gfs["status"] == "ok"
+
+
 async def test_meteogram_no_complete_run_is_unavailable(client: httpx.AsyncClient) -> None:
     # nam has only a building run (2 of 10 frames) -> no complete run -> unavailable.
     _publish_tmp2m(

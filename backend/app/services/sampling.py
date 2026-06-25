@@ -211,6 +211,66 @@ def _variable_run_complete(plugin: Any, var_entry: dict[str, Any], var: str, run
     return available >= _MIN_USABLE_FRAMES_FALLBACK
 
 
+def _run_manifest_complete(
+    plugin: Any,
+    variables_map: dict[str, Any],
+    variables: list[str],
+    run_id: str,
+) -> bool:
+    """Whether ``run_id``'s manifest is complete for the requested variables.
+
+    Usable means at least one requested variable is present and complete, and no
+    present variable is still building. A variable absent from the manifest is
+    ignored (not disqualifying).
+    """
+    saw_complete = False
+    for var in variables:
+        canonical = var
+        if plugin is not None and hasattr(plugin, "normalize_var_id"):
+            try:
+                canonical = plugin.normalize_var_id(var)
+            except Exception:
+                canonical = var
+        entry = variables_map.get(canonical)
+        if not isinstance(entry, dict):
+            entry = variables_map.get(var)
+        if not isinstance(entry, dict):
+            continue  # variable absent in this run -> ignore (don't disqualify)
+        if _variable_run_complete(plugin, entry, canonical, run_id):
+            saw_complete = True
+        else:
+            return False  # present but still building -> not usable
+    return saw_complete
+
+
+def run_complete_for_variables(
+    model: str,
+    run_id: str,
+    variables: list[str],
+    *,
+    region: str | None = None,
+) -> bool:
+    """Whether a specific ``run_id`` is complete/usable for the variables.
+
+    Same completion semantics as :func:`resolve_latest_complete_run`'s per-run
+    check, exposed for validating an explicitly pinned run before sampling it.
+    """
+    from .. import main as _main
+    from ..models.registry import get_model
+
+    manifest = _main._load_manifest(model, run_id, region=region)
+    if not isinstance(manifest, dict):
+        return False
+    variables_map = manifest.get("variables")
+    if not isinstance(variables_map, dict):
+        return False
+    try:
+        plugin = get_model(model)
+    except Exception:
+        plugin = None
+    return _run_manifest_complete(plugin, variables_map, variables, run_id)
+
+
 def resolve_latest_complete_run(
     model: str,
     variables: list[str],
@@ -249,28 +309,7 @@ def resolve_latest_complete_run(
         variables_map = manifest.get("variables")
         if not isinstance(variables_map, dict):
             continue
-
-        saw_complete = False
-        disqualified = False
-        for var in variables:
-            canonical = var
-            if plugin is not None and hasattr(plugin, "normalize_var_id"):
-                try:
-                    canonical = plugin.normalize_var_id(var)
-                except Exception:
-                    canonical = var
-            entry = variables_map.get(canonical)
-            if not isinstance(entry, dict):
-                entry = variables_map.get(var)
-            if not isinstance(entry, dict):
-                continue  # variable absent in this run -> ignore (don't disqualify)
-            if _variable_run_complete(plugin, entry, canonical, run_id):
-                saw_complete = True
-            else:
-                disqualified = True  # present but still building -> not usable
-                break
-
-        if saw_complete and not disqualified:
+        if _run_manifest_complete(plugin, variables_map, variables, run_id):
             return run_id
 
     return None

@@ -2001,16 +2001,36 @@ def get_forecast_meteogram(
                 + ", ".join(unsupported)
             )
 
-    # Resolve the latest *complete* run per (entitled) model first — not merely
-    # the latest discovered run, which may still be publishing frames (a building
-    # run would otherwise produce truncated lines near "Now"). Run ids are part of
-    # the cache key so a cycle publish correctly invalidates the cached payload.
+    # Normalize any explicitly pinned runs (model id -> run id), keyed lowercase
+    # to match norm_models.
+    pinned = {
+        str(k or "").strip().lower(): str(v or "").strip()
+        for k, v in (pinned_runs or {}).items()
+        if str(k or "").strip() and str(v or "").strip()
+    }
+
+    # Resolve the run per (entitled) model. An explicitly pinned run is honored
+    # only when it exists and is complete for the requested variables; otherwise
+    # we fall back to the latest *complete* run — not merely the latest discovered
+    # run, which may still be publishing frames (a building run would otherwise
+    # produce truncated lines near "Now"). Run ids are part of the cache key so a
+    # cycle publish (or a different pin) correctly invalidates the cached payload.
     run_ids: dict[str, str | None] = {}
     for model in norm_models:
         if entitled.get(model) is False:
             continue
         try:
-            run_ids[model] = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
+            resolved: str | None = None
+            pinned_run = pinned.get(model)
+            if pinned_run:
+                concrete = sampling.resolve_run(model, pinned_run, region=region)
+                if concrete and sampling.run_complete_for_variables(
+                    model, concrete, norm_vars, region=region
+                ):
+                    resolved = concrete
+            if resolved is None:
+                resolved = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
+            run_ids[model] = resolved
         except Exception:
             logger.exception("Meteogram run resolution failed for %s", model)
             run_ids[model] = None

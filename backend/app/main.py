@@ -3943,6 +3943,7 @@ class MeteogramRequestIn(BaseModel):
     models: list[str] = Field(..., min_length=1, max_length=8)
     variables: list[str] = Field(..., min_length=1, max_length=6)
     run_policy: dict[str, Any] = Field(default_factory=lambda: {"type": "latest_per_model"})
+    pinned_runs: dict[str, str] | None = None
     include_members: bool = False
     region: str | None = None
 
@@ -3979,6 +3980,7 @@ def forecast_meteogram(
             models=body.models,
             variables=body.variables,
             run_policy=body.run_policy,
+            pinned_runs=body.pinned_runs,
             include_members=body.include_members,
             region=body.region,
             entitled=entitled,
