@@ -9,7 +9,7 @@ import {
   meteogramLocationMatches,
   subscribeMeteogramCache,
 } from "@/lib/meteogram-cache";
-import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
+import { meteogramAuthHeaders, meteogramAuthScope } from "@/lib/meteogram-auth";
 
 export type {
   MeteogramPoint,
@@ -50,15 +50,20 @@ export function useMeteogram({
   variables,
   enabled = true,
 }: UseMeteogramParams): UseMeteogramResult {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [, bumpCacheVersion] = useReducer((version: number) => version + 1, 0);
   const [reloadKey, setReloadKey] = useState(0);
+
+  const authScope = meteogramAuthScope(isLoaded === true, isSignedIn === true);
 
   const modelsKey = models.join(",");
   const variablesKey = variables.join(",");
   const cacheKey = useMemo(
-    () => buildMeteogramCacheKey(lat, lon, models, variables),
-    [lat, lon, modelsKey, variablesKey],
+    () =>
+      authScope
+        ? buildMeteogramCacheKey(lat, lon, models, variables, authScope)
+        : "",
+    [authScope, lat, lon, models, modelsKey, variables, variablesKey],
   );
 
   const getAuthHeaders = useCallback(
@@ -67,14 +72,14 @@ export function useMeteogram({
   );
 
   useEffect(() => {
-    if (!enabled || models.length === 0 || variables.length === 0) {
+    if (!enabled || !authScope || models.length === 0 || variables.length === 0) {
       return;
     }
 
     const unsubscribe = subscribeMeteogramCache(cacheKey, bumpCacheVersion);
 
-  void fetchMeteogramCached(
-    { lat, lon, models, variables, getAuthHeaders },
+    void fetchMeteogramCached(
+      { lat, lon, models, variables, authScope, getAuthHeaders },
     {
       reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
       force: reloadKey > 0,
@@ -85,6 +90,7 @@ export function useMeteogram({
 
     return unsubscribe;
   }, [
+    authScope,
     cacheKey,
     enabled,
     getAuthHeaders,
