@@ -1,4 +1,5 @@
 import type { MeteogramResponse } from "@/lib/meteogram-types";
+import type { MeteogramAuthScope } from "@/lib/meteogram-auth";
 import { API_V4_BASE } from "@/lib/config";
 
 export type MeteogramFetchParams = {
@@ -6,6 +7,8 @@ export type MeteogramFetchParams = {
   lon: number;
   models: string[];
   variables: string[];
+  /** Must match the Authorization header sent with the request (backend varies by token). */
+  authScope: MeteogramAuthScope;
   getAuthHeaders: () => Promise<Record<string, string>>;
 };
 
@@ -23,10 +26,11 @@ export function buildMeteogramCacheKey(
   lon: number,
   models: string[],
   variables: string[],
+  authScope: MeteogramAuthScope,
 ): string {
   const modelsKey = [...models].sort().join(",");
   const variablesKey = [...variables].sort().join(",");
-  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}`;
+  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}:${authScope}`;
 }
 
 export function meteogramLocationMatches(
@@ -79,7 +83,13 @@ async function requestMeteogram(
   reason: string,
 ): Promise<MeteogramResponse> {
   const startedAt = import.meta.env.DEV ? performance.now() : 0;
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(
+    params.lat,
+    params.lon,
+    params.models,
+    params.variables,
+    params.authScope,
+  );
 
   try {
     const authStartedAt = import.meta.env.DEV ? performance.now() : 0;
@@ -154,7 +164,13 @@ export function fetchMeteogramCached(
   params: MeteogramFetchParams,
   options?: { reason?: string; force?: boolean },
 ): Promise<MeteogramResponse> {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(
+    params.lat,
+    params.lon,
+    params.models,
+    params.variables,
+    params.authScope,
+  );
   const reason = options?.reason ?? "fetch";
   const force = options?.force === true;
 
@@ -182,7 +198,13 @@ export function fetchMeteogramCached(
 
 /** Warm the cache after a Forecast page location is selected. */
 export function prefetchMeteogram(params: MeteogramFetchParams, reason = "prefetch"): void {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(
+    params.lat,
+    params.lon,
+    params.models,
+    params.variables,
+    params.authScope,
+  );
   if (params.models.length === 0 || params.variables.length === 0) return;
   if (cache.get(key)?.data) {
     devLog("prefetch skipped (cache hit)", { key, reason });

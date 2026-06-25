@@ -23,7 +23,7 @@ import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { eligibleTemperatureModels } from "@/lib/eligible-temperature-models";
 import { useEntitlements } from "@/lib/entitlements";
-import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
+import { meteogramAuthHeaders, meteogramAuthScope } from "@/lib/meteogram-auth";
 import { prefetchMeteogram } from "@/lib/meteogram-cache";
 import { useSiteLoading } from "@/lib/site-loading";
 
@@ -1148,7 +1148,7 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
 
 export default function Forecast() {
   const { user } = useUser();
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { canAccessProduct, isLoaded: entitlementsLoaded } = useEntitlements();
   const { start: startSiteLoading } = useSiteLoading();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1209,6 +1209,8 @@ export default function Forecast() {
   // Warm meteogram cache as soon as a Forecast location is ready — before Models tab open.
   useEffect(() => {
     if (!forecast || !entitlementsLoaded) return;
+    const authScope = meteogramAuthScope(authLoaded === true, isSignedIn === true);
+    if (!authScope) return;
     const { latitude: lat, longitude: lon } = forecast.location;
     const models = eligibleTemperatureModels(lat, lon, canAccessProduct);
     if (models.length === 0) return;
@@ -1219,6 +1221,7 @@ export default function Forecast() {
         lon,
         models,
         variables: ["tmp2m"],
+        authScope,
         getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
       },
       "forecast-page-prefetch",
@@ -1228,6 +1231,7 @@ export default function Forecast() {
     forecast?.location.longitude,
     meteogramPrefetchModelsKey,
     entitlementsLoaded,
+    authLoaded,
     getToken,
     isSignedIn,
   ]);
