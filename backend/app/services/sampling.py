@@ -16,6 +16,7 @@ unchanged.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import threading
 from functools import lru_cache
@@ -369,3 +370,80 @@ def sample_point_value(cog_path: Path, *, lat: float, lon: float) -> float | Non
     if no_data or value is None:
         return None
     return round(float(value), 1)
+
+
+# Concurrency for the meteogram frame fan-out. COG opens are I/O-bound and GDAL
+# releases the GIL, so threads give a near-linear speedup over the sequential
+# per-frame opens (which dominate a cold meteogram request).
+_METEOGRAM_SAMPLE_WORKERS = 16
+
+# One (fh, value, valid_time, units) row for a frame whose value COG exists.
+FrameSample = tuple[int, float | None, str | None, str | None]
+
+
+def _sample_one_frame(
+    model: str,
+    run_id: str,
+    var: str,
+    fh: int,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None,
+) -> FrameSample | None:
+    """Sample one forecast hour. Thread-safe: opens and closes its own dataset
+    (not the shared ``_ds_cache``, whose LRU eviction closes handles other
+    threads may still be reading). Returns ``None`` when the value COG is absent
+    so the frame is omitted, matching the sequential path's behavior.
+    """
+    cog = _resolve_val_cog(model, run_id, var, fh, region=region)
+    if cog is None:
+        return None
+    value: float | None = None
+    try:
+        with rasterio.open(cog) as ds:
+            row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
+            raw, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
+            value = None if (no_data or raw is None) else round(float(raw), 1)
+    except Exception:
+        logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
+        value = None
+    sidecar = _resolve_sidecar(model, run_id, var, fh, region=region)
+    valid_time = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
+    units: str | None = None
+    if isinstance(sidecar, dict):
+        sidecar_units = sidecar.get("units")
+        if sidecar_units:
+            units = str(sidecar_units)
+    return (fh, value, valid_time, units)
+
+
+def sample_frames(
+    model: str,
+    run_id: str,
+    var: str,
+    fhs: list[int],
+    *,
+    lat: float,
+    lon: float,
+    region: str | None = None,
+) -> list[FrameSample]:
+    """Sample many forecast hours for one model/variable concurrently.
+
+    Returns the per-frame rows for frames whose value COG exists (order is not
+    guaranteed; callers sort by fh). Falls back to a sequential pass for a single
+    frame to avoid pool overhead.
+    """
+    if len(fhs) <= 1:
+        rows = [_sample_one_frame(model, run_id, var, fh, lat=lat, lon=lon, region=region) for fh in fhs]
+        return [row for row in rows if row is not None]
+
+    workers = min(_METEOGRAM_SAMPLE_WORKERS, len(fhs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        rows = list(
+            pool.map(
+                lambda fh: _sample_one_frame(model, run_id, var, fh, lat=lat, lon=lon, region=region),
+                fhs,
+            )
+        )
+    return [row for row in rows if row is not None]

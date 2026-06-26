@@ -1930,23 +1930,15 @@ def _sample_variable_series(
     if not fhs:
         return {"units": _variable_units(model, var, None), "points": None, "error": "artifact_not_found"}
 
+    # Sample all frames concurrently — the per-frame COG opens are the dominant
+    # cost of a cold meteogram, and they are I/O-bound.
+    sampled = sampling.sample_frames(model, run_id, var, fhs, lat=lat, lon=lon, region=region)
+
     points: list[dict[str, Any]] = []
     units: str | None = None
-    for fh in fhs:
-        cog = sampling._resolve_val_cog(model, run_id, var, fh, region=region)
-        if cog is None:
-            continue
-        try:
-            value = sampling.sample_point_value(cog, lat=lat, lon=lon)
-        except Exception:
-            logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
-            value = None
-        sidecar = sampling._resolve_sidecar(model, run_id, var, fh, region=region)
-        if units is None and isinstance(sidecar, dict):
-            sidecar_units = sidecar.get("units")
-            if sidecar_units:
-                units = str(sidecar_units)
-        valid_time = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
+    for fh, value, valid_time, frame_units in sampled:
+        if units is None and frame_units:
+            units = frame_units
         points.append({"fh": fh, "valid_time": valid_time, "value": value})
 
     resolved_units = _variable_units(model, var, units)
