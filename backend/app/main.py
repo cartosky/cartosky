@@ -3855,6 +3855,40 @@ async def forecast_page_v4(
     return await forecast_page(lat, lon, display_name, timezone, country_code, admin1, country)
 
 
+@app.get("/api/v4/forecast-page/core")
+async def forecast_page_core_v4(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    display_name: str | None = Query(None),
+    timezone: str | None = Query(None),
+    country_code: str | None = Query(None),
+    admin1: str | None = Query(None),
+    country: str | None = Query(None),
+):
+    """Open-Meteo-only forecast core for an instant first paint. The client
+    fetches the full /forecast-page afterward for NWS enrichment."""
+    try:
+        location_hint = None
+        if display_name:
+            location_hint = forecast_page_service.LocationHint(
+                display_name=display_name,
+                timezone=timezone,
+                country_code=country_code,
+                admin1=admin1,
+                country=country,
+            )
+        payload = await forecast_page_service.get_forecast_page_core(lat, lon, location_hint=location_hint)
+    except forecast_page_service.ForecastPageError as exc:
+        status_code = 404 if exc.code == "LOCATION_NOT_FOUND" else 502 if exc.upstream_status else 500
+        return _error_response(
+            status_code=status_code,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+    return JSONResponse(content=payload, headers={"Cache-Control": "public, max-age=60"})
+
+
 @app.get("/api/forecast-page/by-query")
 async def forecast_page_by_query(
     q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
@@ -3882,6 +3916,26 @@ async def forecast_page_by_query_v4(
     q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
 ):
     return await forecast_page_by_query(q)
+
+
+@app.get("/api/v4/forecast-page/by-query/core")
+async def forecast_page_by_query_core_v4(
+    q: str = Query(..., min_length=2, description="ZIP, City, ST, or plain city name"),
+):
+    """Open-Meteo-only core for a free-text query. The client enriches with NWS
+    afterward using the resolved coords in the payload."""
+    try:
+        payload = await forecast_page_service.get_forecast_page_by_query_core(q)
+    except forecast_page_service.LocationNotFoundError as exc:
+        return _error_response(status_code=404, code=exc.code, message=exc.message)
+    except forecast_page_service.ForecastPageError as exc:
+        return _error_response(
+            status_code=502 if exc.upstream_status else 500,
+            code=exc.code,
+            message=exc.message,
+            upstream_status=exc.upstream_status,
+        )
+    return JSONResponse(content=payload, headers={"Cache-Control": "public, max-age=60"})
 
 
 @app.get("/api/forecast-discussion")

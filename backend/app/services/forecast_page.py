@@ -1600,6 +1600,64 @@ async def _timed(name: str, coro: Any, sink: dict[str, float]) -> Any:
         sink[name] = round((time.perf_counter() - started) * 1000.0, 1)
 
 
+async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
+    """Fast Open-Meteo-only forecast core (current / hourly / daily).
+
+    Renders instantly. NWS enrichment — the observation upgrade, the 7-day
+    narrative, alerts, and the AFD — is fetched separately by the client via the
+    full ``/forecast-page`` endpoint and merged in. ``source_status.nws ==
+    "pending"`` signals the client that NWS enrichment is available for this
+    (US) location; ``"not_applicable"`` means open-meteo is the only source.
+    """
+    try:
+        om_payload = await _fetch_open_meteo_forecast(client, location)
+        om_status = "ok"
+    except ForecastPageError:
+        om_payload = {}
+        om_status = "unavailable"
+    if not om_payload:
+        raise ForecastPageError("FORECAST_PAGE_EMPTY", "No forecast data could be assembled for this location.")
+
+    declared_us_region = (location.country_code or "").upper() == "US"
+    should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
+
+    current_payload = _normalize_open_meteo_current(om_payload)
+    hourly_payload, hourly_freshness = _normalize_open_meteo_hourly(om_payload)
+    daily_payload = _normalize_open_meteo_daily(om_payload)
+    timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
+    current_payload = _apply_current_icon_day_night(
+        current_payload, timezone_name=timezone_name, om_payload=om_payload
+    )
+
+    return {
+        "location": _location_payload(location, om_payload),
+        "source_status": _build_source_status(
+            region_mode="us_hybrid" if should_probe_nws else "open_meteo_beta",
+            nws_status="pending" if should_probe_nws else "not_applicable",
+            om_status=om_status,
+        ),
+        "current": current_payload,
+        "hourly": hourly_payload,
+        "daily": daily_payload,
+        "official_text_forecast": None,
+        "afd": None,
+        "alerts": [],
+        "attribution": {
+            "current": "Open-Meteo",
+            "hourly": "Open-Meteo",
+            "daily": "Open-Meteo",
+            "afd": None,
+            "alerts": None,
+        },
+        "freshness": _build_freshness_payload(
+            current_payload=current_payload,
+            hourly_freshness=hourly_freshness,
+            afd_payload=None,
+            alerts_freshness=None,
+        ),
+    }
+
+
 async def _build_forecast_page_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
     cache_key = _forecast_location_cache_key(location)
     cached_payload = _cache_get("forecast-page", cache_key)
@@ -1825,6 +1883,18 @@ async def get_forecast_page_by_query(query: str) -> dict[str, Any]:
         return await _build_forecast_page_payload(client, location)
 
 
+async def get_forecast_page_by_query_core(query: str) -> dict[str, Any]:
+    """Open-Meteo-only core for a free-text query (geocode + open-meteo). The
+    client enriches with NWS afterward using the resolved coords in the payload."""
+    normalized_query = query.strip()
+    if len(normalized_query) < 2:
+        raise ForecastPageError("INVALID_QUERY", "Forecast page query must be at least 2 characters long.")
+
+    async with _build_client() as client:
+        location = await _resolve_location_by_query(client, normalized_query)
+        return await _build_core_payload(client, location)
+
+
 async def get_forecast_page(lat: float, lon: float, location_hint: LocationHint | None = None) -> dict[str, Any]:
     async with _build_client() as client:
         if location_hint is not None and location_hint.display_name:
@@ -1832,6 +1902,17 @@ async def get_forecast_page(lat: float, lon: float, location_hint: LocationHint 
         else:
             location = await _resolve_location_by_coordinates(client, lat, lon)
         return await _build_forecast_page_payload(client, location)
+
+
+async def get_forecast_page_core(lat: float, lon: float, location_hint: LocationHint | None = None) -> dict[str, Any]:
+    """Open-Meteo-only forecast core for an instant first paint. The client then
+    fetches the full ``/forecast-page`` for NWS enrichment and merges it in."""
+    async with _build_client() as client:
+        if location_hint is not None and location_hint.display_name:
+            location = _resolved_location_from_hint(lat=lat, lon=lon, hint=location_hint)
+        else:
+            location = await _resolve_location_by_coordinates(client, lat, lon)
+        return await _build_core_payload(client, location)
 
 
 async def get_forecast_discussion(office: str) -> dict[str, Any] | None:

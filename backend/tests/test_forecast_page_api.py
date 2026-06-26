@@ -525,6 +525,39 @@ async def test_degraded_us_hybrid_payload_does_not_poison_forecast_page_cache(mo
     assert points_calls == 2
 
 
+async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    _freeze_now(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "api.open-meteo.com" and path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "api.weather.gov":
+            raise AssertionError(f"core must not call NWS: {request.url}")
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    location_hint = forecast_page_service.LocationHint(
+        display_name="Sioux Falls, SD",
+        timezone="America/Chicago",
+        country_code="US",
+        admin1="South Dakota",
+        country="United States",
+    )
+    payload = await forecast_page_service.get_forecast_page_core(43.55, -96.73, location_hint=location_hint)
+
+    assert payload["current"]["source"] == "open_meteo"
+    assert payload["hourly"]
+    assert payload["daily"]
+    assert payload["official_text_forecast"] is None
+    assert payload["afd"] is None
+    assert payload["alerts"] == []
+    # US location → NWS enrichment available; the client should fetch it next.
+    assert payload["source_status"]["nws"] == "pending"
+
+
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
 
