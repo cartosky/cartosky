@@ -4,10 +4,12 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
   CloudSun,
+  Loader2,
   MapPinned,
   RefreshCw,
   Search,
@@ -21,6 +23,7 @@ import { ModelsTabContent } from "@/components/model-guidance/ModelsTabContent";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
+import { MODELS_TAB_VARIABLES } from "@/lib/chart-constants";
 import { eligibleTemperatureModels } from "@/lib/eligible-temperature-models";
 import { useEntitlements } from "@/lib/entitlements";
 import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
@@ -136,6 +139,10 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "discussion", label: "Discussion" },
 ];
 
+function isTabId(value: string | null | undefined): value is TabId {
+  return TABS.some((tab) => tab.id === value);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 function degreesToCardinal(deg: number | null): string {
@@ -182,10 +189,10 @@ function isCoordString(s: string): boolean {
 
 function alertStyles(severity: string | null) {
   switch ((severity || "").toLowerCase()) {
-    case "extreme":  return { border: "border-rose-300/25",   bg: "bg-rose-300/10",       text: "text-rose-100",   badge: "bg-rose-300/18 text-rose-100" };
-    case "severe":   return { border: "border-orange-300/20", bg: "bg-orange-300/8",       text: "text-orange-100", badge: "bg-orange-300/16 text-orange-100" };
-    case "moderate": return { border: "border-amber-300/20",  bg: "bg-amber-300/8",        text: "text-amber-100",  badge: "bg-amber-300/14 text-amber-100" };
-    default:         return { border: "border-yellow-300/16", bg: "bg-yellow-300/[0.05]",  text: "text-yellow-100", badge: "bg-yellow-300/12 text-yellow-100" };
+    case "extreme":  return { border: "border-rose-300/25",   bg: "bg-rose-300/10",       text: "text-rose-100" };
+    case "severe":   return { border: "border-orange-300/20", bg: "bg-orange-300/8",       text: "text-orange-100" };
+    case "moderate": return { border: "border-amber-300/20",  bg: "bg-amber-300/8",        text: "text-amber-100" };
+    default:         return { border: "border-yellow-300/16", bg: "bg-yellow-300/[0.05]",  text: "text-yellow-100" };
   }
 }
 
@@ -220,6 +227,13 @@ function feelsLikeF(tempF: number | null, windMph: number | null, humidityPct: n
 
 function viewerHref(lat: number, lon: number): string {
   return `/viewer${buildPermalinkSearch({ region: MAP_VIEW_DEFAULTS.region, lat, lon, z: 7 })}`;
+}
+
+/** "Denver, CO · 39.7392°N, 104.9903°W"-style location line for shared images. */
+function formatLocationText(name: string, lat: number, lon: number): string {
+  const latStr = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? "N" : "S"}`;
+  const lonStr = `${Math.abs(lon).toFixed(4)}°${lon >= 0 ? "E" : "W"}`;
+  return `${name} · ${latStr}, ${lonStr}`;
 }
 
 function readFiniteSearchParam(searchParams: URLSearchParams, key: string): number | null {
@@ -980,10 +994,27 @@ function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
 
 // ── Alerts ────────────────────────────────────────────────────────────
 
-function AlertsBanner({ alerts }: { alerts: AlertEntry[] }) {
+function AlertsBanner({ alerts, checking }: { alerts: AlertEntry[]; checking?: boolean }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   function toggle(i: number) {
     setExpanded(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  }
+  if (alerts.length === 0) {
+    return (
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+        {checking ? (
+          <p className="flex items-center gap-2 text-sm text-white/45">
+            <Loader2 className="h-3.5 w-3.5 flex-none animate-spin text-cyan-300" aria-hidden />
+            Checking alerts…
+          </p>
+        ) : (
+          <p className="flex items-center gap-2 text-sm text-white/45">
+            <Check className="h-3.5 w-3.5 flex-none text-cyan-300" aria-hidden />
+            No active alerts
+          </p>
+        )}
+      </div>
+    );
   }
   return (
     <div className="space-y-2">
@@ -997,11 +1028,6 @@ function AlertsBanner({ alerts }: { alerts: AlertEntry[] }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`text-sm font-medium ${s.text}`}>{alert.event ?? "Alert"}</span>
-                  {alert.severity && (
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.badge}`}>
-                      {alert.severity}
-                    </span>
-                  )}
                 </div>
                 {alert.headline && <p className="mt-1 text-sm text-white/70">{alert.headline}</p>}
                 {alert.areas.length > 0 && <p className="mt-0.5 text-xs text-white/38">{alert.areas.slice(0, 3).join(" · ")}</p>}
@@ -1144,6 +1170,37 @@ function DiscussionTab({ afd }: { afd: ForecastPayload["afd"] }) {
   );
 }
 
+// ── Open-Meteo core + async NWS enrichment ────────────────────────────
+// The page first paints from the fast Open-Meteo core (current/hourly/daily),
+// then merges NWS pieces (real-observation current, 7-day narrative, alerts,
+// AFD) when the slower /forecast-page call returns. Hourly/daily stay
+// Open-Meteo. `source_status.nws === "pending"` on the core marks a US location
+// that has NWS enrichment to fetch.
+function buildForecastParams(lat: number, lon: number, hint?: Partial<LocationResult>): URLSearchParams {
+  const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+  if (hint?.display_name) params.set("display_name", hint.display_name);
+  if (hint?.timezone) params.set("timezone", hint.timezone);
+  if (hint?.country_code) params.set("country_code", hint.country_code);
+  if (hint?.admin1) params.set("admin1", hint.admin1);
+  if (hint?.country) params.set("country", hint.country);
+  return params;
+}
+
+function mergeNwsEnrichment(core: ForecastPayload, full: ForecastPayload): ForecastPayload {
+  return {
+    ...core,
+    // Upgrade to the real NWS observation when present; otherwise keep the
+    // Open-Meteo modeled current. hourly/daily/location stay from the core.
+    current: full.attribution?.current === "NWS" ? full.current : core.current,
+    official_text_forecast: full.official_text_forecast ?? core.official_text_forecast,
+    alerts: full.alerts ?? core.alerts,
+    afd: full.afd ?? core.afd,
+    attribution: { ...core.attribution, ...full.attribution },
+    source_status: full.source_status,
+    freshness: { ...core.freshness, ...full.freshness },
+  };
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────
 
 export default function Forecast() {
@@ -1166,7 +1223,10 @@ export default function Forecast() {
   const [forecast, setForecast] = useState<ForecastPayload | null>(null);
   const [isLoading, setIsLoading] = useState(initialRestorePending);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("hourly");
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const tabParam = searchParams.get("tab");
+    return isTabId(tabParam) ? tabParam : "hourly";
+  });
   const [favoriteLimitMessage, setFavoriteLimitMessage] = useState<string | null>(null);
   const {
     favorites,
@@ -1218,7 +1278,7 @@ export default function Forecast() {
         lat,
         lon,
         models,
-        variables: ["tmp2m"],
+        variables: [...MODELS_TAB_VARIABLES],
         getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
       },
       "forecast-page-prefetch",
@@ -1231,6 +1291,35 @@ export default function Forecast() {
     getToken,
     isSignedIn,
   ]);
+
+  // Deep-link / reload directly onto a coordinate URL: warm the meteogram from
+  // the URL coords as soon as entitlements load, in parallel with the
+  // forecast-page fetch, instead of waiting for it. The forecast-page echoes
+  // coordinate input verbatim, so this hits the same cache key ModelsTabContent
+  // uses — prefetchMeteogram dedupes the later forecast-page-prefetch to a cache
+  // hit, so it is the same single request fired ~2s earlier (no double fetch).
+  // Only coordinate deep-links benefit; `q=` searches have no coords until the
+  // geocode resolves and fall through to the forecast-page prefetch above.
+  useEffect(() => {
+    if (!entitlementsLoaded) return;
+    const lat = readFiniteSearchParam(searchParams, "lat");
+    const lon = readFiniteSearchParam(searchParams, "lon");
+    if (lat === null || lon === null) return;
+    const models = eligibleTemperatureModels(lat, lon, canAccessProduct);
+    if (models.length === 0) return;
+    prefetchMeteogram(
+      {
+        lat,
+        lon,
+        models,
+        variables: [...MODELS_TAB_VARIABLES],
+        getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
+      },
+      "forecast-url-prefetch",
+    );
+    // Fire once when entitlements become available, using the initial URL coords.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitlementsLoaded]);
 
   useEffect(() => {
     return () => {
@@ -1299,7 +1388,30 @@ export default function Forecast() {
     if (locationHint?.country_code) nextParams.country_code = locationHint.country_code;
     if (locationHint?.admin1) nextParams.admin1 = locationHint.admin1;
     if (locationHint?.country) nextParams.country = locationHint.country;
+    // On the initial deep-link restore, carry the shared tab + Models-tab view
+    // state (set by ModelsTabContent) through this rebuild so the link lands on
+    // the right tab/mode. A fresh user-initiated search starts clean (Hourly),
+    // mirroring the setActiveTab reset below.
+    if (initialRestorePendingRef.current) {
+      const tab = searchParams.get("tab");
+      const section = searchParams.get("section");
+      const detailModel = searchParams.get("detail_model");
+      const models = searchParams.get("models");
+      if (tab) nextParams.tab = tab;
+      if (section) nextParams.section = section;
+      if (detailModel) nextParams.detail_model = detailModel;
+      if (models != null) nextParams.models = models;
+    }
     setSearchParams(nextParams, { replace: true });
+  }
+
+  function handleSelectTab(nextTab: TabId) {
+    setActiveTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    // "hourly" is the default — omit it to keep URLs clean.
+    if (nextTab === "hourly") next.delete("tab");
+    else next.set("tab", nextTab);
+    setSearchParams(next, { replace: true });
   }
 
   useEffect(() => {
@@ -1347,6 +1459,41 @@ export default function Forecast() {
     };
   }, [query, pendingName]);
 
+  // Background NWS enrichment for an already-rendered core. Best-effort: failures
+  // and aborts leave the Open-Meteo core in place. Guards against a superseded
+  // load merging stale data over a newer location.
+  async function enrichWithNws(
+    lat: number,
+    lon: number,
+    hint: Partial<LocationResult> | undefined,
+    ctrl: AbortController,
+  ) {
+    // Resolve the "pending" marker (so the alerts banner stops "checking") even
+    // when enrichment fails — best-effort, keeping the Open-Meteo core. No-ops if
+    // this load was superseded.
+    const resolvePending = () => {
+      if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
+      setForecast((prev) =>
+        prev && prev.source_status?.nws === "pending"
+          ? { ...prev, source_status: { ...prev.source_status, nws: "unavailable" } }
+          : prev,
+      );
+    };
+    try {
+      const params = buildForecastParams(lat, lon, hint);
+      const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
+      if (!res.ok) {
+        resolvePending();
+        return;
+      }
+      const full = (await res.json()) as ForecastPayload;
+      if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
+      setForecast((prev) => (prev ? mergeNwsEnrichment(prev, full) : prev));
+    } catch {
+      resolvePending();
+    }
+  }
+
   async function loadByCoords(lat: number, lon: number, preferredName?: string, locationHint?: Partial<LocationResult>) {
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
@@ -1354,15 +1501,14 @@ export default function Forecast() {
     const stopSiteLoading = startSiteLoading("Loading forecast");
     setIsLoading(true); setError(null); setShowDropdown(false);
     try {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
-      const displayName = locationHint?.display_name ?? null;
-      if (displayName) params.set("display_name", displayName);
-      if (locationHint?.timezone) params.set("timezone", locationHint.timezone);
-      if (locationHint?.country_code) params.set("country_code", locationHint.country_code);
-      if (locationHint?.admin1) params.set("admin1", locationHint.admin1);
-      if (locationHint?.country) params.set("country", locationHint.country);
-
-      const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
+      const params = buildForecastParams(lat, lon, locationHint);
+      let res = await fetch(`${API_V4_BASE}/forecast-page/core?${params.toString()}`, { signal: ctrl.signal });
+      if (!res.ok) {
+        // Fallback for a backend without the core endpoint (staged deploy). The
+        // full endpoint returns the same shape, already NWS-enriched, so the
+        // enrich step below no-ops (its nws status is never "pending").
+        res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
+      }
       if (!res.ok) throw new Error("Forecast unavailable for this location.");
       const data = (await res.json()) as ForecastPayload;
       const name = isCoordString(data.location.display_name) && preferredName
@@ -1378,16 +1524,29 @@ export default function Forecast() {
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
-      setActiveTab("hourly");
+      // Reset to Hourly only for a fresh user-initiated search; the initial
+      // deep-link restore keeps the tab parsed from the URL.
+      if (!initialRestorePendingRef.current) setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
       addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
+      // Fill in NWS pieces (real-obs current, 7-day narrative, alerts, AFD)
+      // without blocking the now-rendered core.
+      if (data.source_status?.nws === "pending") {
+        void enrichWithNws(data.location.latitude, data.location.longitude, persistedHint, ctrl);
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable.");
     } finally {
       stopSiteLoading();
-      if (loadAbortRef.current === ctrl) setIsLoading(false);
-      if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
+      if (loadAbortRef.current === ctrl) {
+        setIsLoading(false);
+        // Only the active (non-superseded) load clears the restore flag. A
+        // StrictMode/abort-superseded earlier load must not flip it first, or
+        // the real load's URL sync would treat this deep link as a fresh search
+        // and drop the tab / Models-view params.
+        if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
+      }
     }
   }
 
@@ -1398,7 +1557,11 @@ export default function Forecast() {
     const stopSiteLoading = startSiteLoading("Loading forecast");
     setIsLoading(true); setError(null); setShowDropdown(false);
     try {
-      const res = await fetch(`${API_V4_BASE}/forecast-page/by-query?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+      let res = await fetch(`${API_V4_BASE}/forecast-page/by-query/core?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+      if (!res.ok) {
+        // Fallback for a backend without the by-query core endpoint (staged deploy).
+        res = await fetch(`${API_V4_BASE}/forecast-page/by-query?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { detail?: string };
         throw new Error(body.detail ?? "Forecast unavailable. Try selecting a location from the dropdown.");
@@ -1414,16 +1577,28 @@ export default function Forecast() {
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
-      setActiveTab("hourly");
+      // Reset to Hourly only for a fresh user-initiated search; the initial
+      // deep-link restore keeps the tab parsed from the URL.
+      if (!initialRestorePendingRef.current) setActiveTab("hourly");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
       addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
+      // Enrich the rendered core with NWS using the resolved coordinates.
+      if (data.source_status?.nws === "pending") {
+        void enrichWithNws(data.location.latitude, data.location.longitude, persistedHint, ctrl);
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Forecast guidance is temporarily unavailable. Try selecting from the dropdown suggestions.");
     } finally {
       stopSiteLoading();
-      if (loadAbortRef.current === ctrl) setIsLoading(false);
-      if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
+      if (loadAbortRef.current === ctrl) {
+        setIsLoading(false);
+        // Only the active (non-superseded) load clears the restore flag. A
+        // StrictMode/abort-superseded earlier load must not flip it first, or
+        // the real load's URL sync would treat this deep link as a fresh search
+        // and drop the tab / Models-view params.
+        if (initialRestorePendingRef.current) initialRestorePendingRef.current = false;
+      }
     }
   }
 
@@ -1608,6 +1783,9 @@ export default function Forecast() {
                 className="w-full md:w-[320px] md:flex-none"
               />
             </div>
+            <div className="mt-5">
+              <AlertsBanner alerts={f.alerts} checking={f.source_status?.nws === "pending"} />
+            </div>
           </div>
         </div>
 
@@ -1619,7 +1797,7 @@ export default function Forecast() {
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => handleSelectTab(tab.id)}
                   className={`flex-none px-4 py-3 text-[13px] whitespace-nowrap border-b-2 transition-colors ${
                     activeTab === tab.id
                       ? "border-white text-white font-medium"
@@ -1635,11 +1813,6 @@ export default function Forecast() {
 
         {/* Tab Content */}
         <div className="mx-auto max-w-6xl px-5 md:px-8 py-6 pb-12">
-          {f.alerts.length > 0 && (
-            <div className="mb-6">
-              <AlertsBanner alerts={f.alerts} />
-            </div>
-          )}
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
           {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
           {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
@@ -1648,6 +1821,7 @@ export default function Forecast() {
               lat={f.location.latitude}
               lon={f.location.longitude}
               timezone={f.location.timezone}
+              locationText={formatLocationText(f.location.display_name, f.location.latitude, f.location.longitude)}
             />
           )}
           {activeTab === "discussion" && <DiscussionTab afd={f.afd} />}

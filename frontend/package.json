@@ -15,6 +15,7 @@
   "dependencies": {
     "@clerk/react": "6.7.3",
     "@posthog/react": "^1.8.2",
+    "@radix-ui/react-popover": "^1.1.17",
     "@radix-ui/react-select": "2.1.4",
     "@radix-ui/react-slider": "1.2.2",
     "@radix-ui/react-slot": "1.1.1",

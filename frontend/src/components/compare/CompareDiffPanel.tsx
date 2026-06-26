@@ -6,6 +6,7 @@ import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { GridManifestResponse } from "@/lib/api";
 import { OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
+import type { MapRegionView } from "@/lib/map-region-views";
 import { CompareDiffLegend } from "@/components/compare/CompareDiffLegend";
 
 /**
@@ -21,6 +22,7 @@ export type CompareDiffPanelProps = {
   rightModel: string;
   variable: string;
   region: string;
+  regionViews: Record<string, MapRegionView>;
   basemapMode: BasemapMode;
   showLegend: boolean;
   /** Pre-computed synthetic diff manifest from the pipeline. */
@@ -43,6 +45,7 @@ export function CompareDiffPanel({
   leftModel,
   variable,
   region,
+  regionViews,
   basemapMode,
   showLegend,
   diffManifest,
@@ -165,7 +168,7 @@ export function CompareDiffPanel({
         gridActive={gridActive}
         variable={variable}
         region={region}
-        regionViews={{}}
+        regionViews={regionViews}
         opacity={OVERLAY_DEFAULT_OPACITY}
         mode="idle-warmup"
         basemapMode={basemapMode}

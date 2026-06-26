@@ -24,7 +24,7 @@ export const COMPARE_DIFF_SCALES: Record<string, DiffScale> = {
   wspd850:        { maxAbs: 20,   units: "kt" },
   wspd300:        { maxAbs: 20,   units: "kt" },
   hgt500:         { maxAbs: 20,   units: "dam" },
-  hgt500_anom:    { maxAbs: 40,   units: "dam" },
+  hgt500_anom:    { maxAbs: 400,  units: "m" },
   vort500:        { maxAbs: 4,    units: "×10⁻⁵/s" },
   pwat:           { maxAbs: 0.5,  units: "in" },
   apcp:           { maxAbs: 0.25, units: "in/hr" },

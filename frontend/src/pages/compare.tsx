@@ -28,6 +28,7 @@ import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
 import { intersectSortedHours, resolveMutualGridHour, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
+import { buildMapRegionViews } from "@/lib/map-region-views";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch, replaceUrlQuery } from "@/lib/permalink";
 import { useModelLoader, type UseModelLoaderResult } from "@/lib/use-model-loader";
@@ -590,6 +591,10 @@ export default function Compare() {
     const stored = readLegendVisibilityPreference();
     return stored !== null ? stored : true;
   });
+  const regionViews = useMemo(
+    () => buildMapRegionViews(regionPresets ?? {}),
+    [regionPresets],
+  );
 
   useEffect(() => { writeBasemapModePreference(basemapMode); }, [basemapMode]);
   useEffect(() => { writeLegendVisibilityPreference(showLegends); }, [showLegends]);
@@ -1517,6 +1522,7 @@ export default function Compare() {
             model={lModel}
             variable={lVariable}
             region={region}
+            regionViews={regionViews}
             basemapMode={basemapMode}
             showLegend={showLegends}
             onMapReady={handleLeftMapReady}
@@ -1590,6 +1596,7 @@ export default function Compare() {
             model={rModel}
             variable={rVariable}
             region={region}
+            regionViews={regionViews}
             basemapMode={basemapMode}
             showLegend={showLegends}
             onMapReady={handleRightMapReady}
@@ -1627,6 +1634,7 @@ export default function Compare() {
               rightModel={rModel}
               variable={lVariable}
               region={region}
+              regionViews={regionViews}
               basemapMode={basemapMode}
               showLegend={showLegends}
               diffManifest={diff.diffManifest}

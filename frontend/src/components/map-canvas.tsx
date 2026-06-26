@@ -72,6 +72,7 @@ type AnimatedGridPlaybackState = {
   frameUrl: string | null;
   frameHour: number | null;
   prefetchPivotHour: number | null;
+  contourGeoJsonUrl: string | null;
   compositeGridLayers: Array<{
     id: string;
     manifest: GridManifestResponse | null;
@@ -109,14 +110,17 @@ const OBSERVED_MOBILE_SCRUB_MIN_BEHIND = 2;
 const OBSERVED_DESKTOP_SCRUB_PREFETCH_BUDGET = 12;
 const OBSERVED_DESKTOP_SCRUB_MIN_AHEAD = 3;
 const OBSERVED_DESKTOP_SCRUB_MIN_BEHIND = 2;
-const CONTOUR_CACHE_MAX_ENTRIES = 96;
-const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 8;
-const CONTOUR_PREFETCH_CONCURRENCY_MOBILE = 1;
-const CONTOUR_PREFETCH_MOBILE_LIMIT = 8;
+const CONTOUR_CACHE_MAX_ENTRIES = 240;
+const CONTOUR_PREFETCH_CONCURRENCY_DESKTOP = 6;
+const CONTOUR_PREFETCH_CONCURRENCY_MOBILE = 2;
+const CONTOUR_PREFETCH_DESKTOP_LIMIT = 200;
+const CONTOUR_PREFETCH_MOBILE_LIMIT = 100;
 const CONTOUR_PREFETCH_MOBILE_YIELD_MS = 24;
+const CONTOUR_PREFETCH_PROMOTE_LIMIT = 8;
 
 const CONTOUR_SOURCE_ID = "twf-contours";
 const CONTOUR_LAYER_ID = "twf-contours";
+const CONTOUR_LABEL_LAYER_ID = "twf-contour-labels";
 const VECTOR_SOURCE_IDS = ["twf-vectors-a", "twf-vectors-b"] as const;
 const VECTOR_FILL_LAYER_IDS = ["twf-vectors-fill-a", "twf-vectors-fill-b"] as const;
 const VECTOR_HALO_LINE_LAYER_IDS = ["twf-vectors-halo-a", "twf-vectors-halo-b"] as const;
@@ -135,8 +139,6 @@ const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const CONTOUR_LINE_COLOR = "#000000";
-const CONTOUR_LABEL_COLOR = "rgba(0,0,0,0.72)";
-const CONTOUR_LABEL_SHADOW = "0 1px 2px rgba(255,255,255,0.62)";
 const TRANSPARENT_PIXEL_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z8AARQMBgAEAtwH9WwAAAABJRU5ErkJggg==";
 
@@ -574,38 +576,6 @@ class RasterRgbLayerController {
   }
 }
 
-function contourLabelFromValue(value: unknown): string | null {
-  const numericValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return null;
-  }
-  return String(Math.round(numericValue));
-}
-
-function withContourLabels(payload: GeoJSON.FeatureCollection): GeoJSON.FeatureCollection {
-  if (!payload || payload.type !== "FeatureCollection" || !Array.isArray(payload.features)) {
-    return EMPTY_FEATURE_COLLECTION;
-  }
-
-  return {
-    ...payload,
-    features: payload.features.map((feature) => {
-      const properties = feature.properties && typeof feature.properties === "object" ? feature.properties : {};
-      const label = contourLabelFromValue((properties as Record<string, unknown>).value);
-      if (!label) {
-        return feature;
-      }
-      return {
-        ...feature,
-        properties: {
-          ...properties,
-          label,
-        },
-      };
-    }),
-  };
-}
-
 function isMobileDevice(): boolean {
   if (typeof navigator === "undefined") {
     return false;
@@ -682,29 +652,12 @@ type GridPaintSettings = {
   brightnessMax: number;
 };
 
-type ContourScreenLabel = {
-  id: string;
-  label: string;
-  x: number;
-  y: number;
-  angle: number;
-};
-
 type PressureCenterScreenLabel = {
   id: string;
   type: "H" | "L";
   valueLabel: string;
   x: number;
   y: number;
-};
-
-type LngLatPair = [number, number];
-
-type ContourLinePlacement = {
-  coord: LngLatPair;
-  angle: number;
-  distancePx: number;
-  totalDistancePx: number;
 };
 
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
@@ -718,257 +671,6 @@ function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "lig
 
 function getBoundaryLineColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#f3f4f6" : "#000000";
-}
-
-function readContourLineStrings(geometry: GeoJSON.Geometry | null | undefined): LngLatPair[][] {
-  if (!geometry) {
-    return [];
-  }
-  if (geometry.type === "LineString") {
-    return [geometry.coordinates as LngLatPair[]];
-  }
-  if (geometry.type === "MultiLineString") {
-    return geometry.coordinates as LngLatPair[][];
-  }
-  return [];
-}
-
-function longestLineString(lines: LngLatPair[][]): LngLatPair[] | null {
-  let best: LngLatPair[] | null = null;
-  let bestLength = 0;
-  for (const line of lines) {
-    if (!Array.isArray(line) || line.length < 2) {
-      continue;
-    }
-    if (line.length > bestLength) {
-      best = line;
-      bestLength = line.length;
-    }
-  }
-  return best;
-}
-
-function longestLineStringIndex(lines: LngLatPair[][]): number {
-  let bestIndex = -1;
-  let bestLength = 0;
-  lines.forEach((line, index) => {
-    if (!Array.isArray(line) || line.length < 2) {
-      return;
-    }
-    if (line.length > bestLength) {
-      bestIndex = index;
-      bestLength = line.length;
-    }
-  });
-  return bestIndex;
-}
-
-function interpolateLngLat(start: LngLatPair, end: LngLatPair, t: number): LngLatPair {
-  return [
-    Number(start[0]) + (Number(end[0]) - Number(start[0])) * t,
-    Number(start[1]) + (Number(end[1]) - Number(start[1])) * t,
-  ];
-}
-
-function contourLinePlacement(line: LngLatPair[], map: maplibregl.Map): ContourLinePlacement | null {
-  if (!Array.isArray(line) || line.length < 2) {
-    return null;
-  }
-
-  const projected = line.map((coord) => map.project(coord));
-  const distances: number[] = [0];
-  for (let index = 1; index < projected.length; index += 1) {
-    const previous = projected[index - 1];
-    const current = projected[index];
-    const dx = current.x - previous.x;
-    const dy = current.y - previous.y;
-    distances.push(distances[index - 1] + Math.hypot(dx, dy));
-  }
-
-  const totalDistance = distances[distances.length - 1] ?? 0;
-  if (!Number.isFinite(totalDistance) || totalDistance <= 0) {
-    return null;
-  }
-
-  const targetDistance = totalDistance / 2;
-  for (let index = 0; index < line.length - 1; index += 1) {
-    const startDistance = distances[index];
-    const endDistance = distances[index + 1];
-    if (targetDistance < startDistance || targetDistance > endDistance) {
-      continue;
-    }
-    const start = line[index];
-    const end = line[index + 1];
-    const segmentDistance = endDistance - startDistance;
-    const t = segmentDistance > 0 ? (targetDistance - startDistance) / segmentDistance : 0;
-    const coord = interpolateLngLat(start, end, Math.max(0, Math.min(1, t)));
-    const startPoint = projected[index];
-    const endPoint = projected[index + 1];
-    let angle = Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * 180 / Math.PI;
-    if (angle > 90) angle -= 180;
-    if (angle < -90) angle += 180;
-    return {
-      coord,
-      angle,
-      distancePx: targetDistance,
-      totalDistancePx: totalDistance,
-    };
-  }
-
-  return null;
-}
-
-function splitContourLabelLine(line: LngLatPair[], map: maplibregl.Map): LngLatPair[][] {
-  const placement = contourLinePlacement(line, map);
-  if (!placement || placement.totalDistancePx < 24) {
-    return [line];
-  }
-
-  const gapHalfPx = 13;
-  const centerDistance = placement.distancePx;
-  const projected = line.map((coord) => map.project(coord));
-  const distances: number[] = [0];
-  for (let index = 1; index < projected.length; index += 1) {
-    const previous = projected[index - 1];
-    const current = projected[index];
-    const dx = current.x - previous.x;
-    const dy = current.y - previous.y;
-    distances.push(distances[index - 1] + Math.hypot(dx, dy));
-  }
-  const totalDistance = placement.totalDistancePx;
-  const gapStartDistance = Math.max(0, centerDistance - gapHalfPx);
-  const gapEndDistance = Math.min(totalDistance, centerDistance + gapHalfPx);
-
-  const before: LngLatPair[] = [];
-  const after: LngLatPair[] = [];
-  for (let index = 0; index < line.length - 1; index += 1) {
-    const startDistance = distances[index];
-    const endDistance = distances[index + 1];
-    const start = line[index];
-    const end = line[index + 1];
-    const segmentDistance = endDistance - startDistance;
-    if (!Number.isFinite(segmentDistance) || segmentDistance <= 0) {
-      continue;
-    }
-
-    if (endDistance <= gapStartDistance) {
-      if (before.length === 0) {
-        before.push(start);
-      }
-      before.push(end);
-      continue;
-    }
-
-    if (startDistance >= gapEndDistance) {
-      if (after.length === 0) {
-        after.push(start);
-      }
-      after.push(end);
-      continue;
-    }
-
-    if (startDistance < gapStartDistance && gapStartDistance < endDistance) {
-      const t = (gapStartDistance - startDistance) / segmentDistance;
-      if (before.length === 0) {
-        before.push(start);
-      }
-      before.push(interpolateLngLat(start, end, t));
-    }
-
-    if (startDistance < gapEndDistance && gapEndDistance < endDistance) {
-      const t = (gapEndDistance - startDistance) / segmentDistance;
-      after.push(interpolateLngLat(start, end, t));
-      after.push(end);
-    }
-  }
-
-  const segments = [before, after].filter((segment) => segment.length >= 2);
-  return segments.length > 0 ? segments : [line];
-}
-
-function buildContourLineDisplayPayload(payload: GeoJSON.FeatureCollection, map: maplibregl.Map): GeoJSON.FeatureCollection {
-  return {
-    ...payload,
-    features: payload.features.map((feature) => {
-      const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
-      if (!label) {
-        return feature;
-      }
-      const lines = readContourLineStrings(feature.geometry);
-      const targetIndex = longestLineStringIndex(lines);
-      if (targetIndex < 0) {
-        return feature;
-      }
-
-      const nextLines = lines.flatMap((line, index) => (
-        index === targetIndex ? splitContourLabelLine(line, map) : [line]
-      ));
-      if (nextLines.length === 0) {
-        return feature;
-      }
-
-      return {
-        ...feature,
-        geometry: {
-          type: "MultiLineString",
-          coordinates: nextLines,
-        },
-      };
-    }),
-  };
-}
-
-function buildContourScreenLabels(
-  payload: GeoJSON.FeatureCollection | null,
-  map: maplibregl.Map
-): ContourScreenLabel[] {
-  if (!payload || !Array.isArray(payload.features)) {
-    return [];
-  }
-
-  const canvas = map.getCanvas();
-  const width = canvas.clientWidth || canvas.width;
-  const height = canvas.clientHeight || canvas.height;
-  const labels: ContourScreenLabel[] = [];
-  const marginPx = 32;
-
-  payload.features.forEach((feature, index) => {
-    const label = typeof feature.properties?.label === "string" ? feature.properties.label.trim() : "";
-    if (!label) {
-      return;
-    }
-    const line = longestLineString(readContourLineStrings(feature.geometry));
-    if (!line || line.length < 2) {
-      return;
-    }
-    const placement = contourLinePlacement(line, map);
-    if (!placement) {
-      return;
-    }
-    const lng = Number(placement.coord[0]);
-    const lat = Number(placement.coord[1]);
-    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-      return;
-    }
-    const point = map.project([lng, lat]);
-    if (
-      point.x < -marginPx ||
-      point.y < -marginPx ||
-      point.x > width + marginPx ||
-      point.y > height + marginPx
-    ) {
-      return;
-    }
-    labels.push({
-      id: `${label}-${index}`,
-      label,
-      x: point.x,
-      y: point.y,
-      angle: placement.angle,
-    });
-  });
-
-  return labels;
 }
 
 function pressureCenterValueLabel(center: PressureCenter): string {
@@ -1173,6 +875,7 @@ export function buildMapStyle(
 
   return {
     version: 8,
+    glyphs: "https://tiles.stadiamaps.com/fonts/{fontstack}/{range}.pbf",
     sources: {
       "twf-basemap": {
         type: "raster",
@@ -1321,6 +1024,27 @@ export function buildMapStyle(
           "line-color": CONTOUR_LINE_COLOR,
           "line-opacity": 0.9,
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 2.5, 12, 3.5],
+        },
+      },
+      {
+        id: CONTOUR_LABEL_LAYER_ID,
+        type: "symbol",
+        source: CONTOUR_SOURCE_ID,
+        layout: {
+          visibility: contourGeoJsonUrl ? "visible" : "none",
+          "symbol-placement": "line",
+          "text-field": ["to-string", ["round", ["to-number", ["get", "value"]]]],
+          "text-size": 11,
+          "text-font": ["Noto Sans Regular"],
+          "symbol-spacing": 280,
+          "text-max-angle": 35,
+          "text-padding": 2,
+          "text-keep-upright": true,
+        },
+        paint: {
+          "text-color": "#111111",
+          "text-halo-color": "rgba(255,255,255,0.88)",
+          "text-halo-width": 1.5,
         },
       },
       ...buildVectorBufferLayers(),
@@ -1564,7 +1288,6 @@ export function MapCanvas({
   // selectionKey change), same pattern as App's gridFrameReadyRef.
   const cityLabelsReadyFiredRef = useRef(false);
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
-  const [contourScreenLabels, setContourScreenLabels] = useState<ContourScreenLabel[]>([]);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
 
   const geolocationMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -1585,6 +1308,10 @@ export function MapCanvas({
   isAnimatingRef.current = isAnimating;
   const contourCacheRef = useRef<Map<string, GeoJSON.FeatureCollection>>(new Map());
   const contourPrefetchInFlightRef = useRef<Set<string>>(new Set());
+  const contourPrefetchPriorityUrlsRef = useRef<string[]>([]);
+  const latestRequestedContourUrlRef = useRef("");
+  const contourRafHitCountRef = useRef(0);
+  const contourRafMissCountRef = useRef(0);
   const activeContourPayloadRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const activeContourUrlRef = useRef("");
   const vectorRequestTokenRef = useRef(0);
@@ -1607,14 +1334,6 @@ export function MapCanvas({
     };
   }, [region, regionViews]);
 
-  const refreshContourScreenLabels = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !activeContourPayloadRef.current) {
-      setContourScreenLabels([]);
-      return;
-    }
-    setContourScreenLabels(buildContourScreenLabels(activeContourPayloadRef.current, map));
-  }, []);
   const applyContourPayload = useCallback((
     map: maplibregl.Map,
     source: maplibregl.GeoJSONSource,
@@ -1625,9 +1344,79 @@ export function MapCanvas({
     activeContourUrlRef.current = normalizedUrl;
     activeContourPayloadRef.current = payload;
     setLayerVisibility(map, CONTOUR_LAYER_ID, Boolean(normalizedUrl));
-    source.setData(buildContourLineDisplayPayload(payload, map) as any);
-    refreshContourScreenLabels();
-  }, [refreshContourScreenLabels]);
+    setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, Boolean(normalizedUrl));
+    source.setData(payload as any);
+  }, []);
+
+  const contourDebugEnabled = import.meta.env.DEV;
+
+  const rememberContourPayload = useCallback((normalizedUrl: string, payload: GeoJSON.FeatureCollection) => {
+    contourCacheRef.current.set(normalizedUrl, payload);
+    while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
+      const oldestKey = contourCacheRef.current.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      contourCacheRef.current.delete(oldestKey);
+    }
+  }, []);
+
+  const promoteContourPrefetchUrl = useCallback((rawUrl: string | null | undefined) => {
+    const normalizedUrl = normalizeDataUrl(rawUrl);
+    if (!normalizedUrl) {
+      return;
+    }
+    const nextUrls = contourPrefetchPriorityUrlsRef.current.filter((url) => url !== normalizedUrl);
+    nextUrls.unshift(normalizedUrl);
+    if (nextUrls.length > CONTOUR_PREFETCH_PROMOTE_LIMIT) {
+      nextUrls.length = CONTOUR_PREFETCH_PROMOTE_LIMIT;
+    }
+    contourPrefetchPriorityUrlsRef.current = nextUrls;
+  }, []);
+
+  const requestContourWarmFetch = useCallback((rawUrl: string | null | undefined) => {
+    const normalizedUrl = normalizeDataUrl(rawUrl);
+    if (
+      !normalizedUrl
+      || contourCacheRef.current.has(normalizedUrl)
+      || contourPrefetchInFlightRef.current.has(normalizedUrl)
+    ) {
+      return false;
+    }
+
+    contourPrefetchInFlightRef.current.add(normalizedUrl);
+    void productFetch(productId, normalizedUrl, {
+      credentials: "omit",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Contour prefetch failed: ${response.status}`);
+        }
+        return (await response.json()) as GeoJSON.FeatureCollection;
+      })
+      .then((payload) => {
+        rememberContourPayload(normalizedUrl, payload);
+        contourPrefetchPriorityUrlsRef.current = contourPrefetchPriorityUrlsRef.current.filter((url) => url !== normalizedUrl);
+        const map = mapRef.current;
+        const source = map?.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        if (
+          map
+          && source
+          && typeof source.setData === "function"
+          && latestRequestedContourUrlRef.current === normalizedUrl
+        ) {
+          applyContourPayload(map, source, normalizedUrl, payload);
+        }
+      })
+      .catch((error) => {
+        console.warn("[map] contour prefetch failed", { contourGeoJsonUrl: normalizedUrl, error });
+      })
+      .finally(() => {
+        contourPrefetchInFlightRef.current.delete(normalizedUrl);
+      });
+
+    return true;
+  }, [applyContourPayload, productId, rememberContourPayload]);
 
   const apiRoot = useMemo(() => API_ORIGIN.replace(/\/$/, ""), []);
   const normalizedRasterRgbFrameUrl = useMemo(() => {
@@ -2022,6 +1811,7 @@ export function MapCanvas({
     frameUrl: string | null;
     frameHour: number | null;
     prefetchPivotHour: number | null;
+    contourGeoJsonUrl?: string | null;
     compositeLayers: AnimatedGridPlaybackState["compositeGridLayers"];
   }) => {
     const map = mapRef.current;
@@ -2052,11 +1842,32 @@ export function MapCanvas({
       return;
     }
 
-    const normalizedContourUrl = normalizeDataUrl(contourGeoJsonUrl);
+    const contourUrlToApply = params.contourGeoJsonUrl !== undefined
+      ? params.contourGeoJsonUrl
+      : contourGeoJsonUrl;
+    const normalizedContourUrl = normalizeDataUrl(contourUrlToApply);
+    latestRequestedContourUrlRef.current = normalizedContourUrl;
+    const isRafContourSync = params.contourGeoJsonUrl !== undefined;
     const contourSource = map.getSource(CONTOUR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     const cachedContourPayload = normalizedContourUrl ? contourCacheRef.current.get(normalizedContourUrl) : null;
     if (contourSource && typeof contourSource.setData === "function" && cachedContourPayload) {
+      if (isRafContourSync) {
+        contourRafHitCountRef.current += 1;
+      }
       applyContourPayload(map, contourSource, normalizedContourUrl, cachedContourPayload);
+    } else if (normalizedContourUrl) {
+      if (isRafContourSync) {
+        contourRafMissCountRef.current += 1;
+      }
+      promoteContourPrefetchUrl(normalizedContourUrl);
+      void requestContourWarmFetch(normalizedContourUrl);
+      if (contourSource && typeof contourSource.setData === "function") {
+        activeContourUrlRef.current = "";
+        activeContourPayloadRef.current = null;
+        setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+        setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
+        contourSource.setData(EMPTY_FEATURE_COLLECTION as any);
+      }
     }
 
     controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
@@ -2159,11 +1970,35 @@ export function MapCanvas({
     onGridFrameReady,
     opacity,
     overlayFadeOutZoom,
+    promoteContourPrefetchUrl,
+    requestContourWarmFetch,
     requestGridRepaint,
     selectionEpoch,
     selectionKey,
     variable,
   ]);
+
+  useEffect(() => {
+    const scheduledCount = contourPrefetchUrls.length;
+    contourPrefetchPriorityUrlsRef.current = [];
+    contourRafHitCountRef.current = 0;
+    contourRafMissCountRef.current = 0;
+
+    return () => {
+      if (!contourDebugEnabled) {
+        return;
+      }
+      console.debug("[map] contour", {
+        event: "selection-summary",
+        selectionKey,
+        productId,
+        scheduledCount,
+        cacheSize: contourCacheRef.current.size,
+        rafHits: contourRafHitCountRef.current,
+        rafMisses: contourRafMissCountRef.current,
+      });
+    };
+  }, [contourDebugEnabled, contourPrefetchUrls, productId, selectionKey]);
 
   useEffect(() => {
     return () => {
@@ -2257,6 +2092,9 @@ export function MapCanvas({
     }
     if (map.getLayer(CONTOUR_LAYER_ID)) {
       map.moveLayer(CONTOUR_LAYER_ID, COASTLINE_LAYER_ID);
+    }
+    if (map.getLayer(CONTOUR_LABEL_LAYER_ID)) {
+      map.moveLayer(CONTOUR_LABEL_LAYER_ID, COASTLINE_LAYER_ID);
     }
     // Coastline / boundaries / lake shoreline move to the top (in this order,
     // so lake shoreline ends up highest of the group). twf-labels is gone, so
@@ -2459,6 +2297,7 @@ export function MapCanvas({
           applyContourPayload(map, contourSource, activeUrl, activePayload);
         } else {
           setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+          setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
           contourSource.setData(EMPTY_FEATURE_COLLECTION as any);
         }
       }
@@ -2525,14 +2364,15 @@ export function MapCanvas({
     }
 
     const normalizedUrl = normalizeDataUrl(contourGeoJsonUrl);
+    latestRequestedContourUrlRef.current = normalizedUrl;
 
     if (!normalizedUrl) {
       contourAbortRef.current?.abort();
       contourAbortRef.current = null;
       activeContourUrlRef.current = "";
       activeContourPayloadRef.current = null;
-      setContourScreenLabels([]);
       setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+      setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
       source.setData(EMPTY_FEATURE_COLLECTION as any);
       return;
     }
@@ -2543,22 +2383,21 @@ export function MapCanvas({
       return;
     }
 
+    promoteContourPrefetchUrl(normalizedUrl);
+
     const requestToken = ++contourRequestTokenRef.current;
     contourAbortRef.current?.abort();
     contourAbortRef.current = null;
 
-    if (!isAnimatingRef.current || !activeContourPayloadRef.current) {
-      activeContourUrlRef.current = "";
-      activeContourPayloadRef.current = null;
-      setContourScreenLabels([]);
-      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
-      source.setData(EMPTY_FEATURE_COLLECTION as any);
-    } else {
-      setLayerVisibility(map, CONTOUR_LAYER_ID, true);
-    }
+    activeContourUrlRef.current = "";
+    activeContourPayloadRef.current = null;
+    setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+    setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
+    source.setData(EMPTY_FEATURE_COLLECTION as any);
 
     const controller = new AbortController();
     contourAbortRef.current = controller;
+    contourPrefetchInFlightRef.current.add(normalizedUrl);
     const startedAtMs = startNetworkTimer();
 
     void productFetch(productId, normalizedUrl, {
@@ -2578,20 +2417,14 @@ export function MapCanvas({
             contour_url_path: normalizedUrl,
           },
         });
-        return withContourLabels(payload);
+        return payload;
       })
       .then((payload) => {
         if (controller.signal.aborted || contourRequestTokenRef.current !== requestToken) {
           return;
         }
-        contourCacheRef.current.set(normalizedUrl, payload);
-        while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
-          const oldestKey = contourCacheRef.current.keys().next().value;
-          if (!oldestKey) {
-            break;
-          }
-          contourCacheRef.current.delete(oldestKey);
-        }
+        rememberContourPayload(normalizedUrl, payload);
+        contourPrefetchPriorityUrlsRef.current = contourPrefetchPriorityUrlsRef.current.filter((url) => url !== normalizedUrl);
         applyContourPayload(map, source, normalizedUrl, payload);
       })
       .catch((error) => {
@@ -2601,6 +2434,7 @@ export function MapCanvas({
         console.warn("[map] contour fetch failed", { contourGeoJsonUrl: normalizedUrl, error });
       })
       .finally(() => {
+        contourPrefetchInFlightRef.current.delete(normalizedUrl);
         if (contourAbortRef.current === controller) {
           contourAbortRef.current = null;
         }
@@ -2612,39 +2446,7 @@ export function MapCanvas({
         contourAbortRef.current = null;
       }
     };
-  }, [applyContourPayload, contourGeoJsonUrl, isLoaded, productId]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !isLoaded) {
-      return;
-    }
-
-    let rafId: number | null = null;
-    const scheduleRefresh = () => {
-      if (rafId !== null) {
-        return;
-      }
-      rafId = window.requestAnimationFrame(() => {
-        rafId = null;
-        refreshContourScreenLabels();
-      });
-    };
-
-    map.on("move", scheduleRefresh);
-    map.on("zoom", scheduleRefresh);
-    map.on("resize", scheduleRefresh);
-    scheduleRefresh();
-
-    return () => {
-      map.off("move", scheduleRefresh);
-      map.off("zoom", scheduleRefresh);
-      map.off("resize", scheduleRefresh);
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-      }
-    };
-  }, [isLoaded, refreshContourScreenLabels]);
+  }, [applyContourPayload, contourGeoJsonUrl, isLoaded, productId, promoteContourPrefetchUrl, rememberContourPayload]);
 
   useEffect(() => {
     if (!isLoaded || contourPrefetchUrls.length === 0) {
@@ -2652,20 +2454,24 @@ export function MapCanvas({
     }
 
     const controller = new AbortController();
-    const prefetchCandidates = isDesktopLayout
-      ? contourPrefetchUrls
-      : contourPrefetchUrls.slice(0, CONTOUR_PREFETCH_MOBILE_LIMIT);
+    const prefetchCandidates = [
+      ...contourPrefetchPriorityUrlsRef.current,
+      ...contourPrefetchUrls,
+    ];
+    const prefetchLimit = isDesktopLayout ? CONTOUR_PREFETCH_DESKTOP_LIMIT : CONTOUR_PREFETCH_MOBILE_LIMIT;
     const pendingUrls: string[] = [];
     for (const rawUrl of prefetchCandidates) {
       const normalizedUrl = normalizeDataUrl(rawUrl);
-      if (
-        !normalizedUrl
-        || contourCacheRef.current.has(normalizedUrl)
-        || contourPrefetchInFlightRef.current.has(normalizedUrl)
-      ) {
+      if (!normalizedUrl || pendingUrls.includes(normalizedUrl)) {
+        continue;
+      }
+      if (contourCacheRef.current.has(normalizedUrl) || contourPrefetchInFlightRef.current.has(normalizedUrl)) {
         continue;
       }
       pendingUrls.push(normalizedUrl);
+      if (pendingUrls.length >= prefetchLimit) {
+        break;
+      }
     }
 
     if (pendingUrls.length === 0) {
@@ -2702,18 +2508,12 @@ export function MapCanvas({
           if (!response.ok) {
             throw new Error(`Contour prefetch failed: ${response.status}`);
           }
-          const payload = withContourLabels((await response.json()) as GeoJSON.FeatureCollection);
+          const payload = (await response.json()) as GeoJSON.FeatureCollection;
           if (controller.signal.aborted) {
             return;
           }
-          contourCacheRef.current.set(normalizedUrl, payload);
-          while (contourCacheRef.current.size > CONTOUR_CACHE_MAX_ENTRIES) {
-            const oldestKey = contourCacheRef.current.keys().next().value;
-            if (!oldestKey) {
-              break;
-            }
-            contourCacheRef.current.delete(oldestKey);
-          }
+          rememberContourPayload(normalizedUrl, payload);
+          contourPrefetchPriorityUrlsRef.current = contourPrefetchPriorityUrlsRef.current.filter((url) => url !== normalizedUrl);
         } catch (error) {
           if (controller.signal.aborted) {
             return;
@@ -2735,7 +2535,7 @@ export function MapCanvas({
     return () => {
       controller.abort();
     };
-  }, [contourGeoJsonUrl, contourPrefetchUrls, isDesktopLayout, isLoaded, productId]);
+  }, [contourPrefetchUrls, isDesktopLayout, isLoaded, productId, rememberContourPayload]);
 
   useEffect(() => {
     const normalizedUrl = String(vectorGeoJsonUrl ?? "").trim();
@@ -3201,6 +3001,7 @@ export function MapCanvas({
           frameUrl: nextState.frameUrl,
           frameHour: nextState.frameHour,
           prefetchPivotHour: nextState.prefetchPivotHour,
+          contourGeoJsonUrl: nextState.contourGeoJsonUrl ?? null,
           compositeLayers: nextState.compositeGridLayers,
         });
       }
@@ -3246,6 +3047,7 @@ export function MapCanvas({
           frameUrl: nextState.frameUrl,
           frameHour: nextState.frameHour,
           prefetchPivotHour: nextState.prefetchPivotHour,
+          contourGeoJsonUrl: nextState.contourGeoJsonUrl ?? null,
           compositeLayers: nextState.compositeGridLayers,
         });
       }
@@ -3550,23 +3352,6 @@ export function MapCanvas({
         >
           <div className="map-pressure-center__letter">{item.type}</div>
           {item.valueLabel && <div className="map-pressure-center__value">{item.valueLabel}</div>}
-        </div>
-      ))}
-
-      {contourScreenLabels.map((item) => (
-        <div
-          key={item.id}
-          className="pointer-events-none absolute z-[35] rounded-[3px] px-1 font-mono text-[10px] font-semibold leading-none tracking-normal shadow-sm"
-          style={{
-            left: item.x,
-            top: item.y,
-            transform: `translate(-50%, -50%) rotate(${item.angle}deg)`,
-            color: CONTOUR_LABEL_COLOR,
-            textShadow: CONTOUR_LABEL_SHADOW,
-          }}
-          aria-hidden="true"
-        >
-          {item.label}
         </div>
       ))}
 

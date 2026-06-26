@@ -24,6 +24,7 @@ type UseMeteogramParams = {
   lon: number;
   models: string[];
   variables: string[];
+  pinnedRuns?: Record<string, string>;
   enabled?: boolean;
 };
 
@@ -48,6 +49,7 @@ export function useMeteogram({
   lon,
   models,
   variables,
+  pinnedRuns,
   enabled = true,
 }: UseMeteogramParams): UseMeteogramResult {
   const { getToken, isSignedIn } = useAuth();
@@ -56,9 +58,10 @@ export function useMeteogram({
 
   const modelsKey = models.join(",");
   const variablesKey = variables.join(",");
+  const pinnedRunsKey = JSON.stringify(pinnedRuns ?? {});
   const cacheKey = useMemo(
-    () => buildMeteogramCacheKey(lat, lon, models, variables),
-    [lat, lon, modelsKey, variablesKey],
+    () => buildMeteogramCacheKey(lat, lon, models, variables, pinnedRuns),
+    [lat, lon, modelsKey, variablesKey, pinnedRunsKey],
   );
 
   const getAuthHeaders = useCallback(
@@ -74,7 +77,7 @@ export function useMeteogram({
     const unsubscribe = subscribeMeteogramCache(cacheKey, bumpCacheVersion);
 
   void fetchMeteogramCached(
-    { lat, lon, models, variables, getAuthHeaders },
+    { lat, lon, models, variables, pinnedRuns, getAuthHeaders },
     {
       reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
       force: reloadKey > 0,
@@ -95,6 +98,7 @@ export function useMeteogram({
     reloadKey,
     variables,
     variablesKey,
+    pinnedRunsKey,
   ]);
 
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
@@ -106,7 +110,13 @@ export function useMeteogram({
   const error = entry?.error ?? null;
   const inFlight = isMeteogramFetchInFlight(cacheKey);
 
-  const loading = enabled && models.length > 0 && !data && inFlight;
+  // "No data and no error yet" means a fetch is pending or about to start —
+  // treat it as loading. Relying on `inFlight` alone misses the gap between a
+  // cache-key change (e.g. switching runs) and the effect that starts the fetch:
+  // the fetch start does not re-render, so `inFlight` reads false for the whole
+  // request and the empty state would flash until the fetch resolves.
+  const loading =
+    enabled && models.length > 0 && variables.length > 0 && !data && !error;
   const isUpdating = enabled && !!data && inFlight;
 
   return { data, loading, isUpdating, error, reload };

@@ -6,6 +6,7 @@ export type MeteogramFetchParams = {
   lon: number;
   models: string[];
   variables: string[];
+  pinnedRuns?: Record<string, string>;
   getAuthHeaders: () => Promise<Record<string, string>>;
 };
 
@@ -23,10 +24,19 @@ export function buildMeteogramCacheKey(
   lon: number,
   models: string[],
   variables: string[],
+  pinnedRuns?: Record<string, string>,
 ): string {
   const modelsKey = [...models].sort().join(",");
   const variablesKey = [...variables].sort().join(",");
-  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}`;
+  const hasPins = pinnedRuns && Object.keys(pinnedRuns).length > 0;
+  const runsKey = hasPins
+    ? [...models]
+        .sort()
+        .map((m) => `${m}:${pinnedRuns![m] ?? "latest"}`)
+        .join(",")
+    : "";
+  const suffix = runsKey ? `:${runsKey}` : "";
+  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}:${suffix}`;
 }
 
 export function meteogramLocationMatches(
@@ -79,7 +89,7 @@ async function requestMeteogram(
   reason: string,
 ): Promise<MeteogramResponse> {
   const startedAt = import.meta.env.DEV ? performance.now() : 0;
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
 
   try {
     const authStartedAt = import.meta.env.DEV ? performance.now() : 0;
@@ -103,6 +113,9 @@ async function requestMeteogram(
         models: params.models,
         variables: params.variables,
         run_policy: { type: "latest_per_model" },
+        ...(params.pinnedRuns && Object.keys(params.pinnedRuns).length > 0
+      ? { pinned_runs: params.pinnedRuns }
+      : {}),
       }),
     });
     const networkMs = import.meta.env.DEV ? performance.now() - networkStartedAt : 0;
@@ -154,7 +167,7 @@ export function fetchMeteogramCached(
   params: MeteogramFetchParams,
   options?: { reason?: string; force?: boolean },
 ): Promise<MeteogramResponse> {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
   const reason = options?.reason ?? "fetch";
   const force = options?.force === true;
 
@@ -182,7 +195,7 @@ export function fetchMeteogramCached(
 
 /** Warm the cache after a Forecast page location is selected. */
 export function prefetchMeteogram(params: MeteogramFetchParams, reason = "prefetch"): void {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables);
+  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
   if (params.models.length === 0 || params.variables.length === 0) return;
   if (cache.get(key)?.data) {
     devLog("prefetch skipped (cache hit)", { key, reason });

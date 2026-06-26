@@ -37,21 +37,52 @@ export const CHART_THEME = {
   dayBoundary: "hsla(0, 0%, 100%, 0.15)",
 } as const;
 
+/**
+ * Semantic colors used in the Model Detail single-model card.
+ * These are independent of model identity — they encode meteorological meaning.
+ */
+export const DETAIL_COLORS = {
+  /** Daily high temperature bars — warm red */
+  tempHigh: "#E05252",
+  /** Daily low temperature bars — cool blue */
+  tempLow: "#5B9BD5",
+  /** Temperature value labels and bar strokes */
+  tempStroke: "#E8E8E8",
+  /** Precipitation bars fill base (hex, no alpha — alpha appended in canvas) */
+  precipBar: "#4CAF82",
+  /** Precipitation bars stroke */
+  precipStroke: "#4CAF82",
+  /** Cumulative precipitation line */
+  precipCumul: "#4CAF82",
+  /** Wind speed line */
+  wind: "#94A3B8",
+} as const;
+
 // Long-range temperature guidance models (Models tab Phase 1A). NAM omitted — discontinued.
 export const TEMPERATURE_GUIDANCE_MODELS = ["ecmwf", "gfs", "aifs", "nbm"] as const;
 
 export type TemperatureGuidanceModel = (typeof TEMPERATURE_GUIDANCE_MODELS)[number];
 
+// Cumulative precipitation guidance models (Models tab Phase 1B). NAM omitted — discontinued.
+export const PRECIP_GUIDANCE_MODELS = ["ecmwf", "gfs", "nbm", "aifs"] as const;
+
+// 10 m wind speed guidance models (Models tab Phase 1B).
+export const WIND_GUIDANCE_MODELS = ["ecmwf", "gfs", "nbm"] as const;
+
+// Variables the Models tab requests in one meteogram call (Phase 1B). Shared by
+// the tab and the Forecast page prefetch so the warm cache key matches.
+export const MODELS_TAB_VARIABLES = ["tmp2m", "precip_total", "wspd10m"] as const;
+
 // Models omitted from pills and meteogram requests outside CONUS.
 export const CONUS_ONLY_GUIDANCE_MODELS = new Set<string>(["nbm"]);
 
-// uPlot series dash patterns: [on, off, …] in CSS pixels. Omit / undefined = solid.
-export const MODEL_LINE_DASH: Record<TemperatureGuidanceModel, number[] | undefined> = {
-  ecmwf: undefined,
-  gfs: [8, 4],
-  aifs: [2, 3],
-  nbm: [8, 3, 2, 3],
-};
+// Anchor (primary) model. Drawn heavier, at full opacity, and on top of the
+// others; secondary models are slightly de-emphasized.
+export const ANCHOR_GUIDANCE_MODEL = "ecmwf";
+
+export function isAnchorModel(model: string): boolean {
+  return model.toLowerCase() === ANCHOR_GUIDANCE_MODEL;
+}
 
 // Model display short names, used by pills and tooltips.
 export const MODEL_SHORT_NAMES: Record<string, string> = {
@@ -83,27 +114,35 @@ export function modelColor(model: string): string {
   return (MODEL_COLORS as Record<string, string>)[model.toLowerCase()] ?? "#9CA3AF";
 }
 
-/** Stroke color with alpha so co-linear model lines remain distinguishable when overlaid. */
-export function modelLineStroke(model: string, alpha = 0.88): string {
+/**
+ * Solid stroke color for a model line. The anchor model renders at full opacity;
+ * secondary models are slightly de-emphasized so the anchor reads as primary.
+ * Pass `alpha` to override (e.g. equal weighting in single-model sub-charts).
+ */
+export function modelLineStroke(model: string, alpha?: number): string {
   const hex = modelColor(model);
+  const a = alpha ?? (isAnchorModel(model) ? 1 : 0.7);
   if (!hex.startsWith("#") || hex.length < 7) return hex;
   const r = Number.parseInt(hex.slice(1, 3), 16);
   const g = Number.parseInt(hex.slice(3, 5), 16);
   const b = Number.parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
-/** Marker radius at coincident-value timestamps; earlier series draw larger rings underneath. */
-export const COINCIDENT_POINT_SIZE_BY_INDEX = [6, 5.5, 5, 4.5] as const;
+/** Line width (px): anchor model slightly heavier than the secondary models. */
+export function modelLineWidth(model: string): number {
+  return isAnchorModel(model) ? 2.5 : 1.75;
+}
+
+/**
+ * Draw order with the anchor model last so it renders on top of the others.
+ * Stable: preserves the relative order of the non-anchor models.
+ */
+export function orderModelsAnchorLast<T extends string>(models: readonly T[]): T[] {
+  return [...models].sort((a, b) => Number(isAnchorModel(a)) - Number(isAnchorModel(b)));
+}
 
 export function modelShortName(model: string): string {
   return MODEL_SHORT_NAMES[model.toLowerCase()] ?? model.toUpperCase();
 }
 
-export function modelLineDash(model: string): number[] | undefined {
-  const key = model.toLowerCase() as TemperatureGuidanceModel;
-  if (key in MODEL_LINE_DASH) {
-    return MODEL_LINE_DASH[key];
-  }
-  return undefined;
-}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 
 type ChartContainerProps = {
   title: string;
@@ -35,7 +36,9 @@ export function ChartContainer({
       </div>
 
       {isLoading ? (
-        <div className="h-[320px] w-full animate-pulse rounded-lg bg-white/[0.04]" />
+        <div className="flex h-[320px] w-full items-center justify-center rounded-lg bg-white/[0.02]">
+          <Loader2 className="h-6 w-6 animate-spin text-cyan-200/80" />
+        </div>
       ) : error ? (
         <div className="flex h-[320px] w-full flex-col items-center justify-center gap-3 rounded-lg bg-white/[0.02] text-center">
           <p className="px-6 text-[13px] text-white/55">{error}</p>

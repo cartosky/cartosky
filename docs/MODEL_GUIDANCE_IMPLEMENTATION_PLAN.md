@@ -16,7 +16,7 @@ The Forecast page (`/forecast`) currently exposes a single **Models** top-level 
 
 | Top-level Forecast tab | Purpose |
 |------------------------|---------|
-| **Models** | Deterministic / multi-model comparison charts (ECMWF, GFS, NAM, AIFS, NBM, etc.) |
+| **Models** | Deterministic / multi-model comparison charts (ECMWF, GFS, AIFS, NBM, etc.) |
 | **Ensembles** | EPS and GEFS ensemble guidance — mean products in Phase 2, per-member products in Phase 3 |
 
 **Locked decision:** Models and Ensembles are **separate top-level tabs** in `forecast.tsx` (alongside Hourly, 7-day, Extended, Discussion). They are not nested sub-tabs inside a single Model Guidance panel. Phase 1A ships the Models tab; the Ensembles top-level tab is added in Phase 2 (disabled or "Coming soon" until then).
@@ -48,12 +48,12 @@ Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Ph
 
 | Chart | Tab | Phase | Models / Ensembles | Variables |
 |-------|-----|-------|-------------------|-------------|
-| Multi-model hourly temperature | Models | 1A | ECMWF, GFS, NAM, AIFS, NBM | `tmp2m` |
-| Model pill filter (tab-wide) | Models | 1A | ECMWF, GFS, NAM, AIFS, NBM | — |
+| Multi-model hourly temperature | Models | 1A | ECMWF, GFS, AIFS, NBM | `tmp2m` |
+| Model pill filter (tab-wide) | Models | 1A | ECMWF, GFS, AIFS, NBM | — |
 | Multi-model cumulative precipitation | Models | 1B | ECMWF, GFS, NBM, AIFS | `precip_total` |
 | Per-model 6-hr precipitation detail | Models | 1B | ECMWF, GFS, NBM, AIFS (one sub-chart each) | `precip_total` (derived 6-hr steps) |
 | Multi-model 10 m wind speed | Models | 1B | ECMWF, GFS, NBM | `wspd10m` |
-| Daily high/low temperature toggle | Models | 1B | ECMWF, GFS, NAM, AIFS, NBM | `tmp2m` (client aggregation) |
+| Daily high/low temperature toggle | Models | 1B | ECMWF, GFS, AIFS, NBM | `tmp2m` (client aggregation) |
 | Ensemble temperature spread | Ensembles | 2 (placeholder) / 3 | EPS, GEFS | `tmp2m` — **requires per-member data** |
 | Ensemble precip probability thresholds | Ensembles | 2 (placeholder) / 3 | EPS, GEFS | `precip_total` — **requires per-member data** |
 | Ensemble mean temperature plume | Ensembles | 2 | EPS, GEFS | `tmp2m` (mean) |
@@ -81,7 +81,7 @@ Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Ph
 - Runtime artifacts use `__mean` suffix.
 - Individual GEFS member files (`atmos.5` with `member=1..30`) are **not** fetched, stored, or served.
 
-**Deterministic models** (Phases 1A/1B): ECMWF (`ecmwf`), GFS (`gfs`), NAM (`nam`), AIFS (`aifs`), NBM (`nbm`) publish single-member artifacts with no `__mean` suffix. All have `supports_sampling: True` in their capabilities.
+**Deterministic models** (Phases 1A/1B): ECMWF (`ecmwf`), GFS (`gfs`), AIFS (`aifs`), NBM (`nbm`) publish single-member artifacts with no `__mean` suffix. All have `supports_sampling: True` in their capabilities.
 
 **Implication:** Any chart requiring spread, probability of exceedance, spaghetti plots, or member-ranked snowfall **cannot** be built from current data. Phase 2 must show placeholders for those charts or ship mean-only alternatives.
 
@@ -112,7 +112,7 @@ The meteogram endpoint must **not** expose N separate HTTP round-trips to the cl
 interface MeteogramRequest {
   lat: number;          // WGS84, -90..90
   lon: number;          // WGS84, -180..180
-  models: string[];     // e.g. ["ecmwf","gfs","nam","aifs","nbm","eps","gefs"]
+  models: string[];     // e.g. ["ecmwf","gfs","aifs","nbm","eps","gefs"]
   variables: string[];    // canonical var keys, e.g. ["tmp2m","precip_total","wspd10m"]
   run_policy: RunPolicy;
   include_members?: boolean;  // Phase 3 only; default false
@@ -233,7 +233,7 @@ async def forecast_meteogram(body: MeteogramRequestIn, ...):
 | Origin in-process | Same key | 300 s | Mirror `_sample_cache` pattern in `forecast_page.py` or `main.py`. |
 | COG dataset cache | Existing `_ds_cache` | Existing | Meteogram must not bypass `_get_cached_dataset`. |
 
-**TTL reasoning:** Model cycles update every 1–6 hours; 5-minute CDN TTL balances freshness vs. fan-out cost. A single meteogram for 5 models × 3 variables × ~60 forecast hours = ~900 point samples — caching is mandatory.
+**TTL reasoning:** Model cycles update every 1–6 hours; 5-minute CDN TTL balances freshness vs. fan-out cost. A single meteogram for 4 models × 3 variables × ~60 forecast hours = ~720 point samples — caching is mandatory.
 
 **Never:** Fan out to Herbie or unpublish'd paths. If `fh{NNN}.val.cog.tif` is absent, return null for that point.
 
@@ -247,7 +247,7 @@ async def forecast_meteogram(body: MeteogramRequestIn, ...):
 
 **Recommendation (approved): uPlot** for all Model Guidance charts (Models and Ensembles tabs).
 
-Justification: Phase 3 requires 50 EPS + 30 GEFS member lines without degradation. Recharts cannot meet that bar. uPlot handles Phase 1A's 5-line temperature chart equally well with one abstraction (`UplotTimeSeriesChart`). Add dependency: `uplot` + `uplot-react` (or a ~80-line wrapper in `frontend/src/components/charts/UplotChart.tsx`) in **Phase 1A**.
+Justification: Phase 3 requires 50 EPS + 30 GEFS member lines without degradation. Recharts cannot meet that bar. uPlot handles Phase 1A's 4-line temperature chart equally well with one abstraction (`UplotTimeSeriesChart`). Add dependency: `uplot` + `uplot-react` (or a ~80-line wrapper in `frontend/src/components/charts/UplotChart.tsx`) in **Phase 1A**.
 
 Recharts remains in the repo for admin analytics only; do not use for Model Guidance.
 
@@ -301,7 +301,6 @@ Establish in **Phase 1A before any chart component**.
 export const MODEL_COLORS = {
   ecmwf: "#E85002",   // ECMWF orange
   gfs: "#1E6BB8",     // NOAA blue
-  nam: "#2CA02C",     // green
   aifs: "#9467BD",    // purple (ECMWF AI)
   aigfs: "#17BECF",   // cyan — reserved; omitted from Phase 1A/1B/2/3 charts (NOMADS reliability)
   nbm: "#BCBD22",     // olive
@@ -369,7 +368,7 @@ Padding: `p-4 md:p-5`; background `bg-white/[0.03]`; border `border-white/10`; r
 
 - Row of toggleable pills; each pill shows model short name + color dot from `MODEL_COLORS`.
 - Props: `models: string[]`, `activeModels: Set<string>`, `onChange: (next: Set<string>) => void`, `entitledModels?: Set<string>`.
-- **CONUS coverage:** When `lat/lon` is outside CONUS bbox (`-134, 24, -60, 55`), exclude `nam` and `nbm` from pills **and** from the meteogram `models[]` request — no greyed-out pill, no tooltip. Silent omission.
+- **CONUS coverage:** When `lat/lon` is outside CONUS bbox (`-134, 24, -60, 55`), exclude `nbm` from pills **and** from the meteogram `models[]` request — no greyed-out pill, no tooltip. Silent omission.
 - **Entitlements:** Hide pills for models the user is not entitled to (source: existing capabilities/entitlements data the frontend already consumes). Do not show pills that will never return data.
 - State lives in parent tab (`ModelsTabContent` / `EnsemblesTabContent`); passed to all charts as `visibleModels`.
 
@@ -405,11 +404,10 @@ Implement the full contract in Section 2. Phase 1A must support any requested va
 |-------|--------|------------------|----------------|------------------------|
 | ECMWF | `ecmwf` | `tmp2m` | `na` | 0–144 step 3; 150–360 step 6 |
 | GFS | `gfs` | `tmp2m` | `na` | 0–240 step 3; 246–384 step 6 |
-| NAM | `nam` | `tmp2m` | `conus` | 0–60 hourly |
 | AIFS | `aifs` | `tmp2m` | `na` | 0–360 step 6 (native 6-hourly points; no interpolation) |
 | NBM | `nbm` | `tmp2m` | `conus` | 1–36 hourly; then 6-hourly to 264 |
 
-**Coverage gating:** When `lat/lon` is outside CONUS bbox (`-134, 24, -60, 55`), backend may still accept `nam`/`nbm` in the request but the frontend must omit them. Backend returns `unavailable` if requested for out-of-coverage locations.
+**Coverage gating:** When `lat/lon` is outside CONUS bbox (`-134, 24, -60, 55`), backend may still accept `nbm` in the request but the frontend must omit it. Backend returns `unavailable` if requested for out-of-coverage locations.
 
 #### 4.2 Route wiring in `main.py`
 
@@ -470,14 +468,14 @@ Precipitation (`#precipitation`) and Wind (`#wind`) section anchors are **not re
 - `frontend/src/components/charts/UplotChart.tsx` (uPlot wrapper)
 - `frontend/src/components/model-guidance/ModelsTabContent.tsx`
 - `frontend/src/components/model-guidance/MultiModelTemperatureChart.tsx`
-- `frontend/src/hooks/useMeteogram.ts` — requests `variables: ["tmp2m"]`; builds `models[]` from entitled + in-coverage set (excludes NAM/NBM outside CONUS)
+- `frontend/src/hooks/useMeteogram.ts` — requests `variables: ["tmp2m"]`; builds `models[]` from entitled + in-coverage set (excludes NBM outside CONUS)
 - `frontend/src/pages/forecast.tsx` — replace `ModelsTab` body with `ModelsTabContent`; add `ensembles` to `TabId` when Phase 2 begins
 
 #### 4.5 Multi-model hourly temperature (Phase 1A)
 
 | Property | Value |
 |----------|-------|
-| Models | ECMWF, GFS, NAM, AIFS, NBM |
+| Models | ECMWF, GFS, AIFS, NBM |
 | Variable | `tmp2m` |
 | Y-axis | °F |
 | Lines | One per visible model; color from `MODEL_COLORS` |
@@ -492,10 +490,10 @@ Precipitation (`#precipitation`) and Wind (`#wind`) section anchors are **not re
 #### 4.6 Model pill filter (Phase 1A)
 
 - Renders above the temperature chart.
-- Default: all eligible models active (ECMWF, GFS, AIFS, plus NAM/NBM when inside CONUS and entitled).
+- Default: all eligible models active (ECMWF, GFS, AIFS, plus NBM when inside CONUS and entitled).
 - Toggling a pill shows/hides that model's line on the temperature chart.
 - State: `activeModels: Set<string>` in `ModelsTabContent`.
-- `useMeteogram` must not include `nam` or `nbm` in `models[]` when location is outside CONUS bbox.
+- `useMeteogram` must not include `nbm` in `models[]` when location is outside CONUS bbox.
 
 #### 4.7 Loading / error / empty states (Phase 1A)
 
@@ -516,7 +514,7 @@ Precipitation (`#precipitation`) and Wind (`#wind`) section anchors are **not re
 ### Phase 1A verification checklist
 
 - [ ] `pytest backend/tests/test_sample_batch_api.py` passes after `sampling.py` extract.
-- [ ] `curl -s -X POST http://localhost:8000/api/v4/forecast/meteogram -H 'Content-Type: application/json' -d '{"lat":45.5,"lon":-93.2,"models":["gfs","ecmwf","nam"],"variables":["tmp2m"],"run_policy":{"type":"latest_per_model"}}' | jq '.series | keys'` returns `["ecmwf","gfs","nam"]` (or subset with partial status).
+- [ ] `curl -s -X POST http://localhost:8000/api/v4/forecast/meteogram -H 'Content-Type: application/json' -d '{"lat":45.5,"lon":-93.2,"models":["gfs","ecmwf","aifs"],"variables":["tmp2m"],"run_policy":{"type":"latest_per_model"}}' | jq '.series | keys'` returns `["aifs","ecmwf","gfs"]` (or subset with partial status).
 - [ ] Same request with invalid model returns 200 with omitted model or 400 — not 500.
 - [ ] Response includes `Cache-Control: public, max-age=300`.
 - [ ] `pytest backend/tests/test_forecast_meteogram_api.py -v` passes.
@@ -526,7 +524,7 @@ Precipitation (`#precipitation`) and Wind (`#wind`) section anchors are **not re
 - [ ] Toggling model pill hides/shows series on temperature chart.
 - [ ] Location change triggers new meteogram fetch.
 - [ ] Loading skeleton, error message, and empty state each render correctly inside `ChartContainer`.
-- [ ] Location outside CONUS: NAM and NBM pills absent and omitted from meteogram `models[]`.
+- [ ] Location outside CONUS: NBM pill absent and omitted from meteogram `models[]`.
 - [ ] No precipitation or wind charts visible.
 
 ---
@@ -552,7 +550,7 @@ No new endpoints. Meteogram already supports `precip_total` and `wspd10m`; Phase
 
 ```json
 {
-  "models": ["ecmwf", "gfs", "nam", "aifs", "nbm"],
+  "models": ["ecmwf", "gfs", "aifs", "nbm"],
   "variables": ["tmp2m", "precip_total", "wspd10m"],
   "run_policy": { "type": "latest_per_model" }
 }
@@ -562,7 +560,7 @@ No new endpoints. Meteogram already supports `precip_total` and `wspd10m`; Phase
 |-------|----------------------|-------|
 | ECMWF, GFS, AIFS | `precip_total` | Cumulative from run init; respect manifest `min_fh` |
 | ECMWF, GFS, NBM | `wspd10m` | Derived from u/v components in builder |
-| NAM | `precip_total`, `wspd10m` | CONUS only |
+| NBM | `precip_total` | CONUS only |
 
 **6-hour step derivation (client-side):** `step_6h[i] = cumul[fh_i] - cumul[fh_{i-6}]` at 6-hourly boundaries from cumulative series in meteogram response. No extra API call.
 
@@ -595,7 +593,7 @@ ModelsTabContent (updated)
 
 | Property | Value |
 |----------|-------|
-| Models | ECMWF, GFS, NBM, AIFS (NAM when in CONUS; same coverage rules as Phase 1A) |
+| Models | ECMWF, GFS, NBM, AIFS (same coverage rules as Phase 1A) |
 | Variable | `precip_total` |
 | Y-axis | inches (cumulative from run init) |
 | Lines | One per visible model (pill filter applies) |
@@ -885,7 +883,7 @@ For agent convenience, these are resolved — do not re-litigate:
 | Topic | Locked decision |
 |-------|-----------------|
 | AIFS / 6-hourly models | Native points only; no interpolation; fewer points on chart is expected |
-| NAM/NBM outside CONUS | Hide pill; omit from `models[]` request silently |
+| NBM outside CONUS | Hide pill; omit from `models[]` request silently |
 | AIGFS | Omitted Phase 1A–3; color constant only |
 | HRRR | No chart work Phase 1–3; color constant only; future short-range section |
 | `run_policy` | `latest_per_model` only in v1 |

@@ -12,7 +12,9 @@ import {
   nearestFrame,
 } from "@/lib/app-utils";
 import { API_ORIGIN, OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
+import { resolveGridContourGeoJsonUrl } from "@/lib/grid-contours";
 import { selectGridManifestLod } from "@/lib/grid-lod";
+import type { MapRegionView } from "@/lib/map-region-views";
 import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
 import { MapLegend } from "@/components/map-legend";
 
@@ -21,6 +23,7 @@ type ComparePanelProps = {
   model: string;
   variable: string;
   region: string;
+  regionViews: Record<string, MapRegionView>;
   basemapMode: BasemapMode;
   showLegend: boolean;
   onMapReady: (map: maplibregl.Map) => void;
@@ -41,7 +44,7 @@ type ComparePanelProps = {
 };
 
 const API_ROOT = API_ORIGIN.replace(/\/$/, "");
-const EMPTY_REGION_VIEWS = {};
+const EMPTY_CONTOUR_PREFETCH_URLS: string[] = [];
 
 function selectionEpochForKey(key: string): number {
   let hash = 0;
@@ -56,6 +59,7 @@ export function ComparePanel({
   model,
   variable,
   region,
+  regionViews,
   basemapMode,
   showLegend,
   onMapReady,
@@ -131,6 +135,50 @@ export function ComparePanel({
 
   const gridActive = prefersGridSubstrate && Boolean(gridManifest) && Boolean(activeGridFrameUrl);
 
+  const contourGeoJsonUrl = useMemo(() => {
+    if (!gridActive) {
+      return null;
+    }
+    return resolveGridContourGeoJsonUrl({
+      model,
+      run: resolvedRun,
+      variable,
+      hour: activeGridFrameHour,
+      gridManifest,
+      frameRows,
+      apiBase: `${API_ROOT}/api/v4`,
+    });
+  }, [activeGridFrameHour, frameRows, gridActive, gridManifest, model, resolvedRun, variable]);
+
+  const contourPrefetchUrls = useMemo(() => {
+    if (!gridActive || activeGridFrameHour === null || gridFrameHours.length <= 1) {
+      return EMPTY_CONTOUR_PREFETCH_URLS;
+    }
+    const pivotIndex = gridFrameHours.indexOf(activeGridFrameHour);
+    const candidateHours = pivotIndex >= 0
+      ? [
+          ...gridFrameHours.slice(pivotIndex + 1, pivotIndex + 7),
+          ...gridFrameHours.slice(Math.max(0, pivotIndex - 2), pivotIndex).reverse(),
+        ]
+      : gridFrameHours.slice(1, 7);
+    const urls: string[] = [];
+    for (const hour of candidateHours) {
+      const url = resolveGridContourGeoJsonUrl({
+        model,
+        run: resolvedRun,
+        variable,
+        hour,
+        gridManifest,
+        frameRows,
+        apiBase: `${API_ROOT}/api/v4`,
+      });
+      if (url && url !== contourGeoJsonUrl && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+    return urls;
+  }, [activeGridFrameHour, contourGeoJsonUrl, frameRows, gridActive, gridFrameHours, gridManifest, model, resolvedRun, variable]);
+
   const onFirstFrameReadyRef = useRef(onFirstFrameReady);
   onFirstFrameReadyRef.current = onFirstFrameReady;
   const firstFrameReadyFiredRef = useRef(false);
@@ -196,9 +244,11 @@ export function ComparePanel({
         gridFrameHour={gridActive && activeGridFrameHour !== null ? activeGridFrameHour : null}
         gridLegend={gridActive ? legend : null}
         gridActive={gridActive}
+        contourGeoJsonUrl={gridActive ? contourGeoJsonUrl : null}
+        contourPrefetchUrls={gridActive ? contourPrefetchUrls : EMPTY_CONTOUR_PREFETCH_URLS}
         variable={variable}
         region={region}
-        regionViews={EMPTY_REGION_VIEWS}
+        regionViews={regionViews}
         opacity={OVERLAY_DEFAULT_OPACITY}
         mode="idle-warmup"
         basemapMode={basemapMode}

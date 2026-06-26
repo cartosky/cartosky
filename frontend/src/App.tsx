@@ -2524,35 +2524,103 @@ export default function App() {
     if (!model || !displayedOverlayVariable || frameRows.length <= 1 || !resolvedRunForRequests) {
       return [] as string[];
     }
-    const currentHour = Number.isFinite(resolvedGridDisplayHour)
-      ? Number(resolvedGridDisplayHour)
-      : Number.isFinite(visibleOverlayHour)
-        ? Number(visibleOverlayHour)
-        : Number(visibleOverlayFrame?.fh);
     const orderedRows = [...frameRows].sort((a, b) => Number(a.fh) - Number(b.fh));
-    const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === currentHour);
-    const contourPrefetchAhead = isDesktopViewerLayout ? 12 : 6;
-    const contourPrefetchBehind = isDesktopViewerLayout ? 4 : 2;
-    const contourPrefetchFallbackEnd = isDesktopViewerLayout ? 17 : 9;
-    const candidateRows = pivotIndex >= 0
-      ? [
-          orderedRows[pivotIndex],
-          ...orderedRows.slice(pivotIndex + 1, pivotIndex + 1 + contourPrefetchAhead),
-          ...orderedRows.slice(Math.max(0, pivotIndex - contourPrefetchBehind), pivotIndex).reverse(),
-        ]
-      : orderedRows.slice(1, contourPrefetchFallbackEnd);
+    const orderedHours = orderedRows
+      .map((row) => Number(row.fh))
+      .filter((hour) => Number.isFinite(hour));
+    if (orderedHours.length === 0) {
+      return [] as string[];
+    }
+    const contourTargetHourCandidate = Number.isFinite(gridPlaybackHourRef.current)
+      ? Number(gridPlaybackHourRef.current)
+      : (Number.isFinite(pendingScrubHourRef.current)
+        ? Number(pendingScrubHourRef.current)
+        : (Number.isFinite(scrubRequestedHourRef.current)
+          ? Number(scrubRequestedHourRef.current)
+          : (Number.isFinite(targetForecastHourRef.current)
+            ? Number(targetForecastHourRef.current)
+            : (Number.isFinite(forecastHourRef.current)
+              ? Number(forecastHourRef.current)
+              : Number(orderedRows[0]?.fh)))));
+    const contourTargetHour = Number.isFinite(contourTargetHourCandidate)
+      ? Number(contourTargetHourCandidate)
+      : orderedHours[0];
+    const pivotHour = nearestFrame(orderedHours, contourTargetHour);
+    const pivotIndex = orderedRows.findIndex((row) => Number(row.fh) === pivotHour);
+    const contourPriorityFuture = isDesktopViewerLayout ? 12 : 6;
+    const contourPriorityPast = isDesktopViewerLayout ? 6 : 3;
+    const contourDirection: 1 | -1 | 0 = scrubDirectionRef.current;
+    const candidateRows: FrameRow[] = [];
+    const pushedHours = new Set<number>();
+    const pushRowAtIndex = (index: number) => {
+      const row = orderedRows[index];
+      if (!row) {
+        return;
+      }
+      const hour = Number(row.fh);
+      if (!Number.isFinite(hour) || pushedHours.has(hour)) {
+        return;
+      }
+      pushedHours.add(hour);
+      candidateRows.push(row);
+    };
+
+    if (pivotIndex >= 0) {
+      pushRowAtIndex(pivotIndex);
+      if (contourDirection < 0) {
+        for (let step = 1; step <= contourPriorityPast; step += 1) {
+          pushRowAtIndex(pivotIndex - step);
+        }
+        for (let step = 1; step <= contourPriorityFuture; step += 1) {
+          pushRowAtIndex(pivotIndex + step);
+        }
+        for (let index = pivotIndex + contourPriorityFuture + 1; index < orderedRows.length; index += 1) {
+          pushRowAtIndex(index);
+        }
+        for (let index = pivotIndex - contourPriorityPast - 1; index >= 0; index -= 1) {
+          pushRowAtIndex(index);
+        }
+      } else {
+        for (let step = 1; step <= contourPriorityFuture; step += 1) {
+          pushRowAtIndex(pivotIndex + step);
+        }
+        for (let step = 1; step <= contourPriorityPast; step += 1) {
+          pushRowAtIndex(pivotIndex - step);
+        }
+        for (let index = pivotIndex + contourPriorityFuture + 1; index < orderedRows.length; index += 1) {
+          pushRowAtIndex(index);
+        }
+        for (let index = pivotIndex - contourPriorityPast - 1; index >= 0; index -= 1) {
+          pushRowAtIndex(index);
+        }
+      }
+    } else {
+      for (let index = 0; index < orderedRows.length; index += 1) {
+        pushRowAtIndex(index);
+      }
+    }
+
     const urls: string[] = [];
+    const seenUrls = new Set<string>();
     for (const row of candidateRows) {
       if (!row) {
         continue;
       }
       const url = contourGeoJsonUrlForHour(Number(row.fh));
-      if (url && url !== contourGeoJsonUrl && !urls.includes(url)) {
+      if (url && !seenUrls.has(url)) {
+        seenUrls.add(url);
         urls.push(url);
       }
     }
     return urls;
-  }, [contourGeoJsonUrl, contourGeoJsonUrlForHour, displayedOverlayVariable, frameRows, isDesktopViewerLayout, model, resolvedGridDisplayHour, resolvedRunForRequests, visibleOverlayFrame, visibleOverlayHour]);
+  }, [
+    contourGeoJsonUrlForHour,
+    displayedOverlayVariable,
+    frameRows,
+    isDesktopViewerLayout,
+    model,
+    resolvedRunForRequests,
+  ]);
   const pressureCenters = useMemo(() => {
     const frameMeta = extractLegendMeta(visibleOverlayFrame) ?? extractLegendMeta(frameRows[0] ?? null);
     return Array.isArray(frameMeta?.pressure_centers) ? frameMeta.pressure_centers : [];
@@ -4643,6 +4711,7 @@ export default function App() {
     const targetHour = Number.isFinite(gridPlaybackHourRef.current)
       ? Number(gridPlaybackHourRef.current)
       : (Number.isFinite(resolvedGridDisplayHour) ? Number(resolvedGridDisplayHour) : null);
+    const contourUrl = contourGeoJsonUrlForHour(targetHour);
     const loopWrapPrefetchHour = gridPlaybackLoopWrapTargetRef.current;
     const prefetchPivotHour = Number.isFinite(loopWrapPrefetchHour)
       ? Number(loopWrapPrefetchHour)
@@ -4652,9 +4721,10 @@ export default function App() {
       frameUrl: animatedCompositeLayers.length === 0 ? gridFrameUrlForHour(targetHour) : null,
       frameHour: targetHour,
       prefetchPivotHour,
+      contourGeoJsonUrl: contourUrl,
       compositeGridLayers: animatedCompositeLayers,
     };
-  }, [buildCompositeGridLayersForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
+  }, [buildCompositeGridLayersForHour, contourGeoJsonUrlForHour, gridFrameUrlForHour, isGridLowMidActive, resolvedGridDisplayHour]);
 
   const directGridPlaybackActive = useMemo(() => {
     if (!isGridLowMidActive || isPlaying || isGridPreloadingForPlay || isScrubbing) {
@@ -4692,15 +4762,18 @@ export default function App() {
       return null;
     }
     const targetHour = nearestFrame(gridFrameHours, Number(targetCandidate));
+    const contourUrl = contourGeoJsonUrlForHour(targetHour);
     const directCompositeLayers = buildCompositeGridLayersForHour(targetHour);
     return {
       frameUrl: directCompositeLayers.length === 0 ? gridFrameUrlForHour(targetHour) : null,
       frameHour: targetHour,
       prefetchPivotHour: targetHour,
+      contourGeoJsonUrl: contourUrl,
       compositeGridLayers: directCompositeLayers,
     };
   }, [
     buildCompositeGridLayersForHour,
+    contourGeoJsonUrlForHour,
     directGridPlaybackActive,
     gridFrameHours,
     gridFrameUrlForHour,

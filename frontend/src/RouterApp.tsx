@@ -130,7 +130,7 @@ export default function RouterApp() {
     <Routes>
       <Route element={<MarketingLayout />}>
         <Route path="/" element={<Home />} />
-        <Route path="/forecast" element={<Forecast />} />
+        <Route path="/forecast" element={<CapabilitiesProvider><Forecast /></CapabilitiesProvider>} />
         <Route path="/climate" element={<Climate />} />
         <Route path="/models" element={<Models />} />
         <Route path="/variables" element={<Variables />} />
