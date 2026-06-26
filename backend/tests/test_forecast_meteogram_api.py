@@ -432,6 +432,26 @@ async def test_meteogram_multi_variable_returns_all_three(client: httpx.AsyncCli
         assert points and all(p["value"] == TEST_VALUE for p in points)
 
 
+async def test_meteogram_prefers_manifest_valid_time_and_units(client: httpx.AsyncClient) -> None:
+    # Production manifests carry per-frame valid_time + the variable's units, so
+    # the meteogram sources both from the manifest (one read) and skips per-frame
+    # sidecar reads. Inject sentinel manifest values that differ from the sidecars
+    # and assert the manifest values win.
+    manifest_path = main_module.MANIFESTS_ROOT / "gfs" / "20260306_00z.json"
+    manifest = json.loads(manifest_path.read_text())
+    entry = manifest["variables"]["tmp2m"]
+    entry["units"] = "ZZ"
+    entry["frames"] = [{"fh": fh, "valid_time": "2099-01-01T00:00:00Z"} for fh in FRAME_HOURS]
+    manifest_path.write_text(json.dumps(manifest))
+    _reset_main_caches()
+
+    response = await client.post("/api/v4/forecast/meteogram", json=_body(["gfs"], ["tmp2m"]))
+    assert response.status_code == 200
+    tmp2m = response.json()["series"]["gfs"]["variables"]["tmp2m"]
+    assert tmp2m["units"] == "ZZ"
+    assert all(p["valid_time"] == "2099-01-01T00:00:00Z" for p in tmp2m["points"])
+
+
 async def test_model_guidance_v4_returns_410(client: httpx.AsyncClient) -> None:
     # Retired after Phase 1B; clients must use POST /api/v4/forecast/meteogram.
     response = await client.get("/api/v4/model-guidance?lat=45.5&lon=-100.5")

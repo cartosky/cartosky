@@ -1917,38 +1917,6 @@ def _model_supports_members(model: str) -> bool:
         return False
 
 
-def _sample_variable_series(
-    model: str,
-    run_id: str,
-    var: str,
-    *,
-    lat: float,
-    lon: float,
-    region: str | None,
-) -> dict[str, Any]:
-    fhs = sampling.manifest_frame_hours(model, run_id, var, region=region)
-    if not fhs:
-        return {"units": _variable_units(model, var, None), "points": None, "error": "artifact_not_found"}
-
-    # Sample all frames concurrently — the per-frame COG opens are the dominant
-    # cost of a cold meteogram, and they are I/O-bound.
-    sampled = sampling.sample_frames(model, run_id, var, fhs, lat=lat, lon=lon, region=region)
-
-    points: list[dict[str, Any]] = []
-    units: str | None = None
-    for fh, value, valid_time, frame_units in sampled:
-        if units is None and frame_units:
-            units = frame_units
-        points.append({"fh": fh, "valid_time": valid_time, "value": value})
-
-    resolved_units = _variable_units(model, var, units)
-    if not points:
-        return {"units": resolved_units, "points": None, "error": "artifact_not_found"}
-
-    points.sort(key=lambda item: item["fh"])
-    return {"units": resolved_units, "points": points}
-
-
 def get_forecast_meteogram(
     *,
     lat: float,
@@ -2046,39 +2014,82 @@ def get_forecast_meteogram(
                 return payload
             _meteogram_cache.pop(cache_key, None)
 
+    # Build the per-(model, variable) plan from manifests (one cached read each):
+    # forecast hours + their valid_times + units. Sampling then reads only the COG
+    # value per frame — valid_time/units come from the manifest, not a per-frame
+    # sidecar — and every frame across all models/variables is sampled in one pass.
     series: dict[str, Any] = {}
+    plan: list[tuple[str, str, str, list[tuple[int, str | None]], str | None]] = []
+    sample_tasks: list[tuple[str, str, str, int]] = []
     for model in norm_models:
         if entitled.get(model) is False:
             series[model] = {"status": "not_entitled"}
             continue
-
         run_id = run_ids.get(model)
         if not run_id:
             series[model] = {"status": "unavailable", "run_id": None}
             continue
+        for var in norm_vars:
+            frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
+            plan.append((model, run_id, var, frames, units))
+            for fh, _vt in frames:
+                sample_tasks.append((model, run_id, var, fh))
 
+    sampled = sampling.sample_values_parallel(sample_tasks, lat=lat, lon=lon, region=region)
+    value_by_key: dict[tuple[str, str, int], tuple[bool, float | None]] = {}
+    for task, res in zip(sample_tasks, sampled):
+        value_by_key[(task[0], task[2], task[3])] = res
+
+    # Frames whose manifest omits valid_time fall back to the canonical sidecar.
+    # Normally empty (the publish pipeline writes valid_time into the manifest),
+    # so this adds no reads on the hot path.
+    vt_fallback_tasks = [
+        (model, run_id, var, fh)
+        for model, run_id, var, frames, _units in plan
+        for fh, vt in frames
+        if vt is None and value_by_key.get((model, var, fh), (False, None))[0]
+    ]
+    vt_by_key: dict[tuple[str, str, int], str | None] = {}
+    if vt_fallback_tasks:
+        for task, vt in zip(
+            vt_fallback_tasks, sampling.read_frame_valid_times(vt_fallback_tasks, region=region)
+        ):
+            vt_by_key[(task[0], task[2], task[3])] = vt
+
+    var_results_by_model: dict[str, dict[str, Any]] = {}
+    vars_with_values_by_model: dict[str, int] = {}
+    for model, run_id, var, frames, units in plan:
+        points: list[dict[str, Any]] = []
+        for fh, valid_time in frames:
+            present, value = value_by_key.get((model, var, fh), (False, None))
+            if not present:
+                continue
+            if valid_time is None:
+                valid_time = vt_by_key.get((model, var, fh))
+            points.append({"fh": fh, "valid_time": valid_time, "value": value})
+        resolved_units = _variable_units(model, var, units)
+        if points:
+            points.sort(key=lambda item: item["fh"])
+            result: dict[str, Any] = {"units": resolved_units, "points": points}
+            if any(p["value"] is not None for p in points):
+                vars_with_values_by_model[model] = vars_with_values_by_model.get(model, 0) + 1
+        else:
+            result = {"units": resolved_units, "points": None, "error": "artifact_not_found"}
+        var_results_by_model.setdefault(model, {})[var] = result
+
+    for model in norm_models:
+        if model in series:  # already set: not_entitled / unavailable
+            continue
+        run_id = run_ids.get(model)
         run_dt = parse_run_id_datetime(run_id)
         run_time = _isoformat(run_dt) if run_dt is not None else None
-
-        var_results: dict[str, Any] = {}
-        vars_with_values = 0
-        for var in norm_vars:
-            result = _sample_variable_series(model, run_id, var, lat=lat, lon=lon, region=region)
-            var_results[var] = result
-            points = result.get("points")
-            if isinstance(points, list) and any(p.get("value") is not None for p in points):
-                vars_with_values += 1
-
-        if vars_with_values == len(norm_vars) and vars_with_values > 0:
-            status = "ok"
-        else:
-            status = "partial"
-
+        vwv = vars_with_values_by_model.get(model, 0)
+        status = "ok" if (vwv == len(norm_vars) and vwv > 0) else "partial"
         series[model] = {
             "run_id": run_id,
             "run_time": run_time,
             "status": status,
-            "variables": var_results,
+            "variables": var_results_by_model.get(model, {}),
         }
 
     payload = {

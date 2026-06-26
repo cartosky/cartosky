@@ -316,21 +316,25 @@ def resolve_latest_complete_run(
     return None
 
 
-def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None = None) -> list[int]:
-    """Return the sorted forecast hours published for ``var`` in ``run``.
+def manifest_frame_entries(
+    model: str, run: str, var: str, *, region: str | None = None
+) -> tuple[list[tuple[int, str | None]], str | None]:
+    """Return ``([(fh, valid_time), ...], units)`` for ``var`` in ``run``.
 
-    Mirrors the frame source used by ``/api/v4/{model}/{run}/{var}/frames``:
-    the manifest ``variables[<canonical_var>].frames[].fh`` list.
+    Reads the run manifest once (it is ``_load_json_cached``). The publish
+    pipeline writes per-frame ``valid_time`` and the variable's ``units`` into
+    the manifest, so the meteogram can source both here and skip a per-frame
+    sidecar read. Frames are sorted and de-duplicated by fh.
     """
     from .. import main as _main
     from ..models.registry import get_model
 
     manifest = _main._load_manifest(model, run, region=region)
     if not isinstance(manifest, dict):
-        return []
+        return [], None
     variables = manifest.get("variables")
     if not isinstance(variables, dict):
-        return []
+        return [], None
 
     canonical_var = var
     try:
@@ -344,18 +348,32 @@ def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None =
     if not isinstance(entry, dict):
         entry = variables.get(var)
     if not isinstance(entry, dict):
-        return []
+        return [], None
 
     frames = entry.get("frames")
     if not isinstance(frames, list):
-        return []
+        return [], None
 
-    hours = {
-        int(item["fh"])
-        for item in frames
-        if isinstance(item, dict) and isinstance(item.get("fh"), int)
-    }
-    return sorted(hours)
+    by_fh: dict[int, str | None] = {}
+    for item in frames:
+        if not isinstance(item, dict) or not isinstance(item.get("fh"), int):
+            continue
+        vt = item.get("valid_time")
+        by_fh[int(item["fh"])] = vt if isinstance(vt, str) and vt else None
+
+    units_raw = entry.get("units")
+    units = str(units_raw) if isinstance(units_raw, str) and units_raw else None
+    return sorted(by_fh.items()), units
+
+
+def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None = None) -> list[int]:
+    """Return the sorted forecast hours published for ``var`` in ``run``.
+
+    Mirrors the frame source used by ``/api/v4/{model}/{run}/{var}/frames``:
+    the manifest ``variables[<canonical_var>].frames[].fh`` list.
+    """
+    entries, _units = manifest_frame_entries(model, run, var, region=region)
+    return [fh for fh, _vt in entries]
 
 
 def sample_point_value(cog_path: Path, *, lat: float, lon: float) -> float | None:
@@ -372,16 +390,17 @@ def sample_point_value(cog_path: Path, *, lat: float, lon: float) -> float | Non
     return round(float(value), 1)
 
 
-# Concurrency for the meteogram frame fan-out. COG opens are I/O-bound and GDAL
-# releases the GIL, so threads give a near-linear speedup over the sequential
-# per-frame opens (which dominate a cold meteogram request).
+# Concurrency for the meteogram frame fan-out. Threads overlap COG opens when
+# the workload is I/O-bound (cold page cache / remote storage); when the COGs
+# are hot in page cache the opens are GIL-bound and threads don't help — see the
+# note on ``sample_values_parallel`` for the process-pool escape hatch.
 _METEOGRAM_SAMPLE_WORKERS = 16
 
-# One (fh, value, valid_time, units) row for a frame whose value COG exists.
-FrameSample = tuple[int, float | None, str | None, str | None]
+# (model, run_id, var, fh) — one frame to sample.
+SampleTask = tuple[str, str, str, int]
 
 
-def _sample_one_frame(
+def sample_value(
     model: str,
     run_id: str,
     var: str,
@@ -389,61 +408,80 @@ def _sample_one_frame(
     *,
     lat: float,
     lon: float,
-    region: str | None,
-) -> FrameSample | None:
-    """Sample one forecast hour. Thread-safe: opens and closes its own dataset
-    (not the shared ``_ds_cache``, whose LRU eviction closes handles other
-    threads may still be reading). Returns ``None`` when the value COG is absent
-    so the frame is omitted, matching the sequential path's behavior.
+    region: str | None = None,
+) -> tuple[bool, float | None]:
+    """Sample one frame's value COG. Thread-safe: opens and closes its own
+    dataset (not the shared ``_ds_cache``, whose LRU eviction closes handles
+    other threads may still be reading).
+
+    Returns ``(present, value)``: ``present`` is False when the value COG is
+    absent (the caller omits the frame, matching the prior behavior); ``value``
+    is None for nodata / out-of-bounds / read errors on a present COG. No sidecar
+    is read here — ``valid_time`` and ``units`` come from the run manifest.
     """
     cog = _resolve_val_cog(model, run_id, var, fh, region=region)
     if cog is None:
-        return None
-    value: float | None = None
+        return (False, None)
     try:
         with rasterio.open(cog) as ds:
             row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
             raw, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-            value = None if (no_data or raw is None) else round(float(raw), 1)
+            return (True, None if (no_data or raw is None) else round(float(raw), 1))
     except Exception:
         logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
-        value = None
-    sidecar = _resolve_sidecar(model, run_id, var, fh, region=region)
-    valid_time = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
-    units: str | None = None
-    if isinstance(sidecar, dict):
-        sidecar_units = sidecar.get("units")
-        if sidecar_units:
-            units = str(sidecar_units)
-    return (fh, value, valid_time, units)
+        return (True, None)
 
 
-def sample_frames(
-    model: str,
-    run_id: str,
-    var: str,
-    fhs: list[int],
+def sample_values_parallel(
+    tasks: list[SampleTask],
     *,
     lat: float,
     lon: float,
     region: str | None = None,
-) -> list[FrameSample]:
-    """Sample many forecast hours for one model/variable concurrently.
+) -> list[tuple[bool, float | None]]:
+    """Sample every frame in ``tasks`` (all models/variables for one request) in
+    a single pool, returning ``(present, value)`` per task in input order.
 
-    Returns the per-frame rows for frames whose value COG exists (order is not
-    guaranteed; callers sort by fh). Falls back to a sequential pass for a single
-    frame to avoid pool overhead.
+    Uses a thread pool: effective only while the per-frame COG opens are
+    I/O-bound. If profiling shows the opens are GIL-bound (hot page cache), swap
+    ``ThreadPoolExecutor`` for ``ProcessPoolExecutor`` here — the worker
+    (:func:`sample_value`) is already a top-level, picklable function with no
+    shared state, so that is the only change required.
     """
-    if len(fhs) <= 1:
-        rows = [_sample_one_frame(model, run_id, var, fh, lat=lat, lon=lon, region=region) for fh in fhs]
-        return [row for row in rows if row is not None]
+    if not tasks:
+        return []
+    if len(tasks) == 1:
+        m, r, v, fh = tasks[0]
+        return [sample_value(m, r, v, fh, lat=lat, lon=lon, region=region)]
 
-    workers = min(_METEOGRAM_SAMPLE_WORKERS, len(fhs))
+    workers = min(_METEOGRAM_SAMPLE_WORKERS, len(tasks))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        rows = list(
+        return list(
             pool.map(
-                lambda fh: _sample_one_frame(model, run_id, var, fh, lat=lat, lon=lon, region=region),
-                fhs,
+                lambda t: sample_value(t[0], t[1], t[2], t[3], lat=lat, lon=lon, region=region),
+                tasks,
             )
         )
-    return [row for row in rows if row is not None]
+
+
+def read_frame_valid_times(
+    tasks: list[SampleTask], *, region: str | None = None
+) -> list[str | None]:
+    """Sidecar ``valid_time`` per task, in input order.
+
+    Fallback for frames whose run manifest omits per-frame valid_time (the
+    sidecar is the canonical source — same one ``/frames`` reads). Normally the
+    manifest carries valid_time, so this is called with an empty/short list.
+    """
+    def _one(t: SampleTask) -> str | None:
+        sidecar = _resolve_sidecar(t[0], t[1], t[2], t[3], region=region)
+        vt = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
+        return vt if isinstance(vt, str) and vt else None
+
+    if not tasks:
+        return []
+    if len(tasks) == 1:
+        return [_one(tasks[0])]
+    workers = min(_METEOGRAM_SAMPLE_WORKERS, len(tasks))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_one, tasks))
