@@ -42,6 +42,7 @@ import {
   buildAnchorDisplayGeoJson,
   buildInactiveAnchorFeatureCollection,
   getActiveAnchorLabels,
+  resolveCityLabelMode,
   shouldEnableAnchorValueDisplay,
   type AnchorFeatureCollection,
 } from "@/lib/anchor-labels";
@@ -726,6 +727,7 @@ export default function App() {
     variable,
     supportsSampling: selectedModelSupportsSampling,
   });
+  const cityLabelMode = resolveCityLabelMode({ model, variable });
   const selectedVariableConstraints = (selectedVariableCapability?.constraints ?? {}) as Record<string, unknown>;
   const selectedModelDefaultFrameSelection = readCapabilityDefaultFrameSelection(selectedModelCapability);
   const selectedTimeAxisMode = readCapabilityTimeAxisMode(selectedModelCapability);
@@ -4371,7 +4373,7 @@ export default function App() {
     values: Record<string, number | null>;
     units: string;
   }) => {
-    if (payload.gridSampled || !anchorValueDisplayEnabled || !pointLabelsEnabled) {
+    if (payload.gridSampled || cityLabelMode !== "value" || !pointLabelsEnabled) {
       return;
     }
     if (!variable || !model || !Number.isFinite(payload.frameHour) || payload.points.length === 0) {
@@ -4417,7 +4419,7 @@ export default function App() {
         console.warn("[city-labels] batch sample failed", error);
       });
   }, [
-    anchorValueDisplayEnabled,
+    cityLabelMode,
     ensembleView,
     model,
     pointLabelsEnabled,
@@ -5390,10 +5392,10 @@ export default function App() {
             anchorValueDisplayEnabled && pointLabelsEnabled ? handleAnchorFrameSampled : undefined
           }
           onCityFrameSampled={
-            anchorValueDisplayEnabled && pointLabelsEnabled ? handleCityFrameSampled : undefined
+            cityLabelMode === "value" && pointLabelsEnabled ? handleCityFrameSampled : undefined
           }
           pointLabelsEnabled={pointLabelsEnabled}
-          cityLabelsValueEnabled={anchorValueDisplayEnabled}
+          cityLabelMode={cityLabelMode}
           onCityLabelsReady={() => {
             cityLabelsReadyRef.current = true;
             maybeSignalViewerReady();

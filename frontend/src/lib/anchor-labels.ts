@@ -44,12 +44,21 @@ export type ActiveAnchorLabel = {
 
 export type AnchorDisplayMode = "always" | "active-only" | "hidden";
 
+export type CityLabelMode = "off" | "name-only" | "value";
+
 export type AnchorDisplayRule = {
   mode: AnchorDisplayMode;
   threshold?: number;
 };
 
 const DEFAULT_ANCHOR_DISPLAY_RULE: AnchorDisplayRule = Object.freeze({ mode: "always" });
+
+const CITY_NAME_ONLY_MODELS = new Set(["goes-east", "nws_hazards", "spc", "cpc"]);
+const MRMS_VALUE_LABEL_VARS = new Set([
+  "mrms_recent_precip_6h",
+  "mrms_recent_precip_24h",
+  "mrms_recent_precip_72h",
+]);
 
 export const ANCHOR_DISPLAY_RULES: Readonly<Record<string, AnchorDisplayRule>> = Object.freeze({
   tmp2m: { mode: "always" },
@@ -93,6 +102,27 @@ export function normalizeAnchorVariableKey(varKey: string): string {
 export function resolveAnchorDisplayRule(varKey: string): AnchorDisplayRule {
   const normalized = normalizeAnchorVariableKey(varKey);
   return ANCHOR_DISPLAY_RULES[normalized] ?? DEFAULT_ANCHOR_DISPLAY_RULE;
+}
+
+export function resolveCityLabelMode(params: {
+  model: string | null | undefined;
+  variable: string | null | undefined;
+}): CityLabelMode {
+  const normalizedModel = String(params.model ?? "").trim().toLowerCase();
+  const normalizedVariable = String(params.variable ?? "").trim().toLowerCase();
+
+  if (!normalizedModel || !normalizedVariable) {
+    return "off";
+  }
+  if (normalizedModel === "mrms") {
+    return MRMS_VALUE_LABEL_VARS.has(normalizedVariable) ? "value" : "name-only";
+  }
+  if (CITY_NAME_ONLY_MODELS.has(normalizedModel)) {
+    return "name-only";
+  }
+  return resolveAnchorDisplayRule(normalizedVariable).mode === "hidden"
+    ? "name-only"
+    : "value";
 }
 
 export function shouldEnableAnchorValueDisplay(params: {

@@ -5,7 +5,7 @@ import maplibregl, { type LayerSpecification, type StyleSpecification } from "ma
 import type { GeoJSON } from "geojson";
 
 import type { LegendPayload } from "@/components/map-legend";
-import { type AnchorBatchPoint, type AnchorFeatureCollection } from "@/lib/anchor-labels";
+import { type AnchorBatchPoint, type AnchorFeatureCollection, type CityLabelMode } from "@/lib/anchor-labels";
 import {
   CITIES_STATIC_SOURCE_ID,
   CITY_LABEL_CANDIDATES_LAYER_ID,
@@ -1083,9 +1083,7 @@ type MapCanvasProps = {
   vectorLineHaloEnabled?: boolean;
   anchorGeoJson?: AnchorFeatureCollection | null;
   pointLabelsEnabled?: boolean;
-  /** When false, city labels render names with a "…" placeholder instead of a
-   *  sampled value (e.g. ptype/MRMS/GOES-East have no scalar field to sample). */
-  cityLabelsValueEnabled?: boolean;
+  cityLabelMode?: CityLabelMode;
   showZoomControls?: boolean;
   isDesktopLayout?: boolean;
   legendButtonVisible?: boolean;
@@ -1178,7 +1176,7 @@ export function MapCanvas({
   vectorLineHaloEnabled = false,
   anchorGeoJson = null,
   pointLabelsEnabled = true,
-  cityLabelsValueEnabled = true,
+  cityLabelMode = "value",
   showZoomControls = false,
   isDesktopLayout = false,
   legendButtonVisible = false,
@@ -1280,8 +1278,8 @@ export function MapCanvas({
   isLoadedRef.current = isLoaded;
   const pointLabelsEnabledRef = useRef(pointLabelsEnabled);
   pointLabelsEnabledRef.current = pointLabelsEnabled;
-  const cityLabelsValueEnabledRef = useRef(cityLabelsValueEnabled);
-  cityLabelsValueEnabledRef.current = cityLabelsValueEnabled;
+  const cityLabelModeRef = useRef<CityLabelMode>(cityLabelMode);
+  cityLabelModeRef.current = cityLabelMode;
   const onCityLabelsReadyRef = useRef(onCityLabelsReady);
   onCityLabelsReadyRef.current = onCityLabelsReady;
   // Per-selection latch: fire onCityLabelsReady once per selection (reset on
@@ -1731,10 +1729,10 @@ export function MapCanvas({
       return;
     }
 
-    // Case 1: no grid sampler (vector-only / hazard / static selection) — city
-    // values can never sample, so don't block the screenshot.
-    const latest = latestCitySamplingRef.current;
-    if (!latest) {
+    const cityMode = cityLabelModeRef.current;
+    if (cityMode === "off") {
+      clearCityValueLabels(map);
+      setCityLabelNameOnlyMode(map, false);
       markCityLabelsReady();
       return;
     }
@@ -1752,15 +1750,20 @@ export function MapCanvas({
       return;
     }
 
-    // No scalar field to sample for this variable/model (e.g. radar ptype,
-    // MRMS, GOES-East): show clean city name labels (no value pill) instead.
-    if (!cityLabelsValueEnabledRef.current) {
+    if (cityMode === "name-only") {
+      clearCityValueLabels(map);
       setCityLabelNameOnlyMode(map, true);
       markCityLabelsReady();
       return;
     }
-    // Ensure value mode is active when values are enabled.
+
     setCityLabelNameOnlyMode(map, false);
+
+    const latest = latestCitySamplingRef.current;
+    if (!latest) {
+      clearCityValueLabels(map);
+      return;
+    }
 
     const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
     const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
@@ -2855,26 +2858,32 @@ export function MapCanvas({
       }
     } else {
       // Restore correct mode and refresh
-      setCityLabelNameOnlyMode(map, !cityLabelsValueEnabledRef.current);
-      if (cityLabelsValueEnabledRef.current) {
+      setCityLabelNameOnlyMode(map, cityLabelModeRef.current === "name-only");
+      if (cityLabelModeRef.current === "off") {
+        clearCityValueLabels(map);
+      } else if (cityLabelModeRef.current === "value") {
         scheduleCityLabelRefresh();
       }
     }
   }, [isLoaded, pointLabelsEnabled, scheduleCityLabelRefresh]);
 
-  // Toggle name-only mode immediately when value display is enabled/disabled
-  // (e.g. switching to/from ptype/MRMS/GOES-East), so the layer flips without
-  // waiting for the next frame sample. A follow-up refresh repopulates values.
+  // Toggle city label mode immediately on selection change so the layer flips
+  // without waiting for the next frame sample.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !isLoaded) {
       return;
     }
-    setCityLabelNameOnlyMode(map, !cityLabelsValueEnabled);
-    if (cityLabelsValueEnabled) {
+    if (cityLabelMode === "off") {
+      clearCityValueLabels(map);
+      setCityLabelNameOnlyMode(map, false);
+      return;
+    }
+    setCityLabelNameOnlyMode(map, cityLabelMode === "name-only");
+    if (cityLabelMode === "value") {
       scheduleCityLabelRefresh();
     }
-  }, [cityLabelsValueEnabled, isLoaded, scheduleCityLabelRefresh]);
+  }, [cityLabelMode, isLoaded, scheduleCityLabelRefresh]);
 
   // Clear stale city value labels on variable/model switch (selectionKey
   // changes on either). The next grid frame sample repopulates them.
