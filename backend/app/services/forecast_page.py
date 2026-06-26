@@ -51,6 +51,10 @@ AFD_CACHE_TTL = 30 * 60
 OPEN_METEO_CACHE_TTL = 30 * 60
 ALERTS_CACHE_TTL = 60
 FORECAST_PAGE_CACHE_TTL = 10 * 60
+# A degraded NWS result (some product unavailable) is still cached, but briefly,
+# so reloads of a flaky location don't re-run the whole slow NWS chain every time
+# while still retrying upstream within a minute.
+FORECAST_PAGE_DEGRADED_CACHE_TTL = 60
 
 MAX_STATION_CANDIDATES = 8
 OBSERVATION_SCORE_THRESHOLD = 25.0
@@ -980,12 +984,6 @@ def _forecast_location_cache_key(location: ResolvedLocation) -> str:
     return f"{country}:{location.latitude:.3f}:{location.longitude:.3f}"
 
 
-def _cached_forecast_page_should_retry_nws(payload: dict[str, Any]) -> bool:
-    source_status = payload.get("source_status") or {}
-    nws_status = source_status.get("nws")
-    return nws_status not in {None, "ok", "not_applicable"}
-
-
 async def _fetch_open_meteo_forecast(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
     timezone_name = location.timezone or "auto"
     cache_key = f"{location.latitude:.3f}:{location.longitude:.3f}:{timezone_name}"
@@ -1589,10 +1587,27 @@ def _build_freshness_payload(
     }
 
 
+async def _timed(name: str, coro: Any, sink: dict[str, float]) -> Any:
+    """Await ``coro``, recording its wall time (ms) into ``sink[name]``.
+
+    Used to attribute a cold forecast-page build across its upstream calls so the
+    route can emit a Server-Timing header (find the long pole without guessing).
+    """
+    started = time.perf_counter()
+    try:
+        return await coro
+    finally:
+        sink[name] = round((time.perf_counter() - started) * 1000.0, 1)
+
+
 async def _build_forecast_page_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
     cache_key = _forecast_location_cache_key(location)
     cached_payload = _cache_get("forecast-page", cache_key)
-    if cached_payload is not None and not _cached_forecast_page_should_retry_nws(cached_payload):
+    # Serve any unexpired cache entry. Degraded entries are cached with a short
+    # TTL (below), so the entry's own expiry — not a per-read retry check — decides
+    # when to re-hit NWS. This stops a flaky location from re-running the full NWS
+    # chain on every reload.
+    if cached_payload is not None:
         payload = copy.deepcopy(cached_payload)
         payload["location"]["query"] = location.query
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
@@ -1606,7 +1621,8 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
             payload["freshness"]["alerts"] = alerts_freshness
         return payload
 
-    om_task = asyncio.create_task(_fetch_open_meteo_forecast(client, location))
+    timings: dict[str, float] = {}
+    om_task = asyncio.create_task(_timed("open_meteo", _fetch_open_meteo_forecast(client, location), timings))
 
     declared_us_region = (location.country_code or "").upper() == "US"
     should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
@@ -1635,7 +1651,9 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
 
     if should_probe_nws:
         try:
-            points_payload = await _fetch_nws_points(client, location.latitude, location.longitude)
+            points_payload = await _timed(
+                "nws_points", _fetch_nws_points(client, location.latitude, location.longitude), timings
+            )
             nws_status = "ok"
         except ForecastPageError:
             nws_status = "unavailable"
@@ -1665,24 +1683,36 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
 
         tasks: dict[str, asyncio.Task[Any]] = {}
         if forecast_url:
-            tasks["forecast"] = asyncio.create_task(_fetch_cached_nws_payload(client, "nws-forecast", forecast_url, forecast_url))
+            tasks["forecast"] = asyncio.create_task(
+                _timed("nws_forecast", _fetch_cached_nws_payload(client, "nws-forecast", forecast_url, forecast_url), timings)
+            )
         if hourly_url:
-            tasks["hourly"] = asyncio.create_task(_fetch_cached_nws_payload(client, "nws-hourly", hourly_url, hourly_url))
+            tasks["hourly"] = asyncio.create_task(
+                _timed("nws_hourly", _fetch_cached_nws_payload(client, "nws-hourly", hourly_url, hourly_url), timings)
+            )
         if stations_url:
             tasks["current"] = asyncio.create_task(
-                _select_best_nws_current(
-                    client,
-                    stations_url,
-                    target_lat=location.latitude,
-                    target_lon=location.longitude,
-                    target_elevation_m=location.elevation_m,
+                _timed(
+                    "nws_current",
+                    _select_best_nws_current(
+                        client,
+                        stations_url,
+                        target_lat=location.latitude,
+                        target_lon=location.longitude,
+                        target_elevation_m=location.elevation_m,
+                    ),
+                    timings,
                 )
             )
         tasks["alerts"] = asyncio.create_task(
-            _fetch_nws_alerts(client, lat=location.latitude, lon=location.longitude, zone_codes=zone_codes)
+            _timed(
+                "nws_alerts",
+                _fetch_nws_alerts(client, lat=location.latitude, lon=location.longitude, zone_codes=zone_codes),
+                timings,
+            )
         )
         if office_code:
-            tasks["afd"] = asyncio.create_task(nws_service.get_afd_by_office(office_code))
+            tasks["afd"] = asyncio.create_task(_timed("nws_afd", nws_service.get_afd_by_office(office_code), timings))
 
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         keyed_results = dict(zip(tasks.keys(), results, strict=False))
@@ -1765,9 +1795,24 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
             alerts_freshness=alerts_freshness,
         ),
     }
-    if not _cached_forecast_page_should_retry_nws(payload):
-        _cache_set("forecast-page", cache_key, payload, FORECAST_PAGE_CACHE_TTL)
-    return payload
+    # Cache policy by NWS state:
+    #  - "unavailable" (points lookup failed → NWS skipped, fast open-meteo
+    #    fallback): likely transient, so DON'T cache — the next load retries NWS.
+    #  - "degraded" (points OK but the slow chain returned partial data): cache
+    #    briefly so rapid reloads of a flaky location don't re-run the chain,
+    #    while still retrying within ~a minute.
+    #  - "ok"/"not_applicable": full TTL.
+    nws_state = (payload.get("source_status") or {}).get("nws")
+    if nws_state != "unavailable":
+        _cache_set(
+            "forecast-page",
+            cache_key,
+            payload,
+            FORECAST_PAGE_DEGRADED_CACHE_TTL if nws_state == "degraded" else FORECAST_PAGE_CACHE_TTL,
+        )
+    # Attach per-upstream timings to the RESPONSE only (a fresh dict), never the
+    # cached copy — the route turns these into a Server-Timing header.
+    return {**payload, "_server_timing": timings}
 
 
 async def get_forecast_page_by_query(query: str) -> dict[str, Any]:

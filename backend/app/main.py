@@ -3830,10 +3830,16 @@ async def forecast_page(
             upstream_status=exc.upstream_status,
         )
 
-    return JSONResponse(
-        content=payload,
-        headers={"Cache-Control": "public, max-age=60"},
-    )
+    # Per-upstream timings (present only on a cold build) → Server-Timing header,
+    # visible in the browser Network tab. Kept out of the response body.
+    headers = {"Cache-Control": "public, max-age=60"}
+    timing = payload.pop("_server_timing", None)
+    if isinstance(timing, dict) and timing:
+        headers["Server-Timing"] = _format_server_timing(
+            sorted(timing.items(), key=lambda kv: kv[1], reverse=True)
+        )
+
+    return JSONResponse(content=payload, headers=headers)
 
 
 @app.get("/api/v4/forecast-page")
