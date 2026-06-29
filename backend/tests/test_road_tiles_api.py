@@ -112,6 +112,31 @@ async def test_roads_tilejson_served_from_main_api(client: httpx.AsyncClient) ->
     assert [layer["id"] for layer in payload["vector_layers"]] == ["roads"]
 
 
+async def test_roads_tilejson_falls_back_to_defaults_when_mbtiles_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_roads_mbtiles_path = tmp_path / "data" / "roads" / "v1" / "cartosky_roads.mbtiles"
+
+    roads_tiles._reset_mbtiles_connections()
+    monkeypatch.setattr(main_module, "ROADS_MBTILES", missing_roads_mbtiles_path)
+    monkeypatch.setattr(roads_tiles, "ROADS_MBTILES", missing_roads_mbtiles_path)
+    monkeypatch.setattr(roads_tiles, "TILES_PUBLIC_BASE_URL", "https://api.cartosky.com")
+
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/tiles/v3/roads/v1/tilejson.json")
+
+    roads_tiles._reset_mbtiles_connections()
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == roads_tiles.ROAD_CACHE_MISS
+    payload = response.json()
+    assert payload["name"] == roads_tiles.ROADS_TILESET_NAME
+    assert payload["id"] == roads_tiles.ROADS_TILESET_ID
+    assert payload["tiles"] == ["https://api.cartosky.com/tiles/v3/roads/v1/{z}/{x}/{y}.mvt"]
+
+
 async def test_roads_tile_endpoint_preserves_gzip_and_expected_empty_behavior(client: httpx.AsyncClient) -> None:
     hit_response = await client.get("/tiles/v3/roads/v1/5/0/0.mvt")
 

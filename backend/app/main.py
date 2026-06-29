@@ -4255,15 +4255,6 @@ def boundaries_tile_v3(z: int, x: int, y: int):
 @app.get("/tiles/v3/roads/v1/tilejson.json")
 def roads_tilejson_v3():
     started_at = time.perf_counter()
-    if not ROADS_MBTILES.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "roads tileset not found",
-                "path": str(ROADS_MBTILES),
-            },
-        )
-
     timing_header = _format_server_timing(
         [
             ("roads_tilejson_total", (time.perf_counter() - started_at) * 1000.0),
