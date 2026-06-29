@@ -860,6 +860,16 @@ function roadLineWidthExpression(roadClass: "major" | "primary_secondary" | "loc
   return ["interpolate", ["linear"], ["zoom"], 10, 0.42, 12, 0.65, 14, 0.95] as const;
 }
 
+function roadHaloLineWidthExpression(roadClass: "major" | "primary_secondary" | "local") {
+  if (roadClass === "major") {
+    return ["interpolate", ["linear"], ["zoom"], 5, 2.4, 7, 2.8, 10, 3.35, 14, 4] as const;
+  }
+  if (roadClass === "primary_secondary") {
+    return ["interpolate", ["linear"], ["zoom"], 8, 2.18, 10, 2.52, 12, 2.8, 14, 3.1] as const;
+  }
+  return ["interpolate", ["linear"], ["zoom"], 10, 2.02, 12, 2.25, 14, 2.55] as const;
+}
+
 function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMode = "light"): LayerSpecification[] {
   const profile = getRoadVisualProfile(variable, basemapMode, opacity);
   const specs: Array<{
@@ -898,6 +908,7 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
 
   return specs.flatMap((spec) => {
     const widthExpression = roadLineWidthExpression(spec.roadClass);
+    const haloWidthExpression = roadHaloLineWidthExpression(spec.roadClass);
     return [
       {
         id: spec.haloId,
@@ -913,7 +924,7 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
         paint: {
           "line-color": profile.haloColor,
           "line-opacity": spec.haloOpacity,
-          "line-width": ["+", widthExpression as any, 1.6] as any,
+          "line-width": haloWidthExpression as any,
         },
       } as LayerSpecification,
       {
