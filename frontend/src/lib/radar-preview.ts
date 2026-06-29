@@ -209,6 +209,7 @@ export function buildRadarPreviewMapStyle(): StyleSpecification {
         type: "line",
         source: PREVIEW_BOUNDARY_SOURCE_ID,
         "source-layer": "counties",
+        minzoom: 5,
         filter: ["==", "kind", "county"],
         layout: {
           "line-join": "round",

@@ -41,8 +41,8 @@ Implemented in the build script via separate tippecanoe passes and `tile-join`:
 
 - Country boundaries: `z0-z6` + `z7-z10`
 - Coastline: `z0-z6` + `z7-z10`
-- State boundaries: `z3-z8`
-- County boundaries low detail: `z0-z7`
+- State boundaries: `z0-z10`
+- County boundaries low detail: `z5-z7`
 - County boundaries high detail: `z8-z10`
 - Great Lakes polygons: `z3-z8`
 - Great Lakes shoreline: `z3-z10`
@@ -69,6 +69,10 @@ Set boundary env vars in:
 Important for browsers: set `CARTOSKY_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
 
 The API keeps serving `v1` routes for backward compatibility, but the frontend should use `v2` to bypass stale immutable caches after boundary content changes.
+
+Current intent:
+- State boundaries stay visible down to low continental zooms.
+- County boundaries keep their prior behavior and do not appear until zoom 5.
 
 Then restart the main API unit:
 
