@@ -88,10 +88,10 @@ tippecanoe -f -o "$TMP_DIR/boundary_state.mbtiles" -l boundaries -Z0 -z10 --buff
 tippecanoe -f -o "$TMP_DIR/boundary_county_low.mbtiles" -l counties -Z5 -z7 --buffer=4 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=8 "$BUILD_DIR/county_lines_low.geojson"
 tippecanoe -f -o "$TMP_DIR/boundary_county_high.mbtiles" -l counties -Z8 -z10 --buffer=4 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=6 "$BUILD_DIR/county_lines_high.geojson"
 
-# Keep Great Lakes masks and shorelines lossless enough that water masking does
-# not disappear at intermediate zooms.
+# Keep Great Lakes masks and shorelines lossless enough that shoreline outlines
+# remain visible down to the same low zooms as state boundaries.
 tippecanoe -f -o "$TMP_DIR/hydro_polygon.mbtiles" -l hydro -Z3 -z8 --buffer=4 --simplification=2 "$BUILD_DIR/great_lake_polygons.geojson"
-tippecanoe -f -o "$TMP_DIR/hydro_shoreline.mbtiles" -l hydro -Z3 -z10 --buffer=4 --simplification=2 "$BUILD_DIR/great_lake_shoreline.geojson"
+tippecanoe -f -o "$TMP_DIR/hydro_shoreline.mbtiles" -l hydro -Z0 -z10 --buffer=4 --simplification=2 "$BUILD_DIR/great_lake_shoreline.geojson"
 tippecanoe -f -o "$TMP_DIR/hydro_coastline_low.mbtiles" -l hydro -Z0 -z6 --buffer=6 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/coastline_lines.geojson"
 tippecanoe -f -o "$TMP_DIR/hydro_coastline_high.mbtiles" -l hydro -Z7 -z10 --buffer=6 --simplification=2 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/coastline_lines.geojson"
 

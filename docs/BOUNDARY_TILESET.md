@@ -45,7 +45,7 @@ Implemented in the build script via separate tippecanoe passes and `tile-join`:
 - County boundaries low detail: `z5-z7`
 - County boundaries high detail: `z8-z10`
 - Great Lakes polygons: `z3-z8`
-- Great Lakes shoreline: `z3-z10`
+- Great Lakes shoreline: `z0-z10`
 
 ## Simplification and artifact controls
 
@@ -73,6 +73,7 @@ The API keeps serving `v1` routes for backward compatibility, but the frontend s
 Current intent:
 - State boundaries stay visible down to low continental zooms.
 - County boundaries keep their prior behavior and do not appear until zoom 5.
+- Great Lakes shoreline outlines stay visible down to the same low zoom tier as states.
 
 Then restart the main API unit:
 

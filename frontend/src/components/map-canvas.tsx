@@ -1000,7 +1000,6 @@ export function buildMapStyle(
         type: "line",
         source: STATE_BOUNDARY_SOURCE_ID,
         "source-layer": "hydro",
-        minzoom: 3,
         filter: ["==", "kind", "great_lake_shoreline"],
         layout: {
           "line-join": "round",
