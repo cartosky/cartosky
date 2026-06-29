@@ -129,9 +129,10 @@ type ForecastPayload = {
 
 // ── Tab config ────────────────────────────────────────────────────────
 
-type TabId = "hourly" | "7day" | "extended" | "models" | "discussion";
+type TabId = "current" | "hourly" | "7day" | "extended" | "models" | "discussion";
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "current", label: "Current" },
   { id: "hourly", label: "Hourly" },
   { id: "7day", label: "7-day" },
   { id: "extended", label: "Extended" },
@@ -202,6 +203,15 @@ function freshnessChip(state: string | null, ageMinutes: number | null): { label
   if (state === "stale")   return { label: ageMinutes != null ? `${ageMinutes}m ago · stale` : "Stale",     color: "text-rose-400" };
   if (state === "modeled") return { label: "Modeled",                                                        color: "text-slate-400 dark:text-white/45" };
   return { label: "Recent", color: "text-slate-400 dark:text-white/45" };
+}
+
+function currentAgeLabel(current: CurrentData): string {
+  const ageMinutes = current.quality?.age_minutes;
+  if (ageMinutes !== null && ageMinutes !== undefined) {
+    return `As of ${ageMinutes}m ago`;
+  }
+  const observed = formatObservedAt(current.observed_at);
+  return observed ? `Observed ${observed}` : "Current observation";
 }
 
 function precipColor(pct: number | null): string {
@@ -477,17 +487,6 @@ function SectionEyebrow({ children }: { children: ReactNode }) {
     <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-200/70">
       <span className="h-px w-7 bg-cyan-300/45" />
       <span>{children}</span>
-    </div>
-  );
-}
-
-// ── Metadata item (conditions strip) ─────────────────────────────────
-
-function MetaItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[11px] uppercase tracking-[0.12em] text-cyan-200/70">{label}</div>
-      <div className="mt-0.5 text-[13px] font-medium text-white/80">{value}</div>
     </div>
   );
 }
@@ -956,6 +955,96 @@ function DailyRangeRows({
   );
 }
 
+// ── Current Tab ───────────────────────────────────────────────────────
+
+function CurrentMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[minmax(7.5rem,0.9fr)_1fr] items-baseline gap-4">
+      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-cyan-200/75">{label}</div>
+      <div className="text-[15px] font-medium text-white/90">{value}</div>
+    </div>
+  );
+}
+
+function CurrentConditionsCard({ current }: { current: CurrentData }) {
+  const feelsLike = feelsLikeF(current.temperature_f, current.wind_speed_mph, current.humidity_pct);
+  const metrics = [
+    feelsLike !== null && feelsLike !== current.temperature_f
+      ? { label: "Feels Like", value: `${feelsLike}°` }
+      : null,
+    current.dewpoint_f != null ? { label: "Dew Point", value: `${current.dewpoint_f}°` } : null,
+    current.humidity_pct != null ? { label: "Humidity", value: `${current.humidity_pct}%` } : null,
+    {
+      label: "Wind",
+      value: `${degreesToCardinal(current.wind_dir_deg)} ${current.wind_speed_mph ?? "--"} mph${current.wind_gust_mph ? ` · G${current.wind_gust_mph}` : ""}`,
+    },
+    current.pressure_mb != null ? { label: "Pressure", value: `${current.pressure_mb} mb` } : null,
+    current.visibility_mi != null ? { label: "Visibility", value: `${current.visibility_mi} mi` } : null,
+  ].filter((metric): metric is { label: string; value: string } => metric !== null);
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.18)] md:p-6">
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.26em] text-white/45">
+        Current Conditions
+      </h2>
+
+      <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,0.95fr)_minmax(15rem,1fr)] md:items-center">
+        <div className="flex items-center gap-4 md:min-h-[9.5rem] md:justify-center">
+          <WeatherIcon code={current.icon} size={74} className="flex-none" />
+          <div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[4.5rem] font-medium leading-none text-white drop-shadow-[0_10px_30px_rgba(0,0,0,0.28)] md:text-[5rem]">
+                {current.temperature_f ?? "--"}°
+              </span>
+              <span className="text-2xl font-medium text-white/48">F</span>
+            </div>
+            {current.short_text && (
+              <div className="mt-2 text-lg text-white/62 md:text-xl">{current.short_text}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4 border-white/[0.08] md:border-l md:pl-8">
+          {metrics.map((metric) => (
+            <CurrentMetric key={metric.label} label={metric.label} value={metric.value} />
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 text-[12px] text-white/42">{currentAgeLabel(current)}</div>
+    </section>
+  );
+}
+
+function CurrentRadarCard({ lat, lon }: { lat: number; lon: number }) {
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.26em] text-white/45">
+        Live Radar
+      </h2>
+      <RadarPreviewCard lat={lat} lon={lon} className="mt-4 w-full" />
+    </section>
+  );
+}
+
+function CurrentTab({
+  forecast,
+  checkingAlerts,
+}: {
+  forecast: ForecastPayload;
+  checkingAlerts: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,1fr)]">
+        <CurrentConditionsCard current={forecast.current} />
+        <CurrentRadarCard lat={forecast.location.latitude} lon={forecast.location.longitude} />
+      </div>
+      <AlertsBanner alerts={forecast.alerts} checking={checkingAlerts} />
+    </div>
+  );
+}
+
 // ── Hourly Tab ────────────────────────────────────────────────────────
 
 function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
@@ -1225,7 +1314,7 @@ export default function Forecast() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tabParam = searchParams.get("tab");
-    return isTabId(tabParam) ? tabParam : "hourly";
+    return isTabId(tabParam) ? tabParam : "current";
   });
   const [favoriteLimitMessage, setFavoriteLimitMessage] = useState<string | null>(null);
   const {
@@ -1390,7 +1479,7 @@ export default function Forecast() {
     if (locationHint?.country) nextParams.country = locationHint.country;
     // On the initial deep-link restore, carry the shared tab + Models-tab view
     // state (set by ModelsTabContent) through this rebuild so the link lands on
-    // the right tab/mode. A fresh user-initiated search starts clean (Hourly),
+    // the right tab/mode. A fresh user-initiated search starts clean (Current),
     // mirroring the setActiveTab reset below.
     if (initialRestorePendingRef.current) {
       const tab = searchParams.get("tab");
@@ -1408,8 +1497,8 @@ export default function Forecast() {
   function handleSelectTab(nextTab: TabId) {
     setActiveTab(nextTab);
     const next = new URLSearchParams(searchParams);
-    // "hourly" is the default — omit it to keep URLs clean.
-    if (nextTab === "hourly") next.delete("tab");
+    // "current" is the default — omit it to keep URLs clean.
+    if (nextTab === "current") next.delete("tab");
     else next.set("tab", nextTab);
     setSearchParams(next, { replace: true });
   }
@@ -1524,9 +1613,9 @@ export default function Forecast() {
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
-      // Reset to Hourly only for a fresh user-initiated search; the initial
+      // Reset to Current only for a fresh user-initiated search; the initial
       // deep-link restore keeps the tab parsed from the URL.
-      if (!initialRestorePendingRef.current) setActiveTab("hourly");
+      if (!initialRestorePendingRef.current) setActiveTab("current");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
       addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
       // Fill in NWS pieces (real-obs current, 7-day narrative, alerts, AFD)
@@ -1577,9 +1666,9 @@ export default function Forecast() {
       setForecast({ ...data, location: { ...data.location, display_name: name } });
       setQuery(name);
       setPendingName(name);
-      // Reset to Hourly only for a fresh user-initiated search; the initial
+      // Reset to Current only for a fresh user-initiated search; the initial
       // deep-link restore keeps the tab parsed from the URL.
-      if (!initialRestorePendingRef.current) setActiveTab("hourly");
+      if (!initialRestorePendingRef.current) setActiveTab("current");
       syncLocationSearchParams(data.location.latitude, data.location.longitude, name, persistedHint);
       addRecent(toForecastLocation(name, data.location.latitude, data.location.longitude, persistedHint));
       // Enrich the rendered core with NWS using the resolved coordinates.
@@ -1732,63 +1821,6 @@ export default function Forecast() {
           </div>
         </div>
 
-        {/* Conditions Strip */}
-        <div>
-          <div className="mx-auto max-w-6xl px-5 md:px-8 py-5 border-b-[0.5px] border-white/[0.08]">
-            <div className="flex flex-col md:flex-row md:items-stretch md:justify-between gap-5">
-              <div className="flex flex-wrap items-center gap-5 min-w-0">
-                <div className="flex items-center gap-3 flex-none">
-                  <WeatherIcon code={f.current.icon} size={40} className="flex-none" />
-                  <div>
-                    <div className="text-[36px] font-medium leading-none text-white">
-                      {f.current.temperature_f ?? "--"}°
-                    </div>
-                    <div className="mt-1 text-[13px] text-white/55">
-                      {f.current.short_text ?? ""}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="hidden sm:block self-stretch w-px bg-white/[0.08] flex-none" style={{ minHeight: 44 }} />
-
-                <div className="flex flex-wrap gap-x-6 gap-y-3">
-                  {(() => {
-                    const fl = feelsLikeF(f.current.temperature_f, f.current.wind_speed_mph, f.current.humidity_pct);
-                    return fl !== null && fl !== f.current.temperature_f
-                      ? <MetaItem label="Feels Like" value={`${fl}°`} />
-                      : null;
-                  })()}
-                  {f.current.dewpoint_f != null && (
-                    <MetaItem label="Dew Point" value={`${f.current.dewpoint_f}°`} />
-                  )}
-                  {f.current.humidity_pct != null && (
-                    <MetaItem label="Humidity" value={`${f.current.humidity_pct}%`} />
-                  )}
-                  <MetaItem
-                    label="Wind"
-                    value={`${degreesToCardinal(f.current.wind_dir_deg)} ${f.current.wind_speed_mph ?? "--"} mph${f.current.wind_gust_mph ? ` · G${f.current.wind_gust_mph}` : ""}`}
-                  />
-                  {f.current.pressure_mb != null && (
-                    <MetaItem label="Pressure" value={`${f.current.pressure_mb} mb`} />
-                  )}
-                  {f.current.visibility_mi != null && (
-                    <MetaItem label="Visibility" value={`${f.current.visibility_mi} mi`} />
-                  )}
-                </div>
-              </div>
-
-              <RadarPreviewCard
-                lat={f.location.latitude}
-                lon={f.location.longitude}
-                className="w-full md:w-[320px] md:flex-none"
-              />
-            </div>
-            <div className="mt-5">
-              <AlertsBanner alerts={f.alerts} checking={f.source_status?.nws === "pending"} />
-            </div>
-          </div>
-        </div>
-
         {/* Tab Bar */}
         <div>
           <div className="mx-auto max-w-6xl px-5 md:px-8 border-b-[0.5px] border-white/[0.08]">
@@ -1797,6 +1829,8 @@ export default function Forecast() {
                 <button
                   key={tab.id}
                   type="button"
+                  data-forecast-tab={tab.id}
+                  aria-selected={activeTab === tab.id}
                   onClick={() => handleSelectTab(tab.id)}
                   className={`flex-none px-4 py-3 text-[13px] whitespace-nowrap border-b-2 transition-colors ${
                     activeTab === tab.id
@@ -1813,6 +1847,7 @@ export default function Forecast() {
 
         {/* Tab Content */}
         <div className="mx-auto max-w-6xl px-5 md:px-8 py-6 pb-12">
+          {activeTab === "current"    && <CurrentTab forecast={f} checkingAlerts={f.source_status?.nws === "pending"} />}
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
           {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
           {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}

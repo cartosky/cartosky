@@ -49,11 +49,11 @@ extract_and_tile_class() {
   local geojsonseq_path="$BUILD_DIR/${region}_${road_class}.geojsonseq"
   local mbtiles_path="$TMP_DIR/${region}_${road_class}.mbtiles"
 
-  ogr2ogr -f GeoJSONSeq "$geojsonseq_path" "$pbf_path" lines \
+  ogr2ogr -f GeoJSONSeq "$geojsonseq_path" "$pbf_path" \
     -t_srs EPSG:4326 \
     -skipfailures \
     -dialect SQLite \
-    -sql "SELECT highway, '${road_class}' AS road_class FROM lines WHERE ${where_clause}"
+    -sql "SELECT geometry, highway, '${road_class}' AS road_class FROM lines WHERE ${where_clause}"
 
   if [[ ! -s "$geojsonseq_path" ]]; then
     rm -f "$geojsonseq_path"
