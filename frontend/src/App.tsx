@@ -1297,6 +1297,20 @@ export default function App() {
     }
   }, [gridOnlySelection, model, run, variable, ensembleView]);
 
+  // Drop a resolved grid run id once retention prunes it from /runs — otherwise
+  // frame fetches keep targeting a 404 run until the grid probe finishes.
+  useEffect(() => {
+    if (!resolvedGridLatestRunId) {
+      return;
+    }
+    if (runs.length > 0 && !runs.includes(resolvedGridLatestRunId)) {
+      setResolvedGridLatestRunId(null);
+      lastResolvedGridRunRef.current = null;
+      setGridManifest(null);
+      setLoadedFramesKey("");
+    }
+  }, [runs, resolvedGridLatestRunId]);
+
   const previousRegionRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -3460,8 +3474,12 @@ export default function App() {
       }
 
       try {
+        const retainedGridLatestRunId =
+          resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)
+            ? resolvedGridLatestRunId
+            : null;
         const framesRunKey = gridOnlySelection && run === "latest"
-          ? resolvedGridLatestRunId
+          ? retainedGridLatestRunId
           : (run === "latest" ? "latest" : resolvedRunForRequests);
         if (!framesRunKey) {
           return;
@@ -3732,6 +3750,10 @@ export default function App() {
             return;
           }
 
+          const retainedGridLatestRunId =
+            resolvedGridLatestRunId && nextRuns.includes(resolvedGridLatestRunId)
+              ? resolvedGridLatestRunId
+              : null;
           const manifestMatchesSelection =
             Boolean(runManifest) &&
             runManifest?.model === model &&
@@ -3769,7 +3791,7 @@ export default function App() {
             // to the nearest old hour.
             if (prefersGridSubstrate && selectionSupportsGrid) {
               const gridRunKey = gridOnlySelection && run === "latest"
-                ? (resolvedGridLatestRunId ?? manifestRunKey)
+                ? (retainedGridLatestRunId ?? manifestRunKey)
                 : resolvedRunForRequests;
               const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
               if (cancelled || tickController?.signal.aborted) {
@@ -3797,7 +3819,7 @@ export default function App() {
           }
 
           const framesRunKey = gridOnlySelection && run === "latest"
-            ? resolvedGridLatestRunId
+            ? retainedGridLatestRunId
             : run;
           if (!framesRunKey) {
             return;
@@ -3811,7 +3833,7 @@ export default function App() {
           // gridFrameHours is in sync with the slider when the user scrubs.
           if (prefersGridSubstrate && selectionSupportsGrid) {
             const gridRunKey = gridOnlySelection && run === "latest"
-              ? (resolvedGridLatestRunId ?? framesRunKey)
+              ? (retainedGridLatestRunId ?? framesRunKey)
               : resolvedRunForRequests;
             const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
             if (cancelled || tickController?.signal.aborted) {

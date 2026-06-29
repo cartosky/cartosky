@@ -20,6 +20,16 @@ SCREENSHOT_VIEWPORT_WIDTH = 1280
 SCREENSHOT_VIEWPORT_HEIGHT = 720
 
 
+def _compare_screenshot_mode(url: str) -> str | None:
+    """Return compare page mode from a permalink (`split` or `diff`), or None."""
+    parsed = urlsplit(url)
+    if "/compare" not in parsed.path:
+        return None
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    mode = str(params.get("mode", "split")).strip().lower()
+    return mode if mode in {"split", "diff"} else "split"
+
+
 class ScreenshotService:
     def __init__(self):
         self._playwright: Playwright | None = None
@@ -47,7 +57,9 @@ class ScreenshotService:
     async def render(self, url: str, *, basemap: str = "light") -> bytes:
         # Timing wrappers only — no behavioral changes to the render logic.
         t_entry = time.monotonic()
-        is_compare = "/compare" in urlsplit(url).path
+        compare_mode = _compare_screenshot_mode(url)
+        is_compare = compare_mode is not None
+        is_compare_diff = compare_mode == "diff"
         path_label = "compare" if is_compare else "viewer"
 
         self._queue_depth += 1
@@ -79,7 +91,7 @@ class ScreenshotService:
                 marks["navigated"] = time.monotonic()
 
                 if is_compare:
-                    # Wait for both panels to signal readiness
+                    # Wait for compare readiness (split: both panels; diff: pipeline + map).
                     await page.wait_for_function(
                         "() => document.documentElement.getAttribute('data-compare-ready') === '1'",
                         timeout=SCREENSHOT_TIMEOUT_MS,
@@ -89,38 +101,48 @@ class ScreenshotService:
                     await page.wait_for_timeout(1500)
                     marks["settled"] = time.monotonic()
 
-                    data_url = await page.evaluate(
-                        """() => {
-                            const canvases = Array.from(
-                                document.querySelectorAll('div[role="img"][aria-label="Weather map"] canvas')
-                            );
-                            if (canvases.length < 2) return null;
+                    if is_compare_diff:
+                        data_url = await page.evaluate(
+                            """() => {
+                                const canvas = document.querySelector(
+                                    'div[role="img"][aria-label="Weather map"] canvas'
+                                );
+                                return canvas ? canvas.toDataURL('image/png') : null;
+                            }"""
+                        )
+                    else:
+                        data_url = await page.evaluate(
+                            """() => {
+                                const canvases = Array.from(
+                                    document.querySelectorAll('div[role="img"][aria-label="Weather map"] canvas')
+                                );
+                                if (canvases.length < 2) return null;
 
-                            const leftCanvas = canvases[0];
-                            const rightCanvas = canvases[1];
-                            const W = leftCanvas.width + rightCanvas.width;
-                            const H = Math.max(leftCanvas.height, rightCanvas.height);
+                                const leftCanvas = canvases[0];
+                                const rightCanvas = canvases[1];
+                                const W = leftCanvas.width + rightCanvas.width;
+                                const H = Math.max(leftCanvas.height, rightCanvas.height);
 
-                            const out = document.createElement('canvas');
-                            out.width = W;
-                            out.height = H;
-                            const ctx = out.getContext('2d');
-                            if (!ctx) return null;
+                                const out = document.createElement('canvas');
+                                out.width = W;
+                                out.height = H;
+                                const ctx = out.getContext('2d');
+                                if (!ctx) return null;
 
-                            const splitX = leftCanvas.width;
-                            ctx.drawImage(leftCanvas, 0, 0);
-                            ctx.drawImage(rightCanvas, splitX, 0);
+                                const splitX = leftCanvas.width;
+                                ctx.drawImage(leftCanvas, 0, 0);
+                                ctx.drawImage(rightCanvas, splitX, 0);
 
-                            // Divider gutter matching the live compare UI
-                            const gutterW = 4;
-                            ctx.fillStyle = '#07111f';
-                            ctx.fillRect(splitX - Math.floor(gutterW / 2), 0, gutterW, H);
-                            ctx.fillStyle = 'rgba(255,255,255,0.55)';
-                            ctx.fillRect(splitX, 0, 1, H);
+                                // Divider gutter matching the live compare UI
+                                const gutterW = 4;
+                                ctx.fillStyle = '#07111f';
+                                ctx.fillRect(splitX - Math.floor(gutterW / 2), 0, gutterW, H);
+                                ctx.fillStyle = 'rgba(255,255,255,0.55)';
+                                ctx.fillRect(splitX, 0, 1, H);
 
-                            return out.toDataURL('image/png');
-                        }"""
-                    )
+                                return out.toDataURL('image/png');
+                            }"""
+                        )
                 else:
                     await page.wait_for_selector(
                         'div[role="img"][aria-label="Weather map"] canvas',
