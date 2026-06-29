@@ -1504,7 +1504,17 @@ def _normalize_google_pollen(payload: dict[str, Any]) -> dict[str, Any] | None:
     dominant_plant = plant_entries[0] if plant_entries else None
 
     if dominant_type is None:
-        return None
+        return {
+            "source": "google_pollen",
+            "date": date_value,
+            "index": 0,
+            "category": "None",
+            "color": "#9ca3af",
+            "dominant_type": None,
+            "dominant_plant": dominant_plant.get("label") if dominant_plant else None,
+            "summary": "No significant pollen types are affecting this location today.",
+            "types": [],
+        }
 
     summary_parts: list[str] = []
     for entry in type_entries[:2]:
@@ -1920,6 +1930,28 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         attribution = payload.setdefault("attribution", {})
         attribution.setdefault("air_quality", None)
         attribution.setdefault("pollen", None)
+        if payload.get("pollen") is None:
+            try:
+                pollen_payload = _normalize_google_pollen(await _fetch_google_pollen(client, location))
+            except ForecastPageError as exc:
+                logger.warning(
+                    "Google pollen fetch failed for lat=%.4f lon=%.4f query=%s: %s",
+                    location.latitude,
+                    location.longitude,
+                    location.query,
+                    exc.message,
+                )
+                pollen_payload = None
+            if pollen_payload is not None:
+                payload["pollen"] = pollen_payload
+                attribution["pollen"] = "Google Pollen API"
+            else:
+                logger.warning(
+                    "Google pollen response normalized empty for lat=%.4f lon=%.4f query=%s",
+                    location.latitude,
+                    location.longitude,
+                    location.query,
+                )
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
             alerts, alerts_freshness = await _fetch_nws_alerts(
                 client,
@@ -1992,7 +2024,21 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         pollen_payload = _normalize_google_pollen(await pollen_task)
         if pollen_payload is not None:
             attribution["pollen"] = "Google Pollen API"
-    except ForecastPageError:
+        else:
+            logger.warning(
+                "Google pollen response normalized empty for lat=%.4f lon=%.4f query=%s",
+                location.latitude,
+                location.longitude,
+                location.query,
+            )
+    except ForecastPageError as exc:
+        logger.warning(
+            "Google pollen fetch failed for lat=%.4f lon=%.4f query=%s: %s",
+            location.latitude,
+            location.longitude,
+            location.query,
+            exc.message,
+        )
         pollen_payload = None
 
     if points_payload is not None:

@@ -206,6 +206,19 @@ def _google_pollen_payload() -> dict:
     }
 
 
+def _google_pollen_empty_payload() -> dict:
+    return {
+        "regionCode": "US",
+        "dailyInfo": [
+            {
+                "date": {"year": 2026, "month": 4, "day": 18},
+                "pollenTypeInfo": [],
+                "plantInfo": [],
+            }
+        ],
+    }
+
+
 def _nws_points_payload() -> dict:
     return {
         "properties": {
@@ -684,6 +697,105 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
     assert payload["alerts"] == []
     # US location → NWS enrichment available; the client should fetch it next.
     assert payload["source_status"]["nws"] == "pending"
+
+
+def test_normalize_google_pollen_empty_day_returns_none_category_payload() -> None:
+    normalized = forecast_page_service._normalize_google_pollen(_google_pollen_empty_payload())
+
+    assert normalized is not None
+    assert normalized["index"] == 0
+    assert normalized["category"] == "None"
+    assert normalized["types"] == []
+
+
+async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+    monkeypatch.setenv("CARTOSKY_GOOGLE_POLLEN_API_KEY", "test-google-pollen-key")
+
+    location = forecast_page_service.ResolvedLocation(
+        query="57104",
+        display_name="Sioux Falls, SD",
+        latitude=43.55,
+        longitude=-96.73,
+        timezone="America/Chicago",
+        country_code="US",
+        admin1="South Dakota",
+        country="United States",
+        resolved_by="frontend_location_hint",
+    )
+    cache_key = forecast_page_service._forecast_location_cache_key(location)
+    forecast_page_service._cache_set(
+        "forecast-page",
+        cache_key,
+        {
+            "location": {
+                "query": "57104",
+                "display_name": "Sioux Falls, SD",
+                "latitude": 43.55,
+                "longitude": -96.73,
+                "timezone": "America/Chicago",
+                "country_code": "US",
+                "admin1": "South Dakota",
+                "resolved_by": "frontend_location_hint",
+            },
+            "source_status": {
+                "primary_region_mode": "us_hybrid",
+                "nws": "ok",
+                "open_meteo": "ok",
+                "generated_at": "2026-04-18T17:00:00Z",
+            },
+            "current": {"source": "nws"},
+            "hourly": [],
+            "daily": [],
+            "air_quality": None,
+            "pollen": None,
+            "official_text_forecast": None,
+            "afd": None,
+            "alerts": [],
+            "attribution": {
+                "current": "NWS",
+                "hourly": "NWS",
+                "daily": "Open-Meteo",
+                "air_quality": None,
+                "pollen": None,
+                "afd": None,
+                "alerts": None,
+            },
+            "freshness": {
+                "current": {"state": "fresh", "observed_at": "2026-04-18T16:15:00+00:00", "age_minutes": 45},
+                "afd": {"state": "unknown", "issued_at": None, "age_hours": None},
+            },
+        },
+        forecast_page_service.FORECAST_PAGE_CACHE_TTL,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "pollen.googleapis.com" and path == "/v1/forecast:lookup":
+            return httpx.Response(200, json=_google_pollen_payload())
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.get_forecast_page(
+        43.55,
+        -96.73,
+        location_hint=forecast_page_service.LocationHint(
+            display_name="Sioux Falls, SD",
+            timezone="America/Chicago",
+            country_code="US",
+            admin1="South Dakota",
+            country="United States",
+        ),
+    )
+
+    assert payload["pollen"]["index"] == 4
+    assert payload["attribution"]["pollen"] == "Google Pollen API"
 
 
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
