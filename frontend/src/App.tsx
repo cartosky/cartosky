@@ -578,6 +578,7 @@ export default function App() {
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
   const selectionEpochRef = useRef(selectionEpoch);
+  const selectionKeyRef = useRef("");
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
   const datasetGenerationRef = useRef(0);
   const requestGenerationRef = useRef(0);
@@ -597,6 +598,7 @@ export default function App() {
   const idleWarmupLastProgressAtRef = useRef(0);
   const [idleWarmupStalled, setIdleWarmupStalled] = useState(false);
   const forecastHourRef = useRef(forecastHour);
+  const visibleOverlayHourRef = useRef<number | null>(null);
   const mapZoomRef = useRef(MAP_VIEW_DEFAULTS.zoom);
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
@@ -1046,6 +1048,9 @@ export default function App() {
       ? "latest"
       : resolvedRunForRequests;
   const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}`;
+  useEffect(() => {
+    selectionKeyRef.current = selectionKey;
+  }, [selectionKey]);
   const telemetryRunId = gridOnlySelection && run === "latest"
     ? (resolvedGridLatestRunId ?? latestRunId ?? null)
     : (resolvedRunForRequests ?? (run !== "latest" ? run : latestRunId ?? null));
@@ -2483,6 +2488,9 @@ export default function App() {
   }, [forecastHour, isGridLowMidActive, resolvedGridDisplayHour, visibleGridFrameHour]);
   const mapForecastHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
   const visibleOverlayHour = Number.isFinite(visibleGridOverlayHour) ? Number(visibleGridOverlayHour) : forecastHour;
+  useEffect(() => {
+    visibleOverlayHourRef.current = Number.isFinite(visibleOverlayHour) ? Number(visibleOverlayHour) : null;
+  }, [visibleOverlayHour]);
   const visibleOverlayFrame = useMemo(() => {
     if (Number.isFinite(visibleOverlayHour)) {
       return frameByHour.get(Number(visibleOverlayHour)) ?? null;
@@ -4418,16 +4426,29 @@ export default function App() {
       lat: point.lat,
       lon: point.lng,
     }));
+    const requestSelectionKey = selectionKey;
+    const requestSelectionEpoch = payload.selectionEpoch;
+    const requestFrameHour = payload.frameHour;
     void fetchSampleBatch({
       model,
       run: resolvedRunForRequests,
       variable,
       ensembleView,
-      forecastHour: payload.frameHour,
+      forecastHour: requestFrameHour,
       points: batchPoints,
     })
       .then((result) => {
         if (!mapInstanceRef.current || !result) {
+          return;
+        }
+        if (
+          selectionKeyRef.current !== requestSelectionKey
+          || (
+            requestSelectionEpoch !== undefined
+            && requestSelectionEpoch !== selectionEpochRef.current
+          )
+          || visibleOverlayHourRef.current !== requestFrameHour
+        ) {
           return;
         }
         updateCityValueLabels(

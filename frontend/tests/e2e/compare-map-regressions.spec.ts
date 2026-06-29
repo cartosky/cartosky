@@ -1,7 +1,14 @@
 import { test, expect } from "@playwright/test";
 
+import { resolveCityFrameSamplingOutcome } from "../../src/lib/city-label-sampling";
+import type { CityLabelPoint } from "../../src/lib/city-labels";
 import { resolveGridContourGeoJsonUrl } from "../../src/lib/grid-contours";
 import { buildMapRegionViews } from "../../src/lib/map-region-views";
+
+const cityPoints: CityLabelPoint[] = [
+  { id: "Chicago", name: "Chicago", lat: 41.8781, lng: -87.6298, pop_max: 2_746_388 },
+  { id: "St. Louis", name: "St. Louis", lat: 38.627, lng: -90.1994, pop_max: 301_578 },
+];
 
 test("compare grid contour URL resolves from manifest contour metadata", () => {
   const url = resolveGridContourGeoJsonUrl({
@@ -56,4 +63,42 @@ test("compare region views preserve wide-map zoom limits from region presets", (
   expect(views.conus.minZoom).toBe(2);
   expect(views.na.minZoom).toBe(1.5);
   expect(views.na.bbox).toEqual([-154, 12, -48, 72]);
+});
+
+test("city labels request batch fallback when visible grid bytes are not sampleable", () => {
+  const outcome = resolveCityFrameSamplingOutcome({
+    frameHour: 120,
+    selectionEpoch: 42,
+    selectionKey: "ecmwf:20260629_00z:tmp2m:conus:-",
+    points: cityPoints,
+    sampled: null,
+  });
+
+  expect(outcome.kind).toBe("fallback");
+  expect(outcome.payload).toEqual({
+    frameHour: 120,
+    selectionEpoch: 42,
+    selectionKey: "ecmwf:20260629_00z:tmp2m:conus:-",
+    gridSampled: false,
+    points: cityPoints,
+    values: {},
+    units: "",
+  });
+});
+
+test("city labels use direct grid samples when they are available", () => {
+  const outcome = resolveCityFrameSamplingOutcome({
+    frameHour: 120,
+    selectionEpoch: 42,
+    selectionKey: "ecmwf:20260629_00z:tmp2m:conus:-",
+    points: cityPoints,
+    sampled: {
+      values: { Chicago: 72.4, "St. Louis": 77.1 },
+      units: "F",
+    },
+  });
+
+  expect(outcome.kind).toBe("direct");
+  expect(outcome.values).toEqual({ Chicago: 72.4, "St. Louis": 77.1 });
+  expect(outcome.units).toBe("F");
 });

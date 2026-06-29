@@ -877,6 +877,9 @@ export class GridWebglLayerController {
   private recentFrameUrlSet = new Set<string>();
   private currentFrameSignature: string | null = null;
   private currentTextureSignature: string | null = null;
+  private currentTextureFrameHour: number | null = null;
+  private currentTextureSelectionEpoch = 0;
+  private currentTextureSelectionKey = "";
   private currentTextureUrl: string | null = null;
   private previousTextureUrl: string | null = null;
   private visibleNotifiedSignature: string | null = null;
@@ -1126,6 +1129,9 @@ export class GridWebglLayerController {
       this.currentContourTexture = null;
       this.currentContourTextureUrl = null;
       this.currentTextureSignature = null;
+      this.currentTextureFrameHour = null;
+      this.currentTextureSelectionEpoch = config.selectionEpoch;
+      this.currentTextureSelectionKey = config.selectionKey;
       this.hasPreviousTexture = false;
       this.previousTexture = null;
     }
@@ -2025,6 +2031,9 @@ export class GridWebglLayerController {
     this.currentTextureWidth = cachedTexture?.width ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.width) || 1));
     this.currentTextureHeight = cachedTexture?.height ?? Math.max(1, Math.floor(Number(this.manifest?.grid?.height) || 1));
     this.currentTextureSignature = signature;
+    this.currentTextureFrameHour = Number.isFinite(this.frameHour) ? Number(this.frameHour) : null;
+    this.currentTextureSelectionEpoch = this.selectionEpoch;
+    this.currentTextureSelectionKey = this.selectionKey;
     this.transitionStartedAt = performance.now();
     this.markFrameRetained(frameUrl);
     this.requestRepaint();
@@ -2523,13 +2532,13 @@ export class GridWebglLayerController {
       this.onFrameVisible
       && this.currentTextureSignature
       && this.visibleNotifiedSignature !== this.currentTextureSignature
-      && Number.isFinite(this.frameHour)
+      && Number.isFinite(this.currentTextureFrameHour)
     ) {
       this.visibleNotifiedSignature = this.currentTextureSignature;
       this.onFrameVisible({
-        frameHour: Number(this.frameHour),
-        selectionEpoch: this.selectionEpoch,
-        selectionKey: this.selectionKey,
+        frameHour: Number(this.currentTextureFrameHour),
+        selectionEpoch: this.currentTextureSelectionEpoch,
+        selectionKey: this.currentTextureSelectionKey,
       });
     }
   }

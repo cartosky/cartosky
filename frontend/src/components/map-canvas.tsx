@@ -20,6 +20,7 @@ import {
   updateCityValueLabels,
   type CityLabelPoint,
 } from "@/lib/city-labels";
+import { resolveCityFrameSamplingOutcome, type CityFrameSamplingPayload } from "@/lib/city-label-sampling";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
 import {
@@ -1136,15 +1137,7 @@ type MapCanvasProps = {
     values: Record<string, number | null>;
     units: string;
   }) => void;
-  onCityFrameSampled?: (payload: {
-    frameHour: number;
-    selectionEpoch?: number;
-    selectionKey?: string;
-    gridSampled: boolean;
-    points: CityLabelPoint[];
-    values: Record<string, number | null>;
-    units: string;
-  }) => void;
+  onCityFrameSampled?: (payload: CityFrameSamplingPayload) => void;
 };
 
 const EMPTY_COMPOSITE_GRID_LAYERS: NonNullable<MapCanvasProps["compositeGridLayers"]> = [];
@@ -1282,6 +1275,8 @@ export function MapCanvas({
   cityLabelModeRef.current = cityLabelMode;
   const onCityLabelsReadyRef = useRef(onCityLabelsReady);
   onCityLabelsReadyRef.current = onCityLabelsReady;
+  const onCityFrameSampledRef = useRef(onCityFrameSampled);
+  onCityFrameSampledRef.current = onCityFrameSampled;
   // Per-selection latch: fire onCityLabelsReady once per selection (reset on
   // selectionKey change), same pattern as App's gridFrameReadyRef.
   const cityLabelsReadyFiredRef = useRef(false);
@@ -1767,11 +1762,23 @@ export function MapCanvas({
 
     const cityBatchPoints = cityPoints.map((p) => ({ id: p.id, lat: p.lat, lon: p.lng }));
     const citySampled = latest.sampler.sampleAnchorPoints(cityBatchPoints);
-    if (citySampled) {
-      updateCityValueLabels(map, cityPoints, citySampled.values, citySampled.units);
+    const outcome = resolveCityFrameSamplingOutcome({
+      frameHour: latest.payload.frameHour,
+      selectionEpoch: latest.payload.selectionEpoch,
+      selectionKey: latest.payload.selectionKey,
+      points: cityPoints,
+      sampled: citySampled,
+    });
+    if (outcome.kind === "direct") {
+      updateCityValueLabels(map, cityPoints, outcome.values, outcome.units);
       markCityLabelsReady();
     } else {
-      clearCityValueLabels(map);
+      const fallback = onCityFrameSampledRef.current;
+      if (fallback) {
+        fallback(outcome.payload);
+      } else {
+        clearCityValueLabels(map);
+      }
       // Frame bytes may be evicted while the texture is still visible — proceed
       // without city values rather than hanging server screenshot capture.
       markCityLabelsReady();
