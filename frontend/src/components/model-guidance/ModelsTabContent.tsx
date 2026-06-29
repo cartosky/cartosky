@@ -212,6 +212,18 @@ export function ModelsTabContent({ lat, lon, timezone, locationText }: Props) {
     return Object.keys(result).length > 0 ? result : undefined;
   }, [publishedRuns, latestCompleteRun]);
 
+  const servedRuns = useMemo(() => {
+    if (!data) return undefined;
+    const result: Record<string, string> = {};
+    for (const model of eligibleModels) {
+      const runId = data.series?.[model]?.run_id;
+      if (typeof runId === "string" && runId.trim()) {
+        result[model] = runId;
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  }, [data, eligibleModels]);
+
   // Default detail model: ECMWF when present & ok, otherwise the first model
   // with status "ok", otherwise the first eligible model.
   const defaultDetailModel = useMemo(() => {
@@ -311,6 +323,7 @@ export function ModelsTabContent({ lat, lon, timezone, locationText }: Props) {
         filterMode={viewMode === "detail" ? "single" : "multi"}
         availableRuns={availableRuns}
         pinnedRuns={pinnedRuns}
+        servedRuns={servedRuns}
         onRunChange={handleRunChange}
       />
 
