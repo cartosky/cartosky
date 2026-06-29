@@ -17,6 +17,7 @@ import {
   moveCityLabelLayersToTop,
   queryVisibleCityPoints,
   setCityLabelNameOnlyMode,
+  shouldRefreshCityLabelsAfterSelectionReset,
   updateCityValueLabels,
   type CityLabelPoint,
 } from "@/lib/city-labels";
@@ -3141,7 +3142,13 @@ export function MapCanvas({
     latestCitySamplingRef.current = null;
     cityLabelsReadyFiredRef.current = false;
     clearCityValueLabels(map);
-  }, [isLoaded, variable, selectionKey]);
+    if (shouldRefreshCityLabelsAfterSelectionReset({
+      cityLabelMode: cityLabelModeRef.current,
+      pointLabelsEnabled: pointLabelsEnabledRef.current,
+    })) {
+      scheduleCityLabelRefresh();
+    }
+  }, [isLoaded, variable, selectionKey, scheduleCityLabelRefresh]);
 
   // One-shot: run city sampling as soon as cities-static finishes loading.
   // Handles the race where emitGridFrameVisible fires before the GeoJSON source

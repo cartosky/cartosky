@@ -17,6 +17,7 @@ const CITY_VALUE_PILL_IMAGE_ID = "city-value-label-pill";
 const CITY_LABEL_COLLISION_GAP_PX = 8;
 const CITY_CANDIDATE_MIN_ZOOM = 3.5;
 const CITY_VALUE_LABEL_MAX_COUNT = 96;
+const CITY_NAME_ONLY_LABEL_COLLISION_PADDING_PX = 18;
 
 /**
  * Loaded city candidate data. Plain module-level ref (not React state) so the
@@ -252,6 +253,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
         // text-size must be > 0 or MapLibre skips layout and queryRenderedFeatures
         // returns nothing. Opacity hides the text; collision boxes stay real.
         "text-size": 12,
+        "text-padding": CITY_NAME_ONLY_LABEL_COLLISION_PADDING_PX,
       },
       paint: {
         // Default hidden; setCityLabelNameOnlyMode() flips opacity to 1 when the
@@ -339,6 +341,13 @@ export type CityLabelPoint = {
   lat: number;
   pop_max: number;
 };
+
+export function shouldRefreshCityLabelsAfterSelectionReset(params: {
+  cityLabelMode: "off" | "name-only" | "value";
+  pointLabelsEnabled: boolean;
+}): boolean {
+  return params.pointLabelsEnabled && params.cityLabelMode === "name-only";
+}
 
 // Computes visible candidate cities directly from the loaded GeoJSON using the
 // map's current bounds + zoom. Deliberately does NOT use queryRenderedFeatures:

@@ -1,7 +1,14 @@
 import { test, expect } from "@playwright/test";
+import type { LayerSpecification } from "maplibre-gl";
 
 import { resolveCityFrameSamplingOutcome } from "../../src/lib/city-label-sampling";
-import { initCityLayers, queryVisibleCityPoints, type CityLabelPoint } from "../../src/lib/city-labels";
+import {
+  CITY_LABEL_CANDIDATES_LAYER_ID,
+  initCityLayers,
+  queryVisibleCityPoints,
+  shouldRefreshCityLabelsAfterSelectionReset,
+  type CityLabelPoint,
+} from "../../src/lib/city-labels";
 import { resolveGridContourGeoJsonUrl } from "../../src/lib/grid-contours";
 import { buildMapRegionViews } from "../../src/lib/map-region-views";
 
@@ -156,4 +163,51 @@ test("city label candidates include sparse-region rank 2 and 3 cities at fitted 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("name-only city labels add collision padding for lower-zoom dense regions", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    type: "FeatureCollection",
+    features: [],
+  }), { status: 200 })) as typeof fetch;
+
+  const layers: LayerSpecification[] = [];
+  const map = {
+    getSource: () => undefined,
+    getStyle: () => ({}),
+    setGlyphs: () => undefined,
+    once: (_event: string, callback: () => void) => callback(),
+    addSource: () => undefined,
+    hasImage: () => true,
+    addImage: () => undefined,
+    addLayer: (layer: LayerSpecification) => { layers.push(layer); },
+    getLayer: () => undefined,
+    moveLayer: () => undefined,
+    triggerRepaint: () => undefined,
+  };
+
+  try {
+    await initCityLayers(map as never);
+    const candidateLayer = layers.find((layer) => layer.id === CITY_LABEL_CANDIDATES_LAYER_ID);
+
+    expect(candidateLayer?.layout?.["text-padding"]).toBe(18);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("name-only city labels refresh after product selection reset", () => {
+  expect(shouldRefreshCityLabelsAfterSelectionReset({
+    cityLabelMode: "name-only",
+    pointLabelsEnabled: true,
+  })).toBe(true);
+  expect(shouldRefreshCityLabelsAfterSelectionReset({
+    cityLabelMode: "value",
+    pointLabelsEnabled: true,
+  })).toBe(false);
+  expect(shouldRefreshCityLabelsAfterSelectionReset({
+    cityLabelMode: "name-only",
+    pointLabelsEnabled: false,
+  })).toBe(false);
 });
