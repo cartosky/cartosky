@@ -3750,6 +3750,10 @@ export default function App() {
             return;
           }
 
+          const retainedGridLatestRunId =
+            resolvedGridLatestRunId && nextRuns.includes(resolvedGridLatestRunId)
+              ? resolvedGridLatestRunId
+              : null;
           const manifestMatchesSelection =
             Boolean(runManifest) &&
             runManifest?.model === model &&
@@ -3787,7 +3791,7 @@ export default function App() {
             // to the nearest old hour.
             if (prefersGridSubstrate && selectionSupportsGrid) {
               const gridRunKey = gridOnlySelection && run === "latest"
-                ? (resolvedGridLatestRunId ?? manifestRunKey)
+                ? (retainedGridLatestRunId ?? manifestRunKey)
                 : resolvedRunForRequests;
               const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
               if (cancelled || tickController?.signal.aborted) {
@@ -3814,10 +3818,6 @@ export default function App() {
             return;
           }
 
-          const retainedGridLatestRunId =
-            resolvedGridLatestRunId && nextRuns.includes(resolvedGridLatestRunId)
-              ? resolvedGridLatestRunId
-              : null;
           const framesRunKey = gridOnlySelection && run === "latest"
             ? retainedGridLatestRunId
             : run;
