@@ -15,7 +15,8 @@ const CITY_LABEL_GLYPHS_URL =
   "https://tiles.stadiamaps.com/fonts/{fontstack}/{range}.pbf";
 const CITY_VALUE_PILL_IMAGE_ID = "city-value-label-pill";
 const CITY_LABEL_COLLISION_GAP_PX = 8;
-const CITY_VALUE_LABEL_MAX_COUNT = 42;
+const CITY_CANDIDATE_MIN_ZOOM = 3.5;
+const CITY_VALUE_LABEL_MAX_COUNT = 96;
 
 /**
  * Loaded city candidate data. Plain module-level ref (not React state) so the
@@ -29,11 +30,9 @@ export let citiesStaticData: GeoJSON.FeatureCollection | null = null;
  */
 const CITY_CANDIDATE_ZOOM_FILTER = [
   "any",
-  ["all", [">=", ["zoom"], 4], ["==", ["get", "rank"], 1]],
-  ["all", [">=", ["zoom"], 5], ["==", ["get", "rank"], 2]],
-  ["all", [">=", ["zoom"], 6], ["==", ["get", "rank"], 3]],
-  ["all", [">=", ["zoom"], 7], ["==", ["get", "rank"], 4]],
-  ["all", [">=", ["zoom"], 9], ["==", ["get", "rank"], 5]],
+  ["all", [">=", ["zoom"], CITY_CANDIDATE_MIN_ZOOM], ["<=", ["get", "rank"], 3]],
+  ["all", [">=", ["zoom"], 5.75], ["<=", ["get", "rank"], 4]],
+  ["all", [">=", ["zoom"], 8], ["<=", ["get", "rank"], 5]],
 ];
 
 type ScreenRect = {
@@ -115,9 +114,15 @@ function estimateCityLabelRect(point: { x: number; y: number }, name: string): S
 }
 
 function cityLabelLimitForZoom(zoom: number): number {
-  if (zoom < 5) return 24;
-  if (zoom < 6) return 32;
+  if (zoom < CITY_CANDIDATE_MIN_ZOOM) return 0;
   return CITY_VALUE_LABEL_MAX_COUNT;
+}
+
+function cityCandidateMaxRankForZoom(zoom: number): number {
+  if (zoom >= 8) return 5;
+  if (zoom >= 5.75) return 4;
+  if (zoom >= CITY_CANDIDATE_MIN_ZOOM) return 3;
+  return 0;
 }
 
 function intersectsRect(left: ScreenRect, right: ScreenRect): boolean {
@@ -231,7 +236,7 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       id: CITY_LABEL_CANDIDATES_LAYER_ID,
       type: "symbol",
       source: CITIES_STATIC_SOURCE_ID,
-      minzoom: 4,
+      minzoom: CITY_CANDIDATE_MIN_ZOOM,
       filter: CITY_CANDIDATE_ZOOM_FILTER as any,
       layout: {
         "text-field": ["get", "name"] as any,
@@ -346,12 +351,7 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
   const zoom = map.getZoom();
 
   // Match the same zoom/rank thresholds as CITY_CANDIDATE_ZOOM_FILTER.
-  const maxRank =
-    zoom >= 9 ? 5 :
-    zoom >= 7 ? 4 :
-    zoom >= 6 ? 3 :
-    zoom >= 5 ? 2 :
-    zoom >= 4 ? 1 : 0;
+  const maxRank = cityCandidateMaxRankForZoom(zoom);
 
   if (maxRank === 0) return [];
 

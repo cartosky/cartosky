@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 import { resolveCityFrameSamplingOutcome } from "../../src/lib/city-label-sampling";
-import type { CityLabelPoint } from "../../src/lib/city-labels";
+import { initCityLayers, queryVisibleCityPoints, type CityLabelPoint } from "../../src/lib/city-labels";
 import { resolveGridContourGeoJsonUrl } from "../../src/lib/grid-contours";
 import { buildMapRegionViews } from "../../src/lib/map-region-views";
 
@@ -101,4 +101,59 @@ test("city labels use direct grid samples when they are available", () => {
   expect(outcome.kind).toBe("direct");
   expect(outcome.values).toEqual({ Chicago: 72.4, "St. Louis": 77.1 });
   expect(outcome.units).toBe("F");
+});
+
+test("city label candidates include sparse-region rank 2 and 3 cities at fitted CONUS zoom", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [-116.20345, 43.6135] },
+        properties: { name: "Boise", rank: 2, pop_max: 235684 },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [-104.82025, 41.13998] },
+        properties: { name: "Cheyenne", rank: 3, pop_max: 65132 },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [-100.78374, 46.80833] },
+        properties: { name: "Bismarck", rank: 2, pop_max: 75092 },
+      },
+    ],
+  }), { status: 200 })) as typeof fetch;
+
+  const map = {
+    getSource: () => undefined,
+    getStyle: () => ({}),
+    setGlyphs: () => undefined,
+    once: (_event: string, callback: () => void) => callback(),
+    addSource: () => undefined,
+    hasImage: () => true,
+    addImage: () => undefined,
+    addLayer: () => undefined,
+    getLayer: () => undefined,
+    moveLayer: () => undefined,
+    triggerRepaint: () => undefined,
+    getZoom: () => 3.75,
+    getBounds: () => ({
+      contains: ([lng, lat]: [number, number]) => lng >= -134 && lng <= -60 && lat >= 24 && lat <= 55,
+    }),
+    project: ([lng, lat]: [number, number]) => ({
+      x: (lng + 134) * 16,
+      y: (55 - lat) * 16,
+    }),
+  };
+
+  try {
+    await initCityLayers(map as never);
+    const cityNames = queryVisibleCityPoints(map as never).map((point) => point.name);
+
+    expect(cityNames).toEqual(["Boise", "Bismarck", "Cheyenne"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
