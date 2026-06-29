@@ -54,6 +54,7 @@ const CARTO_DARK_BASE_TILES = [
 ];
 
 const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE}/tiles/v3/boundaries/v2/tilejson.json`;
+const ROADS_VECTOR_TILES_URL = `${TILES_BASE}/tiles/v3/roads/v1/tilejson.json`;
 
 type RegionView = {
   center: [number, number];
@@ -139,6 +140,13 @@ const COUNTRY_BOUNDARY_LAYER_ID = "twf-country-boundaries";
 const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
+const ROADS_SOURCE_ID = "twf-roads";
+const ROAD_MAJOR_HALO_LAYER_ID = "twf-road-major-halo";
+const ROAD_MAJOR_LAYER_ID = "twf-road-major";
+const ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID = "twf-road-primary-secondary-halo";
+const ROAD_PRIMARY_SECONDARY_LAYER_ID = "twf-road-primary-secondary";
+const ROAD_LOCAL_HALO_LAYER_ID = "twf-road-local-halo";
+const ROAD_LOCAL_LAYER_ID = "twf-road-local";
 const CONTOUR_LINE_COLOR = "#000000";
 const TRANSPARENT_PIXEL_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z8AARQMBgAEAtwH9WwAAAABJRU5ErkJggg==";
@@ -661,6 +669,21 @@ type PressureCenterScreenLabel = {
   y: number;
 };
 
+type RoadVisualProfile = {
+  lineColor: string;
+  haloColor: string;
+  lineOpacity: {
+    major: number;
+    primarySecondary: number;
+    local: number;
+  };
+  haloOpacity: {
+    major: number;
+    primarySecondary: number;
+    local: number;
+  };
+};
+
 function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "light"): GridPaintSettings {
   return {
     contrast: 0,
@@ -672,6 +695,73 @@ function getGridPaintSettings(variable?: string, basemapMode: BasemapMode = "lig
 
 function getBoundaryLineColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#f3f4f6" : "#000000";
+}
+
+function isHighContrastRoadVariable(variable?: string | null): boolean {
+  const normalized = String(variable ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "tmp",
+    "temp",
+    "dew",
+    "rh",
+    "precip",
+    "snow",
+    "ice",
+    "cape",
+    "cin",
+    "wspd",
+    "gust",
+    "vort",
+    "mslp",
+    "apcp",
+    "qpf",
+  ].some((token) => normalized.includes(token));
+}
+
+function isLowerContrastRoadVariable(variable?: string | null): boolean {
+  const normalized = String(variable ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "reflectivity",
+    "radar",
+    "ptype",
+    "hazard",
+    "satellite",
+    "rgb",
+  ].some((token) => normalized.includes(token));
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function getRoadVisualProfile(variable: string | undefined, basemapMode: BasemapMode, overlayOpacity: number): RoadVisualProfile {
+  const normalizedOpacity = clamp01(overlayOpacity);
+  const highContrast = isHighContrastRoadVariable(variable);
+  const lowerContrast = isLowerContrastRoadVariable(variable);
+  const profileBoost = highContrast ? 1.12 : lowerContrast ? 0.76 : 0.92;
+  const lineBaseOpacity = Math.max(0.12, Math.min(0.8, (0.16 + normalizedOpacity * 0.5) * profileBoost));
+  const haloBaseOpacity = Math.max(0.08, Math.min(0.52, lineBaseOpacity * (highContrast ? 0.72 : 0.58)));
+
+  return {
+    lineColor: basemapMode === "dark" || highContrast ? "#f8fafc" : "#e5e7eb",
+    haloColor: basemapMode === "dark" ? "#020617" : "#111827",
+    lineOpacity: {
+      major: lineBaseOpacity,
+      primarySecondary: Math.max(0.1, lineBaseOpacity * 0.86),
+      local: Math.max(0.08, lineBaseOpacity * 0.72),
+    },
+    haloOpacity: {
+      major: haloBaseOpacity,
+      primarySecondary: Math.max(0.07, haloBaseOpacity * 0.88),
+      local: Math.max(0.06, haloBaseOpacity * 0.78),
+    },
+  };
 }
 
 function pressureCenterValueLabel(center: PressureCenter): string {
@@ -758,6 +848,114 @@ function getBasemapPaintSettings(basemapMode: BasemapMode): {
 
 function getMapBackgroundColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#1f2a33" : "#e8edf1";
+}
+
+function roadLineWidthExpression(roadClass: "major" | "primary_secondary" | "local") {
+  if (roadClass === "major") {
+    return ["interpolate", ["linear"], ["zoom"], 5, 0.8, 7, 1.2, 10, 1.75, 14, 2.4] as const;
+  }
+  if (roadClass === "primary_secondary") {
+    return ["interpolate", ["linear"], ["zoom"], 8, 0.58, 10, 0.92, 12, 1.2, 14, 1.5] as const;
+  }
+  return ["interpolate", ["linear"], ["zoom"], 10, 0.42, 12, 0.65, 14, 0.95] as const;
+}
+
+function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMode = "light"): LayerSpecification[] {
+  const profile = getRoadVisualProfile(variable, basemapMode, opacity);
+  const specs: Array<{
+    haloId: string;
+    lineId: string;
+    roadClass: "major" | "primary_secondary" | "local";
+    minzoom: number;
+    haloOpacity: number;
+    lineOpacity: number;
+  }> = [
+    {
+      haloId: ROAD_MAJOR_HALO_LAYER_ID,
+      lineId: ROAD_MAJOR_LAYER_ID,
+      roadClass: "major",
+      minzoom: 5,
+      haloOpacity: profile.haloOpacity.major,
+      lineOpacity: profile.lineOpacity.major,
+    },
+    {
+      haloId: ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID,
+      lineId: ROAD_PRIMARY_SECONDARY_LAYER_ID,
+      roadClass: "primary_secondary",
+      minzoom: 8,
+      haloOpacity: profile.haloOpacity.primarySecondary,
+      lineOpacity: profile.lineOpacity.primarySecondary,
+    },
+    {
+      haloId: ROAD_LOCAL_HALO_LAYER_ID,
+      lineId: ROAD_LOCAL_LAYER_ID,
+      roadClass: "local",
+      minzoom: 10,
+      haloOpacity: profile.haloOpacity.local,
+      lineOpacity: profile.lineOpacity.local,
+    },
+  ];
+
+  return specs.flatMap((spec) => {
+    const widthExpression = roadLineWidthExpression(spec.roadClass);
+    return [
+      {
+        id: spec.haloId,
+        type: "line",
+        source: ROADS_SOURCE_ID,
+        "source-layer": "roads",
+        minzoom: spec.minzoom,
+        filter: ["==", "road_class", spec.roadClass],
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": profile.haloColor,
+          "line-opacity": spec.haloOpacity,
+          "line-width": ["+", widthExpression as any, 1.6] as any,
+        },
+      } as LayerSpecification,
+      {
+        id: spec.lineId,
+        type: "line",
+        source: ROADS_SOURCE_ID,
+        "source-layer": "roads",
+        minzoom: spec.minzoom,
+        filter: ["==", "road_class", spec.roadClass],
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": profile.lineColor,
+          "line-opacity": spec.lineOpacity,
+          "line-width": widthExpression as any,
+        },
+      } as LayerSpecification,
+    ];
+  });
+}
+
+function applyRoadLayerStyle(map: maplibregl.Map, variable: string | undefined, opacity: number, basemapMode: BasemapMode): void {
+  const profile = getRoadVisualProfile(variable, basemapMode, opacity);
+  const layerPaint: Array<[string, number, string, number]> = [
+    [ROAD_MAJOR_HALO_LAYER_ID, profile.haloOpacity.major, profile.haloColor, profile.lineOpacity.major],
+    [ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID, profile.haloOpacity.primarySecondary, profile.haloColor, profile.lineOpacity.primarySecondary],
+    [ROAD_LOCAL_HALO_LAYER_ID, profile.haloOpacity.local, profile.haloColor, profile.lineOpacity.local],
+  ];
+
+  for (const [haloLayerId, haloOpacity, haloColor, lineOpacity] of layerPaint) {
+    if (map.getLayer(haloLayerId)) {
+      map.setPaintProperty(haloLayerId, "line-color", haloColor);
+      map.setPaintProperty(haloLayerId, "line-opacity", haloOpacity);
+    }
+    const lineLayerId = haloLayerId.replace("-halo", "");
+    if (map.getLayer(lineLayerId)) {
+      map.setPaintProperty(lineLayerId, "line-color", profile.lineColor);
+      map.setPaintProperty(lineLayerId, "line-opacity", lineOpacity);
+    }
+  }
 }
 
 function setLayerVisibility(map: maplibregl.Map, id: string, visible: boolean) {
@@ -865,7 +1063,9 @@ function setVectorLayerFade(map: maplibregl.Map, bufferIndex: 0 | 1, fade: numbe
 export function buildMapStyle(
   contourGeoJsonUrl?: string | null,
   vectorGeoJsonUrl?: string | null,
-  basemapMode: BasemapMode = "light"
+  basemapMode: BasemapMode = "light",
+  roadsOpacity = 1,
+  variable?: string,
 ): StyleSpecification {
   void vectorGeoJsonUrl;
   const basemapTiles = basemapMode === "dark" ? CARTO_DARK_BASE_TILES : CARTO_LIGHT_BASE_TILES;
@@ -886,6 +1086,10 @@ export function buildMapStyle(
       [STATE_BOUNDARY_SOURCE_ID]: {
         type: "vector",
         url: BOUNDARIES_VECTOR_TILES_URL,
+      },
+      [ROADS_SOURCE_ID]: {
+        type: "vector",
+        url: ROADS_VECTOR_TILES_URL,
       },
       [CONTOUR_SOURCE_ID]: {
         type: "geojson",
@@ -1011,6 +1215,7 @@ export function buildMapStyle(
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.1, 7, 1.5, 10, 1.9],
         },
       },
+      ...buildRoadLayers(variable, roadsOpacity, basemapMode),
       {
         id: CONTOUR_LAYER_ID,
         type: "line",
@@ -2108,9 +2313,23 @@ export function MapCanvas({
     if (map.getLayer(CONTOUR_LABEL_LAYER_ID)) {
       map.moveLayer(CONTOUR_LABEL_LAYER_ID, COASTLINE_LAYER_ID);
     }
-    // Coastline / boundaries / lake shoreline move to the top (in this order,
-    // so lake shoreline ends up highest of the group). twf-labels is gone, so
-    // there is no before-anchor — move each to the absolute top.
+    if (map.getLayer(COUNTY_BOUNDARY_LAYER_ID)) {
+      map.moveLayer(COUNTY_BOUNDARY_LAYER_ID);
+    }
+    for (const layerId of [
+      ROAD_MAJOR_HALO_LAYER_ID,
+      ROAD_MAJOR_LAYER_ID,
+      ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID,
+      ROAD_PRIMARY_SECONDARY_LAYER_ID,
+      ROAD_LOCAL_HALO_LAYER_ID,
+      ROAD_LOCAL_LAYER_ID,
+    ]) {
+      if (map.getLayer(layerId)) {
+        map.moveLayer(layerId);
+      }
+    }
+    // Coastline / country / state / lake shoreline remain above roads so the
+    // road overlay stays useful without overwhelming the major admin outlines.
     if (map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(COASTLINE_LAYER_ID);
     }
@@ -2119,9 +2338,6 @@ export function MapCanvas({
     }
     if (map.getLayer(STATE_BOUNDARY_LAYER_ID)) {
       map.moveLayer(STATE_BOUNDARY_LAYER_ID);
-    }
-    if (map.getLayer(COUNTY_BOUNDARY_LAYER_ID)) {
-      map.moveLayer(COUNTY_BOUNDARY_LAYER_ID);
     }
     if (map.getLayer(LAKE_SHORELINE_LAYER_ID)) {
       map.moveLayer(LAKE_SHORELINE_LAYER_ID);
@@ -2172,7 +2388,7 @@ export function MapCanvas({
     let resizeRafId: number | null = null;
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: buildMapStyle(null, null, basemapMode),
+      style: buildMapStyle(null, null, basemapMode, opacity, variable),
       center: view.center,
       zoom: view.zoom,
       minZoom: view.minZoom ?? 3,
@@ -2210,6 +2426,7 @@ export function MapCanvas({
     map.on("load", () => {
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
+      applyRoadLayerStyle(map, variable, opacity, basemapMode);
       enforceLayerOrder(map);
       // Fire-and-forget: fetches city candidates and adds the city label
       // sources/layers. Handles its own errors and never throws. A follow-up
@@ -2325,12 +2542,21 @@ export function MapCanvas({
     };
 
     map.once("styledata", onStyleData);
-    map.setStyle(buildMapStyle(null, null, basemapMode));
+    map.setStyle(buildMapStyle(null, null, basemapMode, opacity, variable));
 
     return () => {
       map.off("styledata", onStyleData);
     };
-  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive, scheduleCityLabelRefresh, shouldUseGridController]);
+  }, [applyContourPayload, basemapMode, enforceLayerOrder, isLoaded, normalizedRasterRgbFrameUrl, opacity, rasterRgbActive, scheduleCityLabelRefresh, shouldUseGridController, variable]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    applyRoadLayerStyle(map, variable, opacity, basemapMode);
+    enforceLayerOrder(map);
+  }, [basemapMode, enforceLayerOrder, isLoaded, opacity, variable]);
 
   useEffect(() => {
     const map = mapRef.current;

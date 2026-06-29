@@ -5134,7 +5134,7 @@ export default function App() {
         cityName: anchor.cityName,
       }));
 
-    const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode);
+    const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode, opacity, variable);
     const gridReady = gridReadyVersion > 0 && isGridHourReady(resolvedGridDisplayHour);
 
     return {

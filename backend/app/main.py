@@ -59,6 +59,12 @@ from .services.boundary_tiles import (
     empty_mvt_response,
     lookup_mbtiles_tile,
 )
+from .services.roads_tiles import (
+    ROADS_MBTILES,
+    build_roads_tilejson,
+    empty_mvt_response as empty_roads_mvt_response,
+    lookup_mbtiles_tile as lookup_roads_mbtiles_tile,
+)
 from .services.builder.colorize import float_to_rgba
 from .services.grid import (
     expected_grid_frame_size_bytes,
@@ -4184,6 +4190,8 @@ def health_tiles_v3():
         "data_root": str(DATA_ROOT),
         "boundaries_mbtiles": str(BOUNDARIES_MBTILES),
         "boundaries_mbtiles_exists": BOUNDARIES_MBTILES.is_file(),
+        "roads_mbtiles": str(ROADS_MBTILES),
+        "roads_mbtiles_exists": ROADS_MBTILES.is_file(),
     }
 
 
@@ -4232,6 +4240,60 @@ def boundaries_tile_v3(z: int, x: int, y: int):
         "Cache-Control": BOUNDARY_CACHE_HIT,
         "Server-Timing": _format_server_timing(
             [("boundaries_tile_total", (time.perf_counter() - started_at) * 1000.0)]
+        ),
+    }
+    if len(tile) >= 2 and tile[0] == 0x1F and tile[1] == 0x8B:
+        headers["Content-Encoding"] = "gzip"
+
+    return Response(
+        content=tile,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers=headers,
+    )
+
+
+@app.get("/tiles/v3/roads/v1/tilejson.json")
+def roads_tilejson_v3():
+    started_at = time.perf_counter()
+    if not ROADS_MBTILES.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "roads tileset not found",
+                "path": str(ROADS_MBTILES),
+            },
+        )
+
+    timing_header = _format_server_timing(
+        [
+            ("roads_tilejson_total", (time.perf_counter() - started_at) * 1000.0),
+        ]
+    )
+    return Response(
+        content=json.dumps(build_roads_tilejson()),
+        media_type="application/json",
+        headers={
+            "Cache-Control": BOUNDARY_CACHE_MISS,
+            "Server-Timing": timing_header,
+        },
+    )
+
+
+@app.get("/tiles/v3/roads/v1/{z:int}/{x:int}/{y:int}.mvt")
+def roads_tile_v3(z: int, x: int, y: int):
+    started_at = time.perf_counter()
+    tile = lookup_roads_mbtiles_tile(ROADS_MBTILES, z=z, x=x, y=y)
+    if tile is None:
+        response = empty_roads_mvt_response(cache_control=BOUNDARY_CACHE_MISS)
+        response.headers["Server-Timing"] = _format_server_timing(
+            [("roads_tile_total", (time.perf_counter() - started_at) * 1000.0)]
+        )
+        return response
+
+    headers = {
+        "Cache-Control": BOUNDARY_CACHE_HIT,
+        "Server-Timing": _format_server_timing(
+            [("roads_tile_total", (time.perf_counter() - started_at) * 1000.0)]
         ),
     }
     if len(tile) >= 2 and tile[0] == 0x1F and tile[1] == 0x8B:
