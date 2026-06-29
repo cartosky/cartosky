@@ -1772,6 +1772,9 @@ export function MapCanvas({
       markCityLabelsReady();
     } else {
       clearCityValueLabels(map);
+      // Frame bytes may be evicted while the texture is still visible — proceed
+      // without city values rather than hanging server screenshot capture.
+      markCityLabelsReady();
     }
   }, []);
 
