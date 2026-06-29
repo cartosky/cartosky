@@ -676,7 +676,7 @@ export function TwfShareModal({
       const timeoutId = setTimeout(() => controller.abort(), 35000);
       let response: Response;
       try {
-        response = await fetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
+        response = await twfFetch(`${API_ORIGIN}/api/v4/share/screenshot`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -731,18 +731,21 @@ export function TwfShareModal({
       setDraftDataUrl(null);
       return { blob: finalBlob, blobUrl: objectUrl, filename, state: stateWithCapture };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "";
       const message =
         error instanceof Error && error.name === "AbortError"
           ? "Screenshot timed out. Try again."
+          : errorMessage === "Sign in to CartoSky before connecting TWF."
+            ? "Sign in to CartoSky before generating a share image."
           : error instanceof Error
-            ? error.message
+            ? errorMessage
             : "Server screenshot failed.";
       setScreenshotError(message);
       return null;
     } finally {
       setScreenshotBusy(false);
     }
-  }, [API_ORIGIN, buildScreenshotState, getLegend, payload.permalink]);
+  }, [API_ORIGIN, buildScreenshotState, getLegend, payload.permalink, twfFetch]);
 
   useEffect(() => {
     if (!open) {
