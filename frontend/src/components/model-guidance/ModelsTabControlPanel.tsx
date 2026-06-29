@@ -19,6 +19,7 @@ type ModelsTabControlPanelProps = {
   filterMode?: "multi" | "single";
   availableRuns?: Record<string, string[]>;
   pinnedRuns?: Record<string, string>;
+  servedRuns?: Record<string, string>;
   onRunChange?: (model: string, runId: string | null) => void;
 };
 
@@ -42,6 +43,7 @@ export function ModelsTabControlPanel({
   filterMode = "multi",
   availableRuns,
   pinnedRuns,
+  servedRuns,
   onRunChange,
 }: ModelsTabControlPanelProps) {
   return (
@@ -64,6 +66,7 @@ export function ModelsTabControlPanel({
             mode={filterMode}
             availableRuns={availableRuns}
             pinnedRuns={pinnedRuns}
+            servedRuns={servedRuns}
             onRunChange={onRunChange}
           />
         </ControlRow>

@@ -11,6 +11,8 @@ type ModelPillFilterProps = {
   mode?: "multi" | "single";
   availableRuns?: Record<string, string[]>;
   pinnedRuns?: Record<string, string>;
+  /** Run ids actually served by the meteogram API (may differ from pins). */
+  servedRuns?: Record<string, string>;
   onRunChange?: (model: string, runId: string | null) => void;
 };
 
@@ -69,7 +71,7 @@ function RunPopover({
   );
 }
 
-export function ModelPillFilter({ models, activeModels, onChange, mode = "multi", availableRuns, pinnedRuns, onRunChange, }: ModelPillFilterProps) {
+export function ModelPillFilter({ models, activeModels, onChange, mode = "multi", availableRuns, pinnedRuns, servedRuns, onRunChange, }: ModelPillFilterProps) {
   const toggle = (model: string) => {
     if (mode === "single") {
       // Single-select: clicking always selects exactly this model.
@@ -92,8 +94,10 @@ export function ModelPillFilter({ models, activeModels, onChange, mode = "multi"
         const runs = availableRuns?.[model];
         const hasRuns = runs && runs.length > 0 && onRunChange;
         const pinnedRunId = pinnedRuns?.[model] ?? null;
-        const currentRunLabel = pinnedRunId
-          ? formatRunLabel(pinnedRunId)
+        const servedRunId = servedRuns?.[model] ?? null;
+        const displayedRunId = servedRunId ?? pinnedRunId;
+        const currentRunLabel = displayedRunId
+          ? formatRunLabel(displayedRunId)
           : runs
           ? formatRunLabel(sortRunIdsDescending(runs)[0])
           : null;
@@ -130,7 +134,7 @@ export function ModelPillFilter({ models, activeModels, onChange, mode = "multi"
               <RunPopover
                 model={model}
                 runs={runs!}
-                pinnedRunId={pinnedRunId}
+                pinnedRunId={displayedRunId}
                 onRunChange={onRunChange!}
               >
                 <button
