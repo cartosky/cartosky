@@ -4,6 +4,11 @@ import type { LayerSpecification } from "maplibre-gl";
 import { resolveCityFrameSamplingOutcome } from "../../src/lib/city-label-sampling";
 import {
   CITY_LABEL_CANDIDATES_LAYER_ID,
+  CITY_VALUE_LABELS_SOURCE_ID,
+  CITY_VALUE_LABELS_LAYER_ID,
+  CITY_VALUE_LABEL_NAMES_LAYER_ID,
+  CITIES_STATIC_SOURCE_ID,
+  hasCityLabelLayers,
   initCityLayers,
   queryVisibleCityPoints,
   shouldRefreshCityLabelsAfterSelectionReset,
@@ -210,4 +215,39 @@ test("name-only city labels refresh after product selection reset", () => {
     cityLabelMode: "name-only",
     pointLabelsEnabled: false,
   })).toBe(false);
+});
+
+test("city layer initialization repairs missing layers when static source remains", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("city data should not be refetched when the static source already exists");
+  }) as typeof fetch;
+
+  const sources = new Set<string>([CITIES_STATIC_SOURCE_ID]);
+  const layers = new Map<string, LayerSpecification>();
+  const map = {
+    getSource: (id: string) => sources.has(id) ? { id } : undefined,
+    getStyle: () => ({}),
+    setGlyphs: () => undefined,
+    once: (_event: string, callback: () => void) => callback(),
+    addSource: (id: string) => { sources.add(id); },
+    hasImage: () => true,
+    addImage: () => undefined,
+    addLayer: (layer: LayerSpecification) => { layers.set(layer.id, layer); },
+    getLayer: (id: string) => layers.get(id),
+    moveLayer: () => undefined,
+    triggerRepaint: () => undefined,
+  };
+
+  try {
+    await initCityLayers(map as never);
+
+    expect(sources.has(CITY_VALUE_LABELS_SOURCE_ID)).toBe(true);
+    expect(layers.has(CITY_LABEL_CANDIDATES_LAYER_ID)).toBe(true);
+    expect(layers.has(CITY_VALUE_LABEL_NAMES_LAYER_ID)).toBe(true);
+    expect(layers.has(CITY_VALUE_LABELS_LAYER_ID)).toBe(true);
+    expect(hasCityLabelLayers(map as never)).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

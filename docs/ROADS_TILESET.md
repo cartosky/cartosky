@@ -29,6 +29,13 @@ Output MBTiles path:
 
 - `data/roads/v1/cartosky_roads.mbtiles`
 
+## Build strategy
+
+- Downloads `us`, `canada`, and `mexico` OSM PBF extracts sequentially from Geofabrik instead of a single continent-scale monolith.
+- Extracts one road class at a time directly from each PBF with `ogr2ogr`.
+- Emits line-delimited GeoJSON features (`GeoJSONSeq`) that `tippecanoe` can tile without loading the full dataset into Python memory.
+- Deletes each intermediate extract after it is tiled to keep peak disk usage down.
+
 ## Zoom strategy
 
 - Major highways (`motorway`, `trunk`, links): `z5-z14`
@@ -52,3 +59,4 @@ sudo systemctl restart csky-api
 - Road labels are intentionally excluded.
 - Roads are rendered above county borders but below city labels in the viewer.
 - Road opacity is tied to the weather overlay opacity, with higher-contrast defaults for dense filled palettes.
+- This script is intentionally optimized for lower peak memory use on modest servers; it trades some extra sequential processing time for much lower RAM pressure.

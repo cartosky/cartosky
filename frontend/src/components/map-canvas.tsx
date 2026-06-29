@@ -13,6 +13,7 @@ import {
   CITY_VALUE_LABELS_LAYER_ID,
   citiesStaticData,
   clearCityValueLabels,
+  hasCityLabelLayers,
   initCityLayers,
   moveCityLabelLayersToTop,
   queryVisibleCityPoints,
@@ -1945,6 +1946,18 @@ export function MapCanvas({
       clearCityValueLabels(map);
       setCityLabelNameOnlyMode(map, false);
       markCityLabelsReady();
+      return;
+    }
+
+    if (!hasCityLabelLayers(map)) {
+      void initCityLayers(map).then((initialized) => {
+        if (initialized) {
+          moveCityLabelLayersToTop(map);
+          window.requestAnimationFrame(() => {
+            refreshCityValueLabels();
+          });
+        }
+      });
       return;
     }
 

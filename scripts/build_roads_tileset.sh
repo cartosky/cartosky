@@ -11,7 +11,7 @@ LEGACY_OUT_DIR="${ROOT_DIR}/data/v3/roads/v1"
 OUT_MBTILES="${OUT_DIR}/cartosky_roads.mbtiles"
 LEGACY_V3_OUT_MBTILES="${LEGACY_OUT_DIR}/cartosky_roads.mbtiles"
 
-for cmd in curl ogr2ogr tippecanoe tile-join sqlite3 python3; do
+for cmd in curl ogr2ogr tippecanoe tile-join sqlite3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing required command: $cmd" >&2
     exit 1
@@ -21,124 +21,77 @@ done
 mkdir -p "$SOURCE_DIR" "$BUILD_DIR" "$TMP_DIR" "$OUT_DIR" "$LEGACY_OUT_DIR"
 rm -f "$TMP_DIR"/*.mbtiles
 rm -f "$OUT_MBTILES" "$LEGACY_V3_OUT_MBTILES"
+rm -f "$SOURCE_DIR"/* "$BUILD_DIR"/*
 
-PBF_URL="https://download.geofabrik.de/north-america-latest.osm.pbf"
-PBF_PATH="$SOURCE_DIR/north-america-latest.osm.pbf"
+SOURCE_PBFS=(
+  "us|https://download.geofabrik.de/north-america/us-latest.osm.pbf"
+  "canada|https://download.geofabrik.de/north-america/canada-latest.osm.pbf"
+  "mexico|https://download.geofabrik.de/north-america/mexico-latest.osm.pbf"
+)
 
-curl -L "$PBF_URL" -o "$PBF_PATH"
+ROAD_CLASS_SPECS=(
+  "major|highway IN ('motorway','motorway_link','trunk','trunk_link')|5|14|4"
+  "primary_secondary|highway IN ('primary','primary_link','secondary','secondary_link')|8|14|5"
+  "local|highway IN ('tertiary','tertiary_link','residential','unclassified')|10|14|6"
+)
 
-extract_roads() {
-  local output_path="$1"
-  local where_clause="$2"
+declare -a TILESET_PARTS=()
 
-  ogr2ogr -f GeoJSON "$output_path" "$PBF_PATH" lines \
+extract_and_tile_class() {
+  local region="$1"
+  local pbf_path="$2"
+  local road_class="$3"
+  local where_clause="$4"
+  local minzoom="$5"
+  local maxzoom="$6"
+  local simplification="$7"
+
+  local geojsonseq_path="$BUILD_DIR/${region}_${road_class}.geojsonseq"
+  local mbtiles_path="$TMP_DIR/${region}_${road_class}.mbtiles"
+
+  ogr2ogr -f GeoJSONSeq "$geojsonseq_path" "$pbf_path" lines \
     -t_srs EPSG:4326 \
     -skipfailures \
-    -where "$where_clause"
+    -dialect SQLite \
+    -sql "SELECT highway, '${road_class}' AS road_class FROM lines WHERE ${where_clause}"
+
+  if [[ ! -s "$geojsonseq_path" ]]; then
+    rm -f "$geojsonseq_path"
+    return
+  fi
+
+  tippecanoe -f -P -o "$mbtiles_path" -l roads -Z"$minzoom" -z"$maxzoom" \
+    --buffer=6 \
+    --drop-smallest-as-needed \
+    --coalesce-smallest-as-needed \
+    --coalesce-densest-as-needed \
+    --simplification="$simplification" \
+    "$geojsonseq_path"
+
+  TILESET_PARTS+=("$mbtiles_path")
+  rm -f "$geojsonseq_path"
 }
 
-extract_roads "$BUILD_DIR/roads_major_raw.geojson" "highway IN ('motorway','motorway_link','trunk','trunk_link')"
-extract_roads "$BUILD_DIR/roads_primary_secondary_raw.geojson" "highway IN ('primary','primary_link','secondary','secondary_link')"
-extract_roads "$BUILD_DIR/roads_local_raw.geojson" "highway IN ('tertiary','tertiary_link','residential','unclassified')"
+for source_spec in "${SOURCE_PBFS[@]}"; do
+  IFS='|' read -r region pbf_url <<< "$source_spec"
+  pbf_path="$SOURCE_DIR/${region}.osm.pbf"
 
-python3 - "$BUILD_DIR/roads_major_raw.geojson" "$BUILD_DIR/roads_major.geojson" major <<'PY'
-import json
-import sys
+  curl -L "$pbf_url" -o "$pbf_path"
 
-source_path, output_path, road_class = sys.argv[1], sys.argv[2], sys.argv[3]
+  for class_spec in "${ROAD_CLASS_SPECS[@]}"; do
+    IFS='|' read -r road_class where_clause minzoom maxzoom simplification <<< "$class_spec"
+    extract_and_tile_class "$region" "$pbf_path" "$road_class" "$where_clause" "$minzoom" "$maxzoom" "$simplification"
+  done
 
-with open(source_path, 'r', encoding='utf-8') as src_file:
-  feature_collection = json.load(src_file)
+  rm -f "$pbf_path"
+done
 
-features = []
-for feature in feature_collection.get('features', []):
-  if not isinstance(feature, dict):
-    continue
-  geometry = feature.get('geometry')
-  if not isinstance(geometry, dict) or not geometry.get('type'):
-    continue
-  properties = feature.get('properties') if isinstance(feature.get('properties'), dict) else {}
-  properties = {
-    'road_class': road_class,
-    'highway': str(properties.get('highway', '')).strip(),
-  }
-  feature['properties'] = properties
-  features.append(feature)
+if [[ ${#TILESET_PARTS[@]} -eq 0 ]]; then
+  echo "No road features extracted; refusing to emit an empty roads tileset." >&2
+  exit 1
+fi
 
-feature_collection['features'] = features
-
-with open(output_path, 'w', encoding='utf-8') as out_file:
-  json.dump(feature_collection, out_file, separators=(',', ':'))
-PY
-
-python3 - "$BUILD_DIR/roads_primary_secondary_raw.geojson" "$BUILD_DIR/roads_primary_secondary.geojson" primary_secondary <<'PY'
-import json
-import sys
-
-source_path, output_path, road_class = sys.argv[1], sys.argv[2], sys.argv[3]
-
-with open(source_path, 'r', encoding='utf-8') as src_file:
-  feature_collection = json.load(src_file)
-
-features = []
-for feature in feature_collection.get('features', []):
-  if not isinstance(feature, dict):
-    continue
-  geometry = feature.get('geometry')
-  if not isinstance(geometry, dict) or not geometry.get('type'):
-    continue
-  properties = feature.get('properties') if isinstance(feature.get('properties'), dict) else {}
-  properties = {
-    'road_class': road_class,
-    'highway': str(properties.get('highway', '')).strip(),
-  }
-  feature['properties'] = properties
-  features.append(feature)
-
-feature_collection['features'] = features
-
-with open(output_path, 'w', encoding='utf-8') as out_file:
-  json.dump(feature_collection, out_file, separators=(',', ':'))
-PY
-
-python3 - "$BUILD_DIR/roads_local_raw.geojson" "$BUILD_DIR/roads_local.geojson" local <<'PY'
-import json
-import sys
-
-source_path, output_path, road_class = sys.argv[1], sys.argv[2], sys.argv[3]
-
-with open(source_path, 'r', encoding='utf-8') as src_file:
-  feature_collection = json.load(src_file)
-
-features = []
-for feature in feature_collection.get('features', []):
-  if not isinstance(feature, dict):
-    continue
-  geometry = feature.get('geometry')
-  if not isinstance(geometry, dict) or not geometry.get('type'):
-    continue
-  properties = feature.get('properties') if isinstance(feature.get('properties'), dict) else {}
-  properties = {
-    'road_class': road_class,
-    'highway': str(properties.get('highway', '')).strip(),
-  }
-  feature['properties'] = properties
-  features.append(feature)
-
-feature_collection['features'] = features
-
-with open(output_path, 'w', encoding='utf-8') as out_file:
-  json.dump(feature_collection, out_file, separators=(',', ':'))
-PY
-
-tippecanoe -f -o "$TMP_DIR/roads_major.mbtiles" -l roads -Z5 -z14 --buffer=6 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=4 "$BUILD_DIR/roads_major.geojson"
-tippecanoe -f -o "$TMP_DIR/roads_primary_secondary.mbtiles" -l roads -Z8 -z14 --buffer=6 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=5 "$BUILD_DIR/roads_primary_secondary.geojson"
-tippecanoe -f -o "$TMP_DIR/roads_local.mbtiles" -l roads -Z10 -z14 --buffer=6 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=6 "$BUILD_DIR/roads_local.geojson"
-
-tile-join -f -o "$OUT_MBTILES" \
-  "$TMP_DIR/roads_major.mbtiles" \
-  "$TMP_DIR/roads_primary_secondary.mbtiles" \
-  "$TMP_DIR/roads_local.mbtiles"
+tile-join -f -o "$OUT_MBTILES" "${TILESET_PARTS[@]}"
 
 VECTOR_LAYERS='[{"id":"roads","description":"OSM-derived road linework without labels","fields":{"road_class":"String","highway":"String"},"minzoom":5,"maxzoom":14}]'
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('name','CartoSky Roads v1');"

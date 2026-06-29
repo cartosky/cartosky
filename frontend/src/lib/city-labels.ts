@@ -185,6 +185,16 @@ export function setCityLabelNameOnlyMode(map: maplibregl.Map, nameOnly: boolean)
   }
 }
 
+export function hasCityLabelLayers(map: maplibregl.Map): boolean {
+  return Boolean(
+    map.getSource(CITIES_STATIC_SOURCE_ID)
+    && map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)
+    && map.getSource(CITY_VALUE_LABELS_SOURCE_ID)
+    && map.getLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID)
+    && map.getLayer(CITY_VALUE_LABELS_LAYER_ID)
+  );
+}
+
 /**
  * Adds the city-label MapLibre sources and layers used by the zoom-adaptive
  * city label system. Fire-and-forget: handles its own errors and never throws.
@@ -197,7 +207,7 @@ export function setCityLabelNameOnlyMode(map: maplibregl.Map, nameOnly: boolean)
 export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
   try {
     // Guard against double-init (e.g. style reloads re-running the load path).
-    if (map.getSource(CITIES_STATIC_SOURCE_ID)) {
+    if (hasCityLabelLayers(map)) {
       ensureCityValuePillImage(map);
       return true;
     }
@@ -217,110 +227,118 @@ export async function initCityLayers(map: maplibregl.Map): Promise<boolean> {
       });
     }
 
-    const response = await fetch(CITIES_GEOJSON_URL);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch city labels: ${response.status} ${response.statusText}`);
+    if (!map.getSource(CITIES_STATIC_SOURCE_ID)) {
+      const response = await fetch(CITIES_GEOJSON_URL);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch city labels: ${response.status} ${response.statusText}`);
+      }
+      citiesStaticData = (await response.json()) as GeoJSON.FeatureCollection;
+
+      // The style may have been torn down while the fetch was in flight.
+      if (!map.getSource(CITIES_STATIC_SOURCE_ID)) {
+        map.addSource(CITIES_STATIC_SOURCE_ID, {
+          type: "geojson",
+          data: citiesStaticData,
+        });
+      }
     }
-    citiesStaticData = (await response.json()) as GeoJSON.FeatureCollection;
 
-    // The style may have been torn down while the fetch was in flight.
-    if (map.getSource(CITIES_STATIC_SOURCE_ID)) {
-      return true;
+    if (!map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) {
+      map.addLayer({
+        id: CITY_LABEL_CANDIDATES_LAYER_ID,
+        type: "symbol",
+        source: CITIES_STATIC_SOURCE_ID,
+        minzoom: CITY_CANDIDATE_MIN_ZOOM,
+        filter: CITY_CANDIDATE_ZOOM_FILTER as any,
+        layout: {
+          "text-field": ["get", "name"] as any,
+          "text-font": ["Noto Sans Regular"],
+          // Pure data-delivery layer: overlap + ignore-placement disable collision
+          // so EVERY zoom/rank-filtered city renders (invisibly) and is therefore
+          // queryable. Visual collision is handled by the city-value-labels layer.
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          // MapLibre sorts ascending (lower key = higher priority), so negate
+          // pop_max to keep high-population cities first.
+          "symbol-sort-key": ["-", ["get", "pop_max"]] as any,
+          // text-size must be > 0 or MapLibre skips layout and queryRenderedFeatures
+          // returns nothing. Opacity hides the text; collision boxes stay real.
+          "text-size": 12,
+          "text-padding": CITY_NAME_ONLY_LABEL_COLLISION_PADDING_PX,
+        },
+        paint: {
+          // Default hidden; setCityLabelNameOnlyMode() flips opacity to 1 when the
+          // active variable/model has no scalar field to sample. Color + halo make
+          // it legible against the basemap when shown.
+          "text-opacity": 0,
+          "text-color": "rgba(226, 244, 255, 0.90)",
+          "text-halo-color": "rgba(4, 16, 30, 0.86)",
+          "text-halo-width": 1.1,
+          "text-halo-blur": 0,
+        },
+      } as LayerSpecification);
     }
 
-    map.addSource(CITIES_STATIC_SOURCE_ID, {
-      type: "geojson",
-      data: citiesStaticData,
-    });
-
-    map.addLayer({
-      id: CITY_LABEL_CANDIDATES_LAYER_ID,
-      type: "symbol",
-      source: CITIES_STATIC_SOURCE_ID,
-      minzoom: CITY_CANDIDATE_MIN_ZOOM,
-      filter: CITY_CANDIDATE_ZOOM_FILTER as any,
-      layout: {
-        "text-field": ["get", "name"] as any,
-        "text-font": ["Noto Sans Regular"],
-        // Pure data-delivery layer: overlap + ignore-placement disable collision
-        // so EVERY zoom/rank-filtered city renders (invisibly) and is therefore
-        // queryable. Visual collision is handled by the city-value-labels layer.
-        "text-allow-overlap": true,
-        "text-ignore-placement": true,
-        // MapLibre sorts ascending (lower key = higher priority), so negate
-        // pop_max to keep high-population cities first.
-        "symbol-sort-key": ["-", ["get", "pop_max"]] as any,
-        // text-size must be > 0 or MapLibre skips layout and queryRenderedFeatures
-        // returns nothing. Opacity hides the text; collision boxes stay real.
-        "text-size": 12,
-        "text-padding": CITY_NAME_ONLY_LABEL_COLLISION_PADDING_PX,
-      },
-      paint: {
-        // Default hidden; setCityLabelNameOnlyMode() flips opacity to 1 when the
-        // active variable/model has no scalar field to sample. Color + halo make
-        // it legible against the basemap when shown.
-        "text-opacity": 0,
-        "text-color": "rgba(226, 244, 255, 0.90)",
-        "text-halo-color": "rgba(4, 16, 30, 0.86)",
-        "text-halo-width": 1.1,
-        "text-halo-blur": 0,
-      },
-    } as LayerSpecification);
-
-    map.addSource(CITY_VALUE_LABELS_SOURCE_ID, {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-    });
+    if (!map.getSource(CITY_VALUE_LABELS_SOURCE_ID)) {
+      map.addSource(CITY_VALUE_LABELS_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    }
 
     ensureCityValuePillImage(map);
 
-    map.addLayer({
-      id: CITY_VALUE_LABEL_NAMES_LAYER_ID,
-      type: "symbol",
-      source: CITY_VALUE_LABELS_SOURCE_ID,
-      layout: {
-        "text-field": ["get", "name"] as any,
-        "text-font": ["Noto Sans Regular"],
-        "text-size": 12,
-        "text-anchor": "top",
-        "text-offset": [0, 0.68],
-        "text-allow-overlap": true,
-        "text-ignore-placement": true,
-      },
-      paint: {
-        "text-color": "rgba(255, 255, 255, 0.98)",
-        "text-halo-color": "rgba(25, 29, 39, 0.62)",
-        "text-halo-width": 0.9,
-        "text-halo-blur": 0.15,
-      },
-    } as LayerSpecification);
+    if (!map.getLayer(CITY_VALUE_LABEL_NAMES_LAYER_ID)) {
+      map.addLayer({
+        id: CITY_VALUE_LABEL_NAMES_LAYER_ID,
+        type: "symbol",
+        source: CITY_VALUE_LABELS_SOURCE_ID,
+        layout: {
+          "text-field": ["get", "name"] as any,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 12,
+          "text-anchor": "top",
+          "text-offset": [0, 0.68],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": "rgba(255, 255, 255, 0.98)",
+          "text-halo-color": "rgba(25, 29, 39, 0.62)",
+          "text-halo-width": 0.9,
+          "text-halo-blur": 0.15,
+        },
+      } as LayerSpecification);
+    }
 
-    map.addLayer({
-      id: CITY_VALUE_LABELS_LAYER_ID,
-      type: "symbol",
-      source: CITY_VALUE_LABELS_SOURCE_ID,
-      layout: {
-        "icon-image": CITY_VALUE_PILL_IMAGE_ID,
-        "icon-text-fit": "both",
-        "icon-text-fit-padding": [1, 4, 1, 4],
-        "icon-anchor": "center",
-        "icon-allow-overlap": true,
-        "icon-ignore-placement": true,
-        "text-field": ["coalesce", ["get", "value_label"], "…"] as any,
-        // Collision is handled before sampling in queryVisibleCityPoints(), so
-        // this layer just renders the selected city/value pairs.
-        "text-allow-overlap": true,
-        "text-ignore-placement": true,
-        "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
-        "text-size": 11.5,
-        "text-anchor": "center",
-      },
-      paint: {
-        "text-color": "rgba(245, 252, 255, 0.98)",
-        "text-halo-color": "rgba(25, 29, 39, 0.62)",
-        "text-halo-width": 0.4,
-      },
-    } as LayerSpecification);
+    if (!map.getLayer(CITY_VALUE_LABELS_LAYER_ID)) {
+      map.addLayer({
+        id: CITY_VALUE_LABELS_LAYER_ID,
+        type: "symbol",
+        source: CITY_VALUE_LABELS_SOURCE_ID,
+        layout: {
+          "icon-image": CITY_VALUE_PILL_IMAGE_ID,
+          "icon-text-fit": "both",
+          "icon-text-fit-padding": [1, 4, 1, 4],
+          "icon-anchor": "center",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "text-field": ["coalesce", ["get", "value_label"], "…"] as any,
+          // Collision is handled before sampling in queryVisibleCityPoints(), so
+          // this layer just renders the selected city/value pairs.
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-font": ["Noto Sans Bold", "Noto Sans Regular"],
+          "text-size": 11.5,
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": "rgba(245, 252, 255, 0.98)",
+          "text-halo-color": "rgba(25, 29, 39, 0.62)",
+          "text-halo-width": 0.4,
+        },
+      } as LayerSpecification);
+    }
 
     // Put the city label layers on top now that they exist. The
     // repaint-once-cities-static-loads behavior lives in a dedicated effect in
