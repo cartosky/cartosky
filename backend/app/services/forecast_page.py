@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 OPEN_METEO_GEOCODING_BASE = "https://geocoding-api.open-meteo.com/v1"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+GOOGLE_POLLEN_URL = "https://pollen.googleapis.com/v1/forecast:lookup"
 NWS_API_BASE = nws_service.NWS_API_BASE
 GEOCODE_COUNTRY_CODES = ["US", "CA"]
 GEOCODE_SEARCH_CACHE_NAMESPACE = "geocode-search-v2"
@@ -49,6 +51,8 @@ OBSERVATION_CACHE_TTL = 10 * 60
 FORECAST_CACHE_TTL = 20 * 60
 AFD_CACHE_TTL = 30 * 60
 OPEN_METEO_CACHE_TTL = 30 * 60
+AIR_QUALITY_CACHE_TTL = 30 * 60
+POLLEN_CACHE_TTL = 3 * 60 * 60
 ALERTS_CACHE_TTL = 60
 FORECAST_PAGE_CACHE_TTL = 10 * 60
 # A degraded NWS result (some product unavailable) is still cached, but briefly,
@@ -407,6 +411,14 @@ def _coerce_str(value: Any) -> str | None:
     return stripped or None
 
 
+def _env_first(*names: str) -> str | None:
+    for name in names:
+        value = _coerce_str(os.getenv(name))
+        if value:
+            return value
+    return None
+
+
 def _fahrenheit(celsius: float | None) -> int | None:
     if celsius is None:
         return None
@@ -459,6 +471,40 @@ def _convert_precip_to_inches(value: float | None, unit: str | None) -> float | 
 
 def _isoformat(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def _date_iso(year: Any, month: Any, day: Any) -> str | None:
+    try:
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _hex_from_rgb_color(color: Any) -> str | None:
+    if not isinstance(color, dict):
+        return None
+    red = _safe_float(color.get("red")) or 0.0
+    green = _safe_float(color.get("green")) or 0.0
+    blue = _safe_float(color.get("blue")) or 0.0
+    if red == 0.0 and green == 0.0 and blue == 0.0:
+        return None
+    return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
+
+
+def _us_aqi_category(value: int | None) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    if value <= 50:
+        return "Good", "#3ecf6a"
+    if value <= 100:
+        return "Moderate", "#f6c84c"
+    if value <= 150:
+        return "Unhealthy for Sensitive Groups", "#f59e0b"
+    if value <= 200:
+        return "Unhealthy", "#ef4444"
+    if value <= 300:
+        return "Very Unhealthy", "#8b5cf6"
+    return "Hazardous", "#7f1d1d"
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -1050,6 +1096,72 @@ async def _fetch_open_meteo_forecast(client: httpx.AsyncClient, location: Resolv
     return payload
 
 
+async def _fetch_open_meteo_air_quality(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any] | None:
+    timezone_name = location.timezone or "auto"
+    cache_key = f"{location.latitude:.3f}:{location.longitude:.3f}:{timezone_name}"
+    cached = _cache_get("open-meteo-air-quality", cache_key)
+    if cached is not None:
+        return cached
+
+    payload = await _request_json(
+        client,
+        OPEN_METEO_AIR_QUALITY_URL,
+        params={
+            "latitude": round(location.latitude, 4),
+            "longitude": round(location.longitude, 4),
+            "timezone": timezone_name,
+            "current": ",".join(
+                [
+                    "us_aqi",
+                    "us_aqi_pm2_5",
+                    "us_aqi_pm10",
+                    "us_aqi_ozone",
+                    "us_aqi_nitrogen_dioxide",
+                    "pm2_5",
+                    "pm10",
+                    "ozone",
+                    "nitrogen_dioxide",
+                ]
+            ),
+        },
+    )
+    _cache_set("open-meteo-air-quality", cache_key, payload, AIR_QUALITY_CACHE_TTL)
+    return payload
+
+
+async def _fetch_google_pollen(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any] | None:
+    api_key = _env_first("CARTOSKY_GOOGLE_POLLEN_API_KEY", "GOOGLE_POLLEN_API_KEY")
+    if api_key is None:
+        return None
+
+    local_date_key = _utcnow().date().isoformat()
+    if location.timezone:
+        try:
+            local_date_key = _utcnow().astimezone(ZoneInfo(location.timezone)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            pass
+
+    cache_key = f"{location.latitude:.3f}:{location.longitude:.3f}:{local_date_key}"
+    cached = _cache_get("google-pollen", cache_key)
+    if cached is not None:
+        return cached
+
+    payload = await _request_json(
+        client,
+        GOOGLE_POLLEN_URL,
+        params={
+            "key": api_key,
+            "location.latitude": round(location.latitude, 4),
+            "location.longitude": round(location.longitude, 4),
+            "days": 1,
+            "pageSize": 1,
+            "plantsDescription": "false",
+        },
+    )
+    _cache_set("google-pollen", cache_key, payload, POLLEN_CACHE_TTL)
+    return payload
+
+
 async def _fetch_nws_points(client: httpx.AsyncClient, lat: float, lon: float) -> dict[str, Any]:
     cache_key = f"{lat:.4f},{lon:.4f}"
     cached = _cache_get("nws-points", cache_key)
@@ -1240,6 +1352,8 @@ async def _select_best_nws_current(
     for station, raw_result in zip(stations, raw_results, strict=False):
         if isinstance(raw_result, Exception):
             continue
+        if not isinstance(raw_result, dict):
+            continue
         normalized = _normalize_nws_observation_payload(
             raw_result,
             station,
@@ -1285,6 +1399,130 @@ def _normalize_open_meteo_current(payload: dict[str, Any]) -> dict[str, Any]:
             "freshness": "modeled",
             "age_minutes": None,
         },
+    }
+
+
+def _normalize_open_meteo_air_quality(payload: dict[str, Any]) -> dict[str, Any] | None:
+    current = payload.get("current") or {}
+    current_units = payload.get("current_units") or {}
+    observed_at = _coerce_str(current.get("time"))
+    us_aqi = _safe_int(current.get("us_aqi"))
+    category, color = _us_aqi_category(us_aqi)
+
+    driver_candidates = [
+        ("pm2_5", "PM2.5", "us_aqi_pm2_5", "pm2_5"),
+        ("pm10", "PM10", "us_aqi_pm10", "pm10"),
+        ("ozone", "Ozone", "us_aqi_ozone", "ozone"),
+        ("nitrogen_dioxide", "NO2", "us_aqi_nitrogen_dioxide", "nitrogen_dioxide"),
+    ]
+    driver = None
+    for code, label, aqi_key, value_key in driver_candidates:
+        candidate_aqi = _safe_int(current.get(aqi_key))
+        if candidate_aqi is None:
+            continue
+        candidate = {
+            "code": code,
+            "label": label,
+            "value": _safe_float(current.get(value_key)),
+            "unit": _coerce_str(current_units.get(value_key)),
+            "aqi": candidate_aqi,
+        }
+        if driver is None or candidate_aqi > driver["aqi"]:
+            driver = candidate
+
+    if us_aqi is None and driver is None:
+        return None
+
+    display_aqi = us_aqi if us_aqi is not None else (driver["aqi"] if driver is not None else None)
+    if category is None or color is None:
+        category, color = _us_aqi_category(display_aqi)
+
+    return {
+        "source": "open_meteo",
+        "observed_at": observed_at,
+        "us_aqi": us_aqi,
+        "category": category,
+        "color": color,
+        "driver": driver,
+        "pollutants": {
+            "pm2_5": _safe_float(current.get("pm2_5")),
+            "pm10": _safe_float(current.get("pm10")),
+            "ozone": _safe_float(current.get("ozone")),
+            "nitrogen_dioxide": _safe_float(current.get("nitrogen_dioxide")),
+        },
+    }
+
+
+def _normalize_google_pollen(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    daily_info = payload.get("dailyInfo") or []
+    if not daily_info or not isinstance(daily_info[0], dict):
+        return None
+
+    first_day = daily_info[0]
+    date_payload = first_day.get("date") or {}
+    date_value = _date_iso(date_payload.get("year"), date_payload.get("month"), date_payload.get("day"))
+
+    type_entries: list[dict[str, Any]] = []
+    for item in first_day.get("pollenTypeInfo") or []:
+        if not isinstance(item, dict):
+            continue
+        index_info = item.get("indexInfo") or {}
+        type_entries.append(
+            {
+                "code": _coerce_str(item.get("code")),
+                "label": _coerce_str(item.get("displayName")) or _coerce_str(item.get("code")),
+                "category": _coerce_str(index_info.get("category")),
+                "index": _safe_int(index_info.get("value")),
+                "color": _hex_from_rgb_color(index_info.get("color")),
+                "in_season": bool(item.get("inSeason", False)),
+            }
+        )
+
+    type_entries = [entry for entry in type_entries if entry.get("code")]
+    type_entries.sort(key=lambda entry: ((entry.get("index") or -1), bool(entry.get("in_season"))), reverse=True)
+    dominant_type = type_entries[0] if type_entries else None
+
+    plant_entries: list[dict[str, Any]] = []
+    for item in first_day.get("plantInfo") or []:
+        if not isinstance(item, dict):
+            continue
+        index_info = item.get("indexInfo") or {}
+        plant_entries.append(
+            {
+                "code": _coerce_str(item.get("code")),
+                "label": _coerce_str(item.get("displayName")) or _coerce_str(item.get("code")),
+                "category": _coerce_str(index_info.get("category")),
+                "index": _safe_int(index_info.get("value")),
+                "in_season": bool(item.get("inSeason", False)),
+            }
+        )
+
+    plant_entries = [entry for entry in plant_entries if entry.get("code")]
+    plant_entries.sort(key=lambda entry: ((entry.get("index") or -1), bool(entry.get("in_season"))), reverse=True)
+    dominant_plant = plant_entries[0] if plant_entries else None
+
+    if dominant_type is None:
+        return None
+
+    summary_parts: list[str] = []
+    for entry in type_entries[:2]:
+        category = _coerce_str(entry.get("category"))
+        label = _coerce_str(entry.get("label"))
+        if category and label:
+            summary_parts.append(f"{category} {label.lower()} pollen")
+
+    return {
+        "source": "google_pollen",
+        "date": date_value,
+        "index": dominant_type.get("index"),
+        "category": dominant_type.get("category"),
+        "color": dominant_type.get("color"),
+        "dominant_type": dominant_type.get("label"),
+        "dominant_plant": dominant_plant.get("label") if dominant_plant else None,
+        "summary": ", ".join(summary_parts) + "." if summary_parts else None,
+        "types": type_entries,
     }
 
 
@@ -1601,7 +1839,7 @@ async def _timed(name: str, coro: Any, sink: dict[str, float]) -> Any:
 
 
 async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
-    """Fast Open-Meteo-only forecast core (current / hourly / daily).
+    """Fast forecast core (Open-Meteo forecast + current AQI).
 
     Renders instantly. NWS enrichment — the observation upgrade, the 7-day
     narrative, alerts, and the AFD — is fetched separately by the client via the
@@ -1609,6 +1847,7 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
     "pending"`` signals the client that NWS enrichment is available for this
     (US) location; ``"not_applicable"`` means open-meteo is the only source.
     """
+    aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), {}))
     try:
         om_payload = await _fetch_open_meteo_forecast(client, location)
         om_status = "ok"
@@ -1624,6 +1863,10 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
     current_payload = _normalize_open_meteo_current(om_payload)
     hourly_payload, hourly_freshness = _normalize_open_meteo_hourly(om_payload)
     daily_payload = _normalize_open_meteo_daily(om_payload)
+    try:
+        air_quality_payload = _normalize_open_meteo_air_quality(await aq_task)
+    except ForecastPageError:
+        air_quality_payload = None
     timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
     current_payload = _apply_current_icon_day_night(
         current_payload, timezone_name=timezone_name, om_payload=om_payload
@@ -1639,6 +1882,8 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         "current": current_payload,
         "hourly": hourly_payload,
         "daily": daily_payload,
+        "air_quality": air_quality_payload,
+        "pollen": None,
         "official_text_forecast": None,
         "afd": None,
         "alerts": [],
@@ -1646,6 +1891,8 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
             "current": "Open-Meteo",
             "hourly": "Open-Meteo",
             "daily": "Open-Meteo",
+            "air_quality": "Open-Meteo" if air_quality_payload else None,
+            "pollen": None,
             "afd": None,
             "alerts": None,
         },
@@ -1668,6 +1915,11 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     if cached_payload is not None:
         payload = copy.deepcopy(cached_payload)
         payload["location"]["query"] = location.query
+        payload.setdefault("air_quality", None)
+        payload.setdefault("pollen", None)
+        attribution = payload.setdefault("attribution", {})
+        attribution.setdefault("air_quality", None)
+        attribution.setdefault("pollen", None)
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
             alerts, alerts_freshness = await _fetch_nws_alerts(
                 client,
@@ -1681,6 +1933,8 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
 
     timings: dict[str, float] = {}
     om_task = asyncio.create_task(_timed("open_meteo", _fetch_open_meteo_forecast(client, location), timings))
+    aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), timings))
+    pollen_task = asyncio.create_task(_timed("google_pollen", _fetch_google_pollen(client, location), timings))
 
     declared_us_region = (location.country_code or "").upper() == "US"
     should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
@@ -1695,10 +1949,14 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     afd_payload: dict[str, Any] | None = None
     alerts_payload: list[dict[str, Any]] = []
     alerts_freshness: dict[str, Any] | None = None
+    air_quality_payload: dict[str, Any] | None = None
+    pollen_payload: dict[str, Any] | None = None
     attribution = {
         "current": None,
         "hourly": None,
         "daily": "Open-Meteo",
+        "air_quality": None,
+        "pollen": None,
         "afd": None,
         "alerts": None,
     }
@@ -1722,6 +1980,20 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     except ForecastPageError:
         om_payload = {}
         om_status = "unavailable"
+
+    try:
+        air_quality_payload = _normalize_open_meteo_air_quality(await aq_task)
+        if air_quality_payload is not None:
+            attribution["air_quality"] = "Open-Meteo"
+    except ForecastPageError:
+        air_quality_payload = None
+
+    try:
+        pollen_payload = _normalize_google_pollen(await pollen_task)
+        if pollen_payload is not None:
+            attribution["pollen"] = "Google Pollen API"
+    except ForecastPageError:
+        pollen_payload = None
 
     if points_payload is not None:
         props = points_payload.get("properties") or {}
@@ -1842,6 +2114,8 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         "current": current_payload,
         "hourly": hourly_payload,
         "daily": daily_payload,
+        "air_quality": air_quality_payload,
+        "pollen": pollen_payload,
         "official_text_forecast": official_text_forecast,
         "afd": afd_payload,
         "alerts": alerts_payload,

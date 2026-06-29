@@ -46,10 +46,47 @@ const FORECAST_PAYLOAD = {
       snow_in: 0,
       wind_speed_mph: 16,
       wind_gust_mph: 24,
+      sunrise: "2026-06-29T05:46:00-05:00",
+      sunset: "2026-06-29T21:08:00-05:00",
       icon: "partly-cloudy-day",
       short_text: "Hot",
     },
   ],
+  air_quality: {
+    source: "open_meteo",
+    observed_at: "2026-06-29T14:30:00-05:00",
+    us_aqi: 42,
+    category: "Good",
+    color: "#3ecf6a",
+    driver: {
+      code: "pm2_5",
+      label: "PM2.5",
+      value: 11.2,
+      unit: "μg/m³",
+      aqi: 42,
+    },
+    pollutants: {
+      pm2_5: 11.2,
+      pm10: 18.7,
+      ozone: 31.4,
+      nitrogen_dioxide: 7.8,
+    },
+  },
+  pollen: {
+    source: "google_pollen",
+    date: "2026-06-29",
+    index: 4,
+    category: "High",
+    color: "#ffb423",
+    dominant_type: "Tree",
+    dominant_plant: "Oak",
+    summary: "High tree pollen, moderate grass pollen.",
+    types: [
+      { code: "TREE", label: "Tree", category: "High", index: 4, in_season: true },
+      { code: "GRASS", label: "Grass", category: "Moderate", index: 3, in_season: true },
+      { code: "WEED", label: "Weed", category: "Very Low", index: 1, in_season: false },
+    ],
+  },
   official_text_forecast: null,
   afd: null,
   alerts: [
@@ -65,7 +102,13 @@ const FORECAST_PAYLOAD = {
       description: "Heat index values up to 100 expected.",
     },
   ],
-  attribution: { current: "NWS", hourly: "Open-Meteo", daily: "Open-Meteo" },
+  attribution: {
+    current: "NWS",
+    hourly: "Open-Meteo",
+    daily: "Open-Meteo",
+    air_quality: "Open-Meteo",
+    pollen: "Google Pollen API",
+  },
   freshness: {
     current: { state: "fresh", observed_at: "2026-06-29T14:38:00-05:00", age_minutes: 22 },
     afd: { state: "unavailable", issued_at: null, age_hours: null },
@@ -101,10 +144,25 @@ test.describe("Forecast current tab", () => {
 
     await expect(page.getByRole("heading", { name: "Current Conditions" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Live Radar" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sun" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Air Quality" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pollen" })).toBeVisible();
     await expect(page.getByText("91°")).toBeVisible();
     await expect(page.getByText("Partly Cloudy")).toBeVisible();
     await expect(page.getByText("Dew Point")).toBeVisible();
     await expect(page.getByText("73°")).toBeVisible();
+    await expect(page.getByText("5:46 AM")).toBeVisible();
+    await expect(page.getByText("9:08 PM")).toBeVisible();
+    await expect(page.getByText("15h 22m")).toBeVisible();
+    await expect(page.getByText("42")).toBeVisible();
+    await expect(page.getByText("PM2.5")).toBeVisible();
+    await expect(page.getByText("11.2 μg/m³")).toBeVisible();
+    const pollenCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Pollen" }) });
+    await expect(pollenCard.getByText("4", { exact: true })).toBeVisible();
+    await expect(pollenCard.getByText("Tree Pollen", { exact: true })).toBeVisible();
+    await expect(pollenCard.getByText("High", { exact: true }).first()).toBeVisible();
+    await expect(pollenCard.getByText("Grass Pollen", { exact: true })).toBeVisible();
+    await expect(pollenCard.getByText("Moderate", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Heat Advisory", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Hourly" }).click();

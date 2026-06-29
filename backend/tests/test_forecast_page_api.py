@@ -101,6 +101,111 @@ def _open_meteo_payload(*, timezone_name: str) -> dict:
     }
 
 
+def _open_meteo_air_quality_payload(*, timezone_name: str) -> dict:
+    return {
+        "latitude": 43.55,
+        "longitude": -96.73,
+        "timezone": timezone_name,
+        "current_units": {
+            "pm2_5": "μg/m³",
+            "pm10": "μg/m³",
+            "ozone": "μg/m³",
+            "nitrogen_dioxide": "μg/m³",
+        },
+        "current": {
+            "time": "2026-04-18T12:00",
+            "us_aqi": 42,
+            "us_aqi_pm2_5": 42,
+            "us_aqi_pm10": 19,
+            "us_aqi_ozone": 14,
+            "us_aqi_nitrogen_dioxide": 8,
+            "pm2_5": 11.2,
+            "pm10": 18.7,
+            "ozone": 31.4,
+            "nitrogen_dioxide": 7.8,
+        },
+    }
+
+
+def _google_pollen_payload() -> dict:
+    return {
+        "regionCode": "US",
+        "dailyInfo": [
+            {
+                "date": {"year": 2026, "month": 4, "day": 18},
+                "pollenTypeInfo": [
+                    {
+                        "code": "TREE",
+                        "displayName": "Tree",
+                        "inSeason": True,
+                        "indexInfo": {
+                            "code": "UPI",
+                            "displayName": "Universal Pollen Index",
+                            "value": 4,
+                            "category": "High",
+                            "color": {"red": 1.0, "green": 0.72, "blue": 0.1},
+                        },
+                        "healthRecommendations": ["High tree pollen may trigger symptoms."],
+                    },
+                    {
+                        "code": "GRASS",
+                        "displayName": "Grass",
+                        "inSeason": True,
+                        "indexInfo": {
+                            "code": "UPI",
+                            "displayName": "Universal Pollen Index",
+                            "value": 3,
+                            "category": "Moderate",
+                            "color": {"red": 1.0, "green": 0.88, "blue": 0.1},
+                        },
+                    },
+                    {
+                        "code": "WEED",
+                        "displayName": "Weed",
+                        "inSeason": False,
+                        "indexInfo": {
+                            "code": "UPI",
+                            "displayName": "Universal Pollen Index",
+                            "value": 1,
+                            "category": "Very Low",
+                            "color": {"green": 0.62, "blue": 0.22},
+                        },
+                    },
+                ],
+                "plantInfo": [
+                    {
+                        "code": "OAK",
+                        "displayName": "Oak",
+                        "inSeason": True,
+                        "indexInfo": {
+                            "code": "UPI",
+                            "displayName": "Universal Pollen Index",
+                            "value": 4,
+                            "category": "High",
+                        },
+                    },
+                    {
+                        "code": "GRAMINALES",
+                        "displayName": "Grasses",
+                        "inSeason": True,
+                        "indexInfo": {
+                            "code": "UPI",
+                            "displayName": "Universal Pollen Index",
+                            "value": 3,
+                            "category": "Moderate",
+                        },
+                    },
+                    {
+                        "code": "RAGWEED",
+                        "displayName": "Ragweed",
+                        "inSeason": False,
+                    },
+                ],
+            }
+        ],
+    }
+
+
 def _nws_points_payload() -> dict:
     return {
         "properties": {
@@ -223,6 +328,7 @@ def isolate_forecast_page(tmp_path: Path) -> None:
 
 async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
+    monkeypatch.setenv("CARTOSKY_GOOGLE_POLLEN_API_KEY", "test-google-pollen-key")
 
     async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
         return nws_service.AfdResult(
@@ -261,6 +367,10 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
             )
         if host == "api.open-meteo.com" and path == "/v1/forecast":
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
+        if host == "pollen.googleapis.com" and path == "/v1/forecast:lookup":
+            return httpx.Response(200, json=_google_pollen_payload())
         if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
             return httpx.Response(200, json=_nws_points_payload())
         if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast":
@@ -310,6 +420,10 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
     assert payload["hourly"][0]["source"] == "nws"
     assert payload["hourly"][1]["weather_code"] == "rain-night"
     assert payload["daily"][0]["source"] == "open_meteo"
+    assert payload["air_quality"]["us_aqi"] == 42
+    assert payload["air_quality"]["driver"]["code"] == "pm2_5"
+    assert payload["pollen"]["index"] == 4
+    assert payload["pollen"]["types"][0]["code"] == "TREE"
     assert payload["official_text_forecast"]["periods"][0]["name"] == "Tonight"
     assert payload["afd"]["product_id"] == "AFDFSD"
     assert payload["alerts"][0]["event"] == "Wind Advisory"
@@ -317,6 +431,8 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
         "current": "NWS",
         "hourly": "NWS",
         "daily": "Open-Meteo",
+        "air_quality": "Open-Meteo",
+        "pollen": "Google Pollen API",
         "afd": "NWS",
         "alerts": "NWS",
     }
@@ -358,6 +474,8 @@ async def test_get_forecast_page_by_query_falls_back_to_open_meteo_current_when_
             )
         if host == "api.open-meteo.com" and path == "/v1/forecast":
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
         if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
             return httpx.Response(200, json=_nws_points_payload())
         if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast":
@@ -439,6 +557,8 @@ async def test_get_forecast_page_by_query_uses_night_icon_for_nws_current(monkey
             )
         if host == "api.open-meteo.com" and path == "/v1/forecast":
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
         if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
             return httpx.Response(200, json=_nws_points_payload())
         if host == "api.weather.gov" and path == "/gridpoints/FSD/97,70/forecast":
@@ -484,6 +604,8 @@ async def test_degraded_us_hybrid_payload_does_not_poison_forecast_page_cache(mo
         path = request.url.path
         if host == "api.open-meteo.com" and path == "/v1/forecast":
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
         if host == "api.weather.gov" and path == "/points/43.5500,-96.7300":
             points_calls += 1
             if points_calls == 1:
@@ -533,8 +655,12 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
         path = request.url.path
         if host == "api.open-meteo.com" and path == "/v1/forecast":
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
         if host == "api.weather.gov":
             raise AssertionError(f"core must not call NWS: {request.url}")
+        if host == "pollen.googleapis.com":
+            raise AssertionError(f"core must not call Google Pollen: {request.url}")
         raise AssertionError(f"Unhandled request: {request.method} {request.url}")
 
     _mock_async_client(monkeypatch, handler)
@@ -551,6 +677,8 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
     assert payload["current"]["source"] == "open_meteo"
     assert payload["hourly"]
     assert payload["daily"]
+    assert payload["air_quality"]["us_aqi"] == 42
+    assert payload["pollen"] is None
     assert payload["official_text_forecast"] is None
     assert payload["afd"] is None
     assert payload["alerts"] == []
@@ -589,6 +717,8 @@ async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatc
             payload["latitude"] = 43.6532
             payload["longitude"] = -79.3832
             return httpx.Response(200, json=payload)
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Toronto"))
         raise AssertionError(f"Unhandled request: {request.method} {request.url}")
 
     _mock_async_client(monkeypatch, handler)
@@ -619,6 +749,8 @@ async def test_search_locations_city_state_query_falls_back_to_city_search(
             requests.append((name or "", country_code))
             if name == "Denver, CO":
                 return httpx.Response(200, json={"results": []})
+            if name == "Denver" and country_code == "CA":
+                return httpx.Response(200, json={"results": []})
             if name == "Denver" and country_code == "US":
                 return httpx.Response(
                     200,
@@ -645,7 +777,7 @@ async def test_search_locations_city_state_query_falls_back_to_city_search(
 
     payload = await forecast_page_service.search_locations("Denver, CO")
 
-    assert requests == [("Denver, CO", None), ("Denver", "US")]
+    assert requests == [("Denver, CO", "US"), ("Denver, CO", "CA"), ("Denver", "US"), ("Denver", "CA")]
     assert payload["results"][0]["display_name"] == "Denver, CO"
     assert payload["results"][0]["latitude"] == pytest.approx(39.7392)
 
@@ -736,6 +868,8 @@ async def test_get_forecast_page_by_coordinates_probes_nws_when_reverse_geocode_
             payload["latitude"] = 42.3601
             payload["longitude"] = -71.0589
             return httpx.Response(200, json=payload)
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/New_York"))
         if host == "api.weather.gov" and path == "/points/42.3601,-71.0589":
             return httpx.Response(
                 200,
@@ -820,6 +954,8 @@ async def test_get_forecast_page_with_location_hint_skips_reverse_geocode(
             payload["latitude"] = 47.6062
             payload["longitude"] = -122.3321
             return httpx.Response(200, json=payload)
+        if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
+            return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Los_Angeles"))
         if host == "api.weather.gov" and path == "/points/47.6062,-122.3321":
             return httpx.Response(
                 200,
@@ -914,10 +1050,12 @@ async def test_forecast_page_routes_smoke(
             "current": {"source": "nws"},
             "hourly": [],
             "daily": [],
+            "air_quality": None,
+            "pollen": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 
@@ -928,10 +1066,12 @@ async def test_forecast_page_routes_smoke(
             "current": {"source": "nws"},
             "hourly": [],
             "daily": [],
+            "air_quality": None,
+            "pollen": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 

@@ -78,9 +78,53 @@ type DailyEntry = {
   snow_in: number | null;
   wind_speed_mph: number | null;
   wind_gust_mph: number | null;
+  sunrise?: string | null;
+  sunset?: string | null;
   icon: string;
   short_text: string | null;
 };
+
+type AirQualityData = {
+  source: string;
+  observed_at: string | null;
+  us_aqi: number | null;
+  category: string | null;
+  color: string | null;
+  driver: {
+    code: string;
+    label: string;
+    value: number | null;
+    unit: string | null;
+    aqi: number;
+  } | null;
+  pollutants: {
+    pm2_5: number | null;
+    pm10: number | null;
+    ozone: number | null;
+    nitrogen_dioxide: number | null;
+  };
+} | null;
+
+type PollenTypeData = {
+  code: string;
+  label: string;
+  category: string | null;
+  index: number | null;
+  color?: string | null;
+  in_season: boolean;
+};
+
+type PollenData = {
+  source: string;
+  date: string | null;
+  index: number | null;
+  category: string | null;
+  color: string | null;
+  dominant_type: string | null;
+  dominant_plant: string | null;
+  summary: string | null;
+  types: PollenTypeData[];
+} | null;
 
 type TextForecastPeriod = {
   name: string | null;
@@ -117,10 +161,18 @@ type ForecastPayload = {
   current: CurrentData;
   hourly: HourlyEntry[];
   daily: DailyEntry[];
+  air_quality: AirQualityData;
+  pollen: PollenData;
   official_text_forecast: { source: string; generated_at: string | null; periods: TextForecastPeriod[] } | null;
   afd: { office: string; issued_at: string | null; headline: string; text: string | null } | null;
   alerts: AlertEntry[];
-  attribution: { current: string | null; hourly: string | null; daily: string | null };
+  attribution: {
+    current: string | null;
+    hourly: string | null;
+    daily: string | null;
+    air_quality?: string | null;
+    pollen?: string | null;
+  };
   freshness: {
     current: { state: string | null; observed_at: string | null; age_minutes: number | null };
     afd: { state: string; issued_at: string | null; age_hours: number | null };
@@ -212,6 +264,92 @@ function currentAgeLabel(current: CurrentData): string {
   }
   const observed = formatObservedAt(current.observed_at);
   return observed ? `Observed ${observed}` : "Current observation";
+}
+
+function parseClockMinutes(isoLike: string | null | undefined): number | null {
+  if (!isoLike) return null;
+  const match = isoLike.match(/T(\d{2}):(\d{2})/);
+  if (!match) return null;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+function parseClockMinutesInZone(isoLike: string | null | undefined, timeZone?: string | null): number | null {
+  if (!isoLike) return null;
+  const hasExplicitOffset = /(?:Z|[+-]\d{2}:\d{2})$/.test(isoLike);
+  if (hasExplicitOffset) {
+    const date = new Date(isoLike);
+    if (!Number.isNaN(date.getTime())) {
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: timeZone || undefined,
+      });
+      const parts = formatter.formatToParts(date);
+      const hourPart = parts.find(part => part.type === "hour")?.value;
+      const minutePart = parts.find(part => part.type === "minute")?.value;
+      if (hourPart && minutePart) {
+        return parseInt(hourPart, 10) * 60 + parseInt(minutePart, 10);
+      }
+    }
+  }
+  return parseClockMinutes(isoLike);
+}
+
+function formatClockTime(isoLike: string | null | undefined): string {
+  const minutes = parseClockMinutes(isoLike);
+  if (minutes === null) return "--";
+  const hour24 = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+}
+
+function daylightDurationLabel(sunrise: string | null | undefined, sunset: string | null | undefined): string {
+  const sunriseMinutes = parseClockMinutes(sunrise);
+  const sunsetMinutes = parseClockMinutes(sunset);
+  if (sunriseMinutes === null || sunsetMinutes === null || sunsetMinutes <= sunriseMinutes) return "--";
+  const durationMinutes = sunsetMinutes - sunriseMinutes;
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function sunProgress(
+  currentObservedAt: string | null,
+  sunrise: string | null | undefined,
+  sunset: string | null | undefined,
+  timeZone?: string | null,
+): number {
+  const nowMinutes = parseClockMinutesInZone(currentObservedAt, timeZone);
+  const sunriseMinutes = parseClockMinutes(sunrise);
+  const sunsetMinutes = parseClockMinutes(sunset);
+  if (nowMinutes === null || sunriseMinutes === null || sunsetMinutes === null || sunsetMinutes <= sunriseMinutes) {
+    return 0.5;
+  }
+  return clamp((nowMinutes - sunriseMinutes) / (sunsetMinutes - sunriseMinutes), 0, 1);
+}
+
+function formatPollutantValue(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "--";
+  return value >= 10 ? value.toFixed(1).replace(/\.0$/, "") : value.toFixed(1);
+}
+
+function airQualityDescription(data: NonNullable<AirQualityData>): string {
+  const category = (data.category || "").toLowerCase();
+  if (category === "good") return "Air quality is considered satisfactory, and air pollution poses little or no risk.";
+  if (category === "moderate") return "Air quality is acceptable, though unusually sensitive people may notice mild symptoms.";
+  if (category.includes("unhealthy")) return "Air quality may aggravate respiratory conditions, especially for sensitive groups.";
+  return "Air quality conditions are available from the latest Open-Meteo air-quality analysis.";
+}
+
+function cardHeadingClassName(): string {
+  return "text-[11px] font-medium uppercase tracking-[0.26em] text-white/45";
 }
 
 function precipColor(pct: number | null): string {
@@ -1019,10 +1157,176 @@ function CurrentConditionsCard({ current }: { current: CurrentData }) {
 function CurrentRadarCard({ lat, lon }: { lat: number; lon: number }) {
   return (
     <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.26em] text-white/45">
+      <h2 className={cardHeadingClassName()}>
         Live Radar
       </h2>
       <RadarPreviewCard lat={lat} lon={lon} className="mt-4 w-full" />
+    </section>
+  );
+}
+
+function HalfGauge({
+  value,
+  maxValue,
+  color,
+  valueLabel,
+  secondaryLabel,
+}: {
+  value: number | null;
+  maxValue: number;
+  color: string;
+  valueLabel: string;
+  secondaryLabel: string;
+}) {
+  const progress = value === null ? 0 : clamp(value / maxValue, 0, 1);
+  const dash = progress * 100;
+  return (
+    <div className="relative h-[9.5rem] w-[9.5rem]">
+      <svg viewBox="0 0 112 96" className="h-full w-full overflow-visible" aria-hidden="true">
+        <path
+          d="M 16 84 A 40 40 0 0 1 96 84"
+          pathLength={100}
+          className="fill-none stroke-white/[0.10]"
+          strokeWidth="8"
+          strokeLinecap="round"
+        />
+        <path
+          d="M 16 84 A 40 40 0 0 1 96 84"
+          pathLength={100}
+          className="fill-none"
+          stroke={color}
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeDasharray={`${dash} 100`}
+        />
+      </svg>
+      <div className="absolute inset-x-0 bottom-2 text-center">
+        <div className="text-[2.2rem] font-medium leading-none text-white">{valueLabel}</div>
+        <div className="mt-1 text-sm text-white/72">{secondaryLabel}</div>
+      </div>
+    </div>
+  );
+}
+
+function CurrentSunCard({ current, daily, timeZone }: { current: CurrentData; daily: DailyEntry[]; timeZone: string | null }) {
+  const today = daily[0];
+  const sunrise = today?.sunrise ?? null;
+  const sunset = today?.sunset ?? null;
+  const progress = sunProgress(current.observed_at, sunrise, sunset, timeZone);
+  const angle = Math.PI * (1 - progress);
+  const radius = 56;
+  const centerX = 72;
+  const centerY = 80;
+  const sunX = centerX + Math.cos(angle) * radius;
+  const sunY = centerY - Math.sin(angle) * radius;
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+      <h2 className={cardHeadingClassName()}>Sun</h2>
+      <div className="mt-4">
+        <svg viewBox="0 0 144 104" className="h-auto w-full" aria-hidden="true">
+          <path d="M 16 80 A 56 56 0 0 1 128 80" fill="none" stroke="rgba(245, 158, 11, 0.85)" strokeWidth="2.25" strokeLinecap="round" />
+          <path d="M 16 80 A 56 56 0 0 1 128 80" fill="none" stroke="rgba(245, 158, 11, 0.18)" strokeWidth="1.25" strokeDasharray="4 4" />
+          <circle cx={sunX} cy={sunY} r="6.5" fill="#fbbf24" />
+          <g stroke="#fbbf24" strokeWidth="1.8" strokeLinecap="round">
+            <line x1={sunX} y1={sunY - 11} x2={sunX} y2={sunY - 17} />
+            <line x1={sunX} y1={sunY + 11} x2={sunX} y2={sunY + 17} />
+            <line x1={sunX - 11} y1={sunY} x2={sunX - 17} y2={sunY} />
+            <line x1={sunX + 11} y1={sunY} x2={sunX + 17} y2={sunY} />
+            <line x1={sunX - 8} y1={sunY - 8} x2={sunX - 13} y2={sunY - 13} />
+            <line x1={sunX + 8} y1={sunY - 8} x2={sunX + 13} y2={sunY - 13} />
+          </g>
+        </svg>
+      </div>
+      <div className="mt-2 flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xl font-medium text-white">{formatClockTime(sunrise)}</div>
+          <div className="text-sm text-white/55">Sunrise</div>
+        </div>
+        <div className="text-center text-sm text-white/50">Daylight: {daylightDurationLabel(sunrise, sunset)}</div>
+        <div className="text-right">
+          <div className="text-xl font-medium text-white">{formatClockTime(sunset)}</div>
+          <div className="text-sm text-white/55">Sunset</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CurrentAirQualityCard({ airQuality }: { airQuality: AirQualityData }) {
+  const displayAqi = airQuality?.us_aqi ?? airQuality?.driver?.aqi ?? null;
+  if (!airQuality || displayAqi === null) {
+    return (
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+        <h2 className={cardHeadingClassName()}>Air Quality</h2>
+        <p className="mt-5 text-sm text-white/45">Current air-quality data is unavailable for this location.</p>
+      </section>
+    );
+  }
+
+  const driverLabel = airQuality.driver?.label ?? "Driver";
+  const driverValue = airQuality.driver?.value ?? null;
+  const driverUnit = airQuality.driver?.unit ?? "";
+  const gaugeColor = airQuality.color || "#3ecf6a";
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+      <h2 className={cardHeadingClassName()}>Air Quality</h2>
+      <div className="mt-4 flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <HalfGauge
+          value={displayAqi}
+          maxValue={100}
+          color={gaugeColor}
+          valueLabel={String(displayAqi)}
+          secondaryLabel={airQuality.category || "AQI"}
+        />
+        <div className="flex-1 space-y-3">
+          <p className="text-[15px] leading-7 text-white/72">{airQualityDescription(airQuality)}</p>
+          <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-cyan-200/70">Driver Pollutant</div>
+            <div className="mt-1 text-base font-medium text-white">{driverLabel}</div>
+            <div className="text-sm text-white/55">{driverValue === null ? "--" : `${formatPollutantValue(driverValue)} ${driverUnit}`}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CurrentPollenCard({ pollen }: { pollen: PollenData }) {
+  if (!pollen || pollen.index === null) {
+    return (
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+        <h2 className={cardHeadingClassName()}>Pollen</h2>
+        <p className="mt-5 text-sm text-white/45">Pollen guidance is unavailable for this location.</p>
+      </section>
+    );
+  }
+
+  const visibleTypes = pollen.types.filter(type => type.index !== null).slice(0, 3);
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+      <h2 className={cardHeadingClassName()}>Pollen</h2>
+      <div className="mt-4 flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <HalfGauge
+          value={pollen.index}
+          maxValue={5}
+          color={pollen.color || "#ffb423"}
+          valueLabel={String(pollen.index)}
+          secondaryLabel={pollen.category || "Pollen"}
+        />
+        <div className="flex-1 space-y-3">
+          <p className="text-[15px] leading-7 text-white/72">{pollen.summary || `${pollen.category || "Current"} ${pollen.dominant_type?.toLowerCase() || "pollen"} levels are expected today.`}</p>
+          <div className="space-y-2">
+            {visibleTypes.map((type) => (
+              <div key={type.code} className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-white/78">{type.label} Pollen</span>
+                <span className="text-white/55">{type.category || "--"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -1041,6 +1345,11 @@ function CurrentTab({
         <CurrentRadarCard lat={forecast.location.latitude} lon={forecast.location.longitude} />
       </div>
       <AlertsBanner alerts={forecast.alerts} checking={checkingAlerts} />
+      <div className="grid gap-4 xl:grid-cols-3">
+        <CurrentSunCard current={forecast.current} daily={forecast.daily} timeZone={forecast.location.timezone} />
+        <CurrentAirQualityCard airQuality={forecast.air_quality} />
+        <CurrentPollenCard pollen={forecast.pollen} />
+      </div>
     </div>
   );
 }
@@ -1281,6 +1590,8 @@ function mergeNwsEnrichment(core: ForecastPayload, full: ForecastPayload): Forec
     // Upgrade to the real NWS observation when present; otherwise keep the
     // Open-Meteo modeled current. hourly/daily/location stay from the core.
     current: full.attribution?.current === "NWS" ? full.current : core.current,
+    air_quality: full.air_quality ?? core.air_quality,
+    pollen: full.pollen ?? core.pollen,
     official_text_forecast: full.official_text_forecast ?? core.official_text_forecast,
     alerts: full.alerts ?? core.alerts,
     afd: full.afd ?? core.afd,
