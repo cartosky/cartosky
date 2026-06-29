@@ -970,8 +970,6 @@ export function buildMapStyle(
         type: "line",
         source: STATE_BOUNDARY_SOURCE_ID,
         "source-layer": "counties",
-        minzoom: 5,
-        maxzoom: 10,
         filter: ["==", "kind", "county"],
         layout: {
           "line-join": "round",
