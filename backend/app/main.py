@@ -4188,6 +4188,7 @@ def health_tiles_v3():
 
 
 @app.get("/tiles/v3/boundaries/v1/tilejson.json")
+@app.get("/tiles/v3/boundaries/v2/tilejson.json")
 def boundaries_tilejson_v3():
     started_at = time.perf_counter()
     if not BOUNDARIES_MBTILES.is_file():
@@ -4215,6 +4216,7 @@ def boundaries_tilejson_v3():
 
 
 @app.get("/tiles/v3/boundaries/v1/{z:int}/{x:int}/{y:int}.mvt")
+@app.get("/tiles/v3/boundaries/v2/{z:int}/{x:int}/{y:int}.mvt")
 def boundaries_tile_v3(z: int, x: int, y: int):
     started_at = time.perf_counter()
     tile = lookup_mbtiles_tile(BOUNDARIES_MBTILES, z=z, x=x, y=y)

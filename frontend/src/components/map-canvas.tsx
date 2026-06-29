@@ -53,7 +53,7 @@ const CARTO_DARK_BASE_TILES = [
   `https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}${CARTO_TILE_SUFFIX}.png`,
 ];
 
-const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE}/tiles/v3/boundaries/v1/tilejson.json`;
+const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE}/tiles/v3/boundaries/v2/tilejson.json`;
 
 type RegionView = {
   center: [number, number];

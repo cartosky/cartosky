@@ -366,7 +366,7 @@ async function stubSharedViewerRoutes(page: Page) {
   await page.route('**/api/v4/sample/batch', async (route) => {
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
   });
-  await page.route('**/tiles/v3/boundaries/v1/tilejson.json', async (route) => {
+  await page.route('**/tiles/v3/boundaries/v2/tilejson.json', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -380,11 +380,11 @@ async function stubSharedViewerRoutes(page: Page) {
         maxzoom: 10,
         bounds: [-180, -85.0511, 180, 85.0511],
         center: [-98.58, 39.83, 4],
-        tiles: ['https://api.cartosky.com/tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt'],
+        tiles: ['https://api.cartosky.com/tiles/v3/boundaries/v2/{z}/{x}/{y}.mvt'],
       }),
     });
   });
-  await page.route('**/tiles/v3/boundaries/v1/**/*.mvt', async (route) => {
+  await page.route('**/tiles/v3/boundaries/v2/**/*.mvt', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/vnd.mapbox-vector-tile', body: '' });
   });
   await page.route('**/api/v4/**/loop-manifest', async (route) => {

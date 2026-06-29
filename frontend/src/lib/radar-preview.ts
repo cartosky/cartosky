@@ -23,7 +23,7 @@ export const RADAR_PREVIEW_REFRESH_MS = 120_000;
 export const RADAR_PREVIEW_LOOP_FRAME_COUNT = { min: 3, max: 5 } as const;
 export const RADAR_PREVIEW_MAP_HEIGHT_CLASS = "h-[108px] md:h-[120px]";
 
-const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE.replace(/\/$/, "")}/tiles/v3/boundaries/v1/tilejson.json`;
+const BOUNDARIES_VECTOR_TILES_URL = `${TILES_BASE.replace(/\/$/, "")}/tiles/v3/boundaries/v2/tilejson.json`;
 const PREVIEW_BOUNDARY_SOURCE_ID = "radar-preview-boundaries";
 export const RADAR_PREVIEW_STATE_LAYER_ID = "radar-preview-state-boundaries";
 export const RADAR_PREVIEW_COUNTY_LAYER_ID = "radar-preview-county-boundaries";

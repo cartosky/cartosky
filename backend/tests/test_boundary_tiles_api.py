@@ -51,7 +51,7 @@ def _write_boundaries_mbtiles(path: Path) -> bytes:
     )
     metadata_rows = [
         ("name", "Test Boundaries"),
-        ("id", "test-boundaries-v1"),
+        ("id", "test-boundaries-v2"),
         ("minzoom", "0"),
         ("maxzoom", "5"),
         ("bounds", "-180,-85.0511,180,85.0511"),
@@ -103,20 +103,20 @@ async def test_tiles_health_reports_boundary_tileset(client: httpx.AsyncClient) 
 
 
 async def test_boundaries_tilejson_served_from_main_api(client: httpx.AsyncClient) -> None:
-    response = await client.get("/tiles/v3/boundaries/v1/tilejson.json")
+    response = await client.get("/tiles/v3/boundaries/v2/tilejson.json")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_MISS
     assert "boundaries_tilejson_total;dur=" in response.headers.get("server-timing", "")
     payload = response.json()
     assert payload["name"] == "Test Boundaries"
-    assert payload["id"] == "test-boundaries-v1"
-    assert payload["tiles"] == ["https://api.cartosky.com/tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt"]
+    assert payload["id"] == "test-boundaries-v2"
+    assert payload["tiles"] == ["https://api.cartosky.com/tiles/v3/boundaries/v2/{z}/{x}/{y}.mvt"]
     assert [layer["id"] for layer in payload["vector_layers"]] == ["boundaries", "hydro"]
 
 
 async def test_boundaries_tile_endpoint_preserves_gzip_and_expected_empty_behavior(client: httpx.AsyncClient) -> None:
-    hit_response = await client.get("/tiles/v3/boundaries/v1/0/0/0.mvt")
+    hit_response = await client.get("/tiles/v3/boundaries/v2/0/0/0.mvt")
 
     assert hit_response.status_code == 200
     assert hit_response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_HIT
@@ -124,7 +124,7 @@ async def test_boundaries_tile_endpoint_preserves_gzip_and_expected_empty_behavi
     assert hit_response.headers["content-encoding"] == "gzip"
     assert hit_response.content == b"fake-mvt"
 
-    miss_response = await client.get("/tiles/v3/boundaries/v1/1/1/1.mvt")
+    miss_response = await client.get("/tiles/v3/boundaries/v2/1/1/1.mvt")
 
     assert miss_response.status_code == 200
     assert miss_response.headers["cache-control"] == boundary_tiles.BOUNDARY_CACHE_MISS

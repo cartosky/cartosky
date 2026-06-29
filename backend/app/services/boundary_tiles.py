@@ -40,7 +40,16 @@ BOUNDARIES_TILESET_NAME = _env_value(
     "CARTOSKY_BOUNDARIES_TILESET_NAME",
     "CARTOSKY_V3_BOUNDARIES_TILESET_NAME",
     "TWF_V3_BOUNDARIES_TILESET_NAME",
-    default="CartoSky Boundaries v1",
+    default="CartoSky Boundaries v2",
+)
+BOUNDARIES_TILESET_PATH_VERSION = (
+    _env_value(
+        "CARTOSKY_BOUNDARIES_TILESET_VERSION",
+        "CARTOSKY_V3_BOUNDARIES_TILESET_VERSION",
+        "TWF_V3_BOUNDARIES_TILESET_VERSION",
+        default="v2",
+    ).strip().strip("/")
+    or "v2"
 )
 TILES_PUBLIC_BASE_URL = _env_value(
     "CARTOSKY_TILES_PUBLIC_BASE_URL",
@@ -180,7 +189,7 @@ def build_boundaries_tilejson() -> dict[str, object]:
         "maxzoom": maxzoom,
         "bounds": bounds,
         "center": center_vals,
-        "tiles": [f"{TILES_PUBLIC_BASE_URL}/tiles/v3/boundaries/v1/{{z}}/{{x}}/{{y}}.mvt"],
+        "tiles": [f"{TILES_PUBLIC_BASE_URL}/tiles/v3/boundaries/{BOUNDARIES_TILESET_PATH_VERSION}/{{z}}/{{x}}/{{y}}.mvt"],
     }
 
     if "vector_layers" in metadata:

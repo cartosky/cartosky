@@ -80,12 +80,12 @@ mapshaper "$BUILD_DIR/county_lines_raw_nonnull.geojson" -snap interval=0.00003 -
 mapshaper "$SOURCE_DIR/lakes.geojson" -snap interval=0.00005 -clean -filter 'name=="Lake Superior" || name=="Lake Michigan" || name=="Lake Huron" || name=="Lake Erie" || name=="Lake Ontario" || name_en=="Lake Superior" || name_en=="Lake Michigan" || name_en=="Lake Huron" || name_en=="Lake Erie" || name_en=="Lake Ontario"' -each 'kind="great_lake_polygon"' -filter-fields kind,name,name_en -o format=geojson "$BUILD_DIR/great_lake_polygons.geojson"
 mapshaper "$BUILD_DIR/great_lake_polygons.geojson" -snap interval=0.00005 -clean -lines -each 'kind="great_lake_shoreline"' -filter-fields kind -o format=geojson "$BUILD_DIR/great_lake_shoreline.geojson"
 
-# Use split zoom tiers so the zoom 5/6 county transition does not force the same
+# Use split zoom tiers so low-zoom county visibility does not force the same
 # simplification and clipping regime onto every boundary class.
 tippecanoe -f -o "$TMP_DIR/boundary_country_low.mbtiles" -l boundaries -Z0 -z6 --buffer=6 --detect-shared-borders --no-feature-limit --no-tile-size-limit "$BUILD_DIR/country_lines.geojson"
 tippecanoe -f -o "$TMP_DIR/boundary_country_high.mbtiles" -l boundaries -Z7 -z10 --buffer=6 --simplification=2 --detect-shared-borders --no-feature-limit --no-tile-size-limit "$BUILD_DIR/country_lines.geojson"
 tippecanoe -f -o "$TMP_DIR/boundary_state.mbtiles" -l boundaries -Z3 -z8 --buffer=4 --simplification=2 --detect-shared-borders "$BUILD_DIR/state_lines.geojson"
-tippecanoe -f -o "$TMP_DIR/boundary_county_low.mbtiles" -l counties -Z5 -z7 --buffer=4 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=8 "$BUILD_DIR/county_lines_low.geojson"
+tippecanoe -f -o "$TMP_DIR/boundary_county_low.mbtiles" -l counties -Z0 -z7 --buffer=4 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=8 "$BUILD_DIR/county_lines_low.geojson"
 tippecanoe -f -o "$TMP_DIR/boundary_county_high.mbtiles" -l counties -Z8 -z10 --buffer=4 --drop-smallest-as-needed --coalesce-smallest-as-needed --coalesce-densest-as-needed --simplification=6 "$BUILD_DIR/county_lines_high.geojson"
 
 # Keep Great Lakes masks and shorelines lossless enough that water masking does
@@ -106,9 +106,9 @@ tile-join -f -o "$OUT_MBTILES" \
   "$TMP_DIR/hydro_coastline_low.mbtiles" \
   "$TMP_DIR/hydro_coastline_high.mbtiles"
 
-VECTOR_LAYERS='[{"id":"boundaries","description":"country/state linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":0,"maxzoom":10},{"id":"counties","description":"county linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":5,"maxzoom":10},{"id":"hydro","description":"coastline and Great Lakes polygon/shoreline","fields":{"kind":"String"},"minzoom":0,"maxzoom":10}]'
-sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('name','CartoSky Boundaries v1');"
-sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('id','cartosky-boundaries-v1');"
+VECTOR_LAYERS='[{"id":"boundaries","description":"country/state linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":0,"maxzoom":10},{"id":"counties","description":"county linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":0,"maxzoom":10},{"id":"hydro","description":"coastline and Great Lakes polygon/shoreline","fields":{"kind":"String"},"minzoom":0,"maxzoom":10}]'
+sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('name','CartoSky Boundaries v2');"
+sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('id','cartosky-boundaries-v2');"
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('description','Canonical boundary + hydro tileset for CartoSky');"
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('attribution','Natural Earth; U.S. Census Bureau TIGER/Cartographic Boundary');"
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('minzoom','0');"

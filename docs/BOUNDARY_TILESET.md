@@ -6,14 +6,14 @@ This repo now supports a canonical vector tileset for border linework and Great 
 
 Served by `backend/app/main.py`:
 
-- `GET /tiles/v3/boundaries/v1/tilejson.json`
-- `GET /tiles/v3/boundaries/v1/{z}/{x}/{y}.mvt`
+- `GET /tiles/v3/boundaries/v2/tilejson.json`
+- `GET /tiles/v3/boundaries/v2/{z}/{x}/{y}.mvt`
 
 ## Frontend source model
 
 `frontend/src/components/map-canvas.tsx` now uses one vector source:
 
-- `https://api.cartosky.com/tiles/v3/boundaries/v1/tilejson.json`
+- `https://api.cartosky.com/tiles/v3/boundaries/v2/tilejson.json`
 
 Expected source layers:
 
@@ -42,7 +42,7 @@ Implemented in the build script via separate tippecanoe passes and `tile-join`:
 - Country boundaries: `z0-z6` + `z7-z10`
 - Coastline: `z0-z6` + `z7-z10`
 - State boundaries: `z3-z8`
-- County boundaries low detail: `z5-z7`
+- County boundaries low detail: `z0-z7`
 - County boundaries high detail: `z8-z10`
 - Great Lakes polygons: `z3-z8`
 - Great Lakes shoreline: `z3-z10`
@@ -67,6 +67,8 @@ Set boundary env vars in:
 - `deployment/systemd/api.env.example`
 
 Important for browsers: set `CARTOSKY_TILES_PUBLIC_BASE_URL` so TileJSON emits absolute tile URLs (not relative `/tiles/...`).
+
+The API keeps serving `v1` routes for backward compatibility, but the frontend should use `v2` to bypass stale immutable caches after boundary content changes.
 
 Then restart the main API unit:
 
