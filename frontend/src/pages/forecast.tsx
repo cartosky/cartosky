@@ -20,6 +20,7 @@ import {
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
 import { RadarPreviewCard } from "@/components/forecast/RadarPreviewCard";
 import { ModelsTabContent } from "@/components/model-guidance/ModelsTabContent";
+import { EnsemblesTabContent } from "@/components/model-guidance/EnsemblesTabContent";
 import { API_V4_BASE, MAP_VIEW_DEFAULTS, getReleaseSha } from "@/lib/config";
 import { buildPermalinkSearch } from "@/lib/permalink";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
@@ -181,7 +182,7 @@ type ForecastPayload = {
 
 // ── Tab config ────────────────────────────────────────────────────────
 
-type TabId = "current" | "hourly" | "7day" | "extended" | "models" | "discussion";
+type TabId = "current" | "hourly" | "7day" | "extended" | "models" | "ensembles" | "discussion";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "current", label: "Current" },
@@ -189,6 +190,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "7day", label: "7-day" },
   { id: "extended", label: "Extended" },
   { id: "models", label: "Models" },
+  { id: "ensembles", label: "Ensembles" },
   { id: "discussion", label: "Discussion" },
 ];
 
@@ -1797,10 +1799,14 @@ export default function Forecast() {
       const section = searchParams.get("section");
       const detailModel = searchParams.get("detail_model");
       const models = searchParams.get("models");
+      const pinnedRuns = searchParams.get("pinned_runs");
+      const ensemblePinnedRuns = searchParams.get("ensemble_pinned_runs");
       if (tab) nextParams.tab = tab;
       if (section) nextParams.section = section;
       if (detailModel) nextParams.detail_model = detailModel;
       if (models != null) nextParams.models = models;
+      if (pinnedRuns) nextParams.pinned_runs = pinnedRuns;
+      if (ensemblePinnedRuns) nextParams.ensemble_pinned_runs = ensemblePinnedRuns;
     }
     setSearchParams(nextParams, { replace: true });
   }
@@ -2168,6 +2174,13 @@ export default function Forecast() {
               lon={f.location.longitude}
               timezone={f.location.timezone}
               locationText={formatLocationText(f.location.display_name, f.location.latitude, f.location.longitude)}
+            />
+          )}
+          {activeTab === "ensembles" && (
+            <EnsemblesTabContent
+              lat={f.location.latitude}
+              lon={f.location.longitude}
+              timezone={f.location.timezone}
             />
           )}
           {activeTab === "discussion" && <DiscussionTab afd={f.afd} />}

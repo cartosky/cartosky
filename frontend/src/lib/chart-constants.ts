@@ -73,6 +73,12 @@ export const WIND_GUIDANCE_MODELS = ["ecmwf", "gfs", "nbm"] as const;
 // the tab and the Forecast page prefetch so the warm cache key matches.
 export const MODELS_TAB_VARIABLES = ["tmp2m", "precip_total", "wspd10m"] as const;
 
+// Ensemble guidance models (Ensembles tab, Phase 2). Mean-only products.
+export const ENSEMBLE_GUIDANCE_MODELS = ["eps", "gefs"] as const;
+
+// Variables the Ensembles tab requests in one meteogram call (Phase 2).
+export const ENSEMBLES_TAB_VARIABLES = ["tmp2m", "precip_total"] as const;
+
 // Models omitted from pills and meteogram requests outside CONUS.
 export const CONUS_ONLY_GUIDANCE_MODELS = new Set<string>(["nbm"]);
 
@@ -144,5 +150,20 @@ export function orderModelsAnchorLast<T extends string>(models: readonly T[]): T
 
 export function modelShortName(model: string): string {
   return MODEL_SHORT_NAMES[model.toLowerCase()] ?? model.toUpperCase();
+}
+
+/**
+ * Solid stroke color for an ensemble mean line (Ensembles tab, Phase 2).
+ * EPS shares the ECMWF family, GEFS the GFS family.
+ */
+export function ensembleMeanStroke(model: string): string {
+  return model.toLowerCase() === "gefs"
+    ? ENSEMBLE_COLORS.gefs_mean
+    : ENSEMBLE_COLORS.eps_mean;
+}
+
+/** Line width (px) for ensemble mean lines — both read as primary. */
+export function ensembleMeanWidth(): number {
+  return 2.25;
 }
 

@@ -37,6 +37,12 @@ type Props = {
   nowMs?: number;
   /** Lower-bound the y-range at 0 (cumulative precip never goes negative). */
   clampZero?: boolean;
+  /** Per-model stroke override (defaults to the anchor-aware model stroke). */
+  strokeFor?: (model: string) => string;
+  /** Per-model line width override (defaults to the anchor-aware width). */
+  widthFor?: (model: string) => number;
+  /** Show per-point markers along each line (defaults to uPlot's behavior). */
+  showPoints?: boolean;
 };
 
 /**
@@ -55,6 +61,9 @@ export function MultiModelLineChart({
   emptyMessage,
   nowMs,
   clampZero = false,
+  strokeFor = modelLineStroke,
+  widthFor = modelLineWidth,
+  showPoints,
 }: Props) {
   const activeModels = useMemo(
     () =>
@@ -115,13 +124,14 @@ export function MultiModelLineChart({
           const nativeTimestamps = nativeTimestampsByModel.get(model) ?? new Set<number>();
           return {
             label: modelShortName(model),
-            stroke: modelLineStroke(model),
-            width: modelLineWidth(model),
+            stroke: strokeFor(model),
+            width: widthFor(model),
             spanGaps: (u: uPlot, seriesIdx: number, idx0: number, idx1: number) => {
               if (seriesIdx - 1 !== modelIndex) return false;
               const xs = u.data[0] as number[];
               return shouldSpanCadenceGap(xs, nativeTimestamps, idx0, idx1);
             },
+            ...(showPoints === false ? { points: { show: false } } : {}),
             value: (_u: uPlot, v: number | null) =>
               v == null ? "—" : formatValue(v, units),
           };
@@ -131,7 +141,7 @@ export function MultiModelLineChart({
       plugins: [dayBoundaryPlugin(tz), nowMarkerPlugin(nowSec), cursorTooltipPlugin(tz)],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeModels, units, timezone, nowSec, nativeTimestampsByModel, clampZero, formatValue]);
+  }, [activeModels, units, timezone, nowSec, nativeTimestampsByModel, clampZero, formatValue, strokeFor, widthFor, showPoints]);
 
   if (!hasData) {
     return (
