@@ -17,6 +17,7 @@ unchanged.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import threading
 from functools import lru_cache
@@ -26,8 +27,19 @@ from typing import Any
 import numpy as np
 import rasterio
 from pyproj import Transformer
+from rasterio.transform import Affine
 from rasterio.windows import Window
 
+from .grid import (
+    GRID_DTYPE,
+    GRID_DTYPE_UINT8,
+    GRID_FRAME_FORMAT_VERSION,
+    _decode_values,
+    _packing_config,
+    expected_grid_frame_size_bytes,
+    grid_dtype,
+    resolved_grid_frame_meta_path_for_run_root,
+)
 from .run_ids import parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
@@ -119,6 +131,130 @@ def _sample_batch_values(
     return values
 
 
+# ── Binary point sampling primitives ──────────────────────────────────────
+def _binary_encoded_dtype(model: str, var: str) -> tuple[str, np.dtype[Any]]:
+    packing = _packing_config(model, var)
+    if packing is None:
+        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
+    resolved_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    encoded_dtype: np.dtype[Any] = np.dtype(np.uint8 if resolved_dtype == GRID_DTYPE_UINT8 else "<u2")
+    return resolved_dtype, encoded_dtype
+
+
+def _load_binary_frame_meta(meta_path: Path) -> dict[str, Any]:
+    try:
+        meta = json.loads(Path(meta_path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unreadable grid frame metadata: {meta_path}") from exc
+    if not isinstance(meta, dict):
+        raise ValueError(f"Invalid grid frame metadata payload: {meta_path}")
+
+    format_version = meta.get("format_version")
+    try:
+        format_version_int = int(format_version)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Unsupported grid frame format_version {format_version!r}: {meta_path}"
+        ) from exc
+    if format_version_int != GRID_FRAME_FORMAT_VERSION:
+        raise ValueError(
+            f"Unsupported grid frame format_version {format_version!r}: {meta_path}"
+        )
+
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    transform = meta.get("transform")
+    projection = str(meta.get("projection") or "").strip()
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid grid frame dimensions in metadata: {meta_path}")
+    if not isinstance(transform, list) or len(transform) != 6:
+        raise ValueError(f"Grid frame metadata missing affine transform: {meta_path}")
+    if not projection:
+        raise ValueError(f"Grid frame metadata missing projection: {meta_path}")
+
+    return meta
+
+
+def _sample_binary_frame_index(meta: dict[str, Any], *, lon: float, lat: float) -> tuple[int, int]:
+    projection = str(meta.get("projection") or "").strip()
+    if projection.upper() == "EPSG:4326":
+        x, y = float(lon), float(lat)
+    else:
+        x, y = _sample_transformer(projection).transform(lon, lat)
+
+    transform_values = [float(value) for value in meta["transform"]]
+    col_f, row_f = ~Affine(*transform_values) * (x, y)
+    return int(np.floor(row_f)), int(np.floor(col_f))
+
+
+def _read_binary_frame_values(frame_path: Path, meta: dict[str, Any], *, model: str, var: str) -> np.ndarray:
+    width = int(meta["width"])
+    height = int(meta["height"])
+    resolved_dtype, encoded_dtype = _binary_encoded_dtype(model, var)
+    expected_size = expected_grid_frame_size_bytes(width=width, height=height, dtype=resolved_dtype)
+    payload = Path(frame_path).read_bytes()
+    if len(payload) != expected_size:
+        raise ValueError(
+            f"Grid frame byte size mismatch: {frame_path} "
+            f"actual={len(payload)} expected={expected_size}"
+        )
+    encoded = np.frombuffer(payload, dtype=encoded_dtype).reshape(height, width)
+    return _decode_values(encoded, model=model, var=var)
+
+
+def read_binary_sample_value(
+    frame_path: Path,
+    meta_path: Path,
+    *,
+    model: str,
+    var: str,
+    lat: float,
+    lon: float,
+) -> tuple[float | None, bool]:
+    """Sample one point from an already-resolved grid binary frame.
+
+    Returns ``(value, no_data)`` where ``no_data`` is true for out-of-bounds,
+    nodata, or NaN pixels. This intentionally reads the whole frame with a plain
+    file read; Phase D benchmarking will decide whether a cache/mmap strategy is
+    warranted.
+    """
+    meta = _load_binary_frame_meta(meta_path)
+    row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
+    height = int(meta["height"])
+    width = int(meta["width"])
+    if row < 0 or row >= height or col < 0 or col >= width:
+        return None, True
+
+    values = _read_binary_frame_values(frame_path, meta, model=model, var=var)
+    value = float(values[row, col])
+    if np.isnan(value):
+        return None, True
+    return value, False
+
+
+def sample_binary_point_value(
+    frame_path: Path,
+    meta_path: Path,
+    *,
+    model: str,
+    var: str,
+    lat: float,
+    lon: float,
+) -> float | None:
+    """Sample a point from a grid binary frame, rounded like the COG helpers."""
+    value, no_data = read_binary_sample_value(
+        frame_path,
+        meta_path,
+        model=model,
+        var=var,
+        lat=lat,
+        lon=lon,
+    )
+    if no_data or value is None:
+        return None
+    return round(float(value), 1)
+
+
 # ── Artifact resolution ───────────────────────────────────────────────────
 # These delegate run / runtime-var / path resolution to ``app.main`` (lazy
 # import to avoid a load-time cycle). The published value COG already stores
@@ -161,6 +297,38 @@ def _resolve_sidecar(
     candidate = _main._published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
     if candidate.is_file():
         return _main._load_json_cached(candidate, _main._sidecar_cache)
+    return None
+
+
+def _resolve_binary_grid_frame(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    *,
+    ensemble_view: str | None = None,
+    region: str | None = None,
+) -> tuple[Path, Path] | None:
+    del region
+    from .. import main as _main
+
+    resolved = _main._resolve_run(model, run) or run
+    runtime_var = _main._runtime_var_id_for_request(model, var, ensemble_view)
+    var_dir = _main._published_var_dir(model, resolved, runtime_var)
+    meta_path = resolved_grid_frame_meta_path_for_run_root(var_dir.parent, runtime_var, fh)
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = _load_binary_frame_meta(meta_path)
+    except ValueError:
+        logger.exception("Grid frame metadata resolution failed: %s/%s/%s/fh%03d", model, run, var, fh)
+        return None
+    filename = Path(str(meta.get("file") or "")).name
+    if not filename:
+        return None
+    frame_path = meta_path.parent / filename
+    if frame_path.is_file():
+        return frame_path, meta_path
     return None
 
 
@@ -429,6 +597,43 @@ def sample_value(
             return (True, None if (no_data or raw is None) else round(float(raw), 1))
     except Exception:
         logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
+        return (True, None)
+
+
+def sample_binary_value(
+    model: str,
+    run_id: str,
+    var: str,
+    fh: int,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None = None,
+) -> tuple[bool, float | None]:
+    """Sample one frame's grid binary.
+
+    Returns ``(present, value)`` with the same shape as :func:`sample_value` so
+    canary/shadow comparisons can call both paths side by side without touching
+    production route handlers.
+    """
+    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, region=region)
+    if resolved is None:
+        return (False, None)
+    frame_path, meta_path = resolved
+    try:
+        return (
+            True,
+            sample_binary_point_value(
+                frame_path,
+                meta_path,
+                model=model,
+                var=var,
+                lat=lat,
+                lon=lon,
+            ),
+        )
+    except Exception:
+        logger.exception("Binary sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
         return (True, None)
 
 

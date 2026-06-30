@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import rasterio
 from rasterio.errors import RasterioIOError
-from rasterio.transform import Affine, array_bounds
+from rasterio.transform import Affine, array_bounds, from_bounds
 from scipy.ndimage import zoom as ndimage_zoom
 
 from ..config import grid_supported_pair
@@ -23,6 +23,10 @@ from .render_resampling import resampling_name_for_kind, variable_color_map_id
 logger = logging.getLogger(__name__)
 
 GRID_MANIFEST_VERSION = 1
+# Version of the grid frame meta sidecar schema. Bump whenever the sidecar's
+# shape changes (packing precision, compression, new/optional fields) so readers
+# can branch on the version instead of sniffing for field presence.
+GRID_FRAME_FORMAT_VERSION = 1
 GRID_SUBTYPE = "grid"
 GRID_PROJECTION = "EPSG:3857"
 GRID_DTYPE_UINT8 = "uint8"
@@ -1588,6 +1592,50 @@ def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: i
     return encoded
 
 
+def _decode_values(encoded: np.ndarray, *, model: str, var: str) -> np.ndarray:
+    """Inverse of ``_encode_values``: map packed integer codes back to floats.
+
+    This is the single decode authority for grid binaries. Every consumer of an
+    encoded grid value (the binary sampler, route handlers, future exports) must
+    call this rather than reimplementing ``value = (code * scale) + offset``
+    inline, so the decode math can never silently drift from the encode math.
+
+    Packing constants (``scale``/``offset``/``nodata``/``dtype``) are looked up
+    from ``_PACKING_BY_MODEL_VAR`` by ``(model, var)`` — the exact same source
+    ``_encode_values`` is fed from — so this stays model-parameterized rather
+    than assuming GFS's specific values. Codes equal to the packing ``nodata``
+    sentinel decode to ``NaN``. Dtype is branched (uint8 vs uint16) from the
+    packing config so a future uint8 model (e.g. MRMS) is read correctly.
+
+    Returns a float32 array the same shape as ``encoded``.
+    """
+    packing = _packing_config(model, var)
+    if packing is None:
+        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    resolved_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    expected_dtype = np.dtype(np.uint8 if resolved_dtype == GRID_DTYPE_UINT8 else np.uint16)
+
+    codes = np.asarray(encoded)
+    if codes.dtype != expected_dtype:
+        if codes.dtype.itemsize > expected_dtype.itemsize:
+            expected_info = np.iinfo(expected_dtype)
+            if np.any((codes < expected_info.min) | (codes > expected_info.max)):
+                raise ValueError(
+                    f"{model}/{var}: encoded array dtype {codes.dtype} is wider than "
+                    f"the packing's expected dtype {expected_dtype} — values would "
+                    f"silently wrap on cast; caller likely passed the wrong array."
+                )
+        codes = codes.astype(expected_dtype, copy=False)
+
+    nodata_mask = codes == expected_dtype.type(nodata)
+    decoded = codes.astype(np.float32) * np.float32(scale) + np.float32(offset)
+    decoded[nodata_mask] = np.nan
+    return decoded
+
+
 def write_grid_frame_for_run_root(
     *,
     run_root: Path,
@@ -1643,13 +1691,31 @@ def write_grid_frame_for_run_root(
     if GRID_BROTLI_SIDECARS_ENABLED:
         write_grid_brotli_sidecar(out_path, encoded_bytes)
 
+    # Persist the *effective* encoded-frame transform: derived from the same
+    # geographic bounds computed above, combined with the POST-upscale
+    # width/height (encoded.shape). For display-prepped variables the encoded
+    # grid is finer than the original warp output, so the original transform
+    # would describe pixels that are too large and misalign sampling. Using the
+    # post-upscale shape gives the transform that actually matches the bytes on
+    # disk. Stored as the 6 affine coefficients [a, b, c, d, e, f].
+    left, bottom, right, top = bounds
+    effective_transform = from_bounds(left, bottom, right, top, width, height)
     frame_meta = {
+        "format_version": GRID_FRAME_FORMAT_VERSION,
         "fh": int(fh),
         "level": int(level),
         "file": out_path.name,
         "width": width,
         "height": height,
         "bbox": bounds,
+        "transform": [
+            effective_transform.a,
+            effective_transform.b,
+            effective_transform.c,
+            effective_transform.d,
+            effective_transform.e,
+            effective_transform.f,
+        ],
         "projection": crs_text,
     }
     if prep_meta:

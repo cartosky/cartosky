@@ -580,7 +580,7 @@ def test_build_grid_for_run_supports_gfs_precip_total(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "precip_total"
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == 0.01
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
     assert manifest["grid"]["width"] == values.shape[1] * 3
@@ -597,7 +597,7 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     assert encoded.shape == (values.shape[0] * 3, values.shape[1] * 3)
     assert encoded.dtype == np.dtype("<u2")
     assert np.count_nonzero(encoded == 65535) > 0
-    assert int(encoded.max()) >= 486
+    assert int(encoded.max()) >= 4800
     assert int(encoded.min()) == 0
 
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"

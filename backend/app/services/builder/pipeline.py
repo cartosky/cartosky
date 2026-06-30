@@ -60,8 +60,12 @@ from app.services.builder.fetch import (
 from app.services.colormaps import get_color_map_spec
 from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_params, normalize_baseline_source
 from app.services.grid import (
+    GRID_FRAME_FORMAT_VERSION,
+    expected_grid_frame_size_bytes,
     grid_frame_meta_path_for_run_root,
     grid_frame_path_for_run_root,
+    grid_dtype,
+    _packing_config,
     write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
 )
@@ -704,13 +708,17 @@ def validate_cog(
 # ---------------------------------------------------------------------------
 
 
-def check_value_sanity(
-    val_path: Path,
+def _check_value_array_sanity(
+    values: np.ndarray,
     var_spec: dict[str, Any],
     var_spec_model: Any | None = None,
     var_capability: Any | None = None,
+    *,
+    label: str,
+    gate_name: str,
+    pass_name: str | None = None,
 ) -> bool:
-    """Sanity-check pixel statistics of the produced value artifact."""
+    """Sanity-check pixel statistics of a value array."""
     ok = True
     spec_type = str(var_spec.get("type", "")).lower()
     model_kind = str(getattr(var_spec_model, "kind", "") or "").lower()
@@ -744,67 +752,222 @@ def check_value_sanity(
         except (TypeError, ValueError):
             min_discrete_level = None
 
-    # --- Value COG checks ---
-    with rasterio.open(val_path) as src:
-        values = src.read(1)
-        finite_mask = np.isfinite(values)
-        finite_count = int(np.count_nonzero(finite_mask))
-        total_pixels = values.size
+    values_array = np.asarray(values)
+    finite_mask = np.isfinite(values_array)
+    finite_count = int(np.count_nonzero(finite_mask))
+    total_pixels = int(values_array.size)
+    if total_pixels <= 0:
+        logger.error("%s has no pixels (%s)", gate_name, label)
+        return False
 
-        # Nodata ratio sanity threshold
-        nodata_ratio = 1.0 - (finite_count / total_pixels)
-        if nodata_ratio > max_nodata_ratio:
-            if is_categorical_ptype and finite_count == 0:
+    # Nodata ratio sanity threshold
+    nodata_ratio = 1.0 - (finite_count / total_pixels)
+    if nodata_ratio > max_nodata_ratio:
+        if is_categorical_ptype and finite_count == 0:
+            logger.warning(
+                "Dry categorical ptype frame allowed: nodata ratio %.1f%% (%s)",
+                nodata_ratio * 100,
+                label,
+            )
+        else:
+            logger.error(
+                "%s nodata ratio too high: %.1f%% (>%.1f%%) — "
+                "likely grid misalignment or empty fetch (%s)",
+                gate_name,
+                nodata_ratio * 100,
+                max_nodata_ratio * 100,
+                label,
+            )
+            ok = False
+
+    # Value range: min ≠ max
+    if finite_count > 0:
+        vmin = float(np.nanmin(values_array[finite_mask]))
+        vmax = float(np.nanmax(values_array[finite_mask]))
+        if vmin == vmax:
+            if allow_dry_frame and (min_discrete_level is None or vmin <= min_discrete_level):
                 logger.warning(
-                    "Dry categorical ptype frame allowed: nodata ratio %.1f%% (%s)",
-                    nodata_ratio * 100,
-                    val_path,
+                    "Dry frame allowed: flat value field at %.2f (%s)",
+                    vmin,
+                    label,
                 )
             else:
                 logger.error(
-                    "Value COG nodata ratio too high: %.1f%% (>%.1f%%) — "
-                    "likely grid misalignment or empty fetch (%s)",
-                    nodata_ratio * 100,
-                    max_nodata_ratio * 100,
-                    val_path,
+                    "%s is flat (min==max==%.2f) — "
+                    "likely constant input or unit conversion error (%s)",
+                    gate_name,
+                    vmin,
+                    label,
                 )
                 ok = False
 
-        # Value range: min ≠ max
-        if finite_count > 0:
-            vmin = float(np.nanmin(values[finite_mask]))
-            vmax = float(np.nanmax(values[finite_mask]))
-            if vmin == vmax:
-                if allow_dry_frame and (min_discrete_level is None or vmin <= min_discrete_level):
-                    logger.warning(
-                        "Dry frame allowed: flat value field at %.2f (%s)",
-                        vmin,
-                        val_path,
-                    )
-                else:
-                    logger.error(
-                        "Value COG is flat (min==max==%.2f) — "
-                        "likely constant input or unit conversion error (%s)",
-                        vmin, val_path,
-                    )
-                    ok = False
-
-            # Value range within VarSpec.range ± 20% (for physical continuous vars)
-            spec_range = var_spec.get("range")
-            if not skip_physical_range_checks and spec_range and len(spec_range) == 2:
-                spec_min, spec_max = float(spec_range[0]), float(spec_range[1])
-                span = spec_max - spec_min
-                margin = span * 0.2
-                if vmin < spec_min - margin or vmax > spec_max + margin:
-                    logger.warning(
-                        "Value range [%.1f, %.1f] outside spec range "
-                        "[%.1f, %.1f] ± 20%% — may indicate unit error (%s)",
-                        vmin, vmax, spec_min, spec_max, val_path,
-                    )
-                    # Warning only, not a hard fail
+        # Value range within VarSpec.range ± 20% (for physical continuous vars)
+        spec_range = var_spec.get("range")
+        if not skip_physical_range_checks and spec_range and len(spec_range) == 2:
+            spec_min, spec_max = float(spec_range[0]), float(spec_range[1])
+            span = spec_max - spec_min
+            margin = span * 0.2
+            if vmin < spec_min - margin or vmax > spec_max + margin:
+                logger.warning(
+                    "Value range [%.1f, %.1f] outside spec range "
+                    "[%.1f, %.1f] ± 20%% — may indicate unit error (%s)",
+                    vmin, vmax, spec_min, spec_max, label,
+                )
+                # Warning only, not a hard fail
 
     if ok:
-        logger.info("Value sanity PASS: %s", val_path.name)
+        logger.info("%s PASS: %s", pass_name or gate_name, label)
+    return ok
+
+
+def check_pre_encode_value_sanity(
+    values: np.ndarray,
+    var_spec: dict[str, Any],
+    var_spec_model: Any | None = None,
+    var_capability: Any | None = None,
+    *,
+    label: str = "pre-encode array",
+) -> bool:
+    """Sanity-check the array that will be encoded into a grid binary."""
+    return _check_value_array_sanity(
+        values,
+        var_spec,
+        var_spec_model=var_spec_model,
+        var_capability=var_capability,
+        label=label,
+        gate_name="Pre-encode value sanity",
+    )
+
+
+def check_value_sanity(
+    val_path: Path,
+    var_spec: dict[str, Any],
+    var_spec_model: Any | None = None,
+    var_capability: Any | None = None,
+) -> bool:
+    """Sanity-check pixel statistics of the produced value artifact."""
+    with rasterio.open(val_path) as src:
+        values = src.read(1)
+    return _check_value_array_sanity(
+        values,
+        var_spec,
+        var_spec_model=var_spec_model,
+        var_capability=var_capability,
+        label=str(val_path),
+        gate_name="Value COG",
+        pass_name="Value sanity",
+    )
+
+
+def validate_grid_binary_frame(
+    frame_path: Path,
+    meta_path: Path,
+    *,
+    model: str,
+    var: str,
+    fh: int,
+) -> bool:
+    """Validate the generated grid binary and metadata sidecar structure."""
+    ok = True
+    packing = _packing_config(model, var)
+    if packing is None:
+        logger.error("Grid binary validation unsupported pack target: %s/%s", model, var)
+        return False
+    packing_dtype = grid_dtype(str(packing.get("dtype")))
+
+    if not frame_path.is_file():
+        logger.error("Grid binary missing: %s", frame_path)
+        return False
+    if not meta_path.is_file():
+        logger.error("Grid binary metadata missing: %s", meta_path)
+        return False
+
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception as exc:
+        logger.error("Grid binary metadata unreadable: %s (%s)", meta_path, exc)
+        return False
+
+    if meta.get("format_version") != GRID_FRAME_FORMAT_VERSION:
+        logger.error(
+            "Grid binary metadata format_version: expected %s, got %r (%s)",
+            GRID_FRAME_FORMAT_VERSION,
+            meta.get("format_version"),
+            meta_path,
+        )
+        ok = False
+
+    try:
+        meta_fh = int(meta.get("fh"))
+    except (TypeError, ValueError):
+        logger.error("Grid binary metadata fh invalid: expected %03d, got %r (%s)", int(fh), meta.get("fh"), meta_path)
+        ok = False
+    else:
+        if meta_fh != int(fh):
+            logger.error("Grid binary metadata fh: expected %03d, got %r (%s)", int(fh), meta.get("fh"), meta_path)
+            ok = False
+
+    if str(meta.get("file") or "") != frame_path.name:
+        logger.error("Grid binary metadata file mismatch: expected %s, got %r (%s)", frame_path.name, meta.get("file"), meta_path)
+        ok = False
+
+    try:
+        width = int(meta.get("width"))
+        height = int(meta.get("height"))
+    except (TypeError, ValueError):
+        logger.error("Grid binary metadata dimensions invalid: width=%r height=%r (%s)", meta.get("width"), meta.get("height"), meta_path)
+        return False
+    if width <= 0 or height <= 0:
+        logger.error("Grid binary metadata dimensions must be positive: width=%d height=%d (%s)", width, height, meta_path)
+        ok = False
+
+    bbox = meta.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        logger.error("Grid binary metadata bbox invalid: %r (%s)", bbox, meta_path)
+        ok = False
+    else:
+        try:
+            bbox_values = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            logger.error("Grid binary metadata bbox contains non-numeric values: %r (%s)", bbox, meta_path)
+            ok = False
+        else:
+            if not all(np.isfinite(bbox_values)):
+                logger.error("Grid binary metadata bbox contains non-finite values: %r (%s)", bbox, meta_path)
+                ok = False
+
+    transform = meta.get("transform")
+    if not isinstance(transform, list) or len(transform) != 6:
+        logger.error("Grid binary metadata transform invalid: %r (%s)", transform, meta_path)
+        ok = False
+    else:
+        try:
+            transform_values = [float(value) for value in transform]
+        except (TypeError, ValueError):
+            logger.error("Grid binary metadata transform contains non-numeric values: %r (%s)", transform, meta_path)
+            ok = False
+        else:
+            if not all(np.isfinite(transform_values)):
+                logger.error("Grid binary metadata transform contains non-finite values: %r (%s)", transform, meta_path)
+                ok = False
+
+    if not str(meta.get("projection") or "").strip():
+        logger.error("Grid binary metadata projection missing (%s)", meta_path)
+        ok = False
+
+    expected_size = expected_grid_frame_size_bytes(width=width, height=height, dtype=packing_dtype)
+    actual_size = frame_path.stat().st_size
+    if actual_size != expected_size:
+        logger.error(
+            "Grid binary byte size: expected %d, got %d (%s)",
+            expected_size,
+            actual_size,
+            frame_path,
+        )
+        ok = False
+
+    if ok:
+        logger.info("Grid binary validation PASS: %s", frame_path.name)
     return ok
 
 
@@ -1624,6 +1787,29 @@ def build_frame(
             warped_mib=round(_array_mib(warped_data), 2), shape=tuple(getattr(warped_data, "shape", ())),
             dtype=str(getattr(warped_data, "dtype", "")),
         )
+        try:
+            if not check_pre_encode_value_sanity(
+                warped_data,
+                var_spec_colormap,
+                var_spec_model=var_spec_model,
+                var_capability=var_capability,
+                label=f"{model}/{var_key}/fh{int(fh):03d}",
+            ):
+                logger.warning(
+                    "Phase C shadow gate failed: pre-encode value sanity "
+                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    model,
+                    var_key,
+                    int(fh),
+                )
+        except Exception:
+            logger.exception(
+                "Phase C shadow gate errored: pre-encode value sanity "
+                "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                model,
+                var_key,
+                int(fh),
+            )
 
         # --- Step 5: Write artifacts ---
         logger.info("Step 5/6: Writing artifacts")
@@ -1737,6 +1923,29 @@ def build_frame(
                 values=warped_data,
                 transform=dst_transform,
             )
+            try:
+                if not validate_grid_binary_frame(
+                    grid_frame_path,
+                    grid_frame_meta_path,
+                    model=model,
+                    var=var_key,
+                    fh=fh,
+                ):
+                    logger.warning(
+                        "Phase C shadow gate failed: grid binary validation "
+                        "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                        model,
+                        var_key,
+                        int(fh),
+                    )
+            except Exception:
+                logger.exception(
+                    "Phase C shadow gate errored: grid binary validation "
+                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    model,
+                    var_key,
+                    int(fh),
+                )
 
         logger.info(
             "Frame complete: %s/%s/%s/%s/%s "
