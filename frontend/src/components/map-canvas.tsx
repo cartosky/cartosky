@@ -746,22 +746,22 @@ function getRoadVisualProfile(variable: string | undefined, basemapMode: Basemap
   const normalizedOpacity = clamp01(overlayOpacity);
   const highContrast = isHighContrastRoadVariable(variable);
   const lowerContrast = isLowerContrastRoadVariable(variable);
-  const profileBoost = highContrast ? 1.12 : lowerContrast ? 0.76 : 0.92;
-  const lineBaseOpacity = Math.max(0.12, Math.min(0.8, (0.16 + normalizedOpacity * 0.5) * profileBoost));
-  const haloBaseOpacity = Math.max(0.08, Math.min(0.52, lineBaseOpacity * (highContrast ? 0.72 : 0.58)));
+  const profileBoost = highContrast ? 0.94 : lowerContrast ? 0.72 : 0.82;
+  const lineBaseOpacity = Math.max(0.08, Math.min(0.46, (0.1 + normalizedOpacity * 0.24) * profileBoost));
+  const haloBaseOpacity = Math.max(0.04, Math.min(0.18, lineBaseOpacity * (highContrast ? 0.44 : 0.36)));
 
   return {
-    lineColor: basemapMode === "dark" || highContrast ? "#f8fafc" : "#e5e7eb",
+    lineColor: basemapMode === "dark" || highContrast ? "#dbe4ec" : "#c6d0da",
     haloColor: basemapMode === "dark" ? "#020617" : "#111827",
     lineOpacity: {
       major: lineBaseOpacity,
-      primarySecondary: Math.max(0.1, lineBaseOpacity * 0.86),
-      local: Math.max(0.08, lineBaseOpacity * 0.72),
+      primarySecondary: Math.max(0.07, lineBaseOpacity * 0.82),
+      local: Math.max(0.05, lineBaseOpacity * 0.64),
     },
     haloOpacity: {
       major: haloBaseOpacity,
-      primarySecondary: Math.max(0.07, haloBaseOpacity * 0.88),
-      local: Math.max(0.06, haloBaseOpacity * 0.78),
+      primarySecondary: Math.max(0.035, haloBaseOpacity * 0.82),
+      local: Math.max(0.025, haloBaseOpacity * 0.7),
     },
   };
 }
@@ -854,22 +854,22 @@ function getMapBackgroundColor(basemapMode: BasemapMode): string {
 
 function roadLineWidthExpression(roadClass: "major" | "primary_secondary" | "local") {
   if (roadClass === "major") {
-    return ["interpolate", ["linear"], ["zoom"], 5, 0.8, 7, 1.2, 10, 1.75, 14, 2.4] as const;
+    return ["interpolate", ["linear"], ["zoom"], 5, 0.58, 7, 0.82, 10, 1.15, 14, 1.55] as const;
   }
   if (roadClass === "primary_secondary") {
-    return ["interpolate", ["linear"], ["zoom"], 8, 0.58, 10, 0.92, 12, 1.2, 14, 1.5] as const;
+    return ["interpolate", ["linear"], ["zoom"], 8, 0.42, 10, 0.62, 12, 0.82, 14, 1.02] as const;
   }
-  return ["interpolate", ["linear"], ["zoom"], 10, 0.42, 12, 0.65, 14, 0.95] as const;
+  return ["interpolate", ["linear"], ["zoom"], 10, 0.26, 12, 0.4, 14, 0.58] as const;
 }
 
 function roadHaloLineWidthExpression(roadClass: "major" | "primary_secondary" | "local") {
   if (roadClass === "major") {
-    return ["interpolate", ["linear"], ["zoom"], 5, 2.4, 7, 2.8, 10, 3.35, 14, 4] as const;
+    return ["interpolate", ["linear"], ["zoom"], 5, 1.2, 7, 1.5, 10, 1.85, 14, 2.2] as const;
   }
   if (roadClass === "primary_secondary") {
-    return ["interpolate", ["linear"], ["zoom"], 8, 2.18, 10, 2.52, 12, 2.8, 14, 3.1] as const;
+    return ["interpolate", ["linear"], ["zoom"], 8, 1, 10, 1.2, 12, 1.45, 14, 1.7] as const;
   }
-  return ["interpolate", ["linear"], ["zoom"], 10, 2.02, 12, 2.25, 14, 2.55] as const;
+  return ["interpolate", ["linear"], ["zoom"], 10, 0.8, 12, 1, 14, 1.2] as const;
 }
 
 function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMode = "light"): LayerSpecification[] {
