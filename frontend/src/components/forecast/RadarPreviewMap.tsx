@@ -220,7 +220,6 @@ export function RadarPreviewMap({
       touchPitch: false,
       interactive: false,
       attributionControl: false,
-      preserveDrawingBuffer: false,
     });
 
     map.dragPan.disable();

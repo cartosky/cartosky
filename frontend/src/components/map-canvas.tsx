@@ -2424,7 +2424,6 @@ export function MapCanvas({
       dragRotate: false,
       touchPitch: false,
       attributionControl: false,
-      preserveDrawingBuffer: false,
     });
 
     map.touchZoomRotate.disableRotation();

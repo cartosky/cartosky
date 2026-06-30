@@ -1073,8 +1073,13 @@ export class GridWebglLayerController {
           void this.ensureFrameLoaded(this.frameUrl, this.currentFrameSignature);
         }
       },
-      render: (_gl, matrix) => {
-        this.render(matrix as number[]);
+      render: (_gl, args) => {
+        const matrix =
+          Array.isArray(args)
+            ? args
+            : Array.from(args.defaultProjectionData.mainMatrix);
+
+        this.render(matrix);
       },
       onRemove: () => {
         this.disposeGlResources();
