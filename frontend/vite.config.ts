@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
 const DEV_PROXY_TARGET = "http://127.0.0.1:8200";
-const DEV_PROXY_PATHS = ["/api", "/auth", "/twf", "/tiles"] as const;
+const DEV_PROXY_PATHS = ["/api", "/auth", "/twf", "/tiles", "/static"] as const;
 const DEV_SERVER_PROXY: Record<string, { target: string; changeOrigin: boolean }> = Object.fromEntries(
   DEV_PROXY_PATHS.map((path) => [path, { target: DEV_PROXY_TARGET, changeOrigin: true }]),
 );

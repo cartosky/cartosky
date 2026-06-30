@@ -24,7 +24,7 @@
     "clsx": "2.1.1",
     "html-to-image": "^1.11.13",
     "lucide-react": "^1.17.0",
-    "maplibre-gl": "4.7.1",
+    "maplibre-gl": "^5.24.0",
     "mixpanel-browser": "^2.80.0",
     "posthog-js": "^1.363.4",
     "react": "^19.2.6",
