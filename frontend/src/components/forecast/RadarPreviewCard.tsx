@@ -20,9 +20,15 @@ export type RadarPreviewCardProps = {
   lat: number;
   lon: number;
   className?: string;
+  mapHeightClassName?: string;
 };
 
-export function RadarPreviewCard({ lat, lon, className = "" }: RadarPreviewCardProps) {
+export function RadarPreviewCard({
+  lat,
+  lon,
+  className = "",
+  mapHeightClassName = RADAR_PREVIEW_MAP_HEIGHT_CLASS,
+}: RadarPreviewCardProps) {
   const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [isInView, setIsInView] = useState(true);
@@ -149,10 +155,10 @@ export function RadarPreviewCard({ lat, lon, className = "" }: RadarPreviewCardP
       tabIndex={0}
       onClick={handleOpenViewer}
       onKeyDown={handleKeyDown}
-      className={`overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] cursor-pointer transition hover:border-cyan-300/30 hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 ${className}`}
+      className={`flex h-full flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] cursor-pointer transition hover:border-cyan-300/30 hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 ${className}`}
       aria-label="Open live MRMS radar in the viewer"
     >
-      <div className={`relative w-full ${RADAR_PREVIEW_MAP_HEIGHT_CLASS}`}>
+      <div className={`relative w-full flex-1 ${mapHeightClassName}`}>
         {showSkeleton ? (
           <div className="absolute inset-0 animate-pulse bg-white/[0.04]" />
         ) : null}
@@ -180,7 +186,7 @@ export function RadarPreviewCard({ lat, lon, className = "" }: RadarPreviewCardP
         />
       </div>
       <div className="flex items-center justify-between border-t border-white/[0.06] px-3 py-2 text-[11px]">
-        <span className="text-cyan-200/80">Live Radar</span>
+        <span className="text-cyan-200/80">View Full Radar</span>
         <span className="flex items-center gap-1 text-white/45">
           {frameAgeLabel || "MRMS"}
           <ArrowRight className="h-3 w-3" />

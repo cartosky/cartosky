@@ -707,8 +707,32 @@ async def test_degraded_us_hybrid_payload_does_not_poison_forecast_page_cache(mo
     assert points_calls == 2
 
 
-async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
+    monkeypatch.setenv("CARTOSKY_GOOGLE_POLLEN_API_KEY", "test-google-pollen-key")
+
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert location.latitude == 43.55
+        assert location.longitude == -96.73
+        return {
+            "last_6h_in": 0.31,
+            "last_24h_in": 0.87,
+            "last_72h_in": 1.62,
+            "ytd": {
+                "actual_in": 10.53,
+                "normal_in": 14.23,
+                "percent_of_normal": 74,
+                "departure_in": -3.7,
+                "station_name": "Sioux Falls Foss Field",
+            },
+            "days_since_rain": {
+                "days": 0,
+                "at_cap": False,
+                "station_name": "Sioux Falls Foss Field",
+            },
+        }
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
@@ -717,10 +741,10 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
             return httpx.Response(200, json=_open_meteo_payload(timezone_name="America/Chicago"))
         if host == "air-quality-api.open-meteo.com" and path == "/v1/air-quality":
             return httpx.Response(200, json=_open_meteo_air_quality_payload(timezone_name="America/Chicago"))
+        if host == "pollen.googleapis.com" and path == "/v1/forecast:lookup":
+            return httpx.Response(200, json=_google_pollen_payload())
         if host == "api.weather.gov":
             raise AssertionError(f"core must not call NWS: {request.url}")
-        if host == "pollen.googleapis.com":
-            raise AssertionError(f"core must not call Google Pollen: {request.url}")
         raise AssertionError(f"Unhandled request: {request.method} {request.url}")
 
     _mock_async_client(monkeypatch, handler)
@@ -738,8 +762,24 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
     assert payload["hourly"]
     assert payload["daily"]
     assert payload["air_quality"]["us_aqi"] == 42
-    assert payload["pollen"] is None
-    assert payload["observed_precip"] is None
+    assert payload["pollen"]["index"] == 4
+    assert payload["observed_precip"] == {
+        "last_6h_in": 0.31,
+        "last_24h_in": 0.87,
+        "last_72h_in": 1.62,
+        "ytd": {
+            "actual_in": 10.53,
+            "normal_in": 14.23,
+            "percent_of_normal": 74,
+            "departure_in": -3.7,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
     assert payload["official_text_forecast"] is None
     assert payload["afd"] is None
     assert payload["alerts"] == []

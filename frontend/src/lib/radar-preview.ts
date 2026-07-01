@@ -15,7 +15,7 @@ import { buildPermalinkSearch } from "@/lib/permalink";
 export const RADAR_PREVIEW_MODEL = "mrms";
 export const RADAR_PREVIEW_VARIABLE = "reflectivity";
 export const RADAR_PREVIEW_REGION = "conus";
-export const RADAR_PREVIEW_ZOOM = 9;
+export const RADAR_PREVIEW_ZOOM = 6;
 export const RADAR_PREVIEW_LOOP_MS = 875;
 export const RADAR_PREVIEW_FRAME_UPDATE_TIMEOUT_MS = RADAR_PREVIEW_LOOP_MS * 2;
 export const RADAR_PREVIEW_INITIAL_TIMEOUT_MS = 8000;

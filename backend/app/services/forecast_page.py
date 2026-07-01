@@ -2424,7 +2424,7 @@ async def _timed(name: str, coro: Any, sink: dict[str, float]) -> Any:
 
 
 async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocation) -> dict[str, Any]:
-    """Fast forecast core (Open-Meteo forecast + current AQI).
+    """Fast forecast core (Open-Meteo forecast + non-NWS supplemental data).
 
     Renders instantly. NWS enrichment — the observation upgrade, the 7-day
     narrative, alerts, and the AFD — is fetched separately by the client via the
@@ -2432,7 +2432,10 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
     "pending"`` signals the client that NWS enrichment is available for this
     (US) location; ``"not_applicable"`` means open-meteo is the only source.
     """
-    aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), {}))
+    timings: dict[str, float] = {}
+    aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), timings))
+    pollen_task = asyncio.create_task(_timed("google_pollen", _fetch_google_pollen(client, location), timings))
+    observed_precip_task = asyncio.create_task(_timed("observed_precip", _fetch_observed_precip(location), timings))
     try:
         om_payload = await _fetch_open_meteo_forecast(client, location)
         om_status = "ok"
@@ -2452,6 +2455,18 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         air_quality_payload = _normalize_open_meteo_air_quality(await aq_task)
     except ForecastPageError:
         air_quality_payload = None
+    try:
+        pollen_payload = _normalize_google_pollen(await pollen_task)
+    except ForecastPageError as exc:
+        logger.warning(
+            "Google pollen fetch failed for lat=%.4f lon=%.4f query=%s: %s",
+            location.latitude,
+            location.longitude,
+            location.query,
+            exc.message,
+        )
+        pollen_payload = None
+    observed_precip_payload = await observed_precip_task
     timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
     current_payload = _apply_current_icon_day_night(
         current_payload, timezone_name=timezone_name, om_payload=om_payload
@@ -2468,8 +2483,8 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         "hourly": hourly_payload,
         "daily": daily_payload,
         "air_quality": air_quality_payload,
-        "pollen": None,
-        "observed_precip": None,
+        "pollen": pollen_payload,
+        "observed_precip": observed_precip_payload,
         "official_text_forecast": None,
         "afd": None,
         "alerts": [],
@@ -2478,8 +2493,8 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
             "hourly": "Open-Meteo",
             "daily": "Open-Meteo",
             "air_quality": "Open-Meteo" if air_quality_payload else None,
-            "pollen": None,
-            "observed_precip": None,
+            "pollen": "Google Pollen API" if pollen_payload else None,
+            "observed_precip": _observed_precip_attribution(observed_precip_payload),
             "afd": None,
             "alerts": None,
         },

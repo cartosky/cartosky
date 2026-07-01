@@ -127,6 +127,28 @@ type PollenData = {
   types: PollenTypeData[];
 } | null;
 
+type ObservedPrecipYtdData = {
+  actual_in: number | null;
+  normal_in: number | null;
+  percent_of_normal: number | null;
+  departure_in: number | null;
+  station_name: string | null;
+};
+
+type DaysSinceRainData = {
+  days: number;
+  at_cap: boolean;
+  station_name: string | null;
+};
+
+type ObservedPrecipData = {
+  last_6h_in: number | null;
+  last_24h_in: number | null;
+  last_72h_in: number | null;
+  ytd: ObservedPrecipYtdData | null;
+  days_since_rain: DaysSinceRainData | null;
+} | null;
+
 type TextForecastPeriod = {
   name: string | null;
   is_daytime: boolean;
@@ -164,6 +186,7 @@ type ForecastPayload = {
   daily: DailyEntry[];
   air_quality: AirQualityData;
   pollen: PollenData;
+  observed_precip: ObservedPrecipData;
   official_text_forecast: { source: string; generated_at: string | null; periods: TextForecastPeriod[] } | null;
   afd: { office: string; issued_at: string | null; headline: string; text: string | null } | null;
   alerts: AlertEntry[];
@@ -173,6 +196,7 @@ type ForecastPayload = {
     daily: string | null;
     air_quality?: string | null;
     pollen?: string | null;
+    observed_precip?: string | null;
   };
   freshness: {
     current: { state: string | null; observed_at: string | null; age_minutes: number | null };
@@ -340,6 +364,30 @@ function sunProgress(
 function formatPollutantValue(value: number | null): string {
   if (value === null || Number.isNaN(value)) return "--";
   return value >= 10 ? value.toFixed(1).replace(/\.0$/, "") : value.toFixed(1);
+}
+
+function formatPrecipInches(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "--";
+  return `${value.toFixed(2)} in`;
+}
+
+function formatSignedPrecipInches(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "--";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}${Math.abs(value).toFixed(2)} in`;
+}
+
+function departureColorClass(value: number | null): string {
+  if (value === null) return "text-white/45";
+  if (value > 0) return "text-emerald-300";
+  if (value < 0) return "text-rose-300";
+  return "text-white/55";
+}
+
+function formatDaysSinceRain(value: DaysSinceRainData | null): string {
+  if (!value) return "--";
+  if (value.at_cap) return `${value.days}+ days`;
+  return `${value.days} day${value.days === 1 ? "" : "s"}`;
 }
 
 function airQualityDescription(data: NonNullable<AirQualityData>): string {
@@ -1123,7 +1171,7 @@ function CurrentConditionsCard({ current }: { current: CurrentData }) {
   ].filter((metric): metric is { label: string; value: string } => metric !== null);
 
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.18)] md:p-6">
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.18)] md:p-5">
       <h2 className="text-[11px] font-medium uppercase tracking-[0.26em] text-white/45">
         Current Conditions
       </h2>
@@ -1158,16 +1206,16 @@ function CurrentConditionsCard({ current }: { current: CurrentData }) {
 
 function CurrentRadarCard({ lat, lon }: { lat: number; lon: number }) {
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+    <section className="flex h-full flex-col rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
       <h2 className={cardHeadingClassName()}>
         Live Radar
       </h2>
-      <RadarPreviewCard lat={lat} lon={lon} className="mt-4 w-full" />
+      <RadarPreviewCard lat={lat} lon={lon} className="mt-3 w-full flex-1" mapHeightClassName="h-full flex-1" />
     </section>
   );
 }
 
-function HalfGauge({
+function RadialGauge({
   value,
   maxValue,
   color,
@@ -1183,27 +1231,27 @@ function HalfGauge({
   const progress = value === null ? 0 : clamp(value / maxValue, 0, 1);
   const dash = progress * 100;
   return (
-    <div className="relative h-[9.5rem] w-[9.5rem]">
-      <svg viewBox="0 0 112 96" className="h-full w-full overflow-visible" aria-hidden="true">
+    <div className="relative h-[7.5rem] w-[7.5rem]">
+      <svg viewBox="0 0 100 100" className="h-full w-full overflow-visible" aria-hidden="true">
         <path
-          d="M 16 84 A 40 40 0 0 1 96 84"
+          d="M 25.9 84.4 A 42 42 0 1 1 74.1 84.4"
           pathLength={100}
           className="fill-none stroke-white/[0.10]"
-          strokeWidth="8"
+          strokeWidth="6.25"
           strokeLinecap="round"
         />
         <path
-          d="M 16 84 A 40 40 0 0 1 96 84"
+          d="M 25.9 84.4 A 42 42 0 1 1 74.1 84.4"
           pathLength={100}
           className="fill-none"
           stroke={color}
-          strokeWidth="8"
+          strokeWidth="6.25"
           strokeLinecap="round"
           strokeDasharray={`${dash} 100`}
         />
       </svg>
-      <div className="absolute inset-x-0 bottom-2 text-center">
-        <div className="text-[2.2rem] font-medium leading-none text-white">{valueLabel}</div>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+        <div className="text-3xl font-medium leading-none text-white">{valueLabel}</div>
         <div className="mt-1 text-sm text-white/72">{secondaryLabel}</div>
       </div>
     </div>
@@ -1212,44 +1260,52 @@ function HalfGauge({
 
 function CurrentSunCard({ current, daily, timeZone }: { current: CurrentData; daily: DailyEntry[]; timeZone: string | null }) {
   const today = daily[0];
+  if (!today) {
+    return (
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+        <h2 className={cardHeadingClassName()}>Sun</h2>
+        <p className="mt-5 text-sm text-white/45">Sun data is unavailable for this location.</p>
+      </section>
+    );
+  }
+
   const sunrise = today?.sunrise ?? null;
   const sunset = today?.sunset ?? null;
   const progress = sunProgress(current.observed_at, sunrise, sunset, timeZone);
   const angle = Math.PI * (1 - progress);
-  const radius = 56;
-  const centerX = 72;
-  const centerY = 80;
+  const radius = 68;
+  const centerX = 80;
+  const centerY = 74;
   const sunX = centerX + Math.cos(angle) * radius;
   const sunY = centerY - Math.sin(angle) * radius;
 
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
       <h2 className={cardHeadingClassName()}>Sun</h2>
-      <div className="mt-4">
-        <svg viewBox="0 0 144 104" className="h-auto w-full" aria-hidden="true">
-          <path d="M 16 80 A 56 56 0 0 1 128 80" fill="none" stroke="rgba(245, 158, 11, 0.85)" strokeWidth="2.25" strokeLinecap="round" />
-          <path d="M 16 80 A 56 56 0 0 1 128 80" fill="none" stroke="rgba(245, 158, 11, 0.18)" strokeWidth="1.25" strokeDasharray="4 4" />
-          <circle cx={sunX} cy={sunY} r="6.5" fill="#fbbf24" />
-          <g stroke="#fbbf24" strokeWidth="1.8" strokeLinecap="round">
-            <line x1={sunX} y1={sunY - 11} x2={sunX} y2={sunY - 17} />
-            <line x1={sunX} y1={sunY + 11} x2={sunX} y2={sunY + 17} />
-            <line x1={sunX - 11} y1={sunY} x2={sunX - 17} y2={sunY} />
-            <line x1={sunX + 11} y1={sunY} x2={sunX + 17} y2={sunY} />
-            <line x1={sunX - 8} y1={sunY - 8} x2={sunX - 13} y2={sunY - 13} />
-            <line x1={sunX + 8} y1={sunY - 8} x2={sunX + 13} y2={sunY - 13} />
-          </g>
+      <div className="mt-3">
+        <svg viewBox="0 0 160 76" className="h-auto w-full" aria-hidden="true">
+          <path
+            d="M 12 74 A 68 68 0 0 1 148 74"
+            fill="none"
+            stroke="rgba(251, 191, 36, 0.6)"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <circle cx={sunX} cy={sunY} r="5.5" fill="#fbbf24" />
         </svg>
       </div>
-      <div className="mt-2 flex items-start justify-between gap-4">
-        <div>
-          <div className="text-xl font-medium text-white">{formatClockTime(sunrise)}</div>
-          <div className="text-sm text-white/55">Sunrise</div>
+      <div className="mt-2">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-medium text-white">{formatClockTime(sunrise)}</div>
+            <div className="text-sm text-white/55">Sunrise</div>
+          </div>
+          <div className="text-right">
+            <div className="text-lg font-medium text-white">{formatClockTime(sunset)}</div>
+            <div className="text-sm text-white/55">Sunset</div>
+          </div>
         </div>
-        <div className="text-center text-sm text-white/50">Daylight: {daylightDurationLabel(sunrise, sunset)}</div>
-        <div className="text-right">
-          <div className="text-xl font-medium text-white">{formatClockTime(sunset)}</div>
-          <div className="text-sm text-white/55">Sunset</div>
-        </div>
+        <div className="mt-2 text-center text-sm text-white/50">Daylight: {daylightDurationLabel(sunrise, sunset)}</div>
       </div>
     </section>
   );
@@ -1259,36 +1315,28 @@ function CurrentAirQualityCard({ airQuality }: { airQuality: AirQualityData }) {
   const displayAqi = airQuality?.us_aqi ?? airQuality?.driver?.aqi ?? null;
   if (!airQuality || displayAqi === null) {
     return (
-      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
         <h2 className={cardHeadingClassName()}>Air Quality</h2>
         <p className="mt-5 text-sm text-white/45">Current air-quality data is unavailable for this location.</p>
       </section>
     );
   }
 
-  const driverLabel = airQuality.driver?.label ?? "Driver";
-  const driverValue = airQuality.driver?.value ?? null;
-  const driverUnit = airQuality.driver?.unit ?? "";
   const gaugeColor = airQuality.color || "#3ecf6a";
 
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
       <h2 className={cardHeadingClassName()}>Air Quality</h2>
-      <div className="mt-4 flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-        <HalfGauge
+      <div className="mt-3 flex flex-col items-center gap-4">
+        <RadialGauge
           value={displayAqi}
           maxValue={100}
           color={gaugeColor}
           valueLabel={String(displayAqi)}
           secondaryLabel={airQuality.category || "AQI"}
         />
-        <div className="flex-1 space-y-3">
-          <p className="text-[15px] leading-7 text-white/72">{airQualityDescription(airQuality)}</p>
-          <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-cyan-200/70">Driver Pollutant</div>
-            <div className="mt-1 text-base font-medium text-white">{driverLabel}</div>
-            <div className="text-sm text-white/55">{driverValue === null ? "--" : `${formatPollutantValue(driverValue)} ${driverUnit}`}</div>
-          </div>
+        <div className="w-full space-y-2">
+          <p className="text-[15px] leading-6 text-white/72">{airQualityDescription(airQuality)}</p>
         </div>
       </div>
     </section>
@@ -1298,7 +1346,7 @@ function CurrentAirQualityCard({ airQuality }: { airQuality: AirQualityData }) {
 function CurrentPollenCard({ pollen }: { pollen: PollenData }) {
   if (!pollen || pollen.index === null) {
     return (
-      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
         <h2 className={cardHeadingClassName()}>Pollen</h2>
         <p className="mt-5 text-sm text-white/45">Pollen guidance is unavailable for this location.</p>
       </section>
@@ -1307,18 +1355,18 @@ function CurrentPollenCard({ pollen }: { pollen: PollenData }) {
 
   const visibleTypes = pollen.types.filter(type => type.index !== null).slice(0, 3);
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-6">
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
       <h2 className={cardHeadingClassName()}>Pollen</h2>
-      <div className="mt-4 flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-        <HalfGauge
+      <div className="mt-3 flex flex-col items-center gap-4">
+        <RadialGauge
           value={pollen.index}
           maxValue={5}
           color={pollen.color || "#ffb423"}
           valueLabel={String(pollen.index)}
           secondaryLabel={pollen.category || "Pollen"}
         />
-        <div className="flex-1 space-y-3">
-          <p className="text-[15px] leading-7 text-white/72">{pollen.summary || `${pollen.category || "Current"} ${pollen.dominant_type?.toLowerCase() || "pollen"} levels are expected today.`}</p>
+        <div className="w-full space-y-2">
+          <p className="text-[15px] leading-6 text-white/72">{pollen.summary || `${pollen.category || "Current"} ${pollen.dominant_type?.toLowerCase() || "pollen"} levels are expected today.`}</p>
           <div className="space-y-2">
             {visibleTypes.map((type) => (
               <div key={type.code} className="flex items-center justify-between gap-4 text-sm">
@@ -1327,6 +1375,62 @@ function CurrentPollenCard({ pollen }: { pollen: PollenData }) {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CurrentPrecipCard({ observedPrecip, attribution }: { observedPrecip: ObservedPrecipData; attribution: string | null | undefined }) {
+  if (!observedPrecip) {
+    return (
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+        <h2 className={cardHeadingClassName()}>Observed Precipitation</h2>
+        <p className="mt-5 text-sm text-white/45">Observed precipitation data is unavailable for this location.</p>
+      </section>
+    );
+  }
+
+  const ytd = observedPrecip.ytd;
+  const daysSinceRain = observedPrecip.days_since_rain;
+  const ytdSummaryAvailable = ytd?.percent_of_normal != null || ytd?.departure_in != null;
+  const rows = [
+    { label: "Last 6 Hours", value: formatPrecipInches(observedPrecip.last_6h_in) },
+    { label: "Last 24 Hours", value: formatPrecipInches(observedPrecip.last_24h_in) },
+    { label: "Last 72 Hours", value: formatPrecipInches(observedPrecip.last_72h_in) },
+  ];
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+      <h2 className={cardHeadingClassName()}>Observed Precipitation</h2>
+      <div className="mt-4 divide-y divide-white/[0.07] rounded-lg border border-white/[0.06] bg-black/10">
+        {rows.map((row) => (
+          <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-200/75">{row.label}</div>
+            <div className="text-right text-[15px] font-medium text-white/90">{row.value}</div>
+          </div>
+        ))}
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3.5">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-200/75">Year to Date</div>
+          <div className="text-right">
+            <div className="text-[15px] font-medium text-white/90">{formatPrecipInches(ytd?.actual_in ?? null)}</div>
+            <div className="mt-1 flex items-center justify-end gap-2 text-[12px]">
+              {ytdSummaryAvailable ? (
+                <>
+                  <span className="text-white/55">{ytd?.percent_of_normal != null ? `${ytd.percent_of_normal}%` : "--"}</span>
+                  <span className={departureColorClass(ytd?.departure_in ?? null)}>{formatSignedPrecipInches(ytd?.departure_in ?? null)}</span>
+                </>
+              ) : (
+                <span className="text-white/45">--</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-200/75">Days Since Rain</div>
+          <div className="text-right text-[15px] font-medium text-white/90">{formatDaysSinceRain(daysSinceRain)}</div>
         </div>
       </div>
     </section>
@@ -1347,11 +1451,12 @@ function CurrentTab({
         <CurrentRadarCard lat={forecast.location.latitude} lon={forecast.location.longitude} />
       </div>
       <AlertsBanner alerts={forecast.alerts} checking={checkingAlerts} />
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         <CurrentSunCard current={forecast.current} daily={forecast.daily} timeZone={forecast.location.timezone} />
         <CurrentAirQualityCard airQuality={forecast.air_quality} />
         <CurrentPollenCard pollen={forecast.pollen} />
       </div>
+      <CurrentPrecipCard observedPrecip={forecast.observed_precip} attribution={forecast.attribution.observed_precip} />
     </div>
   );
 }
@@ -1594,6 +1699,7 @@ function mergeNwsEnrichment(core: ForecastPayload, full: ForecastPayload): Forec
     current: full.attribution?.current === "NWS" ? full.current : core.current,
     air_quality: full.air_quality ?? core.air_quality,
     pollen: full.pollen ?? core.pollen,
+    observed_precip: full.observed_precip ?? core.observed_precip,
     official_text_forecast: full.official_text_forecast ?? core.official_text_forecast,
     alerts: full.alerts ?? core.alerts,
     afd: full.afd ?? core.afd,
