@@ -103,7 +103,7 @@ For a fixed set of lat/lon points — including points squarely inside a pixel, 
 
 ### Layer 3 — Production canary (multi-day parallel write, real data, real traffic patterns)
 
-For a window of 4 mode cycles, GFS continues writing both the value COG (unchanged) and the grid binary (already happening today) — no pipeline change needed for this step, since both are already produced. During this window:
+For a window of 4 model cycles, GFS continues writing both the value COG (unchanged) and the grid binary (already happening today) — no pipeline change needed for this step, since both are already produced. During this window:
 
 - The live sampling service continues reading from COGs — no behavior change to production traffic yet.
 - A standalone script (not wired into any live endpoint) runs periodically against real published GFS runs from the canary window, sampling a meaningful set of real-world points — reuse an existing NWS station or city-label coordinate list rather than synthetic points, to surface real-world edge cases (points near the bbox edge, near nodata/ocean-masked regions, at the highest forecast hours).
@@ -194,6 +194,30 @@ Add `sampling_source` to `_meteogram_cache_key()`. Update `/api/v4/sample` and `
 7. **Measure that model's actual COG storage footprint on prod** (the same `du -sh` exercise from Section 6) before claiming a storage win for it — do not assume the GFS percentage (~27%) transfers to another model; different models have different variable sets, different display-prep configs, and different forecast-hour ranges.
 
 This checklist is the actual deliverable of "Phase A's decode/parity infrastructure is now reusable" — the infrastructure is reusable, but the audit is not automatic, and skipping steps 1-4 for a new model risks reproducing the exact class of errors the GFS pass caught (incomplete enumeration, loop-registered variables, undiscovered upscale configs).
+
+### Phase G addendum — leaner canary protocol for models after GFS
+
+GFS's canary window required deep manual investigation (neighborhood-sampling comparisons, category-boundary tracing, palette-code verification) for every divergence that appeared, because nothing was known yet about what a real bug versus expected behavior looked like for this migration. That depth was necessary the first time; it is not necessary every time, and treating it as necessary every time would make Phase G prohibitively slow across multiple models.
+
+**For every model after GFS, escalate to full manual investigation only when a divergence pattern doesn't match something already characterized during GFS's pass:**
+
+- **Already-characterized, low-escalation patterns** (confirm via distance-to-boundary check only, not a full neighborhood dive): divergences on a continuous-field variable with an active `upscale_factor > 1` config, 100% concentrated within roughly one pixel-width of a boundary, at a rate similar to what GFS showed (low single-digit percent of that variable's samples at most). This matches the `precip_total`/`ptype_intensity_rain` pattern exactly — a quick `distance_to_boundary_px` distribution check confirming near-100% sub-pixel concentration is sufficient evidence, without re-running the Orlando/Bridgeport-style live neighborhood query every time.
+- **Already-characterized, low-escalation pattern for categorical variables**: divergences on a `categorical_nearest=True` variable, 100% boundary-concentrated, with category mismatches confirmed adjacent (via that model's own palette/bin definitions, not assumed) or crossing no physical-type boundary. Same treatment as `ptype_intensity` — verify the palette-adjacency claim once per model (palettes differ per model), but don't repeat the full manual dive if the pattern otherwise matches.
+- **Requires full escalation, same rigor as GFS's original passes:** any Group 1 (non-upscaled) divergence at all — this bar never relaxes, since Group 1's whole premise is that these variables should match exactly regardless of model. Any divergence pattern that is *not* boundary-concentrated. Any new variable type not seen during GFS (a new dtype, a new display-prep resampling kind beyond continuous/categorical-nearest, anything structurally novel). Any divergence rate meaningfully higher than what GFS showed for a comparable variable type.
+
+**A single packing-constant audit substitutes for a large share of the investigative burden.** GFS's one real bug (`vort500`) was a packing-table configuration mistake, not a sampler logic error — and Section on Phase G's checklist item 1 already requires enumerating every packing entry for the new model. Doing that audit carefully *before* running the canary, specifically checking every physically-signed variable (anomalies, vorticity, divergence, or anything else that can be negative) has a correctly negative `offset`, is likely to catch this exact class of bug before the canary ever runs — turning what cost a full extra investigation cycle for GFS into a five-minute static check for the next model.
+
+### Phase G addendum — packing fixes do not apply retroactively to already-published runs
+
+**This is a distinct, important operational gotcha, discovered during GFS's own rollout, that must be accounted for during every future model's cutover, not just noted once and forgotten:**
+
+The value COG stores raw, unquantized float32 — it never passes through the packing table's `scale`/`offset`/`_encode_values()` machinery at all, since that machinery exists solely to quantize values into the grid binary's compact integer format. This means **any packing-table bug (like `vort500`'s) only ever corrupts the *binary* representation, never the COG.** COG sampling of an affected variable has been correct the entire time, even on runs published before the bug was found and fixed.
+
+Per this migration's own explicit decision (no backfill of already-published frames), fixing a packing bug does **not** retroactively correct binary frames for runs already sitting in retention. Those runs keep their bad bytes until they naturally age out.
+
+**Consequence for any future cutover:** the moment a model is added to `CARTOSKY_BINARY_SAMPLING_MODELS`, the flag applies to **every currently-retained run for that model**, not just runs published after a fix. If a packing bug is found and fixed during that model's canary window, flipping the allowlist before all currently-retained runs have cycled through post-fix publishing will serve **known-wrong data for the affected variable on any older retained run a user's run-selector might request** — a real, live regression on data already in front of users, for however long that model's retention window takes to fully turn over (for GFS's 6-run/6-hour-cadence pattern, roughly 24-30 hours).
+
+**Before flipping the allowlist for any future model, explicitly check:** was a packing-table fix made at any point during that model's canary window? If yes, either wait for full retention turnover before flipping, or make a deliberate, informed decision to accept a known, bounded, self-resolving regression window — do not flip without having asked this question.
 
 ---
 
