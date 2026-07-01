@@ -829,10 +829,14 @@ async def test_fetch_acis_precip_summary_logs_station_lookup_miss(
 ) -> None:
     _freeze_now(monkeypatch)
 
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
+
     async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
         assert url == forecast_page_service.ACIS_STATION_META_URL
         return {"meta": []}
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
     caplog.set_level(logging.WARNING)
 
@@ -848,6 +852,9 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _freeze_now(monkeypatch)
+
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
 
     async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
         if url == forecast_page_service.ACIS_STATION_META_URL:
@@ -879,6 +886,7 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
             }
         raise AssertionError(f"Unexpected URL {url}")
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
     caplog.set_level(logging.INFO)
 
@@ -907,6 +915,9 @@ async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_ne
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _freeze_now(monkeypatch)
+
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
 
     station_rows = {
         "USC00399999 6": [[f"2026-01-{day:02d}", "M", "M"] for day in range(1, 7)],
@@ -956,6 +967,7 @@ async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_ne
             }
         raise AssertionError(f"Unexpected URL {url}")
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
     caplog.set_level(logging.INFO)
 
@@ -985,6 +997,9 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _freeze_now(monkeypatch)
+
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
 
     station_rows = {
         "USRAPIDBAD1 6": [[f"2026-01-{day:02d}", "M", "M"] for day in range(1, 5)],
@@ -1034,6 +1049,7 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
             }
         raise AssertionError(f"Unexpected URL {url}")
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
     caplog.set_level(logging.INFO)
 
@@ -1064,6 +1080,9 @@ async def test_fetch_acis_precip_summary_prefers_candidate_with_normals_within_s
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     _freeze_now(monkeypatch)
+
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
 
     station_rows = {
         "USCPARTIAL 6": [
@@ -1110,6 +1129,7 @@ async def test_fetch_acis_precip_summary_prefers_candidate_with_normals_within_s
             }
         raise AssertionError(f"Unexpected URL {url}")
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
     caplog.set_level(logging.INFO)
 
@@ -1139,6 +1159,9 @@ async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_
 ) -> None:
     _freeze_now(monkeypatch)
 
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return []
+
     async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
         if url == forecast_page_service.ACIS_STATION_META_URL:
             return {
@@ -1163,6 +1186,7 @@ async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_
             }
         raise AssertionError(f"Unexpected URL {url}")
 
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
     monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
 
     async with httpx.AsyncClient() as client:
@@ -1176,6 +1200,73 @@ async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_
             "station_name": "Sioux Falls Foss Field",
         },
     }
+
+
+async def test_fetch_acis_precip_summary_prefers_nws_station_candidates_before_bbox_search(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_nws_station_candidates(client, lat: float, lon: float):
+        return [
+            forecast_page_service.StationInfo(
+                station_id="KFSD",
+                name="Sioux Falls Regional Airport",
+                latitude=43.582,
+                longitude=-96.741,
+                elevation_m=435.0,
+                station_type="ASOS",
+            )
+        ]
+
+    data_calls: list[str] = []
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            raise AssertionError("StnMeta should not run when an NWS-anchored station succeeds")
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            sid = payload["sid"]
+            data_calls.append(sid if payload["elems"][0].get("duration") != "ytd" else f"{sid}:ytd")
+            if payload["elems"][0].get("duration") == "ytd":
+                return {
+                    "data": [
+                        ["2026-07-01", "9.20", "-5.03"],
+                    ],
+                }
+            return {
+                "meta": {"name": "SIOUX FALLS FOSS FIELD"},
+                "data": [
+                    ["2026-06-29", "0.00", "0.10"],
+                    ["2026-06-30", "0.00", "0.10"],
+                    ["2026-07-01", "0.25", "0.10"],
+                ],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_nws_station_candidates_for_acis", fake_nws_station_candidates)
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.INFO)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
+
+    assert data_calls == ["KFSD 5", "KFSD 5:ytd"]
+    assert payload == {
+        "ytd": {
+            "actual_in": 9.2,
+            "normal_in": 14.23,
+            "percent_of_normal": 65,
+            "departure_in": -5.03,
+            "station_name": "SIOUX FALLS FOSS FIELD",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "SIOUX FALLS FOSS FIELD",
+        },
+    }
+    assert "resolved via NWS-anchored station" in caplog.text
 
 
 async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:

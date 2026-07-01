@@ -1384,57 +1384,38 @@ async def _fetch_acis_precip_summary_with_client(
     data_payload: dict[str, Any] | None = None
     attempted_sids: set[str] = set()
     attempt_count = 0
+
+    async def _fetch_candidate_payload(candidate_sid: str) -> dict[str, Any]:
+        return await _post_json(
+            client,
+            ACIS_STATION_DATA_URL,
+            payload={
+                "sid": candidate_sid,
+                "sdate": f"{today.year}-01-01",
+                "edate": today.isoformat(),
+                "meta": "name,sids",
+                "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
+            },
+        )
+
     try:
-        for span in (0.35, 0.75, 1.5, 3.0):
-            if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
-                break
-            bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
-            meta_payload = await _post_json(
-                client,
-                ACIS_STATION_META_URL,
-                payload={"bbox": bbox, "meta": "name,sids,ll,elev"},
+        nws_candidates = await _fetch_nws_station_candidates_for_acis(client, lat, lon)
+        if not nws_candidates:
+            logger.info(
+                "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because NWS station list was empty or unavailable",
+                lat,
+                lon,
             )
-            stations = meta_payload.get("meta") if isinstance(meta_payload, dict) else None
-            if not isinstance(stations, list):
-                continue
-
-            span_candidates: list[tuple[float, str, str]] = []
-            for station in stations:
-                if not isinstance(station, dict):
-                    continue
-                coords = station.get("ll")
-                if not isinstance(coords, list) or len(coords) < 2:
-                    continue
-                station_lon = _safe_float(coords[0])
-                station_lat = _safe_float(coords[1])
-                sid = _preferred_acis_sid(station.get("sids"))
-                name = _coerce_str(station.get("name"))
-                if station_lon is None or station_lat is None or sid is None or name is None:
-                    continue
-                distance_km = _haversine_km(lat, lon, station_lat, station_lon)
-                span_candidates.append((distance_km, sid, name))
-
-            span_candidates.sort(key=lambda item: item[0])
+        else:
             partial_candidate: tuple[str, str, dict[str, Any]] | None = None
-            for _distance_km, candidate_sid, candidate_name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]:
-                if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
-                    break
+            for station in nws_candidates:
+                candidate_sid = f"{station.station_id} 5"
+                candidate_name = station.name or station.station_id
                 if candidate_sid in attempted_sids:
                     continue
                 attempted_sids.add(candidate_sid)
-                attempt_count += 1
 
-                candidate_payload = await _post_json(
-                    client,
-                    ACIS_STATION_DATA_URL,
-                    payload={
-                        "sid": candidate_sid,
-                        "sdate": f"{today.year}-01-01",
-                        "edate": today.isoformat(),
-                        "meta": "name,sids",
-                        "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
-                    },
-                )
+                candidate_payload = await _fetch_candidate_payload(candidate_sid)
                 candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
                 actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
                 normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
@@ -1475,6 +1456,121 @@ async def _fetch_acis_precip_summary_with_client(
                 station_sid = candidate_sid
                 station_name = candidate_name
                 data_payload = candidate_payload
+                logger.info(
+                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
+                    candidate_name,
+                    candidate_sid,
+                    lat,
+                    lon,
+                )
+                break
+
+            if data_payload is None and partial_candidate is not None:
+                station_sid, station_name, data_payload = partial_candidate
+                logger.info(
+                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
+                    station_name,
+                    station_sid,
+                    lat,
+                    lon,
+                )
+
+            if data_payload is None:
+                logger.info(
+                    "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because all NWS candidates failed quality check",
+                    lat,
+                    lon,
+                )
+
+        for span in (0.35, 0.75, 1.5, 3.0):
+            if data_payload is not None:
+                break
+            if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                break
+            bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
+            meta_payload = await _post_json(
+                client,
+                ACIS_STATION_META_URL,
+                payload={"bbox": bbox, "meta": "name,sids,ll,elev"},
+            )
+            stations = meta_payload.get("meta") if isinstance(meta_payload, dict) else None
+            if not isinstance(stations, list):
+                continue
+
+            span_candidates: list[tuple[float, str, str]] = []
+            for station in stations:
+                if not isinstance(station, dict):
+                    continue
+                coords = station.get("ll")
+                if not isinstance(coords, list) or len(coords) < 2:
+                    continue
+                station_lon = _safe_float(coords[0])
+                station_lat = _safe_float(coords[1])
+                sid = _preferred_acis_sid(station.get("sids"))
+                name = _coerce_str(station.get("name"))
+                if station_lon is None or station_lat is None or sid is None or name is None:
+                    continue
+                distance_km = _haversine_km(lat, lon, station_lat, station_lon)
+                span_candidates.append((distance_km, sid, name))
+
+            span_candidates.sort(key=lambda item: item[0])
+            partial_candidate: tuple[str, str, dict[str, Any]] | None = None
+            for _distance_km, candidate_sid, candidate_name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]:
+                if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                    break
+                if candidate_sid in attempted_sids:
+                    continue
+                attempted_sids.add(candidate_sid)
+                attempt_count += 1
+
+                candidate_payload = await _fetch_candidate_payload(candidate_sid)
+                candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
+                actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
+                normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
+                actual_ratio = (actual_usable_rows / total_rows) if total_rows > 0 else 0.0
+                normal_ratio = (normal_usable_rows / total_rows) if total_rows > 0 else 0.0
+                actual_missing_ratio = 1.0 - actual_ratio if total_rows > 0 else 1.0
+                normal_missing_ratio = 1.0 - normal_ratio if total_rows > 0 else 1.0
+
+                if total_rows == 0 or actual_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                    logger.info(
+                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: actual_rows=%d/%d actual_missing_fraction=%.2f normal_missing_fraction=%.2f",
+                        candidate_name,
+                        candidate_sid,
+                        lat,
+                        lon,
+                        actual_usable_rows,
+                        total_rows,
+                        actual_missing_ratio,
+                        normal_missing_ratio,
+                    )
+                    continue
+
+                if normal_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                    logger.info(
+                        "ACIS candidate %s (%s) has usable actual data but insufficient normal-period record: actual_rows=%d/%d normal_rows=%d/%d normal_missing_fraction=%.2f",
+                        candidate_name,
+                        candidate_sid,
+                        actual_usable_rows,
+                        total_rows,
+                        normal_usable_rows,
+                        total_rows,
+                        normal_missing_ratio,
+                    )
+                    if partial_candidate is None:
+                        partial_candidate = (candidate_sid, candidate_name, candidate_payload)
+                    continue
+
+                station_sid = candidate_sid
+                station_name = candidate_name
+                data_payload = candidate_payload
+                logger.info(
+                    "ACIS station resolved via ACIS bbox search station %s (%s) for lat=%.4f lon=%.4f",
+                    candidate_name,
+                    candidate_sid,
+                    lat,
+                    lon,
+                )
                 break
 
             if data_payload is not None:
@@ -1675,6 +1771,28 @@ async def _fetch_station_candidates(client: httpx.AsyncClient, stations_url: str
 
     _cache_set("nws-stations", cache_key, [station.__dict__ for station in stations], FORECAST_CACHE_TTL)
     return stations
+
+
+async def _fetch_nws_station_candidates_for_acis(
+    client: httpx.AsyncClient,
+    lat: float,
+    lon: float,
+) -> list[StationInfo]:
+    try:
+        points_payload = await _fetch_nws_points(client, lat, lon)
+    except ForecastPageError:
+        return []
+
+    props = points_payload.get("properties") or {}
+    stations_url = _coerce_str(props.get("observationStations"))
+    if stations_url is None:
+        return []
+
+    try:
+        stations = await _fetch_station_candidates(client, stations_url)
+    except ForecastPageError:
+        return []
+    return stations[:4]
 
 
 async def _fetch_station_observation(client: httpx.AsyncClient, station_id: str) -> dict[str, Any]:
