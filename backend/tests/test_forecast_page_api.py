@@ -813,6 +813,53 @@ def test_summarize_acis_precip_summary_caps_days_since_rain_when_series_never_fi
     }
 
 
+async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = {
+        "mrms_recent_precip_6h": 0.31,
+        "mrms_recent_precip_24h": 0.87,
+        "mrms_recent_precip_72h": 1.62,
+    }
+
+    def fake_resolve_latest_complete_run(model: str, variables: list[str], *, region: str | None = None) -> str | None:
+        assert model == "mrms"
+        assert variables == ["mrms_recent_precip_6h", "mrms_recent_precip_24h", "mrms_recent_precip_72h"]
+        assert region == "conus"
+        return "20260701_1438z"
+
+    def fake_sample_value(
+        model: str,
+        run_id: str,
+        var: str,
+        fh: int,
+        *,
+        lat: float,
+        lon: float,
+        region: str | None = None,
+    ) -> tuple[bool, float | None]:
+        assert model == "mrms"
+        assert run_id == "20260701_1438z"
+        assert fh == 0
+        assert lat == 43.55
+        assert lon == -96.73
+        assert region == "conus"
+        return True, values[var]
+
+    def fail_binary_sample(*args, **kwargs):
+        raise AssertionError("MRMS recent precip should sample value COGs, not binary grid frames")
+
+    monkeypatch.setattr(forecast_page_service.sampling, "resolve_latest_complete_run", fake_resolve_latest_complete_run)
+    monkeypatch.setattr(forecast_page_service.sampling, "sample_value", fake_sample_value)
+    monkeypatch.setattr(forecast_page_service.sampling, "sample_binary_value", fail_binary_sample)
+
+    payload = await forecast_page_service._fetch_observed_precip_mrms(43.55, -96.73)
+
+    assert payload == {
+        "last_6h_in": 0.31,
+        "last_24h_in": 0.87,
+        "last_72h_in": 1.62,
+    }
+
+
 async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

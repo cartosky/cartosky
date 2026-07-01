@@ -1336,7 +1336,7 @@ async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] 
         ("mrms_recent_precip_72h", "last_72h_in"),
     ):
         present, value = await asyncio.to_thread(
-            sampling.sample_binary_value,
+            sampling.sample_value,
             "mrms",
             run_id,
             var,
