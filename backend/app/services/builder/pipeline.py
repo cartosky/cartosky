@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import grid_build_enabled
+from app.config import binary_sampling_models, grid_build_enabled
 from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
@@ -1787,7 +1787,16 @@ def build_frame(
             warped_mib=round(_array_mib(warped_data), 2), shape=tuple(getattr(warped_data, "shape", ())),
             dtype=str(getattr(warped_data, "dtype", "")),
         )
-        try:
+        # Binary-sampling models (migration plan Phase F cutover) no longer
+        # write a value COG, so the COG-based gates below never run for them.
+        # The pre-encode sanity gate is therefore ENFORCED for these models —
+        # a failure rejects the frame exactly like check_value_sanity does on
+        # the COG path. For everything else it stays a Phase C shadow gate.
+        binary_only = model.strip().lower() in binary_sampling_models()
+        if binary_only:
+            # No try/except: an unexpected gate error propagates to the outer
+            # handler (cleanup + "failed"), matching how a check_value_sanity
+            # exception behaves on the COG path.
             if not check_pre_encode_value_sanity(
                 warped_data,
                 var_spec_colormap,
@@ -1795,58 +1804,83 @@ def build_frame(
                 var_capability=var_capability,
                 label=f"{model}/{var_key}/fh{int(fh):03d}",
             ):
-                logger.warning(
-                    "Phase C shadow gate failed: pre-encode value sanity "
+                logger.error(
+                    "Pre-encode value sanity failed — rejecting frame "
+                    "(model=%s is binary-only; no COG fallback gate exists)",
+                    model,
+                )
+                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+                return _result(None, "failed")
+        else:
+            try:
+                if not check_pre_encode_value_sanity(
+                    warped_data,
+                    var_spec_colormap,
+                    var_spec_model=var_spec_model,
+                    var_capability=var_capability,
+                    label=f"{model}/{var_key}/fh{int(fh):03d}",
+                ):
+                    logger.warning(
+                        "Phase C shadow gate failed: pre-encode value sanity "
+                        "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                        model,
+                        var_key,
+                        int(fh),
+                    )
+            except Exception:
+                logger.exception(
+                    "Phase C shadow gate errored: pre-encode value sanity "
                     "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
                     model,
                     var_key,
                     int(fh),
                 )
-        except Exception:
-            logger.exception(
-                "Phase C shadow gate errored: pre-encode value sanity "
-                "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
-                model,
-                var_key,
-                int(fh),
-            )
 
         # --- Step 5: Write artifacts ---
         logger.info("Step 5/6: Writing artifacts")
-        write_value_cog(
-            warped_data, val_path,
-            model=model, region=region,
-            downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
-        )
-        _log_frame_memory_checkpoint(
-            "after_publish", model=model, region=region, var=var_key, fh=fh,
-        )
+        if binary_only:
+            # Value COG retired for binary-sampling models: the grid binary
+            # (written below) serves rendering and sampling, and the enforced
+            # pre-encode gate above already applied the value-quality gate.
+            logger.info(
+                "Step 6/6: Value COG write + COG gates skipped (model=%s is binary-only)",
+                model,
+            )
+        else:
+            write_value_cog(
+                warped_data, val_path,
+                model=model, region=region,
+                downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
+            )
+            _log_frame_memory_checkpoint(
+                "after_publish", model=model, region=region, var=var_key, fh=fh,
+            )
 
-        # --- Step 6: Validate (Gates 1 & 2) ---
-        logger.info("Step 6/6: Validating artifacts")
-        _, grid_m = get_grid_params(model, region)
+            # --- Step 6: Validate (Gates 1 & 2) ---
+            logger.info("Step 6/6: Validating artifacts")
+            _, grid_m = get_grid_params(model, region)
 
-        # Gate 1: structural validation
-        if not validate_cog(
-            val_path,
-            expected_bands=1,
-            expected_dtype="Float32",
-            region=region,
-            grid_meters=grid_m * VALUE_HOVER_DOWNSAMPLE_FACTOR,
-        ):
-            logger.error("Value COG validation failed — rejecting frame")
-            _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-            return _result(None, "failed")
+            # Gate 1: structural validation
+            if not validate_cog(
+                val_path,
+                expected_bands=1,
+                expected_dtype="Float32",
+                region=region,
+                grid_meters=grid_m * VALUE_HOVER_DOWNSAMPLE_FACTOR,
+            ):
+                logger.error("Value COG validation failed — rejecting frame")
+                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+                return _result(None, "failed")
 
-        if not check_value_sanity(
-            val_path,
-            var_spec_colormap,
-            var_spec_model=var_spec_model,
-            var_capability=var_capability,
-        ):
-            logger.error("Value sanity failed — rejecting frame")
-            _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-            return _result(None, "failed")
+            if not check_value_sanity(
+                val_path,
+                var_spec_colormap,
+                var_spec_model=var_spec_model,
+                var_capability=var_capability,
+            ):
+                logger.error("Value sanity failed — rejecting frame")
+                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+                return _result(None, "failed")
 
         contours_meta, contour_geojson_path = _build_contour_metadata_for_variable(
             model=model,
@@ -1951,7 +1985,7 @@ def build_frame(
             "Frame complete: %s/%s/%s/%s/%s "
             "(Val: %s, JSON: %s%s)",
             model, region, run_id, var_key, fh_str,
-            _file_size_str(val_path),
+            "skipped (binary-only)" if binary_only else _file_size_str(val_path),
             _file_size_str(sidecar_path),
             f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
         )

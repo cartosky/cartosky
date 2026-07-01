@@ -3531,6 +3531,11 @@ def _published_var_dir(model: str, run: str, var: str, *, region: str | None = N
 
 
 def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> bool:
+    # `has_cog` means "a hover-samplable frame exists". Binary-sampling models
+    # no longer publish value COGs, so the equivalent signal is the published
+    # grid binary frame — the artifact /api/v4/sample reads for them.
+    if model.strip().lower() in app_config.binary_sampling_models():
+        return _resolve_binary_grid_frame(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
     return _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
 
 
