@@ -18,7 +18,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -35,6 +35,8 @@ OPEN_METEO_GEOCODING_BASE = "https://geocoding-api.open-meteo.com/v1"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 GOOGLE_POLLEN_URL = "https://pollen.googleapis.com/v1/forecast:lookup"
+ACIS_STATION_META_URL = "https://data.rcc-acis.org/StnMeta"
+ACIS_STATION_DATA_URL = "https://data.rcc-acis.org/StnData"
 NWS_API_BASE = nws_service.NWS_API_BASE
 GEOCODE_COUNTRY_CODES = ["US", "CA"]
 GEOCODE_SEARCH_CACHE_NAMESPACE = "geocode-search-v2"
@@ -53,6 +55,7 @@ AFD_CACHE_TTL = 30 * 60
 OPEN_METEO_CACHE_TTL = 30 * 60
 AIR_QUALITY_CACHE_TTL = 30 * 60
 POLLEN_CACHE_TTL = 3 * 60 * 60
+ACIS_CACHE_TTL = 6 * 60 * 60
 ALERTS_CACHE_TTL = 60
 FORECAST_PAGE_CACHE_TTL = 10 * 60
 # A degraded NWS result (some product unavailable) is still cached, but briefly,
@@ -355,6 +358,46 @@ async def _request_json(
             await asyncio.sleep(RETRY_BACKOFF_SECONDS)
         try:
             response = await client.get(url, params=params, headers=headers)
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            continue
+        except httpx.RequestError as exc:
+            raise UpstreamServiceError(message=f"Request failed for {url}: {exc}") from exc
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except json.JSONDecodeError as exc:
+                raise UpstreamServiceError(message=f"Invalid JSON returned from {url}.") from exc
+
+        if response.status_code in RETRYABLE_STATUS_CODES:
+            last_error = UpstreamServiceError(upstream_status=response.status_code)
+            continue
+
+        raise UpstreamServiceError(
+            message=f"Upstream request failed for {url} with HTTP {response.status_code}.",
+            upstream_status=response.status_code,
+        )
+
+    if isinstance(last_error, UpstreamServiceError):
+        raise last_error
+    raise UpstreamServiceError(message=f"Request to {url} timed out after retries.")
+
+
+async def _post_json(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    payload: dict[str, Any],
+    retries: int = MAX_RETRIES,
+) -> Any:
+    last_error: Exception | None = None
+
+    for attempt in range(retries + 1):
+        if attempt > 0:
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+        try:
+            response = await client.post(url, json=payload)
         except httpx.TimeoutException as exc:
             last_error = exc
             continue
@@ -1162,6 +1205,284 @@ async def _fetch_google_pollen(client: httpx.AsyncClient, location: ResolvedLoca
     return payload
 
 
+def _parse_acis_precip_amount(value: Any) -> float | None:
+    text = _coerce_str(value)
+    if text is None:
+        return None
+    upper = text.upper()
+    if upper == "T":
+        return 0.0
+    if upper in {"M", "S"}:
+        return None
+    return _safe_float(text)
+
+
+def _preferred_acis_sid(values: Any) -> str | None:
+    if not isinstance(values, list):
+        return None
+    type_priority = {
+        "6": 0,
+        "32": 1,
+        "2": 2,
+        "1": 3,
+        "7": 4,
+        "5": 5,
+        "4": 6,
+        "3": 7,
+        "10": 8,
+    }
+    candidates: list[tuple[int, int, str]] = []
+    for raw in values:
+        sid = _coerce_str(raw)
+        if sid is None:
+            continue
+        sid_type = sid.rsplit(" ", 1)[-1]
+        candidates.append((type_priority.get(sid_type, 99), -len(sid), sid))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][2]
+
+
+def _summarize_acis_precip_summary(
+    *,
+    station_name: str,
+    rows: list[Any],
+) -> dict[str, Any]:
+    actual_total = 0.0
+    normal_total = 0.0
+    have_actual = False
+    have_normal = False
+
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        actual_value = _parse_acis_precip_amount(row[1])
+        if actual_value is not None:
+            actual_total += actual_value
+            have_actual = True
+        if len(row) >= 3:
+            normal_value = _parse_acis_precip_amount(row[2])
+            if normal_value is not None:
+                normal_total += normal_value
+                have_normal = True
+
+    ytd: dict[str, Any] | None = None
+    if have_actual or have_normal:
+        actual_in = round(actual_total, 2) if have_actual else None
+        normal_in = round(normal_total, 2) if have_normal else None
+        percent_of_normal = None
+        if actual_in is not None and normal_in not in {None, 0}:
+            percent_of_normal = round((actual_in / normal_in) * 100)
+        departure_in = None
+        if actual_in is not None and normal_in is not None:
+            departure_in = round(actual_in - normal_in, 2)
+        ytd = {
+            "actual_in": actual_in,
+            "normal_in": normal_in,
+            "percent_of_normal": percent_of_normal,
+            "departure_in": departure_in,
+            "station_name": station_name,
+        }
+
+    dry_days = 0
+    saw_actual_day = False
+    found_wet_day = False
+    for row in reversed(rows):
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        actual_value = _parse_acis_precip_amount(row[1])
+        if actual_value is None:
+            break
+        saw_actual_day = True
+        if actual_value > 0.1:
+            found_wet_day = True
+            break
+        dry_days += 1
+
+    days_since_rain = None
+    if saw_actual_day:
+        days_since_rain = {
+            "days": dry_days,
+            "at_cap": not found_wet_day,
+            "station_name": station_name,
+        }
+
+    return {
+        "ytd": ytd,
+        "days_since_rain": days_since_rain,
+    }
+
+
+async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] | None:
+    variables = ["mrms_recent_precip_6h", "mrms_recent_precip_24h", "mrms_recent_precip_72h"]
+    try:
+        run_id = await asyncio.to_thread(
+            sampling.resolve_latest_complete_run,
+            "mrms",
+            variables,
+            region="conus",
+        )
+    except Exception:
+        logger.exception("MRMS observed precip run resolution failed for lat=%.4f lon=%.4f", lat, lon)
+        return None
+    if run_id is None:
+        return None
+
+    results: dict[str, float | None] = {}
+    for var, key in (
+        ("mrms_recent_precip_6h", "last_6h_in"),
+        ("mrms_recent_precip_24h", "last_24h_in"),
+        ("mrms_recent_precip_72h", "last_72h_in"),
+    ):
+        present, value = await asyncio.to_thread(
+            sampling.sample_binary_value,
+            "mrms",
+            run_id,
+            var,
+            0,
+            lat=lat,
+            lon=lon,
+            region="conus",
+        )
+        results[key] = value if present else None
+    return results
+
+
+async def _fetch_acis_precip_summary_with_client(
+    client: httpx.AsyncClient,
+    lat: float,
+    lon: float,
+) -> dict[str, Any] | None:
+    today = _utcnow().date()
+    cache_key = f"{lat:.3f}:{lon:.3f}:{today.isoformat()}"
+    cached = _cache_get("acis-precip-summary", cache_key)
+    if cached is not None:
+        return cached
+
+    station_name: str | None = None
+    station_sid: str | None = None
+    try:
+        for span in (0.35, 0.75, 1.5, 3.0):
+            bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
+            meta_payload = await _post_json(
+                client,
+                ACIS_STATION_META_URL,
+                payload={"bbox": bbox, "meta": "name,sids,ll,elev"},
+            )
+            stations = meta_payload.get("meta") if isinstance(meta_payload, dict) else None
+            if not isinstance(stations, list):
+                continue
+
+            best_station: tuple[float, str, str] | None = None
+            for station in stations:
+                if not isinstance(station, dict):
+                    continue
+                coords = station.get("ll")
+                if not isinstance(coords, list) or len(coords) < 2:
+                    continue
+                station_lon = _safe_float(coords[0])
+                station_lat = _safe_float(coords[1])
+                sid = _preferred_acis_sid(station.get("sids"))
+                name = _coerce_str(station.get("name"))
+                if station_lon is None or station_lat is None or sid is None or name is None:
+                    continue
+                distance_km = _haversine_km(lat, lon, station_lat, station_lon)
+                candidate = (distance_km, sid, name)
+                if best_station is None or candidate[0] < best_station[0]:
+                    best_station = candidate
+            if best_station is not None:
+                station_sid = best_station[1]
+                station_name = best_station[2]
+                break
+
+        if station_sid is None:
+            return None
+
+        data_payload = await _post_json(
+            client,
+            ACIS_STATION_DATA_URL,
+            payload={
+                "sid": station_sid,
+                "sdate": f"{today.year}-01-01",
+                "edate": today.isoformat(),
+                "meta": "name,sids",
+                "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
+            },
+        )
+    except ForecastPageError as exc:
+        logger.warning(
+            "ACIS observed precip fetch failed for lat=%.4f lon=%.4f: %s",
+            lat,
+            lon,
+            exc.message,
+        )
+        return None
+
+    data_meta = data_payload.get("meta") if isinstance(data_payload, dict) else None
+    resolved_station_name = station_name
+    if isinstance(data_meta, dict):
+        resolved_station_name = _coerce_str(data_meta.get("name")) or resolved_station_name
+    if resolved_station_name is None:
+        resolved_station_name = station_sid
+    if resolved_station_name is None:
+        return None
+
+    rows = data_payload.get("data") if isinstance(data_payload, dict) else None
+    summary = _summarize_acis_precip_summary(
+        station_name=resolved_station_name,
+        rows=rows if isinstance(rows, list) else [],
+    )
+    if summary.get("ytd") is None and summary.get("days_since_rain") is None:
+        return None
+
+    _cache_set("acis-precip-summary", cache_key, summary, ACIS_CACHE_TTL)
+    return summary
+
+
+async def _fetch_acis_precip_summary(lat: float, lon: float) -> dict[str, Any] | None:
+    async with _build_client() as client:
+        return await _fetch_acis_precip_summary_with_client(client, lat, lon)
+
+
+def _observed_precip_attribution(observed_precip: dict[str, Any] | None) -> str | None:
+    if observed_precip is None:
+        return None
+    has_mrms = any(observed_precip.get(key) is not None for key in ("last_6h_in", "last_24h_in", "last_72h_in"))
+    has_acis = observed_precip.get("ytd") is not None or observed_precip.get("days_since_rain") is not None
+    if has_mrms and has_acis:
+        return "MRMS · ACIS"
+    if has_mrms:
+        return "MRMS"
+    if has_acis:
+        return "ACIS"
+    return None
+
+
+async def _fetch_observed_precip(location: ResolvedLocation) -> dict[str, Any] | None:
+    mrms_task = asyncio.create_task(_fetch_observed_precip_mrms(location.latitude, location.longitude))
+    acis_task = asyncio.create_task(_fetch_acis_precip_summary(location.latitude, location.longitude))
+    mrms_payload, acis_payload = await asyncio.gather(mrms_task, acis_task)
+
+    observed_precip = {
+        "last_6h_in": None,
+        "last_24h_in": None,
+        "last_72h_in": None,
+        "ytd": None,
+        "days_since_rain": None,
+    }
+    if isinstance(mrms_payload, dict):
+        for key in ("last_6h_in", "last_24h_in", "last_72h_in"):
+            observed_precip[key] = mrms_payload.get(key)
+    if isinstance(acis_payload, dict):
+        observed_precip["ytd"] = acis_payload.get("ytd")
+        observed_precip["days_since_rain"] = acis_payload.get("days_since_rain")
+
+    if _observed_precip_attribution(observed_precip) is None:
+        return None
+    return observed_precip
+
+
 async def _fetch_nws_points(client: httpx.AsyncClient, lat: float, lon: float) -> dict[str, Any]:
     cache_key = f"{lat:.4f},{lon:.4f}"
     cached = _cache_get("nws-points", cache_key)
@@ -1894,6 +2215,7 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         "daily": daily_payload,
         "air_quality": air_quality_payload,
         "pollen": None,
+        "observed_precip": None,
         "official_text_forecast": None,
         "afd": None,
         "alerts": [],
@@ -1903,6 +2225,7 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
             "daily": "Open-Meteo",
             "air_quality": "Open-Meteo" if air_quality_payload else None,
             "pollen": None,
+            "observed_precip": None,
             "afd": None,
             "alerts": None,
         },
@@ -1927,9 +2250,11 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         payload["location"]["query"] = location.query
         payload.setdefault("air_quality", None)
         payload.setdefault("pollen", None)
+        payload.setdefault("observed_precip", None)
         attribution = payload.setdefault("attribution", {})
         attribution.setdefault("air_quality", None)
         attribution.setdefault("pollen", None)
+        attribution.setdefault("observed_precip", None)
         if payload.get("pollen") is None:
             try:
                 pollen_payload = _normalize_google_pollen(await _fetch_google_pollen(client, location))
@@ -1952,6 +2277,10 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
                     location.longitude,
                     location.query,
                 )
+        if "observed_precip" not in cached_payload:
+            observed_precip = await _fetch_observed_precip(location)
+            payload["observed_precip"] = observed_precip
+            attribution["observed_precip"] = _observed_precip_attribution(observed_precip)
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
             alerts, alerts_freshness = await _fetch_nws_alerts(
                 client,
@@ -1967,6 +2296,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     om_task = asyncio.create_task(_timed("open_meteo", _fetch_open_meteo_forecast(client, location), timings))
     aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), timings))
     pollen_task = asyncio.create_task(_timed("google_pollen", _fetch_google_pollen(client, location), timings))
+    observed_precip_task = asyncio.create_task(_timed("observed_precip", _fetch_observed_precip(location), timings))
 
     declared_us_region = (location.country_code or "").upper() == "US"
     should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
@@ -1983,12 +2313,14 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     alerts_freshness: dict[str, Any] | None = None
     air_quality_payload: dict[str, Any] | None = None
     pollen_payload: dict[str, Any] | None = None
+    observed_precip_payload: dict[str, Any] | None = None
     attribution = {
         "current": None,
         "hourly": None,
         "daily": "Open-Meteo",
         "air_quality": None,
         "pollen": None,
+        "observed_precip": None,
         "afd": None,
         "alerts": None,
     }
@@ -2040,6 +2372,9 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
             exc.message,
         )
         pollen_payload = None
+
+    observed_precip_payload = await observed_precip_task
+    attribution["observed_precip"] = _observed_precip_attribution(observed_precip_payload)
 
     if points_payload is not None:
         props = points_payload.get("properties") or {}
@@ -2162,6 +2497,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         "daily": daily_payload,
         "air_quality": air_quality_payload,
         "pollen": pollen_payload,
+        "observed_precip": observed_precip_payload,
         "official_text_forecast": official_text_forecast,
         "afd": afd_payload,
         "alerts": alerts_payload,

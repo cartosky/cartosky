@@ -343,6 +343,34 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
     _freeze_now(monkeypatch)
     monkeypatch.setenv("CARTOSKY_GOOGLE_POLLEN_API_KEY", "test-google-pollen-key")
 
+    async def fake_fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, float | None] | None:
+        assert (lat, lon) == (43.55, -96.73)
+        return {
+            "last_6h_in": 0.31,
+            "last_24h_in": 0.87,
+            "last_72h_in": 1.62,
+        }
+
+    async def fake_fetch_acis_precip_summary(lat: float, lon: float) -> dict[str, object] | None:
+        assert (lat, lon) == (43.55, -96.73)
+        return {
+            "ytd": {
+                "actual_in": 8.42,
+                "normal_in": 9.25,
+                "percent_of_normal": 91,
+                "departure_in": -0.83,
+                "station_name": "Sioux Falls Foss Field",
+            },
+            "days_since_rain": {
+                "days": 14,
+                "at_cap": True,
+                "station_name": "Sioux Falls Foss Field",
+            },
+        }
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip_mrms", fake_fetch_observed_precip_mrms)
+    monkeypatch.setattr(forecast_page_service, "_fetch_acis_precip_summary", fake_fetch_acis_precip_summary)
+
     async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
         return nws_service.AfdResult(
             wfo=office,
@@ -437,6 +465,23 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
     assert payload["air_quality"]["driver"]["code"] == "pm2_5"
     assert payload["pollen"]["index"] == 4
     assert payload["pollen"]["types"][0]["code"] == "TREE"
+    assert payload["observed_precip"] == {
+        "last_6h_in": 0.31,
+        "last_24h_in": 0.87,
+        "last_72h_in": 1.62,
+        "ytd": {
+            "actual_in": 8.42,
+            "normal_in": 9.25,
+            "percent_of_normal": 91,
+            "departure_in": -0.83,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 14,
+            "at_cap": True,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
     assert payload["official_text_forecast"]["periods"][0]["name"] == "Tonight"
     assert payload["afd"]["product_id"] == "AFDFSD"
     assert payload["alerts"][0]["event"] == "Wind Advisory"
@@ -446,6 +491,7 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
         "daily": "Open-Meteo",
         "air_quality": "Open-Meteo",
         "pollen": "Google Pollen API",
+        "observed_precip": "MRMS · ACIS",
         "afd": "NWS",
         "alerts": "NWS",
     }
@@ -692,6 +738,7 @@ async def test_forecast_page_core_is_open_meteo_only(monkeypatch: pytest.MonkeyP
     assert payload["daily"]
     assert payload["air_quality"]["us_aqi"] == 42
     assert payload["pollen"] is None
+    assert payload["observed_precip"] is None
     assert payload["official_text_forecast"] is None
     assert payload["afd"] is None
     assert payload["alerts"] == []
@@ -706,6 +753,64 @@ def test_normalize_google_pollen_empty_day_returns_none_category_payload() -> No
     assert normalized["index"] == 0
     assert normalized["category"] == "None"
     assert normalized["types"] == []
+
+
+def test_summarize_acis_precip_summary_builds_ytd_and_days_since_rain() -> None:
+    summary = forecast_page_service._summarize_acis_precip_summary(
+        station_name="Sioux Falls Foss Field",
+        rows=[
+            ["2026-01-01", "0.10", "0.02"],
+            ["2026-01-02", "0.25", "0.03"],
+            ["2026-01-03", "T", "0.02"],
+            ["2026-01-04", "M", "0.01"],
+            ["2026-01-05", "0.00", "0.04"],
+            ["2026-01-06", "0.00", "0.04"],
+            ["2026-01-07", "0.12", "0.01"],
+            ["2026-01-08", "0.00", "0.01"],
+            ["2026-01-09", "0.05", "0.01"],
+        ],
+    )
+
+    assert summary == {
+        "ytd": {
+            "actual_in": 0.52,
+            "normal_in": 0.19,
+            "percent_of_normal": 274,
+            "departure_in": 0.33,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 2,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
+
+
+def test_summarize_acis_precip_summary_caps_days_since_rain_when_series_never_finds_wet_day() -> None:
+    summary = forecast_page_service._summarize_acis_precip_summary(
+        station_name="Dry Creek",
+        rows=[
+            ["2026-01-01", "0.00", "0.02"],
+            ["2026-01-02", "T", "0.02"],
+            ["2026-01-03", "0.10", "0.03"],
+        ],
+    )
+
+    assert summary == {
+        "ytd": {
+            "actual_in": 0.1,
+            "normal_in": 0.07,
+            "percent_of_normal": 143,
+            "departure_in": 0.03,
+            "station_name": "Dry Creek",
+        },
+        "days_since_rain": {
+            "days": 3,
+            "at_cap": True,
+            "station_name": "Dry Creek",
+        },
+    }
 
 
 async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
@@ -751,6 +856,7 @@ async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
             "daily": [],
             "air_quality": None,
             "pollen": None,
+            "observed_precip": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
@@ -760,6 +866,7 @@ async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
                 "daily": "Open-Meteo",
                 "air_quality": None,
                 "pollen": None,
+                "observed_precip": None,
                 "afd": None,
                 "alerts": None,
             },
@@ -1164,10 +1271,11 @@ async def test_forecast_page_routes_smoke(
             "daily": [],
             "air_quality": None,
             "pollen": None,
+            "observed_precip": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "observed_precip": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 
@@ -1180,10 +1288,11 @@ async def test_forecast_page_routes_smoke(
             "daily": [],
             "air_quality": None,
             "pollen": None,
+            "observed_precip": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "observed_precip": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 
