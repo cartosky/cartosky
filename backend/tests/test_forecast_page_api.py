@@ -369,8 +369,19 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
             },
         }
 
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert (location.latitude, location.longitude) == (43.55, -96.73)
+        return {
+            "station_name": "Sioux Falls Foss Field",
+            "normal_high_f": 61,
+            "normal_low_f": 38,
+            "records_high": None,
+            "records_low": None,
+        }
+
     monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip_mrms", fake_fetch_observed_precip_mrms)
     monkeypatch.setattr(forecast_page_service, "_fetch_acis_precip_summary", fake_fetch_acis_precip_summary)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
 
     async def fake_get_afd_by_office(office: str) -> nws_service.AfdResult:
         return nws_service.AfdResult(
@@ -466,6 +477,17 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
     assert payload["air_quality"]["driver"]["code"] == "pm2_5"
     assert payload["pollen"]["index"] == 4
     assert payload["pollen"]["types"][0]["code"] == "TREE"
+    assert payload["temperature_history"] == {
+        "today_high_f": 64,
+        "normal_high_f": 61,
+        "today_low_f": 42,
+        "normal_low_f": 38,
+        "departure_f": 3,
+        "high_is_final": False,
+        "records_high": None,
+        "records_low": None,
+        "station_name": "Sioux Falls Foss Field",
+    }
     assert payload["observed_precip"] == {
         "last_6h_in": 0.31,
         "last_24h_in": 0.87,
@@ -492,6 +514,7 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
         "daily": "Open-Meteo",
         "air_quality": "Open-Meteo",
         "pollen": "Google Pollen API",
+        "temperature_history": "Open-Meteo · ACIS",
         "observed_precip": "MRMS · ACIS",
         "afd": "NWS",
         "alerts": "NWS",
@@ -732,7 +755,19 @@ async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch
             },
         }
 
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert location.latitude == 43.55
+        assert location.longitude == -96.73
+        return {
+            "station_name": "Sioux Falls Foss Field",
+            "normal_high_f": 61,
+            "normal_low_f": 38,
+            "records_high": None,
+            "records_low": None,
+        }
+
     monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
@@ -763,6 +798,17 @@ async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch
     assert payload["daily"]
     assert payload["air_quality"]["us_aqi"] == 42
     assert payload["pollen"]["index"] == 4
+    assert payload["temperature_history"] == {
+        "today_high_f": 64,
+        "normal_high_f": 61,
+        "today_low_f": 42,
+        "normal_low_f": 38,
+        "departure_f": 3,
+        "high_is_final": False,
+        "records_high": None,
+        "records_low": None,
+        "station_name": "Sioux Falls Foss Field",
+    }
     assert payload["observed_precip"] == {
         "last_6h_in": 0.31,
         "last_24h_in": 0.87,
@@ -785,6 +831,51 @@ async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch
     assert payload["alerts"] == []
     # US location → NWS enrichment available; the client should fetch it next.
     assert payload["source_status"]["nws"] == "pending"
+
+
+async def test_fetch_temperature_history_reads_acis_normals_for_resolved_station(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_resolve_acis_station(client, lat: float, lon: float, *, quality_check_elem: str = "pcpn"):
+        assert lat == 43.55
+        assert lon == -96.73
+        assert quality_check_elem == "maxt"
+        return ("KFSD 5", "Sioux Falls Foss Field")
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        assert url == forecast_page_service.ACIS_STATION_DATA_URL
+        return {
+            "data": [
+                ["2026-04-18", "61", "38"],
+            ]
+        }
+
+    monkeypatch.setattr(forecast_page_service, "_resolve_acis_station", fake_resolve_acis_station)
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+
+    location = forecast_page_service.ResolvedLocation(
+        query="57104",
+        display_name="Sioux Falls, SD",
+        latitude=43.55,
+        longitude=-96.73,
+        timezone="America/Chicago",
+        country_code="US",
+        admin1="South Dakota",
+        country="United States",
+        resolved_by="frontend_location_hint",
+    )
+
+    payload = await forecast_page_service._fetch_temperature_history(location)
+
+    assert payload == {
+        "station_name": "Sioux Falls Foss Field",
+        "normal_high_f": 61,
+        "normal_low_f": 38,
+        "records_high": None,
+        "records_low": None,
+    }
 
 
 def test_normalize_google_pollen_empty_day_returns_none_category_payload() -> None:
@@ -1291,7 +1382,7 @@ async def test_fetch_acis_precip_summary_prefers_nws_station_candidates_before_b
     async with httpx.AsyncClient() as client:
         payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
 
-    assert data_calls == ["KFSD 5", "KFSD 5:ytd"]
+    assert data_calls == ["KFSD 5", "KFSD 5", "KFSD 5:ytd"]
     assert payload == {
         "ytd": {
             "actual_in": 9.2,
@@ -1523,6 +1614,11 @@ async def test_get_forecast_page_refreshes_missing_observed_precip_from_cached_p
             "days_since_rain": None,
         }
 
+    async def fake_fetch_temperature_history(location_arg: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert location_arg.latitude == 43.55
+        assert location_arg.longitude == -96.73
+        return None
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -1531,6 +1627,7 @@ async def test_get_forecast_page_refreshes_missing_observed_precip_from_cached_p
         raise AssertionError(f"Unhandled request: {request.method} {request.url}")
 
     monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
     _mock_async_client(monkeypatch, handler)
 
     payload = await forecast_page_service.get_forecast_page(
@@ -1656,6 +1753,11 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
             },
         }
 
+    async def fake_fetch_temperature_history(location_arg: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert location_arg.latitude == 43.55
+        assert location_arg.longitude == -96.73
+        return None
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -1664,6 +1766,7 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
         raise AssertionError(f"Unhandled request: {request.method} {request.url}")
 
     monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
     _mock_async_client(monkeypatch, handler)
 
     payload = await forecast_page_service.get_forecast_page(
@@ -2064,11 +2167,12 @@ async def test_forecast_page_routes_smoke(
             "daily": [],
             "air_quality": None,
             "pollen": None,
+            "temperature_history": None,
             "observed_precip": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "observed_precip": None, "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "temperature_history": None, "observed_precip": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 
@@ -2081,11 +2185,12 @@ async def test_forecast_page_routes_smoke(
             "daily": [],
             "air_quality": None,
             "pollen": None,
+            "temperature_history": None,
             "observed_precip": None,
             "official_text_forecast": None,
             "afd": None,
             "alerts": [],
-            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "observed_precip": None, "afd": None, "alerts": None},
+            "attribution": {"current": "NWS", "hourly": None, "daily": "Open-Meteo", "air_quality": None, "pollen": None, "temperature_history": None, "observed_precip": None, "afd": None, "alerts": None},
             "freshness": {},
         }
 

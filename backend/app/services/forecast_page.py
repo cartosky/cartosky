@@ -56,6 +56,7 @@ OPEN_METEO_CACHE_TTL = 30 * 60
 AIR_QUALITY_CACHE_TTL = 30 * 60
 POLLEN_CACHE_TTL = 3 * 60 * 60
 ACIS_CACHE_TTL = 6 * 60 * 60
+ACIS_STATION_RESOLUTION_TTL = 30 * 24 * 60 * 60
 ACIS_MAX_STATION_CANDIDATES = 5
 ACIS_MAX_STATION_ATTEMPTS = 3
 ACIS_MIN_USABLE_ROW_RATIO = 0.5
@@ -1209,11 +1210,15 @@ async def _fetch_google_pollen(client: httpx.AsyncClient, location: ResolvedLoca
 
 
 def _parse_acis_precip_amount(value: Any) -> float | None:
+    return _parse_acis_numeric_value(value, trace_is_zero=True)
+
+
+def _parse_acis_numeric_value(value: Any, *, trace_is_zero: bool = False) -> float | None:
     text = _coerce_str(value)
     if text is None:
         return None
     upper = text.upper()
-    if upper == "T":
+    if trace_is_zero and upper == "T":
         return 0.0
     if upper in {"M", "S"}:
         return None
@@ -1333,6 +1338,54 @@ def _build_acis_ytd_summary(
     }
 
 
+def _compose_temperature_history_payload(
+    *,
+    location: ResolvedLocation,
+    daily_payload: list[dict[str, Any]],
+    fetched_payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    today_daily = daily_payload[0] if daily_payload else None
+    today_high_f = _safe_int((today_daily or {}).get("high_f"))
+    today_low_f = _safe_int((today_daily or {}).get("low_f"))
+    normal_high_f = _safe_int((fetched_payload or {}).get("normal_high_f"))
+    normal_low_f = _safe_int((fetched_payload or {}).get("normal_low_f"))
+    records_high = (fetched_payload or {}).get("records_high") if isinstance(fetched_payload, dict) else None
+    records_low = (fetched_payload or {}).get("records_low") if isinstance(fetched_payload, dict) else None
+    station_name = _coerce_str((fetched_payload or {}).get("station_name")) if isinstance(fetched_payload, dict) else None
+
+    if all(
+        value is None
+        for value in (today_high_f, today_low_f, normal_high_f, normal_low_f, records_high, records_low, station_name)
+    ):
+        return None
+
+    timezone_name = location.timezone
+    local_today = _utcnow().date().isoformat()
+    if timezone_name:
+        try:
+            local_today = _utcnow().astimezone(ZoneInfo(timezone_name)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            pass
+    forecast_date = _coerce_str((today_daily or {}).get("date"))
+    high_is_final = forecast_date is not None and forecast_date != local_today
+
+    departure_f = None
+    if today_high_f is not None and normal_high_f is not None:
+        departure_f = today_high_f - normal_high_f
+
+    return {
+        "today_high_f": today_high_f,
+        "normal_high_f": normal_high_f,
+        "today_low_f": today_low_f,
+        "normal_low_f": normal_low_f,
+        "departure_f": departure_f,
+        "high_is_final": high_is_final,
+        "records_high": records_high,
+        "records_low": records_low,
+        "station_name": station_name,
+    }
+
+
 async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] | None:
     variables = ["mrms_recent_precip_6h", "mrms_recent_precip_24h", "mrms_recent_precip_72h"]
     try:
@@ -1379,213 +1432,24 @@ async def _fetch_acis_precip_summary_with_client(
     if cached is not None:
         return cached
 
-    station_name: str | None = None
-    station_sid: str | None = None
-    data_payload: dict[str, Any] | None = None
-    attempted_sids: set[str] = set()
-    attempt_count = 0
+    resolved_station = await _resolve_acis_station(client, lat, lon, quality_check_elem="pcpn")
+    if resolved_station is None:
+        return None
+    station_sid, station_name = resolved_station
 
-    async def _fetch_candidate_payload(candidate_sid: str) -> dict[str, Any]:
-        return await _post_json(
+    data_payload: dict[str, Any] | None = None
+    try:
+        data_payload = await _post_json(
             client,
             ACIS_STATION_DATA_URL,
             payload={
-                "sid": candidate_sid,
+                "sid": station_sid,
                 "sdate": f"{today.year}-01-01",
                 "edate": today.isoformat(),
                 "meta": "name,sids",
                 "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
             },
         )
-
-    try:
-        nws_candidates = await _fetch_nws_station_candidates_for_acis(client, lat, lon)
-        if not nws_candidates:
-            logger.info(
-                "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because NWS station list was empty or unavailable",
-                lat,
-                lon,
-            )
-        else:
-            partial_candidate: tuple[str, str, dict[str, Any]] | None = None
-            for station in nws_candidates:
-                candidate_sid = f"{station.station_id} 5"
-                candidate_name = station.name or station.station_id
-                if candidate_sid in attempted_sids:
-                    continue
-                attempted_sids.add(candidate_sid)
-
-                candidate_payload = await _fetch_candidate_payload(candidate_sid)
-                candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
-                actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
-                normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
-                actual_ratio = (actual_usable_rows / total_rows) if total_rows > 0 else 0.0
-                normal_ratio = (normal_usable_rows / total_rows) if total_rows > 0 else 0.0
-                actual_missing_ratio = 1.0 - actual_ratio if total_rows > 0 else 1.0
-                normal_missing_ratio = 1.0 - normal_ratio if total_rows > 0 else 1.0
-
-                if total_rows == 0 or actual_ratio < ACIS_MIN_USABLE_ROW_RATIO:
-                    logger.info(
-                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: actual_rows=%d/%d actual_missing_fraction=%.2f normal_missing_fraction=%.2f",
-                        candidate_name,
-                        candidate_sid,
-                        lat,
-                        lon,
-                        actual_usable_rows,
-                        total_rows,
-                        actual_missing_ratio,
-                        normal_missing_ratio,
-                    )
-                    continue
-
-                if normal_ratio < ACIS_MIN_USABLE_ROW_RATIO:
-                    logger.info(
-                        "ACIS candidate %s (%s) has usable actual data but insufficient normal-period record: actual_rows=%d/%d normal_rows=%d/%d normal_missing_fraction=%.2f",
-                        candidate_name,
-                        candidate_sid,
-                        actual_usable_rows,
-                        total_rows,
-                        normal_usable_rows,
-                        total_rows,
-                        normal_missing_ratio,
-                    )
-                    if partial_candidate is None:
-                        partial_candidate = (candidate_sid, candidate_name, candidate_payload)
-                    continue
-
-                station_sid = candidate_sid
-                station_name = candidate_name
-                data_payload = candidate_payload
-                logger.info(
-                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
-                    candidate_name,
-                    candidate_sid,
-                    lat,
-                    lon,
-                )
-                break
-
-            if data_payload is None and partial_candidate is not None:
-                station_sid, station_name, data_payload = partial_candidate
-                logger.info(
-                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
-                    station_name,
-                    station_sid,
-                    lat,
-                    lon,
-                )
-
-            if data_payload is None:
-                logger.info(
-                    "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because all NWS candidates failed quality check",
-                    lat,
-                    lon,
-                )
-
-        for span in (0.35, 0.75, 1.5, 3.0):
-            if data_payload is not None:
-                break
-            if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
-                break
-            bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
-            meta_payload = await _post_json(
-                client,
-                ACIS_STATION_META_URL,
-                payload={"bbox": bbox, "meta": "name,sids,ll,elev"},
-            )
-            stations = meta_payload.get("meta") if isinstance(meta_payload, dict) else None
-            if not isinstance(stations, list):
-                continue
-
-            span_candidates: list[tuple[float, str, str]] = []
-            for station in stations:
-                if not isinstance(station, dict):
-                    continue
-                coords = station.get("ll")
-                if not isinstance(coords, list) or len(coords) < 2:
-                    continue
-                station_lon = _safe_float(coords[0])
-                station_lat = _safe_float(coords[1])
-                sid = _preferred_acis_sid(station.get("sids"))
-                name = _coerce_str(station.get("name"))
-                if station_lon is None or station_lat is None or sid is None or name is None:
-                    continue
-                distance_km = _haversine_km(lat, lon, station_lat, station_lon)
-                span_candidates.append((distance_km, sid, name))
-
-            span_candidates.sort(key=lambda item: item[0])
-            partial_candidate: tuple[str, str, dict[str, Any]] | None = None
-            for _distance_km, candidate_sid, candidate_name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]:
-                if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
-                    break
-                if candidate_sid in attempted_sids:
-                    continue
-                attempted_sids.add(candidate_sid)
-                attempt_count += 1
-
-                candidate_payload = await _fetch_candidate_payload(candidate_sid)
-                candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
-                actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
-                normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
-                actual_ratio = (actual_usable_rows / total_rows) if total_rows > 0 else 0.0
-                normal_ratio = (normal_usable_rows / total_rows) if total_rows > 0 else 0.0
-                actual_missing_ratio = 1.0 - actual_ratio if total_rows > 0 else 1.0
-                normal_missing_ratio = 1.0 - normal_ratio if total_rows > 0 else 1.0
-
-                if total_rows == 0 or actual_ratio < ACIS_MIN_USABLE_ROW_RATIO:
-                    logger.info(
-                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: actual_rows=%d/%d actual_missing_fraction=%.2f normal_missing_fraction=%.2f",
-                        candidate_name,
-                        candidate_sid,
-                        lat,
-                        lon,
-                        actual_usable_rows,
-                        total_rows,
-                        actual_missing_ratio,
-                        normal_missing_ratio,
-                    )
-                    continue
-
-                if normal_ratio < ACIS_MIN_USABLE_ROW_RATIO:
-                    logger.info(
-                        "ACIS candidate %s (%s) has usable actual data but insufficient normal-period record: actual_rows=%d/%d normal_rows=%d/%d normal_missing_fraction=%.2f",
-                        candidate_name,
-                        candidate_sid,
-                        actual_usable_rows,
-                        total_rows,
-                        normal_usable_rows,
-                        total_rows,
-                        normal_missing_ratio,
-                    )
-                    if partial_candidate is None:
-                        partial_candidate = (candidate_sid, candidate_name, candidate_payload)
-                    continue
-
-                station_sid = candidate_sid
-                station_name = candidate_name
-                data_payload = candidate_payload
-                logger.info(
-                    "ACIS station resolved via ACIS bbox search station %s (%s) for lat=%.4f lon=%.4f",
-                    candidate_name,
-                    candidate_sid,
-                    lat,
-                    lon,
-                )
-                break
-
-            if data_payload is not None:
-                break
-            if partial_candidate is not None:
-                station_sid, station_name, data_payload = partial_candidate
-                break
-
-        if station_sid is None or data_payload is None:
-            logger.warning(
-                "ACIS station lookup found no candidates for lat=%.4f lon=%.4f across all bbox spans",
-                lat,
-                lon,
-            )
-            return None
     except ForecastPageError as exc:
         logger.warning(
             "ACIS observed precip fetch failed for lat=%.4f lon=%.4f: %s",
@@ -1662,6 +1526,266 @@ async def _fetch_acis_precip_summary_with_client(
 async def _fetch_acis_precip_summary(lat: float, lon: float) -> dict[str, Any] | None:
     async with _build_client() as client:
         return await _fetch_acis_precip_summary_with_client(client, lat, lon)
+
+
+async def _resolve_acis_station(
+    client: httpx.AsyncClient,
+    lat: float,
+    lon: float,
+    *,
+    quality_check_elem: str = "pcpn",
+) -> tuple[str, str] | None:
+    cache_key = f"{lat:.3f}:{lon:.3f}:{quality_check_elem}"
+    cached = _cache_get("acis-station-resolution", cache_key)
+    if isinstance(cached, dict):
+        cached_sid = _coerce_str(cached.get("sid"))
+        cached_name = _coerce_str(cached.get("name"))
+        if cached_sid is not None and cached_name is not None:
+            return cached_sid, cached_name
+
+    today = _utcnow().date()
+    attempted_sids: set[str] = set()
+    attempt_count = 0
+
+    async def _fetch_candidate_payload(candidate_sid: str) -> dict[str, Any]:
+        return await _post_json(
+            client,
+            ACIS_STATION_DATA_URL,
+            payload={
+                "sid": candidate_sid,
+                "sdate": f"{today.year}-01-01",
+                "edate": today.isoformat(),
+                "meta": "name,sids",
+                "elems": [{"name": quality_check_elem}, {"name": quality_check_elem, "normal": 1}],
+            },
+        )
+
+    async def _select_from_candidates(
+        candidates: list[tuple[str, str]],
+        *,
+        source_label: str,
+    ) -> tuple[str, str] | None:
+        nonlocal attempt_count
+        partial_candidate: tuple[str, str] | None = None
+        for candidate_sid, candidate_name in candidates:
+            if source_label == "acis_bbox" and attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                break
+            if candidate_sid in attempted_sids:
+                continue
+            attempted_sids.add(candidate_sid)
+            if source_label == "acis_bbox":
+                attempt_count += 1
+
+            candidate_payload = await _fetch_candidate_payload(candidate_sid)
+            candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
+            actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
+            normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
+            actual_ratio = (actual_usable_rows / total_rows) if total_rows > 0 else 0.0
+            normal_ratio = (normal_usable_rows / total_rows) if total_rows > 0 else 0.0
+            actual_missing_ratio = 1.0 - actual_ratio if total_rows > 0 else 1.0
+            normal_missing_ratio = 1.0 - normal_ratio if total_rows > 0 else 1.0
+
+            if total_rows == 0 or actual_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                logger.info(
+                    "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: actual_rows=%d/%d actual_missing_fraction=%.2f normal_missing_fraction=%.2f",
+                    candidate_name,
+                    candidate_sid,
+                    lat,
+                    lon,
+                    actual_usable_rows,
+                    total_rows,
+                    actual_missing_ratio,
+                    normal_missing_ratio,
+                )
+                continue
+
+            if normal_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                logger.info(
+                    "ACIS candidate %s (%s) has usable actual data but insufficient normal-period record: actual_rows=%d/%d normal_rows=%d/%d normal_missing_fraction=%.2f",
+                    candidate_name,
+                    candidate_sid,
+                    actual_usable_rows,
+                    total_rows,
+                    normal_usable_rows,
+                    total_rows,
+                    normal_missing_ratio,
+                )
+                if partial_candidate is None:
+                    partial_candidate = (candidate_sid, candidate_name)
+                continue
+
+            if source_label == "nws":
+                logger.info(
+                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
+                    candidate_name,
+                    candidate_sid,
+                    lat,
+                    lon,
+                )
+            else:
+                logger.info(
+                    "ACIS station resolved via ACIS bbox search station %s (%s) for lat=%.4f lon=%.4f",
+                    candidate_name,
+                    candidate_sid,
+                    lat,
+                    lon,
+                )
+            return candidate_sid, candidate_name
+
+        if partial_candidate is not None:
+            if source_label == "nws":
+                logger.info(
+                    "ACIS station resolved via NWS-anchored station %s (%s) for lat=%.4f lon=%.4f",
+                    partial_candidate[1],
+                    partial_candidate[0],
+                    lat,
+                    lon,
+                )
+            else:
+                logger.info(
+                    "ACIS station resolved via ACIS bbox search station %s (%s) for lat=%.4f lon=%.4f",
+                    partial_candidate[1],
+                    partial_candidate[0],
+                    lat,
+                    lon,
+                )
+            return partial_candidate
+        return None
+
+    try:
+        nws_candidates = await _fetch_nws_station_candidates_for_acis(client, lat, lon)
+        if nws_candidates:
+            resolved = await _select_from_candidates(
+                [(f"{station.station_id} 5", station.name or station.station_id) for station in nws_candidates],
+                source_label="nws",
+            )
+            if resolved is not None:
+                _cache_set(
+                    "acis-station-resolution",
+                    cache_key,
+                    {"sid": resolved[0], "name": resolved[1]},
+                    ACIS_STATION_RESOLUTION_TTL,
+                )
+                return resolved
+            logger.info(
+                "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because all NWS candidates failed quality check",
+                lat,
+                lon,
+            )
+        else:
+            logger.info(
+                "Falling back to ACIS bbox search for lat=%.4f lon=%.4f because NWS station list was empty or unavailable",
+                lat,
+                lon,
+            )
+
+        for span in (0.35, 0.75, 1.5, 3.0):
+            if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                break
+            bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
+            meta_payload = await _post_json(
+                client,
+                ACIS_STATION_META_URL,
+                payload={"bbox": bbox, "meta": "name,sids,ll,elev"},
+            )
+            stations = meta_payload.get("meta") if isinstance(meta_payload, dict) else None
+            if not isinstance(stations, list):
+                continue
+
+            span_candidates: list[tuple[float, str, str]] = []
+            for station in stations:
+                if not isinstance(station, dict):
+                    continue
+                coords = station.get("ll")
+                if not isinstance(coords, list) or len(coords) < 2:
+                    continue
+                station_lon = _safe_float(coords[0])
+                station_lat = _safe_float(coords[1])
+                sid = _preferred_acis_sid(station.get("sids"))
+                name = _coerce_str(station.get("name"))
+                if station_lon is None or station_lat is None or sid is None or name is None:
+                    continue
+                distance_km = _haversine_km(lat, lon, station_lat, station_lon)
+                span_candidates.append((distance_km, sid, name))
+
+            span_candidates.sort(key=lambda item: item[0])
+            resolved = await _select_from_candidates(
+                [(sid, name) for _distance_km, sid, name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]],
+                source_label="acis_bbox",
+            )
+            if resolved is not None:
+                _cache_set(
+                    "acis-station-resolution",
+                    cache_key,
+                    {"sid": resolved[0], "name": resolved[1]},
+                    ACIS_STATION_RESOLUTION_TTL,
+                )
+                return resolved
+    except ForecastPageError as exc:
+        logger.warning(
+            "ACIS station resolution failed for lat=%.4f lon=%.4f (%s): %s",
+            lat,
+            lon,
+            quality_check_elem,
+            exc.message,
+        )
+        return None
+
+    logger.warning(
+        "ACIS station lookup found no candidates for lat=%.4f lon=%.4f across all bbox spans",
+        lat,
+        lon,
+    )
+    return None
+
+
+async def _fetch_temperature_history(location: ResolvedLocation) -> dict[str, Any] | None:
+    today = _utcnow().date().isoformat()
+    async with _build_client() as client:
+        resolved_station = await _resolve_acis_station(client, location.latitude, location.longitude, quality_check_elem="maxt")
+        if resolved_station is None:
+            return None
+        station_sid, station_name = resolved_station
+        try:
+            payload = await _post_json(
+                client,
+                ACIS_STATION_DATA_URL,
+                payload={
+                    "sid": station_sid,
+                    "sdate": today,
+                    "edate": today,
+                    "elems": [{"name": "maxt", "normal": 1}, {"name": "mint", "normal": 1}],
+                },
+            )
+        except ForecastPageError as exc:
+            logger.warning(
+                "ACIS temperature history fetch failed for lat=%.4f lon=%.4f station=%s (%s): %s",
+                location.latitude,
+                location.longitude,
+                station_name,
+                station_sid,
+                exc.message,
+            )
+            return None
+
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    row_list = rows if isinstance(rows, list) else []
+    last_row = row_list[-1] if row_list else None
+    normal_high_f = None
+    normal_low_f = None
+    if isinstance(last_row, list):
+        if len(last_row) > 1:
+            normal_high_f = _safe_int(_parse_acis_numeric_value(last_row[1]))
+        if len(last_row) > 2:
+            normal_low_f = _safe_int(_parse_acis_numeric_value(last_row[2]))
+
+    return {
+        "station_name": station_name,
+        "normal_high_f": normal_high_f,
+        "normal_low_f": normal_low_f,
+        "records_high": None,
+        "records_low": None,
+    }
 
 
 def _observed_precip_attribution(observed_precip: dict[str, Any] | None) -> str | None:
@@ -2436,6 +2560,7 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
     aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), timings))
     pollen_task = asyncio.create_task(_timed("google_pollen", _fetch_google_pollen(client, location), timings))
     observed_precip_task = asyncio.create_task(_timed("observed_precip", _fetch_observed_precip(location), timings))
+    temperature_history_task = asyncio.create_task(_timed("temperature_history", _fetch_temperature_history(location), timings))
     try:
         om_payload = await _fetch_open_meteo_forecast(client, location)
         om_status = "ok"
@@ -2467,6 +2592,12 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         )
         pollen_payload = None
     observed_precip_payload = await observed_precip_task
+    fetched_temperature_history = await temperature_history_task
+    temperature_history_payload = _compose_temperature_history_payload(
+        location=location,
+        daily_payload=daily_payload,
+        fetched_payload=fetched_temperature_history,
+    )
     timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
     current_payload = _apply_current_icon_day_night(
         current_payload, timezone_name=timezone_name, om_payload=om_payload
@@ -2484,6 +2615,7 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
         "daily": daily_payload,
         "air_quality": air_quality_payload,
         "pollen": pollen_payload,
+        "temperature_history": temperature_history_payload,
         "observed_precip": observed_precip_payload,
         "official_text_forecast": None,
         "afd": None,
@@ -2494,6 +2626,11 @@ async def _build_core_payload(client: httpx.AsyncClient, location: ResolvedLocat
             "daily": "Open-Meteo",
             "air_quality": "Open-Meteo" if air_quality_payload else None,
             "pollen": "Google Pollen API" if pollen_payload else None,
+            "temperature_history": (
+                "Open-Meteo · ACIS"
+                if fetched_temperature_history is not None
+                else ("Open-Meteo" if temperature_history_payload else None)
+            ),
             "observed_precip": _observed_precip_attribution(observed_precip_payload),
             "afd": None,
             "alerts": None,
@@ -2519,10 +2656,12 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         payload["location"]["query"] = location.query
         payload.setdefault("air_quality", None)
         payload.setdefault("pollen", None)
+        payload.setdefault("temperature_history", None)
         payload.setdefault("observed_precip", None)
         attribution = payload.setdefault("attribution", {})
         attribution.setdefault("air_quality", None)
         attribution.setdefault("pollen", None)
+        attribution.setdefault("temperature_history", None)
         attribution.setdefault("observed_precip", None)
         if payload.get("pollen") is None:
             try:
@@ -2550,6 +2689,18 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
             observed_precip = await _fetch_observed_precip(location)
             payload["observed_precip"] = observed_precip
             attribution["observed_precip"] = _observed_precip_attribution(observed_precip)
+        if payload.get("temperature_history") is None:
+            fetched_temperature_history = await _fetch_temperature_history(location)
+            payload["temperature_history"] = _compose_temperature_history_payload(
+                location=location,
+                daily_payload=payload.get("daily") or [],
+                fetched_payload=fetched_temperature_history,
+            )
+            attribution["temperature_history"] = (
+                "Open-Meteo · ACIS"
+                if fetched_temperature_history is not None
+                else ("Open-Meteo" if payload.get("temperature_history") else None)
+            )
         if payload.get("source_status", {}).get("primary_region_mode") == "us_hybrid":
             alerts, alerts_freshness = await _fetch_nws_alerts(
                 client,
@@ -2566,6 +2717,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     aq_task = asyncio.create_task(_timed("open_meteo_air_quality", _fetch_open_meteo_air_quality(client, location), timings))
     pollen_task = asyncio.create_task(_timed("google_pollen", _fetch_google_pollen(client, location), timings))
     observed_precip_task = asyncio.create_task(_timed("observed_precip", _fetch_observed_precip(location), timings))
+    temperature_history_task = asyncio.create_task(_timed("temperature_history", _fetch_temperature_history(location), timings))
 
     declared_us_region = (location.country_code or "").upper() == "US"
     should_probe_nws = declared_us_region or location.resolved_by in {"coordinate_input", "open_meteo_reverse_geocoding"}
@@ -2582,6 +2734,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     alerts_freshness: dict[str, Any] | None = None
     air_quality_payload: dict[str, Any] | None = None
     pollen_payload: dict[str, Any] | None = None
+    temperature_history_payload: dict[str, Any] | None = None
     observed_precip_payload: dict[str, Any] | None = None
     attribution = {
         "current": None,
@@ -2589,6 +2742,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         "daily": "Open-Meteo",
         "air_quality": None,
         "pollen": None,
+        "temperature_history": None,
         "observed_precip": None,
         "afd": None,
         "alerts": None,
@@ -2747,6 +2901,18 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
     else:
         daily_payload = []
 
+    fetched_temperature_history = await temperature_history_task
+    temperature_history_payload = _compose_temperature_history_payload(
+        location=location,
+        daily_payload=daily_payload,
+        fetched_payload=fetched_temperature_history,
+    )
+    attribution["temperature_history"] = (
+        "Open-Meteo · ACIS"
+        if fetched_temperature_history is not None
+        else ("Open-Meteo" if temperature_history_payload else None)
+    )
+
     timezone_name = location.timezone or _coerce_str(om_payload.get("timezone"))
     current_payload = _apply_current_icon_day_night(
         current_payload,
@@ -2766,6 +2932,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
         "daily": daily_payload,
         "air_quality": air_quality_payload,
         "pollen": pollen_payload,
+        "temperature_history": temperature_history_payload,
         "observed_precip": observed_precip_payload,
         "official_text_forecast": official_text_forecast,
         "afd": afd_payload,
