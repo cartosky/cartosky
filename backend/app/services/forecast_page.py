@@ -56,6 +56,9 @@ OPEN_METEO_CACHE_TTL = 30 * 60
 AIR_QUALITY_CACHE_TTL = 30 * 60
 POLLEN_CACHE_TTL = 3 * 60 * 60
 ACIS_CACHE_TTL = 6 * 60 * 60
+ACIS_MAX_STATION_CANDIDATES = 5
+ACIS_MAX_STATION_ATTEMPTS = 3
+ACIS_MIN_USABLE_ROW_RATIO = 0.5
 ALERTS_CACHE_TTL = 60
 FORECAST_PAGE_CACHE_TTL = 10 * 60
 # A degraded NWS result (some product unavailable) is still cached, but briefly,
@@ -1217,6 +1220,20 @@ def _parse_acis_precip_amount(value: Any) -> float | None:
     return _safe_float(text)
 
 
+def _acis_actual_row_quality(rows: Any) -> tuple[int, int]:
+    total_rows = 0
+    usable_rows = 0
+    if not isinstance(rows, list):
+        return usable_rows, total_rows
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        total_rows += 1
+        if _parse_acis_precip_amount(row[1]) is not None:
+            usable_rows += 1
+    return usable_rows, total_rows
+
+
 def _preferred_acis_sid(values: Any) -> str | None:
     if not isinstance(values, list):
         return None
@@ -1358,19 +1375,21 @@ async def _fetch_acis_precip_summary_with_client(
     lat: float,
     lon: float,
 ) -> dict[str, Any] | None:
-    print(f"[TRACE] _fetch_acis_precip_summary_with_client entered: lat={lat} lon={lon}", flush=True)
     today = _utcnow().date()
     cache_key = f"{lat:.3f}:{lon:.3f}:{today.isoformat()}"
     cached = _cache_get("acis-precip-summary", cache_key)
     if cached is not None:
-        print(f"[TRACE] acis cache HIT for key={cache_key}: {cached}", flush=True)
         return cached
-    print(f"[TRACE] acis cache MISS for key={cache_key}", flush=True)
 
     station_name: str | None = None
     station_sid: str | None = None
+    data_payload: dict[str, Any] | None = None
+    attempted_sids: set[str] = set()
+    attempt_count = 0
     try:
         for span in (0.35, 0.75, 1.5, 3.0):
+            if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                break
             bbox = f"{lon - span:.3f},{lat - span:.3f},{lon + span:.3f},{lat + span:.3f}"
             meta_payload = await _post_json(
                 client,
@@ -1381,7 +1400,7 @@ async def _fetch_acis_precip_summary_with_client(
             if not isinstance(stations, list):
                 continue
 
-            best_station: tuple[float, str, str] | None = None
+            span_candidates: list[tuple[float, str, str]] = []
             for station in stations:
                 if not isinstance(station, dict):
                     continue
@@ -1395,36 +1414,61 @@ async def _fetch_acis_precip_summary_with_client(
                 if station_lon is None or station_lat is None or sid is None or name is None:
                     continue
                 distance_km = _haversine_km(lat, lon, station_lat, station_lon)
-                candidate = (distance_km, sid, name)
-                if best_station is None or candidate[0] < best_station[0]:
-                    best_station = candidate
-            if best_station is not None:
-                station_sid = best_station[1]
-                station_name = best_station[2]
+                span_candidates.append((distance_km, sid, name))
+
+            span_candidates.sort(key=lambda item: item[0])
+            for _distance_km, candidate_sid, candidate_name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]:
+                if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
+                    break
+                if candidate_sid in attempted_sids:
+                    continue
+                attempted_sids.add(candidate_sid)
+                attempt_count += 1
+
+                candidate_payload = await _post_json(
+                    client,
+                    ACIS_STATION_DATA_URL,
+                    payload={
+                        "sid": candidate_sid,
+                        "sdate": f"{today.year}-01-01",
+                        "edate": today.isoformat(),
+                        "meta": "name,sids",
+                        "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
+                    },
+                )
+                candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
+                usable_rows, total_rows = _acis_actual_row_quality(candidate_rows)
+                usable_ratio = (usable_rows / total_rows) if total_rows > 0 else 0.0
+                missing_ratio = 1.0 - usable_ratio if total_rows > 0 else 1.0
+                if total_rows == 0 or usable_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                    logger.info(
+                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: usable_rows=%d/%d missing_fraction=%.2f",
+                        candidate_name,
+                        candidate_sid,
+                        lat,
+                        lon,
+                        usable_rows,
+                        total_rows,
+                        missing_ratio,
+                    )
+                    continue
+
+                station_sid = candidate_sid
+                station_name = candidate_name
+                data_payload = candidate_payload
                 break
 
-        if station_sid is None:
-            print(f"[TRACE] exiting: no station_sid found for lat={lat} lon={lon}", flush=True)
+            if data_payload is not None:
+                break
+
+        if station_sid is None or data_payload is None:
             logger.warning(
                 "ACIS station lookup found no candidates for lat=%.4f lon=%.4f across all bbox spans",
                 lat,
                 lon,
             )
             return None
-
-        data_payload = await _post_json(
-            client,
-            ACIS_STATION_DATA_URL,
-            payload={
-                "sid": station_sid,
-                "sdate": f"{today.year}-01-01",
-                "edate": today.isoformat(),
-                "meta": "name,sids",
-                "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
-            },
-        )
     except ForecastPageError as exc:
-        print(f"[TRACE] exiting: ForecastPageError lat={lat} lon={lon} message={exc.message}", flush=True)
         logger.warning(
             "ACIS observed precip fetch failed for lat=%.4f lon=%.4f: %s",
             lat,
@@ -1440,15 +1484,10 @@ async def _fetch_acis_precip_summary_with_client(
     if resolved_station_name is None:
         resolved_station_name = station_sid
     if resolved_station_name is None:
-        print(f"[TRACE] exiting: no resolved_station_name for lat={lat} lon={lon}", flush=True)
         return None
 
     rows = data_payload.get("data") if isinstance(data_payload, dict) else None
     row_list = rows if isinstance(rows, list) else []
-    print(
-        f"[TRACE] acis rows sample for station={resolved_station_name}: first={row_list[:3]!r} last={row_list[-3:]!r}",
-        flush=True,
-    )
     summary = _summarize_acis_precip_summary(
         station_name=resolved_station_name,
         rows=row_list,
@@ -1463,19 +1502,13 @@ async def _fetch_acis_precip_summary_with_client(
         summary.get("days_since_rain"),
     )
     if summary.get("ytd") is None and summary.get("days_since_rain") is None:
-        print(f"[TRACE] exiting: summary fully null, row_count={len(row_list)}", flush=True)
         return None
 
     _cache_set("acis-precip-summary", cache_key, summary, ACIS_CACHE_TTL)
-    print(
-        f"[TRACE] exiting: success, ytd={summary.get('ytd')} days_since_rain={summary.get('days_since_rain')}",
-        flush=True,
-    )
     return summary
 
 
 async def _fetch_acis_precip_summary(lat: float, lon: float) -> dict[str, Any] | None:
-    print(f"[TRACE] _fetch_acis_precip_summary called: lat={lat} lon={lon}", flush=True)
     async with _build_client() as client:
         return await _fetch_acis_precip_summary_with_client(client, lat, lon)
 
@@ -1495,7 +1528,6 @@ def _observed_precip_attribution(observed_precip: dict[str, Any] | None) -> str 
 
 
 async def _fetch_observed_precip(location: ResolvedLocation) -> dict[str, Any] | None:
-    print(f"[TRACE] _fetch_observed_precip called: lat={location.latitude} lon={location.longitude}", flush=True)
     mrms_task = asyncio.create_task(_fetch_observed_precip_mrms(location.latitude, location.longitude))
     acis_task = asyncio.create_task(_fetch_acis_precip_summary(location.latitude, location.longitude))
     mrms_payload, acis_payload = await asyncio.gather(mrms_task, acis_task)

@@ -912,6 +912,147 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
     assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: row_count=3" in caplog.text
 
 
+async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_nearest_is_all_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    station_rows = {
+        "USC00399999 6": [[f"2026-01-{day:02d}", "M", "M"] for day in range(1, 7)],
+        "USW00014944 6": [
+            ["2026-01-01", "0.20", "0.10"],
+            ["2026-01-02", "0.00", "0.10"],
+            ["2026-01-03", "0.05", "0.10"],
+            ["2026-01-04", "0.00", "0.10"],
+            ["2026-01-05", "0.00", "0.10"],
+            ["2026-01-06", "0.12", "0.10"],
+        ],
+    }
+    station_names = {
+        "USC00399999 6": "SIOUX FALLS 0.5 SW",
+        "USW00014944 6": "SIOUX FALLS FOSS FIELD",
+    }
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            return {
+                "meta": [
+                    {
+                        "ll": [-96.7281, 43.5438],
+                        "sids": ["USC00399999 6"],
+                        "name": "SIOUX FALLS 0.5 SW",
+                    },
+                    {
+                        "ll": [-96.7539, 43.5820],
+                        "sids": ["USW00014944 6", "14944 1"],
+                        "name": "SIOUX FALLS FOSS FIELD",
+                    },
+                ]
+            }
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            sid = payload["sid"]
+            return {
+                "meta": {"name": station_names[sid]},
+                "data": station_rows[sid],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.INFO)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.5437, -96.7280)
+
+    assert payload == {
+        "ytd": {
+            "actual_in": 0.37,
+            "normal_in": 0.6,
+            "percent_of_normal": 62,
+            "departure_in": -0.23,
+            "station_name": "SIOUX FALLS FOSS FIELD",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "SIOUX FALLS FOSS FIELD",
+        },
+    }
+    assert "Rejecting ACIS station SIOUX FALLS 0.5 SW (USC00399999 6)" in caplog.text
+    assert "ACIS precip summary for lat=43.5437 lon=-96.7280 station=SIOUX FALLS FOSS FIELD" in caplog.text
+
+
+async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    station_rows = {
+        "USRAPIDBAD1 6": [[f"2026-01-{day:02d}", "M", "M"] for day in range(1, 5)],
+        "USRAPIDBAD2 6": [
+            ["2026-01-01", "0.10", "0.05"],
+            ["2026-01-02", "M", "0.05"],
+            ["2026-01-03", "M", "0.05"],
+            ["2026-01-04", "M", "0.05"],
+        ],
+        "USRAPIDGOOD 6": [
+            ["2026-01-01", "0.00", "0.05"],
+            ["2026-01-02", "0.04", "0.05"],
+            ["2026-01-03", "0.00", "0.05"],
+            ["2026-01-04", "0.20", "0.05"],
+        ],
+    }
+    station_names = {
+        "USRAPIDBAD1 6": "RAPID CITY 1 N",
+        "USRAPIDBAD2 6": "RAPID CITY 2 E",
+        "USRAPIDGOOD 6": "RAPID CITY REGIONAL AP",
+    }
+    data_calls: list[str] = []
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            return {
+                "meta": [
+                    {"ll": [-103.2305, 44.0810], "sids": ["USRAPIDBAD1 6"], "name": "RAPID CITY 1 N"},
+                    {"ll": [-103.2295, 44.0807], "sids": ["USRAPIDBAD2 6"], "name": "RAPID CITY 2 E"},
+                    {"ll": [-103.0550, 44.0453], "sids": ["USRAPIDGOOD 6"], "name": "RAPID CITY REGIONAL AP"},
+                ]
+            }
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            sid = payload["sid"]
+            data_calls.append(sid)
+            return {
+                "meta": {"name": station_names[sid]},
+                "data": station_rows[sid],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.INFO)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 44.0805, -103.2310)
+
+    assert data_calls == ["USRAPIDBAD1 6", "USRAPIDBAD2 6", "USRAPIDGOOD 6"]
+    assert payload == {
+        "ytd": {
+            "actual_in": 0.24,
+            "normal_in": 0.2,
+            "percent_of_normal": 120,
+            "departure_in": 0.04,
+            "station_name": "RAPID CITY REGIONAL AP",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "RAPID CITY REGIONAL AP",
+        },
+    }
+    assert "Rejecting ACIS station RAPID CITY 1 N (USRAPIDBAD1 6)" in caplog.text
+    assert "Rejecting ACIS station RAPID CITY 2 E (USRAPIDBAD2 6)" in caplog.text
+
+
 async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:
     values = {
         "mrms_recent_precip_6h": 0.31,
