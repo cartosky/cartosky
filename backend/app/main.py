@@ -94,13 +94,18 @@ from .services.sampling import (
     _ds_cache,
     _ds_cache_lock,
     _get_cached_dataset,
+    _load_binary_frame_meta,
+    _read_binary_frame_values,
     _read_sample_value,
+    _resolve_binary_grid_frame,
     _resolve_sidecar,
     _resolve_val_cog,
     _sample_batch_values,
+    _sample_binary_frame_index,
     _sample_dataset_index,
     _sample_dataset_xy,
     _sample_transformer,
+    sample_binary_batch_values,
 )
 from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
@@ -3598,9 +3603,22 @@ def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, region: s
     return var_dir
 
 
-def _sample_cache_key(model: str, run: str, var: str, fh: int, row: int, col: int, ensemble_view: str | None = None) -> str:
+def _sample_cache_key(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    row: int,
+    col: int,
+    ensemble_view: str | None = None,
+    *,
+    sampling_source: str,
+) -> str:
+    # sampling_source ("cog" | "binary") keeps a substrate change from ever
+    # serving a value cached under the other substrate. Required (no default)
+    # so the caller can never silently omit it once the substrate can vary.
     view = _normalize_ensemble_view(ensemble_view) or "-"
-    return f"{model}:{run}:{var}:{view}:{fh}:{row}:{col}"
+    return f"{model}:{run}:{var}:{view}:{fh}:{row}:{col}:{sampling_source}"
 
 
 def _sample_batch_cache_key(
@@ -3610,9 +3628,11 @@ def _sample_batch_cache_key(
     fh: int,
     points_hash: str,
     ensemble_view: str | None = None,
+    *,
+    sampling_source: str,
 ) -> str:
     view = _normalize_ensemble_view(ensemble_view) or "-"
-    return f"batch:{model}:{run}:{var}:{view}:{fh}:{points_hash}"
+    return f"batch:{model}:{run}:{var}:{view}:{fh}:{points_hash}:{sampling_source}"
 
 
 def _sample_points_hash(points: list[SampleBatchPointIn]) -> str:
@@ -5621,22 +5641,51 @@ def sample(
             headers={"Retry-After": str(int(max(1, retry_after)))},
         )
 
-    with otel_tracing.start_as_current_span("sample.resolve_cog") as _span:
-        val_cog = _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region)
-    if val_cog is None:
-        return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
+    # Binary-sampling allowlist (migration plan Phase F): allowlisted models
+    # resolve and read the grid binary; everything else keeps the value-COG
+    # path byte-for-byte. Either way the substrate lands in the cache key so a
+    # flip can never serve a value cached under the other substrate.
+    binary_sampling = model.strip().lower() in app_config.binary_sampling_models()
+    sampling_source = "binary" if binary_sampling else "cog"
+    val_cog: Path | None = None
+    frame_path: Path | None = None
+    meta_path: Path | None = None
+    runtime_var: str | None = None
+    if binary_sampling:
+        with otel_tracing.start_as_current_span("sample.resolve_binary_frame"):
+            binary_frame = _resolve_binary_grid_frame(
+                model, run, var, fh, ensemble_view=ensemble_view, region=region
+            )
+        if binary_frame is None:
+            # Same 404 body as the COG branch below: a missing frame must be
+            # indistinguishable across substrates from the response alone.
+            return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
+        frame_path, meta_path, runtime_var = binary_frame
+    else:
+        with otel_tracing.start_as_current_span("sample.resolve_cog") as _span:
+            val_cog = _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region)
+        if val_cog is None:
+            return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
     try:
         with otel_tracing.start_as_current_span("sample.dataset_lookup"):
-            ds = _get_cached_dataset(val_cog)
-            row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
+            if binary_sampling:
+                frame_meta = _load_binary_frame_meta(meta_path)
+                row, col = _sample_binary_frame_index(frame_meta, lon=lon, lat=lat)
+                grid_height = int(frame_meta["height"])
+                grid_width = int(frame_meta["width"])
+            else:
+                ds = _get_cached_dataset(val_cog)
+                row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
+                grid_height = ds.height
+                grid_width = ds.width
             resolved_run = _resolve_run(model, run, region=region) or run
             sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view, region=region)
             units = sidecar.get("units", "") if sidecar else ""
             valid_time = sidecar.get("valid_time", "") if sidecar else ""
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved_run})
 
-        if row < 0 or row >= ds.height or col < 0 or col >= ds.width:
+        if row < 0 or row >= grid_height or col < 0 or col >= grid_width:
             payload = _sample_payload(
                 model=model,
                 run=resolved_run,
@@ -5651,7 +5700,9 @@ def sample(
             )
             return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
-        key = _sample_cache_key(model, resolved_run, var, fh, row, col, ensemble_view)
+        key = _sample_cache_key(
+            model, resolved_run, var, fh, row, col, ensemble_view, sampling_source=sampling_source
+        )
         now = time.monotonic()
         inflight: _SampleInflight | None = None
         is_leader = False
@@ -5696,7 +5747,18 @@ def sample(
                     return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
         with otel_tracing.start_as_current_span("sample.read_value"):
-            value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
+            if binary_sampling:
+                # runtime_var (from _resolve_binary_grid_frame) is the id the
+                # frame was encoded (packed) under — it can differ from the
+                # requested var for aliases and ensemble views.
+                frame_values = _read_binary_frame_values(
+                    frame_path, frame_meta, model=model, var=runtime_var
+                )
+                raw_value = float(frame_values[row, col])
+                no_data = math.isnan(raw_value)
+                value = None if no_data else raw_value
+            else:
+                value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
 
         payload = _sample_payload(
             model=model,
@@ -5785,17 +5847,39 @@ def sample_batch(
             headers={"Retry-After": str(int(max(1, retry_after)))},
         )
 
-    with otel_tracing.start_as_current_span("sample_batch.resolve_cog"):
-        val_cog = _resolve_val_cog(
-            body.model,
-            body.run,
-            body.variable,
-            body.forecast_hour,
-            ensemble_view=body.ensemble_view,
-            region=body.region,
-        )
-    if val_cog is None:
-        return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
+    # Binary-sampling allowlist (migration plan Phase F): same split as
+    # /api/v4/sample — allowlisted models read the grid binary, everything
+    # else keeps the value-COG path, and the substrate lands in the cache key.
+    binary_sampling = body.model.strip().lower() in app_config.binary_sampling_models()
+    sampling_source = "binary" if binary_sampling else "cog"
+    val_cog: Path | None = None
+    binary_frame: tuple[Path, Path, str] | None = None
+    if binary_sampling:
+        with otel_tracing.start_as_current_span("sample_batch.resolve_binary_frame"):
+            binary_frame = _resolve_binary_grid_frame(
+                body.model,
+                body.run,
+                body.variable,
+                body.forecast_hour,
+                ensemble_view=body.ensemble_view,
+                region=body.region,
+            )
+        if binary_frame is None:
+            # Same 404 body as the COG branch below: a missing frame must be
+            # indistinguishable across substrates from the response alone.
+            return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
+    else:
+        with otel_tracing.start_as_current_span("sample_batch.resolve_cog"):
+            val_cog = _resolve_val_cog(
+                body.model,
+                body.run,
+                body.variable,
+                body.forecast_hour,
+                ensemble_view=body.ensemble_view,
+                region=body.region,
+            )
+        if val_cog is None:
+            return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
     resolved_run = _resolve_run(body.model, body.run, region=body.region) or body.run
     key = _sample_batch_cache_key(
@@ -5805,6 +5889,7 @@ def sample_batch(
         body.forecast_hour,
         _sample_points_hash(body.points),
         body.ensemble_view,
+        sampling_source=sampling_source,
     )
     now = time.monotonic()
     inflight: _SampleInflight | None = None
@@ -5851,7 +5936,6 @@ def sample_batch(
 
     try:
         with otel_tracing.start_as_current_span("sample_batch.compute"):
-            ds = _get_cached_dataset(val_cog)
             sidecar = _resolve_sidecar(
                 body.model,
                 body.run,
@@ -5861,9 +5945,24 @@ def sample_batch(
                 region=body.region,
             )
             units = sidecar.get("units", "") if sidecar else ""
+            if binary_sampling:
+                # runtime_var (from _resolve_binary_grid_frame) is the id the
+                # frame was encoded (packed) under — it can differ from the
+                # requested var for aliases and ensemble views.
+                frame_path, meta_path, runtime_var = binary_frame
+                values = sample_binary_batch_values(
+                    frame_path,
+                    meta_path,
+                    model=body.model,
+                    var=runtime_var,
+                    points=body.points,
+                )
+            else:
+                ds = _get_cached_dataset(val_cog)
+                values = _sample_batch_values(ds, points=body.points)
             payload = {
                 "units": units,
-                "values": _sample_batch_values(ds, points=body.points),
+                "values": values,
             }
 
         with _sample_lock:

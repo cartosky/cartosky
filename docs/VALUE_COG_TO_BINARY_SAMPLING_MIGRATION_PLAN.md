@@ -1,6 +1,6 @@
 # Value COG → Grid Binary Sampling Migration Plan
 
-**Status:** All gating items resolved. Ready to begin Phase A. Targets GFS as the first model, with a 3-4 day parallel-write canary before cutover. All Phase A-F infrastructure is required to be built model-parameterized (see the cross-cutting requirement at the start of Section 4) so that staged rollout to additional models is a configuration change plus a per-model audit (Phase G's checklist), not a re-implementation.
+**Status:** All gating items resolved. Ready to begin Phase A. Targets GFS as the first model, with a 4 cycle parallel-write canary before cutover. All Phase A-F infrastructure is required to be built model-parameterized (see the cross-cutting requirement at the start of Section 4) so that staged rollout to additional models is a configuration change plus a per-model audit (Phase G's checklist), not a re-implementation.
 
 **Document basis:** Every claim in this plan was verified directly against the current codebase (`grid.py`, `sampling.py`, `pipeline.py`, `grid_display_prep.py`, `gfs.py`, `forecast_page.py`, `main.py`, `city-labels.ts`, `grid-webgl.ts`, `test_sample_batch_api.py`) during scoping, including a full review pass by an independent reviewer (Codex) whose corrections are incorporated and individually re-verified against the code below. Where something could not be verified, it is marked explicitly rather than assumed.
 
@@ -103,7 +103,7 @@ For a fixed set of lat/lon points — including points squarely inside a pixel, 
 
 ### Layer 3 — Production canary (multi-day parallel write, real data, real traffic patterns)
 
-For a window of 3-4 days, GFS continues writing both the value COG (unchanged) and the grid binary (already happening today) — no pipeline change needed for this step, since both are already produced. During this window:
+For a window of 4 mode cycles, GFS continues writing both the value COG (unchanged) and the grid binary (already happening today) — no pipeline change needed for this step, since both are already produced. During this window:
 
 - The live sampling service continues reading from COGs — no behavior change to production traffic yet.
 - A standalone script (not wired into any live endpoint) runs periodically against real published GFS runs from the canary window, sampling a meaningful set of real-world points — reuse an existing NWS station or city-label coordinate list rather than synthetic points, to surface real-world edge cases (points near the bbox edge, near nodata/ocean-masked regions, at the highest forecast hours).
@@ -167,7 +167,7 @@ Write the Layer 2 parity test suite against this, including the three tolerance 
 
 ### Phase D — Canary (Layer 3)
 
-Deploy Phases A-C to prod. Run the standalone shadow-comparison script (using the offline/shadow mode from Phase B, not the production endpoint path) against real GFS runs for 3-4 days. Production traffic continues reading from COGs throughout. Review results per the per-group pass conditions in Section 3.
+Deploy Phases A-C to prod. Run the standalone shadow-comparison script (using the offline/shadow mode from Phase B, not the production endpoint path) against real GFS runs for 4 model cycles. Production traffic continues reading from COGs throughout. Review results per the per-group pass conditions in Section 3.
 
 **Add performance benchmarking alongside the correctness comparison — this phase currently validates correctness only.** The shadow-comparison script should record latency for both the COG path and the binary path at each of: single-point sample, a 100-point batch, a 1,000-point batch, and a full meteogram request (85-105 sequential frames). This produces actual evidence of the expected performance win rather than an assumption, and gives the Phase B read-strategy decision (sequential read vs. LRU cache vs. memory-mapping) real data to be made against instead of being guessed at in advance.
 
@@ -256,7 +256,7 @@ Value COG footprint specifically (`*.val.cog.tif` only, summed across all variab
 | 2 | City label sampling dependency on COG path | **Resolved with correction: no backend dependency, but real client-side value-label sampling exists via `sampleAnchorPoints()` in `grid-webgl.ts`, already reading grid binaries, unaffected by this migration. See Section 2 and Section 5.** |
 | 3 | Contour generation dependency on value-COG-based grid frame function | **Resolved: no dependency. `_build_contour_metadata_for_variable` is independently sourced.** |
 | 4 | `prepare_grid_display_values` resolution parity between COG and binary | **Resolved with correction: seven GFS variables are affected, not three, with `ptype_intensity` requiring separate categorical-nearest handling. See Section 1 and Section 3.** |
-| 5 | Canary length | 3-4 days, confirmed. |
+| 5 | Canary length | 4 model cycles, confirmed. |
 | 6 | Real current GFS COG disk usage on prod | **Resolved: measured on prod. 23 GB total value-COG footprint across 6 retained runs (~3.83 GB/run average), ~27% of GFS's total 84 GB per-run-retention storage footprint. See Section 6 for full per-variable breakdown.** |
 | 7 | GFS scope list completeness | **Resolved with correction: four precip-anomaly variables (`precip_5d_anom`, `precip_7d_anom`, `precip_10d_anom`, `precip_16d_anom`) were missing from the original scope. Verified as real, live, `primary=True` catalog variables via loop-registration in `gfs.py`. Added to scope. See Section 2.** |
 | 8 | Meteogram/sample endpoint cache-key and route-handler substrate awareness | **Resolved: `sampling_source` added to `_meteogram_cache_key()` hashed inputs at Phase F; canary uses isolated offline/shadow path. `/api/v4/sample` and `/api/v4/sample/batch` are structurally COG-dependent at the route-handler level — route-handler code changes required at Phase F, not just flag flips; `_sample_cache` TTL is 2 seconds in-process-only. See Phase B, Section 4.** |

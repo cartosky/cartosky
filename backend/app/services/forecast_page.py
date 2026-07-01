@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from .. import config
 from . import nws as nws_service
 from . import sampling
 from .run_ids import parse_run_id_datetime
@@ -3006,6 +3007,7 @@ def _meteogram_cache_key(
     include_members: bool,
     run_ids: dict[str, str | None],
     entitled: dict[str, bool],
+    sampling_source: str,
 ) -> str:
     def _hash(parts: list[str]) -> str:
         return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:12]
@@ -3017,9 +3019,13 @@ def _meteogram_cache_key(
     # Folded in (beyond the plan's key spec) so differing entitlements never
     # share a cached payload at the origin.
     entitled_hash = _hash([f"{m}:{int(bool(entitled.get(m, True)))}" for m in sorted(models)])
+    # sampling_source ("cog" | "binary") keeps a substrate change from ever
+    # serving a payload cached under the other substrate. Required (no default)
+    # so the caller can never silently omit it once the substrate can vary.
     return (
         f"meteogram:v1:{round(lat, 3)}:{round(lon, 3)}:"
-        f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}"
+        f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}:"
+        f"{sampling_source}"
     )
 
 
@@ -3135,6 +3141,16 @@ def get_forecast_meteogram(
             logger.exception("Meteogram run resolution failed for %s", model)
             run_ids[model] = None
 
+    # Binary-sampling allowlist (migration plan Phase F): allowlisted models
+    # sample grid binaries via _sample_variable_series_binary; everything else
+    # keeps the value-COG fan-out. The substrate split is folded into the cache
+    # key ("cog" when no requested model is allowlisted — byte-identical to the
+    # pre-allowlist key — otherwise "binary:<models>") so a substrate flip can
+    # never serve a payload cached under the other substrate.
+    binary_models = config.binary_sampling_models()
+    active_binary = sorted(m for m in norm_models if m in binary_models)
+    sampling_source = "binary:" + ",".join(active_binary) if active_binary else "cog"
+
     cache_key = _meteogram_cache_key(
         lat=lat,
         lon=lon,
@@ -3144,6 +3160,7 @@ def get_forecast_meteogram(
         include_members=include_members,
         run_ids=run_ids,
         entitled=entitled,
+        sampling_source=sampling_source,
     )
     now = time.monotonic()
     with _meteogram_cache_lock:
@@ -3161,6 +3178,8 @@ def get_forecast_meteogram(
     series: dict[str, Any] = {}
     plan: list[tuple[str, str, str, list[tuple[int, str | None]], str | None]] = []
     sample_tasks: list[tuple[str, str, str, int]] = []
+    var_results_by_model: dict[str, dict[str, Any]] = {}
+    vars_with_values_by_model: dict[str, int] = {}
     for model in norm_models:
         if entitled.get(model) is False:
             series[model] = {"status": "not_entitled"}
@@ -3168,6 +3187,22 @@ def get_forecast_meteogram(
         run_id = run_ids.get(model)
         if not run_id:
             series[model] = {"status": "unavailable", "run_id": None}
+            continue
+        if model in binary_models:
+            # Allowlisted: sample this model's grid binaries; the result shape
+            # matches the COG assembly below, so status/series handling is
+            # shared. Non-allowlisted models in the same request still take the
+            # COG fan-out.
+            for var in norm_vars:
+                result = _sample_variable_series_binary(
+                    model, run_id, var, lat=lat, lon=lon, region=region
+                )
+                points = result.get("points")
+                if points and any(p["value"] is not None for p in points):
+                    vars_with_values_by_model[model] = (
+                        vars_with_values_by_model.get(model, 0) + 1
+                    )
+                var_results_by_model.setdefault(model, {})[var] = result
             continue
         for var in norm_vars:
             frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
@@ -3196,8 +3231,6 @@ def get_forecast_meteogram(
         ):
             vt_by_key[(task[0], task[2], task[3])] = vt
 
-    var_results_by_model: dict[str, dict[str, Any]] = {}
-    vars_with_values_by_model: dict[str, int] = {}
     for model, run_id, var, frames, units in plan:
         points: list[dict[str, Any]] = []
         for fh, valid_time in frames:
@@ -3241,3 +3274,64 @@ def get_forecast_meteogram(
     with _meteogram_cache_lock:
         _meteogram_cache[cache_key] = (time.monotonic() + METEOGRAM_CACHE_TTL_SECONDS, payload)
     return payload
+
+
+def _sample_variable_series_binary(
+    model: str,
+    run_id: str,
+    var: str,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None = None,
+) -> dict[str, Any]:
+    """Grid-binary counterpart of the per-variable series assembly inside
+    :func:`get_forecast_meteogram`.
+
+    Performs the same loop that function runs per ``(model, run, var)`` —
+    manifest frames from :func:`sampling.manifest_frame_entries`, one sample per
+    forecast hour, frames whose artifact is absent (``present=False``) omitted,
+    sidecar ``valid_time`` fallback for frames the manifest leaves blank — but
+    reads the packed grid binaries via :func:`sampling.sample_binary_value`
+    instead of the value COGs via :func:`sampling.sample_value`. Result shape
+    matches the per-variable entry in the meteogram payload:
+    ``{"units": ..., "points": [{"fh", "valid_time", "value"}, ...]}`` or
+    ``{"units": ..., "points": None, "error": "artifact_not_found"}``.
+
+    Called from ``get_forecast_meteogram`` only for models on the
+    ``CARTOSKY_BINARY_SAMPLING_MODELS`` allowlist (empty by default — no model
+    takes this path until the migration plan's cutover); also exercised
+    directly by the Phase E COG-vs-binary comparison test.
+    """
+    frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
+    value_by_fh: dict[int, float | None] = {}
+    for fh, _vt in frames:
+        present, value = sampling.sample_binary_value(
+            model, run_id, var, fh, lat=lat, lon=lon, region=region
+        )
+        if present:
+            value_by_fh[fh] = value
+
+    vt_fallback_tasks = [
+        (model, run_id, var, fh) for fh, vt in frames if vt is None and fh in value_by_fh
+    ]
+    vt_by_fh: dict[int, str | None] = {}
+    if vt_fallback_tasks:
+        for task, vt in zip(
+            vt_fallback_tasks, sampling.read_frame_valid_times(vt_fallback_tasks, region=region)
+        ):
+            vt_by_fh[task[3]] = vt
+
+    points: list[dict[str, Any]] = []
+    for fh, valid_time in frames:
+        if fh not in value_by_fh:
+            continue
+        if valid_time is None:
+            valid_time = vt_by_fh.get(fh)
+        points.append({"fh": fh, "valid_time": valid_time, "value": value_by_fh[fh]})
+
+    resolved_units = _variable_units(model, var, units)
+    if points:
+        points.sort(key=lambda item: item["fh"])
+        return {"units": resolved_units, "points": points}
+    return {"units": resolved_units, "points": None, "error": "artifact_not_found"}

@@ -268,3 +268,27 @@ def test_sample_binary_value_resolves_published_grid_frame(
 
     assert present is True
     assert value == 32.0
+
+
+def test_sample_binary_value_decodes_alias_under_runtime_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test for the requested-vs-runtime variable id split: "t2m" is
+    # a real GFS alias for "tmp2m". The frame is published (and packed) under
+    # the runtime id, so the decode packing lookup must use that id too — with
+    # the requested alias, the packing entry ("gfs", "t2m") does not exist and
+    # the sample silently degrades to (True, None) instead of a value.
+    model = "gfs"
+    run = "20260630_00z"
+    values = np.array([[32.0, 40.5]], dtype=np.float32)
+    _write_pair(tmp_path, model=model, var="tmp2m", values=values)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", tmp_path / "published")
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", tmp_path / "manifests")
+    main_module._manifest_cache.clear()
+
+    canonical = sample_binary_value(model, run, "tmp2m", 0, lat=45.5, lon=-100.5)
+    alias = sample_binary_value(model, run, "t2m", 0, lat=45.5, lon=-100.5)
+
+    assert canonical == (True, 32.0)
+    assert alias == canonical

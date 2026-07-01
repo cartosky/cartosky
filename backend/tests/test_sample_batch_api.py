@@ -233,6 +233,138 @@ async def test_sample_batch_rejects_products_without_sampling_support(
     assert response.json() == {"error": "sampling not supported for this product"}
 
 
+# ── Phase F Step 3: binary-sampling allowlist on the sample endpoints ───────
+#
+# Same proof shape as the meteogram allowlist test: publish grid binaries
+# whose value (5.0) deliberately differs from the COGs (1.3 / 4.0 at the test
+# points), flip CARTOSKY_BINARY_SAMPLING_MODELS mid-test WITHOUT clearing the
+# sample cache, and require fresh substrate-correct values — a cache key that
+# failed to vary by substrate would serve the stale COG payload instead.
+
+BINARY_TEST_VALUE = 5.0
+
+
+def _publish_binary_frame() -> None:
+    from app.services import grid as grid_module
+
+    grid_module.write_grid_frames_for_run_root(
+        run_root=main_module.PUBLISHED_ROOT / "hrrr" / "20260306_00z",
+        model="hrrr",
+        var="tmp2m",
+        fh=1,
+        values=np.full((3, 3), BINARY_TEST_VALUE, dtype=np.float32),
+        transform=from_origin(-101.0, 46.0, 1.0, 1.0),
+        projection="EPSG:4326",
+    )
+
+
+SAMPLE_QUERY = {
+    "model": "hrrr",
+    "run": "latest",
+    "var": "tmp2m",
+    "fh": 1,
+    "lat": 45.5,
+    "lon": -100.5,
+}
+
+
+async def test_sample_binary_allowlist_switches_substrate_and_cache_key(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _publish_binary_frame()
+
+    # Default (empty allowlist): COG value, payload cached under the cog key.
+    first = await client.get("/api/v4/sample", params=SAMPLE_QUERY)
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["value"] == 1.3
+    assert first_payload["noData"] is False
+    assert first_payload["units"] == "K"
+
+    # Allowlist hrrr (test-local only): the binary substrate must answer, not
+    # the still-cached COG payload.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    second = await client.get("/api/v4/sample", params=SAMPLE_QUERY)
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["value"] == BINARY_TEST_VALUE
+    assert second_payload["noData"] is False
+    assert second_payload["units"] == "K"
+
+    # Back to empty: the original cog cache key is untouched — verbatim hit.
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    third = await client.get("/api/v4/sample", params=SAMPLE_QUERY)
+    assert third.status_code == 200
+    assert third.json() == first_payload
+
+
+async def test_sample_batch_binary_allowlist_switches_substrate_and_cache_key(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _publish_binary_frame()
+
+    body = {
+        "model": "hrrr",
+        "run": "latest",
+        "variable": "tmp2m",
+        "forecast_hour": 1,
+        "points": [
+            {"id": "SD_1", "lat": 45.5, "lon": -100.5},
+            {"id": "SD_2", "lat": 44.5, "lon": -100.5},
+        ],
+    }
+
+    first = await client.post("/api/v4/sample/batch", json=body)
+    assert first.status_code == 200
+    assert first.json() == {"units": "K", "values": {"SD_1": 1.3, "SD_2": 4.0}}
+
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    second = await client.post("/api/v4/sample/batch", json=body)
+    assert second.status_code == 200
+    assert second.json() == {
+        "units": "K",
+        "values": {"SD_1": BINARY_TEST_VALUE, "SD_2": BINARY_TEST_VALUE},
+    }
+
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    third = await client.post("/api/v4/sample/batch", json=body)
+    assert third.status_code == 200
+    assert third.json() == first.json()
+
+
+async def test_sample_binary_missing_frame_404_matches_cog_404(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No binary frames are published in this test. A missing binary frame on
+    # an allowlisted model must be indistinguishable from a missing COG on a
+    # non-allowlisted one — same status, same body, on both endpoints.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    binary_missing = await client.get("/api/v4/sample", params=SAMPLE_QUERY)
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    cog_missing = await client.get("/api/v4/sample", params={**SAMPLE_QUERY, "fh": 2})
+    assert binary_missing.status_code == cog_missing.status_code == 404
+    assert binary_missing.content == cog_missing.content
+
+    batch_body = {
+        "model": "hrrr",
+        "run": "latest",
+        "variable": "tmp2m",
+        "forecast_hour": 1,
+        "points": [{"id": "SD_1", "lat": 45.5, "lon": -100.5}],
+    }
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    batch_binary_missing = await client.post("/api/v4/sample/batch", json=batch_body)
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    batch_cog_missing = await client.post(
+        "/api/v4/sample/batch", json={**batch_body, "forecast_hour": 2}
+    )
+    assert batch_binary_missing.status_code == batch_cog_missing.status_code == 404
+    assert batch_binary_missing.content == batch_cog_missing.content
+
+
 async def test_sample_batch_reuses_cached_payload(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

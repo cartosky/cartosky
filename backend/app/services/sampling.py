@@ -217,6 +217,10 @@ def read_binary_sample_value(
     nodata, or NaN pixels. This intentionally reads the whole frame with a plain
     file read; Phase D benchmarking will decide whether a cache/mmap strategy is
     warranted.
+
+    ``var`` must be the runtime variable id the frame was packed under (it
+    selects the decode packing config) — callers with a requested/alias id
+    resolve it first, e.g. via :func:`_resolve_binary_grid_frame`.
     """
     meta = _load_binary_frame_meta(meta_path)
     row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
@@ -241,7 +245,11 @@ def sample_binary_point_value(
     lat: float,
     lon: float,
 ) -> float | None:
-    """Sample a point from a grid binary frame, rounded like the COG helpers."""
+    """Sample a point from a grid binary frame, rounded like the COG helpers.
+
+    ``var`` must be the runtime variable id the frame was packed under, as with
+    :func:`read_binary_sample_value`.
+    """
     value, no_data = read_binary_sample_value(
         frame_path,
         meta_path,
@@ -253,6 +261,34 @@ def sample_binary_point_value(
     if no_data or value is None:
         return None
     return round(float(value), 1)
+
+
+def sample_binary_batch_values(
+    frame_path: Path,
+    meta_path: Path,
+    *,
+    model: str,
+    var: str,
+    points: list[Any],
+) -> dict[str, float | None]:
+    """Grid-binary twin of :func:`_sample_batch_values`: one frame read, one
+    value per point id, rounded to 1 decimal, ``None`` for out-of-bounds /
+    nodata / NaN pixels. ``var`` must be the runtime variable id the frame was
+    encoded under, since it selects the decode packing config.
+    """
+    meta = _load_binary_frame_meta(meta_path)
+    values = _read_binary_frame_values(frame_path, meta, model=model, var=var)
+    height = int(meta["height"])
+    width = int(meta["width"])
+    out: dict[str, float | None] = {}
+    for point in points:
+        row, col = _sample_binary_frame_index(meta, lon=point.lon, lat=point.lat)
+        if row < 0 or row >= height or col < 0 or col >= width:
+            out[point.id] = None
+            continue
+        value = float(values[row, col])
+        out[point.id] = None if np.isnan(value) else round(value, 1)
+    return out
 
 
 # ── Artifact resolution ───────────────────────────────────────────────────
@@ -308,7 +344,16 @@ def _resolve_binary_grid_frame(
     *,
     ensemble_view: str | None = None,
     region: str | None = None,
-) -> tuple[Path, Path] | None:
+) -> tuple[Path, Path, str] | None:
+    """Resolve a published grid binary frame to ``(frame_path, meta_path,
+    runtime_var)``, or ``None`` when absent.
+
+    ``runtime_var`` is the resolved runtime variable id the frame was published
+    (and therefore packed) under — aliases normalized, default/requested
+    ensemble view applied. It is returned so callers decode under the exact id
+    that located the frame; deriving it independently at the decode site is how
+    the path id and packing id can silently diverge.
+    """
     del region
     from .. import main as _main
 
@@ -328,7 +373,7 @@ def _resolve_binary_grid_frame(
         return None
     frame_path = meta_path.parent / filename
     if frame_path.is_file():
-        return frame_path, meta_path
+        return frame_path, meta_path, runtime_var
     return None
 
 
@@ -615,11 +660,16 @@ def sample_binary_value(
     Returns ``(present, value)`` with the same shape as :func:`sample_value` so
     canary/shadow comparisons can call both paths side by side without touching
     production route handlers.
+
+    ``var`` may be any requestable id (canonical, alias, or ensemble-view
+    default): the frame is resolved AND decoded under the runtime variable id
+    returned by :func:`_resolve_binary_grid_frame`, so the packing config always
+    matches the bytes on disk.
     """
     resolved = _resolve_binary_grid_frame(model, run_id, var, fh, region=region)
     if resolved is None:
         return (False, None)
-    frame_path, meta_path = resolved
+    frame_path, meta_path, runtime_var = resolved
     try:
         return (
             True,
@@ -627,7 +677,7 @@ def sample_binary_value(
                 frame_path,
                 meta_path,
                 model=model,
-                var=var,
+                var=runtime_var,
                 lat=lat,
                 lon=lon,
             ),

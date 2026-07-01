@@ -84,6 +84,22 @@ def stripe_portal_return_url() -> str:
     return _env_value("STRIPE_PORTAL_RETURN_URL").strip()
 
 
+def binary_sampling_models() -> frozenset[str]:
+    """Models whose point sampling reads grid binaries instead of value COGs.
+
+    Comma-separated model allowlist (``CARTOSKY_BINARY_SAMPLING_MODELS=gfs`` or
+    ``gfs,nam``); empty (the default) means every model keeps the value-COG
+    path. Per-model list rather than a boolean so later models migrate by
+    appending a value, per the COG->binary sampling migration plan. Not
+    lru_cached: the read is trivially cheap per request, and caching would make
+    the flag unswitchable in tests without cache invalidation.
+    """
+    raw = _env_value("CARTOSKY_BINARY_SAMPLING_MODELS").strip().lower()
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 @lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True
