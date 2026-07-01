@@ -1678,6 +1678,19 @@ def _observed_precip_attribution(observed_precip: dict[str, Any] | None) -> str 
     return None
 
 
+def _observed_precip_needs_refetch(observed_precip: dict[str, Any] | None) -> bool:
+    if observed_precip is None:
+        return True
+    ytd = observed_precip.get("ytd")
+    if isinstance(ytd, dict) and ytd.get("percent_of_normal") is None:
+        return True
+    if observed_precip.get("days_since_rain") is None:
+        return True
+    if any(observed_precip.get(key) is None for key in ("last_6h_in", "last_24h_in", "last_72h_in")):
+        return True
+    return False
+
+
 async def _fetch_observed_precip(location: ResolvedLocation) -> dict[str, Any] | None:
     mrms_task = asyncio.create_task(_fetch_observed_precip_mrms(location.latitude, location.longitude))
     acis_task = asyncio.create_task(_fetch_acis_precip_summary(location.latitude, location.longitude))
@@ -2518,7 +2531,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
                     location.longitude,
                     location.query,
                 )
-        if payload.get("observed_precip") is None:
+        if _observed_precip_needs_refetch(payload.get("observed_precip")):
             observed_precip = await _fetch_observed_precip(location)
             payload["observed_precip"] = observed_precip
             attribution["observed_precip"] = _observed_precip_attribution(observed_precip)

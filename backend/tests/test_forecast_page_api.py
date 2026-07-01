@@ -1515,6 +1515,149 @@ async def test_get_forecast_page_refreshes_missing_observed_precip_from_cached_p
     assert payload["attribution"]["observed_precip"] == "MRMS"
 
 
+async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    location = forecast_page_service.ResolvedLocation(
+        query="57104",
+        display_name="Sioux Falls, SD",
+        latitude=43.55,
+        longitude=-96.73,
+        timezone="America/Chicago",
+        country_code="US",
+        admin1="South Dakota",
+        country="United States",
+        resolved_by="frontend_location_hint",
+    )
+    cache_key = forecast_page_service._forecast_location_cache_key(location)
+    forecast_page_service._cache_set(
+        "forecast-page",
+        cache_key,
+        {
+            "location": {
+                "query": "57104",
+                "display_name": "Sioux Falls, SD",
+                "latitude": 43.55,
+                "longitude": -96.73,
+                "timezone": "America/Chicago",
+                "country_code": "US",
+                "admin1": "South Dakota",
+                "resolved_by": "frontend_location_hint",
+            },
+            "source_status": {
+                "primary_region_mode": "us_hybrid",
+                "nws": "ok",
+                "open_meteo": "ok",
+                "generated_at": "2026-04-18T17:00:00Z",
+            },
+            "current": {"source": "nws"},
+            "hourly": [],
+            "daily": [],
+            "air_quality": None,
+            "pollen": None,
+            "observed_precip": {
+                "last_6h_in": 0.31,
+                "last_24h_in": 0.87,
+                "last_72h_in": 1.62,
+                "ytd": {
+                    "actual_in": 10.53,
+                    "normal_in": None,
+                    "percent_of_normal": None,
+                    "departure_in": None,
+                    "station_name": "Sioux Falls Foss Field",
+                },
+                "days_since_rain": {
+                    "days": 0,
+                    "at_cap": False,
+                    "station_name": "Sioux Falls Foss Field",
+                },
+            },
+            "official_text_forecast": None,
+            "afd": None,
+            "alerts": [],
+            "attribution": {
+                "current": "NWS",
+                "hourly": "NWS",
+                "daily": "Open-Meteo",
+                "air_quality": None,
+                "pollen": None,
+                "observed_precip": "MRMS · ACIS",
+                "afd": None,
+                "alerts": None,
+            },
+            "freshness": {
+                "current": {"state": "fresh", "observed_at": "2026-04-18T16:15:00+00:00", "age_minutes": 45},
+                "afd": {"state": "unknown", "issued_at": None, "age_hours": None},
+            },
+        },
+        forecast_page_service.FORECAST_PAGE_CACHE_TTL,
+    )
+
+    async def fake_fetch_observed_precip(location_arg: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        assert location_arg.latitude == 43.55
+        assert location_arg.longitude == -96.73
+        return {
+            "last_6h_in": 0.31,
+            "last_24h_in": 0.87,
+            "last_72h_in": 1.62,
+            "ytd": {
+                "actual_in": 10.53,
+                "normal_in": 14.23,
+                "percent_of_normal": 74,
+                "departure_in": -3.7,
+                "station_name": "Sioux Falls Foss Field",
+            },
+            "days_since_rain": {
+                "days": 0,
+                "at_cap": False,
+                "station_name": "Sioux Falls Foss Field",
+            },
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "api.weather.gov" and path == "/alerts/active":
+            return httpx.Response(200, json={"features": []})
+        raise AssertionError(f"Unhandled request: {request.method} {request.url}")
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    _mock_async_client(monkeypatch, handler)
+
+    payload = await forecast_page_service.get_forecast_page(
+        43.55,
+        -96.73,
+        location_hint=forecast_page_service.LocationHint(
+            display_name="Sioux Falls, SD",
+            timezone="America/Chicago",
+            country_code="US",
+            admin1="South Dakota",
+            country="United States",
+        ),
+    )
+
+    assert payload["observed_precip"] == {
+        "last_6h_in": 0.31,
+        "last_24h_in": 0.87,
+        "last_72h_in": 1.62,
+        "ytd": {
+            "actual_in": 10.53,
+            "normal_in": 14.23,
+            "percent_of_normal": 74,
+            "departure_in": -3.7,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
+    assert payload["attribution"]["observed_precip"] == "MRMS · ACIS"
+
+
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
 
