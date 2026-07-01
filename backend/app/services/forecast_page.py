@@ -1220,7 +1220,7 @@ def _parse_acis_precip_amount(value: Any) -> float | None:
     return _safe_float(text)
 
 
-def _acis_actual_row_quality(rows: Any) -> tuple[int, int]:
+def _acis_row_quality(rows: Any, value_index: int) -> tuple[int, int]:
     total_rows = 0
     usable_rows = 0
     if not isinstance(rows, list):
@@ -1229,7 +1229,7 @@ def _acis_actual_row_quality(rows: Any) -> tuple[int, int]:
         if not isinstance(row, list) or len(row) < 2:
             continue
         total_rows += 1
-        if _parse_acis_precip_amount(row[1]) is not None:
+        if len(row) > value_index and _parse_acis_precip_amount(row[value_index]) is not None:
             usable_rows += 1
     return usable_rows, total_rows
 
@@ -1266,42 +1266,6 @@ def _summarize_acis_precip_summary(
     station_name: str,
     rows: list[Any],
 ) -> dict[str, Any]:
-    actual_total = 0.0
-    normal_total = 0.0
-    have_actual = False
-    have_normal = False
-
-    for row in rows:
-        if not isinstance(row, list) or len(row) < 2:
-            continue
-        actual_value = _parse_acis_precip_amount(row[1])
-        if actual_value is not None:
-            actual_total += actual_value
-            have_actual = True
-        if len(row) >= 3:
-            normal_value = _parse_acis_precip_amount(row[2])
-            if normal_value is not None:
-                normal_total += normal_value
-                have_normal = True
-
-    ytd: dict[str, Any] | None = None
-    if have_actual or have_normal:
-        actual_in = round(actual_total, 2) if have_actual else None
-        normal_in = round(normal_total, 2) if have_normal else None
-        percent_of_normal = None
-        if actual_in is not None and normal_in not in {None, 0}:
-            percent_of_normal = round((actual_in / normal_in) * 100)
-        departure_in = None
-        if actual_in is not None and normal_in is not None:
-            departure_in = round(actual_in - normal_in, 2)
-        ytd = {
-            "actual_in": actual_in,
-            "normal_in": normal_in,
-            "percent_of_normal": percent_of_normal,
-            "departure_in": departure_in,
-            "station_name": station_name,
-        }
-
     dry_days = 0
     saw_actual_day = False
     found_wet_day = False
@@ -1330,8 +1294,42 @@ def _summarize_acis_precip_summary(
         }
 
     return {
-        "ytd": ytd,
+        "ytd": None,
         "days_since_rain": days_since_rain,
+    }
+
+
+def _build_acis_ytd_summary(
+    *,
+    station_name: str,
+    rows: list[Any],
+) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    last_row = rows[-1]
+    if not isinstance(last_row, list) or len(last_row) < 3:
+        return None
+
+    actual_raw = _parse_acis_precip_amount(last_row[1])
+    departure_raw = _parse_acis_precip_amount(last_row[2])
+    if actual_raw is None and departure_raw is None:
+        return None
+
+    actual_in = round(actual_raw, 2) if actual_raw is not None else None
+    departure_in = round(departure_raw, 2) if departure_raw is not None else None
+    normal_in = None
+    if actual_in is not None and departure_in is not None:
+        normal_in = round(actual_in - departure_in, 2)
+    percent_of_normal = None
+    if actual_in is not None and normal_in not in {None, 0}:
+        percent_of_normal = round((actual_in / normal_in) * 100)
+
+    return {
+        "actual_in": actual_in,
+        "normal_in": normal_in,
+        "percent_of_normal": percent_of_normal,
+        "departure_in": departure_in,
+        "station_name": station_name,
     }
 
 
@@ -1417,6 +1415,7 @@ async def _fetch_acis_precip_summary_with_client(
                 span_candidates.append((distance_km, sid, name))
 
             span_candidates.sort(key=lambda item: item[0])
+            partial_candidate: tuple[str, str, dict[str, Any]] | None = None
             for _distance_km, candidate_sid, candidate_name in span_candidates[:ACIS_MAX_STATION_CANDIDATES]:
                 if attempt_count >= ACIS_MAX_STATION_ATTEMPTS:
                     break
@@ -1437,20 +1436,40 @@ async def _fetch_acis_precip_summary_with_client(
                     },
                 )
                 candidate_rows = candidate_payload.get("data") if isinstance(candidate_payload, dict) else None
-                usable_rows, total_rows = _acis_actual_row_quality(candidate_rows)
-                usable_ratio = (usable_rows / total_rows) if total_rows > 0 else 0.0
-                missing_ratio = 1.0 - usable_ratio if total_rows > 0 else 1.0
-                if total_rows == 0 or usable_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                actual_usable_rows, total_rows = _acis_row_quality(candidate_rows, 1)
+                normal_usable_rows, _normal_total_rows = _acis_row_quality(candidate_rows, 2)
+                actual_ratio = (actual_usable_rows / total_rows) if total_rows > 0 else 0.0
+                normal_ratio = (normal_usable_rows / total_rows) if total_rows > 0 else 0.0
+                actual_missing_ratio = 1.0 - actual_ratio if total_rows > 0 else 1.0
+                normal_missing_ratio = 1.0 - normal_ratio if total_rows > 0 else 1.0
+
+                if total_rows == 0 or actual_ratio < ACIS_MIN_USABLE_ROW_RATIO:
                     logger.info(
-                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: usable_rows=%d/%d missing_fraction=%.2f",
+                        "Rejecting ACIS station %s (%s) for lat=%.4f lon=%.4f: actual_rows=%d/%d actual_missing_fraction=%.2f normal_missing_fraction=%.2f",
                         candidate_name,
                         candidate_sid,
                         lat,
                         lon,
-                        usable_rows,
+                        actual_usable_rows,
                         total_rows,
-                        missing_ratio,
+                        actual_missing_ratio,
+                        normal_missing_ratio,
                     )
+                    continue
+
+                if normal_ratio < ACIS_MIN_USABLE_ROW_RATIO:
+                    logger.info(
+                        "ACIS candidate %s (%s) has usable actual data but insufficient normal-period record: actual_rows=%d/%d normal_rows=%d/%d normal_missing_fraction=%.2f",
+                        candidate_name,
+                        candidate_sid,
+                        actual_usable_rows,
+                        total_rows,
+                        normal_usable_rows,
+                        total_rows,
+                        normal_missing_ratio,
+                    )
+                    if partial_candidate is None:
+                        partial_candidate = (candidate_sid, candidate_name, candidate_payload)
                     continue
 
                 station_sid = candidate_sid
@@ -1459,6 +1478,9 @@ async def _fetch_acis_precip_summary_with_client(
                 break
 
             if data_payload is not None:
+                break
+            if partial_candidate is not None:
+                station_sid, station_name, data_payload = partial_candidate
                 break
 
         if station_sid is None or data_payload is None:
@@ -1492,12 +1514,45 @@ async def _fetch_acis_precip_summary_with_client(
         station_name=resolved_station_name,
         rows=row_list,
     )
+    ytd_row_list: list[Any] = []
+    try:
+        ytd_payload = await _post_json(
+            client,
+            ACIS_STATION_DATA_URL,
+            payload={
+                "sid": station_sid,
+                "sdate": f"{today.year}-01-01",
+                "edate": today.isoformat(),
+                "elems": [
+                    {"name": "pcpn", "duration": "ytd", "reduce": "sum"},
+                    {"name": "pcpn", "duration": "ytd", "reduce": "sum", "normal": "departure"},
+                ],
+            },
+        )
+        ytd_rows = ytd_payload.get("data") if isinstance(ytd_payload, dict) else None
+        ytd_row_list = ytd_rows if isinstance(ytd_rows, list) else []
+        summary["ytd"] = _build_acis_ytd_summary(
+            station_name=resolved_station_name,
+            rows=ytd_row_list,
+        )
+    except ForecastPageError as exc:
+        logger.warning(
+            "ACIS reduced YTD fetch failed for lat=%.4f lon=%.4f station=%s (%s): %s",
+            lat,
+            lon,
+            resolved_station_name,
+            station_sid,
+            exc.message,
+        )
+        summary["ytd"] = None
+
     logger.info(
-        "ACIS precip summary for lat=%.4f lon=%.4f station=%s: row_count=%d ytd=%s days_since_rain=%s",
+        "ACIS precip summary for lat=%.4f lon=%.4f station=%s: raw_row_count=%d ytd_row_count=%d ytd=%s days_since_rain=%s",
         lat,
         lon,
         resolved_station_name,
         len(row_list),
+        len(ytd_row_list),
         summary.get("ytd"),
         summary.get("days_since_rain"),
     )

@@ -756,7 +756,7 @@ def test_normalize_google_pollen_empty_day_returns_none_category_payload() -> No
     assert normalized["types"] == []
 
 
-def test_summarize_acis_precip_summary_builds_ytd_and_days_since_rain() -> None:
+def test_summarize_acis_precip_summary_builds_days_since_rain() -> None:
     summary = forecast_page_service._summarize_acis_precip_summary(
         station_name="Sioux Falls Foss Field",
         rows=[
@@ -773,13 +773,7 @@ def test_summarize_acis_precip_summary_builds_ytd_and_days_since_rain() -> None:
     )
 
     assert summary == {
-        "ytd": {
-            "actual_in": 0.52,
-            "normal_in": 0.19,
-            "percent_of_normal": 274,
-            "departure_in": 0.33,
-            "station_name": "Sioux Falls Foss Field",
-        },
+        "ytd": None,
         "days_since_rain": {
             "days": 2,
             "at_cap": False,
@@ -799,13 +793,7 @@ def test_summarize_acis_precip_summary_caps_days_since_rain_when_series_never_fi
     )
 
     assert summary == {
-        "ytd": {
-            "actual_in": 0.1,
-            "normal_in": 0.07,
-            "percent_of_normal": 143,
-            "departure_in": 0.03,
-            "station_name": "Dry Creek",
-        },
+        "ytd": None,
         "days_since_rain": {
             "days": 3,
             "at_cap": True,
@@ -826,13 +814,7 @@ def test_summarize_acis_precip_summary_skips_leading_missing_days_before_countin
     )
 
     assert summary == {
-        "ytd": {
-            "actual_in": 0.25,
-            "normal_in": 0.04,
-            "percent_of_normal": 625,
-            "departure_in": 0.21,
-            "station_name": "Sioux Falls Foss Field",
-        },
+        "ytd": None,
         "days_since_rain": {
             "days": 2,
             "at_cap": False,
@@ -879,6 +861,14 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
                 ]
             }
         if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            if payload["elems"][0].get("duration") == "ytd":
+                return {
+                    "data": [
+                        ["2026-01-01", "0.20", "-0.10"],
+                        ["2026-01-02", "0.20", "-0.10"],
+                        ["2026-01-03", "0.20", "-0.10"],
+                    ],
+                }
             return {
                 "meta": {"name": "Sioux Falls Foss Field"},
                 "data": [
@@ -909,7 +899,7 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
             "station_name": "Sioux Falls Foss Field",
         },
     }
-    assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: row_count=3" in caplog.text
+    assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: raw_row_count=3 ytd_row_count=3" in caplog.text
 
 
 async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_nearest_is_all_missing(
@@ -952,6 +942,14 @@ async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_ne
             }
         if url == forecast_page_service.ACIS_STATION_DATA_URL:
             sid = payload["sid"]
+            if payload["elems"][0].get("duration") == "ytd":
+                assert sid == "USW00014944 6"
+                return {
+                    "data": [
+                        ["2026-01-05", "0.25", "-0.20"],
+                        ["2026-01-06", "0.37", "-0.23"],
+                    ],
+                }
             return {
                 "meta": {"name": station_names[sid]},
                 "data": station_rows[sid],
@@ -1021,6 +1019,14 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
             }
         if url == forecast_page_service.ACIS_STATION_DATA_URL:
             sid = payload["sid"]
+            if payload["elems"][0].get("duration") == "ytd":
+                data_calls.append(f"{sid}:ytd")
+                return {
+                    "data": [
+                        ["2026-01-03", "0.04", "-0.11"],
+                        ["2026-01-04", "0.24", "0.04"],
+                    ],
+                }
             data_calls.append(sid)
             return {
                 "meta": {"name": station_names[sid]},
@@ -1034,7 +1040,7 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
     async with httpx.AsyncClient() as client:
         payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 44.0805, -103.2310)
 
-    assert data_calls == ["USRAPIDBAD1 6", "USRAPIDBAD2 6", "USRAPIDGOOD 6"]
+    assert data_calls == ["USRAPIDBAD1 6", "USRAPIDBAD2 6", "USRAPIDGOOD 6", "USRAPIDGOOD 6:ytd"]
     assert payload == {
         "ytd": {
             "actual_in": 0.24,
@@ -1051,6 +1057,125 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
     }
     assert "Rejecting ACIS station RAPID CITY 1 N (USRAPIDBAD1 6)" in caplog.text
     assert "Rejecting ACIS station RAPID CITY 2 E (USRAPIDBAD2 6)" in caplog.text
+
+
+async def test_fetch_acis_precip_summary_prefers_candidate_with_normals_within_same_span(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    station_rows = {
+        "USCPARTIAL 6": [
+            ["2026-01-01", "0.10", "M"],
+            ["2026-01-02", "0.00", "M"],
+            ["2026-01-03", "0.00", "M"],
+            ["2026-01-04", "0.20", "M"],
+        ],
+        "USCFULL 6": [
+            ["2026-01-01", "0.10", "0.05"],
+            ["2026-01-02", "0.00", "0.05"],
+            ["2026-01-03", "0.00", "0.05"],
+            ["2026-01-04", "0.20", "0.05"],
+        ],
+    }
+    station_names = {
+        "USCPARTIAL 6": "CITY COOP STATION",
+        "USCFULL 6": "CITY AIRPORT STATION",
+    }
+    data_calls: list[str] = []
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            return {
+                "meta": [
+                    {"ll": [-96.7300, 43.5500], "sids": ["USCPARTIAL 6"], "name": "CITY COOP STATION"},
+                    {"ll": [-96.7310, 43.5510], "sids": ["USCFULL 6"], "name": "CITY AIRPORT STATION"},
+                ]
+            }
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            sid = payload["sid"]
+            if payload["elems"][0].get("duration") == "ytd":
+                data_calls.append(f"{sid}:ytd")
+                return {
+                    "data": [
+                        ["2026-01-03", "0.10", "0.00"],
+                        ["2026-01-04", "0.30", "0.10"],
+                    ],
+                }
+            data_calls.append(sid)
+            return {
+                "meta": {"name": station_names[sid]},
+                "data": station_rows[sid],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.INFO)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
+
+    assert data_calls == ["USCPARTIAL 6", "USCFULL 6", "USCFULL 6:ytd"]
+    assert payload == {
+        "ytd": {
+            "actual_in": 0.3,
+            "normal_in": 0.2,
+            "percent_of_normal": 150,
+            "departure_in": 0.1,
+            "station_name": "CITY AIRPORT STATION",
+        },
+        "days_since_rain": {
+            "days": 0,
+            "at_cap": False,
+            "station_name": "CITY AIRPORT STATION",
+        },
+    }
+    assert "ACIS candidate CITY COOP STATION (USCPARTIAL 6) has usable actual data but insufficient normal-period record" in caplog.text
+
+
+async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_call_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            return {
+                "meta": [
+                    {
+                        "ll": [-96.73, 43.55],
+                        "sids": ["USW00014944 6"],
+                        "name": "Sioux Falls Foss Field",
+                    }
+                ]
+            }
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            if payload["elems"][0].get("duration") == "ytd":
+                raise forecast_page_service.ForecastPageError("ACIS_YTD_FAILED", "reduced ytd failed")
+            return {
+                "meta": {"name": "Sioux Falls Foss Field"},
+                "data": [
+                    ["2026-01-01", "0.20", "0.10"],
+                    ["2026-01-02", "0.00", "0.10"],
+                    ["2026-01-03", "M", "0.10"],
+                ],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
+
+    assert payload == {
+        "ytd": None,
+        "days_since_rain": {
+            "days": 1,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
 
 
 async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:
