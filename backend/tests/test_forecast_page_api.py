@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -811,6 +812,104 @@ def test_summarize_acis_precip_summary_caps_days_since_rain_when_series_never_fi
             "station_name": "Dry Creek",
         },
     }
+
+
+def test_summarize_acis_precip_summary_skips_leading_missing_days_before_counting() -> None:
+    summary = forecast_page_service._summarize_acis_precip_summary(
+        station_name="Sioux Falls Foss Field",
+        rows=[
+            ["2026-01-01", "0.20", "0.01"],
+            ["2026-01-02", "0.00", "0.01"],
+            ["2026-01-03", "0.05", "0.01"],
+            ["2026-01-04", "M", "0.01"],
+        ],
+    )
+
+    assert summary == {
+        "ytd": {
+            "actual_in": 0.25,
+            "normal_in": 0.04,
+            "percent_of_normal": 625,
+            "departure_in": 0.21,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 2,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
+
+
+async def test_fetch_acis_precip_summary_logs_station_lookup_miss(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        assert url == forecast_page_service.ACIS_STATION_META_URL
+        return {"meta": []}
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.WARNING)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
+
+    assert payload is None
+    assert "ACIS station lookup found no candidates for lat=43.5500 lon=-96.7300 across all bbox spans" in caplog.text
+
+
+async def test_fetch_acis_precip_summary_logs_computed_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _freeze_now(monkeypatch)
+
+    async def fake_post_json(client, url: str, *, payload: dict, retries: int = 0):
+        if url == forecast_page_service.ACIS_STATION_META_URL:
+            return {
+                "meta": [
+                    {
+                        "ll": [-96.73, 43.55],
+                        "sids": ["USW00014944 6"],
+                        "name": "Sioux Falls Foss Field",
+                    }
+                ]
+            }
+        if url == forecast_page_service.ACIS_STATION_DATA_URL:
+            return {
+                "meta": {"name": "Sioux Falls Foss Field"},
+                "data": [
+                    ["2026-01-01", "0.20", "0.10"],
+                    ["2026-01-02", "0.00", "0.10"],
+                    ["2026-01-03", "M", "0.10"],
+                ],
+            }
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr(forecast_page_service, "_post_json", fake_post_json)
+    caplog.set_level(logging.INFO)
+
+    async with httpx.AsyncClient() as client:
+        payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
+
+    assert payload == {
+        "ytd": {
+            "actual_in": 0.2,
+            "normal_in": 0.3,
+            "percent_of_normal": 67,
+            "departure_in": -0.1,
+            "station_name": "Sioux Falls Foss Field",
+        },
+        "days_since_rain": {
+            "days": 1,
+            "at_cap": False,
+            "station_name": "Sioux Falls Foss Field",
+        },
+    }
+    assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: row_count=3" in caplog.text
 
 
 async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:

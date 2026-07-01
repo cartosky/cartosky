@@ -1288,12 +1288,16 @@ def _summarize_acis_precip_summary(
     dry_days = 0
     saw_actual_day = False
     found_wet_day = False
+    started = False
     for row in reversed(rows):
         if not isinstance(row, list) or len(row) < 2:
             continue
         actual_value = _parse_acis_precip_amount(row[1])
         if actual_value is None:
-            break
+            if started:
+                break
+            continue
+        started = True
         saw_actual_day = True
         if actual_value > 0.1:
             found_wet_day = True
@@ -1397,6 +1401,11 @@ async def _fetch_acis_precip_summary_with_client(
                 break
 
         if station_sid is None:
+            logger.warning(
+                "ACIS station lookup found no candidates for lat=%.4f lon=%.4f across all bbox spans",
+                lat,
+                lon,
+            )
             return None
 
         data_payload = await _post_json(
@@ -1429,9 +1438,19 @@ async def _fetch_acis_precip_summary_with_client(
         return None
 
     rows = data_payload.get("data") if isinstance(data_payload, dict) else None
+    row_list = rows if isinstance(rows, list) else []
     summary = _summarize_acis_precip_summary(
         station_name=resolved_station_name,
-        rows=rows if isinstance(rows, list) else [],
+        rows=row_list,
+    )
+    logger.info(
+        "ACIS precip summary for lat=%.4f lon=%.4f station=%s: row_count=%d ytd=%s days_since_rain=%s",
+        lat,
+        lon,
+        resolved_station_name,
+        len(row_list),
+        summary.get("ytd"),
+        summary.get("days_since_rain"),
     )
     if summary.get("ytd") is None and summary.get("days_since_rain") is None:
         return None
