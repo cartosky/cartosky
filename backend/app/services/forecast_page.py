@@ -1445,6 +1445,10 @@ async def _fetch_acis_precip_summary_with_client(
 
     rows = data_payload.get("data") if isinstance(data_payload, dict) else None
     row_list = rows if isinstance(rows, list) else []
+    print(
+        f"[TRACE] acis rows sample for station={resolved_station_name}: first={row_list[:3]!r} last={row_list[-3:]!r}",
+        flush=True,
+    )
     summary = _summarize_acis_precip_summary(
         station_name=resolved_station_name,
         rows=row_list,
