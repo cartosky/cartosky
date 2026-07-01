@@ -2277,7 +2277,7 @@ async def _build_forecast_page_payload(client: httpx.AsyncClient, location: Reso
                     location.longitude,
                     location.query,
                 )
-        if "observed_precip" not in cached_payload:
+        if payload.get("observed_precip") is None:
             observed_precip = await _fetch_observed_precip(location)
             payload["observed_precip"] = observed_precip
             attribution["observed_precip"] = _observed_precip_attribution(observed_precip)
