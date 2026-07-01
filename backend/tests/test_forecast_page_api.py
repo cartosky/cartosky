@@ -362,11 +362,6 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
                 "departure_in": -0.83,
                 "station_name": "Sioux Falls Foss Field",
             },
-            "days_since_rain": {
-                "days": 14,
-                "at_cap": True,
-                "station_name": "Sioux Falls Foss Field",
-            },
         }
 
     async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
@@ -497,11 +492,6 @@ async def test_get_forecast_page_by_query_builds_us_hybrid_payload(monkeypatch: 
             "normal_in": 9.25,
             "percent_of_normal": 91,
             "departure_in": -0.83,
-            "station_name": "Sioux Falls Foss Field",
-        },
-        "days_since_rain": {
-            "days": 14,
-            "at_cap": True,
             "station_name": "Sioux Falls Foss Field",
         },
     }
@@ -748,11 +738,6 @@ async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch
                 "departure_in": -3.7,
                 "station_name": "Sioux Falls Foss Field",
             },
-            "days_since_rain": {
-                "days": 0,
-                "at_cap": False,
-                "station_name": "Sioux Falls Foss Field",
-            },
         }
 
     async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
@@ -820,11 +805,6 @@ async def test_forecast_page_core_includes_non_nws_supplemental_data(monkeypatch
             "departure_in": -3.7,
             "station_name": "Sioux Falls Foss Field",
         },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
-            "station_name": "Sioux Falls Foss Field",
-        },
     }
     assert payload["official_text_forecast"] is None
     assert payload["afd"] is None
@@ -885,73 +865,6 @@ def test_normalize_google_pollen_empty_day_returns_none_category_payload() -> No
     assert normalized["index"] == 0
     assert normalized["category"] == "None"
     assert normalized["types"] == []
-
-
-def test_summarize_acis_precip_summary_builds_days_since_rain() -> None:
-    summary = forecast_page_service._summarize_acis_precip_summary(
-        station_name="Sioux Falls Foss Field",
-        rows=[
-            ["2026-01-01", "0.10", "0.02"],
-            ["2026-01-02", "0.25", "0.03"],
-            ["2026-01-03", "T", "0.02"],
-            ["2026-01-04", "M", "0.01"],
-            ["2026-01-05", "0.00", "0.04"],
-            ["2026-01-06", "0.00", "0.04"],
-            ["2026-01-07", "0.12", "0.01"],
-            ["2026-01-08", "0.00", "0.01"],
-            ["2026-01-09", "0.05", "0.01"],
-        ],
-    )
-
-    assert summary == {
-        "ytd": None,
-        "days_since_rain": {
-            "days": 2,
-            "at_cap": False,
-            "station_name": "Sioux Falls Foss Field",
-        },
-    }
-
-
-def test_summarize_acis_precip_summary_caps_days_since_rain_when_series_never_finds_wet_day() -> None:
-    summary = forecast_page_service._summarize_acis_precip_summary(
-        station_name="Dry Creek",
-        rows=[
-            ["2026-01-01", "0.00", "0.02"],
-            ["2026-01-02", "T", "0.02"],
-            ["2026-01-03", "0.10", "0.03"],
-        ],
-    )
-
-    assert summary == {
-        "ytd": None,
-        "days_since_rain": {
-            "days": 3,
-            "at_cap": True,
-            "station_name": "Dry Creek",
-        },
-    }
-
-
-def test_summarize_acis_precip_summary_skips_leading_missing_days_before_counting() -> None:
-    summary = forecast_page_service._summarize_acis_precip_summary(
-        station_name="Sioux Falls Foss Field",
-        rows=[
-            ["2026-01-01", "0.20", "0.01"],
-            ["2026-01-02", "0.00", "0.01"],
-            ["2026-01-03", "0.05", "0.01"],
-            ["2026-01-04", "M", "0.01"],
-        ],
-    )
-
-    assert summary == {
-        "ytd": None,
-        "days_since_rain": {
-            "days": 2,
-            "at_cap": False,
-            "station_name": "Sioux Falls Foss Field",
-        },
-    }
 
 
 async def test_fetch_acis_precip_summary_logs_station_lookup_miss(
@@ -1032,13 +945,8 @@ async def test_fetch_acis_precip_summary_logs_computed_summary(
             "departure_in": -0.1,
             "station_name": "Sioux Falls Foss Field",
         },
-        "days_since_rain": {
-            "days": 1,
-            "at_cap": False,
-            "station_name": "Sioux Falls Foss Field",
-        },
     }
-    assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: raw_row_count=3 ytd_row_count=3" in caplog.text
+    assert "ACIS precip summary for lat=43.5500 lon=-96.7300 station=Sioux Falls Foss Field: ytd_row_count=3" in caplog.text
 
 
 async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_nearest_is_all_missing(
@@ -1111,11 +1019,6 @@ async def test_fetch_acis_precip_summary_falls_back_to_reporting_station_when_ne
             "normal_in": 0.6,
             "percent_of_normal": 62,
             "departure_in": -0.23,
-            "station_name": "SIOUX FALLS FOSS FIELD",
-        },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
             "station_name": "SIOUX FALLS FOSS FIELD",
         },
     }
@@ -1196,11 +1099,6 @@ async def test_fetch_acis_precip_summary_retries_candidates_for_second_location(
             "departure_in": 0.04,
             "station_name": "RAPID CITY REGIONAL AP",
         },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
-            "station_name": "RAPID CITY REGIONAL AP",
-        },
     }
     assert "Rejecting ACIS station RAPID CITY 1 N (USRAPIDBAD1 6)" in caplog.text
     assert "Rejecting ACIS station RAPID CITY 2 E (USRAPIDBAD2 6)" in caplog.text
@@ -1276,16 +1174,11 @@ async def test_fetch_acis_precip_summary_prefers_candidate_with_normals_within_s
             "departure_in": 0.1,
             "station_name": "CITY AIRPORT STATION",
         },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
-            "station_name": "CITY AIRPORT STATION",
-        },
     }
     assert "ACIS candidate CITY COOP STATION (USCPARTIAL 6) has usable actual data but insufficient normal-period record" in caplog.text
 
 
-async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_call_fails(
+async def test_fetch_acis_precip_summary_returns_none_when_ytd_reduced_call_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _freeze_now(monkeypatch)
@@ -1323,14 +1216,7 @@ async def test_fetch_acis_precip_summary_keeps_days_since_rain_when_ytd_reduced_
     async with httpx.AsyncClient() as client:
         payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
 
-    assert payload == {
-        "ytd": None,
-        "days_since_rain": {
-            "days": 1,
-            "at_cap": False,
-            "station_name": "Sioux Falls Foss Field",
-        },
-    }
+    assert payload is None
 
 
 async def test_fetch_acis_precip_summary_prefers_nws_station_candidates_before_bbox_search(
@@ -1382,19 +1268,14 @@ async def test_fetch_acis_precip_summary_prefers_nws_station_candidates_before_b
     async with httpx.AsyncClient() as client:
         payload = await forecast_page_service._fetch_acis_precip_summary_with_client(client, 43.55, -96.73)
 
-    assert data_calls == ["KFSD 5", "KFSD 5", "KFSD 5:ytd"]
+    assert data_calls == ["KFSD 5", "KFSD 5:ytd"]
     assert payload == {
         "ytd": {
             "actual_in": 9.2,
             "normal_in": 14.23,
             "percent_of_normal": 65,
             "departure_in": -5.03,
-            "station_name": "SIOUX FALLS FOSS FIELD",
-        },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
-            "station_name": "SIOUX FALLS FOSS FIELD",
+            "station_name": "Sioux Falls Regional Airport",
         },
     }
     assert "resolved via NWS-anchored station" in caplog.text
@@ -1611,7 +1492,6 @@ async def test_get_forecast_page_refreshes_missing_observed_precip_from_cached_p
             "last_24h_in": 0.87,
             "last_72h_in": 1.62,
             "ytd": None,
-            "days_since_rain": None,
         }
 
     async def fake_fetch_temperature_history(location_arg: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
@@ -1647,7 +1527,6 @@ async def test_get_forecast_page_refreshes_missing_observed_precip_from_cached_p
         "last_24h_in": 0.87,
         "last_72h_in": 1.62,
         "ytd": None,
-        "days_since_rain": None,
     }
     assert payload["attribution"]["observed_precip"] == "MRMS"
 
@@ -1705,11 +1584,6 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
                     "departure_in": None,
                     "station_name": "Sioux Falls Foss Field",
                 },
-                "days_since_rain": {
-                    "days": 0,
-                    "at_cap": False,
-                    "station_name": "Sioux Falls Foss Field",
-                },
             },
             "official_text_forecast": None,
             "afd": None,
@@ -1744,11 +1618,6 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
                 "normal_in": 14.23,
                 "percent_of_normal": 74,
                 "departure_in": -3.7,
-                "station_name": "Sioux Falls Foss Field",
-            },
-            "days_since_rain": {
-                "days": 0,
-                "at_cap": False,
                 "station_name": "Sioux Falls Foss Field",
             },
         }
@@ -1790,11 +1659,6 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
             "normal_in": 14.23,
             "percent_of_normal": 74,
             "departure_in": -3.7,
-            "station_name": "Sioux Falls Foss Field",
-        },
-        "days_since_rain": {
-            "days": 0,
-            "at_cap": False,
             "station_name": "Sioux Falls Foss Field",
         },
     }

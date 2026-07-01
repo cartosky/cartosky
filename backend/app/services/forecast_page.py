@@ -1266,44 +1266,6 @@ def _preferred_acis_sid(values: Any) -> str | None:
     return candidates[0][2]
 
 
-def _summarize_acis_precip_summary(
-    *,
-    station_name: str,
-    rows: list[Any],
-) -> dict[str, Any]:
-    dry_days = 0
-    saw_actual_day = False
-    found_wet_day = False
-    started = False
-    for row in reversed(rows):
-        if not isinstance(row, list) or len(row) < 2:
-            continue
-        actual_value = _parse_acis_precip_amount(row[1])
-        if actual_value is None:
-            if started:
-                break
-            continue
-        started = True
-        saw_actual_day = True
-        if actual_value > 0.1:
-            found_wet_day = True
-            break
-        dry_days += 1
-
-    days_since_rain = None
-    if saw_actual_day:
-        days_since_rain = {
-            "days": dry_days,
-            "at_cap": not found_wet_day,
-            "station_name": station_name,
-        }
-
-    return {
-        "ytd": None,
-        "days_since_rain": days_since_rain,
-    }
-
-
 def _build_acis_ytd_summary(
     *,
     station_name: str,
@@ -1437,44 +1399,6 @@ async def _fetch_acis_precip_summary_with_client(
         return None
     station_sid, station_name = resolved_station
 
-    data_payload: dict[str, Any] | None = None
-    try:
-        data_payload = await _post_json(
-            client,
-            ACIS_STATION_DATA_URL,
-            payload={
-                "sid": station_sid,
-                "sdate": f"{today.year}-01-01",
-                "edate": today.isoformat(),
-                "meta": "name,sids",
-                "elems": [{"name": "pcpn"}, {"name": "pcpn", "normal": 1}],
-            },
-        )
-    except ForecastPageError as exc:
-        logger.warning(
-            "ACIS observed precip fetch failed for lat=%.4f lon=%.4f: %s",
-            lat,
-            lon,
-            exc.message,
-        )
-        return None
-
-    data_meta = data_payload.get("meta") if isinstance(data_payload, dict) else None
-    resolved_station_name = station_name
-    if isinstance(data_meta, dict):
-        resolved_station_name = _coerce_str(data_meta.get("name")) or resolved_station_name
-    if resolved_station_name is None:
-        resolved_station_name = station_sid
-    if resolved_station_name is None:
-        return None
-
-    rows = data_payload.get("data") if isinstance(data_payload, dict) else None
-    row_list = rows if isinstance(rows, list) else []
-    summary = _summarize_acis_precip_summary(
-        station_name=resolved_station_name,
-        rows=row_list,
-    )
-    ytd_row_list: list[Any] = []
     try:
         ytd_payload = await _post_json(
             client,
@@ -1489,34 +1413,36 @@ async def _fetch_acis_precip_summary_with_client(
                 ],
             },
         )
-        ytd_rows = ytd_payload.get("data") if isinstance(ytd_payload, dict) else None
-        ytd_row_list = ytd_rows if isinstance(ytd_rows, list) else []
-        summary["ytd"] = _build_acis_ytd_summary(
-            station_name=resolved_station_name,
-            rows=ytd_row_list,
-        )
     except ForecastPageError as exc:
         logger.warning(
             "ACIS reduced YTD fetch failed for lat=%.4f lon=%.4f station=%s (%s): %s",
             lat,
             lon,
-            resolved_station_name,
+            station_name,
             station_sid,
             exc.message,
         )
-        summary["ytd"] = None
+        ytd_payload = None
+
+    ytd_rows = ytd_payload.get("data") if isinstance(ytd_payload, dict) else None
+    ytd_row_list = ytd_rows if isinstance(ytd_rows, list) else []
+    ytd_summary = _build_acis_ytd_summary(
+        station_name=station_name,
+        rows=ytd_row_list,
+    )
+    summary = {
+        "ytd": ytd_summary,
+    }
 
     logger.info(
-        "ACIS precip summary for lat=%.4f lon=%.4f station=%s: raw_row_count=%d ytd_row_count=%d ytd=%s days_since_rain=%s",
+        "ACIS precip summary for lat=%.4f lon=%.4f station=%s: ytd_row_count=%d ytd=%s",
         lat,
         lon,
-        resolved_station_name,
-        len(row_list),
+        station_name,
         len(ytd_row_list),
         summary.get("ytd"),
-        summary.get("days_since_rain"),
     )
-    if summary.get("ytd") is None and summary.get("days_since_rain") is None:
+    if summary.get("ytd") is None:
         return None
 
     _cache_set("acis-precip-summary", cache_key, summary, ACIS_CACHE_TTL)
@@ -1792,7 +1718,7 @@ def _observed_precip_attribution(observed_precip: dict[str, Any] | None) -> str 
     if observed_precip is None:
         return None
     has_mrms = any(observed_precip.get(key) is not None for key in ("last_6h_in", "last_24h_in", "last_72h_in"))
-    has_acis = observed_precip.get("ytd") is not None or observed_precip.get("days_since_rain") is not None
+    has_acis = observed_precip.get("ytd") is not None
     if has_mrms and has_acis:
         return "MRMS · ACIS"
     if has_mrms:
@@ -1807,8 +1733,6 @@ def _observed_precip_needs_refetch(observed_precip: dict[str, Any] | None) -> bo
         return True
     ytd = observed_precip.get("ytd")
     if isinstance(ytd, dict) and ytd.get("percent_of_normal") is None:
-        return True
-    if observed_precip.get("days_since_rain") is None:
         return True
     if any(observed_precip.get(key) is None for key in ("last_6h_in", "last_24h_in", "last_72h_in")):
         return True
@@ -1825,14 +1749,12 @@ async def _fetch_observed_precip(location: ResolvedLocation) -> dict[str, Any] |
         "last_24h_in": None,
         "last_72h_in": None,
         "ytd": None,
-        "days_since_rain": None,
     }
     if isinstance(mrms_payload, dict):
         for key in ("last_6h_in", "last_24h_in", "last_72h_in"):
             observed_precip[key] = mrms_payload.get(key)
     if isinstance(acis_payload, dict):
         observed_precip["ytd"] = acis_payload.get("ytd")
-        observed_precip["days_since_rain"] = acis_payload.get("days_since_rain")
 
     if _observed_precip_attribution(observed_precip) is None:
         return None

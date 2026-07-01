@@ -127,6 +127,18 @@ type PollenData = {
   types: PollenTypeData[];
 } | null;
 
+type TemperatureHistoryData = {
+  today_high_f: number | null;
+  normal_high_f: number | null;
+  today_low_f: number | null;
+  normal_low_f: number | null;
+  departure_f: number | null;
+  high_is_final: boolean;
+  records_high: unknown | null;
+  records_low: unknown | null;
+  station_name: string | null;
+} | null;
+
 type ObservedPrecipYtdData = {
   actual_in: number | null;
   normal_in: number | null;
@@ -135,18 +147,11 @@ type ObservedPrecipYtdData = {
   station_name: string | null;
 };
 
-type DaysSinceRainData = {
-  days: number;
-  at_cap: boolean;
-  station_name: string | null;
-};
-
 type ObservedPrecipData = {
   last_6h_in: number | null;
   last_24h_in: number | null;
   last_72h_in: number | null;
   ytd: ObservedPrecipYtdData | null;
-  days_since_rain: DaysSinceRainData | null;
 } | null;
 
 type TextForecastPeriod = {
@@ -186,6 +191,7 @@ type ForecastPayload = {
   daily: DailyEntry[];
   air_quality: AirQualityData;
   pollen: PollenData;
+  temperature_history: TemperatureHistoryData;
   observed_precip: ObservedPrecipData;
   official_text_forecast: { source: string; generated_at: string | null; periods: TextForecastPeriod[] } | null;
   afd: { office: string; issued_at: string | null; headline: string; text: string | null } | null;
@@ -196,6 +202,7 @@ type ForecastPayload = {
     daily: string | null;
     air_quality?: string | null;
     pollen?: string | null;
+    temperature_history?: string | null;
     observed_precip?: string | null;
   };
   freshness: {
@@ -209,7 +216,7 @@ type ForecastPayload = {
 type TabId = "current" | "hourly" | "7day" | "extended" | "models" | "ensembles" | "discussion";
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: "current", label: "Current" },
+  { id: "current", label: "Today" },
   { id: "hourly", label: "Hourly" },
   { id: "7day", label: "7-day" },
   { id: "extended", label: "Extended" },
@@ -382,12 +389,6 @@ function departureColorClass(value: number | null): string {
   if (value > 0) return "text-emerald-300";
   if (value < 0) return "text-rose-300";
   return "text-white/55";
-}
-
-function formatDaysSinceRain(value: DaysSinceRainData | null): string {
-  if (!value) return "--";
-  if (value.at_cap) return `${value.days}+ days`;
-  return `${value.days} day${value.days === 1 ? "" : "s"}`;
 }
 
 function airQualityDescription(data: NonNullable<AirQualityData>): string {
@@ -1278,12 +1279,23 @@ function CurrentSunCard({ current, daily, timeZone }: { current: CurrentData; da
   const centerY = 74;
   const sunX = centerX + Math.cos(angle) * radius;
   const sunY = centerY - Math.sin(angle) * radius;
+  const sunRaySegments = Array.from({ length: 8 }, (_, index) => {
+    const rayAngle = (index / 8) * Math.PI * 2;
+    const innerRadius = 8;
+    const outerRadius = 12;
+    return {
+      x1: sunX + Math.cos(rayAngle) * innerRadius,
+      y1: sunY + Math.sin(rayAngle) * innerRadius,
+      x2: sunX + Math.cos(rayAngle) * outerRadius,
+      y2: sunY + Math.sin(rayAngle) * outerRadius,
+    };
+  });
 
   return (
     <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
       <h2 className={cardHeadingClassName()}>Sun</h2>
       <div className="mt-3">
-        <svg viewBox="0 0 160 76" className="h-auto w-full" aria-hidden="true">
+        <svg viewBox="0 -8 160 84" className="h-auto w-full" aria-hidden="true">
           <path
             d="M 12 74 A 68 68 0 0 1 148 74"
             fill="none"
@@ -1291,6 +1303,18 @@ function CurrentSunCard({ current, daily, timeZone }: { current: CurrentData; da
             strokeWidth="2"
             strokeLinecap="round"
           />
+          {sunRaySegments.map((segment, index) => (
+            <line
+              key={index}
+              x1={segment.x1}
+              y1={segment.y1}
+              x2={segment.x2}
+              y2={segment.y2}
+              stroke="rgba(251, 191, 36, 0.55)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          ))}
           <circle cx={sunX} cy={sunY} r="5.5" fill="#fbbf24" />
         </svg>
       </div>
@@ -1381,7 +1405,35 @@ function CurrentPollenCard({ pollen }: { pollen: PollenData }) {
   );
 }
 
-function CurrentPrecipCard({ observedPrecip, attribution }: { observedPrecip: ObservedPrecipData; attribution: string | null | undefined }) {
+function TodayNarrativeCard({ textForecast }: { textForecast: ForecastPayload["official_text_forecast"] }) {
+  if (!textForecast || !textForecast.periods.length) return null;
+
+  const dayIndex = textForecast.periods.findIndex(period => period.is_daytime === true);
+  if (dayIndex < 0 || dayIndex + 1 >= textForecast.periods.length) return null;
+
+  const todayPeriod = textForecast.periods[dayIndex];
+  const nextPeriod = textForecast.periods[dayIndex + 1];
+  const todayText = todayPeriod.detailed_text ?? todayPeriod.short_text;
+  const nextText = nextPeriod.detailed_text ?? nextPeriod.short_text;
+  if (!todayText || !nextText) return null;
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+      <div className="space-y-4">
+        <div>
+          <h2 className={cardHeadingClassName()}>Today&apos;s Weather</h2>
+          <p className="mt-2 text-[15px] leading-7 text-white/78">{todayText}</p>
+        </div>
+        <div className="border-t border-white/[0.06] pt-4">
+          <h2 className={cardHeadingClassName()}>Looking Ahead</h2>
+          <p className="mt-2 text-[15px] leading-7 text-white/78">{nextText}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CurrentPrecipCard({ observedPrecip }: { observedPrecip: ObservedPrecipData }) {
   if (!observedPrecip) {
     return (
       <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
@@ -1392,7 +1444,6 @@ function CurrentPrecipCard({ observedPrecip, attribution }: { observedPrecip: Ob
   }
 
   const ytd = observedPrecip.ytd;
-  const daysSinceRain = observedPrecip.days_since_rain;
   const ytdSummaryAvailable = ytd?.percent_of_normal != null || ytd?.departure_in != null;
   const rows = [
     { label: "Last 6 Hours", value: formatPrecipInches(observedPrecip.last_6h_in) },
@@ -1427,11 +1478,74 @@ function CurrentPrecipCard({ observedPrecip, attribution }: { observedPrecip: Ob
             </div>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
 
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5">
-          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-200/75">Days Since Rain</div>
-          <div className="text-right text-[15px] font-medium text-white/90">{formatDaysSinceRain(daysSinceRain)}</div>
-        </div>
+function CurrentTemperatureHistoryCard({ temperatureHistory }: { temperatureHistory: TemperatureHistoryData }) {
+  if (!temperatureHistory) {
+    return (
+      <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+        <h2 className={cardHeadingClassName()}>Temperature History</h2>
+        <p className="mt-5 text-sm text-white/45">Temperature history is unavailable for this location.</p>
+      </section>
+    );
+  }
+
+  const highDeparture =
+    temperatureHistory.today_high_f != null && temperatureHistory.normal_high_f != null
+      ? temperatureHistory.today_high_f - temperatureHistory.normal_high_f
+      : null;
+  const lowDeparture =
+    temperatureHistory.today_low_f != null && temperatureHistory.normal_low_f != null
+      ? temperatureHistory.today_low_f - temperatureHistory.normal_low_f
+      : null;
+
+  const rows = [
+    {
+      kind: "primary" as const,
+      label: "Today's High",
+      value: temperatureHistory.today_high_f != null ? `${temperatureHistory.today_high_f}°` : "--",
+      normalValue: temperatureHistory.normal_high_f != null ? `${temperatureHistory.normal_high_f}°` : "--",
+    },
+    {
+      kind: "departure" as const,
+      label: "High Departure",
+      value: highDeparture != null ? `${highDeparture > 0 ? "+" : highDeparture < 0 ? "-" : ""}${Math.abs(highDeparture)}°` : "--",
+      valueClassName: departureColorClass(highDeparture),
+    },
+    {
+      kind: "primary" as const,
+      label: "Today's Low",
+      value: temperatureHistory.today_low_f != null ? `${temperatureHistory.today_low_f}°` : "--",
+      normalValue: temperatureHistory.normal_low_f != null ? `${temperatureHistory.normal_low_f}°` : "--",
+    },
+    {
+      kind: "departure" as const,
+      label: "Low Departure",
+      value: lowDeparture != null ? `${lowDeparture > 0 ? "+" : lowDeparture < 0 ? "-" : ""}${Math.abs(lowDeparture)}°` : "--",
+      valueClassName: departureColorClass(lowDeparture),
+    },
+  ];
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.16)] md:p-5">
+      <h2 className={cardHeadingClassName()}>Temperature History</h2>
+      <div className="mt-4 divide-y divide-white/[0.07] rounded-lg border border-white/[0.06] bg-black/10">
+        {rows.map((row) => (
+          <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 px-4 py-3.5">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-cyan-200/75">{row.label}</div>
+            <div className="text-right">
+              <div className={`text-[15px] font-medium ${row.kind === "departure" ? row.valueClassName : "text-white/90"}`}>{row.value}</div>
+              {row.kind === "primary" && (
+                <div className="mt-1 flex items-center justify-end gap-2 text-[12px]">
+                  <span className="text-white/55">{`Normal ${row.normalValue}`}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -1451,12 +1565,16 @@ function CurrentTab({
         <CurrentRadarCard lat={forecast.location.latitude} lon={forecast.location.longitude} />
       </div>
       <AlertsBanner alerts={forecast.alerts} checking={checkingAlerts} />
+      <TodayNarrativeCard textForecast={forecast.official_text_forecast} />
       <div className="grid gap-4 lg:grid-cols-3">
         <CurrentSunCard current={forecast.current} daily={forecast.daily} timeZone={forecast.location.timezone} />
         <CurrentAirQualityCard airQuality={forecast.air_quality} />
         <CurrentPollenCard pollen={forecast.pollen} />
       </div>
-      <CurrentPrecipCard observedPrecip={forecast.observed_precip} attribution={forecast.attribution.observed_precip} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CurrentPrecipCard observedPrecip={forecast.observed_precip} />
+        <CurrentTemperatureHistoryCard temperatureHistory={forecast.temperature_history} />
+      </div>
     </div>
   );
 }
@@ -1568,11 +1686,6 @@ function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_te
 
   return (
     <div>
-      {data.generated_at && (
-        <p className="mb-4 text-[11px] text-white/30">
-          NWS Official · Generated {formatObservedAt(data.generated_at)}
-        </p>
-      )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((period, i) => (
           <div key={i} className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
@@ -1641,9 +1754,6 @@ function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution:
         <DailyTempChart daily={daily} />
       </div>
       <div>
-      {attribution && (
-        <p className="mb-4 text-[11px] text-white/30">Source: {attribution}</p>
-      )}
       <DailyRangeRows daily={daily} expandable />
       </div>
     </div>
@@ -1699,6 +1809,7 @@ function mergeNwsEnrichment(core: ForecastPayload, full: ForecastPayload): Forec
     current: full.attribution?.current === "NWS" ? full.current : core.current,
     air_quality: full.air_quality ?? core.air_quality,
     pollen: full.pollen ?? core.pollen,
+    temperature_history: full.temperature_history ?? core.temperature_history,
     observed_precip: full.observed_precip ?? core.observed_precip,
     official_text_forecast: full.official_text_forecast ?? core.official_text_forecast,
     alerts: full.alerts ?? core.alerts,
