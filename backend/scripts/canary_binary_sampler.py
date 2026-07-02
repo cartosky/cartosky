@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Phase D canary: shadow-compare COG vs binary sampling for GFS.
+"""Phase D/Phase G canary: shadow-compare COG vs binary sampling.
 
 Runs against real published data, samples anchor city points across all
-GFS variables and forecast hours, logs divergences with full context,
-and records performance metrics per the migration plan Section 3 / Layer 3.
+selected-model variables and forecast hours, logs divergences with full
+context, and records performance metrics per the migration plan Section 3 /
+Layer 3.
 
 Usage::
 
@@ -13,11 +14,10 @@ Usage::
         --summary summary.json \\
         --workers 8
 
-The script discovers all retained GFS runs under the published root,
-enumerates every variable in ``_PACKING_BY_MODEL_VAR`` for GFS (including
-the four loop-registered precip-anomaly variables), samples anchor-city
-coordinates through both the COG path and the binary path, and writes a
-JSON-lines divergence log plus a summary JSON.
+The script discovers retained runs for the selected model under the published
+root, enumerates every variable in ``_PACKING_BY_MODEL_VAR`` for that model,
+samples anchor-city coordinates through both the COG path and the binary path,
+and writes a JSON-lines divergence log plus a summary JSON.
 
 Tolerance groups::
 
@@ -25,8 +25,10 @@ Tolerance groups::
             |cog - binary| > scale/2 + epsilon.
   Group 2 – continuous 3× upscale → divergence expected near gradients;
             pass condition is "spatially explainable and bounded."
-  Group 3 – categorical-nearest 3× upscale → divergences only at genuine
+  Group 3 – categorical-nearest upscale → divergences only at genuine
             class-boundary pixels (rounded integer comparison).
+  Group 4 – categorical-nearest without upscale → strict categorical equality
+            is expected; any divergence is blocking like Group 1.
 
 Performance benchmarks are run after the core comparison: single-point,
 100-point batch, 1000-point batch, and a full-meteogram simulation
@@ -38,7 +40,7 @@ Exit codes::
   2 – requested run not found
   3 – no comparisons performed (no usable frames)
   4 – blocking: binary frame/meta file missing, Group 1 divergence,
-      or Group 3 categorical divergence
+      Group 3 categorical divergence, or Group 4 categorical divergence
 """
 
 from __future__ import annotations
@@ -110,7 +112,7 @@ def _setup_logging(verbose: bool = False) -> None:
 
 
 # ── Constants ───────────────────────────────────────────────────────
-MODEL = "gfs"
+DEFAULT_MODEL = "gfs"
 RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
 
 SCALE_HALF_EPSILON = 1e-4
@@ -118,27 +120,31 @@ SCALE_HALF_EPSILON = 1e-4
 # Group 2 bounded-tolerance constant (matches parity-test threshold).
 GROUP2_TOLERANCE = 0.55
 
-# GFS variable scope (read from packing table — includes
-# loop-registered precip-anomaly vars).
-GFS_SCOPE = sorted(
-    var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == MODEL
-)
-
-
 # ── Helper: per-variable packing ────────────────────────────────────
 
 
-def _packing(var: str) -> dict[str, Any]:
-    return _PACKING_BY_MODEL_VAR[(MODEL, var)]
+def _normalize_model(model: str) -> str:
+    return str(model or DEFAULT_MODEL).strip().lower()
 
 
-def _packing_dtype(var: str) -> str:
-    return grid_dtype(str(_packing(var).get("dtype") or GRID_DTYPE))
+def _scope_for_model(model: str) -> list[str]:
+    model_norm = _normalize_model(model)
+    return sorted(
+        var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model_norm
+    )
 
 
-def _binary_frame_filename(var: str, fh: int) -> str:
+def _packing(model: str, var: str) -> dict[str, Any]:
+    return _PACKING_BY_MODEL_VAR[(_normalize_model(model), var)]
+
+
+def _packing_dtype(model: str, var: str) -> str:
+    return grid_dtype(str(_packing(model, var).get("dtype") or GRID_DTYPE))
+
+
+def _binary_frame_filename(model: str, var: str, fh: int) -> str:
     """Resolve the binary frame filename from the variable's packing dtype."""
-    return grid_frame_filename(fh, dtype=_packing_dtype(var))
+    return grid_frame_filename(fh, dtype=_packing_dtype(model, var))
 
 
 # ── Dataclasses ─────────────────────────────────────────────────────
@@ -248,20 +254,24 @@ class BenchmarkResult:
 # ── Tolerance group classification ─────────────────────────────────
 
 
-def _classify_variable(var: str) -> int:
-    """Return tolerance group (1, 2, or 3) for a GFS variable."""
-    config = grid_display_prep_config(MODEL, var)
+def _classify_variable(model: str, var: str) -> int:
+    """Return tolerance group (1, 2, 3, or 4) for a model variable."""
+    config = grid_display_prep_config(model, var)
     if config is None:
         return 1
-    if config.categorical_nearest:
+    upscale_factor = max(1, int(config.upscale_factor or 1))
+    categorical = bool(config.categorical_nearest)
+    if categorical and upscale_factor > 1:
         return 3
-    if config.upscale_factor > 1:
+    if categorical:
+        return 4
+    if upscale_factor > 1:
         return 2
     return 1
 
 
-def _build_group_index() -> dict[str, int]:
-    return {var: _classify_variable(var) for var in GFS_SCOPE}
+def _build_group_index(model: str, scope: list[str]) -> dict[str, int]:
+    return {var: _classify_variable(model, var) for var in scope}
 
 
 # ── Anchor points ───────────────────────────────────────────────────
@@ -339,13 +349,13 @@ def _fallback_anchor_points() -> list[AnchorPoint]:
 # ── Run / frame discovery ───────────────────────────────────────────
 
 
-def _discover_runs(published_root: Path) -> list[str]:
-    """Return sorted list of GFS run ids with published data."""
-    gfs_dir = published_root / MODEL
-    if not gfs_dir.is_dir():
+def _discover_runs(published_root: Path, model: str) -> list[str]:
+    """Return sorted list of run ids with published data for a model."""
+    model_dir = published_root / _normalize_model(model)
+    if not model_dir.is_dir():
         return []
     runs: list[str] = []
-    for entry in sorted(gfs_dir.iterdir()):
+    for entry in sorted(model_dir.iterdir()):
         if not entry.is_dir():
             continue
         if not RUN_ID_RE.match(entry.name):
@@ -356,6 +366,7 @@ def _discover_runs(published_root: Path) -> list[str]:
 
 def _discover_frames_for_run_var(
     published_root: Path,
+    model: str,
     run: str,
     var: str,
 ) -> list[int]:
@@ -364,7 +375,7 @@ def _discover_frames_for_run_var(
     Binary frame existence is verified at sample time rather than here,
     so frame-discovery can report missing-binary-frame files separately.
     """
-    var_dir = published_root / MODEL / run / var
+    var_dir = published_root / _normalize_model(model) / run / var
     if not var_dir.is_dir():
         return []
     fh_values: list[int] = []
@@ -434,6 +445,7 @@ def _distance_to_pixel_boundary(
 
 def _sample_one(
     published_root: Path,
+    model: str,
     run: str,
     var: str,
     fh: int,
@@ -444,10 +456,11 @@ def _sample_one(
     Distinguishes file-missing from no-value samples so the caller can
     treat infrastructure problems separately from legitimate nodata.
     """
-    var_dir = published_root / MODEL / run / var
+    model_norm = _normalize_model(model)
+    var_dir = published_root / model_norm / run / var
     cog_path = var_dir / f"fh{fh:03d}.val.cog.tif"
     grid_dir = var_dir / "grid"
-    bin_name = _binary_frame_filename(var, fh)
+    bin_name = _binary_frame_filename(model_norm, var, fh)
     frame_path = grid_dir / bin_name
     meta_path = grid_dir / f"fh{fh:03d}.l0.meta.json"
 
@@ -479,7 +492,7 @@ def _sample_one(
         try:
             raw, no_data = read_binary_sample_value(
                 frame_path, meta_path,
-                model=MODEL, var=var,
+                model=model_norm, var=var,
                 lat=point.lat, lon=point.lon,
             )
             bin_value = None if (no_data or raw is None) else float(raw)
@@ -500,7 +513,13 @@ def _sample_one(
     )
 
 
-def _is_divergent(result: SampleResult, group: int, var: str) -> bool:
+def _is_divergent(
+    result: SampleResult,
+    group: int,
+    var: str,
+    *,
+    model: str = DEFAULT_MODEL,
+) -> bool:
     """Does this result constitute a reportable divergence?
 
     Only called when neither substrate has a missing file.
@@ -508,7 +527,10 @@ def _is_divergent(result: SampleResult, group: int, var: str) -> bool:
 
     Group 1 (no upscale):  |cog - binary| > scale/2 + epsilon.
     Group 2 (continuous 3×): |cog - binary| > GROUP2_TOLERANCE.
-    Group 3 (categorical 3×): int(round(cog)) != int(round(binary)).
+    Group 3 (categorical upscale): int(round(cog)) != int(round(binary)).
+    Group 4 (categorical no-upscale): same integer-category equality as Group 3,
+        but blocking like Group 1 because matching-resolution categories should
+        not diverge.
     """
     # Both absent (matching nodata / out-of-bounds) — agreed.
     if result.cog_value is None and result.binary_value is None:
@@ -519,11 +541,11 @@ def _is_divergent(result: SampleResult, group: int, var: str) -> bool:
         return True
 
     if group == 1:
-        scale = float(_packing(var)["scale"])
+        scale = float(_packing(model, var)["scale"])
         threshold = scale / 2 + SCALE_HALF_EPSILON
         return abs(result.cog_value - result.binary_value) > threshold
 
-    if group == 3:
+    if group in {3, 4}:
         return int(round(result.cog_value)) != int(round(result.binary_value))
 
     # Group 2 — continuous 3× upscale: bounded tolerance.
@@ -572,6 +594,8 @@ class DivergenceAccumulator:
 
 def _run_comparison(
     published_root: Path,
+    model: str,
+    scope: list[str],
     runs_to_process: list[str],
     anchors: list[AnchorPoint],
     group_index: dict[str, int],
@@ -580,15 +604,16 @@ def _run_comparison(
     sample_limit: int | None = None,
 ) -> dict[str, Any]:
     """Core comparison loop.  Returns summary statistics dict."""
-    logger.info("Processing %d GFS run(s): %s", len(runs_to_process),
-                ", ".join(runs_to_process))
+    model_norm = _normalize_model(model)
+    logger.info("Processing %d %s run(s): %s", len(runs_to_process),
+                model_norm, ", ".join(runs_to_process))
 
     divergence_fh = None
     if log_path:
         divergence_fh = open(log_path, "w", encoding="utf-8")
 
     stats: dict[str, Any] = {
-        "model": MODEL,
+        "model": model_norm,
         "runs_found": len(runs_to_process),
         "runs": runs_to_process,
     }
@@ -608,8 +633,8 @@ def _run_comparison(
     try:
         for run in runs_to_process:
             logger.info("Processing run: %s", run)
-            for var in GFS_SCOPE:
-                fh_values = _discover_frames_for_run_var(published_root, run, var)
+            for var in scope:
+                fh_values = _discover_frames_for_run_var(published_root, model_norm, run, var)
                 if not fh_values:
                     continue
                 vars_with_frames.add(var)
@@ -622,7 +647,7 @@ def _run_comparison(
                         total += 1
                         group_counts[group] += 1
 
-                        result = _sample_one(published_root, run, var, fh, point)
+                        result = _sample_one(published_root, model_norm, run, var, fh, point)
                         total_cog_latencies.append(result.cog_latency_s)
                         total_binary_latencies.append(result.binary_latency_s)
 
@@ -644,10 +669,10 @@ def _run_comparison(
                         # file.  (Both-values-None is already handled inside
                         # _is_divergent.)
                         if not result.any_file_missing:
-                            if _is_divergent(result, group, var):
+                            if _is_divergent(result, group, var, model=model_norm):
                                 divergences.record(run, var, group)
                                 div = Divergence(
-                                    model=MODEL,
+                                    model=model_norm,
                                     run=run,
                                     var=var,
                                     fh=fh,
@@ -727,43 +752,45 @@ def _percentile(data: list[float], p: int) -> float:
 
 def _run_benchmarks(
     published_root: Path,
+    model: str,
     anchors: list[AnchorPoint],
     target_run: str,
     workers: int,
 ) -> list[BenchmarkResult]:
     """Run the four Phase D performance benchmarks."""
+    model_norm = _normalize_model(model)
     bench_var = "tmp2m"
-    fh_values = _discover_frames_for_run_var(published_root, target_run, bench_var)
+    fh_values = _discover_frames_for_run_var(published_root, model_norm, target_run, bench_var)
     if not fh_values:
         logger.warning("No frames for benchmark var %s in run %s", bench_var, target_run)
         return []
 
     fh0 = fh_values[0]
     anchor = anchors[0]
-    var_dir = published_root / MODEL / target_run / bench_var
+    var_dir = published_root / model_norm / target_run / bench_var
     cog_path = var_dir / f"fh{fh0:03d}.val.cog.tif"
     grid_dir = var_dir / "grid"
-    bin_name = _binary_frame_filename(bench_var, fh0)
+    bin_name = _binary_frame_filename(model_norm, bench_var, fh0)
     frame_path = grid_dir / bin_name
     meta_path = grid_dir / f"fh{fh0:03d}.l0.meta.json"
 
     results: list[BenchmarkResult] = []
 
     # 1. Single-point
-    results.append(_bench_single(cog_path, frame_path, meta_path, anchor, bench_var))
+    results.append(_bench_single(cog_path, frame_path, meta_path, model_norm, anchor, bench_var))
 
     # 2. 100-point batch
-    points_100 = _scatter_points(anchors, 100, published_root, target_run, bench_var)
+    points_100 = _scatter_points(anchors, 100, published_root, model_norm, target_run, bench_var)
     results.append(_bench_batch(cog_path, frame_path, meta_path, points_100,
-                                bench_var, label="100-point batch"))
+                                model_norm, bench_var, label="100-point batch"))
 
     # 3. 1000-point batch
-    points_1000 = _scatter_points(anchors, 1000, published_root, target_run, bench_var)
+    points_1000 = _scatter_points(anchors, 1000, published_root, model_norm, target_run, bench_var)
     results.append(_bench_batch(cog_path, frame_path, meta_path, points_1000,
-                                bench_var, label="1000-point batch"))
+                                model_norm, bench_var, label="1000-point batch"))
 
     # 4. Meteogram simulation: 85–105 sequential frames, single point
-    results.append(_bench_meteogram(published_root, target_run, bench_var, fh_values,
+    results.append(_bench_meteogram(published_root, model_norm, target_run, bench_var, fh_values,
                                     anchor, workers))
 
     return results
@@ -773,6 +800,7 @@ def _bench_single(
     cog_path: Path,
     frame_path: Path,
     meta_path: Path,
+    model: str,
     anchor: AnchorPoint,
     var: str,
 ) -> BenchmarkResult:
@@ -791,7 +819,7 @@ def _bench_single(
         try:
             read_binary_sample_value(
                 frame_path, meta_path,
-                model=MODEL, var=var,
+                model=model, var=var,
                 lat=anchor.lat, lon=anchor.lon,
             )
         except Exception:
@@ -806,6 +834,7 @@ def _bench_batch(
     frame_path: Path,
     meta_path: Path,
     points: list[AnchorPoint],
+    model: str,
     var: str,
     *,
     label: str,
@@ -825,7 +854,7 @@ def _bench_batch(
         try:
             read_binary_sample_value(
                 frame_path, meta_path,
-                model=MODEL, var=var,
+                model=model, var=var,
                 lat=pt.lat, lon=pt.lon,
             )
         except Exception:
@@ -837,6 +866,7 @@ def _bench_batch(
 
 def _bench_meteogram(
     published_root: Path,
+    model: str,
     run: str,
     var: str,
     fh_values: list[int],
@@ -853,12 +883,13 @@ def _bench_meteogram(
     cog_times: list[float] = []
     bin_times: list[float] = []
 
-    var_dir = published_root / MODEL / run / var
+    model_norm = _normalize_model(model)
+    var_dir = published_root / model_norm / run / var
     grid_dir = var_dir / "grid"
 
     for fh in fh_subset:
         c_path = var_dir / f"fh{fh:03d}.val.cog.tif"
-        bin_name = _binary_frame_filename(var, fh)
+        bin_name = _binary_frame_filename(model_norm, var, fh)
         f_path = grid_dir / bin_name
         m_path = grid_dir / f"fh{fh:03d}.l0.meta.json"
 
@@ -875,7 +906,7 @@ def _bench_meteogram(
             if f_path.is_file() and m_path.is_file():
                 read_binary_sample_value(
                     f_path, m_path,
-                    model=MODEL, var=var,
+                    model=model_norm, var=var,
                     lat=anchor.lat, lon=anchor.lon,
                 )
         except Exception:
@@ -889,6 +920,7 @@ def _scatter_points(
     anchors: list[AnchorPoint],
     count: int,
     published_root: Path,
+    model: str,
     run: str,
     var: str,
 ) -> list[AnchorPoint]:
@@ -896,7 +928,7 @@ def _scatter_points(
     if len(anchors) >= count:
         return anchors[:count]
 
-    var_dir = published_root / MODEL / run / var
+    var_dir = published_root / _normalize_model(model) / run / var
     bbox = (-125.0, 24.0, -66.0, 50.0)
     for cog_path in sorted(var_dir.glob("fh*.val.cog.tif")):
         try:
@@ -961,14 +993,16 @@ def _build_benchmark(
 
 def _estimate_comparison_count(
     published_root: Path,
+    model: str,
+    scope: list[str],
     runs: list[str],
     anchors: list[AnchorPoint],
 ) -> int:
     """Estimate total comparisons without sampling."""
     estimate = 0
     for run in runs:
-        for var in GFS_SCOPE:
-            fh_values = _discover_frames_for_run_var(published_root, run, var)
+        for var in scope:
+            fh_values = _discover_frames_for_run_var(published_root, model, run, var)
             if fh_values:
                 estimate += len(fh_values) * len(anchors)
     return estimate
@@ -988,7 +1022,7 @@ def _exit_code(
         2 – requested run missing
         3 – no comparisons performed
         4 – blocking: binary frame/meta file missing, Group 1 divergence,
-            or Group 3 categorical divergence
+            Group 3 categorical divergence, or Group 4 categorical divergence
     """
     if missing_run:
         return 2
@@ -1023,8 +1057,17 @@ def _exit_code(
     if group3_div > 0:
         logger.error(
             "%d Group 3 divergence(s) — categorical match expected "
-            "for ptype_intensity (after rounding)",
+            "for upscaled categorical variables (after rounding)",
             group3_div,
+        )
+        return 4
+
+    group4_div = int(by_group.get("4", 0))
+    if group4_div > 0:
+        logger.error(
+            "%d Group 4 divergence(s) — categorical match expected "
+            "for non-upscaled categorical variables (after rounding)",
+            group4_div,
         )
         return 4
 
@@ -1055,7 +1098,7 @@ def _metrics_report(
     bin_no_value = int(stats.get("binary_no_value_samples", 0))
 
     report: dict[str, Any] = {
-        "model": MODEL,
+        "model": stats.get("model", DEFAULT_MODEL),
         "runs": stats.get("runs", []),
         "runs_found": stats.get("runs_found", 0),
         "total_comparisons": total,
@@ -1088,8 +1131,13 @@ def _metrics_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Phase D canary: shadow-compare COG vs binary sampling for GFS.",
+        description="Phase D/Phase G canary: shadow-compare COG vs binary sampling.",
         parents=[_early_parser],
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help="Model id to compare (default: gfs)",
     )
     parser.add_argument(
         "--log-divergences",
@@ -1130,6 +1178,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     _setup_logging(verbose=args.verbose)
+    model = _normalize_model(args.model)
+    scope = _scope_for_model(model)
+    if not scope:
+        logger.error("No grid packing scope found for model: %s", model)
+        sys.exit(1)
 
     data_root = Path(args.data_root).expanduser().resolve()
     published_root = data_root / "published"
@@ -1140,25 +1193,25 @@ def main() -> None:
     # ── Run selection ───────────────────────────────────────────────
     missing_run = False
     if args.run:
-        run_dir = published_root / MODEL / args.run
+        run_dir = published_root / model / args.run
         if not run_dir.is_dir() or not RUN_ID_RE.match(args.run):
             logger.error("Requested run not found or invalid: %s", args.run)
             sys.exit(2)
         all_runs = [args.run]
         logger.info("Processing single run: %s", args.run)
     else:
-        all_runs = _discover_runs(published_root)
+        all_runs = _discover_runs(published_root, model)
         if not all_runs:
-            logger.error("No published GFS runs found under %s", published_root)
+            logger.error("No published %s runs found under %s", model, published_root)
             sys.exit(3)
 
     # ── Safety warning for full-run mode ────────────────────────────
     if not args.run and not args.sample_limit:
         logger.warning(
             "No --run or --sample-limit provided — will process ALL %d retained "
-            "GFS run(s). This may run for a long time. Use --sample-limit for "
+            "%s run(s). This may run for a long time. Use --sample-limit for "
             "a quick sanity check or --run to target a single run.",
-            len(all_runs),
+            len(all_runs), model,
         )
 
     # ── Anchors ─────────────────────────────────────────────────────
@@ -1169,26 +1222,32 @@ def main() -> None:
         sys.exit(1)
 
     # ── Tolerance groups ────────────────────────────────────────────
-    group_index = _build_group_index()
+    group_index = _build_group_index(model, scope)
     group1 = [v for v, g in group_index.items() if g == 1]
     group2 = [v for v, g in group_index.items() if g == 2]
     group3 = [v for v, g in group_index.items() if g == 3]
-    logger.info("Tolerance groups: Group-1=%d vars, Group-2=%d vars, Group-3=%d vars",
-                len(group1), len(group2), len(group3))
+    group4 = [v for v, g in group_index.items() if g == 4]
+    logger.info(
+        "Tolerance groups: Group-1=%d vars, Group-2=%d vars, Group-3=%d vars, Group-4=%d vars",
+        len(group1), len(group2), len(group3), len(group4),
+    )
     logger.debug("Group 1: %s", ", ".join(group1))
     logger.debug("Group 2: %s", ", ".join(group2))
     logger.debug("Group 3: %s", ", ".join(group3))
+    logger.debug("Group 4: %s", ", ".join(group4))
 
     # ── Estimate ────────────────────────────────────────────────────
-    estimate = _estimate_comparison_count(published_root, all_runs, anchors)
+    estimate = _estimate_comparison_count(published_root, model, scope, all_runs, anchors)
     logger.info(
         "Estimated comparison count: ~%d (runs=%d × max vars=%d × frames × anchors=%d)",
-        estimate, len(all_runs), len(GFS_SCOPE), len(anchors),
+        estimate, len(all_runs), len(scope), len(anchors),
     )
 
     # ── Core comparison ────────────────────────────────────────────
     stats = _run_comparison(
         published_root,
+        model,
+        scope,
         all_runs,
         anchors,
         group_index,
@@ -1201,7 +1260,7 @@ def main() -> None:
     if not args.skip_benchmarks:
         logger.info("Running performance benchmarks...")
         bench_run = all_runs[-1]
-        benchmarks = _run_benchmarks(published_root, anchors, bench_run, args.workers)
+        benchmarks = _run_benchmarks(published_root, model, anchors, bench_run, args.workers)
         for bm in benchmarks:
             logger.info(
                 "Bench %s: COG avg=%.2f ms  p95=%.2f ms | "
@@ -1214,12 +1273,19 @@ def main() -> None:
     # ── Summary ────────────────────────────────────────────────────
     report = _metrics_report(stats, benchmarks)
     report["anchor_count"] = len(anchors)
-    report["scope_variable_count"] = len(GFS_SCOPE)
-    report["scope_variables"] = GFS_SCOPE
+    report["scope_variable_count"] = len(scope)
+    report["scope_variables"] = scope
     report["tolerance_groups"] = {
         "group_1": group1,
         "group_2": group2,
         "group_3": group3,
+        "group_4": group4,
+    }
+    report["tolerance_group_descriptions"] = {
+        "group_1": "No display-prep entry; continuous; exact within scale/2.",
+        "group_2": "Display-prep entry with upscale_factor > 1; continuous; boundary-tolerant numeric comparison.",
+        "group_3": "Display-prep entry with upscale_factor > 1 and categorical_nearest=True; boundary-tolerant integer-category comparison.",
+        "group_4": "Display-prep entry with categorical_nearest=True and no upscale; strict integer-category equality.",
     }
     if args.sample_limit:
         report["sample_limit"] = args.sample_limit

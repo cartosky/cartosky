@@ -219,6 +219,62 @@ Per this migration's own explicit decision (no backfill of already-published fra
 
 **Before flipping the allowlist for any future model, explicitly check:** was a packing-table fix made at any point during that model's canary window? If yes, either wait for full retention turnover before flipping, or make a deliberate, informed decision to accept a known, bounded, self-resolving regression window — do not flip without having asked this question.
 
+### Phase G audit — HRRR and NBM static readiness
+
+This audit covers the model-specific discovery work required before running either model's canary. It does **not** start a canary, add either model to `CARTOSKY_BINARY_SAMPLING_MODELS`, or change `pipeline.py` cutover behavior.
+
+#### HRRR
+
+Packing scope from `_PACKING_BY_MODEL_VAR` is 23 variables:
+
+`dp2m`, `mlcape`, `mucape`, `precip_total`, `pwat`, `radar_ptype`, `radar_ptype_frzr`, `radar_ptype_rain`, `radar_ptype_sleet`, `radar_ptype_snow`, `rh2m`, `rh700`, `sbcape`, `snowfall_kuchera_total`, `snowfall_total`, `tmp2m`, `tmp850`, `tmp850_anom`, `vort500`, `wgst10m`, `wspd10m`, `wspd300`, `wspd850`.
+
+Catalog cross-reference: all packed HRRR variables are present in `HRRR_VARS`. The four `radar_ptype_*` component variables are catalog entries but are marked `internal_only` and `buildable=False` in `HRRR_VARIABLE_CATALOG`, matching their role as internal composite layers rather than direct user-facing products. No HRRR variables are registered through a hidden model loop in `grid.py`; the packed HRRR scope is represented by literal `("hrrr", var)` entries.
+
+Packing constants checked:
+
+| Variable | Checked result |
+|---|---|
+| `vort500` | Correctly packed with `offset=-100.0`; no repeat of the earlier GFS signed-vorticity bug. |
+| `tmp850_anom` | Correctly packed with `offset=-80.0`. |
+| All HRRR packed variables | `uint16`; no HRRR variable uses `uint8`. |
+
+Tolerance groups for the generalized canary:
+
+| Group | HRRR variables |
+|---|---|
+| Group 1 | `dp2m`, `mlcape`, `mucape`, `precip_total`, `pwat`, `rh2m`, `rh700`, `sbcape`, `snowfall_kuchera_total`, `snowfall_total`, `tmp2m`, `tmp850`, `tmp850_anom`, `vort500`, `wgst10m`, `wspd10m`, `wspd300`, `wspd850` |
+| Group 2 | `radar_ptype_frzr`, `radar_ptype_rain`, `radar_ptype_sleet`, `radar_ptype_snow` |
+| Group 3 | None |
+| Group 4 | `radar_ptype` |
+
+The `radar_ptype` Group 4 classification is intentional and structurally distinct from GFS's old categorical group: `grid_display_prep_config("hrrr", "radar_ptype")` has `upscale_factor=1` and `categorical_nearest=True`. There is no resolution difference between the value COG and the grid binary for this variable, so the canary should require strict integer-category equality and treat any divergence as blocking. The four `radar_ptype_rain/snow/sleet/frzr` component variables each have `upscale_factor=3` and `categorical_nearest=False`, so they are Group 2 continuous-upscale variables.
+
+Storage measurement status: blocked in this local workspace. The production path used for the GFS measurement, `/opt/cartosky/data/published`, is not mounted here (`/opt/cartosky` does not exist). The only local HRRR tree found was `/Users/brianaustin/cartosky/data/v3/published/hrrr`, an old partial PNW fixture measuring 2.3 MB; this is **not** a production retention footprint and must not be used for a storage-win claim. Before HRRR canary/cutover planning continues, run the same Section 6 `du -sh` production measurement against the real retained HRRR runs and the HRRR `*.val.cog.tif` subset.
+
+#### NBM
+
+Packing scope from `_PACKING_BY_MODEL_VAR` is 5 variables:
+
+`precip_total`, `sbcape`, `snowfall_total`, `tmp2m`, `wspd10m`.
+
+Catalog cross-reference: the packed variables are the real buildable NBM products in `NBM_VARIABLE_CATALOG`. `NBM_VARS` also contains source/component entries (`10u`, `10v`, `10si`, `apcp_step`, `asnow_step`) used to derive the buildable products, including `wspd10m` from the wind components. No NBM variables are registered through a hidden model loop in `grid.py`, and there is no GFS-style hidden scope gap.
+
+Packing constants and dtype check: all NBM packed variables use `uint16`; no NBM variable uses `uint8`.
+
+Tolerance groups for the generalized canary:
+
+| Group | NBM variables |
+|---|---|
+| Group 1 | `sbcape`, `tmp2m`, `wspd10m` |
+| Group 2 | `precip_total`, `snowfall_total` |
+| Group 3 | None |
+| Group 4 | None |
+
+`precip_total` and `snowfall_total` both have `upscale_factor=3` and `categorical_nearest=False`, matching the continuous-upscale Group 2 pattern. No NBM variable falls into Group 3 or Group 4.
+
+Storage measurement status: blocked in this local workspace. No local or production NBM published tree was available (`/opt/cartosky/data/published` is absent, and `/Users/brianaustin/cartosky/data/v3/published/nbm` does not exist). Before NBM canary/cutover planning continues, run the same Section 6 `du -sh` production measurement against the real retained NBM runs and the NBM `*.val.cog.tif` subset.
+
 ---
 
 ## 4a. Future hardening — not blockers for this migration

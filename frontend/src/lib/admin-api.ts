@@ -180,15 +180,6 @@ export type StatusRunDetailResponse = {
   result: StatusResult;
 };
 
-export type StatusQaSummaryResponse = {
-  store_mode: "shared" | "separate";
-  db_path: string;
-  total_reviews: number;
-  warning_reviews: number;
-  distinct_runs: number;
-  latest_checked_at: number | null;
-};
-
 export type AdminObservabilitySummaryResponse = {
   metrics_enabled: boolean;
   http: {
@@ -415,8 +406,4 @@ export async function fetchAdminStatusRunDetail(params: {
   search.set("model", params.model);
   search.set("run", params.run);
   return fetchAdminJson<StatusRunDetailResponse>(`${API_ORIGIN}/api/v4/admin/status/run?${search.toString()}`);
-}
-
-export async function fetchAdminStatusQaSummary(): Promise<StatusQaSummaryResponse> {
-  return fetchAdminJson<StatusQaSummaryResponse>(`${API_ORIGIN}/api/v4/admin/status/qa-summary`);
 }

@@ -2087,14 +2087,6 @@ async def admin_status_run_detail(
     }
 
 
-@app.get("/api/v4/admin/status/qa-summary")
-async def admin_status_qa_summary(
-    request: Request,
-    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
-) -> dict[str, Any]:
-    return admin_telemetry.get_status_qa_summary()
-
-
 ROADMAP_PATH = Path("/var/lib/cartosky/roadmap.json")
 
 
