@@ -539,11 +539,73 @@ export async function fetchModels(options?: FetchOptions): Promise<ModelOption[]
   return fetchJson<ModelOption[]>(`${API_V4_BASE}/models`, options);
 }
 
+const CAPABILITIES_CACHE_KEY = "twf_v4_capabilities_cache";
+const CAPABILITIES_ETAG_KEY = "twf_v4_capabilities_etag";
+
 export async function fetchCapabilities(options?: FetchOptions): Promise<CapabilitiesResponse> {
-  return fetchJson<CapabilitiesResponse>(`${API_V4_BASE}/capabilities`, {
-    ...options,
-    diagnosticMetricName: options?.diagnosticMetricName ?? "capabilities_fetch_duration",
+  const cachedRaw = localStorage.getItem(CAPABILITIES_CACHE_KEY);
+  const etag = localStorage.getItem(CAPABILITIES_ETAG_KEY);
+  const headers: Record<string, string> = {};
+  if (etag && cachedRaw) {
+    headers["If-None-Match"] = etag;
+  }
+
+  const startedAtMs = startNetworkTimer();
+  const response = await publicFetch(`${API_V4_BASE}/capabilities`, {
+    credentials: "omit",
+    headers,
+    signal: options?.signal,
+    cache: "no-store",
   });
+  trackNetworkFetchDuration({
+    metric_name: options?.diagnosticMetricName ?? "capabilities_fetch_duration",
+    started_at_ms: startedAtMs,
+    response,
+    meta: {
+      ...(options?.diagnosticMeta ?? {}),
+      had_cached_capabilities: Boolean(cachedRaw),
+      had_if_none_match: Boolean(etag && cachedRaw),
+    },
+  });
+
+  if (response.status === 304 && cachedRaw) {
+    try {
+      return JSON.parse(cachedRaw) as CapabilitiesResponse;
+    } catch {
+      localStorage.removeItem(CAPABILITIES_CACHE_KEY);
+      localStorage.removeItem(CAPABILITIES_ETAG_KEY);
+    }
+  }
+
+  if (!response.ok) {
+    if (cachedRaw) {
+      try {
+        return JSON.parse(cachedRaw) as CapabilitiesResponse;
+      } catch {
+        // fall through to the error below
+      }
+    }
+    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const payload = (await response.json()) as CapabilitiesResponse;
+  const nextEtag = response.headers.get("ETag");
+  const cacheControl = (response.headers.get("Cache-Control") ?? "").toLowerCase();
+  // Only cache responses the server marks shareable; when pro gating is enabled the
+  // backend serves per-user availability as "private, no-store" without an ETag.
+  const cacheable = Boolean(nextEtag) && !cacheControl.includes("no-store") && !cacheControl.includes("private");
+  try {
+    if (cacheable && nextEtag) {
+      localStorage.setItem(CAPABILITIES_CACHE_KEY, JSON.stringify(payload));
+      localStorage.setItem(CAPABILITIES_ETAG_KEY, nextEtag);
+    } else {
+      localStorage.removeItem(CAPABILITIES_CACHE_KEY);
+      localStorage.removeItem(CAPABILITIES_ETAG_KEY);
+    }
+  } catch {
+    // localStorage quota or private-mode failures must never break capabilities.
+  }
+  return payload;
 }
 
 export async function fetchBootstrap(params?: {

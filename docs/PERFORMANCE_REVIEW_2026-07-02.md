@@ -236,7 +236,7 @@ smaller and lower risk; runs+manifest parallelization removed — already implem
 | # | Change | Fixes | Effort | Expected win |
 |---|---|---|---|---|
 | 1 | Simplify+round CPC/SPC vector GeoJSON at publish, republish + CF purge | CPC 20–30 s load | S | 20–30 s → ~1–2 s **[measured 95% payload cut]** — ✅ implemented 2026-07-02 |
-| 2 | Capabilities ETag/localStorage caching (copy region-presets pattern) | Load time | S | −300–600 ms every visit |
+| 2 | Capabilities ETag/localStorage caching (copy region-presets pattern) | Load time | S | −300–600 ms every visit — ✅ implemented 2026-07-02 (304 verified: 300 B vs 120 KB) |
 | 3 | Scrub prefetch pivots on live scrub target; promote committed frame; reduce scrub-time React churn (memo heavy children) | Scrub lag/jank | S–M | Biggest scrub-feel win |
 | 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where CPU+GPU budgets allow) | Animation stutter, scrub misses | M | Zero-network playback after warm |
 | 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | Fewer main-thread stalls |
