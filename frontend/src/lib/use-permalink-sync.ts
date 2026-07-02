@@ -18,6 +18,12 @@ export interface UsePermalinkSyncParams {
   ensembleView: string | null;
   resolvedForecastHourPermalink: number | null;
   region: string | null;
+  /**
+   * While true, URL write-back is paused (hydration detection still runs).
+   * Used during autoplay so history.replaceState doesn't fire every UI tick;
+   * when it flips back to false the effect re-runs and flushes the final state.
+   */
+  suspended?: boolean;
 }
 
 /**
@@ -41,6 +47,7 @@ export function usePermalinkSync({
   ensembleView,
   resolvedForecastHourPermalink,
   region,
+  suspended = false,
 }: UsePermalinkSyncParams): void {
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
 
@@ -73,6 +80,9 @@ export function usePermalinkSync({
     if (suppressNextUrlSyncRef.current) {
       suppressNextUrlSyncRef.current = false;
       lastSyncedPermalinkSearchRef.current = window.location.search;
+      return;
+    }
+    if (suspended) {
       return;
     }
 
@@ -118,5 +128,6 @@ export function usePermalinkSync({
     resolvedForecastHourPermalink,
     region,
     mapViewTick,
+    suspended,
   ]);
 }

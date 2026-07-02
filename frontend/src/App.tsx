@@ -5316,6 +5316,7 @@ export default function App() {
     ensembleView,
     resolvedForecastHourPermalink,
     region,
+    suspended: isPlaying || isGridPreloadingForPlay,
   });
 
   const compareHref = useMemo(() => {

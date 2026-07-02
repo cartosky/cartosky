@@ -164,11 +164,14 @@ scrubbing pays full price.
 **Fix:** memoize the heavy children + stabilize their callback props. Cheap, measurable
 with React Profiler.
 
-### 3e. Permalink sync during autoplay **[code-read]**
+### 3e. Permalink sync during autoplay **[✅ implemented 2026-07-02]**
 
-[use-permalink-sync.ts:80-104](frontend/src/lib/use-permalink-sync.ts:80) calls
-`history.replaceState()` every ~200 ms while playing. Skip URL sync while
-`isPlaying`, flush once on stop.
+[use-permalink-sync.ts](frontend/src/lib/use-permalink-sync.ts) called
+`history.replaceState()` every ~200 ms while playing. The hook now takes a `suspended`
+flag (App passes `isPlaying || isGridPreloadingForPlay`); while suspended no writes are
+scheduled, and when playback stops the effect re-runs and flushes the final state once.
+Verified in-browser: 0 writes during a playback run, exactly 1 flush on stop with the
+correct final `fh`.
 
 ### 3f. Minor
 - WebGL1 fallback expands uint16→RGBA in a main-thread loop
@@ -257,7 +260,7 @@ smaller and lower risk; runs+manifest parallelization removed — already implem
 | 2 | Capabilities ETag/localStorage caching (copy region-presets pattern) | Load time | S | −300–600 ms every visit — ✅ implemented 2026-07-02 (304 verified: 300 B vs 120 KB) |
 | 3 | Reduce scrub-time React churn (dead scrub state removed, controls memoized); pivot-on-target found already implemented | Scrub lag/jank | S–M | ✅ implemented 2026-07-02 (per-pixel App re-renders eliminated) |
 | 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where budget allows) | Animation stutter, scrub misses | M | ✅ implemented 2026-07-02 (verified: 25/25 frames warmed idle, 0 network requests during playback+scrub) |
-| 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | Fewer main-thread stalls |
+| 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | ✅ implemented 2026-07-02 (0 URL writes during play, single flush on stop) |
 | 6 | Backend: cache manifest scans, JSON TTL 1→10 s, GDAL LRU 64 + GDAL_CACHEMAX | Origin tail latency, swap pressure | S | Removes FS scans from hot path |
 | 7 | Per-product first-paint RUM metric | Diagnosing reports like "SPC is slow" | S | Observability |
 | 8 | Evaluate booting viewer from /bootstrap | Load time | M | ~1 fewer dependent round trip |
