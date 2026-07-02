@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from app.models.spc import SPC_MODEL
 from app.services.publish_utils import promote_run, write_json_atomic, write_latest_pointer, write_run_manifest
 from app.services.run_ids import format_run_id
+from app.services.vector_simplify import simplify_vector_features
 
 logger = logging.getLogger(__name__)
 
@@ -580,7 +581,11 @@ def publish_spc_products_bundle(
         for frame in sorted(frames, key=lambda item: int(item.fh)):
             total_frames += 1
             latest_valid_time = frame.valid_time if latest_valid_time is None else max(latest_valid_time, frame.valid_time)
-            write_json_atomic(vector_root / f"fh{frame.fh:03d}.geojson", {"type": "FeatureCollection", "features": frame.features})
+            write_json_atomic(
+                vector_root / f"fh{frame.fh:03d}.geojson",
+                {"type": "FeatureCollection", "features": simplify_vector_features(frame.features)},
+                compact=True,
+            )
             write_json_atomic(var_root / f"fh{frame.fh:03d}.json", _build_product_frame_sidecar(run_id=run_id, product=product, frame=frame))
             targets.append((var_id, frame.fh))
 

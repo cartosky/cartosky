@@ -13,10 +13,14 @@ from typing import Any
 from .run_ids import format_run_id, parse_run_id_datetime
 logger = logging.getLogger(__name__)
 
-def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+def write_json_atomic(path: Path, payload: dict[str, Any], *, compact: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
+    if compact:
+        text = json.dumps(payload, separators=(",", ":"), sort_keys=False)
+    else:
+        text = json.dumps(payload, indent=2, sort_keys=False)
+    tmp.write_text(text + "\n")
     tmp.replace(path)
 
 

@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from app.models.cpc import CPC_MODEL
 from app.services.publish_utils import promote_run, write_json_atomic, write_latest_pointer, write_run_manifest
 from app.services.run_ids import format_run_id
+from app.services.vector_simplify import simplify_vector_features
 
 logger = logging.getLogger(__name__)
 
@@ -577,6 +578,22 @@ def _link_or_copy(source: Path, target: Path) -> None:
 
 
 def _copy_preserved_run_artifact(source: Path, target: Path, *, run_id: str, source_run_id: str) -> None:
+    if source.suffix.lower() == ".geojson":
+        # Re-simplify preserved vectors so pre-existing unsimplified payloads
+        # (published before geometry reduction landed) shrink on the next
+        # publish cycle instead of waiting for their product to be reissued.
+        try:
+            payload = json.loads(source.read_text())
+        except (OSError, json.JSONDecodeError):
+            _link_or_copy(source, target)
+            return
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if not isinstance(features, list):
+            _link_or_copy(source, target)
+            return
+        payload["features"] = simplify_vector_features(features)
+        write_json_atomic(target, payload, compact=True)
+        return
     if source_run_id == run_id or source.suffix.lower() != ".json":
         _link_or_copy(source, target)
         return
@@ -628,7 +645,11 @@ def cache_cpc_outlook(data_root: Path, outlook: CPCOutlookPayload, *, run_id: st
     var_root = data_root / "staging" / CPC_MODEL_ID / run_id / outlook.product.var_id
     vector_root = var_root / "vectors"
     vector_root.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(vector_root / "fh000.geojson", {"type": "FeatureCollection", "features": outlook.features})
+    write_json_atomic(
+        vector_root / "fh000.geojson",
+        {"type": "FeatureCollection", "features": simplify_vector_features(outlook.features)},
+        compact=True,
+    )
     write_json_atomic(var_root / "fh000.json", _build_frame_sidecar(run_id=run_id, outlook=outlook))
 
 
