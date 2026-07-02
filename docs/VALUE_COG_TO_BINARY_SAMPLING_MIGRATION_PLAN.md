@@ -302,6 +302,27 @@ Per-forecast-hour profile (aggregated across all variables and all 6 retained ru
 
 Retention-turnover note for the packing-fix addendum: 6 retained runs at 3-hour cadence gives NBM a full retention turnover of roughly **18-19 hours** after a packing fix — between HRRR's ~6-7 hours and GFS's 24-30 hours.
 
+#### Phase G checklist status — HRRR and NBM (as of 2026-07-02)
+
+| Checklist item | HRRR | NBM |
+|---|---|---|
+| 1-4 — static audit (packing enumeration, catalog cross-reference, display-prep enumeration, structural differences) | Complete (this section) | Complete (this section) |
+| 5 — re-run Layers 1-4 | **Layers 1-2 complete**; Layers 3-4 pending | **Layers 1-2 complete**; Layers 3-4 pending |
+| 6 — add to `CARTOSKY_BINARY_SAMPLING_MODELS` | Not yet — gated on item 5 completing | Not yet — gated on item 5 completing |
+| 7 — prod storage measurement | Complete (measured above) | Complete (measured above) |
+
+**Layers 1-2 implementation, completed 2026-07-02.** The static audit above was independently re-verified at runtime during this work and confirmed in full: 23 literal HRRR entries, 5 literal NBM entries, no loop-registered entries for either model (the registration loops cover gfs/ecmwf/aigfs/gefs/aifs/eps/ndfd/wpc only), all uint16, `vort500` `offset=-100.0`, `tmp850_anom` `offset=-80.0`, and all tolerance-group assignments match `grid_display_prep_config` exactly. What was built:
+
+- `test_grid_value_decode.py` is now parameterized over `("gfs", "hrrr", "nbm")` with per-model variable lists derived from `_PACKING_BY_MODEL_VAR` at collection time (future packing additions are covered automatically), all assertions through `_decode_values()`, in-range values generated from each variable's own packing band so negative-offset variables exercise negative values automatically, plus a guard test that HRRR/NBM remain all-uint16 so a future `uint8` addition forces a re-audit.
+- `test_binary_sampler_parity.py` fixture helpers generalized to take transform/projection (GFS tests unchanged); HRRR and NBM fixtures use each model's real grid geometry (`MODEL_REGISTRY` + `get_grid_params` + `compute_transform_and_shape` — 3 km and 13 km CONUS respectively, EPSG:3857), not GFS geometry. Group 1/2/4 parity assertions per the group tables above, including strict integer-category equality for `radar_ptype` (Group 4) at interior, near-boundary, and on-boundary points. A partition test pins this section's group tables to the live display-prep config, so an unaudited new variable fails loudly. Also fixed a latent EPSG:4326 assumption in the test file's `_meta_index` helper that broke on projected meta transforms.
+- Tolerance-group classification extracted to a shared helper, `sampling_tolerance_group()` in `grid_display_prep.py`, deriving group 1/2/3/4 purely from `upscale_factor` × `categorical_nearest` with no model or variable names; the canary script's `_classify_variable` now delegates to it; covered by its own unit test fed synthetic configs for all four group shapes.
+- Verification: 287 tests passing across the four affected suites (146 new HRRR/NBM parameterizations); 26 failures in adjacent suites confirmed via stash-diff to be pre-existing on main, not regressions.
+
+**Correction to the record on Group 4 novelty.** The working assumption going into the item 5 implementation (stated in that task's prompt, not in this document) was that Group 4 assertion logic "does not exist yet anywhere." This was wrong: the canary script already contained config-derived Group 4 classification, integer-equality divergence checking, and blocking exit-code logic. What item 5 genuinely added was Group 4 *parity-test* coverage and the extraction of classification into the shared, unit-tested helper. Recorded per this document's convention of documenting corrections in place rather than silently absorbing them.
+
+**Remaining sequence before either model's allowlist flip:** deploy the item 5 changes to prod (the shared helper and the canary script's delegation to it are production-adjacent code the shadow script depends on); run each model's 4-cycle Layer 3 canary using the leaner protocol from the addendum above (the two canaries may run concurrently; HRRR's window should include at least one 48-hour extended cycle so fh019-048 frames are exercised; point lists must be filtered to each model's CONUS bbox so out-of-coverage points register as expected-missing rather than divergence noise); gather Phase C parallel-gate evidence on HRRR and NBM frames during the same window; extend and run Layer 4 meteogram integration per model (NBM's fh264 range is the longest sequential-read pattern the binary path has yet faced); apply the packing-fix retroactivity check from the addendum above; then and only then, checklist item 6.
+
+
 ---
 
 ## 4a. Future hardening — not blockers for this migration

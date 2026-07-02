@@ -36,7 +36,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import type { GroupedOption } from "@/lib/app-utils";
+import { supportsNwsWarningsOverlay, type GroupedOption } from "@/lib/app-utils";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { API_V4_BASE } from "@/lib/config";
 import { useFeedbackContext } from "@/lib/feedback-context";
@@ -1260,7 +1260,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                   checked={pointLabelsEnabled}
                   onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
                 />
-                {model === "mrms" ? (
+                {supportsNwsWarningsOverlay(model, variable) ? (
                   <DisplayRow
                     label="NWS Warnings"
                     icon={TriangleAlert}
@@ -1599,7 +1599,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           checked={pointLabelsEnabled}
           onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
         />
-        {model === "mrms" ? (
+        {supportsNwsWarningsOverlay(model, variable) ? (
           <DisplayRow
             label="NWS Warnings"
             icon={TriangleAlert}

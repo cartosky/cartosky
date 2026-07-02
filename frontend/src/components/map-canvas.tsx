@@ -1782,7 +1782,10 @@ export function MapCanvas({
         aheadTarget = Math.min(remainingAhead, 1);
       }
     } else if (mode === "autoplay") {
-      aheadTarget = Math.min(remainingAhead, 8);
+      // When the whole run fits the cache budget, keep warming the full
+      // timeline during playback — autoplay ordering is sequential-ahead, so
+      // upcoming frames still download first and the tail fills in behind.
+      aheadTarget = gridIdleWarmupFullRun ? remainingAhead : Math.min(remainingAhead, 8);
       behindTarget = Math.min(remainingBehind, 2);
     } else if (mode === "variable-switch") {
       aheadTarget = Math.min(remainingAhead, 6);
@@ -2010,7 +2013,13 @@ export function MapCanvas({
       sampled: citySampled,
     });
     if (outcome.kind === "direct") {
-      updateCityValueLabels(map, cityPoints, outcome.values, outcome.units);
+      updateCityValueLabels(
+        map,
+        cityPoints,
+        outcome.values,
+        outcome.units,
+        (value) => latest.sampler.valueRendersTransparent(value),
+      );
       markCityLabelsReady();
     } else {
       const fallback = onCityFrameSampledRef.current;

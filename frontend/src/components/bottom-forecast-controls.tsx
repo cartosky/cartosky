@@ -25,6 +25,8 @@ import {
 type BottomForecastControlsProps = {
   forecastHour: number;
   availableFrames: number[];
+  /** Frame hours whose data is already cached locally (drives the buffered track). */
+  bufferedFrameHours?: number[];
   onForecastHourChange: (fh: number, reason?: "standard" | "scrub-live" | "scrub-commit") => void;
   onScrubStateChange?: (isScrubbing: boolean) => void;
   isPlaying: boolean;
@@ -57,6 +59,37 @@ type BottomForecastControlsProps = {
   runIncompleteDescription?: string | null;
   runIncompleteTone?: ObservedSourceStatusTone | null;
 };
+
+/**
+ * Map buffered frame hours onto slider-track fractions. The slider operates in
+ * index space (value = index into `frames`), so contiguous runs of buffered
+ * indices become [start, end] fractions; each index covers a half-step either
+ * side so single buffered frames stay visible.
+ */
+function computeBufferedRanges(frames: number[], buffered: number[] | undefined): Array<[number, number]> {
+  if (!buffered || buffered.length === 0 || frames.length === 0) {
+    return [];
+  }
+  const bufferedSet = new Set(buffered);
+  const count = frames.length;
+  if (count === 1) {
+    return bufferedSet.has(frames[0]) ? [[0, 1]] : [];
+  }
+  const ranges: Array<[number, number]> = [];
+  let runStart: number | null = null;
+  for (let index = 0; index <= count; index += 1) {
+    const isBuffered = index < count && bufferedSet.has(frames[index]);
+    if (isBuffered && runStart === null) {
+      runStart = index;
+    } else if (!isBuffered && runStart !== null) {
+      const left = Math.max(0, runStart - 0.5) / (count - 1);
+      const right = Math.min(count - 1, index - 0.5) / (count - 1);
+      ranges.push([left, right]);
+      runStart = null;
+    }
+  }
+  return ranges;
+}
 
 function formatCpcIssuedDisplay(iso: string | null | undefined): string | null {
   if (!iso) {
@@ -274,6 +307,7 @@ function statusBadgeClass(tone: ObservedSourceStatusTone | null | undefined): st
 export const BottomForecastControls = memo(function BottomForecastControls({
   forecastHour,
   availableFrames,
+  bufferedFrameHours,
   onForecastHourChange,
   onScrubStateChange,
   isPlaying,
@@ -372,6 +406,14 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     const published = availableFrames.filter((frame) => Number.isFinite(frame) && frame <= cappedAvailableForecastHours);
     return published.length > 0 ? published : availableFrames.slice(0, 1);
   }, [availableFrames, cappedAvailableForecastHours, enhancedAvailabilityTrack]);
+  const availableBufferedRanges = useMemo(
+    () => computeBufferedRanges(availableFrames, bufferedFrameHours),
+    [availableFrames, bufferedFrameHours],
+  );
+  const publishedBufferedRanges = useMemo(
+    () => computeBufferedRanges(publishedFrames, bufferedFrameHours),
+    [bufferedFrameHours, publishedFrames],
+  );
   const publishedSliderIndex = Math.max(0, publishedFrames.indexOf(effectiveHour));
   const desktopInteractiveTrackPercent = desktopEnhancedTrack
     ? runIsComplete
@@ -697,6 +739,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                         min={0}
                         max={Math.max(0, (mobileEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
                         step={1}
+                        bufferedRanges={mobileEnhancedTrack ? publishedBufferedRanges : availableBufferedRanges}
                         disabled={disabled || isPlaying || !hasFrames || (mobileEnhancedTrack && publishedFrames.length === 0)}
                         className={cn(
                           "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5",
@@ -847,6 +890,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                           min={0}
                           max={Math.max(0, (desktopEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
                           step={1}
+                          bufferedRanges={desktopEnhancedTrack ? publishedBufferedRanges : availableBufferedRanges}
                           disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && publishedFrames.length === 0)}
                           className={desktopSliderClassName}
                         />

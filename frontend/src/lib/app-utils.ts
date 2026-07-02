@@ -345,6 +345,13 @@ export function defaultBasemapModeForSelection(model: string, variable: string):
   return "light";
 }
 
+// The NWS warnings overlay only applies to radar-derived MRMS variables, not the precip ones.
+const MRMS_RADAR_VARIABLES = new Set(["reflectivity", "mrms_radar_ptype"]);
+
+export function supportsNwsWarningsOverlay(model: string, variable: string): boolean {
+  return model === "mrms" && MRMS_RADAR_VARIABLES.has(variable);
+}
+
 export function readLegendVisibilityPreference(): boolean | null {
   if (typeof window === "undefined") {
     return null;

@@ -428,27 +428,34 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
 
 // Pushes a sampled FeatureCollection to city-value-labels.
 // values: Record<id, number|null>
+// isNoDataValue: when provided, cities whose sampled value would render as
+// no data on the map (e.g. transparent zero precip) are omitted entirely.
 export function updateCityValueLabels(
   map: maplibregl.Map,
   points: CityLabelPoint[],
   values: Record<string, number | null>,
   _units: string,
+  isNoDataValue?: (value: number) => boolean,
 ): void {
   const source = map.getSource(CITY_VALUE_LABELS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
   if (!source) return;
-  const features: GeoJSON.Feature[] = points.map((p) => {
+  const features: GeoJSON.Feature[] = [];
+  for (const p of points) {
     const raw = values[p.id];
     const num = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+    if (num !== null && isNoDataValue?.(num)) {
+      continue;
+    }
     const rounded = num !== null ? Math.round(num * 10) / 10 : null;
     const valueLabel = rounded !== null
       ? Number.isInteger(rounded) ? String(Math.round(rounded)) : rounded.toFixed(1)
       : null;
-    return {
+    features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [p.lng, p.lat] },
       properties: { name: p.name, value_label: valueLabel },
-    };
-  });
+    });
+  }
   source.setData({ type: "FeatureCollection", features });
 }
 

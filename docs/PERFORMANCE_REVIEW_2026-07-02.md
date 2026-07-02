@@ -146,6 +146,19 @@ not the cold-scrub boost. Verified locally: 25/25 MRMS frames warmed while idle 
 exactly one request each (no eviction churn), then a full playback loop + 10 scrub steps
 generated **zero network requests**.
 
+**Extended 2026-07-02 (after user feedback on fresh-run HRRR scrubs):** the warm
+originally paused during scrubbing and capped autoplay prefetch at an 8-frame window, so
+a just-published run scrubbed immediately still stalled. Two changes close that gap for
+budget-fitting forecast runs: the scrub-time boost now warms to the product-aware target
+(100% when the run fits budget) instead of stopping at 70%, and autoplay prefetch
+extends to the full remaining timeline (sequential-ahead ordering keeps upcoming frames
+prioritized). Observed high-res grids keep their windowed scrub budgets. Plus a
+**video-player-style buffered indicator** on the timeline (`bufferedRanges` on the shared
+Slider, driven by `gridReadyHours`) so the warm state is visible instead of guessable.
+Verified on a live 48-frame HRRR run: the buffered bar filled 37% → 100% during a
+continuous 15 s scrub (crossing the old 70% stop point), and a subsequent scrub across
+the warm run made zero network requests.
+
 ### 3c. Playback loop gates on texture readiness **[code-read]**
 
 The rAF loop ([App.tsx:3942-3993](frontend/src/App.tsx:3942)) polls `gridReadyHourSet`

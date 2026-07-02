@@ -12,7 +12,7 @@ const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
 import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
 import { useTour } from "@/hooks/useTour";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
-import { idleWarmupFrameBudgetBytes } from "@/lib/grid-webgl";
+import { gridValueRendersTransparent, idleWarmupFrameBudgetBytes } from "@/lib/grid-webgl";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
 import {
   fetchAnchorFeatureCollection,
@@ -133,6 +133,7 @@ import {
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
   resolveScrubDisplayLagHours,
+  supportsNwsWarningsOverlay,
   writeAnimationDelayPreference,
   // Types
   type NewRunNoticeState,
@@ -2683,7 +2684,7 @@ export default function App() {
   }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
 
   const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(() => String(Date.now()));
-  const mrmsNwsWarningsEnabled = model === "mrms" && nwsWarningsEnabled;
+  const mrmsNwsWarningsEnabled = supportsNwsWarningsOverlay(model, variable) && nwsWarningsEnabled;
   const prevMrmsNwsWarningsEnabledRef = useRef(false);
   const mrmsNwsWarningsIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
@@ -4523,6 +4524,7 @@ export default function App() {
           payload.points,
           result.values,
           result.units,
+          (value) => gridValueRendersTransparent(gridManifest, value),
         );
       })
       .catch((error) => {
@@ -4531,6 +4533,7 @@ export default function App() {
   }, [
     cityLabelMode,
     ensembleView,
+    gridManifest,
     model,
     pointLabelsEnabled,
     resolvedRunForRequests,
@@ -4936,7 +4939,10 @@ export default function App() {
     : 0;
   const showBufferStatus = isGridPreloadingForPlay && gridFrameHours.length > 0;
   const bufferStatusText = `Buffering grid ${preloadBufferedCount}/${preloadTotal}`;
-  const scrubColdPrefetchBoost = isScrubbing && idleWarmupReadyRatio < PRELOAD_START_RATIO;
+  // Keep warming during a scrub until the product-aware warm target is met
+  // (100% for runs that fit the cache budget, 70% otherwise) — stopping at 70%
+  // left fresh runs cold exactly when users scrub them first.
+  const scrubColdPrefetchBoost = isScrubbing && idleWarmupReadyRatio < idleWarmupTargetRatio;
   const scrubLagBurstActive = useMemo(() => {
     const longTimelineFrames = isDesktopViewerLayout
       ? SCRUB_LONG_TIMELINE_FRAMES
@@ -5634,6 +5640,7 @@ export default function App() {
         <BottomForecastControls
           forecastHour={forecastHour}
           availableFrames={controlAvailableFrameHours}
+          bufferedFrameHours={gridReadyHours}
           onForecastHourChange={requestForecastHour}
           onScrubStateChange={setIsScrubbing}
           isPlaying={controlsIsPlaying}

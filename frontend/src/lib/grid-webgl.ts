@@ -581,6 +581,19 @@ function transparentZeroForManifest(manifest: GridManifestResponse | null): bool
   return Boolean(manifest?.palette?.transparent_zero);
 }
 
+/** True when a sampled value would render fully transparent under the
+ *  manifest's palette rules (transparent_below_min / transparent_zero) —
+ *  i.e. the map shows no data at that point, so value labels should too. */
+export function gridValueRendersTransparent(
+  manifest: GridManifestResponse | null,
+  value: number,
+): boolean {
+  if (value <= transparentBelowMinForManifest(manifest)) {
+    return true;
+  }
+  return transparentZeroForManifest(manifest) && value < 0.5;
+}
+
 /** Convert user-facing raster-contrast (−1 … 1) to the shader factor.
  *  Matches MapLibre's internal `contrastFactor()`. */
 function contrastFactor(contrast: number): number {
@@ -2555,6 +2568,12 @@ export class GridWebglLayerController {
         selectionKey: this.currentTextureSelectionKey,
       });
     }
+  }
+
+  /** True when `value` renders fully transparent under the current manifest's
+   *  palette rules — used to hide city value labels where the map shows no data. */
+  valueRendersTransparent(value: number): boolean {
+    return gridValueRendersTransparent(this.manifest, value);
   }
 
   /** Sample anchor-city values from the currently displayed grid frame bytes. */
