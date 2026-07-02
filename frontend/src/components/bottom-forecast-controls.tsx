@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertCircle, GitCompareArrows, MessageSquareText, Pause, Play, Share2, Settings } from "lucide-react";
 
@@ -271,7 +271,7 @@ function statusBadgeClass(tone: ObservedSourceStatusTone | null | undefined): st
   }
 }
 
-export function BottomForecastControls({
+export const BottomForecastControls = memo(function BottomForecastControls({
   forecastHour,
   availableFrames,
   onForecastHourChange,
@@ -937,4 +937,4 @@ export function BottomForecastControls({
       </div>
     </TooltipProvider>
   );
-}
+});

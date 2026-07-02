@@ -348,7 +348,9 @@ export default function App() {
   const [isGridPreloadingForPlay, setIsGridPreloadingForPlay] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [isScrubLodHoldActive, setIsScrubLodHoldActive] = useState(false);
-  const [scrubRequestedHour, setScrubRequestedHour] = useState<number | null>(null);
+  // Live (unsnapped) scrub hour is tracked ref-only: it changes on every slider
+  // pixel and nothing renders it, so keeping it out of state avoids re-rendering
+  // the whole tree per scrub event. Consumers read scrubRequestedHourRef.
   const [scrubCommitIntent, setScrubCommitIntent] = useState<ScrubCommitIntent | null>(null);
 
   useEffect(() => {
@@ -2934,7 +2936,7 @@ export default function App() {
   useEffect(() => {
     datasetGenerationRef.current += 1;
     pendingLoopStartMetricRef.current = null;
-    setScrubRequestedHour(null);
+    scrubRequestedHourRef.current = null;
   }, [
     // Only the three selector values that uniquely identify a dataset change.
     // frameHours.length is derived state, and including it would cause a second
@@ -3062,7 +3064,6 @@ export default function App() {
       };
 
       if (reason === "standard") {
-        setScrubRequestedHour(null);
         scrubRequestedHourRef.current = null;
         setScrubCommitIntent(null);
         pendingScrubHourRef.current = null;
@@ -3088,7 +3089,6 @@ export default function App() {
             : null,
         };
 
-        setScrubRequestedHour(null);
         scrubRequestedHourRef.current = null;
         pendingScrubHourRef.current = null;
         scrubPhase0aRef.current = emptyScrubPhase0aSnapshot();
@@ -3121,7 +3121,6 @@ export default function App() {
       scrubTrace.lastRequestedHour = requestedHour;
 
       scrubRequestedHourRef.current = requestedHour;
-      setScrubRequestedHour(requestedHour);
 
       const nextGridHour = snapHour(requestedHour);
       applyScrubGridTarget(nextGridHour);
@@ -4707,7 +4706,6 @@ export default function App() {
   // so it cannot preempt the in-progress scrub and re-lock the slider.
   useEffect(() => {
     if (!isScrubbing) {
-      setScrubRequestedHour(null);
       scrubRequestedHourRef.current = null;
     }
   }, [isScrubbing]);

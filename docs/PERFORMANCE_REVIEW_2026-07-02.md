@@ -87,22 +87,28 @@ by model) so the next "X is slow" report comes with data. The RUM plumbing alrea
 Your instinct is right: the pipeline works but is convoluted, and the two highest-impact
 defects are wiring issues, not architecture.
 
-### 3a. Scrub prefetch chases the painted frame, not the user **[measured]**
+### 3a. Scrub prefetch pivot — RETRACTED, then re-diagnosed **[corrected 2026-07-02]**
 
-[App.tsx:1994-2031](frontend/src/App.tsx:1994) — `gridPrefetchPivotHour` falls back to
-`requestedGridDisplayHour`/`resolvedGridDisplayHour` (the frame currently painted) during
-a live drag. `scrubCommitIntent` only overrides the pivot *after release*, and only when
-the jump exceeds `SCRUB_COMMIT_NEIGHBOR_WINDOW`. So during a fast scrub the prefetcher
-is always loading frames around where the user *was*, guaranteeing misses at the target.
-The specific pivot behavior flagged in the May review is still present, though the
-surrounding system has evolved since (partial `scrubCommitIntent` wiring, idle warmup,
-and a `scrubColdPrefetchBoost` during cold scrubs at
-[App.tsx:4873](frontend/src/App.tsx:4873)) — so in practice the lag mostly bites during
-the not-yet-warm window after a product switch.
+*(Correction: the original claim here — "prefetch chases the painted frame, not the
+user" — was wrong. During a scrub, `requestedGridDisplayHour` returns
+`targetForecastHour` ([App.tsx:1673-1675](frontend/src/App.tsx:1673)), which
+`applyScrubGridTarget` updates immediately on every scrub event with the snapped live
+target ([App.tsx:2093-2098](frontend/src/App.tsx:2093)). The pivot's fallback therefore
+already tracks the live scrub target, not the painted frame — the painted hour is
+`presentedGridDisplayHour`, a different variable the original review conflated with it.
+The May-era defect was fixed at some point between reviews.)*
 
-**Fix:** while a scrub is active, pivot prefetch on `scrubRequestedHour` (the live slider
-target, direction-aware via `scrubDirectionRef`). On release, immediately promote the
-committed frame to top fetch priority and abort unprotected in-flight prefetches.
+The real, verified scrub-time defect was **render churn**: `scrubRequestedHour` was React
+state set on *every raw slider event* (per pixel, ~60/s) yet **never read by anything**
+— every consumer reads `scrubRequestedHourRef`. Each drag pixel re-rendered the entire
+~5,650-line App tree for a value nobody rendered, while the snapped target (which
+legitimately drives painting and prefetch) only changes on frame-hour crossings.
+
+**Fix (✅ implemented 2026-07-02):** removed the dead state — the live scrub hour is now
+ref-only, so scrub re-renders happen only on snapped frame-hour crossings; and memoized
+`BottomForecastControls` (props verified referentially stable) so unrelated App renders
+(warmup ticks, legend updates) stop reconciling its 940-line tree. Verified in-browser:
+scrub and autoplay behave identically before/after.
 
 ### 3b. Preloading all frames: extend the existing warmup to 100% **[measured]**
 
@@ -237,7 +243,7 @@ smaller and lower risk; runs+manifest parallelization removed — already implem
 |---|---|---|---|---|
 | 1 | Simplify+round CPC/SPC vector GeoJSON at publish, republish + CF purge | CPC 20–30 s load | S | 20–30 s → ~1–2 s **[measured 95% payload cut]** — ✅ implemented 2026-07-02 |
 | 2 | Capabilities ETag/localStorage caching (copy region-presets pattern) | Load time | S | −300–600 ms every visit — ✅ implemented 2026-07-02 (304 verified: 300 B vs 120 KB) |
-| 3 | Scrub prefetch pivots on live scrub target; promote committed frame; reduce scrub-time React churn (memo heavy children) | Scrub lag/jank | S–M | Biggest scrub-feel win |
+| 3 | Reduce scrub-time React churn (dead scrub state removed, controls memoized); pivot-on-target found already implemented | Scrub lag/jank | S–M | ✅ implemented 2026-07-02 (per-pixel App re-renders eliminated) |
 | 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where CPU+GPU budgets allow) | Animation stutter, scrub misses | M | Zero-network playback after warm |
 | 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | Fewer main-thread stalls |
 | 6 | Backend: cache manifest scans, JSON TTL 1→10 s, GDAL LRU 64 + GDAL_CACHEMAX | Origin tail latency, swap pressure | S | Removes FS scans from hot path |
