@@ -8,9 +8,11 @@ import {
   fetchAdminNetworkDiagnostics,
   fetchAdminObservabilitySummary,
   fetchAdminOverviewSummary,
+  fetchAdminProductLoads,
   fetchAdminStatusResults,
   fetchAdminTracesSummary,
   type AdminNetworkDiagnosticsResponse,
+  type AdminProductLoadsResponse,
   type AdminObservabilitySummaryResponse,
   type NetworkDiagnosticBreakdown,
   type NetworkDiagnosticMetricName,
@@ -82,7 +84,7 @@ function SummaryCard(props: {
   );
 }
 
-function formatMetricValue(summary: OverviewMetricSummary | null, percentile: "p75" | "p95" = "p75"): string {
+function formatMetricValue(summary: OverviewMetricSummary | null, percentile: "p50" | "p75" | "p95" = "p75"): string {
   if (!summary) {
     return "Awaiting data";
   }
@@ -277,6 +279,7 @@ export default function AdminOverviewPage() {
   const [results, setResults] = useState<StatusResult[]>([]);
   const [overview, setOverview] = useState<AdminOverviewSummaryResponse | null>(null);
   const [networkDiagnostics, setNetworkDiagnostics] = useState<AdminNetworkDiagnosticsResponse | null>(null);
+  const [productLoads, setProductLoads] = useState<AdminProductLoadsResponse | null>(null);
   const [observability, setObservability] = useState<AdminObservabilitySummaryResponse | null>(null);
   const [traces, setTraces] = useState<AdminTracesSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -307,15 +310,17 @@ export default function AdminOverviewPage() {
             setError(nextError instanceof Error ? nextError.message : "Failed to load admin overview");
           });
 
-        const [overviewResponse, networkDiagnosticsResponse, observabilityResponse, tracesResponse] = await Promise.all([
+        const [overviewResponse, networkDiagnosticsResponse, productLoadsResponse, observabilityResponse, tracesResponse] = await Promise.all([
           fetchAdminOverviewSummary("7d"),
           fetchAdminNetworkDiagnostics("7d"),
+          fetchAdminProductLoads("7d"),
           fetchAdminObservabilitySummary(),
           fetchAdminTracesSummary(),
         ]);
         if (cancelled) return;
         setOverview(overviewResponse);
         setNetworkDiagnostics(networkDiagnosticsResponse);
+        setProductLoads(productLoadsResponse);
         setObservability(observabilityResponse);
         setTraces(tracesResponse);
         setError(null);
@@ -534,6 +539,63 @@ export default function AdminOverviewPage() {
               })}
             </div>
           </div>
+        </AdminSurface>
+
+        <AdminSurface
+          title="Product Load Times"
+          headerRight={
+            <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/62">
+              Sampled RUM · last 7d
+            </div>
+          }
+        >
+          {productLoads?.models?.length ? (
+            <div className="overflow-hidden rounded-[1.2rem] border border-white/10 bg-white/[0.03]">
+              <div className="grid grid-cols-[minmax(120px,1.2fr)_90px_90px_70px_90px_90px_70px_minmax(90px,0.9fr)] gap-3 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+                <div>Product</div>
+                <div>Load p50</div>
+                <div>Load p95</div>
+                <div>Loads</div>
+                <div>Switch p50</div>
+                <div>Switch p95</div>
+                <div>Switches</div>
+                <div>Last seen</div>
+              </div>
+              <div>
+                {productLoads.models.map((entry) => {
+                  const landed = entry.metrics.first_overlay_visible_duration;
+                  const switched = entry.metrics.product_switch_paint_duration;
+                  const worstP95 = Math.max(Number(landed?.p95 ?? 0), Number(switched?.p95 ?? 0));
+                  const rowTone = worstP95 > 10000
+                    ? "bg-rose-500/[0.05]"
+                    : worstP95 > 4000
+                      ? "bg-amber-500/[0.04]"
+                      : "";
+                  return (
+                    <div
+                      key={entry.model_id}
+                      className={`grid grid-cols-[minmax(120px,1.2fr)_90px_90px_70px_90px_90px_70px_minmax(90px,0.9fr)] gap-3 border-b border-white/6 px-4 py-3 text-sm last:border-b-0 ${rowTone}`}
+                    >
+                      <div className="font-semibold text-white">{entry.model_id}</div>
+                      <div className="text-white/78">{formatMetricValue(landed ?? null, "p50")}</div>
+                      <div className={`font-semibold ${worstP95 > 10000 ? "text-rose-300" : worstP95 > 4000 ? "text-amber-300" : "text-white/90"}`}>
+                        {formatMetricValue(landed ?? null, "p95")}
+                      </div>
+                      <div className="text-white/68">{landed?.count ?? 0}</div>
+                      <div className="text-white/78">{formatMetricValue(switched ?? null, "p50")}</div>
+                      <div className="text-white/78">{formatMetricValue(switched ?? null, "p95")}</div>
+                      <div className="text-white/68">{switched?.count ?? 0}</div>
+                      <div className="text-xs text-white/55">{formatRelativeTimestamp(entry.last_seen_at)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] px-4 py-6 text-sm text-white/55">
+              Waiting for sampled product load metrics. Loads record when a session lands on a product; switches record when users change products mid-session.
+            </div>
+          )}
         </AdminSurface>
 
         <AdminSurface title="Ownership Map">

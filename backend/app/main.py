@@ -1983,6 +1983,20 @@ async def admin_feedback(
         raise TwfApiError(status_code=400, code="INVALID_FEEDBACK_QUERY", message=str(exc)) from exc
 
 
+@app.get("/api/v4/admin/performance/product-loads")
+async def admin_product_loads(
+    request: Request,
+    window: str = Query("7d"),
+    _admin_identity: ClerkPrincipal | twf_oauth.TwfSession = Depends(_require_admin_identity),
+) -> dict[str, Any]:
+    normalized_window = window.strip().lower()
+    since_ts = int(time.time()) - _resolve_window_seconds(normalized_window)
+    return {
+        "window": normalized_window,
+        **admin_telemetry.get_product_load_breakdown(since_ts=since_ts),
+    }
+
+
 @app.get("/api/v4/admin/overview/summary")
 async def admin_overview_summary(
     request: Request,

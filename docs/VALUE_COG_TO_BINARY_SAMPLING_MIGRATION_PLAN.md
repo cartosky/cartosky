@@ -250,7 +250,20 @@ Tolerance groups for the generalized canary:
 
 The `radar_ptype` Group 4 classification is intentional and structurally distinct from GFS's old categorical group: `grid_display_prep_config("hrrr", "radar_ptype")` has `upscale_factor=1` and `categorical_nearest=True`. There is no resolution difference between the value COG and the grid binary for this variable, so the canary should require strict integer-category equality and treat any divergence as blocking. The four `radar_ptype_rain/snow/sleet/frzr` component variables each have `upscale_factor=3` and `categorical_nearest=False`, so they are Group 2 continuous-upscale variables.
 
-Storage measurement status: blocked in this local workspace. The production path used for the GFS measurement, `/opt/cartosky/data/published`, is not mounted here (`/opt/cartosky` does not exist). The only local HRRR tree found was `/Users/brianaustin/cartosky/data/v3/published/hrrr`, an old partial PNW fixture measuring 2.3 MB; this is **not** a production retention footprint and must not be used for a storage-win claim. Before HRRR canary/cutover planning continues, run the same Section 6 `du -sh` production measurement against the real retained HRRR runs and the HRRR `*.val.cog.tif` subset.
+Storage measurement status: **measured on prod, 2026-07-02** (checklist item 7 satisfied for HRRR). Six retained runs, `20260702_10z` through `20260702_15z` — note HRRR retention holds a mix of cycle lengths, unlike GFS:
+
+| Cycle type | Runs in retention | Per-run total (all artifacts) | Per-run value-COG subset |
+|---|---|---|---|
+| Standard 18-hour cycle | 5 (`10z`, `11z`, `13z`, `14z`, `15z`) | 7.9 GB each | 3.4 GB each |
+| Extended 48-hour cycle | 1 (`12z`) | 21 GB | 8.9 GB |
+
+Full HRRR retention footprint: **60 GB total, of which 26 GB is value COGs (~43%)**. As checklist item 7 anticipated, the GFS percentage (~27%) did not transfer — HRRR's COG share is materially higher, so retiring HRRR's value COGs is a proportionally larger per-model win than GFS's despite HRRR's smaller absolute footprint. Any "per-run" figure quoted for HRRR must distinguish the two cycle types; a single blended average is misleading given the 48-hour cycle is ~2.6x the size of a standard cycle.
+
+Per-forecast-hour consistency (aggregated across all variables and all retained runs): ~1,026–1,103 MB per forecast hour for fh000–fh018 (present in all six runs, i.e. ~171–184 MB per run per fh) and ~183–192 MB per forecast hour for fh019–fh048 (present only in the single retained 48-hour cycle). Sizes are smooth and monotonic-ish across the fh range with no outliers — no per-hour anomaly suggesting a corrupt or unusually-shaped artifact.
+
+**Per-variable breakdown: not yet captured.** The first measurement pass keyed aggregation on filename, but HRRR's published layout places the variable name in the directory path (`{run}/{var}/fhNNN.val.cog.tif`), with no variable token in the filename — so that pass produced the per-forecast-hour table above instead of a per-variable table. If a Section 6-style per-variable table is wanted for HRRR (useful for the same prioritization observation made for GFS, not a gate for canary/cutover), re-run the aggregation keyed on the parent directory name. The headline figures above are sufficient for the checklist item 7 storage-win claim.
+
+Retention-turnover note for the packing-fix addendum: with 6 retained runs at hourly cadence, HRRR's full retention turnover after a packing fix is roughly **6-7 hours** — far shorter than GFS's 24-30 hours — which materially lowers the cost of the "wait for turnover before flipping the allowlist" option should a packing bug be found during HRRR's canary.
 
 #### NBM
 
@@ -273,7 +286,21 @@ Tolerance groups for the generalized canary:
 
 `precip_total` and `snowfall_total` both have `upscale_factor=3` and `categorical_nearest=False`, matching the continuous-upscale Group 2 pattern. No NBM variable falls into Group 3 or Group 4.
 
-Storage measurement status: blocked in this local workspace. No local or production NBM published tree was available (`/opt/cartosky/data/published` is absent, and `/Users/brianaustin/cartosky/data/v3/published/nbm` does not exist). Before NBM canary/cutover planning continues, run the same Section 6 `du -sh` production measurement against the real retained NBM runs and the NBM `*.val.cog.tif` subset.
+Storage measurement status: **measured on prod, 2026-07-02** (checklist item 7 satisfied for NBM). Six retained runs, `20260702_00z` through `20260702_15z` at 3-hour cadence, uniform in size — unlike HRRR, NBM retention has no mixed cycle lengths:
+
+| Measure | Value |
+|---|---|
+| Per-run total (all artifacts) | 1.1 GB, consistent across all 6 runs |
+| Per-run value-COG subset | 257–258 MB, consistent across all 6 runs |
+| Full retention footprint | **6.2 GB total, of which 1.6 GB is value COGs (~26%)** |
+
+NBM's COG share (~26%) lands almost exactly on GFS's ~27% — coincidentally, given HRRR came in at ~43% — reinforcing checklist item 7's point that the percentage must be measured per model, not assumed. In absolute terms NBM is by far the smallest storage win of the three models measured (1.6 GB vs. GFS's 23 GB and HRRR's 26 GB), consistent with its 5-variable scope. The justification for migrating NBM is therefore almost entirely the single-artifact architectural consistency argument (Section 1), not storage.
+
+Per-forecast-hour profile (aggregated across all variables and all 6 retained runs; per-fh aggregation for the same filename-layout reason noted in the HRRR section — variable name is a directory component, `{run}/{var}/fhNNN.val.cog.tif`): NBM's forecast-hour structure is hourly fh000–fh036, then 3-hourly fh039–fh264. Three distinct size bands: ~16.0 MB per fh for fh000–fh005, ~19.4–21.0 MB per fh for fh006–fh036, and ~10.3–10.7 MB per fh for the 3-hourly fh039–fh264 range. The step up at fh006 and the drop in the extended range presumably reflect which of the 5 variables are published at which forecast hours (e.g. accumulation products not present at the earliest hours, and a reduced variable set at extended range) — **plausible but not verified against the catalog**; worth a one-line confirmation during NBM's Layer 2/canary work only if per-fh frame availability turns out to matter for the shadow-comparison script's expected-frame enumeration. No anomalous outliers in the profile.
+
+**Per-variable breakdown: not yet captured** — same reason and same corrected command (keyed on parent directory) as the HRRR section; optional for prioritization, not a gate.
+
+Retention-turnover note for the packing-fix addendum: 6 retained runs at 3-hour cadence gives NBM a full retention turnover of roughly **18-19 hours** after a packing fix — between HRRR's ~6-7 hours and GFS's 24-30 hours.
 
 ---
 

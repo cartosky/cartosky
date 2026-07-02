@@ -219,6 +219,34 @@ def grid_display_prep_config(model: str, var: str) -> GridDisplayPrepConfig | No
     return _GRID_DISPLAY_PREP_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
 
 
+def sampling_tolerance_group(config: GridDisplayPrepConfig | None) -> int:
+    """Tolerance group for COG-vs-binary sampling comparisons (migration plan
+    Section 3 Layer 2 / Phase G), derived from the display-prep config rather
+    than per-model variable lists:
+
+      Group 1 — no display prep (or no upscale, non-categorical): the COG and
+                binary describe the same pixel grid; agreement within scale/2.
+      Group 2 — continuous upscale (``upscale_factor > 1``): the binary is a
+                finer grid; bounded numeric tolerance.
+      Group 3 — categorical upscale (``categorical_nearest`` with upscale):
+                integer-category comparison, boundary divergence tolerated.
+      Group 4 — categorical without upscale (``categorical_nearest`` at
+                ``upscale_factor == 1``): same resolution on both sides, so
+                strict integer-category equality with zero tolerance.
+    """
+    if config is None:
+        return 1
+    upscale_factor = max(1, int(config.upscale_factor or 1))
+    categorical = bool(config.categorical_nearest)
+    if categorical and upscale_factor > 1:
+        return 3
+    if categorical:
+        return 4
+    if upscale_factor > 1:
+        return 2
+    return 1
+
+
 def _masked_gaussian(data: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
     if sigma <= 0.0:
         return data.astype(np.float32, copy=False)

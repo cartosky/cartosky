@@ -33,6 +33,7 @@ type RumMetricInput = TelemetryBase & {
     | "contour_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
+    | "product_switch_paint_duration"
     | "animation_stall_count"
     | "frame_drop_bucket";
   metric_value: number;

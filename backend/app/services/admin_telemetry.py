@@ -72,6 +72,7 @@ ALLOWED_RUM_METRIC_NAMES = {
     "contour_fetch_duration",
     "first_map_render_duration",
     "first_overlay_visible_duration",
+    "product_switch_paint_duration",
     "tile_request_failure_count",
     "animation_stall_count",
     "frame_drop_bucket",
@@ -97,6 +98,7 @@ RUM_METRIC_UNITS = {
     "contour_fetch_duration": "ms",
     "first_map_render_duration": "ms",
     "first_overlay_visible_duration": "ms",
+    "product_switch_paint_duration": "ms",
     "tile_request_failure_count": "count",
     "animation_stall_count": "count",
     "frame_drop_bucket": "count",
@@ -1836,6 +1838,7 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
         "contour_fetch_duration",
         "first_map_render_duration",
         "first_overlay_visible_duration",
+        "product_switch_paint_duration",
         "tile_request_failure_count",
         "animation_stall_count",
         "frame_drop_bucket",
@@ -1866,6 +1869,61 @@ def get_overview_summary(*, since_ts: int) -> dict[str, Any]:
             "rum_sample_count": _sample_count(rum_diagnostic_names),
         },
     }
+
+
+PRODUCT_LOAD_METRIC_NAMES = (
+    "first_overlay_visible_duration",
+    "product_switch_paint_duration",
+)
+
+
+def get_product_load_breakdown(*, since_ts: int) -> dict[str, Any]:
+    """Per-model percentiles for viewer first-paint RUM metrics.
+
+    ``first_overlay_visible_duration`` covers sessions that land on the product
+    (page load → first frame painted); ``product_switch_paint_duration`` covers
+    mid-session switches to the product (selection change → first frame painted).
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT metric_name, metric_value, model_id, created_at
+            FROM rum_events
+            WHERE created_at >= ?
+              AND metric_name IN ({",".join("?" for _ in PRODUCT_LOAD_METRIC_NAMES)})
+            ORDER BY created_at ASC
+            """,
+            (since_ts, *PRODUCT_LOAD_METRIC_NAMES),
+        ).fetchall()
+
+    values_by_model: dict[str, dict[str, list[float]]] = {}
+    last_seen_by_model: dict[str, int] = {}
+    for row in rows:
+        model_key = str(row["model_id"] or "unknown").strip() or "unknown"
+        metric_name = str(row["metric_name"])
+        per_metric = values_by_model.setdefault(
+            model_key,
+            {name: [] for name in PRODUCT_LOAD_METRIC_NAMES},
+        )
+        per_metric[metric_name].append(float(row["metric_value"]))
+        last_seen_by_model[model_key] = int(row["created_at"])
+
+    models = [
+        {
+            "model_id": model_key,
+            "last_seen_at": last_seen_by_model.get(model_key),
+            "metrics": {
+                metric_name: _rum_metric_summary(per_metric.get(metric_name, []), metric_unit="ms")
+                for metric_name in PRODUCT_LOAD_METRIC_NAMES
+            },
+        }
+        for model_key, per_metric in values_by_model.items()
+    ]
+    models.sort(
+        key=lambda item: sum(int(metric["count"]) for metric in item["metrics"].values()),
+        reverse=True,
+    )
+    return {"models": models}
 
 
 def get_network_diagnostics_summary(*, since_ts: int, limit_per_breakdown: int = 4) -> dict[str, Any]:

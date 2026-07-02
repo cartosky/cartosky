@@ -1322,6 +1322,7 @@ type MapCanvasProps = {
   onZoomRoutingSignal?: (payload: { zoom: number; gestureActive: boolean }) => void;
   onViewportChange?: (payload: { lat: number; lon: number; z: number }) => void;
   onGridFrameVisible?: (payload: GridFrameVisiblePayload) => void;
+  onVectorFrameVisible?: () => void;
   onGridFrameReady?: (frameUrl: string) => void;
   onGridFrameEvicted?: (frameUrl: string) => void;
   onRasterRgbFrameReady?: (frameUrl: string) => void;
@@ -1408,6 +1409,7 @@ export function MapCanvas({
   onZoomRoutingSignal,
   onViewportChange,
   onGridFrameVisible,
+  onVectorFrameVisible,
   onGridFrameReady,
   onGridFrameEvicted,
   onRasterRgbFrameReady,
@@ -1484,6 +1486,8 @@ export function MapCanvas({
   }, [productId, vectorGeoJsonUrl]);
   const vectorLineHaloEnabledRef = useRef(vectorLineHaloEnabled);
   vectorLineHaloEnabledRef.current = vectorLineHaloEnabled;
+  const onVectorFrameVisibleRef = useRef(onVectorFrameVisible);
+  onVectorFrameVisibleRef.current = onVectorFrameVisible;
 
   const [isLoaded, setIsLoaded] = useState(false);
   const isLoadedRef = useRef(isLoaded);
@@ -2937,6 +2941,7 @@ export function MapCanvas({
       hideVectorBuffer((bufferIndex === 0 ? 1 : 0));
       activeVectorBufferRef.current = bufferIndex;
       activeVectorUrlRef.current = url;
+      onVectorFrameVisibleRef.current?.();
     };
     const startCrossfade = (fromBuffer: 0 | 1, toBuffer: 0 | 1, payload: GeoJSON.FeatureCollection, url: string) => {
       if (!applyVectorData(toBuffer, payload)) {
@@ -2947,6 +2952,7 @@ export function MapCanvas({
       if (!map) {
         return;
       }
+      onVectorFrameVisibleRef.current?.();
       if (vectorTransitionRafRef.current !== null) {
         window.cancelAnimationFrame(vectorTransitionRafRef.current);
         vectorTransitionRafRef.current = null;

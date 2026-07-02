@@ -91,7 +91,10 @@ from app.services.grid import (
     grid_dtype,
     grid_frame_filename,
 )
-from app.services.grid_display_prep import grid_display_prep_config
+from app.services.grid_display_prep import (
+    grid_display_prep_config,
+    sampling_tolerance_group,
+)
 from app.services.sampling import (
     _read_sample_value,
     _sample_dataset_index,
@@ -255,19 +258,12 @@ class BenchmarkResult:
 
 
 def _classify_variable(model: str, var: str) -> int:
-    """Return tolerance group (1, 2, 3, or 4) for a model variable."""
-    config = grid_display_prep_config(model, var)
-    if config is None:
-        return 1
-    upscale_factor = max(1, int(config.upscale_factor or 1))
-    categorical = bool(config.categorical_nearest)
-    if categorical and upscale_factor > 1:
-        return 3
-    if categorical:
-        return 4
-    if upscale_factor > 1:
-        return 2
-    return 1
+    """Return tolerance group (1, 2, 3, or 4) for a model variable.
+
+    Delegates to the shared config-derived classifier so the canary and the
+    Layer 2 parity tests can never drift apart on group assignment.
+    """
+    return sampling_tolerance_group(grid_display_prep_config(model, var))
 
 
 def _build_group_index(model: str, scope: list[str]) -> dict[str, int]:

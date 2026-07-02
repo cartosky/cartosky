@@ -262,8 +262,71 @@ smaller and lower risk; runs+manifest parallelization removed — already implem
 | 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where budget allows) | Animation stutter, scrub misses | M | ✅ implemented 2026-07-02 (verified: 25/25 frames warmed idle, 0 network requests during playback+scrub) |
 | 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | ✅ implemented 2026-07-02 (0 URL writes during play, single flush on stop) |
 | 6 | Backend: cache manifest scans, JSON TTL 1→10 s, GDAL LRU 64 + GDAL_CACHEMAX | Origin tail latency, swap pressure | S | Removes FS scans from hot path |
-| 7 | Per-product first-paint RUM metric | Diagnosing reports like "SPC is slow" | S | Observability |
+| 7 | Per-product first-paint RUM metric + admin dashboard table | Diagnosing reports like "SPC is slow" | S | ✅ implemented 2026-07-02 (see §7 below) |
 | 8 | Evaluate booting viewer from /bootstrap | Load time | M | ~1 fewer dependent round trip |
 
 Items 1–5 are independent and individually shippable. Item 4 is the strategic one — a
 fully warm run makes playback effectively local.
+
+---
+
+## 7. Per-product load-time observability (implemented 2026-07-02)
+
+What shipped:
+- **New RUM metric `product_switch_paint_duration`** — armed when the selection changes
+  after initial paint, recorded when the first frame of the new selection becomes
+  visible. Covers mid-session switches to products (the case `first_overlay_visible_duration`,
+  which is once-per-mount, structurally misses).
+- **Vector paint callback** — vector-only products (CPC/SPC/NWS hazards) never emitted
+  frame-visible callbacks, so they recorded **no first-paint metrics at all** (a real
+  gap: the products this review was prompted by were invisible in RUM). The map's
+  vector delivery path now fires `onVectorFrameVisible`, wired to both first-paint and
+  switch-paint tracking.
+- **Backend breakdown**: `get_product_load_breakdown` groups both metrics per model
+  over `rum_events`; new admin route `GET /api/v4/admin/performance/product-loads`.
+  Covered by tests (grouping, percentiles, admin gating).
+- **Admin dashboard**: "Product Load Times" table on the admin overview page — per
+  product: landed-load p50/p95/count, switch p50/p95/count, last seen; rows tinted
+  amber >4 s p95, red >10 s p95.
+
+Verification: backend fully test-covered (21 pass); frontend tsc clean; the RUM emit
+pipeline and the new code paths ran clean in-browser. Full browser verification of the
+switch-metric firing was blocked by preview-environment failures (see §8) — first prod
+deploy will confirm via the dashboard table itself populating. Note `VITE_CARTOSKY_RUM_ENABLED`
+must be on in prod (and consider the diagnostics sample rate: rare products need a high
+rate to accumulate signal).
+
+---
+
+## 8. NEW BUG discovered during #7 verification: runs-list race deadlocks the viewer
+
+While verifying in a fresh browser profile, the viewer reliably hung on "Loading
+viewer" forever. Bisected with all local changes stashed — **the bug is pre-existing on
+main** and is a strong candidate for real-user reports of slow/stuck loads:
+
+- `requestGenerationRef` increments on any `[model, run, variable]` change
+  ([App.tsx:588-590](frontend/src/App.tsx:588)).
+- The `loadRunsAndVars` effect captures the generation, fetches the runs list, and on
+  completion bails if the generation moved — but its dependency array does **not**
+  include `variable`. If the variable settles while the runs fetch is in flight (a
+  race whose outcome depends on capabilities latency vs runs latency), the completion
+  is discarded, nothing re-triggers the effect, and `runs` stays `[]` forever.
+- Empty `runs` → `latestGridRunCandidates` is `[]` → grid "latest" never resolves →
+  no frames → permanent "Loading viewer". A user refresh re-rolls the race.
+- Repro was deterministic in the affected sessions (cold cache + ~450 ms capabilities
+  through the SSH tunnel) and never occurred when capabilities resolved fast — note
+  fix #2 (capabilities client caching) narrows the window on repeat visits but does
+  not fix first visits.
+
+**✅ Fixed 2026-07-02.** The generation comparison was removed from the `loadRunsAndVars`
+effect's three completion guards, keeping `controller.signal.aborted` — which is the
+complete staleness guard here: every input the effect reads is in its dependency array,
+so any relevant change aborts via cleanup and re-runs. The generation counter's only
+incremental behavior was discarding completions on variable-only changes, and runs/
+manifest data are variable-independent, so those completions are valid to apply.
+Verified under the exact repro conditions (desktop layout, cold capabilities cache) that
+previously deadlocked every attempt: the runs list now populates (6 runs), the grid
+"latest" run resolves, and the grid manifest + 25 frame rows load. (Note: the other
+generation guards in the bootstrap and frames effects were left untouched — their
+effects' dependency arrays cover their generation triggers, so they are redundant but
+not deadlock-prone.)

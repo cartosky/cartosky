@@ -66,6 +66,7 @@ export type AdminOverviewSummaryResponse = {
     | "contour_fetch_duration"
     | "first_map_render_duration"
     | "first_overlay_visible_duration"
+    | "product_switch_paint_duration"
     | "tile_request_failure_count"
     | "animation_stall_count"
     | "frame_drop_bucket",
@@ -342,6 +343,25 @@ export async function fetchAdminNetworkDiagnostics(window: string): Promise<Admi
   const search = new URLSearchParams();
   search.set("window", window);
   return fetchAdminJson<AdminNetworkDiagnosticsResponse>(`${API_ORIGIN}/api/v4/admin/overview/network-diagnostics?${search.toString()}`);
+}
+
+export type ProductLoadMetricName = "first_overlay_visible_duration" | "product_switch_paint_duration";
+
+export type AdminProductLoadEntry = {
+  model_id: string;
+  last_seen_at: number | null;
+  metrics: Record<ProductLoadMetricName, OverviewMetricSummary>;
+};
+
+export type AdminProductLoadsResponse = {
+  window: string;
+  models: AdminProductLoadEntry[];
+};
+
+export async function fetchAdminProductLoads(window: string): Promise<AdminProductLoadsResponse> {
+  const search = new URLSearchParams();
+  search.set("window", window);
+  return fetchAdminJson<AdminProductLoadsResponse>(`${API_ORIGIN}/api/v4/admin/performance/product-loads?${search.toString()}`);
 }
 
 export async function fetchAdminObservabilitySummary(): Promise<AdminObservabilitySummaryResponse> {

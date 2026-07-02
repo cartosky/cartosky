@@ -1024,3 +1024,86 @@ async def test_admin_perf_queries_can_limit_to_latest_runs_per_model(client: htt
             "target_ms": 250.0,
         },
     ]
+
+
+async def test_product_load_breakdown_groups_first_paint_metrics_by_model(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    payloads = [
+        {
+            "metric_name": "first_overlay_visible_duration",
+            "metric_value": 1800.0,
+            "metric_unit": "ms",
+            "session_id": "viewer-session-1",
+            "model_id": "cpc",
+            "variable_id": "cpc_610_temp",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "first_overlay_visible_duration",
+            "metric_value": 2200.0,
+            "metric_unit": "ms",
+            "session_id": "viewer-session-2",
+            "model_id": "cpc",
+            "variable_id": "cpc_610_temp",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "product_switch_paint_duration",
+            "metric_value": 900.0,
+            "metric_unit": "ms",
+            "session_id": "viewer-session-1",
+            "model_id": "cpc",
+            "variable_id": "cpc_610_temp",
+            "page": "/viewer",
+        },
+        {
+            "metric_name": "first_overlay_visible_duration",
+            "metric_value": 600.0,
+            "metric_unit": "ms",
+            "session_id": "viewer-session-3",
+            "model_id": "hrrr",
+            "variable_id": "tmp2m",
+            "page": "/viewer",
+        },
+    ]
+    for payload in payloads:
+        response = await client.post(
+            "/api/v4/telemetry/rum",
+            cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+            json=payload,
+        )
+        assert response.status_code == 204
+
+    breakdown = await client.get(
+        "/api/v4/admin/performance/product-loads?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    assert breakdown.status_code == 200
+    body = breakdown.json()
+    assert body["window"] == "7d"
+
+    models = {entry["model_id"]: entry for entry in body["models"]}
+    assert set(models) == {"cpc", "hrrr"}
+    # cpc has the most samples, so it ranks first
+    assert body["models"][0]["model_id"] == "cpc"
+
+    cpc = models["cpc"]
+    assert cpc["metrics"]["first_overlay_visible_duration"]["count"] == 2
+    assert cpc["metrics"]["first_overlay_visible_duration"]["p50"] == 2000.0
+    assert cpc["metrics"]["product_switch_paint_duration"]["count"] == 1
+    assert cpc["metrics"]["product_switch_paint_duration"]["p50"] == 900.0
+    assert cpc["last_seen_at"] is not None
+
+    hrrr = models["hrrr"]
+    assert hrrr["metrics"]["first_overlay_visible_duration"]["count"] == 1
+    assert hrrr["metrics"]["product_switch_paint_duration"]["count"] == 0
+
+
+async def test_product_load_breakdown_requires_admin_membership(client: httpx.AsyncClient) -> None:
+    _create_session(session_id="member-session", member_id=7, name="Member")
+    response = await client.get(
+        "/api/v4/admin/performance/product-loads?window=7d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "member-session"},
+    )
+    assert response.status_code in (401, 403)

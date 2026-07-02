@@ -3009,6 +3009,41 @@ export default function App() {
     });
   }, [telemetryRunId, region, hasRenderableSelection, loadedFramesKey]);
 
+  // Mid-session product switches: armed when the selection changes after the
+  // initial first paint, recorded when the first frame of the new selection
+  // becomes visible (grid or vector). Gives per-product load visibility for
+  // products users switch to rather than land on.
+  const pendingProductSwitchRef = useRef<{ selectionKey: string; startedAt: number } | null>(null);
+  useEffect(() => {
+    if (!firstViewerFrameTrackedRef.current || !model || !variable) {
+      pendingProductSwitchRef.current = null;
+      return;
+    }
+    pendingProductSwitchRef.current = { selectionKey, startedAt: performance.now() };
+  }, [selectionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const trackProductSwitchPaint = useCallback((frameHour: number | null) => {
+    const pending = pendingProductSwitchRef.current;
+    if (!pending || pending.selectionKey !== selectionKey) {
+      return;
+    }
+    pendingProductSwitchRef.current = null;
+    const durationMs = performance.now() - pending.startedAt;
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return;
+    }
+    trackRumDiagnosticMetric({
+      metric_name: "product_switch_paint_duration",
+      metric_value: durationMs,
+      metric_unit: "ms",
+      model_id: modelRef.current || null,
+      variable_id: variableRef.current || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      forecast_hour: Number.isFinite(frameHour) ? Number(frameHour) : null,
+    });
+  }, [region, selectionKey, telemetryRunId]);
+
   useEffect(() => {
     if (firstViewerFrameTrackedRef.current) {
       return;
@@ -3326,8 +3361,15 @@ export default function App() {
   useEffect(() => {
     if (!model) return;
     const controller = new AbortController();
-    const generation = requestGenerationRef.current;
 
+    // Staleness is guarded by controller.signal alone: every input this effect
+    // reads (model, run, runs, ensembleView, ...) is in its dependency array,
+    // so any change aborts via cleanup and re-runs. The shared
+    // requestGenerationRef must NOT gate completions here — it also bumps on
+    // variable-only changes, which don't re-run this effect (variable is not a
+    // dep, and runs/manifest data are variable-independent). Gating on it
+    // discarded completed runs fetches whenever the variable settled mid-flight,
+    // leaving runs=[] with no retry and the viewer stuck on "Loading viewer".
     async function loadRunsAndVars() {
       setError(null);
       try {
@@ -3342,7 +3384,7 @@ export default function App() {
           runDataPromise,
           fetchManifest(model, manifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null),
         ]);
-        if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+        if (controller.signal.aborted) {
           return;
         }
 
@@ -3354,7 +3396,7 @@ export default function App() {
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
           manifestData = await fetchManifest(model, nextManifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null);
-          if (controller.signal.aborted || generation !== requestGenerationRef.current) {
+          if (controller.signal.aborted) {
             return;
           }
         }
@@ -3380,7 +3422,7 @@ export default function App() {
         setVariables(variableOptions);
         setVariable((prev) => (prev && variableIds.includes(prev) ? prev : nextVar));
       } catch (err) {
-        if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+        if (controller.signal.aborted) return;
         setRunManifest(null);
         setError(err instanceof Error ? err.message : "Failed to load run manifest");
       }
@@ -4364,7 +4406,16 @@ export default function App() {
     }
     finalizePendingVariableSwitch(performance.now());
     trackFirstViewerFrame(Number.isFinite(payload.frameHour) ? payload.frameHour : forecastHour);
-  }, [canUseGridPlayback, finalizePendingVariableSwitch, forecastHour, isPlaying, scheduleAutoplayUiHour, selectionKey, trackFirstViewerFrame]);
+    trackProductSwitchPaint(Number.isFinite(payload.frameHour) ? payload.frameHour : null);
+  }, [canUseGridPlayback, finalizePendingVariableSwitch, forecastHour, isPlaying, scheduleAutoplayUiHour, selectionKey, trackFirstViewerFrame, trackProductSwitchPaint]);
+
+  // Vector-only products (CPC/SPC outlooks, NWS hazards) never emit grid frame
+  // callbacks, so their paint moment is reported by the map's vector delivery
+  // path instead — without this they record no first-paint or switch metrics.
+  const handleVectorFrameVisible = useCallback(() => {
+    trackFirstViewerFrame(null);
+    trackProductSwitchPaint(null);
+  }, [trackFirstViewerFrame, trackProductSwitchPaint]);
   const handleAnchorFrameSampled = useCallback((payload: {
     frameHour: number;
     selectionEpoch?: number;
@@ -5472,6 +5523,7 @@ export default function App() {
           overlayFadeOutZoom={overlayFadeOutZoom}
           basemapMode={basemapMode}
           onGridFrameVisible={handleGridFrameVisible}
+          onVectorFrameVisible={handleVectorFrameVisible}
           onGridFrameReady={handleGridFrameReady}
           onGridFrameEvicted={handleGridFrameEvicted}
           onRasterRgbFrameReady={handleRasterRgbFrameReady}
