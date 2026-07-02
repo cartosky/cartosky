@@ -12,6 +12,7 @@ const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
 import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
 import { useTour } from "@/hooks/useTour";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
+import { idleWarmupFrameBudgetBytes } from "@/lib/grid-webgl";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
 import {
   fetchAnchorFeatureCollection,
@@ -1987,12 +1988,28 @@ export default function App() {
     isScrubbing,
     isVariableSwitching,
   ]);
+  const idleWarmupTargetRatio = useMemo(() => {
+    const frameCount = gridFrameHours.length;
+    const width = Number(selectedGridLod?.width);
+    const height = Number(selectedGridLod?.height);
+    if (frameCount === 0 || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return PRELOAD_START_RATIO;
+    }
+    const dtype = String(gridManifest?.grid?.dtype ?? "").toLowerCase();
+    const bytesPerSample = dtype.includes("16") ? 2 : (dtype.includes("32") ? 4 : (dtype.includes("8") ? 1 : 2));
+    const layerCount = Math.max(1, compositeLayerSpecs.length);
+    const runBytes = width * height * bytesPerSample * layerCount * frameCount;
+    // Warm the entire run when it fits the device frame-cache budget with
+    // headroom; past-budget runs stop at the partial ratio so the warm itself
+    // can't trigger LRU eviction churn (evictions re-open the ready gap).
+    return runBytes <= idleWarmupFrameBudgetBytes() * 0.85 ? 1 : PRELOAD_START_RATIO;
+  }, [compositeLayerSpecs.length, gridFrameHours.length, gridManifest, selectedGridLod]);
   const isIdleGridWarmupActive = useMemo(() => {
     if (!canIdleGridWarmup || idleWarmupStalled) {
       return false;
     }
-    return idleWarmupReadyRatio < PRELOAD_START_RATIO;
-  }, [canIdleGridWarmup, idleWarmupReadyRatio, idleWarmupStalled]);
+    return idleWarmupReadyRatio < idleWarmupTargetRatio;
+  }, [canIdleGridWarmup, idleWarmupReadyRatio, idleWarmupStalled, idleWarmupTargetRatio]);
   const gridPrefetchPivotHour = useMemo(() => {
     if (!isGridLowMidActive) {
       return null;
@@ -5413,6 +5430,7 @@ export default function App() {
           gridFrameUrl={isGridLowMidActive && compositeGridLayers.length === 0 ? presentedGridFrameUrl : null}
           gridFrameHour={isGridLowMidActive && Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : null}
           gridPrefetchPivotHour={gridPrefetchPivotHour}
+          gridIdleWarmupFullRun={idleWarmupTargetRatio >= 1}
           gridLegend={isGridLowMidActive ? legend : null}
           gridActive={isGridLowMidActive}
           rasterRgbFrameUrl={rasterRgbFrameUrl}

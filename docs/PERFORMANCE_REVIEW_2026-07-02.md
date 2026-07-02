@@ -134,6 +134,18 @@ stall detection, and there is a `scrubColdPrefetchBoost` during cold scrubs
 Once a run is fully warm, autoplay and scrubbing never touch the network, and the
 scrub-pivot fix (3a) only matters for the not-yet-warm window and capped products.
 
+**✅ Implemented 2026-07-02.** `idleWarmupTargetRatio` in App.tsx computes the run's
+footprint (LOD width × height × dtype bytes × composite layers × frame count) against
+the device-tier frame cache budget (exported as `idleWarmupFrameBudgetBytes()` from
+grid-webgl); runs that fit with 15% headroom warm to 100%, others keep the 70% cap.
+Also fixed along the way: observed grids (MRMS) never reached the full-timeline idle
+branch in `buildGridPrefetchUrls` — the `isObservedGrid` budget window preempted it, so
+idle warm stalled after a handful of frames and latched off. Observed grids now take the
+full-timeline branch when (and only when) the run fits budget and it's a true idle warm,
+not the cold-scrub boost. Verified locally: 25/25 MRMS frames warmed while idle with
+exactly one request each (no eviction churn), then a full playback loop + 10 scrub steps
+generated **zero network requests**.
+
 ### 3c. Playback loop gates on texture readiness **[code-read]**
 
 The rAF loop ([App.tsx:3942-3993](frontend/src/App.tsx:3942)) polls `gridReadyHourSet`
@@ -244,7 +256,7 @@ smaller and lower risk; runs+manifest parallelization removed — already implem
 | 1 | Simplify+round CPC/SPC vector GeoJSON at publish, republish + CF purge | CPC 20–30 s load | S | 20–30 s → ~1–2 s **[measured 95% payload cut]** — ✅ implemented 2026-07-02 |
 | 2 | Capabilities ETag/localStorage caching (copy region-presets pattern) | Load time | S | −300–600 ms every visit — ✅ implemented 2026-07-02 (304 verified: 300 B vs 120 KB) |
 | 3 | Reduce scrub-time React churn (dead scrub state removed, controls memoized); pivot-on-target found already implemented | Scrub lag/jank | S–M | ✅ implemented 2026-07-02 (per-pixel App re-renders eliminated) |
-| 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where CPU+GPU budgets allow) | Animation stutter, scrub misses | M | Zero-network playback after warm |
+| 4 | Extend existing idle warmup to product-aware full-run warm (70% → 100% where budget allows) | Animation stutter, scrub misses | M | ✅ implemented 2026-07-02 (verified: 25/25 frames warmed idle, 0 network requests during playback+scrub) |
 | 5 | Skip permalink sync during autoplay | Autoplay hiccups | S | Fewer main-thread stalls |
 | 6 | Backend: cache manifest scans, JSON TTL 1→10 s, GDAL LRU 64 + GDAL_CACHEMAX | Origin tail latency, swap pressure | S | Removes FS scans from hot path |
 | 7 | Per-product first-paint RUM metric | Diagnosing reports like "SPC is slow" | S | Observability |

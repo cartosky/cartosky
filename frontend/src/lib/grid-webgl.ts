@@ -329,6 +329,15 @@ function resolveFrameCacheBudgetBytes(): number {
   return GRID_FRAME_CACHE_BUDGET_MOBILE_BYTES;                                          // 384 MB
 }
 
+/**
+ * Device-tier frame cache budget, exposed so the idle-warmup logic can decide
+ * whether an entire run's frames fit in cache (full-run warm) or whether it
+ * must stop at a partial ratio to avoid LRU eviction churn.
+ */
+export function idleWarmupFrameBudgetBytes(): number {
+  return resolveFrameCacheBudgetBytes();
+}
+
 function resolveTextureCacheBudgetBytes(): number {
   if (DEVICE_TIER === "high") return GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES;            // 512 MB
   if (DEVICE_TIER === "mid")  return Math.round(GRID_TEXTURE_CACHE_BUDGET_DESKTOP_BYTES * 0.75); // 384 MB

@@ -1287,6 +1287,7 @@ type MapCanvasProps = {
   gridFrameUrl?: string | null;
   gridFrameHour?: number | null;
   gridPrefetchPivotHour?: number | null;
+  gridIdleWarmupFullRun?: boolean;
   gridLegend?: LegendPayload | null;
   gridActive?: boolean;
   rasterRgbFrameUrl?: string | null;
@@ -1372,6 +1373,7 @@ export function MapCanvas({
   gridFrameUrl = null,
   gridFrameHour = null,
   gridPrefetchPivotHour = null,
+  gridIdleWarmupFullRun = false,
   gridLegend = null,
   gridActive = false,
   rasterRgbFrameUrl = null,
@@ -1714,7 +1716,12 @@ export function MapCanvas({
     let aheadTarget: number;
     let behindTarget: number;
 
-    if (isObservedGrid) {
+    // True idle warm (not the cold-scrub boost, which also uses this mode) may
+    // target the whole timeline for observed grids too — but only when App has
+    // verified the full run fits the frame cache budget, otherwise the warm
+    // would fight LRU eviction indefinitely.
+    const fullRunIdleWarmup = mode === "idle-warmup" && gridIdleWarmupFullRun && !isScrubbing;
+    if (isObservedGrid && !fullRunIdleWarmup) {
       const mobileObserved = isMobileDevice();
       // Observed grids (MRMS): prefetch the *entire* timeline, ordered
       // outward from the current frame so the nearest neighbors arrive
@@ -1905,7 +1912,7 @@ export function MapCanvas({
     }
 
     return urls;
-  }, [apiRoot, gridLodLevel, gridManifest, isDesktopLayout, isScrubbing, mode, scrubLagBurstActive]);
+  }, [apiRoot, gridIdleWarmupFullRun, gridLodLevel, gridManifest, isDesktopLayout, isScrubbing, mode, scrubLagBurstActive]);
   const gridPrefetchUrls = useMemo(() => {
     return buildGridPrefetchUrls({
       frameUrl: gridFrameUrl,
