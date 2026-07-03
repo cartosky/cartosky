@@ -15,9 +15,11 @@ Usage::
         --workers 8
 
 The script discovers retained runs for the selected model under the published
-root, enumerates every variable in ``_PACKING_BY_MODEL_VAR`` for that model,
-samples anchor-city coordinates through both the COG path and the binary path,
-and writes a JSON-lines divergence log plus a summary JSON.
+root, enumerates every variable in ``_PACKING_BY_MODEL_VAR`` for that model
+(excluding ``buildable=False`` catalog entries that are never independently
+published), samples anchor-city coordinates through both the COG path and the
+binary path, and writes a JSON-lines divergence log plus a summary JSON.
+``--vars var1,var2`` restricts the scope for targeted smoke runs.
 
 Tolerance groups::
 
@@ -31,16 +33,18 @@ Tolerance groups::
             is expected; any divergence is blocking like Group 1.
 
 Performance benchmarks are run after the core comparison: single-point,
-100-point batch, 1000-point batch, and a full-meteogram simulation
-(85–105 sequential frames), recording latency for both substrates.
+100-point batch, 1000-point batch, and a full-meteogram simulation over the
+model's scheduled forecast-hour range, recording latency for both substrates.
 
 Exit codes::
   0 – clean pass (no blocking divergences, comparisons were performed)
-  1 – usage / data-root missing
+  1 – usage / data-root missing / invalid --vars
   2 – requested run not found
   3 – no comparisons performed (no usable frames)
-  4 – blocking: binary frame/meta file missing, Group 1 divergence,
-      Group 3 categorical divergence, or Group 4 categorical divergence
+  4 – blocking: binary frame/meta file missing, binary resolution failure on
+      a COG-sampled frame (bin_meta_invalid), asymmetric no-value rates
+      between substrates, Group 1 divergence, Group 3 categorical divergence,
+      or Group 4 categorical divergence
 """
 
 from __future__ import annotations
@@ -85,6 +89,7 @@ import numpy as np
 import rasterio
 import rasterio.warp
 
+from app.models.registry import MODEL_REGISTRY
 from app.services.grid import (
     GRID_DTYPE,
     _PACKING_BY_MODEL_VAR,
@@ -123,6 +128,12 @@ SCALE_HALF_EPSILON = 1e-4
 # Group 2 bounded-tolerance constant (matches parity-test threshold).
 GROUP2_TOLERANCE = 0.55
 
+# Substrate-asymmetry blocking thresholds: a binary no-value rate above the
+# first while the COG no-value rate stays below the second is a substrate
+# failure, not legitimate shared no-data.
+BIN_NO_VALUE_BLOCKING_RATE = 0.2
+COG_NO_VALUE_BENIGN_RATE = 0.05
+
 # ── Helper: per-variable packing ────────────────────────────────────
 
 
@@ -130,11 +141,74 @@ def _normalize_model(model: str) -> str:
     return str(model or DEFAULT_MODEL).strip().lower()
 
 
-def _scope_for_model(model: str) -> list[str]:
+def _capability_catalog_for_model(model: str) -> dict[str, Any]:
+    plugin = MODEL_REGISTRY.get(_normalize_model(model))
+    catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", None)
+    return catalog if isinstance(catalog, dict) else {}
+
+
+def _companion_published_vars(catalog: dict[str, Any]) -> set[str]:
+    """Variables published as ``companion_vars`` of a buildable catalog entry.
+
+    The scheduler appends companions of every buildable variable to its build
+    targets, so these are independently published grid frames even when their
+    own capability says ``buildable=False`` (e.g. client-composited layers).
+    """
+    published: set[str] = set()
+    for capability in catalog.values():
+        if not bool(getattr(capability, "buildable", False)):
+            continue
+        frontend = getattr(capability, "frontend", None)
+        companions = frontend.get("companion_vars") if isinstance(frontend, dict) else None
+        if isinstance(companions, list):
+            published.update(
+                c.strip() for c in companions if isinstance(c, str) and c.strip()
+            )
+    return published
+
+
+def _split_scope_by_buildable(
+    packed_vars: list[str],
+    catalog: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Split packed variables into (comparison scope, excluded).
+
+    A variable is excluded when its capability says ``buildable=False`` and it
+    is not companion-published: such variables are derive-strategy inputs
+    consumed in-memory and never written to disk on either substrate, so there
+    is no COG-vs-binary parity question to ask for them.
+    """
+    companions = _companion_published_vars(catalog)
+    in_scope: list[str] = []
+    excluded: list[str] = []
+    for var in packed_vars:
+        capability = catalog.get(var)
+        if capability is None:
+            # Packed but absent from the catalog — nothing to cross-reference.
+            in_scope.append(var)
+        elif bool(getattr(capability, "buildable", False)) or var in companions:
+            in_scope.append(var)
+        else:
+            excluded.append(var)
+    return in_scope, excluded
+
+
+def _scope_for_model(model: str) -> tuple[list[str], list[str]]:
+    """Return (comparison scope, excluded non-buildable vars) for a model."""
     model_norm = _normalize_model(model)
-    return sorted(
+    packed = sorted(
         var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model_norm
     )
+    in_scope, excluded = _split_scope_by_buildable(
+        packed, _capability_catalog_for_model(model_norm)
+    )
+    if excluded:
+        logger.info(
+            "Excluded %d non-buildable, never-published variable(s) from %s "
+            "comparison scope: %s",
+            len(excluded), model_norm, ", ".join(excluded),
+        )
+    return in_scope, excluded
 
 
 def _packing(model: str, var: str) -> dict[str, Any]:
@@ -148,6 +222,27 @@ def _packing_dtype(model: str, var: str) -> str:
 def _binary_frame_filename(model: str, var: str, fh: int) -> str:
     """Resolve the binary frame filename from the variable's packing dtype."""
     return grid_frame_filename(fh, dtype=_packing_dtype(model, var))
+
+
+def _parse_vars_filter(raw: str | None, scope: list[str]) -> list[str]:
+    """Restrict scope to the comma-separated ``--vars`` selection.
+
+    Preserves scope order; raises ValueError when a requested variable is
+    not in the comparison scope.
+    """
+    if raw is None:
+        return scope
+    requested = [item.strip().lower() for item in raw.split(",") if item.strip()]
+    if not requested:
+        raise ValueError("--vars was provided but contained no variable names")
+    unknown = sorted(set(requested) - set(scope))
+    if unknown:
+        raise ValueError(
+            f"--vars entries not in comparison scope: {', '.join(unknown)} "
+            f"(scope: {', '.join(scope)})"
+        )
+    requested_set = set(requested)
+    return [var for var in scope if var in requested_set]
 
 
 # ── Dataclasses ─────────────────────────────────────────────────────
@@ -548,6 +643,23 @@ def _is_divergent(
     return abs(result.cog_value - result.binary_value) > GROUP2_TOLERANCE
 
 
+def _is_bin_meta_invalid(result: SampleResult) -> bool:
+    """Binary substrate failed on a frame the COG side sampled successfully.
+
+    Both binary files exist, the COG produced a value, but binary resolution
+    (meta load / decode / index) failed or returned no-value.  This is a
+    substrate failure, not a tolerance-group divergence, and blocks the canary
+    regardless of the variable's group.
+    """
+    return (
+        not result.cog_file_missing
+        and not result.binary_frame_file_missing
+        and not result.binary_meta_file_missing
+        and result.cog_value is not None
+        and result.binary_value is None
+    )
+
+
 # ── Divergence accumulator ──────────────────────────────────────────
 
 
@@ -620,6 +732,8 @@ def _run_comparison(
     missing_binary_meta_files = 0
     cog_no_value = 0
     binary_no_value = 0
+    bin_meta_invalid = 0
+    comparisons_by_var: dict[str, int] = defaultdict(int)
     total_cog_latencies: list[float] = []
     total_binary_latencies: list[float] = []
     group_counts: dict[int, int] = defaultdict(int)
@@ -642,6 +756,7 @@ def _run_comparison(
                             break
                         total += 1
                         group_counts[group] += 1
+                        comparisons_by_var[var] += 1
 
                         result = _sample_one(published_root, model_norm, run, var, fh, point)
                         total_cog_latencies.append(result.cog_latency_s)
@@ -660,6 +775,8 @@ def _run_comparison(
                                 and not result.binary_meta_file_missing
                                 and result.binary_value is None):
                             binary_no_value += 1
+                        if _is_bin_meta_invalid(result):
+                            bin_meta_invalid += 1
 
                         # Divergence check: only when neither side has a missing
                         # file.  (Both-values-None is already handled inside
@@ -693,14 +810,28 @@ def _run_comparison(
         if divergence_fh:
             divergence_fh.close()
 
+    vars_with_zero_comparisons = [
+        var for var in scope if comparisons_by_var[var] == 0
+    ]
+    if vars_with_zero_comparisons:
+        logger.warning(
+            "%d in-scope variable(s) got zero comparisons%s: %s",
+            len(vars_with_zero_comparisons),
+            (f" (--sample-limit {sample_limit} truncated coverage)"
+             if sample_limit is not None else ""),
+            ", ".join(vars_with_zero_comparisons),
+        )
+
     stats.update({
         "total_comparisons": total,
         "vars_with_frames": len(vars_with_frames),
+        "vars_with_zero_comparisons": vars_with_zero_comparisons,
         "missing_cog_files": missing_cog_files,
         "missing_binary_frame_files": missing_binary_frame_files,
         "missing_binary_meta_files": missing_binary_meta_files,
         "cog_no_value_samples": cog_no_value,
         "binary_no_value_samples": binary_no_value,
+        "bin_meta_invalid_count": bin_meta_invalid,
         "divergences": divergences.asdict(),
         "comparisons_by_group": dict(group_counts),
         "cog_latency_s": _latency_summary(total_cog_latencies),
@@ -710,10 +841,10 @@ def _run_comparison(
     logger.info(
         "Comparison complete: %d samples, %d divergences "
         "(COG missing=%d bin-frame-missing=%d bin-meta-missing=%d "
-        "COG-noval=%d bin-noval=%d)",
+        "COG-noval=%d bin-noval=%d bin-meta-invalid=%d)",
         total, divergences.total,
         missing_cog_files, missing_binary_frame_files, missing_binary_meta_files,
-        cog_no_value, binary_no_value,
+        cog_no_value, binary_no_value, bin_meta_invalid,
     )
     return stats
 
@@ -860,6 +991,23 @@ def _bench_batch(
     return _build_benchmark(label, cog_times, bin_times)
 
 
+def _expected_meteogram_frame_count(model: str, var: str, run: str) -> int | None:
+    """Frame count the model's schedule publishes for this variable and cycle.
+
+    Returns None when the plugin, its schedule, or the run-id cycle hour
+    cannot be resolved.
+    """
+    plugin = MODEL_REGISTRY.get(_normalize_model(model))
+    if plugin is None or not RUN_ID_RE.match(run):
+        return None
+    cycle_hour = int(run[9:11])
+    try:
+        fhs = plugin.scheduled_fhs_for_var(var, cycle_hour)
+    except Exception:
+        return None
+    return len(fhs) or None
+
+
 def _bench_meteogram(
     published_root: Path,
     model: str,
@@ -869,11 +1017,14 @@ def _bench_meteogram(
     anchor: AnchorPoint,
     workers: int,
 ) -> BenchmarkResult:
-    """Sample 85–105 sequential frames (one point) via both paths."""
-    fh_subset = fh_values[:105] if len(fh_values) >= 105 else fh_values
-    if len(fh_subset) < 85:
-        logger.warning("Only %d frames for meteogram benchmark (need 85+)",
-                       len(fh_subset))
+    """Sample the model's scheduled frame range (one point) via both paths."""
+    expected = _expected_meteogram_frame_count(model, var, run)
+    fh_subset = fh_values if expected is None else fh_values[:expected]
+    if expected is not None and len(fh_subset) < expected:
+        logger.warning(
+            "Only %d frames for meteogram benchmark (model schedule expects %d)",
+            len(fh_subset), expected,
+        )
     label = f"meteogram ({len(fh_subset)} frames)"
 
     cog_times: list[float] = []
@@ -1007,6 +1158,17 @@ def _estimate_comparison_count(
 # ── Pass / fail logic ───────────────────────────────────────────────
 
 
+def _no_value_rate_asymmetric(stats: dict[str, Any]) -> bool:
+    """Binary no-value rate exceeds its blocking threshold while the COG
+    no-value rate stays benign — a substrate gap, not shared no-data."""
+    total = int(stats.get("total_comparisons", 0))
+    if total <= 0:
+        return False
+    cog_rate = int(stats.get("cog_no_value_samples", 0)) / total
+    bin_rate = int(stats.get("binary_no_value_samples", 0)) / total
+    return bin_rate > BIN_NO_VALUE_BLOCKING_RATE and cog_rate < COG_NO_VALUE_BENIGN_RATE
+
+
 def _exit_code(
     stats: dict[str, Any],
     missing_run: bool,
@@ -1017,7 +1179,9 @@ def _exit_code(
         0 – clean pass
         2 – requested run missing
         3 – no comparisons performed
-        4 – blocking: binary frame/meta file missing, Group 1 divergence,
+        4 – blocking: binary frame/meta file missing, binary resolution
+            failure on a COG-sampled frame (bin_meta_invalid), asymmetric
+            no-value rates between substrates, Group 1 divergence,
             Group 3 categorical divergence, or Group 4 categorical divergence
     """
     if missing_run:
@@ -1034,6 +1198,26 @@ def _exit_code(
         logger.error(
             "Binary files unexpectedly missing: %d frame file(s), %d meta file(s)",
             missing_bin_frame, missing_bin_meta,
+        )
+        return 4
+
+    bin_meta_invalid = int(stats.get("bin_meta_invalid_count", 0))
+    if bin_meta_invalid > 0:
+        logger.error(
+            "%d binary substrate failure(s): binary resolution failed or "
+            "returned no-value on frames the COG side sampled successfully",
+            bin_meta_invalid,
+        )
+        return 4
+
+    if _no_value_rate_asymmetric(stats):
+        logger.error(
+            "No-value rates are asymmetric between substrates: binary=%.4f "
+            "(> %.2f) while cog=%.4f (< %.2f) — substrate gap, not shared no-data",
+            int(stats.get("binary_no_value_samples", 0)) / total,
+            BIN_NO_VALUE_BLOCKING_RATE,
+            int(stats.get("cog_no_value_samples", 0)) / total,
+            COG_NO_VALUE_BENIGN_RATE,
         )
         return 4
 
@@ -1114,6 +1298,9 @@ def _metrics_report(
             "cog": round(cog_no_value / max(total, 1), 6),
             "binary": round(bin_no_value / max(total, 1), 6),
         },
+        "bin_meta_invalid_count": int(stats.get("bin_meta_invalid_count", 0)),
+        "no_value_rate_asymmetric": _no_value_rate_asymmetric(stats),
+        "vars_with_zero_comparisons": stats.get("vars_with_zero_comparisons", []),
         "divergences": stats.get("divergences", {}),
         "latency_cog_s": stats.get("cog_latency_s", {}),
         "latency_binary_s": stats.get("binary_latency_s", {}),
@@ -1163,6 +1350,12 @@ def main() -> None:
         help="Cap total comparisons for faster dry-runs",
     )
     parser.add_argument(
+        "--vars",
+        default=None,
+        help="Comma-separated variable ids to restrict comparison scope "
+             "(e.g. radar_ptype,tmp2m); composable with --sample-limit and --run",
+    )
+    parser.add_argument(
         "--skip-benchmarks",
         action="store_true",
         help="Skip performance benchmarks",
@@ -1175,10 +1368,19 @@ def main() -> None:
     args = parser.parse_args()
     _setup_logging(verbose=args.verbose)
     model = _normalize_model(args.model)
-    scope = _scope_for_model(model)
+    scope, excluded_non_buildable = _scope_for_model(model)
     if not scope:
         logger.error("No grid packing scope found for model: %s", model)
         sys.exit(1)
+
+    try:
+        scope = _parse_vars_filter(args.vars, scope)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+    if args.vars:
+        logger.info("Scope restricted by --vars to %d variable(s): %s",
+                    len(scope), ", ".join(scope))
 
     data_root = Path(args.data_root).expanduser().resolve()
     published_root = data_root / "published"
@@ -1271,6 +1473,9 @@ def main() -> None:
     report["anchor_count"] = len(anchors)
     report["scope_variable_count"] = len(scope)
     report["scope_variables"] = scope
+    report["excluded_non_buildable_variables"] = excluded_non_buildable
+    if args.vars:
+        report["vars_filter"] = scope
     report["tolerance_groups"] = {
         "group_1": group1,
         "group_2": group2,
