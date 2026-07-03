@@ -239,16 +239,19 @@ Packing constants checked:
 | `tmp850_anom` | Correctly packed with `offset=-80.0`. |
 | All HRRR packed variables | `uint16`; no HRRR variable uses `uint8`. |
 
-Tolerance groups for the generalized canary:
+Tolerance groups for the generalized canary — **corrected 2026-07-02, see below**:
 
 | Group | HRRR variables |
 |---|---|
 | Group 1 | `dp2m`, `mlcape`, `mucape`, `precip_total`, `pwat`, `rh2m`, `rh700`, `sbcape`, `snowfall_kuchera_total`, `snowfall_total`, `tmp2m`, `tmp850`, `tmp850_anom`, `vort500`, `wgst10m`, `wspd10m`, `wspd300`, `wspd850` |
-| Group 2 | `radar_ptype_frzr`, `radar_ptype_rain`, `radar_ptype_sleet`, `radar_ptype_snow` |
+| Group 2 | **None (corrected — see below)** |
 | Group 3 | None |
 | Group 4 | `radar_ptype` |
+| Excluded from comparison scope entirely | `radar_ptype_frzr`, `radar_ptype_rain`, `radar_ptype_sleet`, `radar_ptype_snow` |
 
-The `radar_ptype` Group 4 classification is intentional and structurally distinct from GFS's old categorical group: `grid_display_prep_config("hrrr", "radar_ptype")` has `upscale_factor=1` and `categorical_nearest=True`. There is no resolution difference between the value COG and the grid binary for this variable, so the canary should require strict integer-category equality and treat any divergence as blocking. The four `radar_ptype_rain/snow/sleet/frzr` component variables each have `upscale_factor=3` and `categorical_nearest=False`, so they are Group 2 continuous-upscale variables.
+The `radar_ptype` Group 4 classification is intentional and structurally distinct from GFS's old categorical group: `grid_display_prep_config("hrrr", "radar_ptype")` has `upscale_factor=1` and `categorical_nearest=True`. There is no resolution difference between the value COG and the grid binary for this variable, so the canary requires strict integer-category equality and treats any divergence as blocking.
+
+**Correction, found during HRRR's Layer 3 canary (2026-07-02):** the four `radar_ptype_rain/snow/sleet/frzr` component variables were originally classified as Group 2 based on their `upscale_factor=3` / `categorical_nearest=False` display-prep config alone. This was incomplete — the audit read the packing table and display-prep table (checklist items 1 and 3) but did not cross-reference the variable catalog's `buildable` flag. All four are marked `buildable=False, internal_only=True, allow_dry_frame=True` in `HRRR_VARIABLE_CATALOG` (`hrrr.py`, `_capability_from_var_spec`) — they are derive-strategy inputs consumed in-memory by `radar_ptype_combo` to composite the single published `radar_ptype` frame, and are never independently written to disk as their own grid frame on either substrate. There is no COG-vs-binary parity question to ask for a variable that is never independently published; **HRRR has no Group 2 variables**, and these four are excluded from canary/parity comparison scope entirely, not merely expected to show zero divergence. Checklist item 2 ("cross-reference the variable catalog") is amended to explicitly state: confirm `buildable=True` for every packed/display-prep-configured variable before assigning it a tolerance group, not just confirm catalog presence.
 
 Storage measurement status: **measured on prod, 2026-07-02** (checklist item 7 satisfied for HRRR). Six retained runs, `20260702_10z` through `20260702_15z` — note HRRR retention holds a mix of cycle lengths, unlike GFS:
 
@@ -306,10 +309,14 @@ Retention-turnover note for the packing-fix addendum: 6 retained runs at 3-hour 
 
 | Checklist item | HRRR | NBM |
 |---|---|---|
-| 1-4 — static audit (packing enumeration, catalog cross-reference, display-prep enumeration, structural differences) | Complete (this section) | Complete (this section) |
-| 5 — re-run Layers 1-4 | **Layers 1-2 complete**; Layers 3-4 pending | **Layers 1-2 complete**; Layers 3-4 pending |
-| 6 — add to `CARTOSKY_BINARY_SAMPLING_MODELS` | Not yet — gated on item 5 completing | Not yet — gated on item 5 completing |
+| 1-4 — static audit (packing enumeration, catalog cross-reference incl. `buildable`, display-prep enumeration, structural differences) | Complete, corrected 2026-07-02 (this section) | Complete (this section) |
+| 5 — re-run Layers 1-4 | **Layers 1-3 complete**; Layer 4 pending | **Layers 1-2 complete**; Layers 3-4 pending — blocked on retention turnover |
+| 6 — add to `CARTOSKY_BINARY_SAMPLING_MODELS` | Not yet — gated on Layer 4 + Phase C evidence | Not yet — gated on item 5 completing |
 | 7 — prod storage measurement | Complete (measured above) | Complete (measured above) |
+
+**Layer 3 (canary) result for HRRR, completed 2026-07-02.** Four consecutive cycles (`20260702_18z` through `21z`, including the 18z extended/48-hour cycle for fh019-048 coverage) run via `canary_binary_sampler.py --model hrrr --run <run>`. Corrected scope (18 Group 1 variables + `radar_ptype` Group 4; see the Group 2 correction above): **zero divergence across all four runs**, `no_value_sample_rate.cog == no_value_sample_rate.binary` exactly on every run (parity on the shared no-data footprint, not a substrate gap), `radar_ptype` (Group 4) exercised with thousands of comparisons per run at strict integer-category equality. Benchmarks captured on the 18z (extended-cycle) pass: binary sampling beat COG on single-point (5.6-5.9ms vs 6.6-7.1ms) and 1000-point batch (1.1-1.3ms vs 2.0-2.3ms) reads; meteogram-scale benchmark was informational only (HRRR's real per-run frame count is 19-49, not GFS's 85-105 — the canary script's benchmark warning threshold is hardcoded to the GFS figure and needs correcting before it's reused for other models, tracked as a canary-script follow-up below). The canary script's `_scope_for_model()` did not originally filter on `buildable`, which produced the Group 2 misclassification corrected above — that fix is required before NBM's canary is re-run or any future model's Phase G audit is performed, since the same gap applies fleet-wide, not just to HRRR.
+
+**Canary script follow-ups identified during this pass (tracked, not blocking Layer 4):** (1) scope derivation must filter on `VariableCapability.buildable`, not just packing-table presence; (2) a binary-substrate resolution failure (missing/invalid meta) must be its own blocking classification, not folded into tolerance-group "divergence requiring manual review" — this masked NBM's earlier 100%-binary-no-value incident as a benign Group 2 case; (3) `--vars` filter needed so `--sample-limit` smoke runs can target a specific variable instead of being consumed by whichever variable sorts first alphabetically; (4) meteogram-benchmark frame-count expectation should derive from each model's real scheduled forecast-hour range instead of a hardcoded GFS-era "need 85+".
 
 **Layers 1-2 implementation, completed 2026-07-02.** The static audit above was independently re-verified at runtime during this work and confirmed in full: 23 literal HRRR entries, 5 literal NBM entries, no loop-registered entries for either model (the registration loops cover gfs/ecmwf/aigfs/gefs/aifs/eps/ndfd/wpc only), all uint16, `vort500` `offset=-100.0`, `tmp850_anom` `offset=-80.0`, and all tolerance-group assignments match `grid_display_prep_config` exactly. What was built:
 

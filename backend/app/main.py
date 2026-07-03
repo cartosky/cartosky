@@ -574,29 +574,44 @@ _static_dir = DATA_ROOT / "static"
 _static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", _StaticFiles(directory=str(_static_dir)), name="static")
 
+MRMS_WARNINGS_OVERLAY_REFRESH_INTERVAL_SECONDS = 45
+
+_mrms_warnings_overlay_refresh_task: asyncio.Task | None = None
+
+
 @app.on_event("startup")
 async def startup() -> None:
+    global _mrms_warnings_overlay_refresh_task
     try:
         await screenshot_service._ensure_browser()
     except Exception as exc:
         logger.warning("Screenshot service failed to warm browser: %s", exc)
-    asyncio.create_task(_warm_mrms_warnings_overlay_cache())
+    _mrms_warnings_overlay_refresh_task = asyncio.create_task(
+        _mrms_warnings_overlay_refresh_loop()
+    )
 
 
-async def _warm_mrms_warnings_overlay_cache() -> None:
+async def _mrms_warnings_overlay_refresh_loop() -> None:
+    """Keep the MRMS warnings overlay cache warm so viewer requests never wait on NWS."""
     from .services import nws_hazards as nws_hazards_service
 
-    try:
-        await run_in_threadpool(
-            nws_hazards_service.warm_mrms_warnings_overlay_cache,
-            DATA_ROOT,
-        )
-    except Exception as exc:
-        logger.warning("MRMS warnings overlay cache warm failed: %s", exc)
+    while True:
+        try:
+            await run_in_threadpool(
+                nws_hazards_service.warm_mrms_warnings_overlay_cache,
+                DATA_ROOT,
+            )
+        except Exception as exc:
+            logger.warning("MRMS warnings overlay cache refresh failed: %s", exc)
+        await asyncio.sleep(MRMS_WARNINGS_OVERLAY_REFRESH_INTERVAL_SECONDS)
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    global _mrms_warnings_overlay_refresh_task
+    if _mrms_warnings_overlay_refresh_task is not None:
+        _mrms_warnings_overlay_refresh_task.cancel()
+        _mrms_warnings_overlay_refresh_task = None
     await screenshot_service.close()
 
 
@@ -4199,6 +4214,12 @@ async def nws_hazards_active_warnings(
     from .services import nws_hazards as nws_hazards_service
 
     entitlements.require_product_access(principal, "mrms")
+    cached_payload = nws_hazards_service.peek_mrms_warnings_overlay()
+    if cached_payload is not None:
+        return JSONResponse(
+            content=cached_payload,
+            headers={"Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}"},
+        )
     try:
         filtered_payload = await run_in_threadpool(
             nws_hazards_service.build_mrms_warnings_overlay_geojson,

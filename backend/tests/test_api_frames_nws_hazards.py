@@ -256,6 +256,7 @@ async def test_nws_hazards_active_warnings_overlay_filters_to_convective_product
         "build_mrms_warnings_overlay_geojson",
         fake_build_mrms_warnings_overlay_geojson,
     )
+    monkeypatch.setattr(nws_hazards_service, "_mrms_warnings_overlay_cache", None)
 
     response = await client.get("/api/v4/nws-hazards/active/warnings")
 
@@ -266,6 +267,44 @@ async def test_nws_hazards_active_warnings_overlay_filters_to_convective_product
     assert payload["type"] == "FeatureCollection"
     labels = {feature["properties"]["risk_label"] for feature in payload["features"]}
     assert labels == {"Tornado Warning", "Flash Flood Watch"}
+
+
+async def test_nws_hazards_active_warnings_serves_warm_cache_without_rebuild(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as time_module
+
+    cached_payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"risk_label": "Tornado Warning"}},
+        ],
+    }
+    monkeypatch.setattr(
+        nws_hazards_service,
+        "_mrms_warnings_overlay_cache",
+        nws_hazards_service._MrmsWarningsOverlayCacheEntry(
+            fingerprint="warm",
+            cached_at=time_module.monotonic(),
+            payload=cached_payload,
+        ),
+    )
+
+    def fail_build(data_root: Path) -> dict:
+        raise AssertionError("warm cache should be served without rebuilding")
+
+    monkeypatch.setattr(
+        nws_hazards_service,
+        "build_mrms_warnings_overlay_geojson",
+        fail_build,
+    )
+
+    response = await client.get("/api/v4/nws-hazards/active/warnings")
+
+    assert response.status_code == 200
+    assert response.headers.get("cache-control") == "public, max-age=60"
+    assert response.json() == cached_payload
 
 
 async def test_nws_hazards_alert_detail_endpoint_returns_normalized_nws_alert(

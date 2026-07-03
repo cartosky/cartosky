@@ -50,6 +50,10 @@ MRMS_MERGE_AFFECTED_ZONE_GEOMETRY_EVENTS: frozenset[str] = frozenset({
     "severe thunderstorm watch",
 })
 MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS = 45.0
+# How old a cached overlay may be and still be served directly to viewers without
+# waiting on a live NWS round-trip. Must comfortably exceed the background refresh
+# interval so requests keep hitting the fast path across refresh cycles.
+MRMS_WARNINGS_OVERLAY_SERVE_MAX_AGE_SECONDS = 180.0
 EMPTY_FEATURE_COLLECTION: dict[str, Any] = {"type": "FeatureCollection", "features": []}
 
 
@@ -1191,6 +1195,23 @@ def _mrms_warnings_overlay_cache_set(fingerprint: str, payload: dict[str, Any]) 
     )
 
 
+def peek_mrms_warnings_overlay(
+    max_age_seconds: float = MRMS_WARNINGS_OVERLAY_SERVE_MAX_AGE_SECONDS,
+) -> dict[str, Any] | None:
+    """Return the cached overlay if recent enough to serve, without any upstream fetch.
+
+    Unlike _mrms_warnings_overlay_cache_get this ignores the fingerprint: the caller
+    has no fresh payload to fingerprint against, and a slightly stale overlay beats
+    blocking the viewer on a live api.weather.gov round-trip.
+    """
+    entry = _mrms_warnings_overlay_cache
+    if entry is None:
+        return None
+    if time.monotonic() - entry.cached_at > max_age_seconds:
+        return None
+    return entry.payload
+
+
 def filter_geojson_for_mrms_warnings_overlay(payload: dict[str, Any]) -> dict[str, Any]:
     features_raw = payload.get("features")
     if not isinstance(features_raw, list):
@@ -1239,6 +1260,9 @@ def build_mrms_warnings_overlay_geojson(
     fingerprint = _build_alert_fingerprint(resolved_payload)
     cached_overlay = _mrms_warnings_overlay_cache_get(fingerprint)
     if cached_overlay is not None:
+        # Re-stamp the entry: upstream just confirmed it is still current, which
+        # keeps peek_mrms_warnings_overlay serving it during quiet weather.
+        _mrms_warnings_overlay_cache_set(fingerprint, cached_overlay)
         return cached_overlay
 
     overlay_source_payload = filter_nws_alerts_payload_for_mrms_overlay(resolved_payload)

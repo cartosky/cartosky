@@ -179,6 +179,12 @@ const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
 const NWS_WARNINGS_REFRESH_MS = 60_000;
+
+// Bucketed to the refresh interval so remounts within the same minute produce the
+// same URL and can reuse the browser HTTP cache (the endpoint sends max-age=60).
+function nwsWarningsVersionToken(): string {
+  return String(Math.floor(Date.now() / NWS_WARNINGS_REFRESH_MS));
+}
 const PERMALINK_FALLBACK_MESSAGE = "This link may be outdated - loading default view";
 
 function readRequestedForecastHour(targetHour: number, currentHour: number): number {
@@ -2683,7 +2689,7 @@ export default function App() {
     });
   }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
 
-  const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(() => String(Date.now()));
+  const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(nwsWarningsVersionToken);
   const mrmsNwsWarningsEnabled = supportsNwsWarningsOverlay(model, variable) && nwsWarningsEnabled;
   const prevMrmsNwsWarningsEnabledRef = useRef(false);
   const mrmsNwsWarningsIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
@@ -2710,7 +2716,7 @@ export default function App() {
     }
 
     mrmsNwsWarningsIntervalRef.current = window.setInterval(() => {
-      setNwsWarningsRefreshToken(String(Date.now()));
+      setNwsWarningsRefreshToken(nwsWarningsVersionToken());
     }, NWS_WARNINGS_REFRESH_MS);
   }, [mrmsNwsWarningsEnabled]);
 

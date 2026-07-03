@@ -1316,3 +1316,53 @@ def test_publish_active_hazards_writes_manifest_latest_pointer_and_vector_sideca
     vector_payload = json.loads((result.published_run_dir / "active" / "vectors" / "fh000.geojson").read_text())
     assert vector_payload["type"] == "FeatureCollection"
     assert vector_payload["features"][0]["properties"]["risk_label"] == "Tornado Warning"
+
+
+def test_peek_mrms_warnings_overlay_serves_recent_cache() -> None:
+    import time
+
+    payload = {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"risk_label": "Tornado Warning"}}]}
+    nws_hazards._mrms_warnings_overlay_cache = None
+    try:
+        assert nws_hazards.peek_mrms_warnings_overlay() is None
+
+        nws_hazards._mrms_warnings_overlay_cache_set("fp", payload)
+        assert nws_hazards.peek_mrms_warnings_overlay() == payload
+
+        nws_hazards._mrms_warnings_overlay_cache = nws_hazards._MrmsWarningsOverlayCacheEntry(
+            fingerprint="fp",
+            cached_at=time.monotonic() - (nws_hazards.MRMS_WARNINGS_OVERLAY_SERVE_MAX_AGE_SECONDS + 1.0),
+            payload=payload,
+        )
+        assert nws_hazards.peek_mrms_warnings_overlay() is None
+    finally:
+        nws_hazards._mrms_warnings_overlay_cache = None
+
+
+def test_build_mrms_warnings_overlay_cache_hit_restamps_entry_for_peek() -> None:
+    import time
+
+    payload = {"type": "FeatureCollection", "features": []}
+    nws_hazards._mrms_warnings_overlay_cache = None
+    try:
+        first = nws_hazards.build_mrms_warnings_overlay_geojson(Path("/nonexistent"), payload=payload)
+        assert first == {"type": "FeatureCollection", "features": []}
+
+        # Back-date within the fingerprint TTL so the second build takes the
+        # cache-hit branch rather than rebuilding.
+        stale_age = nws_hazards.MRMS_WARNINGS_OVERLAY_BUILD_CACHE_TTL_SECONDS - 15.0
+        entry = nws_hazards._mrms_warnings_overlay_cache
+        assert entry is not None
+        nws_hazards._mrms_warnings_overlay_cache = nws_hazards._MrmsWarningsOverlayCacheEntry(
+            fingerprint=entry.fingerprint,
+            cached_at=time.monotonic() - stale_age,
+            payload=entry.payload,
+        )
+
+        second = nws_hazards.build_mrms_warnings_overlay_geojson(Path("/nonexistent"), payload=payload)
+        assert second == first
+        restamped = nws_hazards._mrms_warnings_overlay_cache
+        assert restamped is not None
+        assert time.monotonic() - restamped.cached_at < stale_age / 2
+    finally:
+        nws_hazards._mrms_warnings_overlay_cache = None
