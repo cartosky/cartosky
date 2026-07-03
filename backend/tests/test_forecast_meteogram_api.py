@@ -819,3 +819,306 @@ async def test_meteogram_binary_loop_matches_cog_loop(bincmp_env: None) -> None:
         )
 
     print("\n".join(report_lines))
+
+
+# ── Phase G / Layer 4: HRRR COG vs grid-binary meteogram batch-loop comparison ─
+#
+# HRRR counterpart of the GFS Phase E test above (migration plan "Phase G audit
+# — HRRR and NBM static readiness", checklist item 5, Layer 4). Per the
+# corrected 2026-07-02 audit HRRR has NO Group 2/3 variables in comparison
+# scope (the radar_ptype_* components are buildable=False derive inputs, never
+# independently published), so the comparison covers one Group 1 variable
+# (tmp2m, agreement within scale/2) and radar_ptype (Group 4:
+# upscale_factor=1 + categorical_nearest — the COG and binary describe the
+# SAME pixel grid, so strict integer-category equality is required at every
+# forecast hour, planted category boundaries included; any divergence is a
+# real bug, never expected noise). The fixture uses HRRR's real grid geometry
+# (3 km CONUS, EPSG:3857, resolved through the same build helpers the
+# production pipeline and test_binary_sampler_parity.py's HRRR fixtures use)
+# over a small window anchored at the domain origin, and the full scheduled
+# forecast-hour range of a standard cycle so the loop runs a realistic frame
+# count. All constants are HRRR-prefixed and fully separate from the GFS
+# BINCMP_ fixture above.
+
+HRRRCMP_MODEL = "hrrr"
+HRRRCMP_RUN = "20260702_10z"  # cycle 10 is a standard (non-extended) cycle
+HRRRCMP_CYCLE_HOUR = 10
+HRRRCMP_W, HRRRCMP_H = 20, 16
+# Sampled cell + the point's fractional position inside it. Off-center so the
+# containing-pixel lookup is exercised, but unambiguously inside cell col 17 —
+# with upscale_factor=1 both substrates must resolve the identical pixel.
+HRRRCMP_COL, HRRRCMP_ROW = 17, 7
+HRRRCMP_COL_FRAC, HRRRCMP_ROW_FRAC = 0.25, 0.4
+
+# Full scheduled fh range for a standard HRRR cycle (0-18); pinned against
+# the plugin's real schedule inside the test so drift fails loudly.
+HRRRCMP_FRAME_HOURS = list(range(0, 19))
+
+# Forecast hours where a genuine cross-type category boundary (rain | snow in
+# RADAR_PTYPE_BREAKS flat-index space) is planted between the sampled column
+# and its west neighbor. Everywhere else the boundary sits far from the
+# sampled neighborhood.
+HRRRCMP_EDGE_FHS = {3, 9, 15}
+
+HRRRCMP_UNITS = {
+    "tmp2m": "F",
+    "radar_ptype": "dBZ",
+}
+
+
+def _hrrrcmp_geometry():
+    """HRRR's real grid transform + CRS (3 km CONUS, EPSG:3857), resolved via
+    the production build helpers exactly as test_binary_sampler_parity.py's
+    HRRR fixtures do. The fixture covers a small window anchored at the
+    domain origin; pixel size, CRS, and grid alignment are the model's real
+    ones, not GFS's."""
+    from app.models.registry import MODEL_REGISTRY
+    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+
+    plugin = MODEL_REGISTRY[HRRRCMP_MODEL]
+    region = str(plugin.capabilities.canonical_region)
+    bbox_3857, grid_meters = get_grid_params(HRRRCMP_MODEL, region)
+    transform, _height, _width = compute_transform_and_shape(bbox_3857, grid_meters)
+    return transform, "EPSG:3857"
+
+
+def _hrrrcmp_point() -> tuple[float, float]:
+    """Lat/lon of the sampled point (fractional position inside the sampled
+    cell) on the fixture grid."""
+    from pyproj import Transformer
+
+    transform, projection = _hrrrcmp_geometry()
+    x, y = transform * (HRRRCMP_COL + HRRRCMP_COL_FRAC, HRRRCMP_ROW + HRRRCMP_ROW_FRAC)
+    lon, lat = Transformer.from_crs(projection, "EPSG:4326", always_xy=True).transform(x, y)
+    return float(lat), float(lon)
+
+
+def _hrrrcmp_ptype_type(index: int) -> str | None:
+    """Physical type for a radar_ptype flat palette index, from the live
+    palette breaks (the same table _derive_radar_ptype_family publishes
+    indices against) — never invented bins."""
+    from app.services.colormaps import RADAR_PTYPE_BREAKS
+
+    for ptype, span in RADAR_PTYPE_BREAKS.items():
+        offset = int(span["offset"])
+        if offset <= index < offset + int(span["count"]):
+            return ptype
+    return None
+
+
+def _hrrrcmp_field(var: str, fh: int) -> np.ndarray:
+    """Deterministic synthetic field for (var, fh) on the HRRR fixture grid.
+
+    tmp2m values sit on the packing lattice at 1 decimal so both substrates
+    round identically. radar_ptype values are flat palette indices taken from
+    RADAR_PTYPE_BREAKS at runtime: rain everywhere, with a snow region whose
+    west edge lands exactly on the sampled column at the planted hours (a
+    genuine cross-type category boundary one pixel from the sampled pixel)
+    and far away at column 3 otherwise.
+    """
+    rows, cols = np.mgrid[0:HRRRCMP_H, 0:HRRRCMP_W]
+    if var == "tmp2m":
+        return np.round(30.0 + 0.5 * rows + 0.9 * cols + 0.05 * fh, 1).astype(np.float32)
+    if var == "radar_ptype":
+        from app.services.colormaps import RADAR_PTYPE_BREAKS
+
+        step = fh % 4
+        rain_idx = float(RADAR_PTYPE_BREAKS["rain"]["offset"] + [12, 30, 21, 40][step])
+        snow_idx = float(RADAR_PTYPE_BREAKS["snow"]["offset"] + [8, 22, 15, 33][step])
+        assert _hrrrcmp_ptype_type(int(rain_idx)) == "rain"
+        assert _hrrrcmp_ptype_type(int(snow_idx)) == "snow"
+        edge_col = HRRRCMP_COL if fh in HRRRCMP_EDGE_FHS else 3
+        return np.where(cols >= edge_col, snow_idx, rain_idx).astype(np.float32)
+    raise AssertionError(f"unexpected comparison var: {var}")
+
+
+def _hrrrcmp_valid_time(fh: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 7, 2, HRRRCMP_CYCLE_HOUR, 0, tzinfo=timezone.utc)
+    return (start + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _hrrrcmp_scale(var: str) -> float:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    return float(_PACKING_BY_MODEL_VAR[(HRRRCMP_MODEL, var)]["scale"])
+
+
+@pytest.fixture
+def hrrrcmp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import grid as grid_module
+
+    data_root = tmp_path / "data" / "v3"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+
+    transform, projection = _hrrrcmp_geometry()
+
+    manifest_vars: dict[str, dict] = {}
+    run_root = published_root / HRRRCMP_MODEL / HRRRCMP_RUN
+    for var in HRRRCMP_UNITS:
+        manifest_vars[var] = {
+            "units": HRRRCMP_UNITS[var],
+            "expected_frames": len(HRRRCMP_FRAME_HOURS),
+            "available_frames": len(HRRRCMP_FRAME_HOURS),
+            "frames": [
+                {"fh": fh, "valid_time": _hrrrcmp_valid_time(fh)} for fh in HRRRCMP_FRAME_HOURS
+            ],
+        }
+        for fh in HRRRCMP_FRAME_HOURS:
+            cog_path = run_root / var / f"fh{fh:03d}.val.cog.tif"
+            cog_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(
+                cog_path,
+                "w",
+                driver="GTiff",
+                height=HRRRCMP_H,
+                width=HRRRCMP_W,
+                count=1,
+                dtype="float32",
+                crs=projection,
+                transform=transform,
+            ) as ds:
+                ds.write(_hrrrcmp_field(var, fh), 1)
+            grid_module.write_grid_frame_from_value_cog_for_run_root(
+                run_root=run_root,
+                model=HRRRCMP_MODEL,
+                var=var,
+                fh=fh,
+                value_cog_path=cog_path,
+            )
+
+    manifest_dir = manifests_root / HRRRCMP_MODEL
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{HRRRCMP_RUN}.json").write_text(json.dumps({"variables": manifest_vars}))
+    (published_root / HRRRCMP_MODEL / "LATEST.json").write_text(
+        json.dumps({"run_id": HRRRCMP_RUN})
+    )
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    _reset_main_caches()
+    yield
+    _reset_main_caches()
+
+
+def _hrrrcmp_cog_series(var: str) -> dict:
+    """COG twin of `_sample_variable_series_binary` for the HRRR fixture —
+    same shape as `_bincmp_cog_series`, kept separate so the GFS and HRRR
+    fixtures share no state."""
+    from app.services import sampling
+
+    lat, lon = _hrrrcmp_point()
+    frames, _units = sampling.manifest_frame_entries(HRRRCMP_MODEL, HRRRCMP_RUN, var)
+    points = []
+    for fh, valid_time in frames:
+        present, value = sampling.sample_value(
+            HRRRCMP_MODEL, HRRRCMP_RUN, var, fh, lat=lat, lon=lon
+        )
+        if not present:
+            continue
+        points.append({"fh": fh, "valid_time": valid_time, "value": value})
+    points.sort(key=lambda item: item["fh"])
+    return {"points": points}
+
+
+async def test_meteogram_binary_loop_matches_cog_loop_hrrr(hrrrcmp_env: None) -> None:
+    from app.models.registry import MODEL_REGISTRY
+    from app.services import forecast_page as forecast_page_service
+
+    # Pin the fixture's fh range to the plugin's real standard-cycle schedule:
+    # the point of the loop-level test is a realistic frame count.
+    assert HRRRCMP_FRAME_HOURS == list(
+        MODEL_REGISTRY[HRRRCMP_MODEL].target_fhs(HRRRCMP_CYCLE_HOUR)
+    )
+
+    lat, lon = _hrrrcmp_point()
+    report_lines: list[str] = []
+    ptype_cog_by_fh: dict[int, float] = {}
+
+    for var in HRRRCMP_UNITS:
+        cog = _hrrrcmp_cog_series(var)
+        binary = forecast_page_service._sample_variable_series_binary(
+            HRRRCMP_MODEL, HRRRCMP_RUN, var, lat=lat, lon=lon
+        )
+        cog_by_fh = {p["fh"]: p["value"] for p in cog["points"]}
+        bin_by_fh = {p["fh"]: p["value"] for p in (binary["points"] or [])}
+
+        # Missing/None asymmetry between the two paths (same counting pattern
+        # as the GFS test above — not group-specific). This fixture plants no
+        # gaps, so any asymmetry at all is a real batch-loop bug.
+        missing_fhs = sorted(set(cog_by_fh) ^ set(bin_by_fh))
+        common_fhs = sorted(set(cog_by_fh) & set(bin_by_fh))
+        none_asym_fhs = sorted(
+            fh for fh in common_fhs if (cog_by_fh[fh] is None) != (bin_by_fh[fh] is None)
+        )
+        report_lines.append(
+            f"{var}: frames cog={len(cog_by_fh)} binary={len(bin_by_fh)} "
+            f"present-asymmetry={missing_fhs} none-asymmetry={none_asym_fhs}"
+        )
+        assert len(missing_fhs) + len(none_asym_fhs) == 0, report_lines[-1]
+        assert len(cog_by_fh) == len(HRRRCMP_FRAME_HOURS)
+
+        valued_fhs = [
+            fh
+            for fh in common_fhs
+            if cog_by_fh[fh] is not None and bin_by_fh[fh] is not None
+        ]
+        assert valued_fhs == HRRRCMP_FRAME_HOURS, report_lines[-1]
+
+        if var == "tmp2m":
+            # Group 1: exact match within scale/2 at every fh, zero exceptions.
+            scale = _hrrrcmp_scale(var)
+            diverged = [
+                fh for fh in valued_fhs if abs(cog_by_fh[fh] - bin_by_fh[fh]) > scale / 2.0
+            ]
+            for fh in diverged:
+                report_lines.append(
+                    f"  {var} fh{fh:03d}: cog={cog_by_fh[fh]} binary={bin_by_fh[fh]}"
+                )
+            assert not diverged, "\n".join(report_lines)
+        else:
+            # Group 4 (radar_ptype): upscale_factor=1 + categorical_nearest —
+            # both substrates read the SAME pixel, so the sampled category must
+            # match EXACTLY at every fh, planted-boundary hours included. No
+            # adjacent-category tolerance, no neighborhood-range allowance:
+            # any mismatch is a real bug (and blocking in the canary).
+            for fh in valued_fhs:
+                cog_idx = int(round(cog_by_fh[fh]))
+                bin_idx = int(round(bin_by_fh[fh]))
+                ptype_cog_by_fh[fh] = cog_by_fh[fh]
+                assert cog_idx == bin_idx, "\n".join(
+                    report_lines
+                    + [
+                        f"  {var} fh{fh:03d}: cog index {cog_idx} "
+                        f"({_hrrrcmp_ptype_type(cog_idx)}) vs binary {bin_idx} "
+                        f"({_hrrrcmp_ptype_type(bin_idx)})"
+                    ]
+                )
+
+    # Prove the fixture isn't accidentally flat: at every planted-boundary
+    # hour the pixel one column west of the sampled pixel belongs to a
+    # DIFFERENT physical type, so a naive same-resolution nearest-sample bug
+    # (off-by-one pixel / wrong rounding) would have produced a cross-type
+    # divergence above — while the pass condition itself stays zero
+    # divergence, full stop. Also confirm the comparison actually sampled the
+    # planted (snow-side) value at those hours, so a broken edge-planting
+    # change fails here rather than silently comparing rain against rain.
+    for fh in sorted(HRRRCMP_EDGE_FHS):
+        field = _hrrrcmp_field("radar_ptype", fh)
+        sampled_idx = int(field[HRRRCMP_ROW, HRRRCMP_COL])
+        west_idx = int(field[HRRRCMP_ROW, HRRRCMP_COL - 1])
+        assert _hrrrcmp_ptype_type(sampled_idx) != _hrrrcmp_ptype_type(west_idx), (
+            f"radar_ptype fh{fh:03d}: planted boundary missing — sampled pixel "
+            f"and west neighbor are both {_hrrrcmp_ptype_type(sampled_idx)}"
+        )
+        assert int(round(ptype_cog_by_fh[fh])) == sampled_idx, (
+            f"radar_ptype fh{fh:03d}: sampled value "
+            f"{ptype_cog_by_fh[fh]} does not match the planted boundary-side "
+            f"index {sampled_idx}"
+        )
+        assert _hrrrcmp_ptype_type(sampled_idx) == "snow"
+
+    print("\n".join(report_lines))

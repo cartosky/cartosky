@@ -229,6 +229,198 @@ def test_non_allowlisted_model_gate_behavior_unchanged(
     assert (staging_var / "fh000.val.cog.tif").is_file()
 
 
+# ── HRRR coverage ────────────────────────────────────────────────────────────
+#
+# Same enforced-gate guarantee as the GFS tests above, for the next model in
+# the migration (Phase G). Two materially different rejection paths:
+# tmp2m goes through the generic continuous branch of
+# _check_value_array_sanity (flat field, max_nodata_ratio=0.95), while
+# radar_ptype takes the is_categorical_ptype branch (real colormap spec is
+# type="indexed" with ptype_breaks), whose threshold is max_nodata_ratio=0.998
+# and whose only flat/dry allowance requires finite_count == 0. The GFS
+# fixtures above are untouched; HRRR gets its own plugin/harness with each
+# variable's real spec shape from HRRR_VARIABLE_CATALOG and the REAL colormap
+# specs (get_color_map_spec is deliberately not mocked here — the categorical
+# branch keys off the real radar_ptype spec's type + ptype_breaks).
+
+
+class _HrrrPlugin(_Plugin):
+    id = "hrrr"
+
+
+def _hrrr_var_specs(var: str):
+    """(var_spec_model, var_capability) mirroring the real HRRR catalog entry
+    for `var` — HRRR_VARIABLE_CATALOG has tmp2m as a primary continuous fetch
+    (units F, color_map_id "tmp2m") and radar_ptype as a derived discrete
+    composite (derive="radar_ptype_combo", units dBZ, color_map_id
+    "radar_ptype", frontend WITHOUT allow_dry_frame — that flag belongs to the
+    radar_ptype_* components only)."""
+    if var == "tmp2m":
+        return (
+            SimpleNamespace(
+                id="tmp2m",
+                derived=False,
+                selectors=SimpleNamespace(hints={}, search=[":TMP:2 m above ground:"]),
+                kind="continuous",
+                units="F",
+            ),
+            SimpleNamespace(color_map_id="tmp2m", kind="continuous", units="F", frontend={}),
+        )
+    if var == "radar_ptype":
+        return (
+            SimpleNamespace(
+                id="radar_ptype",
+                derived=True,
+                selectors=SimpleNamespace(hints={}, search=[]),
+                kind="discrete",
+                units="dBZ",
+            ),
+            SimpleNamespace(color_map_id="radar_ptype", kind="discrete", units="dBZ", frontend={}),
+        )
+    raise AssertionError(f"unexpected HRRR test var: {var}")
+
+
+def _hrrr_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetched: np.ndarray,
+    var: str,
+) -> None:
+    """HRRR twin of `_harness`. Differences: per-variable var_spec/capability
+    from `_hrrr_var_specs`, `derive_variable` mocked for the derived
+    radar_ptype path (build_frame skips fetch/convert for derived vars), and
+    the real `get_color_map_spec` left in place."""
+    var_spec_model, var_capability = _hrrr_var_specs(var)
+
+    monkeypatch.setattr(pipeline_module, "_ensure_products_ready", lambda **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_spec", lambda *a, **k: var_spec_model)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_capability", lambda *a, **k: var_capability)
+    monkeypatch.setattr(
+        pipeline_module,
+        "fetch_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "derive_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    monkeypatch.setattr(
+        pipeline_module,
+        "warp_to_target_grid",
+        lambda data, src_crs, src_transform, **kwargs: (data, src_transform),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "float_to_rgba",
+        lambda data, color_map_id, meta_var_key=None: (
+            np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8),
+            {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
+
+
+def _build_hrrr(tmp_path: Path, var: str):
+    return pipeline_module.build_frame(
+        model="hrrr",
+        region="conus",
+        var_id=var,
+        fh=0,
+        run_date=datetime(2026, 7, 2, 10, 0),
+        data_root=tmp_path,
+        product="sfc",
+        model_plugin=_HrrrPlugin(),
+        return_status=True,
+    )
+
+
+def test_binary_only_model_rejects_bad_frame_hrrr_tmp2m(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guarantee as the GFS test above, for hrrr: a flat constant field
+    # fails the REAL pre-encode gate (min == max, no dry-frame allowance for
+    # tmp2m) and must reject the frame with the COG write/gates never reached.
+    # 32.0 F sits inside HRRR's real tmp2m packing band
+    # (_PACKING_BY_MODEL_VAR[("hrrr", "tmp2m")]: scale=0.1, offset=-100.0) —
+    # the rejection is the gate's doing, not an out-of-band encode artifact.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    _hrrr_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m")
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = _build_hrrr(tmp_path, "tmp2m")
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "hrrr" / "20260702_10z" / "tmp2m"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
+def test_binary_only_model_rejects_bad_frame_hrrr_radar_ptype(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # radar_ptype exercises the is_categorical_ptype branch of
+    # _check_value_array_sanity, not the continuous one: the real "radar_ptype"
+    # colormap spec is type="indexed" with ptype_breaks, so the nodata
+    # threshold is the relaxed 0.998 (not 0.95) and the only fully-dry
+    # allowance requires finite_count == 0. The bad array here is genuinely
+    # bad under THAT branch: 1 finite pixel out of 2000 (nodata ratio 0.9995 >
+    # 0.998) while NOT fully dry, so the dry-frame carve-out does not apply.
+    from app.services.colormaps import RADAR_PTYPE_BREAKS
+
+    rain = RADAR_PTYPE_BREAKS["rain"]
+    rain_lo = float(rain["offset"])
+    rain_hi = float(rain["offset"] + rain["count"] - 1)
+
+    var_spec_model, var_capability = _hrrr_var_specs("radar_ptype")
+    real_spec = pipeline_module.get_color_map_spec("radar_ptype")
+
+    # Fixture-sharpness guard: a sparse-but-valid scene at 0.97 nodata (two
+    # distinct in-range palette indices) PASSES the real gate — it would fail
+    # the generic 0.95 threshold, so this pins the categorical branch (and its
+    # 0.998 threshold) as the logic actually in play for this var_spec. If a
+    # spec/branch change ever re-routes radar_ptype to the continuous branch,
+    # this assertion fails loudly instead of the test below passing for the
+    # wrong reason.
+    sparse_valid = np.full((40, 50), np.nan, dtype=np.float32)
+    sparse_valid.flat[:30] = rain_lo
+    sparse_valid.flat[30:60] = rain_hi  # 60/2000 finite -> nodata ratio 0.97
+    assert (
+        pipeline_module.check_pre_encode_value_sanity(
+            sparse_valid,
+            real_spec,
+            var_spec_model=var_spec_model,
+            var_capability=var_capability,
+            label="hrrr/radar_ptype categorical-branch pin",
+        )
+        is True
+    )
+
+    bad = np.full((40, 50), np.nan, dtype=np.float32)
+    bad.flat[0] = rain_lo  # 1/2000 finite -> nodata ratio 0.9995, not fully dry
+
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    _hrrr_harness(monkeypatch, fetched=bad, var="radar_ptype")
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = _build_hrrr(tmp_path, "radar_ptype")
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "hrrr" / "20260702_10z" / "radar_ptype"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
 def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
