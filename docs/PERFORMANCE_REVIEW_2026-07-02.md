@@ -343,3 +343,27 @@ previously deadlocked every attempt: the runs list now populates (6 runs), the g
 generation guards in the bootstrap and frames effects were left untouched — their
 effects' dependency arrays cover their generation triggers, so they are redundant but
 not deadlock-prone.)
+
+---
+
+## 9. Hygiene pass from external (DeepSeek) audit review (implemented 2026-07-02)
+
+An external static audit was cross-checked against this branch (several of its findings
+were already fixed here, two were factually wrong — React 18 batching, prod accel-redirect
+state — and one misread the provider topology). Four items survived review and shipped:
+
+- **Context value memoized** in `capabilities-context.tsx` (was re-created every render).
+- **`Intl.DateTimeFormat` instances hoisted** to module constants in `time-axis.ts` —
+  formatter construction ran on every timeline readout update during scrubs/playback.
+  Verified: 8 scrub steps → 8 correct distinct readouts.
+- **In-flight dedup for `fetchGridManifest`** — concurrent same-URL requests (latest-run
+  probes, composite layers, strict-mode double effects) now share one request. Shared
+  requests carry no abort signal by design; every call site re-checks its own signal
+  after awaiting. Verified: 6 distinct grid-manifest URLs → exactly 6 requests (0 dupes).
+- **Background refresh parallelized** — the 30 s tick now fetches manifest + grid-manifest
+  concurrently (runs first, since the manifest key depends on it) while preserving the
+  documented apply order (grid manifest before frameRows to avoid scrub snap-back).
+  Verified: both requests start at the same millisecond; tick ~30% faster.
+
+Known remaining nit from that review worth a future look: the refresh tick deep-compares
+manifests via `JSON.stringify` twice per tick; harmless at current payload sizes.

@@ -69,13 +69,48 @@ export function formatIssuedTimeISO(iso: string | null | undefined): string | nu
   return formatIssuedTimeLabel(parsed);
 }
 
+// Formatter construction is expensive (~0.1-1ms each) and these run in the
+// timeline readout path on every frame crossing during scrubs and playback —
+// construct once at module load and share (Intl format() calls are stateless).
+const ISSUED_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+const HOUR_MINUTE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  hour: "numeric",
+  minute: "2-digit",
+});
+const FULL_VALID_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+const VALID_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZoneName: "short",
+});
+const COMPACT_DATE_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+const COMPACT_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+});
+
 function formatIssuedTimeLabel(date: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  return ISSUED_TIME_FORMAT.format(date);
 }
 
 export function formatObservedRunLabel(runId: string): string {
@@ -83,10 +118,7 @@ export function formatObservedRunLabel(runId: string): string {
   if (!parsed) {
     return runId;
   }
-  const timeLabel = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
+  const timeLabel = HOUR_MINUTE_FORMAT.format(parsed);
   const month = parsed.getMonth() + 1;
   const day = String(parsed.getDate()).padStart(2, "0");
   return `${timeLabel} ${month}/${day}`;
@@ -97,15 +129,7 @@ export function formatObservedValidTime(iso: string | null | undefined): string 
   if (!parsed) {
     return null;
   }
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(parsed);
+  return FULL_VALID_TIME_FORMAT.format(parsed);
 }
 
 export function formatObservedCompactTime(iso: string | null | undefined): string | null {
@@ -113,10 +137,7 @@ export function formatObservedCompactTime(iso: string | null | undefined): strin
   if (!parsed) {
     return null;
   }
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
+  return HOUR_MINUTE_FORMAT.format(parsed);
 }
 
 function isWindGustVariable(variableId: string | null | undefined): boolean {
@@ -146,23 +167,9 @@ export function formatValidTime(
     return null;
   }
   if (isWindGustVariable(variableId)) {
-    return new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(parsed);
+    return FULL_VALID_TIME_FORMAT.format(parsed);
   }
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZoneName: "short",
-  }).format(parsed);
+  return VALID_DATE_FORMAT.format(parsed);
 }
 
 export function formatValidCompactTime(
@@ -174,17 +181,9 @@ export function formatValidCompactTime(
     return null;
   }
   if (isWindGustVariable(variableId)) {
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(parsed);
+    return COMPACT_DATE_TIME_FORMAT.format(parsed);
   }
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(parsed);
+  return COMPACT_DATE_FORMAT.format(parsed);
 }
 
 export function validDayLabel(forecastHour: number | null | undefined): string {

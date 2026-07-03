@@ -3830,7 +3830,18 @@ export default function App() {
             const manifestRunKey = gridOnlySelection && run === "latest"
               ? ((resolvedGridLatestRunId && nextRuns.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : run)
               : run;
-            const manifestData = await fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal });
+            // Fetch the run manifest and grid manifest concurrently — neither
+            // response depends on the other. Only the APPLY order matters (see
+            // the comment below), and that is preserved.
+            const gridRunKey = gridOnlySelection && run === "latest"
+              ? (retainedGridLatestRunId ?? manifestRunKey)
+              : resolvedRunForRequests;
+            const [manifestData, nextGridManifest] = await Promise.all([
+              fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal }),
+              (prefersGridSubstrate && selectionSupportsGrid)
+                ? fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal })
+                : Promise.resolve(null),
+            ]);
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -3850,28 +3861,19 @@ export default function App() {
             }
             const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
 
-            // Refresh the grid manifest BEFORE extending frameRows / the
+            // Apply the grid manifest BEFORE extending frameRows / the
             // slider.  gridFrameHours (derived from gridManifest) is used by
             // the scrub handler to snap the requested hour.  If we update the
             // slider first, the user can see new hours and try to scrub to
             // them while gridFrameHours still lacks them, causing a snap-back
             // to the nearest old hour.
-            if (prefersGridSubstrate && selectionSupportsGrid) {
-              const gridRunKey = gridOnlySelection && run === "latest"
-                ? (retainedGridLatestRunId ?? manifestRunKey)
-                : resolvedRunForRequests;
-              const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
-              if (cancelled || tickController?.signal.aborted) {
-                return;
-              }
-              if (nextGridManifest) {
-                setGridManifest((prev) => {
-                  if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
-                    return prev;
-                  }
-                  return nextGridManifest;
-                });
-              }
+            if (nextGridManifest) {
+              setGridManifest((prev) => {
+                if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
+                  return prev;
+                }
+                return nextGridManifest;
+              });
             }
 
             if (hasFrameList) {
@@ -3891,29 +3893,29 @@ export default function App() {
           if (!framesRunKey) {
             return;
           }
-          const rows = await fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: tickController.signal });
+          // Concurrent fetches; the grid manifest is still APPLIED before
+          // frameRows so gridFrameHours stays in sync with the slider when
+          // the user scrubs.
+          const framesGridRunKey = gridOnlySelection && run === "latest"
+            ? (retainedGridLatestRunId ?? framesRunKey)
+            : resolvedRunForRequests;
+          const [rows, nextGridManifest] = await Promise.all([
+            fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: tickController.signal }),
+            (prefersGridSubstrate && selectionSupportsGrid)
+              ? fetchGridManifest(model, framesGridRunKey, variable, region, ensembleView, { signal: tickController.signal })
+              : Promise.resolve(null),
+          ]);
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
 
-          // Refresh the grid manifest before updating frameRows so that
-          // gridFrameHours is in sync with the slider when the user scrubs.
-          if (prefersGridSubstrate && selectionSupportsGrid) {
-            const gridRunKey = gridOnlySelection && run === "latest"
-              ? (retainedGridLatestRunId ?? framesRunKey)
-              : resolvedRunForRequests;
-            const nextGridManifest = await fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal });
-            if (cancelled || tickController?.signal.aborted) {
-              return;
-            }
-            if (nextGridManifest) {
-              setGridManifest((prev) => {
-                if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
-                  return prev;
-                }
-                return nextGridManifest;
-              });
-            }
+          if (nextGridManifest) {
+            setGridManifest((prev) => {
+              if (prev && JSON.stringify(prev) === JSON.stringify(nextGridManifest)) {
+                return prev;
+              }
+              return nextGridManifest;
+            });
           }
 
           setFrameRows((prevRows) => {

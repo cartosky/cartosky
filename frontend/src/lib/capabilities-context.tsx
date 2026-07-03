@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   fetchCapabilities,
@@ -53,12 +53,10 @@ export function CapabilitiesProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value: CapabilitiesContextValue = {
-    capabilities,
-    regionPresets,
-    loading,
-    error,
-  };
+  const value = useMemo<CapabilitiesContextValue>(
+    () => ({ capabilities, regionPresets, loading, error }),
+    [capabilities, error, loading, regionPresets],
+  );
 
   return <CapabilitiesContext.Provider value={value}>{children}</CapabilitiesContext.Provider>;
 }

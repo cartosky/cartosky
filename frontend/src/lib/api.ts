@@ -755,7 +755,14 @@ export async function fetchFrames(
     .sort((a, b) => Number(a.fh) - Number(b.fh));
 }
 
-export async function fetchGridManifest(
+// In-flight dedup: the viewer fires concurrent grid-manifest requests for the
+// same URL (latest-run probes, composite layers, background refresh). Shared
+// requests intentionally carry NO abort signal — an aborting caller just
+// abandons its await (all call sites re-check their own signal after awaiting),
+// so one caller's abort can't cancel the response for the others.
+const gridManifestInflight = new Map<string, Promise<GridManifestResponse | null>>();
+
+export function fetchGridManifest(
   model: string,
   run: string,
   varKey: string,
@@ -771,35 +778,50 @@ export async function fetchGridManifest(
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
   }
-  try {
-    const response = await fetchJson<GridManifestResponse>(
-      `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest${query.toString() ? `?${query.toString()}` : ""}`,
-      {
-        ...options,
-        productId: model,
-        diagnosticMetricName: options?.diagnosticMetricName ?? "grid_manifest_fetch_duration",
-        diagnosticMeta: {
-          ...(options?.diagnosticMeta ?? {}),
-          model_id: model,
-          run_id: runKey,
-          variable_id: varKey,
-          region: region ?? null,
-        },
-      }
-    );
-    if (
-      !response
-      || !Array.isArray(response.lods)
-      || !response.grid
-      || !Number.isFinite(Number(response.grid.width))
-      || !Number.isFinite(Number(response.grid.height))
-    ) {
-      return null;
-    }
-    return response;
-  } catch {
-    return null;
+  const url = `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest${query.toString() ? `?${query.toString()}` : ""}`;
+
+  const inflight = gridManifestInflight.get(url);
+  if (inflight) {
+    return inflight;
   }
+
+  const request = (async (): Promise<GridManifestResponse | null> => {
+    try {
+      const response = await fetchJson<GridManifestResponse>(
+        url,
+        {
+          ...options,
+          signal: undefined,
+          productId: model,
+          diagnosticMetricName: options?.diagnosticMetricName ?? "grid_manifest_fetch_duration",
+          diagnosticMeta: {
+            ...(options?.diagnosticMeta ?? {}),
+            model_id: model,
+            run_id: runKey,
+            variable_id: varKey,
+            region: region ?? null,
+          },
+        }
+      );
+      if (
+        !response
+        || !Array.isArray(response.lods)
+        || !response.grid
+        || !Number.isFinite(Number(response.grid.width))
+        || !Number.isFinite(Number(response.grid.height))
+      ) {
+        return null;
+      }
+      return response;
+    } catch {
+      return null;
+    } finally {
+      gridManifestInflight.delete(url);
+    }
+  })();
+
+  gridManifestInflight.set(url, request);
+  return request;
 }
 
 export async function fetchRgbManifest(
