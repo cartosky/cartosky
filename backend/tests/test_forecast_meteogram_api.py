@@ -1122,3 +1122,287 @@ async def test_meteogram_binary_loop_matches_cog_loop_hrrr(hrrrcmp_env: None) ->
         assert _hrrrcmp_ptype_type(sampled_idx) == "snow"
 
     print("\n".join(report_lines))
+
+
+# ── Phase G / Layer 4: NBM COG vs grid-binary meteogram batch-loop comparison ─
+#
+# NBM counterpart of the HRRR test above (migration plan "Phase G audit — HRRR
+# and NBM static readiness", checklist item 5, Layer 4). Per the audit NBM has
+# Group 1 (sbcape, tmp2m, wspd10m) and Group 2 (precip_total, snowfall_total,
+# both upscale_factor=3 continuous) and no Group 3/4 — so unlike HRRR this
+# comparison needs the GFS-style planted display-prep boundary for its Group 2
+# variable, where the pass condition is "boundary-explainable divergence
+# within the COG neighborhood's value range", not exact match. Covered here:
+# tmp2m (Group 1, scale/2 exact) and precip_total (Group 2). The fixture uses
+# NBM's real grid geometry (13 km CONUS, EPSG:3857) via the same build
+# helpers as the HRRR fixture, and each variable's own live schedule from
+# scheduled_fhs_for_var — NBM's Group 1/2 schedules genuinely differ
+# (precip_total has min_fh=6), and tmp2m's synoptic-cycle schedule is the
+# longest sequential-read pattern the binary path has yet faced (fh264).
+# All constants are NBMCMP_-prefixed; the GFS BINCMP_ and HRRR HRRRCMP_
+# fixtures are untouched.
+
+NBMCMP_MODEL = "nbm"
+NBMCMP_RUN = "20260702_00z"  # cycle 00 is synoptic: hourly to fh036, 6-hourly to fh264
+NBMCMP_CYCLE_HOUR = 0
+NBMCMP_W, NBMCMP_H = 20, 16
+# Sampled coarse cell + fractional position: 0.05 leans the point against the
+# cell's left edge (the GFS BINCMP_ arrangement) so the Group 2 binary path's
+# 3x fine grid reads the col-16 side of a planted edge while the COG's
+# coarse nearest-pixel stays on col 17.
+NBMCMP_COL, NBMCMP_ROW = 17, 7
+NBMCMP_COL_FRAC, NBMCMP_ROW_FRAC = 0.05, 0.5
+
+# Forecast hours where precip_total's field edge is planted at the sampled
+# column (divergence expected); everywhere else the edge sits far away and
+# the sampled neighborhood is flat (exact match expected). Spread across the
+# hourly and 6-hourly bands of the schedule.
+NBMCMP_EDGE_FHS = {24, 120, 240}
+
+NBMCMP_UNITS = {
+    "tmp2m": "F",
+    "precip_total": "in",
+}
+
+
+def _nbmcmp_geometry():
+    """NBM's real grid transform + CRS (13 km CONUS, EPSG:3857), resolved via
+    the production build helpers — same pattern as the HRRR fixture."""
+    from app.models.registry import MODEL_REGISTRY
+    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+
+    plugin = MODEL_REGISTRY[NBMCMP_MODEL]
+    region = str(plugin.capabilities.canonical_region)
+    bbox_3857, grid_meters = get_grid_params(NBMCMP_MODEL, region)
+    transform, _height, _width = compute_transform_and_shape(bbox_3857, grid_meters)
+    return transform, "EPSG:3857"
+
+
+def _nbmcmp_point() -> tuple[float, float]:
+    from pyproj import Transformer
+
+    transform, projection = _nbmcmp_geometry()
+    x, y = transform * (NBMCMP_COL + NBMCMP_COL_FRAC, NBMCMP_ROW + NBMCMP_ROW_FRAC)
+    lon, lat = Transformer.from_crs(projection, "EPSG:4326", always_xy=True).transform(x, y)
+    return float(lat), float(lon)
+
+
+def _nbmcmp_frame_hours(var: str) -> list[int]:
+    """The variable's own live schedule for the fixture cycle. NBM's Group 1
+    and Group 2 schedules differ (precip_total/snowfall_total carry min_fh=6),
+    so the fixture publishes per-variable frame lists rather than one shared
+    range — and deriving them from the plugin (rather than hardcoding the
+    canary-observed 75-frame tmp2m figure) keeps the test pinned to the real
+    schedule if it ever drifts."""
+    from app.models.registry import MODEL_REGISTRY
+
+    return [
+        int(fh)
+        for fh in MODEL_REGISTRY[NBMCMP_MODEL].scheduled_fhs_for_var(var, NBMCMP_CYCLE_HOUR)
+    ]
+
+
+def _nbmcmp_field(var: str, fh: int) -> np.ndarray:
+    """Deterministic synthetic field for (var, fh) on the NBM fixture grid.
+
+    tmp2m values sit on the packing lattice at 1 decimal so both substrates
+    round identically. precip_total mirrors the GFS BINCMP_ Group 2 pattern:
+    a zero/value step edge whose column lands exactly on the sampled column
+    at the planted hours (so display-prep bilinear mixing / zero-support
+    clamping on the 3x fine grid genuinely fires at the sampled point) and
+    far away at column 3 otherwise, leaving the sampled neighborhood flat.
+    """
+    rows, cols = np.mgrid[0:NBMCMP_H, 0:NBMCMP_W]
+    if var == "tmp2m":
+        return np.round(30.0 + 0.5 * rows + 0.9 * cols + 0.05 * fh, 1).astype(np.float32)
+    if var == "precip_total":
+        step = fh // 3
+        value = [0.62, 0.38, 0.81, 0.24, 1.13][step % 5]
+        edge_col = NBMCMP_COL if fh in NBMCMP_EDGE_FHS else 3
+        return np.where(cols >= edge_col, value, 0.0).astype(np.float32)
+    raise AssertionError(f"unexpected comparison var: {var}")
+
+
+def _nbmcmp_valid_time(fh: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 7, 2, NBMCMP_CYCLE_HOUR, 0, tzinfo=timezone.utc)
+    return (start + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _nbmcmp_scale(var: str) -> float:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    return float(_PACKING_BY_MODEL_VAR[(NBMCMP_MODEL, var)]["scale"])
+
+
+def _nbmcmp_neighborhood(var: str, fh: int) -> np.ndarray:
+    field = _nbmcmp_field(var, fh)
+    r0, r1 = max(0, NBMCMP_ROW - 1), min(NBMCMP_H, NBMCMP_ROW + 2)
+    c0, c1 = max(0, NBMCMP_COL - 1), min(NBMCMP_W, NBMCMP_COL + 2)
+    return field[r0:r1, c0:c1]
+
+
+@pytest.fixture
+def nbmcmp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import grid as grid_module
+
+    data_root = tmp_path / "data" / "v3"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+
+    transform, projection = _nbmcmp_geometry()
+
+    manifest_vars: dict[str, dict] = {}
+    run_root = published_root / NBMCMP_MODEL / NBMCMP_RUN
+    for var in NBMCMP_UNITS:
+        frame_hours = _nbmcmp_frame_hours(var)
+        manifest_vars[var] = {
+            "units": NBMCMP_UNITS[var],
+            "expected_frames": len(frame_hours),
+            "available_frames": len(frame_hours),
+            "frames": [
+                {"fh": fh, "valid_time": _nbmcmp_valid_time(fh)} for fh in frame_hours
+            ],
+        }
+        for fh in frame_hours:
+            cog_path = run_root / var / f"fh{fh:03d}.val.cog.tif"
+            cog_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(
+                cog_path,
+                "w",
+                driver="GTiff",
+                height=NBMCMP_H,
+                width=NBMCMP_W,
+                count=1,
+                dtype="float32",
+                crs=projection,
+                transform=transform,
+            ) as ds:
+                ds.write(_nbmcmp_field(var, fh), 1)
+            grid_module.write_grid_frame_from_value_cog_for_run_root(
+                run_root=run_root,
+                model=NBMCMP_MODEL,
+                var=var,
+                fh=fh,
+                value_cog_path=cog_path,
+            )
+
+    manifest_dir = manifests_root / NBMCMP_MODEL
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{NBMCMP_RUN}.json").write_text(json.dumps({"variables": manifest_vars}))
+    (published_root / NBMCMP_MODEL / "LATEST.json").write_text(
+        json.dumps({"run_id": NBMCMP_RUN})
+    )
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    _reset_main_caches()
+    yield
+    _reset_main_caches()
+
+
+def _nbmcmp_cog_series(var: str) -> dict:
+    """COG twin of `_sample_variable_series_binary` for the NBM fixture."""
+    from app.services import sampling
+
+    lat, lon = _nbmcmp_point()
+    frames, _units = sampling.manifest_frame_entries(NBMCMP_MODEL, NBMCMP_RUN, var)
+    points = []
+    for fh, valid_time in frames:
+        present, value = sampling.sample_value(
+            NBMCMP_MODEL, NBMCMP_RUN, var, fh, lat=lat, lon=lon
+        )
+        if not present:
+            continue
+        points.append({"fh": fh, "valid_time": valid_time, "value": value})
+    points.sort(key=lambda item: item["fh"])
+    return {"points": points}
+
+
+async def test_meteogram_binary_loop_matches_cog_loop_nbm(nbmcmp_env: None) -> None:
+    from app.services import forecast_page as forecast_page_service
+
+    # The planted-boundary hours must be part of precip_total's real schedule,
+    # or the Group 2 boundary assertions below would be vacuously skipped.
+    assert NBMCMP_EDGE_FHS <= set(_nbmcmp_frame_hours("precip_total"))
+
+    lat, lon = _nbmcmp_point()
+    report_lines: list[str] = []
+
+    for var in NBMCMP_UNITS:
+        frame_hours = _nbmcmp_frame_hours(var)
+        cog = _nbmcmp_cog_series(var)
+        binary = forecast_page_service._sample_variable_series_binary(
+            NBMCMP_MODEL, NBMCMP_RUN, var, lat=lat, lon=lon
+        )
+        cog_by_fh = {p["fh"]: p["value"] for p in cog["points"]}
+        bin_by_fh = {p["fh"]: p["value"] for p in (binary["points"] or [])}
+
+        # Missing/None asymmetry between the two paths (same counting pattern
+        # as the GFS/HRRR tests above — not group-specific). This fixture
+        # plants no gaps, so any asymmetry at all is a real batch-loop bug.
+        missing_fhs = sorted(set(cog_by_fh) ^ set(bin_by_fh))
+        common_fhs = sorted(set(cog_by_fh) & set(bin_by_fh))
+        none_asym_fhs = sorted(
+            fh for fh in common_fhs if (cog_by_fh[fh] is None) != (bin_by_fh[fh] is None)
+        )
+        report_lines.append(
+            f"{var}: frames cog={len(cog_by_fh)} binary={len(bin_by_fh)} "
+            f"present-asymmetry={missing_fhs} none-asymmetry={none_asym_fhs}"
+        )
+        assert len(missing_fhs) + len(none_asym_fhs) == 0, report_lines[-1]
+        # Both loops walked the variable's own full live schedule (75 frames
+        # for tmp2m on a synoptic cycle, 69 for precip_total with min_fh=6).
+        assert sorted(cog_by_fh) == frame_hours
+
+        valued_fhs = [
+            fh
+            for fh in common_fhs
+            if cog_by_fh[fh] is not None and bin_by_fh[fh] is not None
+        ]
+        assert valued_fhs == frame_hours, report_lines[-1]
+
+        scale = _nbmcmp_scale(var)
+        diverged = [
+            fh for fh in valued_fhs if abs(cog_by_fh[fh] - bin_by_fh[fh]) > scale / 2.0
+        ]
+        for fh in diverged:
+            nbhd = _nbmcmp_neighborhood(var, fh)
+            report_lines.append(
+                f"  {var} fh{fh:03d}: cog={cog_by_fh[fh]} binary={bin_by_fh[fh]} "
+                f"neighborhood=[{np.nanmin(nbhd):.3f}, {np.nanmax(nbhd):.3f}]"
+            )
+
+        if var == "tmp2m":
+            # Group 1: exact match within scale/2 at every fh, zero exceptions.
+            assert not diverged, "\n".join(report_lines)
+        else:
+            # Group 2 (precip_total, 3x continuous upscale): >=95% exact
+            # within scale/2; every divergence must be boundary-explainable —
+            # the binary value must lie inside the COG neighborhood's value
+            # range (what bilinear mixing / zero-support clamping at a
+            # display-prep boundary can produce), never outside it. A real
+            # decode/registration regression lands outside.
+            match_ratio = 1.0 - len(diverged) / len(valued_fhs)
+            assert match_ratio >= 0.95, "\n".join(report_lines)
+            for fh in diverged:
+                nbhd = _nbmcmp_neighborhood(var, fh)
+                low = float(np.nanmin(nbhd)) - scale / 2.0
+                high = float(np.nanmax(nbhd)) + scale / 2.0
+                assert low <= bin_by_fh[fh] <= high, "\n".join(report_lines)
+            # Prove the comparison exercised a real display-prep boundary: at
+            # least one planted-edge hour must actually diverge, otherwise the
+            # boundary-tolerance assertions above vacuously compared flat
+            # fields.
+            assert NBMCMP_EDGE_FHS & set(diverged), (
+                f"{var}: no divergence at planted boundary hours "
+                f"{sorted(NBMCMP_EDGE_FHS)}\n" + "\n".join(report_lines)
+            )
+            # And every divergence must be at a planted hour — the sampled
+            # neighborhood is flat everywhere else, so a divergence off the
+            # planted hours is a real bug, not an upscale artifact.
+            assert set(diverged) <= NBMCMP_EDGE_FHS, "\n".join(report_lines)
+
+    print("\n".join(report_lines))

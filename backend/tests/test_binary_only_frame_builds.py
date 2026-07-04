@@ -421,6 +421,100 @@ def test_binary_only_model_rejects_bad_frame_hrrr_radar_ptype(
     assert not (staging_var / "grid").exists()
 
 
+# ── NBM coverage ─────────────────────────────────────────────────────────────
+#
+# Same enforced-gate guarantee for the third migration model (Phase G). NBM
+# has no categorical/indexed variable in scope — all five packed variables
+# are continuous — so only the generic branch of _check_value_array_sanity
+# applies (flat field, max_nodata_ratio=0.95, no ptype carve-out) and one
+# tmp2m rejection test proves the mechanism, matching the GFS precedent.
+# NBM's tmp2m is a direct fetch (primary=True, derived=False in
+# NBM_VARIABLE_CATALOG — unlike HRRR's derived radar_ptype), with
+# color_map_id="tmp2m", kind="continuous", units="F".
+
+
+class _NbmPlugin(_Plugin):
+    id = "nbm"
+
+
+def _nbm_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetched: np.ndarray,
+) -> None:
+    """NBM twin of `_hrrr_harness`, tmp2m only: fetch-path mocks (NBM derives
+    nothing in scope), var_spec/capability mirroring NBM_VARIABLE_CATALOG's
+    real tmp2m entry, and the real `get_color_map_spec` left in place."""
+    var_spec_model = SimpleNamespace(
+        id="tmp2m",
+        derived=False,
+        selectors=SimpleNamespace(hints={}, search=[":TMP:2 m above ground:"]),
+        kind="continuous",
+        units="F",
+    )
+    var_capability = SimpleNamespace(color_map_id="tmp2m", kind="continuous", units="F", frontend={})
+
+    monkeypatch.setattr(pipeline_module, "_ensure_products_ready", lambda **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_spec", lambda *a, **k: var_spec_model)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_capability", lambda *a, **k: var_capability)
+    monkeypatch.setattr(
+        pipeline_module,
+        "fetch_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    monkeypatch.setattr(
+        pipeline_module,
+        "warp_to_target_grid",
+        lambda data, src_crs, src_transform, **kwargs: (data, src_transform),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "float_to_rgba",
+        lambda data, color_map_id, meta_var_key=None: (
+            np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8),
+            {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
+
+
+def test_binary_only_model_rejects_bad_frame_nbm_tmp2m(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guarantee as the GFS/HRRR tests above, for nbm: a flat constant
+    # field fails the REAL pre-encode gate (min == max, no dry-frame allowance
+    # for tmp2m) and must reject the frame with the COG write/gates never
+    # reached. 32.0 F sits inside NBM's real tmp2m packing band
+    # (_PACKING_BY_MODEL_VAR[("nbm", "tmp2m")]: scale=0.1, offset=-100.0) —
+    # the rejection is the gate's doing, not an out-of-band encode artifact.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "nbm")
+    _nbm_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = pipeline_module.build_frame(
+        model="nbm",
+        region="conus",
+        var_id="tmp2m",
+        fh=0,
+        run_date=datetime(2026, 7, 2, 0, 0),
+        data_root=tmp_path,
+        product="co",
+        model_plugin=_NbmPlugin(),
+        return_status=True,
+    )
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "nbm" / "20260702_00z" / "tmp2m"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
 def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

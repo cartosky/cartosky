@@ -318,7 +318,7 @@ Retention-turnover note for the packing-fix addendum: 6 retained runs at 3-hour 
 
 **Canary script hardening, completed 2026-07-03.** All four follow-ups from the HRRR Layer 3 pass are implemented in `canary_binary_sampler.py` (verified by direct code read, not just the implementation summary): (1) scope derivation now filters on `VariableCapability.buildable`, **with one necessary refinement found during implementation** — a naive buildable-only filter would have wrongly excluded GFS's `ptype_intensity_rain/snow/ice`, which are `buildable=False` yet are independently published via the scheduler's `companion_vars` mechanism (`scheduler.py`, `_companion_vars_for_var`/`_scheduled_targets_for_cycle`) as companions of the buildable `ptype_intensity`. The filter now excludes `buildable=False` only when a variable is *also* not companion-published; HRRR's `radar_ptype_*` components are companions of nothing and remain correctly excluded. (2) `bin_meta_invalid_count` is now a distinct, always-blocking classification (any binary resolution failure on a frame the COG side sampled successfully exits 4 regardless of tolerance group) separate from a blocking asymmetric-no-value-rate check (binary no-value rate > 0.2 while COG stays < 0.05); both surface at the summary's top level. (3) `--vars` added, validated against post-filter scope, composable with `--run`/`--sample-limit`; a `vars_with_zero_comparisons` warning fires whenever `--sample-limit` truncates coverage before an in-scope variable gets any comparisons. (4) `_expected_meteogram_frame_count()` derives the expected frame count from `plugin.scheduled_fhs_for_var()` for the run's actual cycle hour instead of a hardcoded GFS-era "need 85+" — confirmed against HRRR's real canary output (49 frames expected/observed for the 18z extended cycle, 19 for standard cycles). Verification: 314 directly-affected tests pass; full suite shows the same ~79 pre-existing failures as main, confirmed via stash-diff to be pre-existing rather than introduced by this change.
 
-**Tracked, not yet a problem:** EPS/GEFS `__mean` variables are resolved to a runtime var id via a third mechanism (`resolve_runtime_var_id`) that the buildable/companion filter does not model. If an EPS/GEFS Phase G audit runs before this is addressed, verify the filter correctly resolves runtime var ids against the capability catalog rather than silently excluding valid ensemble-mean variables.
+**Tracked, not yet a problem:** EPS/GEFS `__mean` variables are resolved to a runtime var id via a third mechanism (`resolve_runtime_var_id`) that the buildable/companion filter does not model. If an EPS/GEFS Phase G audit runs before this is addressed, verify the filter correctly resolves runtime var ids against the capability catalog rather than silently excluding valid ensemble-mean variables. *Update 2026-07-04: addressed — the canary's scope filter now includes `ensemble.artifact_map` values of buildable entries (`_ensemble_artifact_published_vars`), and the GEFS/EPS Phase G audit below found one remaining refinement needed on the opposite side (bare artifact-mapped ids are still falsely included; see that section).*
 
 **Layers 1-2 implementation, completed 2026-07-02.** The static audit above was independently re-verified at runtime during this work and confirmed in full: 23 literal HRRR entries, 5 literal NBM entries, no loop-registered entries for either model (the registration loops cover gfs/ecmwf/aigfs/gefs/aifs/eps/ndfd/wpc only), all uint16, `vort500` `offset=-100.0`, `tmp850_anom` `offset=-80.0`, and all tolerance-group assignments match `grid_display_prep_config` exactly. What was built:
 
@@ -331,6 +331,112 @@ Retention-turnover note for the packing-fix addendum: 6 retained runs at 3-hour 
 
 **Remaining sequence before either model's allowlist flip:** deploy the item 5 changes to prod (the shared helper and the canary script's delegation to it are production-adjacent code the shadow script depends on); run each model's 4-cycle Layer 3 canary using the leaner protocol from the addendum above (the two canaries may run concurrently; HRRR's window should include at least one 48-hour extended cycle so fh019-048 frames are exercised; point lists must be filtered to each model's CONUS bbox so out-of-coverage points register as expected-missing rather than divergence noise); gather Phase C parallel-gate evidence on HRRR and NBM frames during the same window; extend and run Layer 4 meteogram integration per model (NBM's fh264 range is the longest sequential-read pattern the binary path has yet faced); apply the packing-fix retroactivity check from the addendum above; then and only then, checklist item 6.
 
+### Phase G audit — GEFS and EPS static readiness (checklist items 1–4)
+
+This audit covers checklist items 1–4 only, performed 2026-07-04 as a single combined pass because both models publish through the same buildable/`__mean`-twin ensemble pattern (`BaseModelPlugin.resolve_runtime_var_id` + `ensemble.artifact_map`) — but every claim below was verified per-model against `gefs.py`, `eps.py`, `grid.py`, `grid_display_prep.py`, and `scheduler.py` directly, not assumed to transfer between the two. It does **not** start a canary, implement Layer 1/2 tests, add either model to `CARTOSKY_BINARY_SAMPLING_MODELS`, or measure prod storage (checklist item 7 remains open for both).
+
+#### The ensemble publish path — the finding that shapes both audits
+
+Neither model publishes any frame under a bare catalog var id. The scheduler resolves every build target through `_runtime_var_id()` (`scheduler.py`, `_build_one_frame` and `_build_bundle`) *before* calling `build_frame`/`build_frame_bundle`, and `build_frame` stages artifacts and performs its packing-table lookup under that resolved id. For both models, every buildable catalog entry carries `ensemble.artifact_map = {"mean": "<var>__mean"}` and `default_view = "mean"`, so **the on-disk published artifact ids are exclusively the `__mean` twins** (verified programmatically: 18/18 GEFS and 14/14 EPS buildable entries redirect; zero publish under their own id; zero `companion_vars` anywhere in either catalog). `supported_views` is `["mean"]` on every entry of both models — per-member views are not reachable today and are out of scope pending their own sizing spike.
+
+Three consequences:
+
+1. **The parity/comparison scope for both models is the set of `__mean` artifact ids, not the bare user-facing ids.** The bare ids are runtime aliases; users requesting `tmp2m` are served `tmp2m__mean` frames.
+2. **Seven bare-id packing entries per model are write-path-dead**: `tmp2m_anom`, `tmp850_anom`, `hgt500_anom`, and the four loop-registered precip-anomaly bare ids each have a `_PACKING_BY_MODEL_VAR` entry that the production write path never uses (the encoder keys on the `__mean` id, which has its own entry). Verified that each dead entry's constants are byte-identical to its `__mean` twin's, so there is no `vort500`-class divergence hazard hiding in the duplication — but no frames exist on disk under these ids, and any tooling that iterates packing keys (the canary does) will find empty directories for them.
+3. **Canary scope-filter status:** the 2026-07-04 filter fix (`_ensemble_artifact_published_vars` in `canary_binary_sampler.py`) correctly pulls the `__mean` artifacts *into* scope. The remaining gap found by this audit is the mirror image: the buildable bare ids stay in scope (they pass the `buildable=True` check) even though their frames live under a different id, so a GEFS/EPS canary run today would report zero comparisons for 7 variables per model. **Required before either model's canary:** either extend the filter to exclude buildable ids whose runtime resolution redirects to a different artifact id, or run with an explicit `--vars` list of artifact ids and treat the bare-id zero-comparison warnings as expected. The former is the real fix; the current behavior is a false inclusion, not a false exclusion, so parity coverage itself is not compromised either way. *Resolved later the same day: `_ensemble_dead_alias_vars()` now excludes buildable ids whose `artifact_map` redirects every reachable view elsewhere, reported separately in the summary as `excluded_dead_alias_variables` (distinct from `excluded_non_buildable_variables`). Verified: GEFS 18 in scope + 7 dead aliases, EPS 14 + 7 (+ `hgt500__mean` non-buildable), GFS/HRRR/NBM scopes byte-identical to before.*
+
+#### GEFS
+
+Packing scope from `_PACKING_BY_MODEL_VAR` is 25 entries — 17 literal plus **8 loop-registered** (the `for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom")` loop near the bottom of `grid.py` registers both the bare and `__mean` id for each): checklist item 1's loop-registration warning applies for real here, and note GEFS's fourth anomaly window is **16d**, not ECMWF-family 15d.
+
+Per the publish-path finding above, the 25 packed entries split into **18 published artifacts** (comparison scope) and **7 write-path-dead bare aliases** (`tmp2m_anom`, `tmp850_anom`, `hgt500_anom`, `precip_{5,7,10,16}d_anom`). Published-artifact packing constants, all `uint16` (no GEFS entry sets a `dtype`, so all take the `GRID_DTYPE` default; no `uint8` anywhere):
+
+| Artifact id | scale | offset | units |
+|---|---|---|---|
+| `tmp2m__mean`, `tmp850__mean` | 0.1 | -100.0 | F |
+| `tmp2m_anom__mean`, `tmp850_anom__mean` | 0.1 | -80.0 | F |
+| `hgt500_anom__mean` | 1.0 | -600.0 | m |
+| `rh2m__mean`, `rh700__mean` | 0.1 | 0.0 | % |
+| `wspd850__mean`, `wspd300__mean` | 0.1 | 0.0 | kt |
+| `wspd10m__mean` | 0.1 | 0.0 | mph |
+| `sbcape__mean` | 1.0 | 0.0 | J/kg |
+| `snowfall_total__mean` | 0.1 | 0.0 | in |
+| `pwat__mean`, `precip_total__mean` | 0.01 | 0.0 | in |
+| `precip_{5,7,10,16}d_anom__mean` | 0.01 | -128.0 | in |
+
+Signed-variable offset audit (the `vort500`-class check from the addendum): every physically-signed variable — both temperature anomalies, the height anomaly, and all four precip anomalies — carries a correctly negative offset. Note `hgt500_anom__mean`'s `scale=1.0` means 1 m quantization (0.5 m Group 1 tolerance), the coarsest quantization in the GEFS set; same on both substrates' comparison logic, just worth knowing when eyeballing canary output.
+
+Catalog cross-reference: all 25 packed ids are live entries in `GEFS_VARIABLE_CATALOG` — which itself uses the loop-registration pattern for the precip anomalies (`gefs.py`, the `PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY` loops appending to both `GEFS_VARS` and `GEFS_VARIABLE_CATALOG` at import time). Every buildable entry has an `artifact_map`, every mapped runtime id has a packing entry, and no packed GEFS id is unreachable — the 7 bare aliases are reachable as *build targets* (they are the scheduled ids), just never used as *artifact* ids.
+
+Tolerance groups for the 18 published artifacts (via `sampling_tolerance_group` against `grid_display_prep_config`, verified programmatically):
+
+| Group | GEFS artifacts |
+|---|---|
+| Group 1 | `tmp2m__mean`, `tmp2m_anom__mean`, `tmp850__mean`, `tmp850_anom__mean`, `hgt500_anom__mean`, `rh2m__mean`, `rh700__mean`, `wspd850__mean`, `wspd300__mean`, `wspd10m__mean`, `sbcape__mean`, `pwat__mean`, `precip_{5,7,10,16}d_anom__mean` |
+| Group 2 | `precip_total__mean`, `snowfall_total__mean` (both `upscale_factor=3`, `categorical_nearest=False`, `preserve_zero_support=True`) |
+| Group 3 / 4 | None |
+| Excluded (write-path-dead bare aliases) | `tmp2m_anom`, `tmp850_anom`, `hgt500_anom`, `precip_{5,7,10,16}d_anom` |
+
+Structural differences from GFS/HRRR/NBM (checklist item 4):
+
+- **Published region is `na` (-178 to -25 lon, 5 to 82 lat), not CONUS** — the first audited model whose canonical build region is not CONUS. Canary anchor-point lists must be filtered to the `na` bbox, and CONUS-only point lists would silently ignore most of the coverage; conversely, Alaska/Canada points that HRRR/NBM treated as expected-missing are *in scope* here.
+- Grid resolution 25 km (`grid_meters_by_region`: 25,000 m for both `na` and `conus`), from 0.5° source GRIB (`atmos.5`, Herbie `member="mean"` for every `__mean` runtime var).
+- Forecast-hour schedule is **cycle-hour independent**: fh 0–384 step 6 = 65 frames, every cycle, 6-hour cadence — no HRRR-style mixed cycle lengths.
+- Constraint-windowed variables reduce real frame counts (all derived via `scheduled_fhs_for_var`, which the canary's expected-frame logic already uses): `precip_total__mean`/`snowfall_total__mean` 64 frames (min_fh 6); `precip_5d_anom__mean` 45 (min_fh 120); `precip_7d_anom__mean` 37 (min_fh 168); `precip_10d_anom__mean` 25 (min_fh 240); and **`precip_16d_anom__mean` is a single-frame variable** (min_fh = max_fh = 384) — with default sampling limits it will get very few comparisons per run, so per-variable coverage warnings need reading with that in mind rather than as truncation.
+- Heavily derived variable set: every artifact except `tmp2m/tmp850/rh2m/rh700/pwat/sbcape` means is derive-strategy output (ERA5-baseline anomalies, cumulative precip, 10:1 snowfall, u/v-composited wind speeds) — all consumed upstream of `write_grid_frame_for_run_root`, so no new parity semantics, but Group 1 anomalies exercise the negative-offset packing bands more than any previously audited model.
+
+#### EPS
+
+Packing scope from `_PACKING_BY_MODEL_VAR` is 22 entries — 14 literal plus **8 loop-registered** via a separate, EPS-specific loop in `grid.py` (not the GEFS loop: EPS's fourth anomaly window is **15d**, `precip_{5,7,10,15}d_anom` + `__mean` twins). The 22 split into **14 published artifacts**, **7 write-path-dead bare aliases** (`tmp2m_anom`, `tmp850_anom`, `hgt500_anom`, `precip_{5,7,10,15}d_anom`), and **one packed id that is not reachable at all — see the flag below**. All entries `uint16` (no `dtype` key anywhere in the EPS set; no `uint8`).
+
+Published-artifact packing constants:
+
+| Artifact id | scale | offset | units |
+|---|---|---|---|
+| `tmp2m__mean`, `tmp850__mean` | 0.1 | -100.0 | F |
+| `tmp2m_anom__mean`, `tmp850_anom__mean` | 0.1 | -80.0 | F |
+| `hgt500_anom__mean` | 1.0 | -600.0 | m |
+| `rh2m__mean`, `rh700__mean` | 0.1 | 0.0 | % |
+| `wspd10m__mean` | 0.1 | 0.0 | mph |
+| `pwat__mean`, `precip_total__mean` | 0.01 | 0.0 | in |
+| `precip_{5,7,10,15}d_anom__mean` | 0.01 | -128.0 | in |
+
+Signed-variable offset audit: all anomalies carry correctly negative offsets, same constants as their GEFS counterparts. EPS has no wind-aloft, CAPE, or snowfall artifacts — its 14-variable scope is a strict subset of GEFS's shape apart from the 15d/16d window difference.
+
+**Flagged, packed but unreachable: `("eps", "hgt500__mean")`** (scale 0.1, offset -60.0, dam). Its catalog entry is `buildable=False, internal_only=True`, it is not an `artifact_map` value of any buildable entry, and it is nobody's companion — it exists as the *contour-component input* consumed in-memory by `hgt500_anom`'s derive/contour hints. No scheduler build target can produce a frame under this id, so the packing entry appears to be stale or anticipatory config. GEFS has the same catalog shape for its `hgt500__mean` but — correctly — no packing entry for it, which reinforces the stale-config reading. The canary's scope filter already excludes it. **Before EPS's canary: confirm no `hgt500__mean` directory exists under any retained EPS run on prod** (a one-line `ls`); if frames *do* exist there, a fourth publish path is in play that this audit did not model, and the scope filter needs re-examination before trusting its exclusions.
+
+Catalog cross-reference: all 22 packed ids are live entries in `EPS_VARIABLE_CATALOG`, which loop-registers the precip anomalies the same way GEFS does (`eps.py`, `PRECIP_ANOM_360_TARGET_FH_BY_VAR_KEY` loops). Every buildable entry has an `artifact_map`; every mapped runtime id has a packing entry.
+
+Tolerance groups — **EPS is the first audited model with zero display-prep entries**: `_GRID_DISPLAY_PREP_BY_MODEL_VAR` contains no `("eps", …)` key at all, so every EPS artifact is Group 1, **including `precip_total__mean`** (unlike GFS/NBM/GEFS, whose precip products are upscale-3 Group 2; this matches the ECMWF-family pattern — deterministic `ecmwf`'s snowfall/ptype configs also use `upscale_factor=1`):
+
+| Group | EPS artifacts |
+|---|---|
+| Group 1 | All 14 published artifacts |
+| Group 2 / 3 / 4 | None |
+| Excluded (write-path-dead bare aliases) | `tmp2m_anom`, `tmp850_anom`, `hgt500_anom`, `precip_{5,7,10,15}d_anom` |
+| Excluded (packed but unreachable — flagged above) | `hgt500__mean` |
+
+Consequence: EPS's canary has **no tolerated boundary-divergence category whatsoever** — any divergence on any variable is a blocking Group 1 divergence under the addendum's never-relaxed bar. Expect the cleanest pass/fail signal of any model so far, and treat any nonzero divergence as full-escalation.
+
+Structural differences from GFS/HRRR/NBM (checklist item 4):
+
+- **Same `na` published region caveat as GEFS** (EPS reuses `ECMWF_REGIONS`; identical bbox), 18 km grid (`grid_meters_by_region`: 18,000 m).
+- **Cycle-hour-dependent schedule on the synoptic/off-cycle axis** — a different axis than HRRR's standard/extended split: 00z/12z run fh 0–360 step 6 (61 frames); 06z/18z run fh 0–144 step 6 (25 frames), 6-hour cadence.
+- **Off-cycle runs legitimately publish zero frames for three variables**: `precip_7d_anom__mean` (min_fh 168), `precip_10d_anom__mean` (240), and `precip_15d_anom__mean` (360) all have min_fh above the off-cycle max of 144, and `precip_5d_anom__mean` drops to 5 frames (120–144). A canary pass over an 06z/18z run must treat zero comparisons for those three as *expected schedule behavior*, not missing coverage — this is a case the HRRR/NBM canaries never exercised, and the strongest reason EPS's 4-cycle canary window should include both a synoptic and an off-cycle run. `precip_15d_anom__mean` is additionally a single-frame variable (min_fh = max_fh = 360) on synoptic cycles.
+- Source is ECMWF ensemble GRIB (Herbie `model="ifs"`, `product="enfo"`) with pf-member-mean aggregation requested via a custom fetch kwarg (`_cartosky_fetch_aggregation="ecmwf_pf_mean"`-family values in `eps.py`'s `herbie_request`) — a fetch-path difference with no parity-semantics impact, since aggregation happens before the shared warp/encode path.
+- EPS publishes late relative to its nominal cycle time (`stale_cycle_release_minutes_by_hour`: 390–450 min) — relevant to canary scheduling (a "latest run" selected shortly after a cycle time will be the previous cycle), not to parity.
+- Every EPS variable is bundle-built (`_is_derive_bundle_candidate` returns True for the whole model in `scheduler.py`) — build-orchestration difference only; frames still go through the same `write_grid_frame_for_run_root`.
+
+#### Phase G checklist status — GEFS and EPS (as of 2026-07-04)
+
+| Checklist item | GEFS | EPS |
+|---|---|---|
+| 1-4 — static audit (packing enumeration incl. loop-registered entries, catalog cross-reference incl. `buildable`/publish-path, display-prep enumeration, structural differences) | Complete (this section) | Complete (this section) |
+| 5 — re-run Layers 1-4 | Not started | Not started |
+| 6 — add to `CARTOSKY_BINARY_SAMPLING_MODELS` | Not yet — gated on item 5 | Not yet — gated on item 5 |
+| 7 — prod storage measurement | Not measured | Not measured |
+
+**Pre-canary follow-ups specific to these two models** (beyond the standard remaining sequence): ~~fix the canary scope filter's bare-alias false inclusion~~ (done 2026-07-04, see the publish-path section above); run the `hgt500__mean` on-disk check for EPS; build `na`-bbox anchor-point lists rather than reusing the CONUS lists; and make sure the Layer 2 fixtures use each model's real grid geometry (25 km / 18 km, `na` region) per the same pattern the HRRR/NBM item 5 work established.
 
 ---
 

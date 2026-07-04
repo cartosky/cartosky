@@ -167,48 +167,136 @@ def _companion_published_vars(catalog: dict[str, Any]) -> set[str]:
     return published
 
 
+def _ensemble_artifact_published_vars(catalog: dict[str, Any]) -> set[str]:
+    """Runtime artifacts published via a buildable entry's ``artifact_map``.
+
+    Ensemble models (GEFS, EPS) publish a buildable variable's frames under
+    the runtime id resolved through ``ensemble.artifact_map`` (e.g. ``tmp2m``
+    -> ``tmp2m__mean`` for the "mean" view). Those runtime ids have their own
+    capability entry with ``buildable=False``, but the frames are real
+    independently published artifacts on both substrates. Only views listed
+    in the entry's ``ensemble.supported_views`` are reachable at runtime, so
+    mapped values for other views are ignored.
+    """
+    published: set[str] = set()
+    for capability in catalog.values():
+        if not bool(getattr(capability, "buildable", False)):
+            continue
+        ensemble = getattr(capability, "ensemble", None)
+        if not isinstance(ensemble, dict):
+            continue
+        artifact_map = ensemble.get("artifact_map")
+        if not isinstance(artifact_map, dict) or not artifact_map:
+            continue
+        raw_views = ensemble.get("supported_views")
+        views = raw_views if isinstance(raw_views, (list, tuple)) else []
+        for view in views:
+            normalized_view = str(view or "").strip().lower()
+            if not normalized_view:
+                continue
+            resolved = artifact_map.get(normalized_view)
+            if isinstance(resolved, str) and resolved.strip():
+                published.add(resolved.strip())
+    return published
+
+
+def _ensemble_dead_alias_vars(catalog: dict[str, Any]) -> set[str]:
+    """Buildable ids whose runtime resolution redirects to a different artifact.
+
+    The scheduler resolves every build target through ``resolve_runtime_var_id``
+    before writing, so a buildable entry whose ``ensemble.artifact_map`` maps
+    every reachable view (per its ``supported_views``) to some *other* var id
+    is never written under its own name — it is a runtime alias with no frames
+    on disk on either substrate (e.g. GEFS/EPS ``tmp2m_anom`` vs the published
+    ``tmp2m_anom__mean``). Entries without an ``artifact_map`` never redirect
+    and are unaffected.
+    """
+    dead: set[str] = set()
+    for var_key, capability in catalog.items():
+        if not bool(getattr(capability, "buildable", False)):
+            continue
+        ensemble = getattr(capability, "ensemble", None)
+        if not isinstance(ensemble, dict):
+            continue
+        artifact_map = ensemble.get("artifact_map")
+        if not isinstance(artifact_map, dict) or not artifact_map:
+            continue
+        raw_views = ensemble.get("supported_views")
+        views = raw_views if isinstance(raw_views, (list, tuple)) else []
+        mapped: set[str] = set()
+        for view in views:
+            normalized_view = str(view or "").strip().lower()
+            if not normalized_view:
+                continue
+            resolved = artifact_map.get(normalized_view)
+            if isinstance(resolved, str) and resolved.strip():
+                mapped.add(resolved.strip())
+        if mapped and str(var_key).strip() not in mapped:
+            dead.add(str(var_key).strip())
+    return dead
+
+
 def _split_scope_by_buildable(
     packed_vars: list[str],
     catalog: dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """Split packed variables into (comparison scope, excluded).
+) -> tuple[list[str], list[str], list[str]]:
+    """Split packed variables into (scope, excluded non-buildable, excluded dead-alias).
 
-    A variable is excluded when its capability says ``buildable=False`` and it
-    is not companion-published: such variables are derive-strategy inputs
-    consumed in-memory and never written to disk on either substrate, so there
-    is no COG-vs-binary parity question to ask for them.
+    A variable is excluded as non-buildable when its capability says
+    ``buildable=False`` and it is neither companion-published nor
+    ensemble-artifact-published: such variables are derive-strategy inputs
+    consumed in-memory and never written to disk on either substrate.
+
+    A variable is excluded as a dead alias when it is buildable but its own
+    ``ensemble.artifact_map`` redirects every reachable view to a different
+    artifact id: frames exist only under the redirected id, never this one
+    (see ``_ensemble_dead_alias_vars``). The two classes are kept separate so
+    they stay distinguishable in the summary output.
     """
-    companions = _companion_published_vars(catalog)
+    published = _companion_published_vars(catalog) | _ensemble_artifact_published_vars(catalog)
+    dead_aliases = _ensemble_dead_alias_vars(catalog)
     in_scope: list[str] = []
-    excluded: list[str] = []
+    excluded_non_buildable: list[str] = []
+    excluded_dead_alias: list[str] = []
     for var in packed_vars:
         capability = catalog.get(var)
         if capability is None:
             # Packed but absent from the catalog — nothing to cross-reference.
             in_scope.append(var)
-        elif bool(getattr(capability, "buildable", False)) or var in companions:
+        elif var in published:
+            # Frames exist under this id via another entry's publish path.
+            in_scope.append(var)
+        elif var in dead_aliases:
+            excluded_dead_alias.append(var)
+        elif bool(getattr(capability, "buildable", False)):
             in_scope.append(var)
         else:
-            excluded.append(var)
-    return in_scope, excluded
+            excluded_non_buildable.append(var)
+    return in_scope, excluded_non_buildable, excluded_dead_alias
 
 
-def _scope_for_model(model: str) -> tuple[list[str], list[str]]:
-    """Return (comparison scope, excluded non-buildable vars) for a model."""
+def _scope_for_model(model: str) -> tuple[list[str], list[str], list[str]]:
+    """Return (scope, excluded non-buildable, excluded dead-alias) for a model."""
     model_norm = _normalize_model(model)
     packed = sorted(
         var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model_norm
     )
-    in_scope, excluded = _split_scope_by_buildable(
+    in_scope, excluded_non_buildable, excluded_dead_alias = _split_scope_by_buildable(
         packed, _capability_catalog_for_model(model_norm)
     )
-    if excluded:
+    if excluded_non_buildable:
         logger.info(
             "Excluded %d non-buildable, never-published variable(s) from %s "
             "comparison scope: %s",
-            len(excluded), model_norm, ", ".join(excluded),
+            len(excluded_non_buildable), model_norm, ", ".join(excluded_non_buildable),
         )
-    return in_scope, excluded
+    if excluded_dead_alias:
+        logger.info(
+            "Excluded %d buildable dead-alias variable(s) from %s comparison "
+            "scope (published only under their artifact_map runtime id): %s",
+            len(excluded_dead_alias), model_norm, ", ".join(excluded_dead_alias),
+        )
+    return in_scope, excluded_non_buildable, excluded_dead_alias
 
 
 def _packing(model: str, var: str) -> dict[str, Any]:
@@ -1368,7 +1456,7 @@ def main() -> None:
     args = parser.parse_args()
     _setup_logging(verbose=args.verbose)
     model = _normalize_model(args.model)
-    scope, excluded_non_buildable = _scope_for_model(model)
+    scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
     if not scope:
         logger.error("No grid packing scope found for model: %s", model)
         sys.exit(1)
@@ -1474,6 +1562,7 @@ def main() -> None:
     report["scope_variable_count"] = len(scope)
     report["scope_variables"] = scope
     report["excluded_non_buildable_variables"] = excluded_non_buildable
+    report["excluded_dead_alias_variables"] = excluded_dead_alias
     if args.vars:
         report["vars_filter"] = scope
     report["tolerance_groups"] = {
