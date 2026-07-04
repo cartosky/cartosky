@@ -5,6 +5,10 @@
 > **Target:** Complete, polished Model Guidance on `/forecast` before October (TWF busy season).
 >
 > **Phases:** 1A → 1B → 2 → 3. Each phase is independently executable and verifiable.
+>
+> **Status (2026-07-04):** Phases 1A, 1B, and 2 are **complete and deployed to production**. Additional mean meteogram charts may be added in the future, but the Models and Ensembles tabs as specified here are done. Phase 3 is **blocked on `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md`**, which supersedes this document's original member-pipeline and sizing-spike material (see revision note).
+>
+> **Revision note (2026-07-04):** This document predated the value-COG → binary-sampling migration (`docs/VALUE_COG_TO_BINARY_SAMPLING_MIGRATION_PLAN.md`). Sampling-substrate claims have been corrected in place: models on the `CARTOSKY_BINARY_SAMPLING_MODELS` allowlist publish **no value COGs** — sampling reads grid binaries via the binary sampler. The original Phase 3 storage schema and sizing spike were COG-based and are superseded. **Do not execute Phase 3 instructions from this document's git history.**
 
 ---
 
@@ -21,7 +25,7 @@ The Forecast page (`/forecast`) currently exposes a single **Models** top-level 
 
 **Locked decision:** Models and Ensembles are **separate top-level tabs** in `forecast.tsx` (alongside Hourly, 7-day, Extended, Discussion). They are not nested sub-tabs inside a single Model Guidance panel. Phase 1A ships the Models tab; the Ensembles top-level tab is added in Phase 2 (disabled or "Coming soon" until then).
 
-All charts sample from **already-published** grid artifacts under `published/{model}/{run_id}/{runtime_var}/fh{NNN}.val.cog.tif`, using the same COG read path as `/api/v4/sample` and `/api/v4/sample/batch`. No request-time Herbie fetches.
+All charts sample from **already-published** grid artifacts, using the same sampling service as `/api/v4/sample` and `/api/v4/sample/batch`. The sampling substrate is per-model, governed by the `CARTOSKY_BINARY_SAMPLING_MODELS` allowlist (see the migration plan): allowlisted models publish **grid binaries only** (`published/{model}/{run_id}/{runtime_var}/fh{NNN}.l0.u16.bin` + meta sidecar) and are sampled via the binary sampler; non-allowlisted models still publish and sample `fh{NNN}.val.cog.tif`. The meteogram service is substrate-agnostic — it calls the shared sampling layer, which resolves the substrate per model. No request-time Herbie fetches, ever.
 
 ### Why it matters for TWF
 
@@ -38,11 +42,11 @@ Phase 1B ──► Cumulative precip + 6-hr precip detail + wind chart + daily h
               ▼
 Phase 2 ──► Ensembles tab (mean-only products derivable from existing artifacts)
               │
-              ▼  (blocked on sizing spike + per-member pipeline)
+              ▼  (blocked on docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md — spike + member publish phases)
 Phase 3 ──► Per-member spaghetti, precip/snow distributions, probability thresholds
 ```
 
-Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Phase 2 can ship after Phase 1B without Phase 3. Phase 3 is explicitly blocked on new scheduler/storage work for individual ensemble members.
+Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Phase 2 can ship after Phase 1B without Phase 3. Phase 3 is explicitly blocked on new scheduler/storage work for individual ensemble members — that work is now fully specified in `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md` (it serves map products in addition to meteograms, so it is no longer scoped as a sub-section of this plan).
 
 ### Chart catalog
 
@@ -73,15 +77,17 @@ Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Ph
 - Herbie: `model=ifs`, `product=enfo`, aggregation `ecmwf_pf_mean` for mean fields.
 - `EPS_CAPABILITIES.ensemble.supported_views` and every `EPS_VARIABLE_CATALOG` entry: `"supported_views": ["mean"]` only.
 - Runtime artifacts use `__mean` suffix (e.g. `tmp2m__mean`, `precip_total__mean`, `wspd10m__mean`).
-- Individual EPS perturbation members (`enfo` per-member fields) are **not** fetched, stored, or served.
+- Individual EPS perturbation members are **not stored or served** — but they **are downloaded**: `_fetch_ecmwf_pf_mean_variable` (`builder/fetch.py`) byte-range-downloads a subset GRIB containing **all perturbed member bands** per `(var, fh)`, streams them to compute the mean, and discards the member fields. This matters for Phase 3 economics — see the member pipeline plan.
 
 **GEFS** (`backend/app/models/gefs.py`):
 - Herbie: `model=gefs`, `product=atmos.5`, `herbie_kwargs["member"] = "mean"` for all published variables.
 - `GEFS_CAPABILITIES.ensemble.supported_views`: `["mean"]` only.
 - Runtime artifacts use `__mean` suffix.
-- Individual GEFS member files (`atmos.5` with `member=1..30`) are **not** fetched, stored, or served.
+- Individual GEFS member files (`atmos.5` with `member=1..30`) are **not** fetched, stored, or served — the mean comes from the upstream **precomputed `geavg` product** (`member="mean"`), so per-member GEFS is net-new fetch load, unlike EPS. See the member pipeline plan.
 
 **Deterministic models** (Phases 1A/1B): ECMWF (`ecmwf`), GFS (`gfs`), AIFS (`aifs`), NBM (`nbm`) publish single-member artifacts with no `__mean` suffix. All have `supports_sampling: True` in their capabilities.
+
+**Sampling substrate (post-migration):** models on `CARTOSKY_BINARY_SAMPLING_MODELS` publish grid binaries only (no value COGs) and are sampled via the binary sampler; remaining models still use COGs. The meteogram service is substrate-agnostic through the shared sampling layer. When GEFS/EPS flip to the allowlist, their `__mean` artifacts become binary-only with no behavior change to any Phase 1–2 chart.
 
 **Implication:** Any chart requiring spread, probability of exceedance, spaghetti plots, or member-ranked snowfall **cannot** be built from current data. Phase 2 must show placeholders for those charts or ship mean-only alternatives.
 
@@ -89,7 +95,7 @@ Phase 1A is the prerequisite for Phase 1B. Phase 1B completes the Models tab. Ph
 
 **`GET /api/v4/sample`** (`main.py` ~5436):
 - One point, one model, one run, one variable, one forecast hour.
-- Reads `fh{NNN}.val.cog.tif` via `_resolve_val_cog` → `_get_cached_dataset` → `_read_sample_value`.
+- Substrate-branched per the allowlist: binary path (binary-frame resolver + `_decode_values`-backed sampler) for allowlisted models; COG path (`_resolve_val_cog` → `_get_cached_dataset` → `_read_sample_value`) otherwise. `sampling_source` is part of the cache keys.
 - Resolves ensemble models to runtime var via `_runtime_var_id_for_request` (e.g. `tmp2m` + `ensemble_view=mean` → `tmp2m__mean`).
 
 **`POST /api/v4/sample/batch`** (`main.py` ~5599):
@@ -205,10 +211,10 @@ Implementation steps per `(model, variable)` pair:
 
 1. Resolve `run_id` from `run_policy` + `LATEST.json` / manifest.
 2. Load manifest; read `variables[var].frames[].fh` list (same source as `list_frames`).
-3. For each `fh`, call internal sampler from `backend/app/services/sampling.py` (`_resolve_val_cog`, `_get_cached_dataset`, `_sample_dataset_index`, `_read_sample_value`, `_resolve_sidecar`) — **do not** HTTP-loop to self.
+3. For each `fh`, call the internal sampler from `backend/app/services/sampling.py` — the substrate-aware entry point that routes to the binary sampler for allowlisted models and the COG path (`_resolve_val_cog` → `_get_cached_dataset` → `_read_sample_value`) otherwise — **do not** HTTP-loop to self. *(Historical note: as originally written for Phase 1A this step was COG-only; the binary migration made the sampling layer substrate-branched.)*
 4. Apply unit conversion from variable capability catalog if sidecar units differ from display units.
 5. Catch per-fh failures; omit point or set null — never abort sibling models.
-6. Batch COG opens: group by `(model, run, runtime_var)` so each COG dataset is opened once per request.
+6. Batch dataset/frame opens: group by `(model, run, runtime_var)` so each COG dataset (or decoded binary frame, per substrate) is opened once per request.
 
 **Function location:** `backend/app/services/forecast_page.py` (new `get_forecast_meteogram`). Route handler in `backend/app/main.py`. Sampling helpers live in `backend/app/services/sampling.py` — **extract from `main.py` as Phase 1A task 0** before writing meteogram code (required; avoids circular imports).
 
@@ -235,7 +241,7 @@ async def forecast_meteogram(body: MeteogramRequestIn, ...):
 
 **TTL reasoning:** Model cycles update every 1–6 hours; 5-minute CDN TTL balances freshness vs. fan-out cost. A single meteogram for 4 models × 3 variables × ~60 forecast hours = ~720 point samples — caching is mandatory.
 
-**Never:** Fan out to Herbie or unpublish'd paths. If `fh{NNN}.val.cog.tif` is absent, return null for that point.
+**Never:** Fan out to Herbie or unpublish'd paths. If the frame artifact for the model's substrate (`fh{NNN}.l0.u16.bin` for allowlisted models, `fh{NNN}.val.cog.tif` otherwise) is absent, return null for that point.
 
 ### Chart library selection
 
@@ -251,43 +257,13 @@ Justification: Phase 3 requires 50 EPS + 30 GEFS member lines without degradatio
 
 Recharts remains in the repo for admin analytics only; do not use for Model Guidance.
 
-### Individual member data pipeline (Phase 3 prerequisite)
+### Individual member data pipeline (Phase 3 prerequisite) — SUPERSEDED
 
-#### Sizing spike (required before scheduler work)
+**This subsection is superseded by `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md` (2026-07-04).** The version that previously lived here was written before the binary-sampling migration: its sizing spike measured member **value COGs** (an artifact allowlisted models no longer produce), its storage schema used `.val.cog.tif` paths, and its footprint heuristics were COG-inclusive. It also scoped the member pipeline as meteogram-only; the pipeline now has three consumer families (meteogram members, derived stats grids for maps, and potential served per-member maps), which is why it graduated to its own plan.
 
-Before any Phase 3 scheduler extension or multi-variable member rollout, run a **one-run sizing spike**:
+What the member pipeline plan owns: sizing spike protocol (binary edition), member/stats naming and manifest schema, packing resolution for member ids, member build profile, EPS/GEFS fetch strategy, retention decision, storage/RAM budgets, and all rollout phases through member publish. What **this** document still owns for Phase 3: the meteogram `include_members` contract (Section 2 above), the Ensembles-tab chart specifications (Section 7), and their verification checklist.
 
-1. Publish `tmp2m` for **all GEFS members** (`tmp2m__m01` … `tmp2m__m30`, plus `tmp2m__control`) for a single GEFS run (all forecast hours in the GEFS schedule).
-2. Measure and document:
-   - Total disk bytes under `published/gefs/{run}/tmp2m__m*/` and `tmp2m__control/`
-   - Inode count consumed (files per member × members × forecast hours)
-   - End-to-end publish latency for the member batch
-   - Scheduler process peak RSS during the member loop
-   - **Herbie `member` kwarg** for EPS and GEFS control runs (confirm before scheduler code)
-   - **Upstream GEFS member count** (expect 30 perturbation + 1 control = 31; confirm from live `atmos.5` fetch)
-   - **EPS `snowfall_total` feasibility** — direct GRIB field vs derivation complexity; flag if Kuchera-style work is required (does not block spike completion)
-3. Save results to `docs/MODEL_GUIDANCE_PHASE3_SIZING_SPIKE.md`.
-4. Obtain **explicit go-ahead from Brian** before proceeding to EPS member publish or additional variables beyond the spike.
-
-Phase 3 scheduler work beyond the spike is **blocked** until the sizing spike is complete and approved.
-
-Decisions required after sizing spike (before full Phase 3 rollout):
-
-| Topic | EPS | GEFS |
-|-------|-----|------|
-| Herbie product | `ifs` / `enfo` | `gefs` / `atmos.5` |
-| Member selector | Perturbation members via Herbie `member` kwarg or ECMWF pf index (1–50 + control) | `member=1` … `member=30` (verify control member numbering) |
-| `supported_views` | Extend to `["mean", "members"]` | Extend to `["mean", "members"]` |
-| Runtime var naming | `tmp2m__m01` … `tmp2m__m50`, `tmp2m__control` (distinct from m01) | `tmp2m__m01` … `tmp2m__m30`, `tmp2m__control` |
-| Initial member variables | `tmp2m`, `precip_total`, `snowfall_total` only (hard gate after spike approval) | Same |
-| EPS `snowfall_total` | **Phase 3 deliverable:** add to `eps.py` plugin + scheduler (member publishing). Not a prerequisite for spike. If spike flags derivation complexity, scope separately — do not block entire Phase 3. | GEFS already has `snowfall_total__mean` |
-| Scheduler | **Extend existing EPS/GEFS schedulers** (not a separate service) — same run discovery, add member loop after mean publish |
-| Storage path | `published/eps/{run}/tmp2m__m01/fh000.val.cog.tif` | `published/gefs/{run}/tmp2m__m01/fh000.val.cog.tif` |
-| Manifest | Add variable entries or `members` metadata under canonical var | Same |
-| Footprint estimate | ~51× mean disk per variable per run (50 members + control) | ~31× mean |
-| Memory | Builder holds one member grid at a time; same peak as mean build if sequential | Same |
-
-**Do not design full Phase 3 scheduler here** — flag that Phase 3 agent must produce a separate scheduler design doc after Brian approves footprint budget.
+The original spike gate is unchanged in substance: **no member scheduler work of any kind until the sizing spike in the member pipeline plan is complete and Brian has signed off.**
 
 ---
 
@@ -513,6 +489,8 @@ Precipitation (`#precipitation`) and Wind (`#wind`) section anchors are **not re
 
 ### Phase 1A verification checklist
 
+**Status: COMPLETE — shipped to production (recorded 2026-07-04).** Checklist retained for regression reference.
+
 - [ ] `pytest backend/tests/test_sample_batch_api.py` passes after `sampling.py` extract.
 - [ ] `curl -s -X POST http://localhost:8000/api/v4/forecast/meteogram -H 'Content-Type: application/json' -d '{"lat":45.5,"lon":-93.2,"models":["gfs","ecmwf","aifs"],"variables":["tmp2m"],"run_policy":{"type":"latest_per_model"}}' | jq '.series | keys'` returns `["aifs","ecmwf","gfs"]` (or subset with partial status).
 - [ ] Same request with invalid model returns 200 with omitted model or 400 — not 500.
@@ -640,6 +618,8 @@ Deprecate `GET /api/v4/model-guidance`: return **`410 Gone`** after Phase 1B shi
 
 ### Phase 1B verification checklist
 
+**Status: COMPLETE — shipped to production (recorded 2026-07-04).** Checklist retained for regression reference.
+
 - [ ] Meteogram request includes `tmp2m`, `precip_total`, `wspd10m`; all three return data for at least one model at a CONUS test point.
 - [ ] `/forecast` → **Models** top-level tab shows Temperature, Precipitation, and Wind section headers (anchor nav works).
 - [ ] Cumulative precip chart renders ≥2 model lines.
@@ -739,6 +719,8 @@ Data source when available (Phase 3): count of members where cumulative `precip_
 
 ### Phase 2 verification checklist
 
+**Status: COMPLETE — shipped to production (recorded 2026-07-04).** Additional mean charts may be added later, but the tab as specified here is done. Checklist retained for regression reference.
+
 - [ ] `curl` meteogram with `models=["eps","gefs"]` returns `tmp2m` and `precip_total` mean series with `__mean` artifacts.
 - [ ] Ensembles **top-level tab** visible; pill filter shows EPS and GEFS only.
 - [ ] Mean temperature chart shows two lines (EPS, GEFS).
@@ -752,42 +734,15 @@ Data source when available (Phase 3): count of members where cumulative `precip_
 ## 7. Phase 3 — Per-Member Ensemble Charts
 
 **Blocked on:**
-1. Phase 2 verified
-2. **Sizing spike** complete (`docs/MODEL_GUIDANCE_PHASE3_SIZING_SPIKE.md`) with explicit go-ahead from Brian
-3. Per-member data pipeline (Section 2)
+1. Phase 2 verified — **done (2026-07-04)**
+2. GEFS and EPS on `CARTOSKY_BINARY_SAMPLING_MODELS` with COG writes off (migration plan Phase F for both models)
+3. `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md` Phases 0–4 complete: sizing spike (binary edition) with Brian's recorded sign-off, scheduler design approval, and member publish live for both models
 
-Do not start scheduler extension until all three gates pass.
+Do not start any chart work in this section until gate 3 passes. Do not start scheduler work from this document at all — the scheduler extension, storage schema, fetch strategy, packing resolution, and retention policy previously specified here are owned by the member pipeline plan (member artifacts are **grid binaries, not value COGs**).
 
-### Scheduler extension
+### Scheduler extension and storage schema — moved
 
-| File | Change |
-|------|--------|
-| `backend/app/models/eps.py` | `supported_views: ["mean", "members"]`; add member var specs `tmp2m__mNN`, `precip_total__mNN`, `snowfall_total__mNN` (EPS plugin work — Phase 3 deliverable), `wspd10m__mNN`; extend `herbie_request` for member fetch |
-| `backend/app/models/gefs.py` | Same pattern; `member=N` in `herbie_request` |
-| Scheduler service | After mean publish for a `(run, var)`, loop members sequentially; write `published/{model}/{run}/{var}__m{NN}/fh*.val.cog.tif` |
-| Manifest builder | Register member runtime vars OR embed `members: { count, prefix }` on canonical var |
-
-### Storage schema
-
-```text
-published/
-  eps/
-    20260623_12z/
-      tmp2m__mean/fh000.val.cog.tif      # existing
-      tmp2m__m01/fh000.val.cog.tif        # new
-      ...
-      tmp2m__m50/fh000.val.cog.tif
-      tmp2m__control/fh000.val.cog.tif    # EPS control (distinct from m01)
-  gefs/
-    20260330_12z/
-      tmp2m__mean/fh000.val.cog.tif
-      tmp2m__m01/fh000.val.cog.tif
-      ...
-      tmp2m__m30/fh000.val.cog.tif
-      tmp2m__control/fh000.val.cog.tif
-```
-
-Member index: zero-padded 2 digits (`m01`–`m50` EPS perturbations, `m01`–`m30` GEFS perturbations). **Control** stored as `tmp2m__control` for both EPS and GEFS (distinct from `m01`). Expect 31 GEFS files (30 perturbation + 1 control); confirm count in sizing spike.
+See `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md`. Summary of what changed relative to the original version of this section: member artifacts are binary-only (`fh{NNN}.l0.u16.bin` + meta sidecar under `published/{model}/{run}/{var}__m{NN}/`); the member build runs a profile-parameterized slim path; naming (`__m{NN}`, `__control`, zero-padded) is unchanged and locked there.
 
 ### Meteogram extension
 
@@ -849,13 +804,8 @@ If current month ∉ `SNOW_SEASON_MONTHS`: hide snowfall charts OR show card wit
 
 ### Phase 3 verification checklist
 
-- [ ] Sizing spike doc exists with disk, inode, latency, and memory measurements for one full GEFS `tmp2m` member run.
-- [ ] Brian sign-off recorded in sizing spike doc before member scheduler rollout beyond spike.
-- [ ] EPS scheduler publishes `tmp2m__m01` through `tmp2m__m50` plus `tmp2m__control` for latest run.
-- [ ] GEFS scheduler publishes `tmp2m__m01` through `tmp2m__m30` plus `tmp2m__control`.
-- [ ] Inode count on publish volume after member rollout is within agreed budget (per sizing spike extrapolation).
-- [ ] Retention/cleanup job removes superseded member artifacts when a new run publishes; spot-check that old `tmp2m__m*/` directories are deleted per existing run-retention policy.
-- [ ] Meteogram with `include_members: true` returns member arrays for EPS/GEFS.
+- [ ] All gates in `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md` Phases 0–4 passed (spike + sign-off, scheduler design approval, member publish live for both models, retention verified). Pipeline-level checks (disk, inodes, RSS, retention sweep) live in that plan — do not duplicate them here.
+- [ ] Meteogram with `include_members: true` returns member arrays for EPS/GEFS, sampled from member **grid binaries** via the shared binary sampler.
 - [ ] Spaghetti chart renders 50+ lines without frame drops on M1 MacBook / Chrome.
 - [ ] Snowfall histogram shows bucket counts matching manual member tally at test point.
 - [ ] Snowfall detail panel sorts members by accumulation.
@@ -867,14 +817,7 @@ If current month ∉ `SNOW_SEASON_MONTHS`: hide snowfall charts OR show card wit
 
 ## 8. Open Questions (Deferred — Phase 3 Only)
 
-All product decisions for Phases 1A, 1B, and 2 are **locked** and documented inline in Sections 2–7. The following items remain deferred until the Phase 3 sizing spike or explicit approval:
-
-| # | Deferred item | When resolved | Action if blocked |
-|---|---------------|---------------|-------------------|
-| 1 | **EPS control Herbie `member` ID** | Sizing spike | Confirm kwarg/value for control run before EPS scheduler code; store as `tmp2m__control` distinct from `m01` |
-| 2 | **GEFS upstream member count** | Sizing spike | Confirm 30 perturbation + 1 control from live `atmos.5` fetch; store control as `tmp2m__control` |
-| 3 | **EPS `snowfall_total` derivation complexity** | Sizing spike | If direct GRIB unavailable and Kuchera-style derivation required, flag in spike doc and scope separately — does not block rest of Phase 3 |
-| 4 | **Storage budget approval** | After spike doc | Brian explicit go-ahead required before Phase 3 scheduler agent starts beyond spike; initial variables locked to `tmp2m`, `precip_total`, `snowfall_total` |
+All product decisions for Phases 1A, 1B, and 2 are **locked** and documented inline in Sections 2–7. The former deferred items 1–4 (EPS control member ID, GEFS upstream member count, EPS `snowfall_total` derivation complexity, storage budget approval) have **moved to `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md`** (its open-decisions section), where they are tracked alongside the new binary-era decisions (member retention count, display-prep resolution for served member maps). This document has no remaining open pipeline questions of its own — its only open Phase 3 work is chart implementation once the member pipeline plan's gates pass.
 
 ### Locked decisions reference (not open)
 
@@ -900,4 +843,4 @@ For agent convenience, these are resolved — do not re-litigate:
 
 ---
 
-*Document version: 2026-06-23 (open questions locked; 4 Phase 3 deferred items remain).*
+*Document version: 2026-07-04 (binary-era revision: Phases 1A/1B/2 marked complete; sampling-substrate claims corrected for the value-COG → binary migration; member pipeline, storage schema, and sizing spike superseded by `docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md`). Previous version: 2026-06-23.*

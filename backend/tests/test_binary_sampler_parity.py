@@ -328,20 +328,43 @@ def test_sample_binary_value_decodes_alias_under_runtime_var(
 
 PHASE_G_MODELS = ("hrrr", "nbm")
 
+# Ensemble models from the "Phase G audit — GEFS and EPS static readiness"
+# section. Unlike PHASE_G_MODELS (whose full packed lists are parity-tested),
+# their parity scope is the canary's own comparison scope: GEFS/EPS publish
+# exclusively under runtime __mean artifact ids, so the packed bare-id dead
+# aliases (and EPS's stale hgt500__mean entry) have no on-disk artifact pair
+# to compare.
+PHASE_G_ENSEMBLE_MODELS = ("gefs", "eps")
+
 
 def _model_scope(model: str) -> list[str]:
     return sorted(var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model)
+
+
+def _canary_scope(model: str) -> list[str]:
+    """Packed variables intersected with the canary's own scope logic, so
+    Layer 2 coverage cannot silently drift from what Layer 3 exercises."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    in_scope, _excluded_non_buildable, _excluded_dead_alias = _scope_for_model(model)
+    return list(in_scope)
 
 
 def _tolerance_group(model: str, var: str) -> int:
     return sampling_tolerance_group(grid_display_prep_config(model, var))
 
 
+_PHASE_G_SCOPE_BY_MODEL: dict[str, list[str]] = {
+    **{model: _model_scope(model) for model in PHASE_G_MODELS},
+    **{model: _canary_scope(model) for model in PHASE_G_ENSEMBLE_MODELS},
+}
+
+
 def _group_params(group: int) -> list[tuple[str, str]]:
     return [
         (model, var)
-        for model in PHASE_G_MODELS
-        for var in _model_scope(model)
+        for model, scope in _PHASE_G_SCOPE_BY_MODEL.items()
+        for var in scope
         if _tolerance_group(model, var) == group
     ]
 
@@ -389,6 +412,79 @@ def test_phase_g_audit_tolerance_group_partition_matches_config() -> None:
         assert actual == expected, (
             f"{model}: tolerance-group partition diverged from the Phase G "
             f"audit — re-audit before extending the canary/tests.\n"
+            f"actual={actual}\nexpected={expected}"
+        )
+
+
+# Expected tolerance-group partition and dead-alias sets from the migration
+# plan's "Phase G audit — GEFS and EPS static readiness" section, keyed by the
+# canary comparison scope (the published __mean artifacts). GEFS has exactly
+# two Group 2 artifacts (upscale_factor=3 continuous); EPS has zero display-
+# prep entries, so every EPS artifact is Group 1.
+EXPECTED_ENSEMBLE_GROUP_PARTITION = {
+    "gefs": {
+        **{
+            var: 1
+            for var in (
+                "hgt500_anom__mean", "precip_10d_anom__mean",
+                "precip_16d_anom__mean", "precip_5d_anom__mean",
+                "precip_7d_anom__mean", "pwat__mean", "rh2m__mean",
+                "rh700__mean", "sbcape__mean", "tmp2m__mean",
+                "tmp2m_anom__mean", "tmp850__mean", "tmp850_anom__mean",
+                "wspd10m__mean", "wspd300__mean", "wspd850__mean",
+            )
+        },
+        **{var: 2 for var in ("precip_total__mean", "snowfall_total__mean")},
+    },
+    "eps": {
+        var: 1
+        for var in (
+            "hgt500_anom__mean", "precip_10d_anom__mean",
+            "precip_15d_anom__mean", "precip_5d_anom__mean",
+            "precip_7d_anom__mean", "precip_total__mean", "pwat__mean",
+            "rh2m__mean", "rh700__mean", "tmp2m__mean", "tmp2m_anom__mean",
+            "tmp850__mean", "tmp850_anom__mean", "wspd10m__mean",
+        )
+    },
+}
+
+# The audited write-path-dead bare aliases per ensemble model — packed and
+# catalog-buildable, but never written under their own ids because runtime
+# var-id resolution redirects every build to the __mean twin.
+EXPECTED_ENSEMBLE_DEAD_ALIASES = {
+    "gefs": {
+        "hgt500_anom", "precip_10d_anom", "precip_16d_anom", "precip_5d_anom",
+        "precip_7d_anom", "tmp2m_anom", "tmp850_anom",
+    },
+    "eps": {
+        "hgt500_anom", "precip_10d_anom", "precip_15d_anom", "precip_5d_anom",
+        "precip_7d_anom", "tmp2m_anom", "tmp850_anom",
+    },
+}
+
+
+def test_phase_g_ensemble_partition_matches_audit_and_canary_scope() -> None:
+    """Pin the ensemble parameterization to the audit: the canary's scope
+    buckets must partition the packing table, the dead-alias bucket must equal
+    the audited set, and the parity scope above must be exactly the canary
+    scope with the audited tolerance groups — so an unaudited catalog change
+    fails loudly here instead of silently narrowing coverage."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    for model, expected in EXPECTED_ENSEMBLE_GROUP_PARTITION.items():
+        in_scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
+        packed = set(_model_scope(model))
+        assert (
+            set(in_scope) | set(excluded_non_buildable) | set(excluded_dead_alias)
+        ) == packed
+        assert set(excluded_dead_alias) == EXPECTED_ENSEMBLE_DEAD_ALIASES[model]
+        assert set(in_scope).isdisjoint(excluded_dead_alias)
+
+        assert set(_PHASE_G_SCOPE_BY_MODEL[model]) == set(in_scope)
+        actual = {var: _tolerance_group(model, var) for var in in_scope}
+        assert actual == expected, (
+            f"{model}: tolerance-group partition diverged from the ensemble "
+            f"Phase G audit — re-audit before extending the canary/tests.\n"
             f"actual={actual}\nexpected={expected}"
         )
 

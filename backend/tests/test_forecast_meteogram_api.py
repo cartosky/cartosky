@@ -1406,3 +1406,497 @@ async def test_meteogram_binary_loop_matches_cog_loop_nbm(nbmcmp_env: None) -> N
             assert set(diverged) <= NBMCMP_EDGE_FHS, "\n".join(report_lines)
 
     print("\n".join(report_lines))
+
+
+# ── Phase G / Layer 4: GEFS COG vs grid-binary meteogram batch-loop comparison ─
+#
+# GEFS counterpart of the NBM test above (migration plan "Phase G audit — GEFS
+# and EPS static readiness", checklist item 5, Layer 4). Per that audit GEFS
+# publishes exclusively under the runtime __mean artifact ids (the bare
+# buildable ids are write-path-dead aliases), so this fixture publishes — and
+# both sampling loops request — tmp2m__mean and precip_total__mean, never the
+# bare ids. Groups per the audit: tmp2m__mean is Group 1 (exact within
+# scale/2, zero exceptions) and precip_total__mean is Group 2 (upscale_factor=3
+# continuous with preserve_zero_support, same planted-boundary pattern as
+# NBM's precip_total). Frame hours come from scheduled_fhs_for_var, not a
+# hardcoded 65 — the audit's frame count was one cycle's observation and this
+# test must catch schedule drift instead of assuming it. The fixture uses
+# GEFS's real grid geometry (25 km, canonical region "na", EPSG:3857).
+# All constants are GEFSCMP_-prefixed; the GFS BINCMP_, HRRR HRRRCMP_, and
+# NBM NBMCMP_ fixtures are untouched.
+
+GEFSCMP_MODEL = "gefs"
+GEFSCMP_RUN = "20260704_00z"
+GEFSCMP_CYCLE_HOUR = 0
+GEFSCMP_W, GEFSCMP_H = 20, 16
+# Same sampled-cell arrangement as the NBM fixture: 0.05 leans the point
+# against the cell's left edge so the Group 2 binary path's 3x fine grid reads
+# the col-16 side of a planted edge while the COG's coarse nearest-pixel
+# stays on col 17.
+GEFSCMP_COL, GEFSCMP_ROW = 17, 7
+GEFSCMP_COL_FRAC, GEFSCMP_ROW_FRAC = 0.05, 0.5
+
+# Forecast hours where precip_total__mean's field edge is planted at the
+# sampled column (divergence expected); all multiples of 6 so they exist in
+# GEFS's uniform 6-hourly schedule, spread across the fh range.
+GEFSCMP_EDGE_FHS = {24, 120, 240}
+
+GEFSCMP_UNITS = {
+    "tmp2m__mean": "F",
+    "precip_total__mean": "in",
+}
+
+
+def _gefscmp_geometry():
+    """GEFS's real grid transform + CRS (25 km, region "na", EPSG:3857)."""
+    from app.models.registry import MODEL_REGISTRY
+    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+
+    plugin = MODEL_REGISTRY[GEFSCMP_MODEL]
+    region = str(plugin.capabilities.canonical_region)
+    bbox_3857, grid_meters = get_grid_params(GEFSCMP_MODEL, region)
+    transform, _height, _width = compute_transform_and_shape(bbox_3857, grid_meters)
+    return transform, "EPSG:3857"
+
+
+def _gefscmp_point() -> tuple[float, float]:
+    from pyproj import Transformer
+
+    transform, projection = _gefscmp_geometry()
+    x, y = transform * (GEFSCMP_COL + GEFSCMP_COL_FRAC, GEFSCMP_ROW + GEFSCMP_ROW_FRAC)
+    lon, lat = Transformer.from_crs(projection, "EPSG:4326", always_xy=True).transform(x, y)
+    return float(lat), float(lon)
+
+
+def _gefscmp_frame_hours(var: str) -> list[int]:
+    """The artifact's own live schedule, pinned to the plugin — NOT the
+    audit-observed 65-frame figure. precip_total__mean carries min_fh=6, so
+    the two variables' schedules genuinely differ."""
+    from app.models.registry import MODEL_REGISTRY
+
+    return [
+        int(fh)
+        for fh in MODEL_REGISTRY[GEFSCMP_MODEL].scheduled_fhs_for_var(var, GEFSCMP_CYCLE_HOUR)
+    ]
+
+
+def _gefscmp_field(var: str, fh: int) -> np.ndarray:
+    """Deterministic synthetic field for (var, fh) on the GEFS fixture grid.
+
+    tmp2m__mean values sit on the packing lattice at 1 decimal (scale=0.1,
+    and every GEFS fh is a multiple of 6 so 0.05*fh stays on that lattice).
+    precip_total__mean mirrors the NBM Group 2 pattern: a zero/value step
+    edge planted on the sampled column at the edge hours, far away otherwise.
+    """
+    rows, cols = np.mgrid[0:GEFSCMP_H, 0:GEFSCMP_W]
+    if var == "tmp2m__mean":
+        return np.round(30.0 + 0.5 * rows + 0.9 * cols + 0.05 * fh, 1).astype(np.float32)
+    if var == "precip_total__mean":
+        step = fh // 6
+        value = [0.62, 0.38, 0.81, 0.24, 1.13][step % 5]
+        edge_col = GEFSCMP_COL if fh in GEFSCMP_EDGE_FHS else 3
+        return np.where(cols >= edge_col, value, 0.0).astype(np.float32)
+    raise AssertionError(f"unexpected comparison var: {var}")
+
+
+def _gefscmp_valid_time(fh: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 7, 4, GEFSCMP_CYCLE_HOUR, 0, tzinfo=timezone.utc)
+    return (start + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _gefscmp_scale(var: str) -> float:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    return float(_PACKING_BY_MODEL_VAR[(GEFSCMP_MODEL, var)]["scale"])
+
+
+def _gefscmp_neighborhood(var: str, fh: int) -> np.ndarray:
+    field = _gefscmp_field(var, fh)
+    r0, r1 = max(0, GEFSCMP_ROW - 1), min(GEFSCMP_H, GEFSCMP_ROW + 2)
+    c0, c1 = max(0, GEFSCMP_COL - 1), min(GEFSCMP_W, GEFSCMP_COL + 2)
+    return field[r0:r1, c0:c1]
+
+
+@pytest.fixture
+def gefscmp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import grid as grid_module
+
+    data_root = tmp_path / "data" / "v3"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+
+    transform, projection = _gefscmp_geometry()
+
+    manifest_vars: dict[str, dict] = {}
+    run_root = published_root / GEFSCMP_MODEL / GEFSCMP_RUN
+    for var in GEFSCMP_UNITS:
+        frame_hours = _gefscmp_frame_hours(var)
+        manifest_vars[var] = {
+            "units": GEFSCMP_UNITS[var],
+            "expected_frames": len(frame_hours),
+            "available_frames": len(frame_hours),
+            "frames": [
+                {"fh": fh, "valid_time": _gefscmp_valid_time(fh)} for fh in frame_hours
+            ],
+        }
+        for fh in frame_hours:
+            cog_path = run_root / var / f"fh{fh:03d}.val.cog.tif"
+            cog_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(
+                cog_path,
+                "w",
+                driver="GTiff",
+                height=GEFSCMP_H,
+                width=GEFSCMP_W,
+                count=1,
+                dtype="float32",
+                crs=projection,
+                transform=transform,
+            ) as ds:
+                ds.write(_gefscmp_field(var, fh), 1)
+            grid_module.write_grid_frame_from_value_cog_for_run_root(
+                run_root=run_root,
+                model=GEFSCMP_MODEL,
+                var=var,
+                fh=fh,
+                value_cog_path=cog_path,
+            )
+
+    manifest_dir = manifests_root / GEFSCMP_MODEL
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{GEFSCMP_RUN}.json").write_text(json.dumps({"variables": manifest_vars}))
+    (published_root / GEFSCMP_MODEL / "LATEST.json").write_text(
+        json.dumps({"run_id": GEFSCMP_RUN})
+    )
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    _reset_main_caches()
+    yield
+    _reset_main_caches()
+
+
+def _gefscmp_cog_series(var: str) -> dict:
+    """COG twin of `_sample_variable_series_binary` for the GEFS fixture."""
+    from app.services import sampling
+
+    lat, lon = _gefscmp_point()
+    frames, _units = sampling.manifest_frame_entries(GEFSCMP_MODEL, GEFSCMP_RUN, var)
+    points = []
+    for fh, valid_time in frames:
+        present, value = sampling.sample_value(
+            GEFSCMP_MODEL, GEFSCMP_RUN, var, fh, lat=lat, lon=lon
+        )
+        if not present:
+            continue
+        points.append({"fh": fh, "valid_time": valid_time, "value": value})
+    points.sort(key=lambda item: item["fh"])
+    return {"points": points}
+
+
+async def test_meteogram_binary_loop_matches_cog_loop_gefs(gefscmp_env: None) -> None:
+    from app.services import forecast_page as forecast_page_service
+
+    # The planted-boundary hours must be part of precip_total__mean's real
+    # schedule, or the Group 2 boundary assertions below would be vacuously
+    # skipped.
+    assert GEFSCMP_EDGE_FHS <= set(_gefscmp_frame_hours("precip_total__mean"))
+
+    lat, lon = _gefscmp_point()
+    report_lines: list[str] = []
+
+    for var in GEFSCMP_UNITS:
+        frame_hours = _gefscmp_frame_hours(var)
+        cog = _gefscmp_cog_series(var)
+        binary = forecast_page_service._sample_variable_series_binary(
+            GEFSCMP_MODEL, GEFSCMP_RUN, var, lat=lat, lon=lon
+        )
+        cog_by_fh = {p["fh"]: p["value"] for p in cog["points"]}
+        bin_by_fh = {p["fh"]: p["value"] for p in (binary["points"] or [])}
+
+        # Missing/None asymmetry between the two paths (same counting pattern
+        # as the GFS/HRRR/NBM tests above — not group-specific). This fixture
+        # plants no gaps, so any asymmetry at all is a real batch-loop bug.
+        missing_fhs = sorted(set(cog_by_fh) ^ set(bin_by_fh))
+        common_fhs = sorted(set(cog_by_fh) & set(bin_by_fh))
+        none_asym_fhs = sorted(
+            fh for fh in common_fhs if (cog_by_fh[fh] is None) != (bin_by_fh[fh] is None)
+        )
+        report_lines.append(
+            f"{var}: frames cog={len(cog_by_fh)} binary={len(bin_by_fh)} "
+            f"present-asymmetry={missing_fhs} none-asymmetry={none_asym_fhs}"
+        )
+        assert len(missing_fhs) + len(none_asym_fhs) == 0, report_lines[-1]
+        # Both loops walked the artifact's own full live schedule (pinned to
+        # scheduled_fhs_for_var, not the audit-observed frame counts).
+        assert sorted(cog_by_fh) == frame_hours
+
+        valued_fhs = [
+            fh
+            for fh in common_fhs
+            if cog_by_fh[fh] is not None and bin_by_fh[fh] is not None
+        ]
+        assert valued_fhs == frame_hours, report_lines[-1]
+
+        scale = _gefscmp_scale(var)
+        diverged = [
+            fh for fh in valued_fhs if abs(cog_by_fh[fh] - bin_by_fh[fh]) > scale / 2.0
+        ]
+        for fh in diverged:
+            nbhd = _gefscmp_neighborhood(var, fh)
+            report_lines.append(
+                f"  {var} fh{fh:03d}: cog={cog_by_fh[fh]} binary={bin_by_fh[fh]} "
+                f"neighborhood=[{np.nanmin(nbhd):.3f}, {np.nanmax(nbhd):.3f}]"
+            )
+
+        if var == "tmp2m__mean":
+            # Group 1: exact match within scale/2 at every fh, zero exceptions.
+            assert not diverged, "\n".join(report_lines)
+        else:
+            # Group 2 (precip_total__mean, 3x continuous upscale): >=95% exact
+            # within scale/2; every divergence must be boundary-explainable —
+            # inside the COG neighborhood's value range — never outside it.
+            match_ratio = 1.0 - len(diverged) / len(valued_fhs)
+            assert match_ratio >= 0.95, "\n".join(report_lines)
+            for fh in diverged:
+                nbhd = _gefscmp_neighborhood(var, fh)
+                low = float(np.nanmin(nbhd)) - scale / 2.0
+                high = float(np.nanmax(nbhd)) + scale / 2.0
+                assert low <= bin_by_fh[fh] <= high, "\n".join(report_lines)
+            # Prove the comparison exercised a real display-prep boundary.
+            assert GEFSCMP_EDGE_FHS & set(diverged), (
+                f"{var}: no divergence at planted boundary hours "
+                f"{sorted(GEFSCMP_EDGE_FHS)}\n" + "\n".join(report_lines)
+            )
+            # And every divergence must be at a planted hour.
+            assert set(diverged) <= GEFSCMP_EDGE_FHS, "\n".join(report_lines)
+
+    print("\n".join(report_lines))
+
+
+# ── Phase G / Layer 4: EPS COG vs grid-binary meteogram batch-loop comparison ─
+#
+# EPS counterpart (migration plan "Phase G audit — GEFS and EPS static
+# readiness", checklist item 5, Layer 4). Per that audit EPS has zero
+# Group 2/3/4 variables — no display-prep entry exists for any EPS artifact —
+# so there is no boundary case to construct and tmp2m__mean (Group 1, exact
+# within scale/2, zero exceptions) is the whole comparison. EPS's defining
+# structural difference is instead its cycle-hour-dependent schedule:
+# synoptic cycles (00z/12z) run fh 0-360 and off-cycle (06z/18z) run fh 0-144,
+# so this test publishes and compares one run of EACH cycle type, with each
+# run's fh range pinned to scheduled_fhs_for_var for its own cycle hour.
+# The precip_*d_anom__mean artifacts are deliberately NOT fixtured here: per
+# the audit their constraints (min_fh 120/168/240/360) make frame
+# availability cycle-dependent — three of them have zero frames on off-cycle
+# runs — and any future fixture touching them must derive target fhs from
+# the capability constraints dict, not assume presence.
+# All constants are EPSCMP_-prefixed; no other model's fixtures are touched.
+
+EPSCMP_MODEL = "eps"
+# One synoptic run (00z: fh 0-360) and one off-cycle run (06z: fh 0-144).
+EPSCMP_RUNS = {"20260704_00z": 0, "20260704_06z": 6}
+EPSCMP_VAR = "tmp2m__mean"
+EPSCMP_UNITS = "F"
+EPSCMP_W, EPSCMP_H = 20, 16
+# Group 1 only — no planted boundary, so sample the cell center.
+EPSCMP_COL, EPSCMP_ROW = 17, 7
+EPSCMP_COL_FRAC, EPSCMP_ROW_FRAC = 0.5, 0.5
+
+
+def _epscmp_geometry():
+    """EPS's real grid transform + CRS (18 km, region "na", EPSG:3857)."""
+    from app.models.registry import MODEL_REGISTRY
+    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+
+    plugin = MODEL_REGISTRY[EPSCMP_MODEL]
+    region = str(plugin.capabilities.canonical_region)
+    bbox_3857, grid_meters = get_grid_params(EPSCMP_MODEL, region)
+    transform, _height, _width = compute_transform_and_shape(bbox_3857, grid_meters)
+    return transform, "EPSG:3857"
+
+
+def _epscmp_point() -> tuple[float, float]:
+    from pyproj import Transformer
+
+    transform, projection = _epscmp_geometry()
+    x, y = transform * (EPSCMP_COL + EPSCMP_COL_FRAC, EPSCMP_ROW + EPSCMP_ROW_FRAC)
+    lon, lat = Transformer.from_crs(projection, "EPSG:4326", always_xy=True).transform(x, y)
+    return float(lat), float(lon)
+
+
+def _epscmp_frame_hours(cycle_hour: int) -> list[int]:
+    """tmp2m__mean's live schedule for the given cycle hour — EPS's schedule
+    is cycle-hour dependent (61 synoptic frames vs 25 off-cycle per the
+    audit), so the fixture derives each run's frame list from its own cycle
+    hour rather than sharing one fixed range."""
+    from app.models.registry import MODEL_REGISTRY
+
+    return [
+        int(fh)
+        for fh in MODEL_REGISTRY[EPSCMP_MODEL].scheduled_fhs_for_var(EPSCMP_VAR, cycle_hour)
+    ]
+
+
+def _epscmp_field(fh: int) -> np.ndarray:
+    """Deterministic Group 1 field on the packing lattice at 1 decimal
+    (scale=0.1; every EPS fh is a multiple of 6 so 0.05*fh stays on it)."""
+    rows, cols = np.mgrid[0:EPSCMP_H, 0:EPSCMP_W]
+    return np.round(30.0 + 0.5 * rows + 0.9 * cols + 0.05 * fh, 1).astype(np.float32)
+
+
+def _epscmp_valid_time(cycle_hour: int, fh: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    start = datetime(2026, 7, 4, cycle_hour, 0, tzinfo=timezone.utc)
+    return (start + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _epscmp_scale() -> float:
+    from app.services.grid import _PACKING_BY_MODEL_VAR
+
+    return float(_PACKING_BY_MODEL_VAR[(EPSCMP_MODEL, EPSCMP_VAR)]["scale"])
+
+
+@pytest.fixture
+def epscmp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import grid as grid_module
+
+    data_root = tmp_path / "data" / "v3"
+    manifests_root = data_root / "manifests"
+    published_root = data_root / "published"
+
+    transform, projection = _epscmp_geometry()
+    manifest_dir = manifests_root / EPSCMP_MODEL
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+
+    for run, cycle_hour in EPSCMP_RUNS.items():
+        frame_hours = _epscmp_frame_hours(cycle_hour)
+        run_root = published_root / EPSCMP_MODEL / run
+        manifest_vars = {
+            EPSCMP_VAR: {
+                "units": EPSCMP_UNITS,
+                "expected_frames": len(frame_hours),
+                "available_frames": len(frame_hours),
+                "frames": [
+                    {"fh": fh, "valid_time": _epscmp_valid_time(cycle_hour, fh)}
+                    for fh in frame_hours
+                ],
+            }
+        }
+        for fh in frame_hours:
+            cog_path = run_root / EPSCMP_VAR / f"fh{fh:03d}.val.cog.tif"
+            cog_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(
+                cog_path,
+                "w",
+                driver="GTiff",
+                height=EPSCMP_H,
+                width=EPSCMP_W,
+                count=1,
+                dtype="float32",
+                crs=projection,
+                transform=transform,
+            ) as ds:
+                ds.write(_epscmp_field(fh), 1)
+            grid_module.write_grid_frame_from_value_cog_for_run_root(
+                run_root=run_root,
+                model=EPSCMP_MODEL,
+                var=EPSCMP_VAR,
+                fh=fh,
+                value_cog_path=cog_path,
+            )
+        (manifest_dir / f"{run}.json").write_text(json.dumps({"variables": manifest_vars}))
+
+    (published_root / EPSCMP_MODEL / "LATEST.json").write_text(
+        json.dumps({"run_id": "20260704_00z"})
+    )
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
+    monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
+    monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
+    _reset_main_caches()
+    yield
+    _reset_main_caches()
+
+
+def _epscmp_cog_series(run: str) -> dict:
+    """COG twin of `_sample_variable_series_binary` for the EPS fixture."""
+    from app.services import sampling
+
+    lat, lon = _epscmp_point()
+    frames, _units = sampling.manifest_frame_entries(EPSCMP_MODEL, run, EPSCMP_VAR)
+    points = []
+    for fh, valid_time in frames:
+        present, value = sampling.sample_value(
+            EPSCMP_MODEL, run, EPSCMP_VAR, fh, lat=lat, lon=lon
+        )
+        if not present:
+            continue
+        points.append({"fh": fh, "valid_time": valid_time, "value": value})
+    points.sort(key=lambda item: item["fh"])
+    return {"points": points}
+
+
+async def test_meteogram_binary_loop_matches_cog_loop_eps(epscmp_env: None) -> None:
+    from app.services import forecast_page as forecast_page_service
+
+    # EPS's defining structural difference: the two cycle types must yield
+    # genuinely different schedules, or the per-cycle assertions below would
+    # silently collapse into testing the same thing twice.
+    synoptic_fhs = _epscmp_frame_hours(EPSCMP_RUNS["20260704_00z"])
+    off_cycle_fhs = _epscmp_frame_hours(EPSCMP_RUNS["20260704_06z"])
+    assert len(synoptic_fhs) > len(off_cycle_fhs)
+
+    lat, lon = _epscmp_point()
+    scale = _epscmp_scale()
+    report_lines: list[str] = []
+
+    for run, cycle_hour in EPSCMP_RUNS.items():
+        frame_hours = _epscmp_frame_hours(cycle_hour)
+        cog = _epscmp_cog_series(run)
+        binary = forecast_page_service._sample_variable_series_binary(
+            EPSCMP_MODEL, run, EPSCMP_VAR, lat=lat, lon=lon
+        )
+        cog_by_fh = {p["fh"]: p["value"] for p in cog["points"]}
+        bin_by_fh = {p["fh"]: p["value"] for p in (binary["points"] or [])}
+
+        # Missing/None asymmetry between the two paths (same counting pattern
+        # as the GFS/HRRR/NBM tests above). This fixture plants no gaps, so
+        # any asymmetry at all is a real batch-loop bug.
+        missing_fhs = sorted(set(cog_by_fh) ^ set(bin_by_fh))
+        common_fhs = sorted(set(cog_by_fh) & set(bin_by_fh))
+        none_asym_fhs = sorted(
+            fh for fh in common_fhs if (cog_by_fh[fh] is None) != (bin_by_fh[fh] is None)
+        )
+        report_lines.append(
+            f"{run} (cycle {cycle_hour:02d}z): frames cog={len(cog_by_fh)} "
+            f"binary={len(bin_by_fh)} present-asymmetry={missing_fhs} "
+            f"none-asymmetry={none_asym_fhs}"
+        )
+        assert len(missing_fhs) + len(none_asym_fhs) == 0, report_lines[-1]
+        # Both loops walked this cycle type's own full live schedule — the
+        # synoptic and off-cycle runs each pin against their own
+        # scheduled_fhs_for_var result.
+        assert sorted(cog_by_fh) == frame_hours, report_lines[-1]
+
+        valued_fhs = [
+            fh
+            for fh in common_fhs
+            if cog_by_fh[fh] is not None and bin_by_fh[fh] is not None
+        ]
+        assert valued_fhs == frame_hours, report_lines[-1]
+
+        # Group 1 (EPS's only group): exact within scale/2, zero exceptions.
+        diverged = [
+            fh for fh in valued_fhs if abs(cog_by_fh[fh] - bin_by_fh[fh]) > scale / 2.0
+        ]
+        for fh in diverged:
+            report_lines.append(
+                f"  {run} fh{fh:03d}: cog={cog_by_fh[fh]} binary={bin_by_fh[fh]}"
+            )
+        assert not diverged, "\n".join(report_lines)
+
+    print("\n".join(report_lines))

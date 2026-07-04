@@ -6,9 +6,15 @@ arithmetic in isolation so later layers (binary sampler parity, canary,
 meteogram integration) can assume the decode primitive is correct.
 
 Parameterized by model per the Phase G checklist (item 5): GFS (Phases A–F),
-plus HRRR and NBM (Phase G static-readiness audit). Variable lists are derived
-programmatically from ``_PACKING_BY_MODEL_VAR`` filtered by model — never
-hardcoded — so a future packing-table addition is automatically covered.
+plus HRRR and NBM (Phase G static-readiness audit), plus GEFS and EPS (the
+ensemble Phase G audit). Variable lists are derived programmatically from
+``_PACKING_BY_MODEL_VAR`` filtered by model — never hardcoded — so a future
+packing-table addition is automatically covered. For the ensemble models the
+list is additionally filtered through the canary's own scope logic: GEFS/EPS
+publish exclusively under runtime ``__mean`` artifact ids, so their packed
+scope contains bare-id dead aliases that are never independently written to
+disk — no decode round-trip exists for those, and testing them would validate
+dead code paths, not real behavior.
 """
 
 from __future__ import annotations
@@ -47,10 +53,48 @@ def _vars_for_model(model: str) -> list[str]:
     )
 
 
+def _canary_scope_vars(model: str) -> list[str]:
+    """Packed variables the canary actually compares for ``model`` —
+    ``_PACKING_BY_MODEL_VAR`` keys intersected with the canary's own
+    ``_split_scope_by_buildable`` logic (via ``_scope_for_model``), so this
+    parameterization cannot silently drift from what Layer 3 exercises."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    in_scope, _excluded_non_buildable, _excluded_dead_alias = _scope_for_model(model)
+    return list(in_scope)
+
+
+# Ensemble models from the "Phase G audit — GEFS and EPS static readiness"
+# section. Their scope is canary-filtered (see _canary_scope_vars), unlike the
+# MODELS_UNDER_TEST tuple whose full packed lists are all real artifacts.
+ENSEMBLE_MODELS_UNDER_TEST = ("gefs", "eps")
+
+# The audited write-path-dead bare aliases per ensemble model (packed and
+# catalog-buildable, but runtime var-id resolution redirects every build to
+# the __mean twin, so no frame is ever written under these ids). Pinned so an
+# unaudited catalog change fails loudly instead of silently narrowing the
+# parameterized coverage below.
+ENSEMBLE_DEAD_ALIAS_VARS = {
+    "gefs": {
+        "hgt500_anom", "precip_10d_anom", "precip_16d_anom", "precip_5d_anom",
+        "precip_7d_anom", "tmp2m_anom", "tmp850_anom",
+    },
+    "eps": {
+        "hgt500_anom", "precip_10d_anom", "precip_15d_anom", "precip_5d_anom",
+        "precip_7d_anom", "tmp2m_anom", "tmp850_anom",
+    },
+}
+
+
 # (model, var) parameterization across every packed variable of every model
-# under test — derived from the packing table itself.
+# under test — derived from the packing table itself (canary-scope-filtered
+# for the ensemble models).
 MODEL_VAR_PARAMS = [
     (model, var) for model in MODELS_UNDER_TEST for var in _vars_for_model(model)
+] + [
+    (model, var)
+    for model in ENSEMBLE_MODELS_UNDER_TEST
+    for var in _canary_scope_vars(model)
 ]
 
 
@@ -194,6 +238,45 @@ def test_decode_preserves_shape(model: str, var: str) -> None:
     decoded = _decode_values(encoded, model=model, var=var)
     assert decoded.shape == values.shape
     assert np.isnan(decoded[0, 0])
+
+
+@pytest.mark.parametrize("model", ENSEMBLE_MODELS_UNDER_TEST)
+def test_ensemble_scope_partitions_cleanly_and_pins_dead_aliases(model: str) -> None:
+    """The canary's three scope buckets must partition the packing table, and
+    the dead-alias bucket must equal the audited set — so an unaudited catalog
+    or packing change fails loudly here rather than silently narrowing (or
+    widening) the parameterized decode coverage above."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    in_scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
+    packed = set(_vars_for_model(model))
+
+    # Every packed entry lands in exactly one bucket — nothing silently dropped.
+    assert set(in_scope) | set(excluded_non_buildable) | set(excluded_dead_alias) == packed
+    assert set(in_scope).isdisjoint(excluded_dead_alias)
+    assert set(in_scope).isdisjoint(excluded_non_buildable)
+
+    # The dead-alias set is exactly what the Phase G audit established.
+    assert set(excluded_dead_alias) == ENSEMBLE_DEAD_ALIAS_VARS[model]
+
+    # And the Layer 1 parameterization covers exactly the canary scope.
+    covered = {var for (mdl, var) in MODEL_VAR_PARAMS if mdl == model}
+    assert covered == set(in_scope)
+    assert covered, f"no parameterized variables for {model}"
+
+
+def test_gefs_and_eps_packed_variables_are_all_uint16() -> None:
+    """Phase G ensemble-audit invariant: every GEFS and EPS packed entry —
+    including the dead-alias bare ids excluded from decode parameterization —
+    is uint16. A future uint8 addition must be a deliberate, audited change."""
+    for model in ENSEMBLE_MODELS_UNDER_TEST:
+        for var in _vars_for_model(model):
+            packing = _packing(model, var)
+            resolved = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+            assert resolved != GRID_DTYPE_UINT8, (
+                f"{model}/{var} is uint8-packed — the ensemble Phase G audit "
+                f"assumed all-uint16; re-audit before relying on these tests"
+            )
 
 
 def test_hrrr_and_nbm_packed_variables_are_all_uint16() -> None:

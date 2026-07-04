@@ -515,6 +515,332 @@ def test_binary_only_model_rejects_bad_frame_nbm_tmp2m(
     assert not (staging_var / "grid").exists()
 
 
+# ── GEFS coverage ────────────────────────────────────────────────────────────
+#
+# Same enforced-gate guarantee for the first ensemble model (Phase G, "GEFS
+# and EPS static readiness" audit). GEFS publishes exclusively under runtime
+# __mean artifact ids — the scheduler resolves var ids through
+# resolve_runtime_var_id before build_frame, so the builds these tests mirror
+# use tmp2m__mean / precip_total__mean, never the bare catalog keys (the bare
+# ids are write-path-dead aliases with no packing use; _PACKING_BY_MODEL_VAR
+# has no ("gefs", "tmp2m") entry at all). GEFS has no categorical/indexed
+# variable in scope, so only the generic continuous branch of
+# _check_value_array_sanity applies — but its two variables reject through
+# different checks of that one branch:
+#   - tmp2m__mean: flat field (min == max; the "tmp2m" colormap spec has no
+#     allow_dry_frame, so flat always rejects) — the GFS/HRRR/NBM precedent.
+#   - precip_total__mean: the REAL "precip_total" colormap spec carries
+#     allow_dry_frame=True with no discrete levels, so ANY flat field passes
+#     as an allowed dry frame — flatness is not bad input for this variable.
+#     Its genuinely-bad input is the nodata-ratio check: >95% nodata with
+#     finite pixels present (the dry carve-out above that threshold exists
+#     only for categorical ptype specs). Group 2 display-prep status is
+#     irrelevant here: the pre-encode gate runs on the warped array BEFORE
+#     display prep, so upscale config never enters the gate.
+# Real get_color_map_spec left in place for both (the precip behavior keys
+# off the real spec's allow_dry_frame/levels shape).
+
+
+class _GefsPlugin(_Plugin):
+    id = "gefs"
+
+
+def _gefs_var_specs(var: str):
+    """(var_spec_model, var_capability) mirroring the real GEFS catalog entry
+    for `var` — GEFS_VARIABLE_CATALOG has tmp2m__mean as a primary direct
+    fetch (derived=False, kind continuous, units F, color_map_id "tmp2m",
+    internal_only frontend) and precip_total__mean as a derived cumulative
+    product (derived=True via precip_total_cumulative, kind continuous,
+    units in, color_map_id "precip_total", internal_only frontend)."""
+    if var == "tmp2m__mean":
+        return (
+            SimpleNamespace(
+                id="tmp2m__mean",
+                derived=False,
+                selectors=SimpleNamespace(hints={}, search=[":TMP:2 m above ground:"]),
+                kind="continuous",
+                units="F",
+            ),
+            SimpleNamespace(
+                color_map_id="tmp2m",
+                kind="continuous",
+                units="F",
+                frontend={"internal_only": True},
+            ),
+        )
+    if var == "precip_total__mean":
+        return (
+            SimpleNamespace(
+                id="precip_total__mean",
+                derived=True,
+                selectors=SimpleNamespace(hints={}, search=[]),
+                kind="continuous",
+                units="in",
+            ),
+            SimpleNamespace(
+                color_map_id="precip_total",
+                kind="continuous",
+                units="in",
+                frontend={"internal_only": True},
+            ),
+        )
+    raise AssertionError(f"unexpected GEFS test var: {var}")
+
+
+def _gefs_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetched: np.ndarray,
+    var: str,
+) -> None:
+    """GEFS twin of `_hrrr_harness`: per-variable var_spec/capability from
+    `_gefs_var_specs`, `derive_variable` mocked for the derived
+    precip_total__mean path (build_frame skips fetch/convert for derived
+    vars), and the real `get_color_map_spec` left in place."""
+    var_spec_model, var_capability = _gefs_var_specs(var)
+
+    monkeypatch.setattr(pipeline_module, "_ensure_products_ready", lambda **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_spec", lambda *a, **k: var_spec_model)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_capability", lambda *a, **k: var_capability)
+    monkeypatch.setattr(
+        pipeline_module,
+        "fetch_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "derive_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    monkeypatch.setattr(
+        pipeline_module,
+        "warp_to_target_grid",
+        lambda data, src_crs, src_transform, **kwargs: (data, src_transform),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "float_to_rgba",
+        lambda data, color_map_id, meta_var_key=None: (
+            np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8),
+            {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
+
+
+def _build_gefs(tmp_path: Path, var: str):
+    return pipeline_module.build_frame(
+        model="gefs",
+        region="na",
+        var_id=var,
+        fh=0,
+        run_date=datetime(2026, 7, 4, 0, 0),
+        data_root=tmp_path,
+        product="atmos.5",
+        model_plugin=_GefsPlugin(),
+        return_status=True,
+    )
+
+
+def test_binary_only_model_rejects_bad_frame_gefs_tmp2m(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guarantee as the GFS/HRRR/NBM tests above, for gefs — under the
+    # runtime artifact id tmp2m__mean, the only id GEFS ever publishes. A flat
+    # constant field fails the REAL pre-encode gate (min == max, no dry-frame
+    # allowance for the "tmp2m" spec) and must reject the frame with the COG
+    # write/gates never reached. 32.0 F sits inside GEFS's real packing band
+    # (_PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")]: scale=0.1,
+    # offset=-100.0; there is NO bare ("gefs", "tmp2m") packing entry) — the
+    # rejection is the gate's doing, not an out-of-band encode artifact.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    _gefs_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m__mean")
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = _build_gefs(tmp_path, "tmp2m__mean")
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "gefs" / "20260704_00z" / "tmp2m__mean"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
+def test_binary_only_model_rejects_bad_frame_gefs_precip_total(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # precip_total__mean routes through the SAME generic continuous branch as
+    # tmp2m__mean (the real "precip_total" spec is type="continuous" with no
+    # ptype_breaks), but flatness is NOT bad input for it: allow_dry_frame=True
+    # with no discrete levels means any flat field passes as a dry frame. Its
+    # genuinely-bad input is the nodata-ratio check — >95% nodata with finite
+    # pixels present, which has no dry carve-out on the continuous branch.
+    var_spec_model, var_capability = _gefs_var_specs("precip_total__mean")
+    real_spec = pipeline_module.get_color_map_spec("precip_total")
+
+    # Fixture-sharpness pins for the branch actually in play:
+    # (a) a fully flat wet field PASSES (allow_dry_frame, no levels) — so a
+    #     flat-array fixture here would test nothing;
+    # (b) a sparse-but-valid scene at 0.90 nodata PASSES the generic 0.95
+    #     threshold. If a spec change ever drops allow_dry_frame or re-routes
+    #     this variable, (a) fails loudly instead of the test below passing
+    #     for the wrong reason.
+    flat_wet = np.full((40, 50), 0.4, dtype=np.float32)
+    assert (
+        pipeline_module.check_pre_encode_value_sanity(
+            flat_wet,
+            real_spec,
+            var_spec_model=var_spec_model,
+            var_capability=var_capability,
+            label="gefs/precip_total__mean dry-frame pin",
+        )
+        is True
+    )
+    sparse_valid = np.full((40, 50), np.nan, dtype=np.float32)
+    sparse_valid.flat[:200] = np.linspace(0.1, 2.0, 200)  # 0.90 nodata, varied
+    assert (
+        pipeline_module.check_pre_encode_value_sanity(
+            sparse_valid,
+            real_spec,
+            var_spec_model=var_spec_model,
+            var_capability=var_capability,
+            label="gefs/precip_total__mean generic-threshold pin",
+        )
+        is True
+    )
+
+    # 2 finite pixels out of 2000 -> nodata ratio 0.999 > 0.95, finite pixels
+    # present (not fully dry), two distinct values (not flat).
+    bad = np.full((40, 50), np.nan, dtype=np.float32)
+    bad.flat[0] = 0.2
+    bad.flat[1] = 0.6
+
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    _gefs_harness(monkeypatch, fetched=bad, var="precip_total__mean")
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = _build_gefs(tmp_path, "precip_total__mean")
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "gefs" / "20260704_00z" / "precip_total__mean"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
+# ── EPS coverage ─────────────────────────────────────────────────────────────
+#
+# Same enforced-gate guarantee for the second ensemble model (Phase G, "GEFS
+# and EPS static readiness" audit). Like GEFS, EPS publishes exclusively under
+# runtime __mean artifact ids, so the test builds tmp2m__mean, never the bare
+# catalog key. Per the audit EPS has ZERO display-prep entries — every EPS
+# artifact is Group 1 — so there is no Group 2/nodata-ratio case to construct
+# (unlike GEFS's precip_total__mean) and one flat-field tmp2m__mean rejection
+# proves the mechanism, matching the single-variable precedent of the GFS/NBM
+# sections. Fields below mirror EPS_VARIABLE_CATALOG's real tmp2m__mean entry
+# (primary direct fetch, derived=False, kind continuous, units F,
+# color_map_id "tmp2m", internal_only frontend) with the ECMWF-family ":2t:"
+# search selector — confirmed against eps.py, not reused from GEFS.
+
+
+class _EpsPlugin(_Plugin):
+    id = "eps"
+
+
+def _eps_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetched: np.ndarray,
+) -> None:
+    """EPS twin of `_nbm_harness`, tmp2m__mean only: fetch-path mocks (the
+    variable is a direct fetch, so derive_variable is never called for it),
+    var_spec/capability mirroring EPS_VARIABLE_CATALOG's real tmp2m__mean
+    entry, and the real `get_color_map_spec` left in place."""
+    var_spec_model = SimpleNamespace(
+        id="tmp2m__mean",
+        derived=False,
+        selectors=SimpleNamespace(hints={}, search=[":2t:"]),
+        kind="continuous",
+        units="F",
+    )
+    var_capability = SimpleNamespace(
+        color_map_id="tmp2m",
+        kind="continuous",
+        units="F",
+        frontend={"internal_only": True},
+    )
+
+    monkeypatch.setattr(pipeline_module, "_ensure_products_ready", lambda **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_spec", lambda *a, **k: var_spec_model)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_capability", lambda *a, **k: var_capability)
+    monkeypatch.setattr(
+        pipeline_module,
+        "fetch_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
+    )
+    monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    monkeypatch.setattr(
+        pipeline_module,
+        "warp_to_target_grid",
+        lambda data, src_crs, src_transform, **kwargs: (data, src_transform),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "float_to_rgba",
+        lambda data, color_map_id, meta_var_key=None: (
+            np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8),
+            {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
+
+
+def test_binary_only_model_rejects_bad_frame_eps_tmp2m(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same guarantee as the GFS/HRRR/NBM/GEFS tests above, for eps — under the
+    # runtime artifact id tmp2m__mean, the only id EPS ever publishes. A flat
+    # constant field fails the REAL pre-encode gate (min == max, no dry-frame
+    # allowance for the "tmp2m" spec) and must reject the frame with the COG
+    # write/gates never reached. 32.0 F sits inside EPS's real packing band
+    # (_PACKING_BY_MODEL_VAR[("eps", "tmp2m__mean")]: scale=0.1,
+    # offset=-100.0) — the rejection is the gate's doing, not an out-of-band
+    # encode artifact.
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "eps")
+    _eps_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
+    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
+    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
+    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
+
+    path, status = pipeline_module.build_frame(
+        model="eps",
+        region="na",
+        var_id="tmp2m__mean",
+        fh=0,
+        run_date=datetime(2026, 7, 4, 0, 0),
+        data_root=tmp_path,
+        product="enfo",
+        model_plugin=_EpsPlugin(),
+        return_status=True,
+    )
+
+    assert path is None
+    assert status == "failed"
+    staging_var = tmp_path / "staging" / "eps" / "20260704_00z" / "tmp2m__mean"
+    assert not (staging_var / "fh000.val.cog.tif").exists()
+    assert not (staging_var / "fh000.json").exists()
+    assert not (staging_var / "grid").exists()
+
+
 def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
