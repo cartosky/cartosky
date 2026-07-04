@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -283,6 +284,53 @@ def test_eps_scope_is_published_mean_artifacts_only() -> None:
     assert "precip_total__mean" in scope
     assert not set(dead_alias) & set(scope)
     assert not set(dead_alias) & set(excluded)
+
+
+# ── Benchmark variable selection ─────────────────────────────────────
+
+
+def test_benchmark_var_is_first_group1_in_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An ensemble-style scope with no bare "tmp2m" (the old hardcoded pick,
+    # which is never published for such models): the benchmark must target
+    # the first Group 1 variable actually in scope.
+    probed: list[str] = []
+
+    def fake_discover(published_root: Path, model: str, run: str, var: str) -> list[int]:
+        probed.append(var)
+        return []
+
+    monkeypatch.setattr(canary, "_discover_frames_for_run_var", fake_discover)
+
+    scope = ["precip_total__mean", "tmp2m__mean", "tmp850__mean"]
+    group_index = {"precip_total__mean": 2, "tmp2m__mean": 1, "tmp850__mean": 1}
+
+    result = canary._run_benchmarks(
+        Path("/nonexistent"), "gefs", [], "20260704_00z", 1, scope, group_index
+    )
+
+    assert result == []  # no frames on the fake disk — bench aborts cleanly
+    assert probed == ["tmp2m__mean"]
+
+
+def test_benchmarks_skipped_when_scope_has_no_group1(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail_discover(*args: object, **kwargs: object) -> list[int]:
+        raise AssertionError("frame discovery must not run when benchmarks are skipped")
+
+    monkeypatch.setattr(canary, "_discover_frames_for_run_var", fail_discover)
+
+    with caplog.at_level(logging.WARNING, logger="canary"):
+        result = canary._run_benchmarks(
+            Path("/nonexistent"), "hypo", [], "20260704_00z", 1,
+            ["only_upscaled"], {"only_upscaled": 2},
+        )
+
+    assert result == []
+    assert any("skipping benchmarks" in record.message for record in caplog.records)
 
 
 # ── Binary substrate failure (bin_meta_invalid) ─────────────────────

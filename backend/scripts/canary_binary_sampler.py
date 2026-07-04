@@ -971,10 +971,26 @@ def _run_benchmarks(
     anchors: list[AnchorPoint],
     target_run: str,
     workers: int,
+    scope: list[str],
+    group_index: dict[str, int],
 ) -> list[BenchmarkResult]:
-    """Run the four Phase D performance benchmarks."""
+    """Run the four Phase D performance benchmarks.
+
+    The benchmark variable is the first Group 1 variable in scope: the
+    simplest case (no display-prep), matching what every prior model's
+    benchmark measured — and guaranteed to be a variable actually published
+    for this model, unlike a hardcoded var id.
+    """
     model_norm = _normalize_model(model)
-    bench_var = "tmp2m"
+    bench_var = next((var for var in scope if group_index.get(var) == 1), None)
+    if bench_var is None:
+        logger.warning(
+            "No Group 1 variable in %s comparison scope — skipping benchmarks "
+            "(the benchmark methodology assumes a no-display-prep variable)",
+            model_norm,
+        )
+        return []
+    logger.info("Benchmark variable: %s (first Group 1 variable in scope)", bench_var)
     fh_values = _discover_frames_for_run_var(published_root, model_norm, target_run, bench_var)
     if not fh_values:
         logger.warning("No frames for benchmark var %s in run %s", bench_var, target_run)
@@ -1546,7 +1562,10 @@ def main() -> None:
     if not args.skip_benchmarks:
         logger.info("Running performance benchmarks...")
         bench_run = all_runs[-1]
-        benchmarks = _run_benchmarks(published_root, model, anchors, bench_run, args.workers)
+        benchmarks = _run_benchmarks(
+            published_root, model, anchors, bench_run, args.workers,
+            scope, group_index,
+        )
         for bm in benchmarks:
             logger.info(
                 "Bench %s: COG avg=%.2f ms  p95=%.2f ms | "
