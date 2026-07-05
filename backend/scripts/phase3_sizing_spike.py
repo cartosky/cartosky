@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # THROWAWAY — Phase 3 sizing spike, see docs/MODEL_GUIDANCE_PHASE3_SIZING_SPIKE.md
+#
+# DEPRECATED (2026-07-05): this is the VALUE-COG-ERA spike, written before the
+# binary-sampling migration. GEFS/EPS no longer produce value COGs. Do NOT run,
+# reuse, or extend it (docs/ENSEMBLE_MEMBER_PIPELINE_PLAN.md Section 7 warning).
+# The binary-era replacement is backend/scripts/ensemble_member_sizing_spike.py.
 """Phase 3 ensemble-member sizing spike (standalone, throwaway).
 
 Measures the real disk / inode / latency / memory cost of publishing one full
