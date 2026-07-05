@@ -239,8 +239,17 @@ def _ensemble_dead_alias_vars(catalog: dict[str, Any]) -> set[str]:
 def _split_scope_by_buildable(
     packed_vars: list[str],
     catalog: dict[str, Any],
-) -> tuple[list[str], list[str], list[str]]:
-    """Split packed variables into (scope, excluded non-buildable, excluded dead-alias).
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Split packed variables into
+    (scope, excluded non-buildable, excluded dead-alias, excluded uncataloged).
+
+    A variable is excluded as uncataloged when the model's capability catalog
+    has no entry for it at all — checked first because it is the most
+    fundamental failure: there is no capability to consult, so no publish
+    path can vouch for it. This is distinct from the buckets below (which all
+    reason from an existing entry); its typical root cause is a cross-model
+    packing loop injecting a key for a model whose own catalog opted out
+    (e.g. ecmwf's ``precip_16d_anom`` from the gfs-family precip-anom loop).
 
     A variable is excluded as non-buildable when its capability says
     ``buildable=False`` and it is neither companion-published nor
@@ -250,7 +259,7 @@ def _split_scope_by_buildable(
     A variable is excluded as a dead alias when it is buildable but its own
     ``ensemble.artifact_map`` redirects every reachable view to a different
     artifact id: frames exist only under the redirected id, never this one
-    (see ``_ensemble_dead_alias_vars``). The two classes are kept separate so
+    (see ``_ensemble_dead_alias_vars``). The classes are kept separate so
     they stay distinguishable in the summary output.
     """
     published = _companion_published_vars(catalog) | _ensemble_artifact_published_vars(catalog)
@@ -258,11 +267,11 @@ def _split_scope_by_buildable(
     in_scope: list[str] = []
     excluded_non_buildable: list[str] = []
     excluded_dead_alias: list[str] = []
+    excluded_uncataloged: list[str] = []
     for var in packed_vars:
         capability = catalog.get(var)
         if capability is None:
-            # Packed but absent from the catalog — nothing to cross-reference.
-            in_scope.append(var)
+            excluded_uncataloged.append(var)
         elif var in published:
             # Frames exist under this id via another entry's publish path.
             in_scope.append(var)
@@ -272,18 +281,28 @@ def _split_scope_by_buildable(
             in_scope.append(var)
         else:
             excluded_non_buildable.append(var)
-    return in_scope, excluded_non_buildable, excluded_dead_alias
+    return in_scope, excluded_non_buildable, excluded_dead_alias, excluded_uncataloged
 
 
-def _scope_for_model(model: str) -> tuple[list[str], list[str], list[str]]:
-    """Return (scope, excluded non-buildable, excluded dead-alias) for a model."""
+def _scope_for_model(model: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Return (scope, excluded non-buildable, excluded dead-alias,
+    excluded uncataloged) for a model."""
     model_norm = _normalize_model(model)
     packed = sorted(
         var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model_norm
     )
-    in_scope, excluded_non_buildable, excluded_dead_alias = _split_scope_by_buildable(
-        packed, _capability_catalog_for_model(model_norm)
-    )
+    (
+        in_scope,
+        excluded_non_buildable,
+        excluded_dead_alias,
+        excluded_uncataloged,
+    ) = _split_scope_by_buildable(packed, _capability_catalog_for_model(model_norm))
+    if excluded_uncataloged:
+        logger.info(
+            "Excluded %d packed variable(s) with no capability catalog entry "
+            "from %s comparison scope: %s",
+            len(excluded_uncataloged), model_norm, ", ".join(excluded_uncataloged),
+        )
     if excluded_non_buildable:
         logger.info(
             "Excluded %d non-buildable, never-published variable(s) from %s "
@@ -296,7 +315,7 @@ def _scope_for_model(model: str) -> tuple[list[str], list[str], list[str]]:
             "scope (published only under their artifact_map runtime id): %s",
             len(excluded_dead_alias), model_norm, ", ".join(excluded_dead_alias),
         )
-    return in_scope, excluded_non_buildable, excluded_dead_alias
+    return in_scope, excluded_non_buildable, excluded_dead_alias, excluded_uncataloged
 
 
 def _packing(model: str, var: str) -> dict[str, Any]:
@@ -1472,7 +1491,7 @@ def main() -> None:
     args = parser.parse_args()
     _setup_logging(verbose=args.verbose)
     model = _normalize_model(args.model)
-    scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
+    scope, excluded_non_buildable, excluded_dead_alias, excluded_uncataloged = _scope_for_model(model)
     if not scope:
         logger.error("No grid packing scope found for model: %s", model)
         sys.exit(1)
@@ -1582,6 +1601,7 @@ def main() -> None:
     report["scope_variables"] = scope
     report["excluded_non_buildable_variables"] = excluded_non_buildable
     report["excluded_dead_alias_variables"] = excluded_dead_alias
+    report["excluded_uncataloged_variables"] = excluded_uncataloged
     if args.vars:
         report["vars_filter"] = scope
     report["tolerance_groups"] = {

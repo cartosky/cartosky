@@ -346,8 +346,7 @@ def _canary_scope(model: str) -> list[str]:
     Layer 2 coverage cannot silently drift from what Layer 3 exercises."""
     from backend.scripts.canary_binary_sampler import _scope_for_model
 
-    in_scope, _excluded_non_buildable, _excluded_dead_alias = _scope_for_model(model)
-    return list(in_scope)
+    return list(_scope_for_model(model)[0])
 
 
 def _tolerance_group(model: str, var: str) -> int:
@@ -472,11 +471,20 @@ def test_phase_g_ensemble_partition_matches_audit_and_canary_scope() -> None:
     from backend.scripts.canary_binary_sampler import _scope_for_model
 
     for model, expected in EXPECTED_ENSEMBLE_GROUP_PARTITION.items():
-        in_scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
+        (
+            in_scope,
+            excluded_non_buildable,
+            excluded_dead_alias,
+            excluded_uncataloged,
+        ) = _scope_for_model(model)
         packed = set(_model_scope(model))
         assert (
-            set(in_scope) | set(excluded_non_buildable) | set(excluded_dead_alias)
+            set(in_scope)
+            | set(excluded_non_buildable)
+            | set(excluded_dead_alias)
+            | set(excluded_uncataloged)
         ) == packed
+        assert excluded_uncataloged == []
         assert set(excluded_dead_alias) == EXPECTED_ENSEMBLE_DEAD_ALIASES[model]
         assert set(in_scope).isdisjoint(excluded_dead_alias)
 

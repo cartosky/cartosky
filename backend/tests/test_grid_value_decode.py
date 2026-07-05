@@ -60,8 +60,7 @@ def _canary_scope_vars(model: str) -> list[str]:
     parameterization cannot silently drift from what Layer 3 exercises."""
     from backend.scripts.canary_binary_sampler import _scope_for_model
 
-    in_scope, _excluded_non_buildable, _excluded_dead_alias = _scope_for_model(model)
-    return list(in_scope)
+    return list(_scope_for_model(model)[0])
 
 
 # Ensemble models from the "Phase G audit — GEFS and EPS static readiness"
@@ -248,13 +247,27 @@ def test_ensemble_scope_partitions_cleanly_and_pins_dead_aliases(model: str) -> 
     widening) the parameterized decode coverage above."""
     from backend.scripts.canary_binary_sampler import _scope_for_model
 
-    in_scope, excluded_non_buildable, excluded_dead_alias = _scope_for_model(model)
+    (
+        in_scope,
+        excluded_non_buildable,
+        excluded_dead_alias,
+        excluded_uncataloged,
+    ) = _scope_for_model(model)
     packed = set(_vars_for_model(model))
 
     # Every packed entry lands in exactly one bucket — nothing silently dropped.
-    assert set(in_scope) | set(excluded_non_buildable) | set(excluded_dead_alias) == packed
+    assert (
+        set(in_scope)
+        | set(excluded_non_buildable)
+        | set(excluded_dead_alias)
+        | set(excluded_uncataloged)
+    ) == packed
     assert set(in_scope).isdisjoint(excluded_dead_alias)
     assert set(in_scope).isdisjoint(excluded_non_buildable)
+    # Both ensemble models' packed entries are fully cataloged (the
+    # uncataloged bucket exists for cross-model packing-loop strays, e.g.
+    # ecmwf's precip_16d_anom).
+    assert excluded_uncataloged == []
 
     # The dead-alias set is exactly what the Phase G audit established.
     assert set(excluded_dead_alias) == ENSEMBLE_DEAD_ALIAS_VARS[model]

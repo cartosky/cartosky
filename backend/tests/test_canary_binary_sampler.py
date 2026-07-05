@@ -17,8 +17,8 @@ def test_tolerance_classification_handles_model_specific_fourth_group() -> None:
 
 
 def test_scope_is_derived_from_requested_model() -> None:
-    hrrr_scope, _, _ = canary._scope_for_model("hrrr")
-    nbm_scope, _, _ = canary._scope_for_model("nbm")
+    hrrr_scope, _, _, _ = canary._scope_for_model("hrrr")
+    nbm_scope, _, _, _ = canary._scope_for_model("nbm")
 
     assert "radar_ptype" in hrrr_scope
     assert "tmp850_anom" in hrrr_scope
@@ -91,13 +91,16 @@ def test_split_scope_excludes_non_buildable_non_companion_vars() -> None:
     }
     packed = ["alpha", "combo", "hidden_input", "part_a", "part_b", "unlisted"]
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(packed, catalog)
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
+        packed, catalog
+    )
 
-    # buildable stays; companion-published non-buildables stay; vars without
-    # a catalog entry cannot be cross-referenced and stay.
-    assert in_scope == ["alpha", "combo", "part_a", "part_b", "unlisted"]
+    # buildable stays; companion-published non-buildables stay; vars with no
+    # catalog entry at all are excluded as uncataloged (nothing to consult).
+    assert in_scope == ["alpha", "combo", "part_a", "part_b"]
     assert excluded == ["hidden_input"]
     assert dead_alias == []
+    assert uncataloged == ["unlisted"]
 
 
 def test_companions_of_non_buildable_vars_do_not_rescue_scope() -> None:
@@ -106,15 +109,18 @@ def test_companions_of_non_buildable_vars_do_not_rescue_scope() -> None:
         "child": _cap("child", buildable=False),
     }
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(["child", "parent"], catalog)
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
+        ["child", "parent"], catalog
+    )
 
     assert in_scope == []
     assert excluded == ["child", "parent"]
     assert dead_alias == []
+    assert uncataloged == []
 
 
 def test_hrrr_scope_excludes_radar_ptype_components() -> None:
-    scope, excluded, dead_alias = canary._scope_for_model("hrrr")
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("hrrr")
 
     assert excluded == [
         "radar_ptype_frzr",
@@ -123,6 +129,7 @@ def test_hrrr_scope_excludes_radar_ptype_components() -> None:
         "radar_ptype_snow",
     ]
     assert dead_alias == []
+    assert uncataloged == []
     assert not set(excluded) & set(scope)
     assert "radar_ptype" in scope
 
@@ -131,20 +138,22 @@ def test_gfs_scope_keeps_companion_published_ptype_components() -> None:
     # GFS's ptype_intensity_* components are buildable=False but are published
     # as companions of the buildable ptype_intensity composite, so they have a
     # real COG-vs-binary parity question and must stay in scope.
-    scope, excluded, dead_alias = canary._scope_for_model("gfs")
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("gfs")
 
     assert excluded == []
     assert dead_alias == []
+    assert uncataloged == []
     assert "ptype_intensity_rain" in scope
     assert "ptype_intensity_snow" in scope
     assert "ptype_intensity_ice" in scope
 
 
 def test_nbm_scope_has_no_exclusions() -> None:
-    scope, excluded, dead_alias = canary._scope_for_model("nbm")
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("nbm")
 
     assert excluded == []
     assert dead_alias == []
+    assert uncataloged == []
     assert scope
 
 
@@ -183,13 +192,16 @@ def test_split_scope_composes_all_three_publish_paths() -> None:
         "hidden_input", "part_a", "plain",
     ]
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(packed, catalog)
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
+        packed, catalog
+    )
 
     assert in_scope == ["both__mean", "combo", "ens__mean", "part_a", "plain"]
     assert excluded == ["ens__members", "hidden_input"]
     # "ens" and "both" are buildable but their artifact_map redirects every
     # reachable view elsewhere — never written under their own names.
     assert dead_alias == ["both", "ens"]
+    assert uncataloged == []
     assert not set(dead_alias) & set(excluded)
 
 
@@ -204,13 +216,14 @@ def test_buildable_with_redirecting_artifact_map_is_dead_alias() -> None:
         "alias__mean": _cap("alias__mean", buildable=False),
     }
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
         ["alias", "alias__mean"], catalog
     )
 
     assert in_scope == ["alias__mean"]
     assert excluded == []
     assert dead_alias == ["alias"]
+    assert uncataloged == []
 
 
 def test_buildable_without_artifact_map_is_not_dead_alias() -> None:
@@ -218,11 +231,14 @@ def test_buildable_without_artifact_map_is_not_dead_alias() -> None:
     # frames are written under the variable's own name.
     catalog = {"plain": _cap("plain", buildable=True)}
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(["plain"], catalog)
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
+        ["plain"], catalog
+    )
 
     assert in_scope == ["plain"]
     assert excluded == []
     assert dead_alias == []
+    assert uncataloged == []
 
 
 def test_artifact_map_of_non_buildable_var_does_not_rescue_scope() -> None:
@@ -236,7 +252,7 @@ def test_artifact_map_of_non_buildable_var_does_not_rescue_scope() -> None:
         "parent__mean": _cap("parent__mean", buildable=False),
     }
 
-    in_scope, excluded, dead_alias = canary._split_scope_by_buildable(
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
         ["parent", "parent__mean"], catalog
     )
 
@@ -245,6 +261,7 @@ def test_artifact_map_of_non_buildable_var_does_not_rescue_scope() -> None:
     # for buildable ids; "parent" stays in the non-buildable bucket.
     assert excluded == ["parent", "parent__mean"]
     assert dead_alias == []
+    assert uncataloged == []
 
 
 _GEFS_EPS_DEAD_ALIASES = {
@@ -262,10 +279,11 @@ _GEFS_EPS_DEAD_ALIASES = {
 def test_gefs_scope_is_published_mean_artifacts_only() -> None:
     # GEFS publishes exclusively under the runtime __mean artifact ids; the
     # bare buildable ids are runtime aliases with no frames of their own.
-    scope, excluded, dead_alias = canary._scope_for_model("gefs")
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("gefs")
 
     assert excluded == []
     assert dead_alias == _GEFS_EPS_DEAD_ALIASES["gefs"]
+    assert uncataloged == []
     assert "tmp2m__mean" in scope
     assert "precip_total__mean" in scope
     assert "tmp2m_anom__mean" in scope
@@ -274,16 +292,64 @@ def test_gefs_scope_is_published_mean_artifacts_only() -> None:
 
 
 def test_eps_scope_is_published_mean_artifacts_only() -> None:
-    scope, excluded, dead_alias = canary._scope_for_model("eps")
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("eps")
 
     # hgt500__mean is a contour-component input, not an artifact_map value of
     # any buildable entry — a different exclusion class than the dead aliases.
     assert excluded == ["hgt500__mean"]
     assert dead_alias == _GEFS_EPS_DEAD_ALIASES["eps"]
+    assert uncataloged == []
     assert "tmp2m__mean" in scope
     assert "precip_total__mean" in scope
     assert not set(dead_alias) & set(scope)
     assert not set(dead_alias) & set(excluded)
+
+
+def test_packed_var_without_catalog_entry_is_excluded_uncataloged() -> None:
+    # "ghost" is packed and would be rescued by BOTH remaining publish paths —
+    # it is a companion of a buildable entry AND an artifact_map value of a
+    # reachable view — but it has no catalog entry of its own. The uncataloged
+    # check is the most fundamental and runs first: with no capability to
+    # consult, no publish path can vouch for it.
+    catalog = {
+        "host": _cap(
+            "host",
+            buildable=True,
+            companions=["ghost"],
+            supported_views=["mean"],
+            artifact_map={"mean": "ghost"},
+        ),
+    }
+
+    in_scope, excluded, dead_alias, uncataloged = canary._split_scope_by_buildable(
+        ["ghost", "host"], catalog
+    )
+
+    assert uncataloged == ["ghost"]
+    assert in_scope == []  # "host" is itself a dead alias (redirects to ghost)
+    assert dead_alias == ["host"]
+    assert excluded == []
+
+
+def test_ecmwf_scope_excludes_only_uncataloged_precip_16d_anom() -> None:
+    # The cross-model precip-anomaly packing loop in grid.py registers
+    # ("ecmwf", "precip_16d_anom"), but ecmwf's own catalog uses the 15d
+    # window and has no entry for the 16d key — the exact "packed for a model
+    # whose catalog opted out" failure mode this bucket exists for.
+    scope, excluded, dead_alias, uncataloged = canary._scope_for_model("ecmwf")
+
+    assert uncataloged == ["precip_16d_anom"]
+    assert excluded == []
+    assert dead_alias == []
+    assert "precip_16d_anom" not in scope
+    assert "precip_15d_anom" in scope
+
+    # This fix only adds the uncataloged check — the previously audited
+    # models' exclusions must be byte-identical to before (zero uncataloged,
+    # existing buckets pinned by the model-specific tests above).
+    for model in ("gfs", "hrrr", "nbm", "gefs", "eps"):
+        _scope, _non_buildable, _dead, model_uncataloged = canary._scope_for_model(model)
+        assert model_uncataloged == [], f"{model}: unexpected uncataloged packed vars"
 
 
 # ── Benchmark variable selection ─────────────────────────────────────
