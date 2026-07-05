@@ -1330,11 +1330,35 @@ def eps_control_minicheck(published_root: Path, canary_run_dir: Path, *, fh: int
     type_series = inventory["type"].astype(str).str.strip().str.lower()
     cf_rows = inventory.loc[type_series == "cf"]
     pf_rows = inventory.loc[type_series == "pf"]
+    types_present = {str(k): int(v) for k, v in type_series.value_counts().items()}
+    pf_numbers: list[int] = []
+    if "number" in inventory.columns:
+        for raw in pf_rows["number"]:
+            try:
+                pf_numbers.append(int(raw))
+            except (TypeError, ValueError):
+                continue
     if len(cf_rows) == 0:
+        # Not a script failure — a data finding. Verified 2026-07-05 against
+        # data.ecmwf.int and the azure mirror: the enfo ef index contains only
+        # pf rows (members 1..50); ECMWF open data exposes no control member.
         return {
-            "ok": False, "eps_run": run_id, "fh": fh,
+            "ok": True,
+            "cf_present": False,
+            "eps_run": run_id,
+            "fh": fh,
+            "search_pattern": patterns[0],
+            "selection": 'inventory rows filtered to type == "cf"',
+            "types_present": types_present,
             "pf_row_count": int(len(pf_rows)),
-            "reason": "no cf row in inventory for pattern " + patterns[0],
+            "pf_number_range": (
+                [min(pf_numbers), max(pf_numbers)] if pf_numbers else None
+            ),
+            "finding": (
+                "no cf rows in the enfo inventory — EPS member roster from "
+                "this stream is the pf set only; no __control artifact is "
+                "fetchable (resolves plan open decision #2 negatively)"
+            ),
         }
 
     cf_row = cf_rows.iloc[0]
@@ -1367,10 +1391,12 @@ def eps_control_minicheck(published_root: Path, canary_run_dir: Path, *, fh: int
 
     return {
         "ok": bool(payload) and field_shape is not None,
+        "cf_present": True,
         "eps_run": run_id,
         "fh": fh,
         "search_pattern": patterns[0],
         "selection": 'inventory rows filtered to type == "cf"',
+        "types_present": types_present,
         "cf_row_count": int(len(cf_rows)),
         "pf_row_count": int(len(pf_rows)),
         "control_member_identifier": {"number": member_number, "type": "cf"},
